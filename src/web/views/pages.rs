@@ -192,7 +192,10 @@ pub struct PageEditorPage {
     pub public_display_name: String,
     pub public_about: String,
     pub brand_color_value: String,
-    pub show_powered_by: bool,
+    /// `None` while the page inherits the deployment default.
+    pub show_powered_by: Option<bool>,
+    pub powered_by_default: bool,
+    pub white_label: bool,
     pub hide_from_search: bool,
     pub website_url: String,
     pub styles: Vec<StyleOption>,
@@ -241,6 +244,8 @@ pub async fn page_editor(
         )
             .into_response());
     };
+
+    let white_label = state.quotas.limit_for_org(org).await?.white_label_enabled;
 
     // On-page components (curated, in order) + every other org monitor.
     let curated = state
@@ -404,7 +409,9 @@ pub async fn page_editor(
             .public_brand_color
             .clone()
             .unwrap_or_else(|| cfg.default_brand_color.clone()),
-        show_powered_by: b.show_powered_by(cfg.default_show_powered_by),
+        show_powered_by: b.public_show_powered_by,
+        powered_by_default: cfg.default_show_powered_by,
+        white_label,
         hide_from_search: b.public_hide_from_search,
         website_url: b.public_website_url.clone().unwrap_or_default(),
         styles,
@@ -463,7 +470,9 @@ mod tests {
             public_display_name: "Acme".into(),
             public_about: String::new(),
             brand_color_value: "#000000".into(),
-            show_powered_by: true,
+            show_powered_by: None,
+            powered_by_default: true,
+            white_label: false,
             hide_from_search: false,
             website_url: String::new(),
             styles: Vec::new(),
@@ -493,6 +502,30 @@ mod tests {
             }],
             subscribers: Vec::new(),
         }
+    }
+
+    #[test]
+    fn the_badge_toggle_is_live_on_white_label_and_dimmed_otherwise() {
+        let mut locked = editor(None);
+        locked.white_label = false;
+        let html = locked.render().unwrap();
+        assert!(html.contains(r#"id="f-powered-by""#));
+        assert!(
+            html.contains("disabled"),
+            "a plan without white-label cannot remove the badge"
+        );
+        assert!(html.contains("comes with pro"));
+        assert!(html.contains("const storedPoweredBy = null;"));
+        assert!(html.contains("poweredByTouched ? poweredBy.checked : storedPoweredBy"));
+
+        let mut sold = editor(None);
+        sold.white_label = true;
+        sold.show_powered_by = Some(false);
+        let html = sold.render().unwrap();
+        let tag = &html[html.find(r#"id="f-powered-by""#).expect("control renders")..];
+        assert!(!tag[..tag.find('>').unwrap()].contains("disabled"));
+        assert!(!html.contains("comes with pro"));
+        assert!(html.contains("const storedPoweredBy = false;"));
     }
 
     #[test]

@@ -104,6 +104,16 @@
                   placeholder="Short line shown under the header">{{ public_about }}</textarea>
       </label>
 
+      <label class="flex items-center gap-2 text-sm text-body{% if !white_label %} opacity-50{% endif %}">
+        <input id="f-powered-by" type="checkbox" class="h-4 w-4"
+               {% if let Some(pinned) = show_powered_by %}{% if pinned %} checked{% endif %}{% else %}{% if powered_by_default %} checked{% endif %}{% endif %}
+               {% if !white_label %} disabled{% endif %}>
+        <span>show the &ldquo;powered by uptimepage&rdquo; footer</span>
+      </label>
+      {% if !white_label %}
+      <p class="-mt-3 font-mono text-xs text-quiet"># removing the badge comes with pro</p>
+      {% endif %}
+
       <div>
         <span class="mb-1.5 block text-xs text-muted">Brand color</span>
         <div class="flex flex-wrap items-center gap-3">
@@ -331,6 +341,13 @@
 
       // Slug rides the same PATCH as the rest of the page, so the warning has
       // to appear while the field is dirty rather than at the click.
+      // Null is what keeps the page following the deployment default, so only a
+      // deliberate flip replaces it.
+      const poweredBy = document.getElementById('f-powered-by');
+      const storedPoweredBy = {% if let Some(pinned) = show_powered_by %}{{ pinned }}{% else %}null{% endif %};
+      let poweredByTouched = false;
+      poweredBy.addEventListener('change', () => { poweredByTouched = true; });
+
       const form = document.getElementById('page-form');
       const slugEl = document.getElementById('f-slug');
       const slugWarn = document.getElementById('slug-warning');
@@ -426,6 +443,7 @@
               public_about: document.getElementById('f-about').value || null,
               public_brand_color: document.getElementById('f-color').value || null,
               public_style: style.value,
+              public_show_powered_by: poweredByTouched ? poweredBy.checked : storedPoweredBy,
               public_hide_from_search: document.getElementById('f-hide-search').checked,
               public_website_url: document.getElementById('f-website').value || null,
             },
