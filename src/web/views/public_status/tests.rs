@@ -731,18 +731,36 @@ fn only_the_cursorless_archive_page_is_indexable() {
 }
 
 #[test]
-fn the_header_brand_links_to_the_operator_site_when_set() {
-    let html = StatusFullPage {
-        view: build_view(&sample_page(), &[], &Default::default()),
-        branding: branding_with(PublicOrgBranding {
+fn only_a_plan_that_sells_white_label_follows_the_operators_link() {
+    let page = |follow: bool| {
+        let mut branding = branding_with(PublicOrgBranding {
             public_website_url: Some("https://acme.example".into()),
             ..Default::default()
-        }),
-        og: OgMeta::default(),
-    }
-    .render()
-    .unwrap();
-    assert!(html.contains(r#"<a href="https://acme.example" rel="noopener nofollow""#));
+        });
+        branding.follow_website_link = follow;
+        StatusFullPage {
+            view: build_view(&sample_page(), &[], &Default::default()),
+            branding,
+            og: OgMeta::default(),
+        }
+        .render()
+        .unwrap()
+    };
+    assert!(page(true).contains(r#"<a href="https://acme.example""#));
+    assert!(!page(true).contains("nofollow"));
+    assert!(page(false).contains(r#"<a href="https://acme.example" rel="nofollow""#));
+}
+
+#[test]
+fn follow_link_needs_white_label_on_hosted_and_nothing_on_self_host() {
+    // Hosted: the plan decides.
+    assert!(!enforce_follow_link(true, false, false));
+    assert!(enforce_follow_link(true, true, false));
+    // Self-host: no open signup to police, so the operator's own link follows.
+    assert!(enforce_follow_link(false, false, false));
+    // A page kept out of search passes nothing, whatever the plan.
+    assert!(!enforce_follow_link(true, true, true));
+    assert!(!enforce_follow_link(false, false, true));
 }
 
 #[test]

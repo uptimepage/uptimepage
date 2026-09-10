@@ -31,12 +31,24 @@ pub struct BrandingView {
     pub hide_from_search: bool,
     /// Operator's own site. The header brand links here when set, else [`Self::home`].
     pub website_url: Option<String>,
+    /// Whether that link passes ranking signal. See [`enforce_follow_link`].
+    pub follow_website_link: bool,
 }
 
 impl BrandingView {
     /// The header brand links to the operator's own site when they set one.
     pub fn brand_href(&self) -> &str {
         self.website_url.as_deref().unwrap_or(self.home)
+    }
+
+    /// `rel` for the header brand link, or `None` where it needs none: a link
+    /// to the page's own root, or an outbound one the plan lets pass signal.
+    /// The anchor opens in the same tab, so `noopener` would carry nothing.
+    pub fn brand_rel(&self) -> Option<&'static str> {
+        match self.website_url {
+            Some(_) if !self.follow_website_link => Some("nofollow"),
+            _ => None,
+        }
     }
 
     pub fn robots(&self) -> &'static str {
@@ -76,6 +88,7 @@ impl BrandingView {
             home,
             hide_from_search: o.branding.public_hide_from_search,
             website_url: o.branding.public_website_url.clone(),
+            follow_website_link: false,
         }
     }
 }
@@ -112,12 +125,17 @@ pub(super) async fn resolve_branding(
             home,
         )
     };
-    // On a plan-lookup fault, fail closed (badge shown) but log it — otherwise a
-    // DB blip silently strips a paying Pro page's white-label with no signal.
+    // On a plan-lookup fault, fail closed (badge shown, link nofollowed) but log
+    // it — otherwise a DB blip silently strips a paying Pro page's white-label
+    // with no signal.
     let white_label = match state.quotas.limit_for_org(org).await {
         Ok(p) => p.white_label_enabled,
         Err(e) => {
-            tracing::warn!(error = %e, org = %org.0, "white-label gate: plan lookup failed; showing badge");
+            tracing::warn!(
+                error = %e,
+                org = %org.0,
+                "white-label gate: plan lookup failed; showing badge and nofollowing the site link"
+            );
             false
         }
     };
@@ -125,6 +143,11 @@ pub(super) async fn resolve_branding(
         view.show_powered_by,
         state.cfg.marketing.enabled,
         white_label,
+    );
+    view.follow_website_link = enforce_follow_link(
+        state.cfg.marketing.enabled,
+        white_label,
+        view.hide_from_search,
     );
     view
 }
@@ -145,6 +168,18 @@ pub(super) fn status_home(state: &AppState, headers: &HeaderMap) -> &'static str
 /// white-label plans keep the stored preference.
 pub(super) fn enforce_powered_by(stored: bool, saas: bool, white_label: bool) -> bool {
     if saas && !white_label { true } else { stored }
+}
+
+/// Whether the header's outbound link passes ranking signal. Hosted has open
+/// signup, so a free page's link is worth spamming for and the plan has to sell
+/// white-label — the same flag, on purpose: a tier that gets its own branding is
+/// the tier whose link we vouch for. Self-host has nobody to police. A page kept
+/// out of search vouches for nothing either way.
+pub(super) fn enforce_follow_link(saas: bool, white_label: bool, hide_from_search: bool) -> bool {
+    if hide_from_search {
+        return false;
+    }
+    !saas || white_label
 }
 
 /// Independent, template-side re-validation of the brand colour. Trusts
