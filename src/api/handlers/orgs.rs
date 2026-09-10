@@ -488,7 +488,7 @@ pub async fn list_org_members(
         (status = 401, body = ApiError),
         (status = 403, body = ApiError),
         (status = 404, body = ApiError),
-        (status = 409, body = ApiError, description = "Cannot remove the last owner"),
+        (status = 409, body = ApiError, description = "Cannot remove the last owner, or the owner of the account the org bills to"),
     ),
 )]
 pub async fn remove_org_member(
@@ -529,6 +529,10 @@ pub async fn remove_org_member(
         orgs_store::RemoveOutcome::LastOwner => Err(AppError::conflict(
             codes::LAST_OWNER,
             "cannot remove the last owner of an organisation",
+        )),
+        orgs_store::RemoveOutcome::AccountOwner => Err(AppError::conflict(
+            codes::ACCOUNT_OWNER,
+            "this organisation bills to that user's account; delete the organisation instead",
         )),
     }
 }

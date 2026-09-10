@@ -337,7 +337,7 @@ pub const DOCS: &[DocPage] = &[
         blurb: "The org model, how the active org is resolved, and how tenant isolation is enforced.",
         section: Section::Reference,
         scope: Scope::Everyone,
-        lastmod: "2026-09-07",
+        lastmod: "2026-09-10",
         source: include_str!("../../docs/multi-tenancy.md"),
         dir: "",
     },

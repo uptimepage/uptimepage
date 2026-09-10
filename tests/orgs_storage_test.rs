@@ -352,6 +352,46 @@ async fn remove_member_refuses_last_owner() {
 
 #[tokio::test]
 #[ignore]
+async fn remove_member_refuses_the_owner_of_the_paying_account() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let payer = make_user(&pool, "orgs").await;
+    let other = make_user(&pool, "orgs").await;
+    let org = create_org_with_owner(&pool, payer, &unique_slug("paid"), "Paid")
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'owner')")
+        .bind(other.0)
+        .bind(org.id.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        remove_member(&pool, org.id, payer, payer).await.unwrap(),
+        RemoveOutcome::AccountOwner
+    );
+    assert_eq!(
+        remove_member(&pool, org.id, other, payer).await.unwrap(),
+        RemoveOutcome::AccountOwner
+    );
+    assert!(is_owner(&pool, payer, org.id).await.unwrap());
+    assert_eq!(
+        remove_member(&pool, org.id, payer, other).await.unwrap(),
+        RemoveOutcome::Removed
+    );
+
+    sqlx::query("DELETE FROM users WHERE id = ANY($1)")
+        .bind(&[payer.0, other.0][..])
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+#[ignore]
 async fn remove_member_succeeds_when_other_owners_exist() {
     let Some(pool) = common::pg_pool_from_env().await else {
         return;

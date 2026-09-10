@@ -200,6 +200,8 @@ pub mod codes {
     pub const NOT_AN_OWNER: &str = "NOT_AN_OWNER";
     pub const MEMBER_NOT_FOUND: &str = "MEMBER_NOT_FOUND";
     pub const LAST_OWNER: &str = "LAST_OWNER";
+    /// The member being removed owns the account the org bills to.
+    pub const ACCOUNT_OWNER: &str = "ACCOUNT_OWNER";
     /// Deleting this org would leave the caller with no org to sign in to.
     pub const LAST_ORG: &str = "LAST_ORG";
     pub const RESTORE_WINDOW_EXPIRED: &str = "RESTORE_WINDOW_EXPIRED";

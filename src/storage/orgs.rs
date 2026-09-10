@@ -1019,9 +1019,10 @@ pub async fn list_members(pool: &PgPool, org: OrgId) -> Result<Vec<MemberView>> 
 }
 
 /// Remove a member from an org. Refuses to remove the last owner (would leave
-/// the org headless). Writes a `member.removed` audit row with the removed
-/// user's id in metadata. Returns the outcome so the handler can map to the
-/// right HTTP status.
+/// the org headless) and the owner of the account the org bills to (the org
+/// would keep counting against a pool its payer can no longer open). Writes a
+/// `member.removed` audit row with the removed user's id in metadata. Returns
+/// the outcome so the handler can map to the right HTTP status.
 pub async fn remove_member(
     pool: &PgPool,
     org: OrgId,
@@ -1060,6 +1061,20 @@ pub async fn remove_member(
             return Ok(RemoveOutcome::LastOwner);
         }
     }
+    let pays_for_org: Option<(Uuid,)> = sqlx::query_as(
+        r#"SELECT o.id FROM organizations o
+           JOIN accounts a ON a.id = o.account_id
+           WHERE o.id = $1 AND a.owner_user_id = $2"#,
+    )
+    .bind(org.0)
+    .bind(user.0)
+    .fetch_optional(&mut *tx)
+    .await
+    .context("remove_member: account owner check")?;
+    if pays_for_org.is_some() {
+        tx.rollback().await.ok();
+        return Ok(RemoveOutcome::AccountOwner);
+    }
     // The FK clears these anyway; doing it here moves updated_at with them and
     // lets the audit row say how many monitors lost their owner.
     let disowned = sqlx::query(
@@ -1096,6 +1111,7 @@ pub enum RemoveOutcome {
     Removed,
     NotFound,
     LastOwner,
+    AccountOwner,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1217,8 +1233,28 @@ pub async fn add_member(
     max_members: u32,
 ) -> Result<AddMemberOutcome> {
     let mut tx = pool.begin().await.context("add_member: begin")?;
-    let account = accounts::account_for_org(&mut *tx, org).await?;
-    advisory_xact_lock(&mut *tx, &account_lock_key(account))
+    let outcome = add_member_in_tx(&mut tx, org, actor, user, role, max_members).await?;
+    if matches!(outcome, AddMemberOutcome::Added) {
+        tx.commit().await.context("add_member: commit")?;
+    } else {
+        tx.rollback().await.ok();
+    }
+    Ok(outcome)
+}
+
+/// Membership insert inside the caller's transaction, so a caller can bind it
+/// to a state change that must not outlive a refused seat. Any outcome other
+/// than `Added` leaves nothing of its own behind in the transaction.
+pub async fn add_member_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+    actor: UserId,
+    user: UserId,
+    role: Role,
+    max_members: u32,
+) -> Result<AddMemberOutcome> {
+    let account = accounts::account_for_org(&mut **tx, org).await?;
+    advisory_xact_lock(&mut **tx, &account_lock_key(account))
         .await
         .context("add_member: advisory lock")?;
     let inserted: Option<(Uuid,)> = sqlx::query_as(
@@ -1230,11 +1266,10 @@ pub async fn add_member(
     .bind(user.0)
     .bind(org.0)
     .bind(role.as_db_str())
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await
     .context("add_member: insert")?;
     if inserted.is_none() {
-        tx.rollback().await.ok();
         return Ok(AddMemberOutcome::AlreadyMember);
     }
     // Count *after* the insert, over the account's pool (the same query
@@ -1242,19 +1277,24 @@ pub async fn add_member(
     // this fresh row crossed the cap, undo it.
     let (members,): (i64,) = sqlx::query_as(&count_sql::members())
         .bind(account.0)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut **tx)
         .await
         .context("add_member: count members")?;
     let limit = i64::from(max_members);
     if members > limit {
-        tx.rollback().await.ok();
+        sqlx::query("DELETE FROM memberships WHERE user_id = $1 AND org_id = $2")
+            .bind(user.0)
+            .bind(org.0)
+            .execute(&mut **tx)
+            .await
+            .context("add_member: undo over-cap insert")?;
         return Ok(AddMemberOutcome::LimitReached {
             current: members - 1,
             limit,
         });
     }
     record_audit_tx(
-        &mut tx,
+        &mut *tx,
         org,
         Some(actor),
         "member.added",
@@ -1262,7 +1302,6 @@ pub async fn add_member(
     )
     .await
     .context("add_member: audit")?;
-    tx.commit().await.context("add_member: commit")?;
     Ok(AddMemberOutcome::Added)
 }
 

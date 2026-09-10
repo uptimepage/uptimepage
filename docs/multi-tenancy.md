@@ -87,7 +87,7 @@ See [REST API](api.md) for full schemas. The catalogue:
 | `POST` | `/api/v1/orgs/{id}/restore` | Restore within the grace window (only by the deleter) |
 | `GET` | `/api/v1/orgs/check-slug?slug=…` | Slug availability for signup forms |
 | `GET` | `/api/v1/orgs/{id}/members` | List members (owner-only) |
-| `DELETE` | `/api/v1/orgs/{id}/members/{user_id}` | Remove a member (owner-only) |
+| `DELETE` | `/api/v1/orgs/{id}/members/{user_id}` | Remove a member (owner-only; refuses the last owner and the owner of the account the org bills to) |
 | `PATCH` | `/api/v1/orgs/{id}/members/{user_id}` | Change a member's role (owner-only; refuses to demote the last owner) |
 | `POST` | `/api/v1/me/active-org` | Switch the session's active org |
 | `GET` | `/api/v1/me/orgs` | Active (non-deleted) orgs |
