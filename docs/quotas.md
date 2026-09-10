@@ -54,6 +54,11 @@ on a plan without it, a verified custom domain is ignored and those links point
 at the page's own subdomain.
 `white_label_enabled` is what makes the status-page "powered by" toggle real:
 on a plan without it the badge always renders, whatever the page setting says.
+The same flag decides whether the header's `public_website_url` link passes
+ranking signal — followed on a plan that sells white-label, `rel="nofollow"`
+everywhere else, since open signup makes a free page's outbound link worth
+spamming for. A self-hosted deployment has no open signup, so it follows the
+link on any plan, and a page with `public_hide_from_search` set follows nothing.
 
 | Rate budget (per minute) | free | founding | pro | team | Category |
 |---|---|---|---|---|---|
