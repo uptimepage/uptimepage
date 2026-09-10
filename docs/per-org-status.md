@@ -67,6 +67,8 @@ Every route is scoped to the caller's active org: a page id that isn't in that o
 | `public_about` | Markdown, ≤ 500 chars, rendered to sanitised HTML | omitted |
 | `public_style` | one of the named themes | `default` |
 | `public_show_powered_by` | footer attribution toggle. Honoured only on plans with `white_label_enabled`; on any other hosted plan the badge always renders, whatever this is set to | on |
+| `public_website_url` | `http(s)` address, ≤ 200 chars. The header logo (or display name) links here, so a reader who arrived from your site can get back | header links to the status page root |
+| `public_hide_from_search` | serve the page, its incident pages and the archive with `noindex`. The URL keeps working for anyone who has it | off (indexable) |
 | logo | PNG / JPEG / WebP, ≤ 1 MB, ≤ 1200 px; larger images are downscaled. Format is sniffed from the bytes (declared content-type ignored — a script/SVG can't masquerade as an image) and the decoder is allocation- and dimension-bounded against decompression bombs | header shows the display name as text |
 
 A `PATCH` with a `branding` object replaces the display fields wholesale; `name`, `slug`, and `enabled` are independent partial fields. The logo has its own endpoints and is never touched by a branding edit. The editor shows the live URL so the owner can preview exactly what visitors see.

@@ -17,8 +17,8 @@ A monitor is published by adding it to a page; the per-page presentation lives o
 | (binding exists) | the monitor appears as a component on that page |
 | `public_name` | display name on this page; falls back to the operator-side monitor name when unset |
 | `public_description` | optional one-liner shown under the component name |
-| `public_group` | optional group label; components with the same value cluster together. Ungrouped components render last |
-| `sort_order` | integer sort key within a group (ASC); the reorder endpoint rewrites it |
+| `public_group` | optional group label; components with the same value render as one block |
+| `sort_order` | integer sort key (ASC); the reorder endpoint rewrites it. A group takes the position of its earliest component, so dragging any row of a group moves the whole block |
 | `detail_link_enabled` | link the component name to that monitor's read-only detail view. Off by default |
 
 A page belongs to an org and is managed by that org's owner; see [Per-org status pages](per-org-status.md) for the page model, the `max_status_pages` / `max_public_components` caps, and isolation.
