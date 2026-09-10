@@ -60,6 +60,8 @@ pub struct PublicOrgBranding {
     pub public_show_powered_by: Option<bool>,
     #[serde(default)]
     pub public_style: PublicStyle,
+    #[serde(default)]
+    pub public_hide_from_search: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

@@ -5,7 +5,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ incident.header.title }} · {{ branding.display_name }} Status</title>
-    <meta name="robots" content="index,follow">
+    <meta name="robots" content="{{ branding.robots() }}">
     {% include "public/_og.html" %}
     <link rel="icon" type="image/svg+xml" href="{{ "img/favicon.svg"|asset }}">
     <link rel="icon" type="image/png" sizes="32x32" href="{{ "img/favicon.png"|asset }}">

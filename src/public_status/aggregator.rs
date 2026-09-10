@@ -116,6 +116,7 @@ impl OrgAggregator {
         PublicStatusPage,
         Vec<HistoryIncidentMarker>,
         HashMap<Uuid, String>,
+        bool,
     )> {
         let now = Utc::now();
         let components = self.load_page_components(page, org).await?;
@@ -131,6 +132,7 @@ impl OrgAggregator {
             marker_windows,
             paint_windows,
             day_presence,
+            hide_from_search,
         ) = tokio::try_join!(
             self.load_maintenance(org, now, &component_ids, &name_by_id),
             self.load_active_incidents(org, &component_ids, &name_by_id),
@@ -138,6 +140,7 @@ impl OrgAggregator {
             self.load_marker_windows(org, now, &component_ids),
             self.load_paint_windows(org, now, &component_ids, days),
             self.load_day_presence(org, &component_ids, now, days),
+            self.load_hide_from_search(page, org),
         )?;
 
         let history_markers: Vec<HistoryIncidentMarker> = marker_windows
@@ -216,6 +219,7 @@ impl OrgAggregator {
             },
             history_markers,
             name_by_id,
+            hide_from_search,
         ))
     }
 
@@ -256,6 +260,21 @@ impl OrgAggregator {
     }
 
     // ── private helpers ─────────────────────────────────────────────────────
+
+    /// Whether the page asks to stay out of search results. A row that cannot
+    /// be read is treated as hidden, so a fault never publishes what an
+    /// operator chose to hide.
+    async fn load_hide_from_search(&self, page: StatusPageId, org: OrgId) -> Result<bool> {
+        let row: Option<(bool,)> = sqlx::query_as(
+            "SELECT public_hide_from_search FROM status_pages WHERE id = $1 AND org_id = $2",
+        )
+        .bind(page.0)
+        .bind(org.0)
+        .fetch_optional(&self.pg)
+        .await
+        .context("load page search visibility")?;
+        Ok(row.is_none_or(|(hidden,)| hidden))
+    }
 
     /// The page's monitors, with per-page curation applied, in render order.
     async fn load_page_components(

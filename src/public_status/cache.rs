@@ -48,6 +48,9 @@ pub struct PageData {
     pub page: Arc<PublicStatusPage>,
     pub history_markers: Arc<Vec<HistoryIncidentMarker>>,
     pub component_names: Arc<HashMap<Uuid, String>>,
+    /// The page's search-visibility setting, cached alongside the render so the
+    /// feed and badge routes can answer it without a query of their own.
+    pub hide_from_search: bool,
 }
 
 impl From<PublicStatusPage> for PageData {
@@ -56,6 +59,7 @@ impl From<PublicStatusPage> for PageData {
             page: Arc::new(page),
             history_markers: Arc::new(Vec::new()),
             component_names: Arc::new(HashMap::new()),
+            hide_from_search: false,
         }
     }
 }
@@ -65,19 +69,22 @@ impl
         PublicStatusPage,
         Vec<HistoryIncidentMarker>,
         HashMap<Uuid, String>,
+        bool,
     )> for PageData
 {
     fn from(
-        (page, markers, names): (
+        (page, markers, names, hide_from_search): (
             PublicStatusPage,
             Vec<HistoryIncidentMarker>,
             HashMap<Uuid, String>,
+            bool,
         ),
     ) -> Self {
         Self {
             page: Arc::new(page),
             history_markers: Arc::new(markers),
             component_names: Arc::new(names),
+            hide_from_search,
         }
     }
 }

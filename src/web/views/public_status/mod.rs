@@ -356,12 +356,13 @@ pub async fn archive(
         "website",
         &branding,
     );
+    let robots = archive_robots(params.cursor.as_deref(), &branding);
     IncidentArchivePage {
         branding,
         months,
         next_cursor: listing.next_cursor,
         rss_url: RSS_URL,
-        robots: archive_robots(params.cursor.as_deref()),
+        robots,
         og,
     }
     .into_response()
@@ -420,9 +421,9 @@ fn render_public_error(err: PublicAppError) -> Response {
 /// A cursor is opaque but forgeable, and every forgery resolves to a valid
 /// page, so only the cursor-less entry point is offered to the index. The
 /// rest stay crawlable: the archive is the only path to older incidents.
-fn archive_robots(cursor: Option<&str>) -> &'static str {
+fn archive_robots(cursor: Option<&str>, branding: &BrandingView) -> &'static str {
     match cursor {
         Some(_) => "noindex,follow",
-        None => "index,follow",
+        None => branding.robots(),
     }
 }

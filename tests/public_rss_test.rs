@@ -117,6 +117,51 @@ impl PublicSource for TwoIncidentSource {
     }
 }
 
+/// Same feed, from a page the operator asked to keep out of search results.
+struct HiddenPageSource(TwoIncidentSource);
+
+#[async_trait]
+impl PublicSource for HiddenPageSource {
+    async fn page(&self, page: PageRef) -> Result<Arc<PublicStatusPage>, PublicAppError> {
+        self.0.page(page).await
+    }
+    async fn hide_from_search(&self, _page: PageRef) -> bool {
+        true
+    }
+    async fn component_history(
+        &self,
+        page: PageRef,
+        id: Uuid,
+        days: u32,
+    ) -> Result<ComponentHistoryResponse, PublicAppError> {
+        self.0.component_history(page, id, days).await
+    }
+    async fn list_incidents(
+        &self,
+        page: PageRef,
+        q: IncidentListQuery,
+    ) -> Result<CursorPage<PublicIncident>, PublicAppError> {
+        self.0.list_incidents(page, q).await
+    }
+    async fn incident_by_id(
+        &self,
+        page: PageRef,
+        id: Uuid,
+    ) -> Result<PublicIncident, PublicAppError> {
+        self.0.incident_by_id(page, id).await
+    }
+    async fn maintenance(&self, page: PageRef) -> Result<PublicMaintenanceList, PublicAppError> {
+        self.0.maintenance(page).await
+    }
+    async fn incidents_rss(
+        &self,
+        page: PageRef,
+        links: FeedLinks<'_>,
+    ) -> Result<String, PublicAppError> {
+        self.0.incidents_rss(page, links).await
+    }
+}
+
 const BASE_DOMAIN: &str = "example.test";
 const PUBLIC_BASE_URL: &str = "https://status.example.test";
 
@@ -368,5 +413,39 @@ async fn rss_item_guids_are_unique() {
     for block in &parsed.item_blocks {
         let g = item_text(block, "guid").expect("guid present");
         assert!(seen.insert(g), "duplicate guid: {g}");
+    }
+}
+
+#[tokio::test]
+async fn feed_of_a_hidden_page_carries_the_noindex_header() {
+    for (source, expected) in [
+        (
+            Arc::new(HiddenPageSource(TwoIncidentSource)) as Arc<dyn PublicSource>,
+            Some("noindex"),
+        ),
+        (Arc::new(TwoIncidentSource) as Arc<dyn PublicSource>, None),
+    ] {
+        let app = build_test_app_with_public_source(
+            |cfg| {
+                cfg.public_status.base_domain = BASE_DOMAIN.into();
+                cfg.auth.public_base_url = PUBLIC_BASE_URL.into();
+            },
+            source,
+        );
+        let resp = app
+            .oneshot(
+                Request::get("/api/public/v1/incidents.rss")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get("x-robots-tag")
+                .map(|v| v.to_str().unwrap()),
+            expected
+        );
     }
 }

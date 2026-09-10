@@ -209,6 +209,84 @@ fn router() -> axum::Router {
     build_test_app_with_public_source(|_| {}, Arc::new(FakePublicSource))
 }
 
+/// Same data, from a page the operator keeps out of search results.
+struct HiddenSource(FakePublicSource);
+
+#[async_trait]
+impl PublicSource for HiddenSource {
+    async fn page(&self, page: PageRef) -> Result<Arc<PublicStatusPage>, PublicAppError> {
+        self.0.page(page).await
+    }
+    async fn hide_from_search(&self, _page: PageRef) -> bool {
+        true
+    }
+    async fn component_history(
+        &self,
+        page: PageRef,
+        id: Uuid,
+        days: u32,
+    ) -> Result<ComponentHistoryResponse, PublicAppError> {
+        self.0.component_history(page, id, days).await
+    }
+    async fn list_incidents(
+        &self,
+        page: PageRef,
+        q: IncidentListQuery,
+    ) -> Result<CursorPage<PublicIncident>, PublicAppError> {
+        self.0.list_incidents(page, q).await
+    }
+    async fn incident_by_id(
+        &self,
+        page: PageRef,
+        id: Uuid,
+    ) -> Result<PublicIncident, PublicAppError> {
+        self.0.incident_by_id(page, id).await
+    }
+    async fn maintenance(&self, page: PageRef) -> Result<PublicMaintenanceList, PublicAppError> {
+        self.0.maintenance(page).await
+    }
+    async fn incidents_rss(
+        &self,
+        page: PageRef,
+        links: FeedLinks<'_>,
+    ) -> Result<String, PublicAppError> {
+        self.0.incidents_rss(page, links).await
+    }
+}
+
+#[tokio::test]
+async fn a_hidden_page_marks_every_public_representation_noindex() {
+    let paths = [
+        "/api/public/v1/status",
+        "/api/public/v1/incidents",
+        "/api/public/v1/maintenance",
+        "/api/public/v1/badge.svg",
+        "/api/public/v1/incidents.rss",
+    ];
+    for path in paths {
+        let hidden =
+            build_test_app_with_public_source(|_| {}, Arc::new(HiddenSource(FakePublicSource)))
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+        assert_eq!(hidden.status(), StatusCode::OK, "{path}");
+        assert_eq!(
+            hidden
+                .headers()
+                .get("x-robots-tag")
+                .map(|v| v.to_str().unwrap()),
+            Some("noindex"),
+            "{path} must carry the page's noindex"
+        );
+
+        let shown = router()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(shown.headers().get("x-robots-tag"), None, "{path}");
+    }
+}
+
 async fn body_string(resp: axum::response::Response) -> String {
     let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
         .await

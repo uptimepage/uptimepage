@@ -53,6 +53,11 @@
         Renaming is a hard cutover — the old URL stops working the moment you save.
       </p>
       <span class="mt-1 block text-xs text-muted">3–30 lowercase letters, digits or hyphens; must start with a letter.</span>
+
+      <label class="mt-4 flex items-center gap-2 text-sm text-body">
+        <input id="f-hide-search" type="checkbox" class="h-4 w-4"{% if hide_from_search %} checked{% endif %}>
+        <span>hide from search engines: anyone with the URL still reads it</span>
+      </label>
     </div>
   </fieldset>
 
@@ -414,6 +419,7 @@
               public_about: document.getElementById('f-about').value || null,
               public_brand_color: document.getElementById('f-color').value || null,
               public_style: style.value,
+              public_hide_from_search: document.getElementById('f-hide-search').checked,
             },
           });
           dirty = false;

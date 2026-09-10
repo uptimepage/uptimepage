@@ -66,6 +66,13 @@ pub trait PublicSource: Send + Sync {
         Ok((p, Arc::new(Vec::new())))
     }
 
+    /// Whether the page asks to stay out of search results. Answered from the
+    /// same cached snapshot the render uses; a backend without page settings
+    /// says no.
+    async fn hide_from_search(&self, _page: PageRef) -> bool {
+        false
+    }
+
     async fn component_history(
         &self,
         page: PageRef,
@@ -151,6 +158,14 @@ impl PublicSource for OrgPublicSource {
     ) -> Result<(Arc<PublicStatusPage>, Arc<Vec<HistoryIncidentMarker>>), PublicAppError> {
         let data = self.cached(page).await?;
         Ok((data.page.clone(), data.history_markers.clone()))
+    }
+
+    async fn hide_from_search(&self, page: PageRef) -> bool {
+        // An unreadable snapshot reads as hidden: the same fail-closed call the
+        // rendered page makes.
+        self.cached(page)
+            .await
+            .map_or(true, |data| data.hide_from_search)
     }
 
     async fn component_history(

@@ -722,11 +722,31 @@ fn status_url_puts_the_page_where_the_deploy_serves_it() {
 
 #[test]
 fn only_the_cursorless_archive_page_is_indexable() {
-    assert_eq!(archive_robots(None), "index,follow");
+    let branding = sample_branding();
+    assert_eq!(archive_robots(None, &branding), "index,follow");
     assert_eq!(
-        archive_robots(Some("opaque-cursor-token")),
+        archive_robots(Some("opaque-cursor-token"), &branding),
         "noindex,follow"
     );
+}
+
+#[test]
+fn hiding_a_page_from_search_takes_every_page_with_it() {
+    let branding = branding_with(PublicOrgBranding {
+        public_hide_from_search: true,
+        ..Default::default()
+    });
+    assert_eq!(branding.robots(), "noindex,follow");
+    assert_eq!(archive_robots(None, &branding), "noindex,follow");
+
+    let html = StatusFullPage {
+        view: build_view(&sample_page(), &[], &Default::default()),
+        branding,
+        og: OgMeta::default(),
+    }
+    .render()
+    .unwrap();
+    assert!(html.contains(r#"<meta name="robots" content="noindex,follow">"#));
 }
 
 #[test]

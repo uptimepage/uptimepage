@@ -237,7 +237,8 @@ async fn rendered_groups_follow_the_stored_order() {
         .expect("reorder");
 
     let agg = OrgAggregator::new(pool.clone(), ch, AggregatorConfig::default(), None);
-    let (page, _markers, _names) = agg.build(page_id, org_id).await.expect("aggregator build");
+    let (page, _markers, _names, _hidden) =
+        agg.build(page_id, org_id).await.expect("aggregator build");
 
     let rendered: Vec<Option<String>> = page.groups.iter().map(|g| g.name.clone()).collect();
     assert_eq!(
@@ -299,7 +300,8 @@ async fn build_round_trips_seeded_data() {
 
         let page_id = seed_page_with_target(&pool, org_id, target_id).await;
         let agg = OrgAggregator::new(pool, ch, AggregatorConfig::default(), None);
-        let (page, _markers, _names) = agg.build(page_id, org_id).await.expect("aggregator build");
+        let (page, _markers, _names, _hidden) =
+            agg.build(page_id, org_id).await.expect("aggregator build");
 
         let component = page
             .groups
@@ -383,7 +385,7 @@ async fn detail_link_renders_only_for_a_live_share() {
             .expect("attach share");
 
         let agg = OrgAggregator::new(pool.clone(), ch.clone(), cfg.clone(), None);
-        let (page, _, _) = agg.build(page_id, org_id).await.expect("build");
+        let (page, _, _, _) = agg.build(page_id, org_id).await.expect("build");
         assert_eq!(detail_url(&page), None, "flag off means no link");
 
         pages
@@ -399,7 +401,7 @@ async fn detail_link_renders_only_for_a_live_share() {
             .await
             .expect("enable detail link");
         let agg = OrgAggregator::new(pool.clone(), ch.clone(), cfg.clone(), None);
-        let (page, _, _) = agg.build(page_id, org_id).await.expect("build");
+        let (page, _, _, _) = agg.build(page_id, org_id).await.expect("build");
         assert_eq!(
             detail_url(&page),
             Some(format!("https://app.example.com/m/{}", created.token)),
@@ -411,7 +413,7 @@ async fn detail_link_renders_only_for_a_live_share() {
             .await
             .expect("revoke share");
         let agg = OrgAggregator::new(pool.clone(), ch.clone(), cfg, None);
-        let (page, _, _) = agg.build(page_id, org_id).await.expect("build");
+        let (page, _, _, _) = agg.build(page_id, org_id).await.expect("build");
         assert_eq!(
             detail_url(&page),
             None,
@@ -457,7 +459,8 @@ async fn a_component_that_recorded_nothing_is_no_data_not_operational() {
         // Deliberately no ClickHouse rows and no incident.
         let page_id = seed_page_with_target(&pool, org_id, target_id).await;
         let agg = OrgAggregator::new(pool, ch, AggregatorConfig::default(), None);
-        let (page, _markers, _names) = agg.build(page_id, org_id).await.expect("aggregator build");
+        let (page, _markers, _names, _hidden) =
+            agg.build(page_id, org_id).await.expect("aggregator build");
 
         let component = page
             .groups
@@ -623,7 +626,8 @@ async fn build_excludes_internal_incidents() {
             .expect("add internal component");
 
         let agg = OrgAggregator::new(pool, ch, AggregatorConfig::default(), None);
-        let (page, markers, _names) = agg.build(page_id, org_id).await.expect("aggregator build");
+        let (page, markers, _names, _hidden) =
+            agg.build(page_id, org_id).await.expect("aggregator build");
 
         let active: Vec<Uuid> = page.active_incidents.iter().map(|i| i.id).collect();
         assert_eq!(
@@ -753,7 +757,8 @@ async fn build_component_state_follows_confirmed_incidents() {
             .expect("add major component");
 
         let agg = OrgAggregator::new(pool, ch, AggregatorConfig::default(), None);
-        let (page, _markers, _names) = agg.build(page_id, org_id).await.expect("aggregator build");
+        let (page, _markers, _names, _hidden) =
+            agg.build(page_id, org_id).await.expect("aggregator build");
 
         let component = |id: Uuid| {
             page.groups
@@ -878,7 +883,8 @@ async fn internal_auto_incident_paints_strip_manual_stays_hidden() {
             .expect("add manual component");
 
         let agg = OrgAggregator::new(pool, ch, AggregatorConfig::default(), None);
-        let (page, markers, _names) = agg.build(page_id, org_id).await.expect("aggregator build");
+        let (page, markers, _names, _hidden) =
+            agg.build(page_id, org_id).await.expect("aggregator build");
 
         let component = |id: Uuid| {
             page.groups
@@ -1014,7 +1020,8 @@ async fn a_published_declaration_paints_only_when_it_counts() {
             .expect("add outage component");
 
         let agg = OrgAggregator::new(pool, ch, AggregatorConfig::default(), None);
-        let (page, _markers, _names) = agg.build(page_id, org_id).await.expect("aggregator build");
+        let (page, _markers, _names, _hidden) =
+            agg.build(page_id, org_id).await.expect("aggregator build");
 
         let component = |id: Uuid| {
             page.groups

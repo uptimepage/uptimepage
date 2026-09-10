@@ -28,9 +28,18 @@ pub struct BrandingView {
     /// Where the status page lives on this host: every self-link and its
     /// canonical URL use it. See [`status_home`].
     pub home: &'static str,
+    pub hide_from_search: bool,
 }
 
 impl BrandingView {
+    pub fn robots(&self) -> &'static str {
+        if self.hide_from_search {
+            "noindex,follow"
+        } else {
+            "index,follow"
+        }
+    }
+
     pub(super) fn from_org(o: &OrgBranding, cfg: &PublicStatusConfig, home: &'static str) -> Self {
         let display_name = o.resolved_display_name().to_owned();
         let about_html = o
@@ -58,6 +67,7 @@ impl BrandingView {
             show_powered_by: o.branding.show_powered_by(cfg.default_show_powered_by),
             style: o.branding.public_style.as_str(),
             home,
+            hide_from_search: o.branding.public_hide_from_search,
         }
     }
 }
@@ -79,11 +89,16 @@ pub(super) async fn resolve_branding(
     {
         BrandingView::from_org(&ob, cfg, home)
     } else {
+        // Branding is also where the page says whether it may be indexed, so an
+        // unreadable one keeps the generic render out of search results.
         BrandingView::from_org(
             &OrgBranding {
                 name: fallback_name.to_owned(),
                 slug: String::new(),
-                branding: PublicOrgBranding::default(),
+                branding: PublicOrgBranding {
+                    public_hide_from_search: true,
+                    ..PublicOrgBranding::default()
+                },
             },
             cfg,
             home,
