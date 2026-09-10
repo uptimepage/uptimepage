@@ -425,6 +425,22 @@ async fn status_page_renders_empty_page_as_operational() {
 
 // ── HTMX partial swap ──────────────────────────────────────────────────────
 
+/// The page itself states its search visibility in its head, where the operator
+/// setting can reach it. A header here would override that meta and de-index
+/// every published page, so the full response must carry none.
+#[tokio::test]
+async fn status_page_leaves_crawl_directives_to_its_head() {
+    let app = build_test_app_with_web_and_public_source(|_| {}, Arc::new(PublishedSource));
+    let resp = app
+        .oneshot(Request::get("/status").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers().get("x-robots-tag"), None);
+    let html = body_text(resp).await;
+    assert!(html.contains(r#"<meta name="robots""#));
+}
+
 #[tokio::test]
 async fn status_fragment_returns_region_without_doctype() {
     let app = build_test_app_with_web_and_public_source(|_| {}, Arc::new(PublishedSource));
@@ -438,6 +454,23 @@ async fn status_fragment_returns_region_without_doctype() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     assert!(ct(&resp).starts_with("text/html"));
+    // No <head> to hold a robots meta or a canonical, so both ride as headers:
+    // the noindex keeps the duplicate out, the canonical keeps it from taking
+    // the real page with it.
+    assert_eq!(
+        resp.headers()
+            .get("x-robots-tag")
+            .map(|v| v.to_str().unwrap()),
+        Some("noindex,follow")
+    );
+    assert!(
+        resp.headers()
+            .get("link")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.ends_with(r#"; rel="canonical""#)),
+        "fragment must point at the page it duplicates: {:?}",
+        resp.headers().get("link")
+    );
     let html = body_text(resp).await;
     assert!(
         !html.contains("<!doctype html>"),

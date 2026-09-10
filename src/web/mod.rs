@@ -15,6 +15,7 @@ pub mod filters;
 pub mod flash;
 pub mod host;
 pub mod login_hint;
+pub mod robots;
 pub mod routes;
 pub mod theme;
 pub mod time_format;

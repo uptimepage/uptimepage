@@ -41,6 +41,7 @@ use crate::error::AppError;
 use crate::storage::TimeRange;
 use crate::web::error::{WebError, WebResult};
 use crate::web::filters;
+use crate::web::robots;
 use crate::web::views::targets_detail::{
     DEFAULT_RANGE, DetailParams, INCIDENT_DEFAULT_RANGE, INCIDENT_RANGE_KEYS, IncidentRow,
     KpiTrend, PingTally, RANGE_KEYS, ResultRow, SUBTAB_INCIDENTS, SUBTAB_MONITOR, UptimeStatsView,
@@ -310,14 +311,17 @@ pub async fn live_partial(
     let rendered = page
         .render()
         .map_err(|e| AppError::Other(anyhow::anyhow!(e)))?;
-    Ok((
+    let mut resp = (
         [
             (header::CONTENT_TYPE, "text/html; charset=utf-8"),
             (header::CACHE_CONTROL, "no-store"),
         ],
         rendered,
     )
-        .into_response())
+        .into_response();
+    resp.headers_mut()
+        .insert(robots::X_ROBOTS_TAG, robots::NOINDEX_NOFOLLOW);
+    Ok(resp)
 }
 
 pub async fn incidents(
@@ -382,11 +386,20 @@ pub async fn incidents(
 }
 
 /// Token-scoped twin of `results::latency` — the JSON the detail charts fetch.
+/// A JSON sub-resource of a share link: no `<head>` to carry a robots meta, and
+/// `error` strings that name the checked address. [`crate::web::robots`].
+fn noindexed<T: IntoResponse>(body: T) -> Response {
+    let mut resp = body.into_response();
+    resp.headers_mut()
+        .insert(robots::X_ROBOTS_TAG, robots::NOINDEX_NOFOLLOW);
+    resp
+}
+
 pub async fn latency(
     State(state): State<AppState>,
     Path(token): Path<String>,
     Query(q): Query<RangeQuery>,
-) -> WebResult<Json<LatencySeries>> {
+) -> WebResult<Response> {
     let resolved = resolve_share(&state, &token).await?;
     let range = state
         .quotas
@@ -403,10 +416,10 @@ pub async fn latency(
             None,
         )
         .await?;
-    Ok(Json(LatencySeries {
+    Ok(noindexed(Json(LatencySeries {
         buckets,
         bucket_seconds,
-    }))
+    })))
 }
 
 /// One check result as the public timeline drawer sees it. A deliberately
@@ -431,7 +444,7 @@ pub async fn results(
     State(state): State<AppState>,
     Path(token): Path<String>,
     Query(q): Query<RangeQuery>,
-) -> WebResult<Json<serde_json::Value>> {
+) -> WebResult<Response> {
     let resolved = resolve_share(&state, &token).await?;
     let range = state.quotas.clamp_raw(resolved.org, q.resolve()?).await?;
     let limit = q.limit();
@@ -456,7 +469,7 @@ pub async fn results(
             error: r.error.as_deref().map(fmt_error_display),
         })
         .collect();
-    Ok(Json(serde_json::json!({ "items": items })))
+    Ok(noindexed(Json(serde_json::json!({ "items": items }))))
 }
 
 #[cfg(test)]

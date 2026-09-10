@@ -19,7 +19,8 @@ use crate::domain::AssetSlot;
 use crate::domain::PublicIncident;
 use crate::web::error::{NotFoundPage, UnavailablePage};
 use crate::web::filters;
-use crate::web::host::{is_subdomain_public_request, resolve_status_page};
+use crate::web::host::{is_subdomain_public_request, request_origin, resolve_status_page};
+use crate::web::robots;
 
 mod branding;
 mod og;
@@ -133,7 +134,16 @@ pub async fn index(
     if params.fragment.unwrap_or(0) != 0 {
         // Chrome-free auto-refresh fragment: no header/footer/style, so the
         // branding lookup is skipped on the 30s poll.
-        StatusRegion { view }.into_response()
+        let mut resp = StatusRegion { view }.into_response();
+        // The page's own content at a second URL, with no <head> to say so.
+        // The canonical rides along because a bare noindex on a duplicate can
+        // take the page it duplicates out of the index with it.
+        resp.headers_mut()
+            .insert(robots::X_ROBOTS_TAG, robots::NOINDEX_FOLLOW);
+        if let Some(canonical) = canonical_link(&state, &headers) {
+            resp.headers_mut().insert(header::LINK, canonical);
+        }
+        resp
     } else {
         let branding = resolve_branding(
             &state,
@@ -416,6 +426,27 @@ fn render_public_error(err: PublicAppError) -> Response {
                 .into_response()
         }
     }
+}
+
+/// Absolute `rel=canonical` for the page a chrome-less fragment duplicates.
+/// Falls back to the configured base URL, and gives up only when neither names
+/// an origin — in which case the fragment ships the `noindex` alone.
+fn canonical_link(state: &AppState, headers: &HeaderMap) -> Option<header::HeaderValue> {
+    let origin =
+        request_origin(headers, &state.cfg.public_status.base_domain).unwrap_or_else(|| {
+            state
+                .cfg
+                .auth
+                .public_base_url
+                .trim_end_matches('/')
+                .to_owned()
+        });
+    if origin.is_empty() {
+        return None;
+    }
+    let home = branding::status_home(state, headers);
+    let home = home.strip_suffix('/').unwrap_or(home);
+    header::HeaderValue::from_str(&format!("<{origin}{home}>; rel=\"canonical\"")).ok()
 }
 
 /// A cursor is opaque but forgeable, and every forgery resolves to a valid

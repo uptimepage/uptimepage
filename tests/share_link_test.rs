@@ -5,7 +5,8 @@
 //! login. Covers: the read-only detail/incidents pages render; the check config
 //! is shown with credentials redacted to `***`; bad / revoked / expired tokens
 //! all 404 (uniform, no enumeration); a token for one monitor never yields
-//! another's data; and no write method is accepted under `/m/`.
+//! another's data; no write method is accepted under `/m/`; and the head-less
+//! sub-resources carry the crawl directive the page states in its own head.
 
 mod common;
 
@@ -172,6 +173,43 @@ async fn share_sub_resources_render() {
         let (status, _) = get(&router, &path).await;
         assert_eq!(status, StatusCode::OK, "{path} should be 200");
     }
+
+    // The full page says noindex in its own head; the three sub-resources have
+    // no head, so only the header keeps a monitor's check history unindexed.
+    for path in [
+        format!("/m/{token}/live"),
+        format!("/m/{token}/latency"),
+        format!("/m/{token}/results"),
+    ] {
+        let resp = router
+            .clone()
+            .oneshot(Request::get(&path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.headers()
+                .get("x-robots-tag")
+                .map(|v| v.to_str().unwrap()),
+            Some("noindex, nofollow"),
+            "{path}"
+        );
+    }
+
+    // An anonymous, token-scoped view must not sit in a shared cache.
+    let live = router
+        .oneshot(
+            Request::get(format!("/m/{token}/live"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        live.headers()
+            .get("cache-control")
+            .map(|v| v.to_str().unwrap()),
+        Some("no-store")
+    );
 }
 
 #[tokio::test]
