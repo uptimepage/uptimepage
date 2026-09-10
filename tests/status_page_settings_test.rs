@@ -162,10 +162,33 @@ async fn valid_save_persists_and_round_trips() {
     assert_eq!(body["public_brand_color"], "#1a2b3c"); // lower-cased on write
     assert_eq!(body["public_hide_from_search"], true);
     assert_eq!(body["public_website_url"], "https://acme.example");
-    // The powered-by toggle is pinned on: a false override is ignored and the
-    // raw value clears to inherit the default.
-    assert_eq!(body["show_powered_by"], true);
-    assert!(body["public_show_powered_by"].is_null());
+    // The stored override round-trips; whether the badge actually renders is a
+    // plan decision the public page makes, not this value.
+    assert_eq!(body["public_show_powered_by"], false);
+    assert_eq!(body["show_powered_by"], false);
+}
+
+/// The API stores the override instead of discarding it. Whether the badge
+/// then renders is the plan's call, covered by `powered_by_forced_for_saas_non_white_label`.
+#[tokio::test]
+#[ignore]
+async fn hiding_the_badge_is_stored_not_discarded() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (router, id) = owner_page(pool).await;
+    let (st, body) = read(
+        router
+            .oneshot(patch(
+                &id,
+                json!({ "branding": { "public_show_powered_by": false } }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "store the override: {body}");
+    assert_eq!(body["public_show_powered_by"], false);
 }
 
 /// The form's default state (no display name / about set) must not read as a
