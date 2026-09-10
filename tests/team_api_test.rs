@@ -167,7 +167,7 @@ async fn sole_owner_demote_is_conflict() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
-async fn self_demote_with_second_owner_is_allowed() {
+async fn self_demote_with_second_owner_is_allowed_unless_the_org_bills_to_you() {
     let Some((db, name)) = fresh_pg().await else {
         return;
     };
@@ -179,13 +179,25 @@ async fn self_demote_with_second_owner_is_allowed() {
     add_member(&pool, org, second, "owner").await;
 
     let (app, _d) = common::build_test_app_with_pg(pool.clone(), |_| {}).await;
-    let app = common::with_session(app, owner, Some(org), None);
+
+    // The org bills to the first owner's account, so they stay an owner.
+    let as_owner = common::with_session(app.clone(), owner, Some(org), None);
     assert_eq!(
-        send(&app, patch_role(org, owner, "member")).await,
-        StatusCode::NO_CONTENT
+        send(&as_owner, patch_role(org, owner, "member")).await,
+        StatusCode::CONFLICT
     );
     assert_eq!(
         member_role(&pool, org, owner).await.as_deref(),
+        Some("owner")
+    );
+
+    let as_second = common::with_session(app, second, Some(org), None);
+    assert_eq!(
+        send(&as_second, patch_role(org, second, "member")).await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        member_role(&pool, org, second).await.as_deref(),
         Some("member")
     );
 
@@ -289,6 +301,24 @@ async fn storage_set_member_role_outcomes() {
             .await
             .unwrap(),
         LastOwner
+    );
+
+    // With a second owner back, the payer still cannot be demoted.
+    assert_eq!(
+        orgs_store::set_member_role(&pool, org, owner, member, Role::Owner)
+            .await
+            .unwrap(),
+        Updated
+    );
+    assert_eq!(
+        orgs_store::set_member_role(&pool, org, member, owner, Role::Member)
+            .await
+            .unwrap(),
+        AccountOwner
+    );
+    assert_eq!(
+        member_role(&pool, org, owner).await.as_deref(),
+        Some("owner")
     );
 
     common::drop_test_db(&name).await;

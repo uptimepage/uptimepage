@@ -62,35 +62,40 @@ pub async fn request_deletion(
         .await
         .context("delete_account: user advisory lock")?;
 
-    // Candidate solo-owned orgs: the caller is an owner and the *only* owner.
-    // Ordered by id so the per-org locks are always taken in a stable order
-    // (deadlock-free against any other multi-org locker). Only the ids are
-    // needed here — slug + the other-member verdict are read back *under the
-    // locks* so the blocking decision can't race a concurrent invite-accept.
+    // Candidate orgs that go down with the account: the caller is the only
+    // owner, or the org bills to the caller's account. Either way the org has
+    // nobody else who can carry it, so it is tombstoned with the user when it
+    // holds nobody else and blocks the deletion when it does. Ordered by id so
+    // the per-org locks are always taken in a stable order (deadlock-free
+    // against any other multi-org locker). Only the ids are needed here —
+    // slug + the other-member verdict are read back *under the locks* so the
+    // blocking decision can't race a concurrent invite-accept.
     let candidate_ids: Vec<Uuid> = sqlx::query_scalar(
         r#"SELECT o.id
              FROM organizations o
              JOIN memberships m
                ON m.org_id = o.id AND m.user_id = $1 AND m.role = 'owner'
+             JOIN accounts a ON a.id = o.account_id
             WHERE o.deleted_at IS NULL
-              AND (SELECT count(*) FROM memberships mo
-                    WHERE mo.org_id = o.id AND mo.role = 'owner') = 1
+              AND (a.owner_user_id = $1
+                   OR (SELECT count(*) FROM memberships mo
+                        WHERE mo.org_id = o.id AND mo.role = 'owner') = 1)
             ORDER BY o.id"#,
     )
     .bind(user_id.0)
     .fetch_all(&mut *tx)
     .await
-    .context("delete_account: select solo-owned orgs")?;
+    .context("delete_account: select orgs that go with the account")?;
 
     // Same `account_lock_key` as `orgs::add_member` / `invitations::create`,
     // so holding it means no member can be added to these orgs until our
     // transaction ends. Those writers moved to the account key when the caps
     // became pooled; locking the org here instead would leave the freeze
-    // contending with nothing, and a member could join a solo-owned org
+    // contending with nothing, and a member could join a candidate org
     // between the re-read below and the tombstone. Sorted and deduplicated so
     // two concurrent deletions cannot take the same pair in opposite orders.
     let accounts: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT /* SAFE: bound to the caller's own solo-owned orgs, gathered above under their user-delete lock */ \
+        "SELECT /* SAFE: bound to the orgs going down with the caller's account, gathered above under their user-delete lock */ \
          DISTINCT account_id FROM organizations WHERE id = ANY($1) ORDER BY 1",
     )
     .bind(&candidate_ids)
@@ -104,8 +109,8 @@ pub async fn request_deletion(
     }
 
     // Re-read the candidates *under the locks* in one query, computing the
-    // other-member verdict server-side. Any solo-owned org that still has
-    // other members must be transferred or deleted first.
+    // other-member verdict server-side. Any candidate that still has other
+    // members must be deleted first.
     let verdicts: Vec<(Uuid, String, bool)> = sqlx::query_as(
         r#"SELECT o.id, o.slug::text AS slug,
                   EXISTS (SELECT 1 FROM memberships
@@ -132,13 +137,13 @@ pub async fn request_deletion(
         tx.rollback().await.ok();
         return Err(AppError::unprocessable_details(
             codes::OWNS_SHARED_ORGS,
-            "Transfer ownership or delete these organisations before deleting your account.",
+            "Delete these organisations before deleting your account.",
             serde_json::json!({ "orgs": blocking }),
         ));
     }
 
     // All candidates are now safe to tombstone (none has other members).
-    let solo_ids: Vec<Uuid> = verdicts.into_iter().map(|(id, _, _)| id).collect();
+    let bound_ids: Vec<Uuid> = verdicts.into_iter().map(|(id, _, _)| id).collect();
 
     // Soft-delete the user. The `deleted_at IS NULL` guard makes a second
     // deletion of an already-soft-deleted account a clean 4xx rather than a
@@ -162,10 +167,10 @@ pub async fn request_deletion(
         ));
     };
 
-    // Tombstone each solo-owned org, re-asserting the no-other-members
+    // Tombstone each bound org, re-asserting the no-other-members
     // invariant at write time. Zero rows ⇒ someone joined between the check
     // and here ⇒ roll the whole transaction back and report it as blocked.
-    for org_id in &solo_ids {
+    for org_id in &bound_ids {
         let updated: Option<(Uuid,)> = sqlx::query_as(
             r#"UPDATE organizations
                   SET deleted_at = now(), updated_at = now()
@@ -179,13 +184,13 @@ pub async fn request_deletion(
         .bind(user_id.0)
         .fetch_optional(&mut *tx)
         .await
-        .context("delete_account: tombstone solo org")?;
+        .context("delete_account: tombstone bound org")?;
         if updated.is_none() {
             tx.rollback().await.ok();
             return Err(AppError::unprocessable_details(
                 codes::OWNS_SHARED_ORGS,
                 "Organisation membership changed during deletion; nothing was deleted. \
-                 Retry after transferring or deleting shared organisations.",
+                 Retry after deleting shared organisations.",
                 serde_json::json!({ "orgs": [{ "id": org_id }] }),
             ));
         }
@@ -222,14 +227,14 @@ pub async fn request_deletion(
     .await
     .context("delete_account: drop pending invitations")?;
     // Drop memberships in *shared* orgs only. The owner membership on each
-    // tombstoned solo org is intentionally kept: it is how recovery re-grants
-    // access to the restored orgs and how the solo set is re-derived without
+    // tombstoned bound org is intentionally kept: it is how recovery re-grants
+    // access to the restored orgs and how the bound set is re-derived without
     // a schema column. The eventual user hard-purge cascades these away, and
     // the org soft-delete reaches its own grace boundary in lockstep (same
     // `deleted_at`), so nothing leaks past the window.
     sqlx::query("DELETE FROM memberships WHERE user_id = $1 AND org_id <> ALL($2)")
         .bind(user_id.0)
-        .bind(&solo_ids)
+        .bind(&bound_ids)
         .execute(&mut *tx)
         .await
         .context("delete_account: drop shared memberships")?;
@@ -270,7 +275,7 @@ pub async fn restore_account(pool: &PgPool, user_id: UserId) -> Result<Option<Re
     Ok(Some(outcome))
 }
 
-/// Clear `users.deleted_at`, lift the tombstone on the orgs they solo-own, and
+/// Clear `users.deleted_at`, lift the tombstone on the orgs bound to them, and
 /// audit it. `None` when the row was already active — a benign race, not an
 /// error.
 async fn undelete_in_tx(
@@ -316,7 +321,7 @@ async fn undelete_in_tx(
         return Ok(None);
     };
 
-    // Lift the tombstone on the solo orgs this deletion took down — the ones
+    // Lift the tombstone on the bound orgs this deletion took down — the ones
     // whose owner membership it deliberately kept. `delete_account` stamps the
     // user and those orgs from a single transaction-stable `now()`, so their
     // `deleted_at` is never earlier than the user's.
@@ -341,7 +346,7 @@ async fn undelete_in_tx(
     .bind(deleted_at)
     .fetch_all(&mut **tx)
     .await
-    .context("undelete: un-delete solo orgs")?;
+    .context("undelete: un-delete bound orgs")?;
 
     for (org_id,) in &restored {
         record_audit_tx(

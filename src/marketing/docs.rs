@@ -370,7 +370,7 @@ pub const DOCS: &[DocPage] = &[
         blurb: "How long raw checks, rollups, incidents, and audit records are kept on the hosted service.",
         section: Section::Hosted,
         scope: Scope::Hosted,
-        lastmod: "2026-09-07",
+        lastmod: "2026-09-10",
         source: include_str!("../../docs/hosted/data-retention.md"),
         dir: "hosted",
     },

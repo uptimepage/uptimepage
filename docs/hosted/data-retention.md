@@ -47,7 +47,7 @@ Deleting a monitor removes it from the UI and the API immediately. Its check his
 
 Deleting your account suspends it immediately, stops your monitoring, and purges it permanently after 30 days. Within those 30 days you can restore it: sign back in and confirm on the page that appears. Signing in on its own does not cancel the deletion. See [Account settings](../ui.md) for where both actions live.
 
-One blocker to know about: you cannot delete your account while you are the sole owner of an organization that still has other members (the API answers `422 OWNS_SHARED_ORGS`). Transfer ownership or remove the members first; an org where you are the only member is deleted along with the account.
+One blocker to know about: you cannot delete your account while an organization that bills to it, or that you are the sole owner of, still has other members (the API answers `422 OWNS_SHARED_ORGS`). Remove the members or delete the organization first; an org where you are the only member is deleted along with the account.
 
 ## Getting your data out
 

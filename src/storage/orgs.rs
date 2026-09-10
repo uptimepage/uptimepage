@@ -1061,17 +1061,7 @@ pub async fn remove_member(
             return Ok(RemoveOutcome::LastOwner);
         }
     }
-    let pays_for_org: Option<(Uuid,)> = sqlx::query_as(
-        r#"SELECT o.id FROM organizations o
-           JOIN accounts a ON a.id = o.account_id
-           WHERE o.id = $1 AND a.owner_user_id = $2"#,
-    )
-    .bind(org.0)
-    .bind(user.0)
-    .fetch_optional(&mut *tx)
-    .await
-    .context("remove_member: account owner check")?;
-    if pays_for_org.is_some() {
+    if accounts::pays_for_org(&mut *tx, user, org).await? {
         tx.rollback().await.ok();
         return Ok(RemoveOutcome::AccountOwner);
     }
@@ -1120,6 +1110,7 @@ pub enum SetRoleOutcome {
     Unchanged,
     NotFound,
     LastOwner,
+    AccountOwner,
 }
 
 /// Change a member's role. Mirrors [`remove_member`]'s tx + FOR-UPDATE shape:
@@ -1163,6 +1154,10 @@ pub async fn set_member_role(
         if owners.len() <= 1 {
             tx.rollback().await.ok();
             return Ok(SetRoleOutcome::LastOwner);
+        }
+        if accounts::pays_for_org(&mut *tx, target, org).await? {
+            tx.rollback().await.ok();
+            return Ok(SetRoleOutcome::AccountOwner);
         }
     }
     sqlx::query(r#"UPDATE memberships SET role = $3 WHERE org_id = $1 AND user_id = $2"#)

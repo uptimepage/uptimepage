@@ -43,6 +43,26 @@ pub async fn account_for_org<'e, E: PgExecutor<'e>>(exec: E, org: OrgId) -> Resu
     })
 }
 
+/// Whether `user` owns the account that `org` bills to.
+pub async fn pays_for_org<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: UserId,
+    org: OrgId,
+) -> Result<bool> {
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT /* SAFE: bound to the one org id the caller already holds; answers who pays for it */ \
+         o.id FROM organizations o \
+         JOIN accounts a ON a.id = o.account_id \
+         WHERE o.id = $1 AND a.owner_user_id = $2",
+    )
+    .bind(org.0)
+    .bind(user.0)
+    .fetch_optional(exec)
+    .await
+    .context("pays_for_org")?;
+    Ok(row.is_some())
+}
+
 /// The account a user owns, if they have one. A user who only ever joined
 /// other people's orgs has none until they create an org of their own.
 pub async fn account_for_user<'e, E: PgExecutor<'e>>(

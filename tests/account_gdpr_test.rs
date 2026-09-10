@@ -132,6 +132,59 @@ async fn deletion_blocked_when_solely_owning_org_with_other_members() {
     drop_pg(&name).await;
 }
 
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn deletion_blocked_while_a_co_owned_org_bills_to_the_account() {
+    let Some((db, name)) = fresh_pg().await else {
+        return;
+    };
+    let pool = open_pool(&db).await;
+    MIGRATOR.run(&pool).await.unwrap();
+
+    let payer = seed_user(&pool, "payer@example.test", "Payer").await;
+    let co_owner = seed_user(&pool, "co@example.test", "Co").await;
+    let org = uptimepage::storage::create_org_with_owner(
+        &pool,
+        uptimepage::domain::UserId(payer),
+        "billed",
+        "Billed",
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .id;
+    add_member(&pool, org.0, co_owner, "owner").await;
+
+    let err = account::request_deletion(&pool, uptimepage::domain::UserId(payer), 30)
+        .await
+        .expect_err("must block");
+    match err {
+        AppError::UnprocessableDetails { code, details, .. } => {
+            assert_eq!(code, codes::OWNS_SHARED_ORGS);
+            assert_eq!(details["orgs"][0]["slug"], "billed");
+        }
+        other => panic!("expected OWNS_SHARED_ORGS, got {other:?}"),
+    }
+    assert_user_deleted(&pool, payer, false).await;
+    assert_org_deleted(&pool, org.0, false).await;
+
+    // Once the org holds nobody else it goes down with the account.
+    sqlx::query("DELETE FROM memberships WHERE org_id = $1 AND user_id = $2")
+        .bind(org.0)
+        .bind(co_owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+    account::request_deletion(&pool, uptimepage::domain::UserId(payer), 30)
+        .await
+        .expect("deletes");
+    assert_user_deleted(&pool, payer, true).await;
+    assert_org_deleted(&pool, org.0, true).await;
+
+    pool.close().await;
+    drop_pg(&name).await;
+}
+
 // ---------------------------------------------------------------------------
 // delete then restore (re-auth) round-trip
 // ---------------------------------------------------------------------------

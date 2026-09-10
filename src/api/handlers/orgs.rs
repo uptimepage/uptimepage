@@ -548,7 +548,8 @@ pub struct UpdateMemberRoleRequest {
     tag = "orgs",
     summary = "Change a member's role (owner-only)",
     description = "Promote a member to owner or demote an owner to member. \
-                   Refuses to demote the org's only owner.",
+                   Refuses to demote the org's only owner or the owner of the \
+                   account the org bills to.",
     params(("id" = Uuid, Path), ("user_id" = Uuid, Path)),
     request_body = UpdateMemberRoleRequest,
     responses(
@@ -556,7 +557,7 @@ pub struct UpdateMemberRoleRequest {
         (status = 401, body = ApiError),
         (status = 403, body = ApiError),
         (status = 404, body = ApiError),
-        (status = 409, body = ApiError, description = "Cannot demote the last owner"),
+        (status = 409, body = ApiError, description = "Cannot demote the last owner, or the owner of the account the org bills to"),
     ),
 )]
 pub async fn update_org_member_role(
@@ -580,6 +581,10 @@ pub async fn update_org_member_role(
         orgs_store::SetRoleOutcome::LastOwner => Err(AppError::conflict(
             codes::LAST_OWNER,
             "cannot demote the last owner of an organisation",
+        )),
+        orgs_store::SetRoleOutcome::AccountOwner => Err(AppError::conflict(
+            codes::ACCOUNT_OWNER,
+            "this organisation bills to that user's account; they stay an owner",
         )),
     }
 }
