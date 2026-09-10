@@ -162,14 +162,13 @@ async fn valid_save_persists_and_round_trips() {
     assert_eq!(body["public_brand_color"], "#1a2b3c"); // lower-cased on write
     assert_eq!(body["public_hide_from_search"], true);
     assert_eq!(body["public_website_url"], "https://acme.example");
-    // The stored override round-trips; whether the badge actually renders is a
-    // plan decision the public page makes, not this value.
+    // Whether the badge renders is the public page's plan decision, not this.
     assert_eq!(body["public_show_powered_by"], false);
     assert_eq!(body["show_powered_by"], false);
 }
 
-/// The API stores the override instead of discarding it. Whether the badge
-/// then renders is the plan's call, covered by `powered_by_forced_for_saas_non_white_label`.
+/// Whether the badge then renders is the plan's call, covered by
+/// `powered_by_forced_for_saas_non_white_label`.
 #[tokio::test]
 #[ignore]
 async fn hiding_the_badge_is_stored_not_discarded() {

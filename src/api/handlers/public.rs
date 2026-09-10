@@ -33,9 +33,8 @@ use crate::web::host::ResolvedStatusPage;
 const NOINDEX: HeaderValue = HeaderValue::from_static("noindex");
 const X_ROBOTS_TAG: HeaderName = HeaderName::from_static("x-robots-tag");
 
-/// Carries a page's search-visibility decision onto a response. Only the HTML
-/// pages can answer a crawler with a robots meta tag; every other
-/// representation of the page — feed, badge, JSON — says it in this header.
+/// Only an HTML page can answer a crawler with a robots meta tag; a feed, badge
+/// or JSON body says it in this header.
 pub struct Robots<T>(bool, T);
 
 impl<T: IntoResponse> IntoResponse for Robots<T> {

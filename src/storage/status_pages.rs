@@ -211,8 +211,7 @@ const PAGE_COLUMNS: &str = "id, org_id, slug::text AS slug, name, enabled, \
      public_show_powered_by, public_style, public_hide_from_search, \
      public_website_url, write_source, created_at, updated_at, plan_hold_at";
 
-/// Groups render as one contiguous block, so a group's earliest component
-/// places the whole group.
+/// Groups render contiguously, placed by their earliest component.
 pub(crate) const COMPONENT_ORDER: &str = "MIN(spc.sort_order) OVER (PARTITION BY spc.public_group), \
      spc.public_group NULLS LAST, spc.sort_order";
 
@@ -616,8 +615,7 @@ impl StatusPageStore for PgStatusPageStore {
             return Ok(());
         }
         let indices: Vec<i32> = (0..ordered_target_ids.len() as i32).collect();
-        // Renumbered group-first, so the stored order is the rendered order and
-        // a row dropped outside its group settles once instead of on next load.
+        // Renumbered group-first so the stored order is the rendered order.
         sqlx::query(
             r#"WITH incoming AS (
                    SELECT u.target_id, u.ord, spc.public_group

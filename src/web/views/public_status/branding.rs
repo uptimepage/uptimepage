@@ -36,14 +36,12 @@ pub struct BrandingView {
 }
 
 impl BrandingView {
-    /// The header brand links to the operator's own site when they set one.
     pub fn brand_href(&self) -> &str {
         self.website_url.as_deref().unwrap_or(self.home)
     }
 
-    /// `rel` for the header brand link, or `None` where it needs none: a link
-    /// to the page's own root, or an outbound one the plan lets pass signal.
-    /// The anchor opens in the same tab, so `noopener` would carry nothing.
+    /// `None` for a link to the page's own root, or an outbound one the plan
+    /// lets pass signal. The anchor stays in the tab, so `noopener` adds nothing.
     pub fn brand_rel(&self) -> Option<&'static str> {
         match self.website_url {
             Some(_) if !self.follow_website_link => Some("nofollow"),
@@ -110,8 +108,7 @@ pub(super) async fn resolve_branding(
     {
         BrandingView::from_org(&ob, cfg, home)
     } else {
-        // Branding is also where the page says whether it may be indexed, so an
-        // unreadable one keeps the generic render out of search results.
+        // Unreadable branding keeps the generic render out of search results.
         BrandingView::from_org(
             &OrgBranding {
                 name: fallback_name.to_owned(),
@@ -170,11 +167,9 @@ pub(super) fn enforce_powered_by(stored: bool, saas: bool, white_label: bool) ->
     if saas && !white_label { true } else { stored }
 }
 
-/// Whether the header's outbound link passes ranking signal. Hosted has open
-/// signup, so a free page's link is worth spamming for and the plan has to sell
-/// white-label — the same flag, on purpose: a tier that gets its own branding is
-/// the tier whose link we vouch for. Self-host has nobody to police. A page kept
-/// out of search vouches for nothing either way.
+/// Hosted signup is open, so a followed link needs a plan that sells
+/// white-label. Self-host has nobody to police, and a page kept out of search
+/// passes nothing either way.
 pub(super) fn enforce_follow_link(saas: bool, white_label: bool, hide_from_search: bool) -> bool {
     if hide_from_search {
         return false;

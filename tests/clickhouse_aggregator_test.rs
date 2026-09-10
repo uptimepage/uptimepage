@@ -164,9 +164,6 @@ where
     }
 }
 
-/// The rendered page keeps the order the operator dragged the components into:
-/// a group sits where its earliest component sits, and an ungrouped one is not
-/// pinned to the end.
 #[tokio::test]
 #[ignore = "requires DATABASE_URL + CLICKHOUSE_URL — run via `docker compose -f compose.dev.yml up -d` then `cargo test -- --ignored`"]
 async fn rendered_groups_follow_the_stored_order() {

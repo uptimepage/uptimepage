@@ -261,9 +261,7 @@ impl OrgAggregator {
 
     // ── private helpers ─────────────────────────────────────────────────────
 
-    /// Whether the page asks to stay out of search results. A row that cannot
-    /// be read is treated as hidden, so a fault never publishes what an
-    /// operator chose to hide.
+    /// An unreadable row reads as hidden, so a fault publishes nothing.
     async fn load_hide_from_search(&self, page: StatusPageId, org: OrgId) -> Result<bool> {
         let row: Option<(bool,)> = sqlx::query_as(
             "SELECT public_hide_from_search FROM status_pages WHERE id = $1 AND org_id = $2",

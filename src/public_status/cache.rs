@@ -48,8 +48,7 @@ pub struct PageData {
     pub page: Arc<PublicStatusPage>,
     pub history_markers: Arc<Vec<HistoryIncidentMarker>>,
     pub component_names: Arc<HashMap<Uuid, String>>,
-    /// The page's search-visibility setting, cached alongside the render so the
-    /// feed and badge routes can answer it without a query of their own.
+    /// Cached here so the feed, badge and JSON routes need no query of their own.
     pub hide_from_search: bool,
 }
 

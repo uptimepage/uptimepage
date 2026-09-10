@@ -135,9 +135,9 @@ pub async fn index(
         // Chrome-free auto-refresh fragment: no header/footer/style, so the
         // branding lookup is skipped on the 30s poll.
         let mut resp = StatusRegion { view }.into_response();
-        // The page's own content at a second URL, with no <head> to say so.
-        // The canonical rides along because a bare noindex on a duplicate can
-        // take the page it duplicates out of the index with it.
+        // The page's own content at a second URL, with no <head> to say so. A
+        // bare noindex on a duplicate can take the page it duplicates with it,
+        // hence the canonical.
         resp.headers_mut()
             .insert(robots::X_ROBOTS_TAG, robots::NOINDEX_FOLLOW);
         if let Some(canonical) = canonical_link(&state, &headers) {
@@ -428,9 +428,8 @@ fn render_public_error(err: PublicAppError) -> Response {
     }
 }
 
-/// Absolute `rel=canonical` for the page a chrome-less fragment duplicates.
-/// Falls back to the configured base URL, and gives up only when neither names
-/// an origin — in which case the fragment ships the `noindex` alone.
+/// Absolute `rel=canonical` for the page a fragment duplicates. `None` when no
+/// origin is known, leaving the fragment its `noindex` alone.
 fn canonical_link(state: &AppState, headers: &HeaderMap) -> Option<header::HeaderValue> {
     let origin =
         request_origin(headers, &state.cfg.public_status.base_domain).unwrap_or_else(|| {

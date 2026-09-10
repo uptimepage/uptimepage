@@ -174,8 +174,7 @@ async fn share_sub_resources_render() {
         assert_eq!(status, StatusCode::OK, "{path} should be 200");
     }
 
-    // The full page says noindex in its own head; the three sub-resources have
-    // no head, so only the header keeps a monitor's check history unindexed.
+    // The page says noindex in its head; these three have no head.
     for path in [
         format!("/m/{token}/live"),
         format!("/m/{token}/latency"),

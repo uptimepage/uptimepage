@@ -386,8 +386,8 @@ pub async fn incidents(
 }
 
 /// Token-scoped twin of `results::latency` — the JSON the detail charts fetch.
-/// A JSON sub-resource of a share link: no `<head>` to carry a robots meta, and
-/// `error` strings that name the checked address. [`crate::web::robots`].
+/// No `<head>` to carry a robots meta, and `error` strings name the checked
+/// address.
 fn noindexed<T: IntoResponse>(body: T) -> Response {
     let mut resp = body.into_response();
     resp.headers_mut()
