@@ -460,7 +460,11 @@ pub async fn revoke(pool: &PgPool, org: OrgId, id: Uuid) -> Result<bool> {
 /// as `INVITATION_INVALID`. The (id, org_id) tuple ties the mutation to the
 /// org the token resolved to; a request-supplied id alone could never flip a
 /// pending invite in another tenant.
-pub async fn mark_accepted(pool: &PgPool, org: OrgId, id: Uuid) -> Result<bool> {
+pub async fn mark_accepted<'e, E: sqlx::PgExecutor<'e>>(
+    exec: E,
+    org: OrgId,
+    id: Uuid,
+) -> Result<bool> {
     let res = sqlx::query(
         "UPDATE invitations SET accepted_at = now() \
          WHERE id = $1 AND org_id = $2 \
@@ -469,25 +473,9 @@ pub async fn mark_accepted(pool: &PgPool, org: OrgId, id: Uuid) -> Result<bool> 
     )
     .bind(id)
     .bind(org.0)
-    .execute(pool)
+    .execute(exec)
     .await
     .context("invitations::mark_accepted")?;
-    Ok(res.rows_affected() > 0)
-}
-
-/// Revert a just-stamped accept whose membership insert lost the advisory-
-/// locked seat race — the recipient keeps a redeemable token, matching the
-/// "your invitation stays valid" contract on the landing page.
-pub async fn unmark_accepted(pool: &PgPool, org: OrgId, id: Uuid) -> Result<bool> {
-    let res = sqlx::query(
-        "UPDATE invitations SET accepted_at = NULL \
-         WHERE id = $1 AND org_id = $2 AND accepted_at IS NOT NULL",
-    )
-    .bind(id)
-    .bind(org.0)
-    .execute(pool)
-    .await
-    .context("invitations::unmark_accepted")?;
     Ok(res.rows_affected() > 0)
 }
 

@@ -13,6 +13,7 @@
 //! ids through [`try_auto_accept`]. Email-sending uses
 //! [`AppState::email_sender`] so the provider stays config-driven.
 
+use anyhow::Context;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -335,12 +336,21 @@ pub(crate) async fn accept_for_user(
         ));
     }
 
-    // State transition first so the race-loser sees `INVITATION_INVALID`
-    // BEFORE a membership row is inserted. Otherwise two parallel accepts
-    // both pass find_pending_by_token, both call add_member (idempotent
-    // ON CONFLICT), the loser sees INVITATION_INVALID, and an orphan
-    // membership remains visible to the same-user race.
-    if !inv::mark_accepted(pool, row.org_id, row.id).await? {
+    // One transaction for the stamp and the membership: a sign-in racing this
+    // accept sees either a pending invitation or a committed membership, never
+    // the gap between, and a refused seat rolls the stamp back with it. The
+    // account lock comes before the row lock because account deletion takes
+    // them in that order and then deletes the inviter's pending invitations.
+    let mut tx = pool.begin().await.context("accept: begin")?;
+    let account = crate::storage::accounts::account_for_org(&mut *tx, row.org_id).await?;
+    crate::storage::locks::advisory_xact_lock(
+        &mut *tx,
+        &crate::storage::locks::account_lock_key(account),
+    )
+    .await
+    .context("accept: account lock")?;
+    if !inv::mark_accepted(&mut *tx, row.org_id, row.id).await? {
+        tx.rollback().await.ok();
         return Err(AppError::not_found(
             codes::INVITATION_INVALID,
             "invitation is invalid or has expired",
@@ -351,15 +361,11 @@ pub(crate) async fn accept_for_user(
     // same plan number; it only fires if a concurrent accept slipped past
     // the lockless pre-check in validate_acceptable.
     let max_members = u32::try_from(plan.max_members).unwrap_or(u32::MAX);
-    if let orgs_store::AddMemberOutcome::LimitReached { current, limit } =
-        orgs_store::add_member(pool, row.org_id, user_id, user_id, row.role, max_members).await?
-    {
-        // The token must stay redeemable — the landing page promises "try
-        // again once a seat frees up". Best-effort: a failure here only
-        // costs that retry, not correctness.
-        if let Err(err) = inv::unmark_accepted(pool, row.org_id, row.id).await {
-            tracing::warn!(error = %err, invitation = %row.id, "unmark after seat race failed");
-        }
+    let added =
+        orgs_store::add_member_in_tx(&mut tx, row.org_id, user_id, user_id, row.role, max_members)
+            .await?;
+    if let orgs_store::AddMemberOutcome::LimitReached { current, limit } = added {
+        tx.rollback().await.ok();
         // Same audit shape every quota block uses — go through the one place
         // that owns it rather than re-assembling the event by hand.
         state
@@ -372,6 +378,7 @@ pub(crate) async fn accept_for_user(
             plan.id.clone(),
         ));
     }
+    tx.commit().await.context("accept: commit")?;
     Ok(AcceptedInvitation {
         org_id: row.org_id,
         org_slug: org_row.slug,
