@@ -134,7 +134,8 @@ async fn valid_save_persists_and_round_trips() {
                         "public_about": "All good.",
                         "public_brand_color": "#1A2B3C",
                         "public_show_powered_by": false,
-                        "public_hide_from_search": true
+                        "public_hide_from_search": true,
+                        "public_website_url": "https://acme.example"
                     }
                 }),
             ))
@@ -160,6 +161,7 @@ async fn valid_save_persists_and_round_trips() {
     assert_eq!(body["public_display_name"], "Acme Public");
     assert_eq!(body["public_brand_color"], "#1a2b3c"); // lower-cased on write
     assert_eq!(body["public_hide_from_search"], true);
+    assert_eq!(body["public_website_url"], "https://acme.example");
     // The powered-by toggle is pinned on: a false override is ignored and the
     // raw value clears to inherit the default.
     assert_eq!(body["show_powered_by"], true);
@@ -222,6 +224,16 @@ async fn assert_field_rejection(branding: Value, expect_field: &str) {
             .is_some_and(|m| !m.is_empty()),
         "a human message must accompany the field"
     );
+}
+
+#[tokio::test]
+#[ignore]
+async fn bad_website_url_points_at_that_field() {
+    assert_field_rejection(
+        json!({ "public_brand_color": "#3b82f6", "public_website_url": "javascript:alert(1)" }),
+        "public_website_url",
+    )
+    .await;
 }
 
 #[tokio::test]

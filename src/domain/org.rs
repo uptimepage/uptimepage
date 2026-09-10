@@ -62,6 +62,8 @@ pub struct PublicOrgBranding {
     pub public_style: PublicStyle,
     #[serde(default)]
     pub public_hide_from_search: bool,
+    /// Operator's own site, linked from the page header.
+    pub public_website_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -156,6 +158,7 @@ pub enum BrandingError {
     BrandColorFormat,
     AboutTooLong,
     DisplayNameLength,
+    WebsiteUrl,
 }
 
 impl std::fmt::Display for BrandingError {
@@ -164,6 +167,7 @@ impl std::fmt::Display for BrandingError {
             Self::BrandColorFormat => "brand color must be a 6-digit hex like #3b82f6",
             Self::AboutTooLong => "public about may be at most 500 characters",
             Self::DisplayNameLength => "display name must be 1-80 characters",
+            Self::WebsiteUrl => "website must be an http(s) address, at most 200 characters",
         };
         f.write_str(s)
     }
@@ -178,6 +182,7 @@ impl BrandingError {
             Self::BrandColorFormat => "public_brand_color",
             Self::AboutTooLong => "public_about",
             Self::DisplayNameLength => "public_display_name",
+            Self::WebsiteUrl => "public_website_url",
         }
     }
 }
@@ -208,8 +213,20 @@ impl PublicOrgBranding {
                 return Err(BrandingError::DisplayNameLength);
             }
         }
+        if let Some(u) = &self.public_website_url
+            && !is_web_url(u)
+        {
+            return Err(BrandingError::WebsiteUrl);
+        }
         Ok(())
     }
+}
+
+fn is_web_url(s: &str) -> bool {
+    if s.chars().count() > 200 {
+        return false;
+    }
+    url::Url::parse(s).is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.has_host())
 }
 
 fn is_hex_color(s: &str) -> bool {
@@ -351,6 +368,24 @@ mod tests {
         assert_eq!(b.validate(), Err(BrandingError::BrandColorFormat));
         b.public_brand_color = Some("#3b82f".into());
         assert_eq!(b.validate(), Err(BrandingError::BrandColorFormat));
+    }
+
+    #[test]
+    fn branding_validate_accepts_only_web_urls() {
+        let mut b = PublicOrgBranding {
+            public_website_url: Some("https://acme.example/status".into()),
+            ..PublicOrgBranding::default()
+        };
+        assert!(b.validate().is_ok());
+        for bad in [
+            "javascript:alert(1)",
+            "acme.example",
+            "ftp://acme.example",
+            "https://",
+        ] {
+            b.public_website_url = Some(bad.into());
+            assert_eq!(b.validate(), Err(BrandingError::WebsiteUrl), "{bad}");
+        }
     }
 
     #[test]

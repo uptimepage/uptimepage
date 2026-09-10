@@ -72,6 +72,13 @@
           <input id="f-display" type="text" maxlength="80" value="{{ public_display_name }}"
                  autocomplete="off" placeholder="Falls back to the org name" class="w-full field">
         </label>
+
+        <label class="field-outline">
+          <span class="field-outline__label">Website</span>
+          <input id="f-website" type="url" maxlength="200" value="{{ website_url }}"
+                 autocomplete="off" spellcheck="false" placeholder="https://example.com" class="w-full field">
+          <span class="mt-1 block text-xs text-muted">The header logo links here, so readers can get back.</span>
+        </label>
       </div>
 
       <div>
@@ -420,6 +427,7 @@
               public_brand_color: document.getElementById('f-color').value || null,
               public_style: style.value,
               public_hide_from_search: document.getElementById('f-hide-search').checked,
+              public_website_url: document.getElementById('f-website').value || null,
             },
           });
           dirty = false;

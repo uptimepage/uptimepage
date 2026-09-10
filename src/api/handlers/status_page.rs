@@ -59,6 +59,9 @@ pub struct StatusPageView {
     pub show_powered_by: bool,
     /// Keep the page out of search results.
     pub public_hide_from_search: bool,
+    /// Operator's own site, linked from the page header.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_website_url: Option<String>,
     /// Versioned logo URL on the public surface, or `null` when no logo.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logo_url: Option<String>,
@@ -102,6 +105,9 @@ pub struct BrandingInput {
     /// Keep the page out of search results.
     #[serde(default)]
     pub public_hide_from_search: Option<bool>,
+    /// Operator's own site, linked from the page header.
+    #[serde(default)]
+    pub public_website_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -231,6 +237,7 @@ pub async fn update_page(
                 public_show_powered_by: None,
                 public_style: b.public_style.unwrap_or_default(),
                 public_hide_from_search: b.public_hide_from_search.unwrap_or_default(),
+                public_website_url: normalise_opt(b.public_website_url),
             };
             pob.validate().map_err(|e| {
                 AppError::bad_request_field(codes::BRANDING_INVALID, e.to_string(), e.field())
@@ -667,6 +674,7 @@ fn view(state: &AppState, p: StatusPage) -> StatusPageView {
         public_show_powered_by: b.public_show_powered_by,
         show_powered_by: b.show_powered_by(cfg.default_show_powered_by),
         public_hide_from_search: b.public_hide_from_search,
+        public_website_url: b.public_website_url.clone(),
         logo_url: b
             .logo_hash
             .as_deref()

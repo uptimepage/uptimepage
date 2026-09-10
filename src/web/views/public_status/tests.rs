@@ -731,6 +731,34 @@ fn only_the_cursorless_archive_page_is_indexable() {
 }
 
 #[test]
+fn the_header_brand_links_to_the_operator_site_when_set() {
+    let html = StatusFullPage {
+        view: build_view(&sample_page(), &[], &Default::default()),
+        branding: branding_with(PublicOrgBranding {
+            public_website_url: Some("https://acme.example".into()),
+            ..Default::default()
+        }),
+        og: OgMeta::default(),
+    }
+    .render()
+    .unwrap();
+    assert!(html.contains(r#"<a href="https://acme.example" rel="noopener nofollow""#));
+}
+
+#[test]
+fn the_header_brand_falls_back_to_the_status_page_root() {
+    let html = StatusFullPage {
+        view: build_view(&sample_page(), &[], &Default::default()),
+        branding: sample_branding(),
+        og: OgMeta::default(),
+    }
+    .render()
+    .unwrap();
+    assert!(html.contains(r#"<a href="/""#));
+    assert!(!html.contains("nofollow"), "an internal link takes no rel");
+}
+
+#[test]
 fn hiding_a_page_from_search_takes_every_page_with_it() {
     let branding = branding_with(PublicOrgBranding {
         public_hide_from_search: true,

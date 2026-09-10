@@ -171,6 +171,7 @@ struct PageRow {
     public_show_powered_by: Option<bool>,
     public_style: String,
     public_hide_from_search: bool,
+    public_website_url: Option<String>,
     write_source: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -193,6 +194,7 @@ impl PageRow {
                 public_show_powered_by: self.public_show_powered_by,
                 public_style: PublicStyle::from_db(&self.public_style),
                 public_hide_from_search: self.public_hide_from_search,
+                public_website_url: self.public_website_url,
             },
             write_source: WriteSource::from_db(&self.write_source),
             created_at: self.created_at,
@@ -207,7 +209,7 @@ const PAGE_COLUMNS: &str = "id, org_id, slug::text AS slug, name, enabled, \
      (SELECT pa.content_hash FROM page_assets pa \
       WHERE pa.status_page_id = status_pages.id AND pa.slot = 'logo') AS logo_hash, \
      public_show_powered_by, public_style, public_hide_from_search, \
-     write_source, created_at, updated_at, plan_hold_at";
+     public_website_url, write_source, created_at, updated_at, plan_hold_at";
 
 /// Groups render as one contiguous block, so a group's earliest component
 /// places the whole group.
@@ -337,7 +339,8 @@ impl StatusPageStore for PgStatusPageStore {
                  public_style        = CASE WHEN $6::bool THEN $11 ELSE public_style END,
                  public_hide_from_search =
                    CASE WHEN $6::bool THEN $12 ELSE public_hide_from_search END,
-                 write_source = $13,
+                 public_website_url  = CASE WHEN $6::bool THEN $13 ELSE public_website_url END,
+                 write_source = $14,
                  updated_at = now()
                WHERE id = $1 AND org_id = $2
                RETURNING {PAGE_COLUMNS}"#
@@ -354,6 +357,7 @@ impl StatusPageStore for PgStatusPageStore {
         .bind(b.as_ref().and_then(|x| x.public_show_powered_by))
         .bind(b.as_ref().map(|x| x.public_style.as_str()))
         .bind(b.as_ref().is_some_and(|x| x.public_hide_from_search))
+        .bind(b.as_ref().and_then(|x| x.public_website_url.clone()))
         .bind(source.as_str())
         .fetch_optional(&self.pool)
         .await

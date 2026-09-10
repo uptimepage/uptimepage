@@ -1396,7 +1396,8 @@ pub async fn load_page_branding(pool: &PgPool, page: StatusPageId) -> Result<Opt
                    WHERE pa.status_page_id = sp.id AND pa.slot = 'logo') AS logo_hash,
                   sp.public_show_powered_by,
                   sp.public_style,
-                  sp.public_hide_from_search
+                  sp.public_hide_from_search,
+                  sp.public_website_url
              FROM status_pages sp
              JOIN organizations o ON o.id = sp.org_id
             WHERE sp.id = $1
@@ -1417,6 +1418,7 @@ pub async fn load_page_branding(pool: &PgPool, page: StatusPageId) -> Result<Opt
             public_show_powered_by: r.public_show_powered_by,
             public_style: PublicStyle::from_db(&r.public_style),
             public_hide_from_search: r.public_hide_from_search,
+            public_website_url: r.public_website_url,
         },
     }))
 }
@@ -1525,6 +1527,7 @@ struct BrandingRow {
     public_show_powered_by: Option<bool>,
     public_style: String,
     public_hide_from_search: bool,
+    public_website_url: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]

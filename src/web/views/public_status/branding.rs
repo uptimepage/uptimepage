@@ -29,9 +29,16 @@ pub struct BrandingView {
     /// canonical URL use it. See [`status_home`].
     pub home: &'static str,
     pub hide_from_search: bool,
+    /// Operator's own site. The header brand links here when set, else [`Self::home`].
+    pub website_url: Option<String>,
 }
 
 impl BrandingView {
+    /// The header brand links to the operator's own site when they set one.
+    pub fn brand_href(&self) -> &str {
+        self.website_url.as_deref().unwrap_or(self.home)
+    }
+
     pub fn robots(&self) -> &'static str {
         if self.hide_from_search {
             "noindex,follow"
@@ -68,6 +75,7 @@ impl BrandingView {
             style: o.branding.public_style.as_str(),
             home,
             hide_from_search: o.branding.public_hide_from_search,
+            website_url: o.branding.public_website_url.clone(),
         }
     }
 }

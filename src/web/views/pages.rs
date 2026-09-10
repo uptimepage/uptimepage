@@ -194,6 +194,7 @@ pub struct PageEditorPage {
     pub brand_color_value: String,
     pub show_powered_by: bool,
     pub hide_from_search: bool,
+    pub website_url: String,
     pub styles: Vec<StyleOption>,
     /// Groups already in use, offered as suggestions so a second spelling of
     /// one group does not quietly become a second section on the page.
@@ -405,6 +406,7 @@ pub async fn page_editor(
             .unwrap_or_else(|| cfg.default_brand_color.clone()),
         show_powered_by: b.show_powered_by(cfg.default_show_powered_by),
         hide_from_search: b.public_hide_from_search,
+        website_url: b.public_website_url.clone().unwrap_or_default(),
         styles,
         groups,
         host_suffix: public_host_suffix(&state.cfg),
@@ -463,6 +465,7 @@ mod tests {
             brand_color_value: "#000000".into(),
             show_powered_by: true,
             hide_from_search: false,
+            website_url: String::new(),
             styles: Vec::new(),
             groups: Vec::new(),
             host_suffix: Some(".uptimepage.dev".into()),
