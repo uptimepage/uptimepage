@@ -5,7 +5,7 @@
 //! the `maintenance_window_components` join idioms for component curation. Page
 //! branding + logo writes live here (page-keyed), not on `organizations`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -207,6 +207,11 @@ const PAGE_COLUMNS: &str = "id, org_id, slug::text AS slug, name, enabled, \
      public_show_powered_by, public_style, write_source, created_at, updated_at, \
      plan_hold_at";
 
+/// Groups render as one contiguous block, so a group's earliest component
+/// places the whole group.
+pub(crate) const COMPONENT_ORDER: &str = "MIN(spc.sort_order) OVER (PARTITION BY spc.public_group), \
+     spc.public_group NULLS LAST, spc.sort_order";
+
 fn is_unique_violation(e: &sqlx::Error) -> bool {
     e.as_database_error()
         .is_some_and(|d| d.is_unique_violation())
@@ -379,7 +384,7 @@ impl StatusPageStore for PgStatusPageStore {
         org: OrgId,
         page: StatusPageId,
     ) -> Result<Vec<StatusPageComponent>> {
-        let rows: Vec<ComponentRow> = sqlx::query_as(
+        let rows: Vec<ComponentRow> = sqlx::query_as(&format!(
             r#"SELECT spc.target_id, t.name AS monitor_name,
                       spc.public_name, spc.public_description, spc.public_group, spc.sort_order,
                       spc.detail_link_enabled, spc.share_id, ms.id IS NOT NULL AS share_live
@@ -390,8 +395,8 @@ impl StatusPageStore for PgStatusPageStore {
                      AND ms.revoked_at IS NULL
                      AND (ms.expires_at IS NULL OR ms.expires_at > now())
                WHERE spc.status_page_id = $1 AND spc.org_id = $2
-               ORDER BY spc.public_group NULLS LAST, spc.sort_order, t.name"#,
-        )
+               ORDER BY {COMPONENT_ORDER}, t.name"#
+        ))
         .bind(page.0)
         .bind(org.0)
         .fetch_all(&self.pool)
@@ -601,14 +606,35 @@ impl StatusPageStore for PgStatusPageStore {
         if ordered_target_ids.is_empty() {
             return Ok(());
         }
-        // One UPDATE … FROM UNNEST with the new 0-based index as sort_order.
         let indices: Vec<i32> = (0..ordered_target_ids.len() as i32).collect();
+        // Renumbered group-first, so the stored order is the rendered order and
+        // a row dropped outside its group settles once instead of on next load.
         sqlx::query(
-            r#"UPDATE status_page_components spc
-               SET sort_order = u.ord, updated_at = now()
-               FROM UNNEST($3::uuid[], $4::int4[]) AS u(target_id, ord)
+            r#"WITH incoming AS (
+                   SELECT u.target_id, u.ord, spc.public_group
+                   FROM UNNEST($3::uuid[], $4::int4[]) AS u(target_id, ord)
+                   JOIN status_page_components spc
+                     ON spc.target_id = u.target_id
+                    AND spc.status_page_id = $1
+                    AND spc.org_id = $2
+               ),
+               grouped AS (
+                   SELECT target_id, ord, public_group,
+                          MIN(ord) OVER (PARTITION BY public_group) AS group_ord
+                   FROM incoming
+               ),
+               settled AS (
+                   SELECT target_id,
+                          ROW_NUMBER() OVER (
+                              ORDER BY group_ord, public_group NULLS LAST, ord
+                          ) - 1 AS ord
+                   FROM grouped
+               )
+               UPDATE status_page_components spc
+               SET sort_order = settled.ord, updated_at = now()
+               FROM settled
                WHERE spc.status_page_id = $1 AND spc.org_id = $2
-                 AND spc.target_id = u.target_id"#,
+                 AND spc.target_id = settled.target_id"#,
         )
         .bind(page.0)
         .bind(org.0)
@@ -657,6 +683,27 @@ struct MemComponent {
     sort_order: i32,
     detail_link_enabled: bool,
     share_id: Option<MonitorShareId>,
+}
+
+/// Rust mirror of [`COMPONENT_ORDER`]. `key` yields (group, sort_order, target_id).
+fn settle_order<T>(rows: Vec<T>, key: impl Fn(&T) -> (Option<String>, i32, Uuid)) -> Vec<T> {
+    let mut mins: HashMap<Option<String>, i32> = HashMap::new();
+    for row in &rows {
+        let (group, ord, _) = key(row);
+        mins.entry(group)
+            .and_modify(|m| *m = (*m).min(ord))
+            .or_insert(ord);
+    }
+    let mut keyed: Vec<_> = rows
+        .into_iter()
+        .map(|row| {
+            let (group, ord, target) = key(&row);
+            let group_ord = mins.get(&group).copied().unwrap_or(ord);
+            ((group_ord, group.is_none(), group, ord, target), row)
+        })
+        .collect();
+    keyed.sort_by(|a, b| a.0.cmp(&b.0));
+    keyed.into_iter().map(|(_, row)| row).collect()
 }
 
 #[derive(Default)]
@@ -797,7 +844,7 @@ impl StatusPageStore for InMemoryStatusPageStore {
         page: StatusPageId,
     ) -> Result<Vec<StatusPageComponent>> {
         let st = self.inner.lock().unwrap();
-        let mut out: Vec<StatusPageComponent> = st
+        let out: Vec<StatusPageComponent> = st
             .components
             .iter()
             .filter(|c| c.page == page && c.org == org)
@@ -813,24 +860,9 @@ impl StatusPageStore for InMemoryStatusPageStore {
                 share_live: c.share_id.is_some(),
             })
             .collect();
-        // Mirror the Pg `ORDER BY public_group NULLS LAST, sort_order`: Rust's
-        // Option ordering puts None first, so key on is_none() to push it last.
-        // target_id is the stable tiebreak (no monitor_name to sort on here).
-        out.sort_by(|a, b| {
-            (
-                a.public_group.is_none(),
-                &a.public_group,
-                a.sort_order,
-                a.target_id,
-            )
-                .cmp(&(
-                    b.public_group.is_none(),
-                    &b.public_group,
-                    b.sort_order,
-                    b.target_id,
-                ))
-        });
-        Ok(out)
+        Ok(settle_order(out, |c| {
+            (c.public_group.clone(), c.sort_order, c.target_id)
+        }))
     }
 
     async fn add_component(
@@ -973,6 +1005,19 @@ impl StatusPageStore for InMemoryStatusPageStore {
                 c.sort_order = i as i32;
             }
         }
+        let rows: Vec<&mut MemComponent> = st
+            .components
+            .iter_mut()
+            .filter(|c| c.page == page && c.org == org)
+            .collect();
+        for (i, c) in settle_order(rows, |c| {
+            (c.public_group.clone(), c.sort_order, c.target_id)
+        })
+        .into_iter()
+        .enumerate()
+        {
+            c.sort_order = i as i32;
+        }
         Ok(())
     }
 
@@ -991,5 +1036,105 @@ impl StatusPageStore for InMemoryStatusPageStore {
         pages.sort_by_key(|p| p.0);
         pages.dedup();
         Ok(pages)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::NewStatusPageComponent;
+
+    fn grouped(target_id: Uuid, group: &str, sort_order: i32) -> NewStatusPageComponent {
+        NewStatusPageComponent {
+            target_id,
+            public_name: None,
+            public_description: None,
+            public_group: Some(group.into()),
+            sort_order,
+            detail_link_enabled: false,
+        }
+    }
+
+    async fn page_with(
+        components: &[(Uuid, &str)],
+    ) -> (InMemoryStatusPageStore, OrgId, StatusPageId) {
+        let store = InMemoryStatusPageStore::new();
+        let org = OrgId(Uuid::new_v4());
+        let page = store
+            .create(
+                org,
+                NewStatusPage {
+                    slug: "p".into(),
+                    name: "P".into(),
+                    enabled: true,
+                },
+                WriteSource::Api,
+                10,
+                None,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        for (i, (target, group)) in components.iter().enumerate() {
+            store
+                .add_component(org, page.id, grouped(*target, group, i as i32), 100, None)
+                .await
+                .unwrap();
+        }
+        (store, org, page.id)
+    }
+
+    async fn order(store: &InMemoryStatusPageStore, org: OrgId, page: StatusPageId) -> Vec<Uuid> {
+        store
+            .list_components(org, page)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|c| c.target_id)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn dragging_a_group_to_the_top_outranks_the_group_name() {
+        let (ns1, ns2, site, clients) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let (store, org, page) = page_with(&[
+            (ns1, "DNS"),
+            (ns2, "DNS"),
+            (site, "NQUARE"),
+            (clients, "NQUARE"),
+        ])
+        .await;
+        assert_eq!(
+            order(&store, org, page).await,
+            vec![ns1, ns2, site, clients]
+        );
+
+        store
+            .reorder_components(org, page, &[site, clients, ns1, ns2])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            order(&store, org, page).await,
+            vec![site, clients, ns1, ns2]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_row_dropped_into_another_group_rejoins_its_own() {
+        let (a1, a2, b1) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let (store, org, page) = page_with(&[(a1, "A"), (a2, "A"), (b1, "B")]).await;
+
+        store
+            .reorder_components(org, page, &[a1, b1, a2])
+            .await
+            .unwrap();
+
+        assert_eq!(order(&store, org, page).await, vec![a1, a2, b1]);
     }
 }

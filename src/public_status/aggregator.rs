@@ -30,6 +30,7 @@ use crate::domain::{
 use crate::error::Result;
 use crate::security::Cipher;
 use crate::storage::capability_token;
+use crate::storage::status_pages::COMPONENT_ORDER;
 
 use super::auto_incident_title;
 use super::cache::HistoryIncidentMarker;
@@ -76,7 +77,6 @@ struct PageComponent {
     name: String,
     description: Option<String>,
     group: Option<String>,
-    sort_order: i32,
     detail_url: Option<String>,
 }
 
@@ -168,64 +168,32 @@ impl OrgAggregator {
         let history_by_target =
             paint_strips(&component_ids, &day_presence, &paint_windows, now, days);
 
-        let mut public_components: Vec<(Option<String>, i32, PublicComponent)> = components
-            .iter()
-            .map(|c| {
-                let maint = maintenance_by_target.contains(&c.id);
-                let history = history_by_target
-                    .get(&c.id)
-                    .cloned()
-                    .unwrap_or_else(|| vec![DayState::NoData; days as usize]);
-                // Read the evidence off the strip the page is about to render,
-                // so the pill and the history under it cannot disagree.
-                let has_evidence = history.iter().any(|d| *d != DayState::NoData);
-                let current = component_status(open_worst.get(&c.id).copied(), maint, has_evidence);
-                let pc = PublicComponent {
-                    id: c.id,
-                    name: c.name.clone(),
-                    description: c.description.clone(),
-                    current_status: current,
-                    history,
-                    detail_url: c.detail_url.clone(),
-                };
-                (c.group.clone(), c.sort_order, pc)
-            })
-            .collect();
-
-        // Sort within group: by sort_order ASC, then name ASC.
-        public_components.sort_by(|a, b| {
-            a.0.cmp(&b.0)
-                .then(a.1.cmp(&b.1))
-                .then(a.2.name.cmp(&b.2.name))
-        });
-
-        // Ungrouped (None) renders last; sort_by above puts None first because
-        // Option<T>::cmp orders None < Some. Flip the bucket after grouping.
         let mut groups: Vec<PublicComponentGroup> = Vec::new();
-        let mut current_group: Option<String> = None;
-        let mut current_items: Vec<PublicComponent> = Vec::new();
-        for (g, _ord, pc) in public_components {
-            if g != current_group {
-                if !current_items.is_empty() || current_group.is_some() {
-                    groups.push(PublicComponentGroup {
-                        name: current_group.clone(),
-                        components: std::mem::take(&mut current_items),
-                    });
-                }
-                current_group = g;
+        for c in &components {
+            let maint = maintenance_by_target.contains(&c.id);
+            let history = history_by_target
+                .get(&c.id)
+                .cloned()
+                .unwrap_or_else(|| vec![DayState::NoData; days as usize]);
+            // Read the evidence off the strip the page is about to render,
+            // so the pill and the history under it cannot disagree.
+            let has_evidence = history.iter().any(|d| *d != DayState::NoData);
+            let current = component_status(open_worst.get(&c.id).copied(), maint, has_evidence);
+            let pc = PublicComponent {
+                id: c.id,
+                name: c.name.clone(),
+                description: c.description.clone(),
+                current_status: current,
+                history,
+                detail_url: c.detail_url.clone(),
+            };
+            match groups.last_mut() {
+                Some(g) if g.name == c.group => g.components.push(pc),
+                _ => groups.push(PublicComponentGroup {
+                    name: c.group.clone(),
+                    components: vec![pc],
+                }),
             }
-            current_items.push(pc);
-        }
-        if !current_items.is_empty() {
-            groups.push(PublicComponentGroup {
-                name: current_group,
-                components: current_items,
-            });
-        }
-        // Move the ungrouped bucket to the end.
-        if let Some(idx) = groups.iter().position(|g| g.name.is_none()) {
-            let ung = groups.remove(idx);
-            groups.push(ung);
         }
 
         let component_statuses: Vec<PublicComponentStatus> = groups
@@ -289,17 +257,16 @@ impl OrgAggregator {
 
     // ── private helpers ─────────────────────────────────────────────────────
 
-    /// The page's monitors, with per-page curation applied. Ordered by
-    /// (group, sort_order, monitor name) to match the rendered layout.
+    /// The page's monitors, with per-page curation applied, in render order.
     async fn load_page_components(
         &self,
         page: StatusPageId,
         org: OrgId,
     ) -> Result<Vec<PageComponent>> {
-        let rows: Vec<PageComponentRow> = sqlx::query_as::<_, PageComponentRow>(
+        let rows: Vec<PageComponentRow> = sqlx::query_as::<_, PageComponentRow>(&format!(
             r#"SELECT spc.target_id, t.name AS monitor_name,
                       spc.public_name, spc.public_description,
-                      spc.public_group, spc.sort_order,
+                      spc.public_group,
                       CASE WHEN spc.detail_link_enabled THEN ms.token_enc END AS share_token_enc
                FROM status_page_components spc
                JOIN targets t ON t.id = spc.target_id AND t.org_id = spc.org_id
@@ -309,8 +276,8 @@ impl OrgAggregator {
                      AND (ms.expires_at IS NULL OR ms.expires_at > now())
                WHERE spc.status_page_id = $1 AND spc.org_id = $2
                  AND t.plan_hold_at IS NULL
-               ORDER BY spc.public_group NULLS LAST, spc.sort_order, t.name"#,
-        )
+               ORDER BY {COMPONENT_ORDER}, t.name"#
+        ))
         .bind(page.0)
         .bind(org.0)
         .fetch_all(&self.pg)
@@ -323,7 +290,6 @@ impl OrgAggregator {
                 name: r.public_name.unwrap_or(r.monitor_name),
                 description: r.public_description,
                 group: r.public_group,
-                sort_order: r.sort_order,
                 detail_url: r
                     .share_token_enc
                     .as_deref()
@@ -704,7 +670,6 @@ struct PageComponentRow {
     public_name: Option<String>,
     public_description: Option<String>,
     public_group: Option<String>,
-    sort_order: i32,
     share_token_enc: Option<String>,
 }
 

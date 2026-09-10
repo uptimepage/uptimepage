@@ -164,6 +164,93 @@ where
     }
 }
 
+/// The rendered page keeps the order the operator dragged the components into:
+/// a group sits where its earliest component sits, and an ungrouped one is not
+/// pinned to the end.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL + CLICKHOUSE_URL — run via `docker compose -f compose.dev.yml up -d` then `cargo test -- --ignored`"]
+async fn rendered_groups_follow_the_stored_order() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        eprintln!("skipped: DATABASE_URL not set");
+        return;
+    };
+    let Some(ch) = common::ch_client_from_env().await else {
+        eprintln!("skipped: CLICKHOUSE_URL not set");
+        return;
+    };
+
+    let org_id = seed_org(&pool, "agg-order").await;
+    let store = Arc::new(PostgresTargetStore::from_pool(pool.clone(), None));
+    let pages = PgStatusPageStore::new(pool.clone());
+    let mut ids = Vec::new();
+    for name in ["ns1", "site", "notes"] {
+        let unique = format!("agg-test-{name}-{}", Uuid::now_v7());
+        let target = store
+            .create(
+                org_id,
+                public_target(&unique),
+                WriteSource::Ui,
+                i64::MAX,
+                i64::MAX,
+            )
+            .await
+            .expect("create public target");
+        ids.push(target.id);
+    }
+    let (ns1, site, notes) = (ids[0], ids[1], ids[2]);
+
+    let page_id = seed_page_with_target(&pool, org_id, ns1).await;
+    for (target_id, group) in [(site, Some("NQUARE")), (notes, None)] {
+        pages
+            .add_component(
+                org_id,
+                page_id,
+                NewStatusPageComponent {
+                    target_id,
+                    public_name: None,
+                    public_description: None,
+                    public_group: group.map(str::to_owned),
+                    sort_order: 0,
+                    detail_link_enabled: false,
+                },
+                i64::MAX,
+                None,
+            )
+            .await
+            .expect("add component");
+    }
+    pages
+        .update_component(
+            org_id,
+            page_id,
+            ns1,
+            StatusPageComponentUpdate {
+                public_group: Some(Some("DNS".into())),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("group ns1");
+    pages
+        .reorder_components(org_id, page_id, &[notes, site, ns1])
+        .await
+        .expect("reorder");
+
+    let agg = OrgAggregator::new(pool.clone(), ch, AggregatorConfig::default(), None);
+    let (page, _markers, _names) = agg.build(page_id, org_id).await.expect("aggregator build");
+
+    let rendered: Vec<Option<String>> = page.groups.iter().map(|g| g.name.clone()).collect();
+    assert_eq!(
+        rendered,
+        vec![None, Some("NQUARE".into()), Some("DNS".into())],
+        "ungrouped first, then the groups in dragged order"
+    );
+
+    for target_id in ids {
+        delete_target(&pool, target_id).await;
+    }
+}
+
 /// Exercises the history-strip `has(?, target_id)` query site and the
 /// `DateTime → i64` deserialization in its `SELECT`. Either bug breaks this
 /// test with a 503-equivalent error.

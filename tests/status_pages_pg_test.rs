@@ -48,6 +48,16 @@ fn component(target_id: Uuid) -> NewStatusPageComponent {
     }
 }
 
+async fn component_ids(store: &PgStatusPageStore, org: OrgId, page: StatusPageId) -> Vec<Uuid> {
+    store
+        .list_components(org, page)
+        .await
+        .unwrap()
+        .iter()
+        .map(|c| c.target_id)
+        .collect()
+}
+
 /// Two owner-orgs (one user each). Returns `(org_a, org_b, user_a, user_b)`.
 async fn two_orgs(pool: &sqlx::PgPool, tag: &str) -> (OrgId, OrgId, UserId, UserId) {
     let user_a = make_user(pool, tag).await;
@@ -715,6 +725,92 @@ async fn component_curation_crud_and_reorder_live_pg() {
 
     assert!(store.remove_component(org_a, p.id, t2, None).await.unwrap());
     assert_eq!(store.list_components(org_a, p.id).await.unwrap().len(), 2);
+
+    cleanup(&pool, &[org_a, _org_b], &[user_a, user_b]).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL — run via DATABASE_URL=... cargo test -- --ignored"]
+async fn grouped_components_keep_the_order_they_were_dragged_into_live_pg() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (org_a, _org_b, user_a, user_b) = two_orgs(&pool, "sp-order").await;
+    let store = PgStatusPageStore::new(pool.clone());
+    let p = store
+        .create(
+            org_a,
+            page(&unique_slug("order")),
+            WriteSource::Ui,
+            i64::MAX,
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let ns1 = make_target(&pool, org_a, "ns1").await;
+    let ns2 = make_target(&pool, org_a, "ns2").await;
+    let site = make_target(&pool, org_a, "site").await;
+    let clients = make_target(&pool, org_a, "clients").await;
+    for (t, group) in [
+        (ns1, "DNS"),
+        (ns2, "DNS"),
+        (site, "NQUARE"),
+        (clients, "NQUARE"),
+    ] {
+        store
+            .add_component(
+                org_a,
+                p.id,
+                NewStatusPageComponent {
+                    public_group: Some(group.into()),
+                    ..component(t)
+                },
+                i64::MAX,
+                None,
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        component_ids(&store, org_a, p.id).await,
+        vec![ns1, ns2, clients, site],
+        "equal sort_order falls back to group name, then monitor name"
+    );
+
+    store
+        .reorder_components(org_a, p.id, &[site, clients, ns1, ns2])
+        .await
+        .unwrap();
+    assert_eq!(
+        component_ids(&store, org_a, p.id).await,
+        vec![site, clients, ns1, ns2]
+    );
+
+    // An ungrouped component is orderable like any other, not pinned to the end.
+    let notes = make_target(&pool, org_a, "notes").await;
+    store
+        .add_component(org_a, p.id, component(notes), i64::MAX, None)
+        .await
+        .unwrap();
+    store
+        .reorder_components(org_a, p.id, &[notes, site, clients, ns1, ns2])
+        .await
+        .unwrap();
+    assert_eq!(
+        component_ids(&store, org_a, p.id).await,
+        vec![notes, site, clients, ns1, ns2]
+    );
+
+    // A row dropped inside another group rejoins its own rather than splitting it.
+    store
+        .reorder_components(org_a, p.id, &[notes, site, ns1, clients, ns2])
+        .await
+        .unwrap();
+    assert_eq!(
+        component_ids(&store, org_a, p.id).await,
+        vec![notes, site, clients, ns1, ns2]
+    );
 
     cleanup(&pool, &[org_a, _org_b], &[user_a, user_b]).await;
 }

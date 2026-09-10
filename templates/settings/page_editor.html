@@ -552,12 +552,26 @@
       }
       let savedOrder = onPageIds().join(',');
       let orderTimer = null;
+      // Grouped components render as one block, so a drop outside a row's own
+      // group settles elsewhere; replay the stored order or the editor lies.
+      async function replayStoredOrder() {
+        const stored = await (await api('GET', '/api/v1/status-pages/' + id + '/components')).json();
+        const anchor = firstOff();
+        stored.forEach((c) => {
+          const tr = rowsBody.querySelector('tr[data-target-id="' + c.target_id + '"]');
+          if (tr) rowsBody.insertBefore(tr, anchor);
+        });
+        savedOrder = onPageIds().join(',');
+      }
       async function persistOrder() {
         const ids = onPageIds();
-        const key = ids.join(',');
-        if (key === savedOrder) return;
-        try { await api('POST', '/api/v1/status-pages/' + id + '/components/reorder', { target_ids: ids }); savedOrder = key; renderBadgeList(); ok('order saved'); }
-        catch (m) { err(m); }
+        if (ids.join(',') === savedOrder) return;
+        try {
+          await api('POST', '/api/v1/status-pages/' + id + '/components/reorder', { target_ids: ids });
+          await replayStoredOrder();
+          renderBadgeList();
+          ok('order saved');
+        } catch (m) { err(m); }
       }
       function scheduleOrder() { clearTimeout(orderTimer); orderTimer = setTimeout(persistOrder, 400); }
 
@@ -642,7 +656,12 @@
             if (!toggle.checked) return;
             const body = {};
             body[input.dataset.field] = input.type === 'checkbox' ? input.checked : (input.value || null);
-            try { await api('PATCH', '/api/v1/status-pages/' + id + '/components/' + tid, body); renderBadgeList(); refreshGroupOptions(); } catch (m) { err(m); }
+            try {
+              await api('PATCH', '/api/v1/status-pages/' + id + '/components/' + tid, body);
+              if (input.dataset.field === 'public_group') await replayStoredOrder();
+              renderBadgeList();
+              refreshGroupOptions();
+            } catch (m) { err(m); }
           });
         });
       });
