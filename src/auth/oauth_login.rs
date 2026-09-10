@@ -149,6 +149,8 @@ pub struct RemoteIdentity {
 #[derive(Debug, Clone)]
 pub struct ResolvedIdentity {
     pub user_id: UserId,
+    /// `None` for a fresh user whose org was deferred, and for an existing
+    /// account that holds no live membership.
     pub signup_org_id: Option<OrgId>,
     pub is_new_user: bool,
     /// `deleted_at` when this sign-in landed on a soft-deleted account. The
@@ -185,16 +187,27 @@ pub(crate) async fn fetch_limited(
     Ok(collected)
 }
 
+/// Whether a brand-new user leaves phase C owning a personal org.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignupOrg {
+    Create,
+    /// The sign-in carries an invitation: the org they join is the one they
+    /// asked for, and a personal org is created afterwards only if the accept
+    /// does not land.
+    Defer,
+}
+
 /// Phase C of the callback. Find-or-create the user, link the identity, and —
-/// for fresh users — create the signup org plus the owner membership. A
-/// soft-deleted account stays deleted here and is reported via
-/// `pending_deletion`. Caller follows with `session::create`. All work runs
-/// inside one tx, no upstream calls.
+/// for fresh users on [`SignupOrg::Create`] — create the signup org plus the
+/// owner membership. A soft-deleted account stays deleted here and is
+/// reported via `pending_deletion`. Caller follows with `session::create`.
+/// All work runs inside one tx, no upstream calls.
 pub async fn upsert_identity_and_signup_org(
     pool: &PgPool,
     provider: OauthProvider,
     identity: &RemoteIdentity,
     admission: crate::security::Admission,
+    signup_org: SignupOrg,
 ) -> Result<ResolvedIdentity> {
     let mut tx = pool.begin().await.context("phase C: begin tx")?;
 
@@ -340,8 +353,9 @@ pub async fn upsert_identity_and_signup_org(
         });
     }
 
-    // 3. Brand-new user. Insert user, identity, signup org + owner
-    //    membership all in this tx so a rollback leaves zero orphans.
+    // 3. Brand-new user. Insert user, identity, and (unless deferred) signup
+    //    org + owner membership all in this tx so a rollback leaves zero
+    //    orphans.
     //
     //    The admission verdict is spent here and nowhere earlier: branches 1
     //    and 2 above are existing accounts, and an address that joined before
@@ -373,20 +387,25 @@ pub async fn upsert_identity_and_signup_org(
     .await
     .context("phase C: insert identity")?;
 
-    let org_id =
-        crate::storage::orgs::create_signup_org_in_tx(&mut tx, UserId(new_user_id)).await?;
-
-    sqlx::query("UPDATE users SET signup_org_id = $1 WHERE id = $2")
-        .bind(org_id.0)
-        .bind(new_user_id)
-        .execute(&mut *tx)
-        .await
-        .context("phase C: set signup_org_id")?;
+    let signup_org_id = match signup_org {
+        SignupOrg::Create => {
+            let org_id =
+                crate::storage::orgs::create_signup_org_in_tx(&mut tx, UserId(new_user_id)).await?;
+            sqlx::query("UPDATE users SET signup_org_id = $1 WHERE id = $2")
+                .bind(org_id.0)
+                .bind(new_user_id)
+                .execute(&mut *tx)
+                .await
+                .context("phase C: set signup_org_id")?;
+            Some(org_id)
+        }
+        SignupOrg::Defer => None,
+    };
 
     tx.commit().await.context("phase C: commit (new user)")?;
     Ok(ResolvedIdentity {
         user_id: UserId(new_user_id),
-        signup_org_id: Some(org_id),
+        signup_org_id,
         is_new_user: true,
         pending_deletion: None,
         newly_linked: false,

@@ -7,8 +7,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::domain::{AppTheme, DisplayPrefs, OrgId, TimeFormat, UserId};
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use crate::security::EmailRisk;
+use crate::storage::locks::{advisory_xact_lock, signup_lock_key, user_delete_lock_key};
 
 /// Any user at all, soft-deleted included, so first-run seeding stays one-shot.
 pub async fn any_exist(pool: &PgPool) -> Result<bool> {
@@ -168,13 +169,15 @@ pub async fn create_invited_user(
     Ok((UserId(id), false))
 }
 
-/// Returns the signup org only when it (a) is set and (b) still exists.
-/// A user who soft-deleted their signup org keeps the stale column value;
-/// the join filters it out so callers don't anchor pages on a tombstone.
+/// Returns the signup org only when it (a) is set, (b) still exists and
+/// (c) the user still belongs to it. The column goes stale when the org is
+/// soft-deleted or the user is removed from it; the joins filter both so
+/// callers don't anchor a session on an org the user cannot open.
 pub async fn get_signup_org_id(pool: &PgPool, user: UserId) -> Result<Option<OrgId>> {
     let row: Option<(Uuid,)> = sqlx::query_as(
         "SELECT u.signup_org_id FROM users u \
          JOIN organizations o ON o.id = u.signup_org_id \
+         JOIN memberships m ON m.user_id = u.id AND m.org_id = u.signup_org_id \
          WHERE u.id = $1 AND u.deleted_at IS NULL AND o.deleted_at IS NULL",
     )
     .bind(user.0)
@@ -192,4 +195,63 @@ pub async fn resolve_signup_org(pool: &PgPool, user: UserId) -> Result<Option<Or
         return Ok(Some(id));
     }
     crate::storage::orgs::oldest_membership_for_user(pool, user).await
+}
+
+/// The org a session can open in, created when the user holds none. Covers
+/// an invitee whose invitation died between sign-in and accept, and an
+/// account whose last membership was removed. The user-delete lock is taken
+/// first: account deletion holds it while it decides which orgs go down with
+/// the user, so an org created here is either already in that list or waits
+/// until the deletion has committed and is refused. The signup lock then
+/// serialises the membership check with the create, so two concurrent
+/// sign-ins cannot each open a personal org. `created == false` means an org
+/// already existed.
+pub async fn ensure_signup_org(pool: &PgPool, user: UserId) -> Result<(OrgId, bool)> {
+    if let Some(id) = resolve_signup_org(pool, user).await? {
+        return Ok((id, false));
+    }
+    let mut tx = pool.begin().await.context("ensure_signup_org: begin")?;
+    advisory_xact_lock(&mut *tx, &user_delete_lock_key(user))
+        .await
+        .context("ensure_signup_org: user-delete lock")?;
+    advisory_xact_lock(&mut *tx, signup_lock_key())
+        .await
+        .context("ensure_signup_org: signup lock")?;
+    let live: Option<(Uuid,)> =
+        sqlx::query_as("SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL")
+            .bind(user.0)
+            .fetch_optional(&mut *tx)
+            .await
+            .context("ensure_signup_org: user row")?;
+    if live.is_none() {
+        tx.rollback().await.ok();
+        return Err(AppError::Unauthorized);
+    }
+    if let Some(id) = crate::storage::orgs::oldest_membership_for_user(&mut *tx, user).await? {
+        tx.rollback().await.ok();
+        return Ok((id, false));
+    }
+    let org_id = crate::storage::orgs::create_signup_org_in_tx(&mut tx, user).await?;
+    sqlx::query("UPDATE users SET signup_org_id = $1 WHERE id = $2")
+        .bind(org_id.0)
+        .bind(user.0)
+        .execute(&mut *tx)
+        .await
+        .context("ensure_signup_org: set signup_org_id")?;
+    tx.commit().await.context("ensure_signup_org: commit")?;
+    Ok((org_id, true))
+}
+
+/// The org a sign-in opens in when no invitation was joined. An account on
+/// its way out gets whatever it still holds and never a new org; anyone else
+/// gets their own, created on demand.
+pub async fn session_org(
+    pool: &PgPool,
+    user: UserId,
+    pending_deletion: bool,
+) -> Result<Option<OrgId>> {
+    if pending_deletion {
+        return resolve_signup_org(pool, user).await;
+    }
+    Ok(Some(ensure_signup_org(pool, user).await?.0))
 }

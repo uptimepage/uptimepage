@@ -73,7 +73,10 @@ pub async fn is_active_member(pool: &PgPool, user: UserId, org: OrgId) -> Result
 ///    a meaningful landing spot — better than 403 with nowhere to go.
 ///  * Robust against slug rename — does not rely on inferring identity
 ///    from the slug's shape.
-pub async fn oldest_membership_for_user(pool: &PgPool, user: UserId) -> Result<Option<OrgId>> {
+pub async fn oldest_membership_for_user<'e, E: sqlx::PgExecutor<'e>>(
+    exec: E,
+    user: UserId,
+) -> Result<Option<OrgId>> {
     let row: Option<(Uuid,)> = sqlx::query_as(
         r#"SELECT m.org_id FROM memberships m
            JOIN organizations o ON o.id = m.org_id
@@ -82,7 +85,7 @@ pub async fn oldest_membership_for_user(pool: &PgPool, user: UserId) -> Result<O
            LIMIT 1"#,
     )
     .bind(user.0)
-    .fetch_optional(pool)
+    .fetch_optional(exec)
     .await
     .map_err(|e| AppError::Other(anyhow::anyhow!("oldest_membership_for_user: {e}")))?;
     Ok(row.map(|(id,)| OrgId(id)))

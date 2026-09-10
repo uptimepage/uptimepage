@@ -23,7 +23,7 @@ use crate::auth::{
     url::safe_redirect_target,
 };
 use crate::config::OauthClientConfig;
-use crate::domain::UserId;
+use crate::domain::{OrgId, UserId};
 use crate::error::{AppError, Result};
 use crate::observability::metrics::names;
 use crate::web::CurrentUser;
@@ -639,8 +639,8 @@ async fn finish_login(
     }
 
     // Phase C: materialise user + identity, auto-create signup org for new
-    // users, and resolve their default-org id for the session row. Fresh
-    // transaction; no upstream calls.
+    // users unless the dance carries an invitation, and resolve their
+    // default-org id for the session row. Fresh transaction; no upstream calls.
     // Judged here, enforced inside phase C on the brand-new-user branch only:
     // an account that predates its domain landing on a list keeps working.
     let admission = match identity.verified_email.as_deref() {
@@ -656,8 +656,12 @@ async fn finish_login(
         // put a DNS round trip on every returning sign-in.
         Some(_) | None => crate::security::Admission::Clear,
     };
+    let signup_org = match consumed.invitation_id {
+        Some(_) => oauth_login::SignupOrg::Defer,
+        None => oauth_login::SignupOrg::Create,
+    };
     let resolved = match oauth_login::upsert_identity_and_signup_org(
-        pool, provider, &identity, admission,
+        pool, provider, &identity, admission, signup_org,
     )
     .await
     {
@@ -725,13 +729,6 @@ async fn finish_login(
             "sign-in on an account scheduled for deletion; routing to the restore choice"
         );
     }
-    if resolved.is_new_user
-        && let Some(org) = resolved.signup_org_id
-        && let Some(email) = identity.verified_email.as_deref()
-    {
-        seed_owner_email_channel(&state, org, resolved.user_id, email).await;
-    }
-
     // Nobody asked for this in so many words, so the account is told.
     if resolved.is_new_user {
         crate::storage::oauth_identities::record_event(
@@ -772,14 +769,48 @@ async fn finish_login(
     }
 
     // The dance carried an invitation — redeem it now, server-side; the
-    // session then opens directly in the joined org.
+    // session then opens directly in the joined org. A user left with no org
+    // at all gets a personal one here: an invitee whose invitation died before
+    // the accept still holds a proven identity, so the sign-in stands.
     let joined = match consumed.invitation_id {
         Some(id) => {
             crate::api::handlers::invitations::try_auto_accept(&state, resolved.user_id, id).await
         }
         None => None,
     };
-    let active_org = joined.as_ref().map(|j| j.org_id).or(resolved.signup_org_id);
+    let (active_org, created_org) = match landing(joined.as_ref().map(|j| j.org_id), &resolved) {
+        Landing::Org { org, fresh } => (Some(org), fresh.then_some(org)),
+        Landing::NoOrg => (None, None),
+        Landing::OpenPersonalOrg => {
+            match crate::storage::users::ensure_signup_org(pool, resolved.user_id).await {
+                Ok((org, created)) => (Some(org), created.then_some(org)),
+                Err(e) => {
+                    tracing::warn!(error = %e, user_id = %resolved.user_id.0, "oauth callback: opening a personal org failed");
+                    if let Err(err) = login_audit::record(
+                        pool,
+                        method,
+                        LoginAttempt {
+                            user_id: Some(resolved.user_id),
+                            success: false,
+                            ip_hash: ip_hash.as_deref(),
+                            user_agent_hash: ua_hash.as_deref(),
+                            failure_reason: Some("signup_org_failed"),
+                        },
+                    )
+                    .await
+                    {
+                        tracing::warn!(error = %err, "login_audit write failed (non-fatal)");
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    };
+    if let Some(org) = created_org
+        && let Some(email) = account_email(pool, resolved.user_id).await
+    {
+        seed_owner_email_channel(&state, org, resolved.user_id, &email).await;
+    }
 
     // Session fixation: drop any pre-login session bound to this browser
     // before minting the new one. Without this an attacker who pre-seeded a
@@ -885,6 +916,29 @@ async fn finish_login(
     Ok(Redirect::to(&redirect).into_response())
 }
 
+/// Where a finished sign-in opens, read off what phase C and the invitation
+/// accept left behind.
+#[derive(Debug, PartialEq, Eq)]
+enum Landing {
+    /// `fresh` when phase C opened this org during the same sign-in.
+    Org { org: OrgId, fresh: bool },
+    /// No live membership anywhere: open a personal org before the session.
+    OpenPersonalOrg,
+    /// Deletion pending and nothing held; the restore choice needs no org.
+    NoOrg,
+}
+
+fn landing(joined: Option<OrgId>, resolved: &oauth_login::ResolvedIdentity) -> Landing {
+    match joined.or(resolved.signup_org_id) {
+        Some(org) => Landing::Org {
+            org,
+            fresh: joined.is_none() && resolved.is_new_user,
+        },
+        None if resolved.pending_deletion.is_some() => Landing::NoOrg,
+        None => Landing::OpenPersonalOrg,
+    }
+}
+
 pub async fn logout(
     State(state): State<AppState>,
     cookies: Cookies,
@@ -916,4 +970,96 @@ pub async fn logout_all(
     }
     cookies.add(session_store::clear_cookie(&state.cfg.auth.session));
     Ok(Redirect::to("/login").into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn resolved(
+        signup_org_id: Option<OrgId>,
+        is_new_user: bool,
+        pending_deletion: bool,
+    ) -> oauth_login::ResolvedIdentity {
+        oauth_login::ResolvedIdentity {
+            user_id: UserId(uuid::Uuid::now_v7()),
+            signup_org_id,
+            is_new_user,
+            pending_deletion: pending_deletion.then(Utc::now),
+            newly_linked: false,
+        }
+    }
+
+    fn org() -> OrgId {
+        OrgId(uuid::Uuid::now_v7())
+    }
+
+    #[test]
+    fn a_plain_signup_opens_in_the_org_phase_c_created() {
+        let personal = org();
+        assert_eq!(
+            landing(None, &resolved(Some(personal), true, false)),
+            Landing::Org {
+                org: personal,
+                fresh: true
+            }
+        );
+    }
+
+    #[test]
+    fn an_accepted_invitation_opens_in_the_joined_org_without_a_fresh_one() {
+        let team = org();
+        assert_eq!(
+            landing(Some(team), &resolved(None, true, false)),
+            Landing::Org {
+                org: team,
+                fresh: false
+            }
+        );
+        assert_eq!(
+            landing(Some(team), &resolved(Some(org()), false, false)),
+            Landing::Org {
+                org: team,
+                fresh: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_user_holding_no_org_gets_a_personal_one() {
+        assert_eq!(
+            landing(None, &resolved(None, true, false)),
+            Landing::OpenPersonalOrg
+        );
+        assert_eq!(
+            landing(None, &resolved(None, false, false)),
+            Landing::OpenPersonalOrg
+        );
+    }
+
+    #[test]
+    fn an_existing_user_keeps_their_org_and_seeds_nothing() {
+        let own = org();
+        assert_eq!(
+            landing(None, &resolved(Some(own), false, false)),
+            Landing::Org {
+                org: own,
+                fresh: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_pending_deletion_never_opens_a_new_org() {
+        let own = org();
+        assert_eq!(
+            landing(None, &resolved(Some(own), false, true)),
+            Landing::Org {
+                org: own,
+                fresh: false
+            }
+        );
+        assert_eq!(landing(None, &resolved(None, false, true)), Landing::NoOrg);
+    }
 }

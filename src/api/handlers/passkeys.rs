@@ -372,10 +372,10 @@ async fn complete_login(
         Some(id) => crate::api::handlers::invitations::try_auto_accept(state, user_id, id).await,
         None => None,
     };
-    let active_org = joined
-        .as_ref()
-        .map(|j| j.org_id)
-        .or(crate::storage::users::resolve_signup_org(pool, user_id).await?);
+    let active_org = match joined.as_ref().map(|j| j.org_id) {
+        Some(org) => Some(org),
+        None => crate::storage::users::session_org(pool, user_id, pending_deletion).await?,
+    };
 
     let cookie_name = state.cfg.auth.session.cookie_name.as_str();
     if let Some(prev) = cookies.get(cookie_name).map(|c| c.value().to_string())

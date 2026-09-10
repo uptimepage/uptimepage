@@ -610,9 +610,7 @@ async fn open_session_for(
     }
     let active_org = match joined.as_ref().map(|j| j.org_id) {
         Some(org) => Some(org),
-        // Resolving here also un-breaks plain magic logins: CurrentOrg
-        // rejects a session whose active_org_id is NULL.
-        None => crate::storage::users::resolve_signup_org(pool, user_id).await?,
+        None => crate::storage::users::session_org(pool, user_id, pending_deletion).await?,
     };
 
     let cookie_name = state.cfg.auth.session.cookie_name.as_str();

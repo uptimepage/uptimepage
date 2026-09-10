@@ -140,6 +140,7 @@ async fn upsert_creates_user_and_signup_org_for_new_identity() {
         OauthProvider::Github,
         &identity,
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("upsert");
@@ -162,6 +163,7 @@ async fn upsert_creates_user_and_signup_org_for_new_identity() {
         OauthProvider::Github,
         &identity,
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("re-upsert");
@@ -201,6 +203,7 @@ async fn upsert_links_existing_user_on_email_match() {
         OauthProvider::Github,
         &identity,
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("upsert");
@@ -266,6 +269,7 @@ async fn upsert_reports_pending_deletion_without_restoring_on_reauth() {
         OauthProvider::Github,
         &identity,
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("soft-deleted identity resolves on re-auth");
@@ -318,6 +322,7 @@ async fn upsert_links_a_second_provider_and_reports_it_for_the_notice() {
         OauthProvider::Github,
         &github_id,
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("github signup");
@@ -337,6 +342,7 @@ async fn upsert_links_a_second_provider_and_reports_it_for_the_notice() {
         OauthProvider::Google,
         &google_id,
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("google link");
@@ -360,6 +366,7 @@ async fn upsert_links_a_second_provider_and_reports_it_for_the_notice() {
         OauthProvider::Google,
         &google_id,
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("google re-auth");
@@ -391,6 +398,7 @@ async fn an_identity_on_file_outranks_a_matching_address() {
             display_name: None,
         },
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("owner signup");
@@ -414,6 +422,7 @@ async fn an_identity_on_file_outranks_a_matching_address() {
             display_name: None,
         },
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("identity match");
@@ -459,6 +468,7 @@ async fn upsert_matches_tombstoned_user_by_email_on_new_provider() {
         OauthProvider::Github,
         &github_id,
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("github signup");
@@ -479,6 +489,7 @@ async fn upsert_matches_tombstoned_user_by_email_on_new_provider() {
         OauthProvider::Google,
         &google_id,
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("google email-match");
@@ -518,6 +529,7 @@ async fn link_adds_a_second_provider_to_a_signed_in_account() {
         OauthProvider::Github,
         &github_id,
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("github signup");
@@ -558,6 +570,7 @@ async fn link_adds_a_second_provider_to_a_signed_in_account() {
         OauthProvider::Gitlab,
         &gitlab_id,
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("gitlab sign-in");
@@ -588,6 +601,7 @@ async fn link_refuses_a_provider_account_that_opens_someone_else() {
         OauthProvider::Github,
         &mk("a-1", "a@example.test"),
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("a signup");
@@ -596,6 +610,7 @@ async fn link_refuses_a_provider_account_that_opens_someone_else() {
         OauthProvider::Github,
         &mk("b-1", "b@example.test"),
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("b signup");
@@ -644,6 +659,7 @@ async fn unlink_holds_the_last_way_in_only_when_email_cannot_open_it() {
         OauthProvider::Github,
         &github_id,
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("github signup");
@@ -741,6 +757,7 @@ async fn unlink_without_a_subject_cannot_empty_the_account() {
         OauthProvider::Github,
         &first,
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("github signup");
@@ -825,6 +842,7 @@ async fn unlink_reports_a_method_that_is_not_on_the_account() {
         OauthProvider::Github,
         &github_id,
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("github signup");
@@ -888,6 +906,7 @@ async fn upsert_reports_pending_deletion_on_google_reauth() {
         OauthProvider::Google,
         &identity,
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("google re-auth resolves");
@@ -1280,6 +1299,7 @@ async fn a_disabled_provider_is_a_row_not_a_way_in() {
             display_name: None,
         },
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("signup");
@@ -1353,6 +1373,7 @@ async fn signup_and_a_later_link_both_leave_a_trail() {
             display_name: None,
         },
         uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
     )
     .await
     .expect("signup");
@@ -1446,6 +1467,207 @@ async fn the_migration_gives_older_identities_their_signup_row() {
             .expect("an account older than the table still has provenance");
     assert_eq!(provider, "github");
     assert_eq!(origin, "signup");
+
+    pool.close().await;
+    drop_pg(&name).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn deferred_signup_leaves_an_invitee_with_only_the_joined_org() {
+    let Some((db_url, name)) = fresh_pg().await else {
+        return;
+    };
+    let pool = open_pool(&db_url).await;
+    MIGRATOR.run(&pool).await.expect("migrate");
+
+    let inviter = common::make_user(&pool, "inviter").await;
+    let team = uptimepage::storage::create_org_with_owner(
+        &pool,
+        inviter,
+        &common::unique_slug("team"),
+        "Team",
+    )
+    .await
+    .expect("create team org")
+    .expect("slug free");
+
+    let identity = RemoteIdentity {
+        provider_user_id: "invitee-1".into(),
+        provider_username: Some("invitee".into()),
+        verified_email: Some("invitee@example.test".into()),
+        display_name: None,
+    };
+    let resolved = oauth_login::upsert_identity_and_signup_org(
+        &pool,
+        OauthProvider::Github,
+        &identity,
+        uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Defer,
+    )
+    .await
+    .expect("upsert");
+    assert!(resolved.is_new_user);
+    assert!(resolved.signup_org_id.is_none());
+    assert_eq!(memberships_of(&pool, resolved.user_id).await, 0);
+    assert_eq!(accounts_owned_by(&pool, resolved.user_id).await, 0);
+
+    uptimepage::storage::orgs::add_member(
+        &pool,
+        team.id,
+        inviter,
+        resolved.user_id,
+        uptimepage::domain::Role::Member,
+        10,
+    )
+    .await
+    .expect("join team");
+
+    let (org, created) = uptimepage::storage::users::ensure_signup_org(&pool, resolved.user_id)
+        .await
+        .expect("ensure");
+    assert_eq!(org, team.id);
+    assert!(!created);
+    assert_eq!(memberships_of(&pool, resolved.user_id).await, 1);
+    assert_eq!(accounts_owned_by(&pool, resolved.user_id).await, 0);
+
+    let again = oauth_login::upsert_identity_and_signup_org(
+        &pool,
+        OauthProvider::Github,
+        &identity,
+        uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Defer,
+    )
+    .await
+    .expect("re-upsert");
+    assert!(!again.is_new_user);
+    assert_eq!(again.signup_org_id, Some(team.id));
+
+    pool.close().await;
+    drop_pg(&name).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn deferred_signup_gets_a_personal_org_when_the_invitation_does_not_land() {
+    let Some((db_url, name)) = fresh_pg().await else {
+        return;
+    };
+    let pool = open_pool(&db_url).await;
+    MIGRATOR.run(&pool).await.expect("migrate");
+
+    let identity = RemoteIdentity {
+        provider_user_id: "invitee-2".into(),
+        provider_username: None,
+        verified_email: Some("stranded@example.test".into()),
+        display_name: None,
+    };
+    let resolved = oauth_login::upsert_identity_and_signup_org(
+        &pool,
+        OauthProvider::Github,
+        &identity,
+        uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Defer,
+    )
+    .await
+    .expect("upsert");
+    assert!(resolved.signup_org_id.is_none());
+
+    let (org, created) = uptimepage::storage::users::ensure_signup_org(&pool, resolved.user_id)
+        .await
+        .expect("ensure");
+    assert!(created);
+    assert_eq!(memberships_of(&pool, resolved.user_id).await, 1);
+    assert_eq!(accounts_owned_by(&pool, resolved.user_id).await, 1);
+    let (role,): (String,) =
+        sqlx::query_as("SELECT role FROM memberships WHERE user_id = $1 AND org_id = $2")
+            .bind(resolved.user_id.0)
+            .bind(org.0)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(role, "owner");
+    assert_eq!(
+        uptimepage::storage::users::get_signup_org_id(&pool, resolved.user_id)
+            .await
+            .unwrap(),
+        Some(org)
+    );
+
+    let (same, created_twice) =
+        uptimepage::storage::users::ensure_signup_org(&pool, resolved.user_id)
+            .await
+            .expect("ensure again");
+    assert_eq!(same, org);
+    assert!(!created_twice);
+    assert_eq!(memberships_of(&pool, resolved.user_id).await, 1);
+
+    pool.close().await;
+    drop_pg(&name).await;
+}
+
+async fn memberships_of(pool: &sqlx::PgPool, user: UserId) -> i64 {
+    sqlx::query_as::<_, (i64,)>("SELECT count(*) FROM memberships WHERE user_id = $1")
+        .bind(user.0)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+        .0
+}
+
+async fn accounts_owned_by(pool: &sqlx::PgPool, user: UserId) -> i64 {
+    sqlx::query_as::<_, (i64,)>("SELECT count(*) FROM accounts WHERE owner_user_id = $1")
+        .bind(user.0)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+        .0
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_user_removed_from_their_signup_org_gets_a_new_personal_org() {
+    let Some((db_url, name)) = fresh_pg().await else {
+        return;
+    };
+    let pool = open_pool(&db_url).await;
+    MIGRATOR.run(&pool).await.expect("migrate");
+
+    let identity = RemoteIdentity {
+        provider_user_id: "removed-1".into(),
+        provider_username: None,
+        verified_email: Some("removed@example.test".into()),
+        display_name: None,
+    };
+    let resolved = oauth_login::upsert_identity_and_signup_org(
+        &pool,
+        OauthProvider::Github,
+        &identity,
+        uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
+    )
+    .await
+    .expect("upsert");
+    let first = resolved.signup_org_id.expect("signup org");
+
+    sqlx::query("DELETE FROM memberships WHERE user_id = $1")
+        .bind(resolved.user_id.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        uptimepage::storage::users::resolve_signup_org(&pool, resolved.user_id)
+            .await
+            .unwrap(),
+        None
+    );
+    let (org, created) = uptimepage::storage::users::ensure_signup_org(&pool, resolved.user_id)
+        .await
+        .expect("ensure");
+    assert!(created);
+    assert_ne!(org, first);
+    assert_eq!(memberships_of(&pool, resolved.user_id).await, 1);
 
     pool.close().await;
     drop_pg(&name).await;
