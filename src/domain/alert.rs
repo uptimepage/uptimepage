@@ -3,7 +3,7 @@
 //! per-target firing policy — the transport and its secrets live in
 //! `notification_channels`, not here.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -23,7 +23,36 @@ pub struct AlertBinding {
 #[schema(value_type = Vec<AlertBinding>)]
 pub struct TargetAlerts(pub Vec<AlertBinding>);
 
+/// Request-side shape. The stored and agent-facing `AlertBinding` stays
+/// lenient so a key added later never breaks an agent still on the old build.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BindingInput {
+    channel_id: Uuid,
+}
+
 impl TargetAlerts {
+    pub(crate) fn deserialize_strict<'de, D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Vec::<BindingInput>::deserialize(d).map(Self::from_inputs)
+    }
+
+    pub(crate) fn deserialize_strict_opt<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Option<Self>, D::Error> {
+        Option::<Vec<BindingInput>>::deserialize(d).map(|v| v.map(Self::from_inputs))
+    }
+
+    fn from_inputs(inputs: Vec<BindingInput>) -> Self {
+        Self(
+            inputs
+                .into_iter()
+                .map(|b| AlertBinding {
+                    channel_id: b.channel_id,
+                })
+                .collect(),
+        )
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }

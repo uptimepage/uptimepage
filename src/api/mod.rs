@@ -3,6 +3,7 @@ pub mod docs;
 pub mod error;
 pub mod handlers;
 pub mod idempotency;
+pub mod json;
 pub mod json_arc;
 pub mod middleware;
 pub mod page;

@@ -1,5 +1,6 @@
 use super::ALLOWED_SCHEMES;
 use super::dispatch::flow_capable_set;
+use std::collections::HashSet;
 use std::net::IpAddr;
 
 use url::Host;
@@ -110,8 +111,11 @@ pub(crate) async fn ensure_flow_regions_covered(
     if !matches!(check, CheckSpec::Flow(_)) {
         return Ok(());
     }
-    let capable = flow_capable_set(state).await?;
-    if regions.iter().any(|r| capable.contains(r)) {
+    flow_covered(&flow_capable_set(state).await?, check, regions)
+}
+
+fn flow_covered(capable: &HashSet<String>, check: &CheckSpec, regions: &[String]) -> Result<()> {
+    if !matches!(check, CheckSpec::Flow(_)) || regions.iter().any(|r| capable.contains(r)) {
         return Ok(());
     }
     Err(AppError::unprocessable(
@@ -119,6 +123,78 @@ pub(crate) async fn ensure_flow_regions_covered(
         "no flow-capable agent runs in this monitor's region; enable the flow \
          engine on an agent there before creating the monitor",
     ))
+}
+
+/// What a create needs to know about regions, read once per request so a bulk
+/// of thousands does not ask the database per item.
+pub(crate) struct RegionSnapshot {
+    available: Vec<String>,
+    preferred: Vec<String>,
+    flow_capable: HashSet<String>,
+    default_region: String,
+}
+
+impl RegionSnapshot {
+    pub(crate) async fn load(state: &AppState) -> Result<Self> {
+        Ok(Self {
+            available: state.target_store.available_regions().await?,
+            preferred: state.target_store.default_selected_regions().await?,
+            flow_capable: flow_capable_set(state).await?,
+            default_region: state.cfg.scheduler.effective_default_region().to_string(),
+        })
+    }
+
+    pub(crate) fn available_count(&self) -> usize {
+        self.available.len()
+    }
+
+    /// The set a create that names none gets. A flow only runs where an engine
+    /// exists, so the default-selected preference cannot be what leaves one
+    /// with nowhere to run: it falls back to the full catalog.
+    pub(crate) fn default_for(&self, check: &CheckSpec, max_regions: i32) -> Vec<String> {
+        let mut preferred = self.preferred.clone();
+        if matches!(check, CheckSpec::Flow(_)) {
+            preferred.retain(|r| self.flow_capable.contains(r));
+            if preferred.is_empty() {
+                preferred = self
+                    .available
+                    .iter()
+                    .filter(|r| self.flow_capable.contains(*r))
+                    .cloned()
+                    .collect();
+            }
+        }
+        default_region_set(preferred, max_regions, &self.default_region)
+    }
+
+    pub(crate) fn ensure_flow_covered(&self, check: &CheckSpec, regions: &[String]) -> Result<()> {
+        flow_covered(&self.flow_capable, check, regions)
+    }
+
+    /// A named set is refused rather than filtered: dropping a region would
+    /// leave the caller expecting coverage nobody has.
+    pub(crate) fn ensure_flow_runs_in_each(
+        &self,
+        check: &CheckSpec,
+        regions: &[String],
+    ) -> Result<()> {
+        if !matches!(check, CheckSpec::Flow(_)) {
+            return Ok(());
+        }
+        match regions
+            .iter()
+            .find(|r| !self.flow_capable.contains(r.as_str()))
+        {
+            Some(bad) => Err(AppError::unprocessable(
+                codes::NO_FLOW_CAPABLE_AGENT,
+                format!(
+                    "no flow-capable agent runs in {bad}; drop it from the region set \
+                     or enable the flow engine on an agent there"
+                ),
+            )),
+            None => Ok(()),
+        }
+    }
 }
 
 /// Abuse admission control for one user-supplied check. Every handler that
@@ -449,29 +525,25 @@ pub(crate) fn normalize_region_ids(requested: &[String]) -> Result<Vec<String>> 
 }
 
 /// Shared so naming regions at create time and setting them afterwards cannot
-/// drift into two ideas of a valid set.
+/// drift into two ideas of a valid set. Existence before the cap: a misspelt
+/// set must not read as a quota hit, nor be audited as one.
 pub(crate) async fn vet_requested_regions(
     state: &AppState,
     org: OrgId,
     requested: &[String],
+    snapshot: &RegionSnapshot,
 ) -> Result<Vec<String>> {
     let regions = normalize_region_ids(requested)?;
-    state
-        .quotas
-        .check_region_assignment(org, None, regions.len() as i64)
-        .await?;
-    let available: std::collections::HashSet<String> = state
-        .target_store
-        .available_regions()
-        .await?
-        .into_iter()
-        .collect();
-    if let Some(bad) = regions.iter().find(|r| !available.contains(*r)) {
+    if let Some(bad) = regions.iter().find(|r| !snapshot.available.contains(r)) {
         return Err(AppError::unprocessable(
             codes::REGION_INVALID,
             format!("unknown or disabled region: {bad}"),
         ));
     }
+    state
+        .quotas
+        .check_region_assignment(org, None, regions.len() as i64)
+        .await?;
     Ok(regions)
 }
 

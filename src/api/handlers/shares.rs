@@ -6,7 +6,7 @@
 //! re-copy the `/m/{token}` link (stored encrypted at rest). The public read
 //! surface those tokens unlock lives in `web::views::share`.
 
-use axum::Json;
+use crate::api::json::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use chrono::Utc;

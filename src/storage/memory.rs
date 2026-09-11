@@ -1196,6 +1196,7 @@ mod tests {
             renotify_interval_secs: 3600,
             group_name: None,
             owner_user_id: None,
+            regions: None,
         };
 
         let full: Vec<String> = (0..MAX_TAGS_PER_TARGET).map(|i| format!("t{i}")).collect();

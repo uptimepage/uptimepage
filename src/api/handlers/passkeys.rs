@@ -5,7 +5,7 @@
 //! challenge state behind that handle is deleted as it is read, so a replayed
 //! answer finds nothing.
 
-use axum::Json;
+use crate::api::json::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};

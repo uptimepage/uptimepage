@@ -877,6 +877,7 @@ fn a_creation_prompt_states_every_setting_it_would_apply() {
         renotify_interval_secs: 0,
         group_name: Some("API".into()),
         owner_user_id: None,
+        regions: None,
     };
     new.alerts = TargetAlerts(vec![AlertBinding {
         channel_id: Uuid::nil(),

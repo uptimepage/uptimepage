@@ -54,6 +54,7 @@ fn make(name: &str, tags: Vec<String>) -> NewTarget {
         renotify_interval_secs: 3600,
         group_name: None,
         owner_user_id: None,
+        regions: None,
     }
 }
 
@@ -80,6 +81,7 @@ fn make_flow(name: &str) -> NewTarget {
         renotify_interval_secs: 3600,
         group_name: None,
         owner_user_id: None,
+        regions: None,
     }
 }
 
@@ -166,6 +168,7 @@ async fn credentials_stored_as_ciphertext_envelope(pool: PgPool) {
         renotify_interval_secs: 3600,
         group_name: None,
         owner_user_id: None,
+        regions: None,
     };
 
     let created = store

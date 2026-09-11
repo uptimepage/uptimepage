@@ -359,15 +359,31 @@ Use a dedicated low-privilege test account, never a real or admin credential: th
   "tags": ["prod", "tier1"], // at most 50, each at most 50 characters, no blank
                              // and no control or invisible characters. Trimmed
                              // and de-duplicated before the count is applied.
-  "alerts": { /* optional, see below */ }
+  "regions": ["eu-frankfurt"], // optional; ids from GET /api/v1/regions. Omit to
+                             // take the default-selected set under the plan's
+                             // region cap. Every id must be enabled, the set
+                             // must fit the cap, and a heartbeat may name none.
+  "group_name": "API",       // optional, at most 50 characters; null clears
+  "owner_user_id": "…",      // optional member of the org; null clears
+  "alerts": [ /* optional, see below */ ],
+  "alert_confirmations": 2,   // see "Alert config" below, with
+  "notify_recovery": true     // renotify_interval_secs and region_policy
 }
 ```
 
-Server returns the full `Target` including `id` (UUIDv7), `created_at`, `updated_at`, and `write_source`.
+Server returns the full `Target` including `id` (UUIDv7), `created_at`, `updated_at`, and `write_source`. The assigned regions are read back from `GET /api/v1/targets/{id}/regions` and changed with `PUT` on the same path; a `regions` array that names an unknown or disabled id, or any id on a heartbeat, is `422 REGION_INVALID`, and one wider than the plan allows is `422 QUOTA_EXCEEDED`. A `POST /api/v1/targets/bulk` item takes the same field; an item without it shares the default set.
+
+A target `POST` or `PATCH` body may carry only the keys in this section.
+Anything else, a misspelt key or a read-only field echoed back from a `GET`
+such as `id` or `write_source`, is `422 INVALID_JSON` naming the key, so a
+setting under the wrong name fails loudly rather than silently leaving the
+default in place. A body that is not JSON at all is `400 INVALID_JSON`; one
+sent without `Content-Type: application/json` is `415 INVALID_CONTENT_TYPE`.
+The other resources still ignore a key they do not know.
 
 `write_source` is a read-only field recording where the resource was last
 written from: `ui`, `api`, or `terraform` (decided server-side from the
-request, never the body — sending it is ignored). It also appears on
+request, never the body). It also appears on
 notification channels and maintenance windows, and drives the "managed by"
 badge in the web UI. A write through any endpoint restamps it, so it reflects
 the most recent author.
@@ -391,7 +407,7 @@ target (incidents still open and show on status pages).
 "region_policy": "majority"
 ```
 
-- `channel_id` — id of a notification channel owned by the **same org**. A binding to an unknown or another tenant's channel is rejected.
+- `channel_id` — id of a notification channel owned by the **same org**. A binding to an unknown or another tenant's channel is rejected. It is the binding's only key; the firing policy is the monitor's `alert_confirmations` and `notify_recovery` below, and a per-binding key is `422`.
 - `alert_confirmations` — consecutive failing checks before an incident opens (and the same number of passing checks before it closes, which damps flapping). Default `2`, must be `>= 1`.
 - `notify_recovery` — when `true` (default), the recovery is announced to the monitor's channels. When `false`, recovery is silent.
 - `renotify_interval_secs` — seconds before the first reminder while an outage stays unacknowledged. Each further reminder doubles the gap, capped at a day, so a long outage nobody answers decays to a daily nudge. An interval already longer than a day keeps its own cadence. `0` disables reminders; otherwise must be `>= 60`. Default `3600`. Acknowledging or resolving the incident stops the reminders.
@@ -415,8 +431,8 @@ attempt cap; per-incident delivery state is visible at
 A `region_policy` of `{ "count": N }` where `N` is `0` or exceeds the
 available regions is `422 INVALID_REGION_POLICY`. A count within the catalog but
 wider than the regions one monitor is assigned is accepted and clamped to the
-regions that report, since regions are assigned on their own sub-resource and a
-monitor is often narrowed after it is created.
+regions that report, since a monitor's region set can be narrowed at any time
+after it is created.
 
 ### Validation errors
 

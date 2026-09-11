@@ -441,6 +441,7 @@ fn http_target(name: &str, owner: Option<UserId>) -> NewTarget {
         renotify_interval_secs: 3600,
         group_name: None,
         owner_user_id: owner.map(|u| u.0),
+        regions: None,
     }
 }
 
@@ -983,6 +984,7 @@ async fn update_org_slug_keeps_resources_reachable_by_id() {
         renotify_interval_secs: 3600,
         group_name: None,
         owner_user_id: None,
+        regions: None,
     };
     let target = store
         .create(org.id, new, WriteSource::Ui, i64::MAX, i64::MAX)

@@ -229,24 +229,6 @@ pub(crate) async fn flow_capable_set(
     Ok(capable)
 }
 
-/// Narrow an assigned region set to those that can run a flow. Regions that
-/// can't never pull the flow, so leaving them in skews its aggregate status.
-/// Pass-through for non-flow checks.
-pub(crate) async fn flow_restrict_regions(
-    state: &AppState,
-    check: &CheckSpec,
-    available: Vec<String>,
-) -> Result<Vec<String>> {
-    if !matches!(check, CheckSpec::Flow(_)) {
-        return Ok(available);
-    }
-    let capable = flow_capable_set(state).await?;
-    Ok(available
-        .into_iter()
-        .filter(|r| capable.contains(r.as_str()))
-        .collect())
-}
-
 pub(crate) async fn pick_flow_region(state: &AppState, prefer: &[String]) -> Result<String> {
     let capable: Vec<String> = flow_capable_set(state).await?.into_iter().collect();
     if capable.is_empty() {

@@ -142,13 +142,11 @@ curl -sS -X POST http://localhost:8080/api/v1/targets \
               "timeout":10000,"follow_redirects":false,"max_redirects":0,
               "expected_status":{"kind":"exact","value":200},
               "headers":{},"verify_tls":true},
-    "interval": 60, "enabled": true, "tags": [],
-    "public_status": true
+    "interval": 60, "enabled": true, "tags": []
   }'
 ```
 
-`public_status: true` makes the target appear on `/status` and addressable via
-`/api/public/v1/badge.svg?component=<id>`.
+A monitor reaches a public page by being added as a component of a status page, not by a flag on the monitor; see [Per-org status pages](per-org-status.md).
 
 ## Seed UI fixtures
 

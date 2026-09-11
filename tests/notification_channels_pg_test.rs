@@ -393,6 +393,7 @@ async fn target_alert_binding_channel_lookup_is_org_scoped_live_pg() {
         renotify_interval_secs: 3600,
         group_name: None,
         owner_user_id: None,
+        regions: None,
     };
     let created = targets
         .create(org_a, new_target, WriteSource::Ui, i64::MAX, i64::MAX)
@@ -458,6 +459,7 @@ async fn unbind_channel_scrubs_only_that_binding_in_org_live_pg() {
             renotify_interval_secs: 3600,
             group_name: None,
             owner_user_id: None,
+            regions: None,
         }
     };
     let both = targets
@@ -575,6 +577,7 @@ async fn due_for_renotify_selects_overdue_open_unacked_live_pg() {
             renotify_interval_secs: renotify,
             group_name: None,
             owner_user_id: None,
+            regions: None,
         }
     };
 

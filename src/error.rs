@@ -36,6 +36,9 @@ pub enum AppError {
     PayloadTooLarge { code: &'static str, message: String },
 
     #[error("{message}")]
+    UnsupportedMediaType { code: &'static str, message: String },
+
+    #[error("{message}")]
     Conflict { code: &'static str, message: String },
 
     #[error("{message}")]
@@ -152,6 +155,13 @@ impl AppError {
 
     pub fn payload_too_large(code: &'static str, message: impl Into<String>) -> Self {
         Self::PayloadTooLarge {
+            code,
+            message: message.into(),
+        }
+    }
+
+    pub fn unsupported_media_type(code: &'static str, message: impl Into<String>) -> Self {
+        Self::UnsupportedMediaType {
             code,
             message: message.into(),
         }
@@ -298,6 +308,10 @@ impl IntoResponse for AppError {
             ),
             AppError::PayloadTooLarge { code, message } => (
                 StatusCode::PAYLOAD_TOO_LARGE,
+                ApiErrorBody::new(code, message),
+            ),
+            AppError::UnsupportedMediaType { code, message } => (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
                 ApiErrorBody::new(code, message),
             ),
             AppError::Conflict { code, message } => {

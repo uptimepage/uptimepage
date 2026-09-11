@@ -295,6 +295,7 @@ impl McpServer {
                 }
             }),
             owner_user_id: None,
+            regions: args.regions.clone(),
         };
         rest::vet_new_target(&self.state, auth.org, &mut new, &plan)
             .await
@@ -302,15 +303,12 @@ impl McpServer {
 
         // With the other argument checks: a set the fleet cannot serve is a
         // mistake worth answering before a probe is spent on it.
-        let regions = rest::resolve_create_regions(
-            &self.state,
-            auth.org,
-            &new.check,
-            &plan,
-            args.regions.clone(),
-        )
-        .await
-        .map_err(config_error)?;
+        let snapshot = rest::RegionSnapshot::load(&self.state)
+            .await
+            .map_err(config_error)?;
+        let regions = rest::resolve_create_regions(&self.state, auth.org, &new, &plan, &snapshot)
+            .await
+            .map_err(config_error)?;
 
         // Ahead of the probe, not after it: a client that can never confirm must
         // not be able to spend probes at addresses it chooses. Behind argument

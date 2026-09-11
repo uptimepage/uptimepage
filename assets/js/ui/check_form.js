@@ -417,13 +417,22 @@
         // Detection threshold rides the payload when the region fieldset is present.
         // Symbolic values (any/majority/all) go as-is; a number becomes {count: n}.
         const regionRoot = document.querySelector("[data-monitor-regions]");
+        let regions = [];
         if (regionRoot) {
             const sel = regionRoot.querySelector("[data-region-policy]");
             if (sel && !sel.disabled) {
                 const n = parseInt(sel.value, 10);
                 built.payload.region_policy = Number.isInteger(n) ? { count: n } : sel.value;
             }
+            if (currentCheckType() !== "heartbeat") {
+                regions = [...regionRoot.querySelectorAll("[data-region-checkbox]:checked")]
+                    .filter((c) => !c.disabled)
+                    .map((c) => c.value);
+            }
         }
+        // On create the set rides the body, so an unrunnable one refuses the
+        // whole request instead of leaving a monitor on the default coverage.
+        if (regions.length && form.dataset.mode === "create") built.payload.regions = regions;
 
         // SubmitEvent.submitter is the actual clicked button (null for
         // form.requestSubmit() / Cmd+Enter, which we treat as primary save).
@@ -468,20 +477,26 @@
                 const parts = form.dataset.action.split("/");
                 id = parts[parts.length - 1];
             }
-            // Apply the chosen regions (best-effort; the server seeded default
-            // coverage on create). Skipped for heartbeats, which the server rejects.
-            if (regionRoot && id && currentCheckType() !== "heartbeat") {
-                const regions = [...regionRoot.querySelectorAll("[data-region-checkbox]:checked")]
-                    .filter((c) => !c.disabled)
-                    .map((c) => c.value);
-                if (regions.length) {
-                    try {
-                        await fetch(`/api/v1/targets/${id}/regions`, {
-                            method: "PUT",
-                            headers: jsonHeaders(),
-                            body: JSON.stringify({ regions }),
-                        });
-                    } catch { /* server default coverage stands */ }
+            if (regions.length && id && form.dataset.mode === "edit") {
+                let put;
+                try {
+                    put = await fetch(`/api/v1/targets/${id}/regions`, {
+                        method: "PUT",
+                        headers: jsonHeaders(),
+                        body: JSON.stringify({ regions }),
+                    });
+                } catch (err) {
+                    setSubmitting(false);
+                    renderClientError(`Saved, but the regions did not apply: ${err.message || err}`);
+                    return;
+                }
+                if (!put.ok) {
+                    setSubmitting(false);
+                    let body;
+                    try { body = await put.json(); }
+                    catch { renderClientError(`Saved, but the regions did not apply (${put.status})`); return; }
+                    renderApiError(body, put.status);
+                    return;
                 }
             }
             window.location = id ? `/targets/${id}` : "/targets";

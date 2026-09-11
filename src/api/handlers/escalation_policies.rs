@@ -5,7 +5,7 @@
 //! OnCallWrite>`) because a policy is org configuration, not incident data. The
 //! engine consumes these at page time; see `escalation::engine`.
 
-use axum::Json;
+use crate::api::json::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};

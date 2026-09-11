@@ -3,8 +3,8 @@
 //! like the rest of `/operator`. Every change goes through the path a payment
 //! provider's events will, so a manual grant behaves exactly like a paid one.
 
+use crate::api::json::Json;
 use anyhow::Context;
-use axum::Json;
 use axum::extract::{Path, State};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

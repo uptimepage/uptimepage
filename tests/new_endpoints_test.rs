@@ -351,3 +351,141 @@ async fn incidents_endpoint_returns_envelope() {
     assert_eq!(v["items"].as_array().unwrap().len(), 0);
     assert_eq!(v["has_more"], false);
 }
+
+async fn post_json(app: &axum::Router, path: &str, body: Value) -> (StatusCode, Value) {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(path)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    (status, body_json(resp).await)
+}
+
+/// No region catalog in the memory store, so a 422 proves the field is read, not dropped.
+#[tokio::test]
+async fn create_refuses_a_region_it_cannot_serve() {
+    let app = app();
+    let mut payload = http_target_payload("pinned");
+    payload["regions"] = json!(["eu-nowhere"]);
+    let (status, v) = post_json(&app, "/api/v1/targets", payload).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert_eq!(v["error"]["code"], "REGION_INVALID");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("eu-nowhere"),
+        "{v}"
+    );
+}
+
+#[tokio::test]
+async fn create_refuses_regions_on_a_heartbeat() {
+    let app = app();
+    let payload = json!({
+        "name": "cron",
+        "check": { "type": "heartbeat", "period": 300000, "grace": 300000 },
+        "interval": 60,
+        "regions": ["eu-nowhere"]
+    });
+    let (status, v) = post_json(&app, "/api/v1/targets", payload).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert_eq!(v["error"]["code"], "REGION_INVALID");
+}
+
+#[tokio::test]
+async fn bulk_create_vets_each_items_regions() {
+    let app = app();
+    let mut pinned = http_target_payload("pinned");
+    pinned["regions"] = json!(["eu-nowhere"]);
+    let (status, v) = post_json(
+        &app,
+        "/api/v1/targets/bulk",
+        json!([http_target_payload("plain"), pinned]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert_eq!(v["error"]["code"], "REGION_INVALID");
+
+    let resp = app
+        .oneshot(Request::get("/api/v1/targets").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let v = body_json(resp).await;
+    assert_eq!(v["items"].as_array().unwrap().len(), 0, "{v}");
+}
+
+async fn send_json(
+    app: &axum::Router,
+    method: &str,
+    path: &str,
+    body: Value,
+) -> (StatusCode, Value) {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(path)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    (status, body_json(resp).await)
+}
+
+fn assert_unknown_key(status: StatusCode, v: &Value, key: &str) {
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert_eq!(v["error"]["code"], "INVALID_JSON", "{v}");
+    let message = v["error"]["message"].as_str().unwrap();
+    assert!(message.contains(&format!("unknown field `{key}`")), "{v}");
+}
+
+#[tokio::test]
+async fn create_refuses_a_key_it_does_not_know() {
+    let app = app();
+    let mut payload = http_target_payload("typo");
+    payload["region"] = json!(["eu-frankfurt"]);
+    let (status, v) = send_json(&app, "POST", "/api/v1/targets", payload).await;
+    assert_unknown_key(status, &v, "region");
+
+    let id = create_target(&app, "typo-patch").await;
+    let (status, v) = send_json(
+        &app,
+        "PATCH",
+        &format!("/api/v1/targets/{id}"),
+        json!({ "regions": ["eu-frankfurt"] }),
+    )
+    .await;
+    assert_unknown_key(status, &v, "regions");
+
+    let mut payload = http_target_payload("binding-knob");
+    payload["alerts"] = json!([{ "channel_id": uuid::Uuid::nil(), "after_failures": 3 }]);
+    let (status, v) = send_json(&app, "POST", "/api/v1/targets", payload).await;
+    assert_unknown_key(status, &v, "after_failures");
+}
+
+#[tokio::test]
+async fn a_body_that_is_not_json_gets_the_error_envelope() {
+    let resp = app()
+        .oneshot(
+            Request::post("/api/v1/targets")
+                .header("content-type", "application/json")
+                .body(Body::from("{not json"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let v = body_json(resp).await;
+    assert_eq!(v["error"]["code"], "INVALID_JSON", "{v}");
+}

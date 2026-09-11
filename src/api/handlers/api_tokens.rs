@@ -7,7 +7,7 @@
 //! requires a verified email: a compromised unverified account could otherwise
 //! exfiltrate via a fresh token without proving mailbox control.
 
-use axum::Json;
+use crate::api::json::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use chrono::{DateTime, Duration, Utc};

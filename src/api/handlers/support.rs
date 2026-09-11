@@ -4,7 +4,7 @@
 //! request cannot misreport who sent it. Delivery is synchronous because a
 //! dropped mail would silently break the reply the page promises.
 
-use axum::Json;
+use crate::api::json::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};

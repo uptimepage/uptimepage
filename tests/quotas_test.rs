@@ -906,6 +906,7 @@ async fn the_atomic_writer_counts_the_siblings_monitors() {
         renotify_interval_secs: 3600,
         group_name: None,
         owner_user_id: None,
+        regions: None,
     };
     let err = store
         .create(org_b, new, WriteSource::Ui, 2, 0)

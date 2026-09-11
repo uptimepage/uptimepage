@@ -91,6 +91,7 @@ async fn make_target(pool: &sqlx::PgPool, org: OrgId, name: &str) -> Uuid {
         renotify_interval_secs: 3600,
         group_name: None,
         owner_user_id: None,
+        regions: None,
     };
     store
         .create(org, nt, WriteSource::Ui, i64::MAX, i64::MAX)

@@ -6,7 +6,7 @@
 //! member manages their own contact channels (`oncall:read`/`oncall:write` on
 //! the acting session). Who-is-on-call is computed by the store's resolver.
 
-use axum::Json;
+use crate::api::json::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};

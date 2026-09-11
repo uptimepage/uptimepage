@@ -11,7 +11,7 @@
 //! are scrubbed via [`RedactedTarget`] — handing this path a decryptable
 //! `Target` is a compile error, not a review miss.
 
-use axum::Json;
+use crate::api::json::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};

@@ -9,7 +9,7 @@
 //! touches the DB; the logo path is server-derived from a content hash and never
 //! client-chosen.
 
-use axum::Json;
+use crate::api::json::Json;
 use axum::extract::{Multipart, Path, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};

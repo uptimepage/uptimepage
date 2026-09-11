@@ -54,7 +54,8 @@ impl IntoResponse for WebError {
             | AppError::UnprocessableDetails { .. }
             | AppError::QuotaExceeded { .. }
             | AppError::RateLimited { .. }
-            | AppError::PayloadTooLarge { .. } => {
+            | AppError::PayloadTooLarge { .. }
+            | AppError::UnsupportedMediaType { .. } => {
                 tracing::warn!(error = %self.0, "web handler rejected request");
                 (
                     StatusCode::BAD_REQUEST,

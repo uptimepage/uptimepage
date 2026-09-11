@@ -6,7 +6,7 @@
 //! read path returns `value: null` for secrets. `used_by` reports how many
 //! monitors reference a variable, and a referenced variable cannot be deleted.
 
-use axum::Json;
+use crate::api::json::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::AppendHeaders;

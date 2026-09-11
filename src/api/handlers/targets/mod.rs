@@ -1,4 +1,4 @@
-use axum::Json;
+use crate::api::json::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::AppendHeaders;
@@ -40,7 +40,7 @@ mod dispatch;
 mod tests;
 mod validate;
 
-use dispatch::{dispatch_first_check, flow_restrict_regions, pick_flow_region};
+use dispatch::{dispatch_first_check, pick_flow_region};
 use validate::{
     canonicalize_check, carry_credentials, carry_flags, carry_flow_secrets, check_abuse,
     ensure_flow_regions_covered, gate_flow, reject_passive_probe, ssrf_guard,
@@ -50,9 +50,9 @@ use validate::{
 
 pub(crate) use dispatch::{check_now_via_dispatch, flow_capable_set, run_ad_hoc};
 pub(crate) use validate::{
-    default_region_set, normalize_tags, validate_alert_confirmations, validate_group_name,
-    validate_patch_interval, validate_region_policy, validate_renotify_interval,
-    validate_variable_refs, vet_requested_regions,
+    RegionSnapshot, default_region_set, normalize_tags, validate_alert_confirmations,
+    validate_group_name, validate_patch_interval, validate_region_policy,
+    validate_renotify_interval, validate_variable_refs, vet_requested_regions,
 };
 
 #[derive(Debug, Deserialize, IntoParams)]
@@ -183,7 +183,8 @@ pub async fn get(
             "verify_tls": true
         },
         "interval": 60,
-        "tags": ["prod"]
+        "tags": ["prod"],
+        "regions": ["eu-frankfurt", "us-east"]
     })),
     responses(
         (status = 201, description = "Created", body = Target),
@@ -213,7 +214,8 @@ pub async fn create(
     if matches!(&new.check, CheckSpec::Flow(_)) {
         state.quotas.check_can_create_flow(org, None, 1).await?;
     }
-    let regions = resolve_create_regions(&state, org, &new.check, &plan, None).await?;
+    let snapshot = RegionSnapshot::load(&state).await?;
+    let regions = resolve_create_regions(&state, org, &new, &plan, &snapshot).await?;
     let t = create_target(&state, org, new, source, &plan, regions).await?;
     // UUID hex is always ASCII-safe → infallible.
     let location = HeaderValue::from_str(&format!("/api/v1/targets/{}", t.id))
@@ -463,7 +465,8 @@ pub async fn set_target_regions(
             "heartbeat monitors receive pings; they are not probed from regions",
         ));
     }
-    let regions = vet_requested_regions(&state, org, &req.regions).await?;
+    let snapshot = RegionSnapshot::load(&state).await?;
+    let regions = vet_requested_regions(&state, org, &req.regions, &snapshot).await?;
     if !state
         .target_store
         .set_target_regions(org, id, &regions)
@@ -858,12 +861,12 @@ pub async fn bulk_create(
     }
     let plan = state.quotas.limit_for_org(org).await?;
     let guard = ssrf_guard(&state);
-    let available = state.target_store.available_regions().await?;
+    let snapshot = RegionSnapshot::load(&state).await?;
     for new in &mut items {
         canonicalize_check(&mut new.check)?;
         gate_flow(&new.check, &plan)?;
         validate_new_target(new, &guard, &plan)?;
-        validate_region_policy(new.region_policy, available.len())?;
+        validate_region_policy(new.region_policy, snapshot.available_count())?;
         verify_alert_channels(&state, org, &new.alerts).await?;
         check_abuse(&state, org, &new.check)?;
         validate_variable_refs(&state, org, &new.check).await?;
@@ -893,11 +896,9 @@ pub async fn bulk_create(
     // bulk insert and is reapplied once the full region set is assigned.
     let item_policies: Vec<Option<RegionIncidentPolicy>> =
         items.iter().map(|i| i.region_policy).collect();
-    let default_region = state.cfg.scheduler.effective_default_region().to_string();
-    let preferred = state.target_store.default_selected_regions().await?;
-    let regions = default_region_set(preferred, plan.max_regions, &default_region);
+    let mut item_regions: Vec<Vec<String>> = Vec::with_capacity(items.len());
     for new in &items {
-        ensure_flow_regions_covered(&state, &new.check, &regions).await?;
+        item_regions.push(resolve_create_regions(&state, org, new, &plan, &snapshot).await?);
     }
     let flow_count = items
         .iter()
@@ -921,29 +922,15 @@ pub async fn bulk_create(
         .await?;
     // Heartbeat items get their ping-token rows from the next scheduler
     // refresh (self-heal), not a per-item mint loop, so bulk stays one batch.
-    // Flow items only run where an engine exists, so they get the capable subset.
-    let flow_regions: Vec<String> = if flow_count > 0 {
-        let capable = flow_capable_set(&state).await?;
-        regions
-            .iter()
-            .filter(|r| capable.contains(*r))
-            .cloned()
-            .collect()
-    } else {
-        Vec::new()
-    };
-    for (t, explicit) in out.iter().zip(item_policies) {
-        let assigned = if matches!(&t.check, CheckSpec::Flow(_)) {
-            &flow_regions
-        } else {
-            &regions
-        };
+    let default_region = state.cfg.scheduler.effective_default_region();
+    for ((t, explicit), assigned) in out.iter().zip(item_policies).zip(item_regions) {
         // Anything but the seed the insert wrote has to land, one region included:
         // the operator's default need not be the deployment's.
-        if !assigned.is_empty() && (assigned.len() != 1 || assigned[0] != default_region) {
+        let seeded = assigned.len() == 1 && assigned[0] == default_region;
+        if !t.check.is_passive() && !seeded {
             state
                 .target_store
-                .set_target_regions(org, t.id, assigned)
+                .set_target_regions(org, t.id, &assigned)
                 .await?;
         }
         // The insert omits `region_policy`, so only an item that chose one writes.
@@ -1228,11 +1215,12 @@ pub(crate) async fn vet_new_target(
 pub(crate) async fn resolve_create_regions(
     state: &AppState,
     org: OrgId,
-    check: &CheckSpec,
+    new: &NewTarget,
     plan: &crate::domain::quota::Plan,
-    requested: Option<Vec<String>>,
+    snapshot: &RegionSnapshot,
 ) -> Result<Vec<String>> {
-    let regions = match requested {
+    let check = &new.check;
+    let regions = match &new.regions {
         Some(requested) => {
             if check.is_passive() {
                 return Err(AppError::unprocessable(
@@ -1240,38 +1228,13 @@ pub(crate) async fn resolve_create_regions(
                     "heartbeat monitors receive pings; they are not probed from regions",
                 ));
             }
-            let named = vet_requested_regions(state, org, &requested).await?;
-            // Refused rather than filtered like the default path: dropping a named
-            // region would leave the caller expecting coverage nobody has.
-            if matches!(check, CheckSpec::Flow(_)) {
-                let capable = flow_capable_set(state).await?;
-                if let Some(bad) = named.iter().find(|r| !capable.contains(r.as_str())) {
-                    return Err(AppError::unprocessable(
-                        codes::NO_FLOW_CAPABLE_AGENT,
-                        format!(
-                            "no flow-capable agent runs in {bad}; drop it from the region set \
-                                 or enable the flow engine on an agent there"
-                        ),
-                    ));
-                }
-            }
+            let named = vet_requested_regions(state, org, requested, snapshot).await?;
+            snapshot.ensure_flow_runs_in_each(check, &named)?;
             named
         }
-        None => {
-            let default_region = state.cfg.scheduler.effective_default_region().to_string();
-            let preferred = state.target_store.default_selected_regions().await?;
-            let mut preferred = flow_restrict_regions(state, check, preferred).await?;
-            // A flow only runs where an engine exists, so the default-selected
-            // preference cannot be what leaves one with nowhere to run: fall back
-            // to the full catalog when no default region can carry it.
-            if preferred.is_empty() && matches!(check, CheckSpec::Flow(_)) {
-                let available = state.target_store.available_regions().await?;
-                preferred = flow_restrict_regions(state, check, available).await?;
-            }
-            default_region_set(preferred, plan.max_regions, &default_region)
-        }
+        None => snapshot.default_for(check, plan.max_regions),
     };
-    ensure_flow_regions_covered(state, check, &regions).await?;
+    snapshot.ensure_flow_covered(check, &regions)?;
     Ok(regions)
 }
 

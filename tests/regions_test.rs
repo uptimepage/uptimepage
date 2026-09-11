@@ -343,3 +343,116 @@ async fn flow_capable_regions_lists_only_enabled_capable_agents() {
         "a non-flow agent's region is not capable"
     );
 }
+
+fn target_body(name: &str, regions: Option<&[&str]>) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "name": name,
+        "check": check_spec(),
+        "interval": 300,
+    });
+    if let Some(regions) = regions {
+        body["regions"] = serde_json::json!(regions);
+    }
+    body
+}
+
+async fn post_json(
+    router: &axum::Router,
+    path: &str,
+    body: serde_json::Value,
+) -> (axum::http::StatusCode, serde_json::Value) {
+    use tower::ServiceExt;
+    let req = axum::http::Request::post(path)
+        .header("content-type", "application/json")
+        .header("X-Requested-With", "uptimepage")
+        .body(axum::body::Body::from(body.to_string()))
+        .unwrap();
+    let resp = router.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+async fn assigned_regions(router: &axum::Router, id: &str) -> Vec<String> {
+    use tower::ServiceExt;
+    let req = axum::http::Request::get(format!("/api/v1/targets/{id}/regions"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let resp = router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    serde_json::from_value(v["regions"].clone()).unwrap()
+}
+
+#[tokio::test]
+#[ignore]
+async fn create_assigns_the_regions_the_body_names() {
+    use uptimepage::storage::create_org_with_owner;
+
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    ensure_region(&pool, "eu-pin").await;
+    ensure_region(&pool, "us-pin").await;
+    let user = common::make_user(&pool, "pin").await;
+    let org = create_org_with_owner(&pool, user, &common::unique_slug("pin"), "Pin")
+        .await
+        .unwrap()
+        .expect("org")
+        .id;
+    let router = common::with_session(
+        common::build_saas_router_with_pg_targets(pool.clone()).await,
+        user,
+        Some(org),
+        Some("pin-test"),
+    );
+
+    let (status, v) = post_json(
+        &router,
+        "/api/v1/targets",
+        target_body("pinned", Some(&["eu-pin"])),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CREATED, "{v}");
+    let id = v["id"].as_str().unwrap();
+    assert_eq!(
+        assigned_regions(&router, id).await,
+        vec!["eu-pin".to_string()]
+    );
+    let (status, v) = post_json(&router, "/api/v1/targets", target_body("plain", None)).await;
+    assert_eq!(status, axum::http::StatusCode::CREATED, "{v}");
+    let server_default = assigned_regions(&router, v["id"].as_str().unwrap()).await;
+    assert!(!server_default.is_empty());
+
+    let (status, v) = post_json(
+        &router,
+        "/api/v1/targets/bulk",
+        serde_json::json!([
+            target_body("bulk-default", None),
+            target_body("bulk-pinned", Some(&["us-pin"])),
+        ]),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CREATED, "{v}");
+    let items = v.as_array().unwrap();
+    let by_name = |name: &str| {
+        items
+            .iter()
+            .find(|t| t["name"] == name)
+            .and_then(|t| t["id"].as_str())
+            .unwrap()
+            .to_string()
+    };
+    let pinned = assigned_regions(&router, &by_name("bulk-pinned")).await;
+    assert_eq!(pinned, vec!["us-pin".to_string()]);
+    let default = assigned_regions(&router, &by_name("bulk-default")).await;
+    assert_eq!(
+        default, server_default,
+        "an item naming no regions gets what a single create gets"
+    );
+}

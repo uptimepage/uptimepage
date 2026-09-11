@@ -1,4 +1,4 @@
-use axum::Json;
+use crate::api::json::Json;
 use axum::extract::{Query, State};
 use serde::Deserialize;
 use utoipa::IntoParams;

@@ -13,7 +13,7 @@
 //! gets a `SESSION_REQUIRED` 401 (distinct from `UNAUTHORIZED`) so it reads as
 //! "use a browser session", not "your token is bad".
 
-use axum::Json;
+use crate::api::json::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::AppendHeaders;

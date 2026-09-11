@@ -40,6 +40,7 @@ fn a_target() -> NewTarget {
         renotify_interval_secs: 3600,
         group_name: None,
         owner_user_id: None,
+        regions: None,
     }
 }
 

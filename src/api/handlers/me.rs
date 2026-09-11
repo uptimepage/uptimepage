@@ -3,7 +3,7 @@
 //! `/me/orgs` and `/me/active-org` already live in `handlers::orgs`; this
 //! module owns the bits that are pure session/user surface.
 
-use axum::Json;
+use crate::api::json::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use chrono::{DateTime, Utc};

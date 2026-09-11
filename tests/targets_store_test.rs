@@ -35,6 +35,7 @@ async fn seed(
         renotify_interval_secs: 3600,
         group_name: group.map(str::to_owned),
         owner_user_id: None,
+        regions: None,
     };
     store
         .create(org, nt, WriteSource::Ui, i64::MAX, i64::MAX)
@@ -281,6 +282,7 @@ async fn an_update_can_decline_to_claim_authorship() {
         renotify_interval_secs: 3600,
         group_name: None,
         owner_user_id: None,
+        regions: None,
     };
     let id = store
         .create(org.id, declared, WriteSource::Terraform, i64::MAX, i64::MAX)
@@ -361,6 +363,7 @@ async fn a_bulk_tag_add_stops_at_the_cap_and_says_which_monitor_was_full() {
         renotify_interval_secs: 3600,
         group_name: None,
         owner_user_id: None,
+        regions: None,
     };
 
     let full: Vec<String> = (0..MAX_TAGS_PER_TARGET).map(|i| format!("t{i}")).collect();

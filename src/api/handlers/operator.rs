@@ -3,7 +3,7 @@
 //! off the tenant `/api/v1` surface. Agent creation mints the agent's token and
 //! returns it exactly once.
 
-use axum::Json;
+use crate::api::json::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use chrono::{DateTime, Utc};

@@ -123,6 +123,7 @@ pub struct Target {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NewTarget {
     pub name: String,
     pub check: CheckSpec,
@@ -135,7 +136,7 @@ pub struct NewTarget {
     #[serde(default)]
     #[schema(max_items = 50)]
     pub tags: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "TargetAlerts::deserialize_strict")]
     pub alerts: TargetAlerts,
     /// Consecutive failing checks before this monitor alerts. Min 1.
     #[serde(default = "default_alert_confirmations")]
@@ -156,9 +157,14 @@ pub struct NewTarget {
     #[serde(default)]
     #[schema(nullable = true)]
     pub owner_user_id: Option<Uuid>,
+    /// Probe regions to assign at creation. Omit for the default set; refused on a heartbeat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = true)]
+    pub regions: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TargetUpdate {
     pub name: Option<String>,
     pub check: Option<CheckSpec>,
@@ -174,6 +180,7 @@ pub struct TargetUpdate {
     pub renotify_interval_secs: Option<u32>,
     #[schema(max_items = 50)]
     pub tags: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "TargetAlerts::deserialize_strict_opt")]
     pub alerts: Option<TargetAlerts>,
     #[serde(default, deserialize_with = "double_option")]
     #[schema(nullable = true, value_type = Option<String>)]

@@ -18,7 +18,7 @@
 //! push the holds onto it, stopping monitoring they cannot even see. Both
 //! endpoints therefore check the caller against `accounts.owner_user_id`.
 
-use axum::Json;
+use crate::api::json::Json;
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;

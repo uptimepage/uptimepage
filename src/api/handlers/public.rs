@@ -9,7 +9,7 @@
 //!  * relies on the routing layer to stamp the `Cache-Control:
 //!    public, max-age=10, stale-while-revalidate=30` header.
 
-use axum::Json;
+use crate::api::json::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
