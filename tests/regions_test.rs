@@ -394,9 +394,16 @@ async fn assigned_regions(router: &axum::Router, id: &str) -> Vec<String> {
 async fn create_assigns_the_regions_the_body_names() {
     use uptimepage::storage::create_org_with_owner;
 
-    let Some(pool) = common::pg_pool_from_env().await else {
+    // Own DB: the server default is every default-selected region, which on
+    // the shared pool is whatever other suites have seeded.
+    let Some((db_url, db_name)) = common::fresh_test_db("regions_create").await else {
         return;
     };
+    let pool = common::open_test_pool(&db_url).await;
+    MIGRATOR.run(&pool).await.unwrap();
+    // The store's own fallback region, seeded here so the expected default
+    // set does not depend on which create runs first.
+    ensure_region(&pool, "default").await;
     ensure_region(&pool, "eu-pin").await;
     ensure_region(&pool, "us-pin").await;
     let user = common::make_user(&pool, "pin").await;
@@ -427,7 +434,10 @@ async fn create_assigns_the_regions_the_body_names() {
     let (status, v) = post_json(&router, "/api/v1/targets", target_body("plain", None)).await;
     assert_eq!(status, axum::http::StatusCode::CREATED, "{v}");
     let server_default = assigned_regions(&router, v["id"].as_str().unwrap()).await;
-    assert!(!server_default.is_empty());
+    assert_eq!(
+        server_default,
+        ["default", "eu-pin", "us-pin"].map(String::from)
+    );
 
     let (status, v) = post_json(
         &router,
@@ -455,4 +465,7 @@ async fn create_assigns_the_regions_the_body_names() {
         default, server_default,
         "an item naming no regions gets what a single create gets"
     );
+
+    pool.close().await;
+    common::drop_test_db(&db_name).await;
 }
