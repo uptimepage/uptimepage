@@ -7,11 +7,10 @@ use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::{get, post};
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{AllowOrigin, CorsLayer};
-use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::api::handlers;
-use crate::api::{ApiDoc, idempotency, middleware as api_middleware};
+use crate::api::{idempotency, middleware as api_middleware};
 use crate::app::AppState;
 use crate::config::CorsConfig;
 use crate::quotas::rate_limit_middleware;
@@ -581,7 +580,7 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
     // here would leave any future state-changing route on the web
     // router silently un-protected — the same drift pattern that bit
     // the health-path predicate before centralisation.
-    root.merge(SwaggerUi::new("/docs").url("/api/openapi.json", ApiDoc::openapi()))
+    root.merge(SwaggerUi::new("/docs").url("/api/openapi.json", super::docs::openapi().clone()))
         .layer(from_fn(api_middleware::cache_control))
         .layer(from_fn(api_middleware::json_charset))
         .layer(from_fn(api_middleware::navigation_login_redirect))

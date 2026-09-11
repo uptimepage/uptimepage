@@ -10,6 +10,7 @@ pub mod page;
 pub mod public_error;
 pub mod redaction;
 pub mod routes;
+pub mod strict;
 pub mod types;
 
 pub use cursor::IncidentCursor;

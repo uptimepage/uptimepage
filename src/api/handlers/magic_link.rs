@@ -59,7 +59,7 @@ const CODE_NONCE_COOKIE: &str = "_sm_ml_code";
 const CODE_COOKIE_PATH: &str = "/auth/magic-link";
 const CONFIRM_COOKIE_PATH: &str = "/auth/magic-link/verify";
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RequestBody {
     pub email: String,

@@ -471,15 +471,12 @@ async fn create_refuses_a_key_it_does_not_know() {
     let mut payload = http_target_payload("binding-knob");
     payload["alerts"] = json!([{ "channel_id": uuid::Uuid::nil(), "after_failures": 3 }]);
     let (status, v) = send_json(&app, "POST", "/api/v1/targets", payload).await;
-    assert_unknown_key(status, &v, "after_failures");
+    assert_unknown_key(status, &v, "alerts[0].after_failures");
 
     let mut payload = http_target_payload("policy-knob");
     payload["region_policy"] = json!({ "count": 2, "mode": "count" });
-    // An externally tagged variant is one key by construction; serde reports
-    // the second as a syntax error, so this one refuses with 400.
     let (status, v) = send_json(&app, "POST", "/api/v1/targets", payload).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
-    assert_eq!(v["error"]["code"], "INVALID_JSON", "{v}");
+    assert_unknown_key(status, &v, "region_policy.mode");
 
     let (status, v) = send_json(
         &app,
@@ -488,7 +485,123 @@ async fn create_refuses_a_key_it_does_not_know() {
         json!({ "ids": [id], "action": { "type": "enable", "tags": ["prod"] } }),
     )
     .await;
-    assert_unknown_key(status, &v, "tags");
+    assert_unknown_key(status, &v, "action.tags");
+}
+
+/// The stored shapes nested in a body cannot carry the serde attribute, so
+/// the boundary checks them against the schema instead.
+#[tokio::test]
+async fn a_key_inside_the_check_is_refused_too() {
+    let app = app();
+
+    let mut payload = http_target_payload("nested");
+    payload["check"]["timeuot"] = json!(5000);
+    let (status, v) = send_json(&app, "POST", "/api/v1/targets", payload).await;
+    assert_unknown_key(status, &v, "check.timeuot");
+    let message = v["error"]["message"].as_str().unwrap();
+    assert!(message.contains("`timeout`"), "{v}");
+
+    let mut payload = http_target_payload("nested-status");
+    payload["check"]["expected_status"] =
+        json!({ "kind": "range", "value": { "min": 200, "max": 299, "mode": "x" } });
+    let (status, v) = send_json(&app, "POST", "/api/v1/targets", payload).await;
+    assert_unknown_key(status, &v, "check.expected_status.value.mode");
+
+    let (status, v) = send_json(
+        &app,
+        "POST",
+        "/api/v1/targets",
+        json!({
+            "name": "flow",
+            "interval": 300,
+            "check": {
+                "type": "flow",
+                "start_url": "https://example.com/login",
+                "steps": [
+                    { "op": "click", "selector": "#go" },
+                    { "op": "assert_url", "contains": "/home", "selctor": "#x" }
+                ],
+                "timeout": 30000,
+                "step_timeout": 5000,
+                "verify_tls": true
+            }
+        }),
+    )
+    .await;
+    assert_unknown_key(status, &v, "check.steps[1].selctor");
+
+    // A header name is a map key, not a field: anything goes there.
+    let mut payload = http_target_payload("headers");
+    payload["check"]["headers"] = json!({ "X-Anything": "1" });
+    let (status, _) = send_json(&app, "POST", "/api/v1/targets", payload).await;
+    assert_eq!(status, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn a_key_inside_a_channel_config_is_refused_with_its_provider_in_mind() {
+    let app = app();
+    let (status, v) = send_json(
+        &app,
+        "POST",
+        "/api/v1/notification-channels",
+        json!({
+            "name": "sms",
+            "config": {
+                "type": "sms", "provider": "vonage", "to": "+15551234567", "from": "+15557654321",
+                "api_key": "k", "api_secret": "s", "api_secrte": "typo"
+            }
+        }),
+    )
+    .await;
+    assert_unknown_key(status, &v, "config.api_secrte");
+    let message = v["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("`api_secret`") && !message.contains("`auth_token`"),
+        "{v}"
+    );
+}
+
+/// The walk runs on a value, which keeps the last of two equal keys; the
+/// decode runs on the bytes so the repeat is still refused.
+#[tokio::test]
+async fn a_repeated_key_is_refused() {
+    let resp = app()
+        .oneshot(
+            Request::post("/api/v1/targets")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"a","name":"b","interval":60,"check":{"type":"tcp","host":"h","port":1,"timeout":1000}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let v = body_json(resp).await;
+    assert_eq!(v["error"]["code"], "INVALID_JSON", "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("duplicate field `name`"),
+        "{v}"
+    );
+}
+
+#[tokio::test]
+async fn a_body_without_a_json_content_type_is_refused() {
+    let resp = app()
+        .oneshot(
+            Request::post("/api/v1/targets")
+                .header("content-type", "text/plain")
+                .body(Body::from(http_target_payload("x").to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    let v = body_json(resp).await;
+    assert_eq!(v["error"]["code"], "INVALID_CONTENT_TYPE", "{v}");
 }
 
 #[tokio::test]

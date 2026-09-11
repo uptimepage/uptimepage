@@ -130,7 +130,7 @@ pub struct RegionView {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NewRegion {
     pub id: String,
@@ -147,7 +147,7 @@ pub struct NewRegion {
     pub longitude: Option<f64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateRegion {
     #[serde(default)]
@@ -320,7 +320,7 @@ pub struct AgentView {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NewAgent {
     pub region: String,
@@ -337,7 +337,7 @@ pub struct NewAgentResponse {
     pub token_prefix: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateAgent {
     #[serde(default)]

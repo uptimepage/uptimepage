@@ -5,9 +5,9 @@
 //! nothing; expired, revoked, or spent codes all render the same generic
 //! 404 page (no enumeration signal).
 
+use crate::api::json::Json;
 use askama::Template;
 use askama_web::WebTemplate;
-use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -168,7 +168,7 @@ pub async fn status(
     Ok(Json(json!({ "status": status })))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DelegateCreateRequest {
     #[serde(default)]

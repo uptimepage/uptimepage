@@ -25,7 +25,7 @@ const MAX_MESSAGE: usize = 4_000;
 const MAX_PAGE_URL: usize = 300;
 const UNKNOWN: &str = "unknown";
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SupportRequestBody {
     pub topic: String,

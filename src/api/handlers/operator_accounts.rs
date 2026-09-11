@@ -32,7 +32,7 @@ fn validate_reason(reason: &str) -> Result<&str> {
     Ok(trimmed)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SetPlan {
     pub plan_id: String,
@@ -81,7 +81,7 @@ pub async fn set_account_plan(
     }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SetOverrides {
     pub caps: serde_json::Value,

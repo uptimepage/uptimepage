@@ -143,8 +143,9 @@ async fn swagger_ui_is_reachable() {
 }
 
 /// Every request body refuses a key it does not name, so a setting under the
-/// wrong name fails instead of vanishing. Only the stored shapes nested in a
-/// body stay tolerant: what the API returns and agents consume.
+/// wrong name fails instead of vanishing. The published schema says so where
+/// serde can carry the attribute; the rest is strict at the boundary through
+/// the schema walk.
 #[tokio::test]
 async fn every_request_body_refuses_unknown_keys() {
     let resp = app()
@@ -157,10 +158,11 @@ async fn every_request_body_refuses_unknown_keys() {
         .unwrap();
     let doc = body_json(resp).await;
     let schemas = &doc["components"]["schemas"];
-    // CheckSpec and ChannelConfig are the stored shapes and stay tolerant on
-    // purpose. The two enums refuse a stray key at runtime (an externally
-    // tagged variant is one key by construction; BulkAction is denied on the
-    // enum) but their schemas do not say so; new_endpoints_test covers them.
+    // Every body is strict at the boundary through the schema walk in
+    // `api::strict`; this test keeps the published schema saying so where it
+    // can. CheckSpec and ChannelConfig are stored shapes, so their serde
+    // types cannot carry the attribute, and the two enums' schemas have no
+    // place for it. new_endpoints_test covers all four at runtime.
     let tolerant = [
         "CheckSpec",
         "ChannelConfig",
