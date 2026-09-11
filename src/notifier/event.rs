@@ -22,7 +22,8 @@ pub struct IncidentNotice {
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
     pub error_sample: Option<String>,
-    /// Regions down / still up at open time. Empty for a single-region monitor.
+    /// Regions that had confirmed the failure, and those that had not, when the
+    /// notification was built. Empty for a single-region monitor.
     pub regions_down: Vec<String>,
     pub regions_up: Vec<String>,
     /// Deep link to the incident detail page, when a base URL is configured.
@@ -71,8 +72,10 @@ impl IncidentNotice {
         self.regions_down.len() + self.regions_up.len() > 1
     }
 
-    /// `down: a, b{sep}up: c`, each region name passed through `esc`. `None` for
-    /// a single-region monitor. Transports supply their own escaping + separator.
+    /// `down: a, b{sep}not confirmed: c`, each region name passed through `esc`.
+    /// `None` for a single-region monitor. Transports supply their own escaping
+    /// and separator. A region outside the quorum is not "up": it has not yet
+    /// failed enough checks in a row, and often does one tick later.
     pub fn region_summary(&self, esc: impl Fn(&str) -> String, sep: &str) -> Option<String> {
         if !self.has_region_breakdown() {
             return None;
@@ -83,7 +86,7 @@ impl IncidentNotice {
             parts.push(format!("down: {}", join(&self.regions_down)));
         }
         if !self.regions_up.is_empty() {
-            parts.push(format!("up: {}", join(&self.regions_up)));
+            parts.push(format!("not confirmed: {}", join(&self.regions_up)));
         }
         Some(parts.join(sep))
     }

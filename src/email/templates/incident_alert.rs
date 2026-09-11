@@ -109,8 +109,8 @@ impl IncidentAlert {
     }
 
     /// `(down, total)`, only for a monitor watched from more than one region.
-    /// The breakdown is the incident's open-time snapshot, so it describes the
-    /// present only while the incident is open.
+    /// The breakdown is what the incident held when this mail was built, so it
+    /// describes the present only while the incident is open.
     fn region_counts(&self) -> Option<(usize, usize)> {
         if !self.is_open() {
             return None;
@@ -169,7 +169,9 @@ impl IncidentAlert {
         }
         if self.region_counts().is_some() {
             rows.push(("Down in", join_regions(&self.regions_down)));
-            rows.push(("Still up", join_regions(&self.regions_up)));
+            if !self.regions_up.is_empty() {
+                rows.push(("Not confirmed", join_regions(&self.regions_up)));
+            }
         }
         rows
     }
@@ -332,7 +334,7 @@ mod tests {
         for body in [&r.text_body, &r.html_body] {
             assert!(body.contains("17 Aug 2026 12:41 UTC"), "start time");
             assert!(body.contains("apac-sg, eu-helsinki"), "regions down");
-            assert!(body.contains("us-east"), "regions still up");
+            assert!(body.contains("us-east"), "regions not confirmed");
             assert!(body.contains("high"), "urgency");
         }
         assert!(r.html_body.contains("MAJOR INCIDENT OPEN"));
@@ -394,7 +396,7 @@ mod tests {
             // Case-insensitive: the HTML labels ship upper-cased, the text ones do not.
             let body = body.to_lowercase();
             assert!(!body.contains("down in"), "stale breakdown: {body}");
-            assert!(!body.contains("still up"), "stale breakdown: {body}");
+            assert!(!body.contains("not confirmed"), "stale breakdown: {body}");
             assert!(!body.contains("no response"), "stale failure: {body}");
         }
     }
@@ -405,7 +407,7 @@ mod tests {
         a.regions_down = vec!["eu-helsinki".into()];
         a.regions_up = Vec::new();
         let r = render("Uptimepage", &a);
-        assert!(!r.html_body.to_lowercase().contains("still up"));
+        assert!(!r.html_body.to_lowercase().contains("not confirmed"));
         assert!(r.html_body.contains("Failing since 17 Aug 2026 12:41 UTC"));
     }
 

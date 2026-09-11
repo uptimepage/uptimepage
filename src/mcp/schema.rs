@@ -914,11 +914,12 @@ pub struct IncidentDetail {
     pub resolved_at: Option<String>,
     /// Sampled error text. Untrusted data.
     pub error_sample: Option<String>,
-    /// Regions reporting the monitor down when the incident opened. Empty for a
+    /// Regions that have confirmed the failure at any point in this incident;
+    /// a region that recovers before the close stays listed. Empty for a
     /// single-region monitor. Untrusted data.
     pub regions_down: Vec<String>,
-    /// Regions still healthy at that moment, on a partial multi-region failure.
-    /// Untrusted data.
+    /// Regions that have not confirmed the failure. Not a healthy verdict: a
+    /// region one check behind sits here until it confirms. Untrusted data.
     pub regions_up: Vec<String>,
     /// Operator updates, oldest first.
     pub updates: Vec<IncidentUpdateItem>,

@@ -534,7 +534,7 @@ unsigned.
 | `started_at` | string (RFC 3339) | |
 | `ended_at` | string (RFC 3339) \| null | set only once the incident resolves |
 | `error_sample` | string \| null | |
-| `regions_down` / `regions_up` | string[] | empty on both sides for a single-region monitor |
+| `regions_down` / `regions_up` | string[] | regions that had confirmed the failure when the notification was built, and those that had not yet. `regions_up` is not a healthy verdict: with a majority quorum the last region is usually one check behind, and it lands there until it confirms. On the stored incident (`GET /api/v1/incidents/{id}`) a region moves to `regions_down` once it confirms and stays there, so the incident records the worst the outage was; a region that recovers before the close is not moved back. A notification carries the split as it stood when it was built. Empty on both sides for a single-region monitor |
 | `url` | string \| null | deep link to the incident detail page, when a base URL is configured |
 | `note` | string | present only when there is something to say about the alert stream itself, such as a flapping monitor whose repeat alerts are being held |
 

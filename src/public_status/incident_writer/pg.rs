@@ -27,13 +27,14 @@ struct OpenIncidentRow {
     target_id: Uuid,
     started_at: DateTime<Utc>,
     region: Option<String>,
+    regions_down: Option<Vec<String>>,
 }
 
 #[async_trait]
 impl IncidentStore for PgIncidentStore {
     async fn open_for_target(&self, org: OrgId, target_id: Uuid) -> Result<Option<OpenIncident>> {
         let row: Option<OpenIncidentRow> = sqlx::query_as::<_, OpenIncidentRow>(
-            r#"SELECT id, target_id, started_at, region FROM incidents
+            r#"SELECT id, target_id, started_at, region, regions_down FROM incidents
                WHERE target_id = $1 AND org_id = $2 AND ended_at IS NULL
                  AND origin = 'monitor'
                ORDER BY started_at DESC LIMIT 1"#,
@@ -48,6 +49,7 @@ impl IncidentStore for PgIncidentStore {
             target_id: r.target_id,
             started_at: r.started_at,
             region: r.region,
+            regions_down: r.regions_down.unwrap_or_default(),
         }))
     }
 
@@ -71,9 +73,10 @@ impl IncidentStore for PgIncidentStore {
             target_id: Uuid,
             started_at: DateTime<Utc>,
             region: Option<String>,
+            regions_down: Option<Vec<String>>,
         }
         let rows: Vec<Row> = sqlx::query_as::<_, Row>(
-            r#"SELECT i.org_id, i.id, i.target_id, i.started_at, i.region
+            r#"SELECT i.org_id, i.id, i.target_id, i.started_at, i.region, i.regions_down
                FROM incidents i
                JOIN unnest($1::uuid[], $2::uuid[]) AS pairs(org_id, target_id)
                  ON i.org_id = pairs.org_id AND i.target_id = pairs.target_id
@@ -94,6 +97,7 @@ impl IncidentStore for PgIncidentStore {
                     target_id: r.target_id,
                     started_at: r.started_at,
                     region: r.region,
+                    regions_down: r.regions_down.unwrap_or_default(),
                 });
         }
         Ok(out)
@@ -171,6 +175,26 @@ impl IncidentStore for PgIncidentStore {
         .await
         .context("incident close")?;
         Ok(row.is_some())
+    }
+
+    async fn widen(&self, org: OrgId, incident_id: Uuid, regions: &[String]) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE incidents
+                  SET regions_down = COALESCE(regions_down, '{}')
+                        || ARRAY(SELECT r FROM unnest($3::text[]) AS r
+                                  WHERE r <> ALL(COALESCE(regions_down, '{}'))),
+                      regions_up = ARRAY(SELECT r FROM unnest(COALESCE(regions_up, '{}')) AS r
+                                          WHERE r <> ALL($3::text[])),
+                      updated_at = now()
+                WHERE id = $1 AND org_id = $2 AND ended_at IS NULL"#,
+        )
+        .bind(incident_id)
+        .bind(org.0)
+        .bind(regions)
+        .execute(&self.pool)
+        .await
+        .context("incident widen")?;
+        Ok(())
     }
 }
 

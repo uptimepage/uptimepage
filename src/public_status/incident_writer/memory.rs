@@ -22,6 +22,7 @@ struct InMemoryIncidentState {
     by_target: std::collections::HashMap<Uuid, Vec<MemIncident>>,
     inserts: u64,
     closes: u64,
+    widens: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -59,6 +60,10 @@ impl InMemoryIncidentStore {
     pub fn close_count(&self) -> u64 {
         self.inner.lock().closes
     }
+
+    pub fn widen_count(&self) -> u64 {
+        self.inner.lock().widens
+    }
 }
 
 #[async_trait]
@@ -81,6 +86,7 @@ impl IncidentStore for InMemoryIncidentStore {
                     target_id: i.target_id,
                     started_at: i.started_at,
                     region: i.region.clone(),
+                    regions_down: i.regions_down.clone(),
                 })
                 .collect();
             if !open.is_empty() {
@@ -104,6 +110,7 @@ impl IncidentStore for InMemoryIncidentStore {
                 target_id: i.target_id,
                 started_at: i.started_at,
                 region: i.region.clone(),
+                regions_down: i.regions_down.clone(),
             });
         Ok(open)
     }
@@ -148,5 +155,21 @@ impl IncidentStore for InMemoryIncidentStore {
             g.closes += 1;
         }
         Ok(closed)
+    }
+
+    async fn widen(&self, _org: OrgId, incident_id: Uuid, regions: &[String]) -> Result<()> {
+        let mut g = self.inner.lock();
+        for inc in g.by_target.values_mut().flatten() {
+            if inc.id == incident_id && inc.ended_at.is_none() {
+                for r in regions {
+                    if !inc.regions_down.contains(r) {
+                        inc.regions_down.push(r.clone());
+                    }
+                }
+                inc.regions_up.retain(|r| !regions.contains(r));
+            }
+        }
+        g.widens += 1;
+        Ok(())
     }
 }

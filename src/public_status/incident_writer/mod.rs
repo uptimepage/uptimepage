@@ -67,6 +67,9 @@ pub trait IncidentStore: Send + Sync {
     /// `true` = this call flipped the incident to resolved; `false` = it was
     /// already closed (lost the race), so the caller must not page.
     async fn close(&self, org: OrgId, incident_id: Uuid, ended_at: DateTime<Utc>) -> Result<bool>;
+    /// Move `regions` from not-confirmed to confirmed on a still-open incident.
+    /// A union, so two writers widening at once both land.
+    async fn widen(&self, org: OrgId, incident_id: Uuid, regions: &[String]) -> Result<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +79,8 @@ pub struct OpenIncident {
     pub started_at: DateTime<Utc>,
     /// `None` = whole-target incident; `Some(r)` = scoped to one region.
     pub region: Option<String>,
+    /// Regions that have confirmed the failure so far.
+    pub regions_down: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -86,7 +91,9 @@ pub struct NewOpenIncident {
     pub check_count: u32,
     pub error_sample: Option<String>,
     pub region: Option<String>,
-    /// Regions down / still up at open time (empty for a single-region monitor).
+    /// Regions that had confirmed the failure at open, and those that had not
+    /// yet (empty for a single-region monitor). A late region moves across
+    /// once it confirms; nothing moves back.
     pub regions_down: Vec<String>,
     pub regions_up: Vec<String>,
 }
@@ -352,6 +359,14 @@ impl IncidentWriter {
                         tracing::info!(%org, target_id = %target.id, incident_id = %incident_id, "incident closed");
                         self.signal(org, incident_id, NotificationReason::Resolved);
                     }
+                }
+                Action::Widen {
+                    incident_id,
+                    regions,
+                } => {
+                    self.incident_store
+                        .widen(org, incident_id, &regions)
+                        .await?;
                 }
             }
         }

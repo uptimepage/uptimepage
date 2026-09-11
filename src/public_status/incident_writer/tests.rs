@@ -298,6 +298,76 @@ fn decide_multi_worst_region_sets_status_not_earliest() {
     }
 }
 
+/// A region one check behind the quorum joins the breakdown once it confirms;
+/// silence adds nothing and a recovery removes nothing.
+#[test]
+fn the_breakdown_only_grows_while_open() {
+    let base = Utc.with_ymd_and_hms(2026, 5, 13, 12, 0, 0).unwrap();
+    let t = Uuid::now_v7();
+    let open = OpenIncident {
+        id: Uuid::now_v7(),
+        target_id: t,
+        region: None,
+        regions_down: vec!["fra".into(), "us".into()],
+        started_at: ts(base, 0),
+    };
+    let down = |offsets: &[i64]| -> Vec<CheckResult> {
+        offsets
+            .iter()
+            .map(|o| result(t, ts(base, *o), CheckStatus::Down))
+            .collect()
+    };
+    let region = |name: &str, results: Vec<CheckResult>| (name.to_string(), results);
+
+    // Helsinki still one check in: nothing to write.
+    let by_region = vec![
+        region("fra", down(&[0, 30])),
+        region("us", down(&[10, 40])),
+        region("hel", down(&[50])),
+    ];
+    assert!(decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 2).is_empty());
+
+    // Its second failure lands: it joins.
+    let by_region = vec![
+        region("fra", down(&[0, 30])),
+        region("us", down(&[10, 40])),
+        region("hel", down(&[50, 80])),
+    ];
+    match decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 2).as_slice() {
+        [
+            Action::Widen {
+                incident_id,
+                regions,
+            },
+        ] => {
+            assert_eq!(*incident_id, open.id);
+            assert_eq!(regions, &["hel"]);
+        }
+        other => panic!("expected Widen, got {other:?}"),
+    }
+
+    // Frankfurt recovering while the other two hold the quorum, or Helsinki
+    // going quiet, changes nothing stored.
+    let full = OpenIncident {
+        regions_down: vec!["fra".into(), "us".into(), "hel".into()],
+        ..open.clone()
+    };
+    for by_region in [
+        vec![
+            region("fra", vec![result(t, ts(base, 110), CheckStatus::Up)]),
+            region("us", down(&[10, 40])),
+            region("hel", down(&[50, 80])),
+        ],
+        vec![region("fra", down(&[0, 30])), region("us", down(&[10, 40]))],
+        vec![],
+    ] {
+        assert!(
+            decide_multi(t, std::slice::from_ref(&full), &by_region, 2, 2).is_empty(),
+            "{by_region:?}"
+        );
+    }
+}
+
 #[test]
 fn decide_two_good_closes_open_incident() {
     let base = Utc.with_ymd_and_hms(2026, 5, 13, 12, 0, 0).unwrap();
@@ -306,6 +376,7 @@ fn decide_two_good_closes_open_incident() {
         id: Uuid::now_v7(),
         target_id: target,
         region: None,
+        regions_down: Vec::new(),
         started_at: ts(base, 0),
     };
     let results = vec![
@@ -333,6 +404,7 @@ fn decide_single_good_does_not_close_open_incident() {
         id: Uuid::now_v7(),
         target_id: target,
         region: None,
+        regions_down: Vec::new(),
         started_at: ts(base, 0),
     };
     let results = vec![
@@ -351,6 +423,7 @@ fn decide_recovery_run_before_incident_does_not_close() {
         id: Uuid::now_v7(),
         target_id: target,
         region: None,
+        regions_down: Vec::new(),
         started_at: ts(base, 1_000),
     };
     let results = vec![
@@ -374,6 +447,7 @@ fn decide_isolated_good_blip_does_not_close_then_reopen() {
         id: Uuid::now_v7(),
         target_id: target,
         region: None,
+        regions_down: Vec::new(),
         started_at: ts(base, 0),
     };
     let results = vec![
@@ -414,6 +488,7 @@ fn decide_degraded_run_does_not_close_open_incident() {
         id: Uuid::now_v7(),
         target_id: target,
         region: None,
+        regions_down: Vec::new(),
         started_at: ts(base, 0),
     };
     let results = vec![
@@ -473,6 +548,7 @@ fn decide_trailing_degraded_does_not_close() {
         id: Uuid::now_v7(),
         target_id: target,
         region: None,
+        regions_down: Vec::new(),
         started_at: ts(base, 0),
     };
     let results = vec![
@@ -501,6 +577,7 @@ fn decide_running_twice_with_same_data_is_idempotent_for_open() {
         id: Uuid::now_v7(),
         target_id: target,
         region: None,
+        regions_down: Vec::new(),
         started_at: ts(base, 0),
     };
     // Same input, but now we know about the open incident; trailing 'up'
@@ -556,6 +633,7 @@ fn any_down_stays_open_while_one_region_still_bad() {
         target_id: t,
         started_at: ts(b, 0),
         region: None,
+        regions_down: vec!["eu".into()],
     };
     let by_region = vec![
         (
@@ -574,9 +652,14 @@ fn any_down_stays_open_while_one_region_still_bad() {
             ],
         ),
     ];
+    let actions = decide_multi(t, &[open], &by_region, 2, 1);
     assert!(
-        decide_multi(t, &[open], &by_region, 2, 1).is_empty(),
-        "must not close while a region is still down"
+        !actions.iter().any(|a| matches!(a, Action::Close { .. })),
+        "must not close while a region is still down: {actions:?}"
+    );
+    assert!(
+        matches!(actions.as_slice(), [Action::Widen { regions, .. }] if regions == &["us"]),
+        "the region that confirmed after the open joins: {actions:?}"
     );
 }
 
@@ -589,6 +672,7 @@ fn any_down_closes_when_all_regions_recovered() {
         target_id: t,
         started_at: ts(b, 0),
         region: None,
+        regions_down: Vec::new(),
     };
     let by_region = vec![
         (
@@ -684,6 +768,7 @@ fn quorum_closes_when_back_below_threshold() {
         target_id: t,
         started_at: ts(b, 0),
         region: None,
+        regions_down: Vec::new(),
     };
     let by_region = vec![
         (
@@ -1105,6 +1190,11 @@ async fn re_running_writer_with_no_new_data_is_noop() {
     }
     assert_eq!(incidents.insert_count(), 1, "must not double-insert");
     assert_eq!(incidents.close_count(), 0, "no close without recovery");
+    assert_eq!(
+        incidents.widen_count(),
+        0,
+        "nothing new to confirm, nothing written"
+    );
 }
 
 #[tokio::test]

@@ -201,7 +201,7 @@ impl Worker {
             started_at: inc.started_at,
             ended_at: inc.ended_at,
             error_sample: inc.error_sample.clone(),
-            // Open-time snapshot off the incident — no per-page region query.
+            // The stored split, widened as regions confirm — no per-page region query.
             regions_down: inc.regions_down.clone(),
             regions_up: inc.regions_up.clone(),
             url: self.deep_link(inc.id),

@@ -305,7 +305,7 @@ pub(crate) mod tests {
         let card = AlertCard::for_notice(&n);
         assert!(matches!(
             &card.fields[1].value,
-            CardValue::Text(v) if v == "down: eu-helsinki · up: apac-sg"
+            CardValue::Text(v) if v == "down: eu-helsinki · not confirmed: apac-sg"
         ));
     }
 

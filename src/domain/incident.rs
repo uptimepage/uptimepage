@@ -600,7 +600,8 @@ pub struct OpsIncident {
     pub check_count: u64,
     #[schema(nullable = true)]
     pub error_sample: Option<String>,
-    /// Regions down / still up when the incident opened (empty = single-region).
+    /// Regions that have confirmed the failure at any point in this incident,
+    /// and those that have not (empty = single-region).
     #[serde(default)]
     pub regions_down: Vec<String>,
     #[serde(default)]

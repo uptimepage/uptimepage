@@ -205,7 +205,7 @@ pub const DOCS: &[DocPage] = &[
         blurb: "Alert channels, how a monitor binds them, and what decides when an alert fires.",
         section: Section::Guide,
         scope: Scope::Everyone,
-        lastmod: "2026-09-08",
+        lastmod: "2026-09-11",
         source: include_str!("../../docs/notifications.md"),
         dir: "",
     },

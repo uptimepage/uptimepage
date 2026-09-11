@@ -176,3 +176,64 @@ async fn an_open_declaration_does_not_block_a_real_incident_pg() {
         "one open monitor incident per target still holds"
     );
 }
+
+#[tokio::test]
+#[ignore]
+async fn widen_is_a_union_and_leaves_a_closed_incident_alone_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, target_id) = seed(&pool, "iwwiden").await;
+    let store = PgIncidentStore::new(pool.clone());
+
+    let mut new = new_open(target_id);
+    new.regions_down = vec!["fra".into()];
+    new.regions_up = vec!["us".into(), "hel".into(), "sg".into()];
+    let id = store
+        .insert_open(org, new)
+        .await
+        .expect("open")
+        .expect("opened id");
+
+    // Two writers each saw a different region confirm; both land, neither
+    // repeats a region already confirmed.
+    store
+        .widen(org, id, &["us".into(), "fra".into()])
+        .await
+        .expect("widen");
+    store.widen(org, id, &["hel".into()]).await.expect("widen");
+    let open = store
+        .open_for_target(org, target_id)
+        .await
+        .expect("read")
+        .expect("still open");
+    assert_eq!(open.regions_down, ["fra", "us", "hel"]);
+    let (up,): (Vec<String>,) = sqlx::query_as("SELECT regions_up FROM incidents WHERE id = $1")
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(up, ["sg"]);
+
+    assert!(
+        store
+            .close(org, id, chrono::Utc::now())
+            .await
+            .expect("close")
+    );
+    store
+        .widen(org, id, &["sg".into()])
+        .await
+        .expect("widen after close is a no-op");
+    let (down,): (Vec<String>,) =
+        sqlx::query_as("SELECT regions_down FROM incidents WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        down,
+        ["fra", "us", "hel"],
+        "a closed incident keeps its breakdown"
+    );
+}

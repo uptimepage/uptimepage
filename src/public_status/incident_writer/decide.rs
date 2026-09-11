@@ -17,6 +17,11 @@ pub enum Action {
         incident_id: Uuid,
         ended_at: DateTime<Utc>,
     },
+    /// Regions that confirmed the failure since the incident opened.
+    Widen {
+        incident_id: Uuid,
+        regions: Vec<String>,
+    },
 }
 
 struct Verdict<'a> {
@@ -90,6 +95,7 @@ pub fn decide_multi(
                     .flat_map(|v| v.bad.iter().map(|r| r.status))
                     .max_by_key(|s| s.severity_rank())
                     .unwrap_or(CheckStatus::Down);
+                let (regions_down, regions_up) = split_regions(&bad, &verdicts);
                 vec![Action::Open(NewOpenIncident {
                     target_id,
                     started_at: trigger.bad[0].timestamp,
@@ -97,17 +103,8 @@ pub fn decide_multi(
                     check_count: origin.bad.len() as u32,
                     error_sample: incident_error_sample(&bad, verdicts.len(), quorum),
                     region: None,
-                    regions_down: bad
-                        .iter()
-                        .map(|v| v.region)
-                        .filter(|r| !r.is_empty())
-                        .map(str::to_string)
-                        .collect(),
-                    regions_up: verdicts
-                        .iter()
-                        .filter(|v| v.bad.len() < threshold && !v.region.is_empty())
-                        .map(|v| v.region.to_string())
-                        .collect(),
+                    regions_down,
+                    regions_up,
                 })]
             } else {
                 vec![]
@@ -131,9 +128,41 @@ pub fn decide_multi(
                     }];
                 }
             }
-            vec![]
+            // The breakdown only grows: a region one check behind the quorum
+            // joins once it confirms, silence adds nothing, and a recovery is
+            // the close's business, so the row keeps the worst the outage was.
+            let (confirmed, _) = split_regions(&bad, &verdicts);
+            let regions: Vec<String> = confirmed
+                .into_iter()
+                .filter(|r| !inc.regions_down.contains(r))
+                .collect();
+            if regions.is_empty() {
+                return vec![];
+            }
+            vec![Action::Widen {
+                incident_id: inc.id,
+                regions,
+            }]
         }
     }
+}
+
+/// Confirmed regions in the order they failed, then the reporting regions that
+/// have not confirmed. Region names are empty on a single-region stream.
+fn split_regions(bad: &[&Verdict], verdicts: &[Verdict]) -> (Vec<String>, Vec<String>) {
+    let down: Vec<String> = bad
+        .iter()
+        .map(|v| v.region)
+        .filter(|r| !r.is_empty())
+        .map(str::to_string)
+        .collect();
+    let up = verdicts
+        .iter()
+        .map(|v| v.region)
+        .filter(|r| !r.is_empty() && !down.iter().any(|d| d == r))
+        .map(str::to_string)
+        .collect();
+    (down, up)
 }
 
 /// Cause as stated to notifications and incident views. The per-result error
