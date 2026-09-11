@@ -364,7 +364,7 @@ pub async fn test_send(
             "email address not verified — confirm the verification link first",
         ));
     }
-    deliver_test(&state, &channel.config).await?;
+    deliver_test(&state, &channel.config, Some((org, &channel))).await?;
     // A test that lands proves the endpoint is back, so it clears the run. Not
     // for a disabled channel, which delivers nothing whatever the test proves,
     // and never at the cost of failing a test that already went out.
@@ -432,7 +432,7 @@ pub async fn test_config(
             "email channels must be saved and verified before a test send",
         ));
     }
-    deliver_test(&state, &req.config).await?;
+    deliver_test(&state, &req.config, None).await?;
     Ok(Json(TestNotificationResponse { delivered: true }))
 }
 
@@ -1085,7 +1085,11 @@ pub async fn delegate_link_revoke(
 /// One synthetic, clearly-labelled delivery through `config`'s transport.
 /// Shared by the saved-channel and ad-hoc test endpoints so both exercise
 /// the exact notifier path real incidents use.
-async fn deliver_test(state: &AppState, config: &ChannelConfig) -> Result<()> {
+async fn deliver_test(
+    state: &AppState,
+    config: &ChannelConfig,
+    stored: Option<(crate::domain::OrgId, &NotificationChannel)>,
+) -> Result<()> {
     let central =
         state
             .cfg
@@ -1132,7 +1136,35 @@ async fn deliver_test(state: &AppState, config: &ChannelConfig) -> Result<()> {
         url: None,
         note: None,
     };
-    notifier.notify_incident(&notice).await.map_err(|e| {
+    let sent = match stored {
+        Some((org, channel)) => {
+            crate::notifier::notify_following_moves(
+                state.notification_channel_store.as_ref(),
+                org,
+                channel,
+                notifier.as_ref(),
+                &notice,
+            )
+            .await
+        }
+        None => {
+            let sent = notifier.notify_incident(&notice).await;
+            // Nothing to persist to, so the operator must save the new id
+            // themselves: a green test on a dead id would be saved as-is.
+            if let Some(moved) = notifier.taken_chat_migration() {
+                return Err(AppError::bad_request(
+                    codes::INVALID_CONFIG,
+                    format!(
+                        "the group was upgraded to a supergroup and chat_id {} became {}; \
+                         use the new id",
+                        moved.from, moved.to
+                    ),
+                ));
+            }
+            sent
+        }
+    };
+    sent.map_err(|e| {
         AppError::unprocessable(
             codes::CHANNEL_TEST_FAILED,
             format!("test delivery failed: {e}"),

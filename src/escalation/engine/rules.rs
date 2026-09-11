@@ -76,13 +76,11 @@ pub(super) fn retry_delay_secs(
 /// hostile body can't park a retry for days.
 pub(super) fn retry_after_hint(error: Option<&str>) -> Option<chrono::Duration> {
     const MAX_HINT_SECS: i64 = 3600;
-    let err = error?;
-    let rest = err[err.find("\"retry_after\":")? + "\"retry_after\":".len()..].trim_start();
-    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-    let secs: i64 = digits.parse().ok()?;
     // Discord's sub-second hints floor to zero, which costs nothing: the value
     // only ever raises a backoff that has a floor of its own.
-    Some(chrono::Duration::seconds(secs.min(MAX_HINT_SECS)))
+    crate::notifier::json_int_field(error?, "retry_after")
+        .filter(|secs| *secs >= 0)
+        .map(|secs| chrono::Duration::seconds(secs.min(MAX_HINT_SECS)))
 }
 
 /// Wrap bare channel ids (the no-policy fallback + resolution paths) as page

@@ -120,7 +120,15 @@ impl SilenceDelivery for SilenceNotifier {
                 email_alert,
                 None,
             ) {
-                Ok(n) => n.notify_incident(&notice).await.is_ok(),
+                Ok(n) => crate::notifier::notify_following_moves(
+                    self.channels.as_ref(),
+                    org,
+                    &channel,
+                    n.as_ref(),
+                    &notice,
+                )
+                .await
+                .is_ok(),
                 Err(_) => false,
             };
             // A landed send proves the endpoint is alive, whatever sent it.

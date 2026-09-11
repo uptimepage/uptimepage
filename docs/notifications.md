@@ -123,6 +123,8 @@ Deleting removes it from every monitor bound to it. The edit page lists those mo
 
 A channel linked through a central Telegram bot can also be disabled from the other side. If the bot is removed from the chat or the chat sends `/stop`, the channel is disabled with a note explaining why, and re-enabling it clears the note.
 
+One Telegram change needs nothing from you: when a group is upgraded to a supergroup, Telegram gives it a new chat id and the old one stops working. Every channel pointing at that chat, linked or bring-your-own bot, follows the move on its own, either from the bot's webhook or from the first alert that meets the dead id, and the audit log records it as `channel.chat_migrated`.
+
 Email channels have the same property through the one-click stop link (RFC 8058) that every alert mail carries. **Anyone who receives the mail can use it, and it disables that email channel for the whole org**, not just for the person who clicked; the channel shows a "recipient stopped delivery" note, and re-enabling clears it. Worth knowing before you forward alert mail around: a recipient tired of the noise can switch the channel off for everyone.
 
 ## Limits

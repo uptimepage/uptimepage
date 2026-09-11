@@ -244,6 +244,21 @@ impl ChannelConfig {
     pub fn lifecycle_ref(&self) -> Option<&str> {
         with_transport!(self, |c| c.lifecycle_ref())
     }
+
+    /// Compare-and-swap on `from`, so a stale hint never overwrites a chat
+    /// the operator has since chosen.
+    pub fn follow_chat_migration(&mut self, from: &str, to: &str) -> bool {
+        let chat_id = match self {
+            ChannelConfig::Telegram(c) => &mut c.chat_id,
+            ChannelConfig::TelegramApp(c) => &mut c.chat_id,
+            _ => return false,
+        };
+        if chat_id != from || from == to {
+            return false;
+        }
+        *chat_id = to.to_string();
+        true
+    }
 }
 
 pub const MAX_CHANNEL_NAME_LEN: usize = 100;
@@ -391,6 +406,43 @@ mod tests {
 
     use super::transport::MASK;
     use super::*;
+
+    #[test]
+    fn only_the_chat_a_send_used_follows_a_migration() {
+        let mut byo = ChannelConfig::Telegram(TelegramConfig {
+            bot_token: "123:abc".into(),
+            chat_id: "-100".into(),
+        });
+        assert!(
+            !byo.follow_chat_migration("-200", "-100200"),
+            "not this chat"
+        );
+        assert!(!byo.follow_chat_migration("-100", "-100"), "nowhere to go");
+        assert!(byo.follow_chat_migration("-100", "-100100"));
+        assert_eq!(
+            byo.lifecycle_ref(),
+            None,
+            "a BYO bot has no provider lifecycle"
+        );
+        let ChannelConfig::Telegram(c) = &byo else {
+            unreachable!()
+        };
+        assert_eq!(c.chat_id, "-100100");
+        assert_eq!(c.bot_token, "123:abc");
+
+        let mut linked = ChannelConfig::TelegramApp(TelegramAppConfig {
+            chat_id: "-100".into(),
+            chat_title: Some("Ops".into()),
+        });
+        assert!(linked.follow_chat_migration("-100", "-100100"));
+        assert_eq!(linked.lifecycle_ref(), Some("-100100"));
+
+        let mut slack = ChannelConfig::Slack(SlackConfig {
+            webhook_url: "https://hooks.slack.com/x".into(),
+            mention: None,
+        });
+        assert!(!slack.follow_chat_migration("-100", "-100100"));
+    }
 
     #[test]
     fn config_round_trips_per_variant() {

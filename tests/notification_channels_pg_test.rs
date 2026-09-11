@@ -839,6 +839,136 @@ async fn telegram_lifecycle_disable_by_external_ref() {
 
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn telegram_chat_migration_moves_sealed_config_ref_and_audit_live_pg() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (org_a, org_b, user_a, user_b) = two_orgs(&pool, "tg-move").await;
+    let store = PgNotificationChannelStore::new(pool.clone(), Some(test_cipher()));
+
+    let tail = uuid::Uuid::now_v7().simple().to_string();
+    let old = format!("-4{tail}");
+    let new = format!("-100{tail}");
+    let linked = |name: &str| NewNotificationChannel {
+        name: name.into(),
+        config: ChannelConfig::TelegramApp(uptimepage::domain::TelegramAppConfig {
+            chat_id: old.clone(),
+            chat_title: Some("Ops".into()),
+        }),
+        enabled: true,
+        auto_bind_tags: Vec::new(),
+    };
+    let a = store
+        .create(org_a, linked("prod"), WriteSource::Ui, 10, None)
+        .await
+        .unwrap();
+    let b = store
+        .create(org_b, linked("ops"), WriteSource::Ui, 10, None)
+        .await
+        .unwrap();
+    let own = store
+        .create(
+            org_a,
+            NewNotificationChannel {
+                name: "own-bot".into(),
+                config: ChannelConfig::Telegram(uptimepage::domain::TelegramConfig {
+                    bot_token: "123:abc".into(),
+                    chat_id: old.clone(),
+                }),
+                enabled: true,
+                auto_bind_tags: Vec::new(),
+            },
+            WriteSource::Api,
+            10,
+            None,
+        )
+        .await
+        .unwrap();
+    let kind = uptimepage::domain::ChannelKind::TelegramApp;
+
+    // The webhook path moves every org linked to the chat, and the ref the
+    // next kick resolves by moves with it.
+    assert_eq!(
+        store
+            .follow_linked_chat_migration(&old, &new)
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(store.count_by_external_ref(kind, &old).await.unwrap(), 0);
+    assert_eq!(store.count_by_external_ref(kind, &new).await.unwrap(), 2);
+    for (org, id) in [(org_a, a.id), (org_b, b.id)] {
+        let got = store.get(org, id).await.unwrap().unwrap();
+        assert_eq!(got.config.lifecycle_ref(), Some(new.as_str()));
+        assert_eq!(got.write_source, WriteSource::Ui, "no operator write");
+    }
+    assert_eq!(
+        store
+            .follow_linked_chat_migration(&old, &new)
+            .await
+            .unwrap(),
+        0,
+        "the twin service message finds nothing left"
+    );
+
+    // The send path: the BYO bot's sealed config is opened, moved, resealed,
+    // and only the org that owns the row can move it.
+    assert!(
+        !store
+            .follow_chat_migration(org_b, own.id, &old, &new)
+            .await
+            .unwrap()
+    );
+    assert!(
+        store
+            .follow_chat_migration(org_a, own.id, &old, &new)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !store
+            .follow_chat_migration(org_a, own.id, &old, &new)
+            .await
+            .unwrap(),
+        "compare-and-swap on the id the send used"
+    );
+    let got = store.get(org_a, own.id).await.unwrap().unwrap();
+    assert_eq!(
+        got.config,
+        ChannelConfig::Telegram(uptimepage::domain::TelegramConfig {
+            bot_token: "123:abc".into(),
+            chat_id: new.clone(),
+        })
+    );
+    let (raw,): (serde_json::Value,) =
+        sqlx::query_as("SELECT config FROM notification_channels WHERE id = $1")
+            .bind(own.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        raw.get("$enc").is_some(),
+        "moved config is sealed at rest: {raw}"
+    );
+
+    let (audited,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM org_audit_log \
+         WHERE org_id = $1 AND action = 'channel.chat_migrated' \
+           AND metadata->>'from' = $2 AND metadata->>'to' = $3",
+    )
+    .bind(org_a.0)
+    .bind(&old)
+    .bind(&new)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audited, 2, "one linked, one BYO channel moved in org A");
+
+    cleanup(&pool, &[org_a, org_b], &[user_a, user_b]).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
 async fn email_lifecycle_ref_is_derived_and_follows_the_address() {
     let Some(pool) = pg_pool_from_env().await else {
         return;

@@ -17,6 +17,10 @@ pub struct Message {
     #[serde(default)]
     pub text: Option<String>,
     pub chat: Chat,
+    #[serde(default)]
+    pub migrate_to_chat_id: Option<i64>,
+    #[serde(default)]
+    pub migrate_from_chat_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -79,14 +83,28 @@ impl ChatRef {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WebhookAction {
     /// `/start <code>` in a private chat.
-    LinkPrivate { code: String, chat: ChatRef },
+    LinkPrivate {
+        code: String,
+        chat: ChatRef,
+    },
     /// `/start <code>` or `/link <code>` in a group the bot was added to.
-    LinkGroup { code: String, chat: ChatRef },
+    LinkGroup {
+        code: String,
+        chat: ChatRef,
+    },
     /// `/stop` — the chat asked for alerts to end. Unlike [`Self::Removed`]
     /// the bot can still reply with a confirmation.
-    Stop { chat_id: i64 },
+    Stop {
+        chat_id: i64,
+    },
     /// The bot was removed (`left`/`kicked`) from a chat.
-    Removed { chat_id: i64 },
+    Removed {
+        chat_id: i64,
+    },
+    Migrated {
+        from: i64,
+        to: i64,
+    },
     /// Anything we don't act on — acknowledged and dropped.
     Ignore,
 }
@@ -106,6 +124,21 @@ fn parse_command(text: &str) -> Option<(&str, &str)> {
 }
 
 pub fn classify_update(update: &Update) -> WebhookAction {
+    // Announced once in each chat; following it is idempotent.
+    if let Some(msg) = &update.message {
+        if let Some(to) = msg.migrate_to_chat_id {
+            return WebhookAction::Migrated {
+                from: msg.chat.id,
+                to,
+            };
+        }
+        if let Some(from) = msg.migrate_from_chat_id {
+            return WebhookAction::Migrated {
+                from,
+                to: msg.chat.id,
+            };
+        }
+    }
     if let Some(msg) = &update.message
         && let Some(text) = &msg.text
         && let Some((cmd, code)) = parse_command(text)
@@ -275,6 +308,22 @@ mod tests {
             ),
             WebhookAction::Removed { chat_id: -7 }
         );
+    }
+
+    #[test]
+    fn supergroup_upgrade_names_both_ids_from_either_chat() {
+        let from_old = classify(
+            r#"{"message":{"chat":{"id":-4401963077,"type":"group","title":"Ops"},"migrate_to_chat_id":-1004401963077}}"#,
+        );
+        let from_new = classify(
+            r#"{"message":{"chat":{"id":-1004401963077,"type":"supergroup","title":"Ops"},"migrate_from_chat_id":-4401963077}}"#,
+        );
+        let expected = WebhookAction::Migrated {
+            from: -4401963077,
+            to: -1004401963077,
+        };
+        assert_eq!(from_old, expected);
+        assert_eq!(from_new, expected);
     }
 
     #[test]

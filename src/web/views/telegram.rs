@@ -53,6 +53,9 @@ pub async fn webhook(State(state): State<AppState>, headers: HeaderMap, body: By
         WebhookAction::Removed { chat_id } => {
             tokio::spawn(async move { handle_removed(&state, chat_id).await });
         }
+        WebhookAction::Migrated { from, to } => {
+            tokio::spawn(async move { handle_migrated(&state, from, to).await });
+        }
         WebhookAction::Ignore => {}
     }
     StatusCode::OK
@@ -99,6 +102,18 @@ async fn handle_stop(state: &AppState, chat_id: i64) {
 /// Kicked/left/blocked: nobody left to reply to.
 async fn handle_removed(state: &AppState, chat_id: i64) {
     unlink_chat(state, chat_id).await;
+}
+
+async fn handle_migrated(state: &AppState, from: i64, to: i64) {
+    match state
+        .notification_channel_store
+        .follow_linked_chat_migration(&from.to_string(), &to.to_string())
+        .await
+    {
+        Ok(n) if n > 0 => tracing::info!(from, to, channels = n, "telegram chat migrated"),
+        Ok(_) => {}
+        Err(err) => tracing::warn!(?err, from, to, "telegram chat migration failed"),
+    }
 }
 
 async fn handle_link(state: &AppState, code: &str, chat: ChatRef) {

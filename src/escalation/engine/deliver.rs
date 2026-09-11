@@ -10,7 +10,7 @@ use crate::domain::{
 };
 use crate::error::Result;
 use crate::notifier::event::IncidentNotice;
-use crate::notifier::{EmailAlert, build_notifier};
+use crate::notifier::{EmailAlert, build_notifier, notify_following_moves};
 
 use super::rules::{log_error_snippet, push_target, redact_secrets, retry_after_hint};
 use super::{PageTarget, Worker};
@@ -117,7 +117,15 @@ impl Worker {
         ) {
             Ok(n) => {
                 let started = Instant::now();
-                match n.notify_incident(notice).await {
+                let sent = notify_following_moves(
+                    self.channels.as_ref(),
+                    org,
+                    channel,
+                    n.as_ref(),
+                    notice,
+                )
+                .await;
+                match sent {
                     Ok(()) => {
                         note_send(transport, Some(started), SendOutcome::Sent);
                         tracing::info!(

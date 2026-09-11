@@ -53,6 +53,73 @@ pub trait Notifier: Send + Sync {
     fn taken_receipt(&self) -> Option<String> {
         None
     }
+
+    /// A notifier instance serves a single send, so the move belongs to it.
+    fn taken_chat_migration(&self) -> Option<ChatMigration> {
+        None
+    }
+}
+
+/// String-scanned because transports flatten the vendor body into the error
+/// text. Sign allowed, fraction dropped.
+pub(crate) fn json_int_field(error: &str, key: &str) -> Option<i64> {
+    let needle = format!("\"{key}\":");
+    let rest = error[error.find(&needle)? + needle.len()..].trim_start();
+    let end = rest
+        .find(|c: char| !(c.is_ascii_digit() || c == '-'))
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatMigration {
+    pub from: String,
+    pub to: String,
+}
+
+/// Send, then persist any chat move the send followed. Best-effort on the
+/// second half: the page already landed, and an operator who re-pointed the
+/// channel meanwhile wins the compare-and-swap. A linked chat moves for every
+/// org that shares it, the way the bot's webhook would move it.
+pub async fn notify_following_moves(
+    channels: &dyn crate::storage::NotificationChannelStore,
+    org: crate::domain::OrgId,
+    channel: &crate::domain::NotificationChannel,
+    notifier: &dyn Notifier,
+    notice: &IncidentNotice,
+) -> Result<()> {
+    let sent = notifier.notify_incident(notice).await;
+    let Some(moved) = notifier.taken_chat_migration() else {
+        return sent;
+    };
+    let followed = if channel.kind == crate::domain::ChannelKind::TelegramApp {
+        channels
+            .follow_linked_chat_migration(&moved.from, &moved.to)
+            .await
+    } else {
+        channels
+            .follow_chat_migration(org, channel.id, &moved.from, &moved.to)
+            .await
+            .map(u64::from)
+    };
+    match followed {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(
+            org_id = %org.0,
+            channel_id = %channel.id,
+            channels = n,
+            from = %moved.from,
+            to = %moved.to,
+            "notification channel followed its telegram chat migration"
+        ),
+        Err(err) => tracing::warn!(
+            org_id = %org.0,
+            channel_id = %channel.id,
+            error = %err,
+            "telegram chat migration not persisted"
+        ),
+    }
+    sent
 }
 
 /// Central-bot delivery context for one factory call: operator token plus
@@ -221,3 +288,108 @@ pub fn build_notifier(
 }
 
 pub(crate) use crate::text::{truncate_bytes, truncate_chars};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{
+        NewNotificationChannel, OrgId, TelegramAppConfig, TelegramConfig, WriteSource,
+    };
+    use crate::storage::{InMemoryNotificationChannelStore, NotificationChannelStore};
+
+    struct Moved(parking_lot::Mutex<Option<ChatMigration>>);
+
+    #[async_trait]
+    impl Notifier for Moved {
+        async fn notify_incident(&self, _: &IncidentNotice) -> Result<()> {
+            Ok(())
+        }
+
+        fn taken_chat_migration(&self) -> Option<ChatMigration> {
+            self.0.lock().take()
+        }
+    }
+
+    fn moved(from: &str, to: &str) -> Moved {
+        Moved(parking_lot::Mutex::new(Some(ChatMigration {
+            from: from.into(),
+            to: to.into(),
+        })))
+    }
+
+    async fn create(
+        store: &InMemoryNotificationChannelStore,
+        org: OrgId,
+        config: ChannelConfig,
+    ) -> crate::domain::NotificationChannel {
+        store
+            .create(
+                org,
+                NewNotificationChannel {
+                    name: "ops".into(),
+                    config,
+                    enabled: true,
+                    auto_bind_tags: Vec::new(),
+                },
+                WriteSource::Ui,
+                10,
+                None,
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_followed_move_lands_on_the_channel_once() {
+        let store = InMemoryNotificationChannelStore::new();
+        let org = OrgId(uuid::Uuid::now_v7());
+        let ch = create(
+            &store,
+            org,
+            ChannelConfig::Telegram(TelegramConfig {
+                bot_token: "123:abc".into(),
+                chat_id: "-5".into(),
+            }),
+        )
+        .await;
+        let moved = moved("-5", "-1005");
+        let notice = card::tests::notice(crate::domain::NotificationReason::Opened);
+
+        notify_following_moves(&store, org, &ch, &moved, &notice)
+            .await
+            .unwrap();
+        notify_following_moves(&store, org, &ch, &moved, &notice)
+            .await
+            .unwrap();
+
+        let got = store.get(org, ch.id).await.unwrap().unwrap();
+        let ChannelConfig::Telegram(c) = got.config else {
+            unreachable!()
+        };
+        assert_eq!(c.chat_id, "-1005");
+    }
+
+    #[tokio::test]
+    async fn a_linked_chat_moves_for_every_org_that_shares_it() {
+        let store = InMemoryNotificationChannelStore::new();
+        let (a, b) = (OrgId(uuid::Uuid::now_v7()), OrgId(uuid::Uuid::now_v7()));
+        let linked = || {
+            ChannelConfig::TelegramApp(TelegramAppConfig {
+                chat_id: "-5".into(),
+                chat_title: None,
+            })
+        };
+        let ch_a = create(&store, a, linked()).await;
+        let ch_b = create(&store, b, linked()).await;
+        let notice = card::tests::notice(crate::domain::NotificationReason::Opened);
+
+        notify_following_moves(&store, a, &ch_a, &moved("-5", "-1005"), &notice)
+            .await
+            .unwrap();
+
+        for (org, id) in [(a, ch_a.id), (b, ch_b.id)] {
+            let got = store.get(org, id).await.unwrap().unwrap();
+            assert_eq!(got.config.lifecycle_ref(), Some("-1005"));
+        }
+    }
+}

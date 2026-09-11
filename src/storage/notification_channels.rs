@@ -133,6 +133,18 @@ pub trait NotificationChannelStore: Send + Sync {
     ) -> Result<u64>;
     /// Channels of `kind` (any org) still carrying `external_ref`.
     async fn count_by_external_ref(&self, kind: ChannelKind, external_ref: &str) -> Result<i64>;
+    /// Compare-and-swap on `from`. Verification, failure run and
+    /// `write_source` are left alone: the operator changed nothing.
+    async fn follow_chat_migration(
+        &self,
+        org: OrgId,
+        id: Uuid,
+        from: &str,
+        to: &str,
+    ) -> Result<bool>;
+    /// Cross-org like [`Self::disable_by_external_ref`] and for the same
+    /// reason. Returns how many moved.
+    async fn follow_linked_chat_migration(&self, from: &str, to: &str) -> Result<u64>;
     /// Fold one finished delivery into the channel's failure run. One that
     /// lands clears it and stamps `last_delivered_at`; one that used up every
     /// retry extends it. The report stamp is left alone either way, so the
@@ -240,6 +252,41 @@ pub struct PgNotificationChannelStore {
 impl PgNotificationChannelStore {
     pub fn new(pool: PgPool, cipher: Option<Arc<Cipher>>) -> Self {
         Self { pool, cipher }
+    }
+
+    async fn rewrite_chat(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        org: OrgId,
+        id: Uuid,
+        config: Value,
+        from: &str,
+        to: &str,
+    ) -> Result<bool> {
+        let mut cfg = open(config, self.cipher.as_deref())?;
+        if !cfg.follow_chat_migration(from, to) {
+            return Ok(false);
+        }
+        sqlx::query(
+            "UPDATE notification_channels SET config = $3, external_ref = $4, updated_at = now() \
+             WHERE id = $1 AND org_id = $2",
+        )
+        .bind(id)
+        .bind(org.0)
+        .bind(seal(&cfg, self.cipher.as_deref())?)
+        .bind(cfg.lifecycle_ref())
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| AppError::Other(anyhow!("follow chat migration: {e}")))?;
+        crate::storage::orgs::record_audit_tx(
+            tx,
+            org,
+            None,
+            "channel.chat_migrated",
+            serde_json::json!({ "channel_id": id, "kind": cfg.kind().as_db_str(), "from": from, "to": to }),
+        )
+        .await?;
+        Ok(true)
     }
 }
 
@@ -635,6 +682,76 @@ impl NotificationChannelStore for PgNotificationChannelStore {
         Ok(n)
     }
 
+    async fn follow_chat_migration(
+        &self,
+        org: OrgId,
+        id: Uuid,
+        from: &str,
+        to: &str,
+    ) -> Result<bool> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| AppError::Other(anyhow!("begin: {e}")))?;
+        let row: Option<(Value,)> = sqlx::query_as(
+            "SELECT config FROM notification_channels WHERE id = $1 AND org_id = $2 FOR UPDATE",
+        )
+        .bind(id)
+        .bind(org.0)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| AppError::Other(anyhow!("lock notification channel: {e}")))?;
+        let Some((config,)) = row else {
+            return Ok(false);
+        };
+        let moved = self
+            .rewrite_chat(&mut tx, org, id, config, from, to)
+            .await?;
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Other(anyhow!("commit: {e}")))?;
+        Ok(moved)
+    }
+
+    async fn follow_linked_chat_migration(&self, from: &str, to: &str) -> Result<u64> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| AppError::Other(anyhow!("begin: {e}")))?;
+        let rows: Vec<(Uuid, Uuid, Value)> = sqlx::query_as(
+            r#"SELECT id, org_id, config FROM notification_channels /* SAFE: provider lifecycle — the chat moved for every org linked to it; kind partitions the ref namespace */
+               WHERE kind = $1 AND external_ref = $2 FOR UPDATE"#,
+        )
+        .bind(ChannelKind::TelegramApp.as_db_str())
+        .bind(from)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| AppError::Other(anyhow!("lock linked telegram channels: {e}")))?;
+        let mut moved = 0;
+        for (id, org_id, config) in rows {
+            // One row that will not open must not hold the others on the
+            // dead id.
+            match self
+                .rewrite_chat(&mut tx, OrgId(org_id), id, config, from, to)
+                .await
+            {
+                Ok(true) => moved += 1,
+                Ok(false) => {}
+                Err(err) => tracing::warn!(
+                    channel_id = %id,
+                    error = %err,
+                    "linked telegram channel did not follow the chat migration"
+                ),
+            }
+        }
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Other(anyhow!("commit: {e}")))?;
+        Ok(moved)
+    }
+
     async fn record_delivery_outcome(
         &self,
         org: OrgId,
@@ -796,6 +913,15 @@ impl InMemoryNotificationChannelStore {
 
     pub fn is_empty(&self) -> bool {
         self.inner.lock().is_empty()
+    }
+
+    fn move_chat(e: &mut MemEntry, from: &str, to: &str) -> bool {
+        if !e.ch.config.follow_chat_migration(from, to) {
+            return false;
+        }
+        e.external_ref = e.ch.config.lifecycle_ref().map(str::to_owned);
+        e.ch.updated_at = Utc::now();
+        true
     }
 }
 
@@ -1006,6 +1132,33 @@ impl NotificationChannelStore for InMemoryNotificationChannelStore {
             .iter()
             .filter(|e| e.ch.kind == kind && e.external_ref.as_deref() == Some(external_ref))
             .count() as i64)
+    }
+
+    async fn follow_chat_migration(
+        &self,
+        org: OrgId,
+        id: Uuid,
+        from: &str,
+        to: &str,
+    ) -> Result<bool> {
+        let mut g = self.inner.lock();
+        let Some(e) = g.iter_mut().find(|e| e.org == org && e.ch.id == id) else {
+            return Ok(false);
+        };
+        Ok(Self::move_chat(e, from, to))
+    }
+
+    async fn follow_linked_chat_migration(&self, from: &str, to: &str) -> Result<u64> {
+        let mut moved = 0;
+        for e in self.inner.lock().iter_mut() {
+            if e.ch.kind == ChannelKind::TelegramApp
+                && e.external_ref.as_deref() == Some(from)
+                && Self::move_chat(e, from, to)
+            {
+                moved += 1;
+            }
+        }
+        Ok(moved)
     }
 
     async fn record_delivery_outcome(
@@ -1414,6 +1567,104 @@ mod tests {
             .unwrap();
         assert!(re.enabled);
         assert_eq!(re.disabled_reason, None);
+    }
+
+    #[tokio::test]
+    async fn a_moved_chat_is_followed_by_every_org_linked_to_it_and_by_id_once() {
+        let store = InMemoryNotificationChannelStore::new();
+        let linked = |name: &str, chat: &str| NewNotificationChannel {
+            name: name.into(),
+            config: ChannelConfig::TelegramApp(crate::domain::TelegramAppConfig {
+                chat_id: chat.into(),
+                chat_title: None,
+            }),
+            enabled: true,
+            auto_bind_tags: Vec::new(),
+        };
+        let byo = NewNotificationChannel {
+            name: "own-bot".into(),
+            config: ChannelConfig::Telegram(crate::domain::TelegramConfig {
+                bot_token: "123:abc".into(),
+                chat_id: "-100".into(),
+            }),
+            enabled: true,
+            auto_bind_tags: Vec::new(),
+        };
+        let a = store
+            .create(org(), linked("prod", "-100"), WriteSource::Ui, 10, None)
+            .await
+            .unwrap();
+        let b = store
+            .create(
+                other_org(),
+                linked("ops", "-100"),
+                WriteSource::Ui,
+                10,
+                None,
+            )
+            .await
+            .unwrap();
+        let own = store
+            .create(org(), byo, WriteSource::Api, 10, None)
+            .await
+            .unwrap();
+
+        // A BYO bot never reaches the webhook; its own send reports the move.
+        let moved = store
+            .follow_linked_chat_migration("-100", "-100100")
+            .await
+            .unwrap();
+        assert_eq!(moved, 2);
+        for (o, id) in [(org(), a.id), (other_org(), b.id)] {
+            let got = store.get(o, id).await.unwrap().unwrap();
+            assert_eq!(got.config.lifecycle_ref(), Some("-100100"));
+        }
+        assert_eq!(
+            store
+                .count_by_external_ref(ChannelKind::TelegramApp, "-100100")
+                .await
+                .unwrap(),
+            2,
+            "a later kick resolves by the new id"
+        );
+        assert_eq!(
+            store
+                .follow_linked_chat_migration("-100", "-100100")
+                .await
+                .unwrap(),
+            0,
+            "the twin service message finds nothing left to move"
+        );
+
+        assert!(
+            store
+                .follow_chat_migration(org(), own.id, "-100", "-100100")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !store
+                .follow_chat_migration(org(), own.id, "-100", "-100100")
+                .await
+                .unwrap(),
+            "already moved"
+        );
+        assert!(
+            !store
+                .follow_chat_migration(other_org(), own.id, "-100100", "-5")
+                .await
+                .unwrap(),
+            "another org's id never reaches the row"
+        );
+        let got = store.get(org(), own.id).await.unwrap().unwrap();
+        assert_eq!(
+            got.config,
+            ChannelConfig::Telegram(crate::domain::TelegramConfig {
+                bot_token: "123:abc".into(),
+                chat_id: "-100100".into(),
+            })
+        );
+        assert_eq!(got.write_source, WriteSource::Api, "no operator touched it");
     }
 
     #[tokio::test]
