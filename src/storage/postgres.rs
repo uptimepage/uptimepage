@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,7 +14,8 @@ use crate::api::types::{TagCount, TargetsSummary};
 use crate::config::PostgresConfig;
 use crate::domain::target::MAX_TAGS_PER_TARGET;
 use crate::domain::{
-    CheckSpec, NewTarget, OrgId, Target, TargetAlerts, TargetUpdate, UserId, WriteSource,
+    CheckSpec, NewTarget, NewTargetWithRegions, OrgId, RegionIncidentPolicy, Target, TargetAlerts,
+    TargetUpdate, UserId, WriteSource,
 };
 use crate::error::{AppError, Result};
 use crate::quotas::service::count_sql;
@@ -726,7 +728,7 @@ impl TargetStore for PostgresTargetStore {
     async fn bulk_create(
         &self,
         org: OrgId,
-        items: Vec<NewTarget>,
+        items: Vec<NewTargetWithRegions>,
         source: WriteSource,
         max_targets: i64,
         max_flow_checks: i64,
@@ -736,27 +738,34 @@ impl TargetStore for PostgresTargetStore {
         }
         let flow_len = items
             .iter()
-            .filter(|i| matches!(i.check, CheckSpec::Flow(_)))
+            .filter(|i| matches!(i.target.check, CheckSpec::Flow(_)))
             .count() as i64;
+        let (items, region_sets): (Vec<NewTarget>, Vec<Vec<String>>) =
+            items.into_iter().map(|i| (i.target, i.regions)).unzip();
 
         // Same lock-then-count-then-write pattern as the singular path:
         // the per-org advisory lock makes the count accurate against a
         // concurrent bulk (a count subquery alone is not race-safe under
         // READ COMMITTED). All-or-nothing on the cap.
-        const SQL: &str = r#"INSERT INTO targets (org_id, name, check_spec, interval_secs, enabled, tags, alerts,
+        // Ids are minted here so each row's region set can be keyed to it
+        // without leaning on RETURNING order, which Postgres does not promise.
+        const SQL: &str = r#"INSERT INTO targets (id, org_id, name, check_spec, interval_secs, enabled, tags, alerts,
                                     group_name, owner_user_id, write_source,
-                                    alert_confirmations, notify_recovery, renotify_interval_secs)
-               SELECT $9, u.name, u.check_spec, u.interval_secs, u.enabled,
+                                    alert_confirmations, notify_recovery, renotify_interval_secs,
+                                    region_policy)
+               SELECT u.id, $9, u.name, u.check_spec, u.interval_secs, u.enabled,
                       ARRAY(SELECT jsonb_array_elements_text(u.tags)),
                       u.alerts,
                       u.group_name, u.owner_user_id,
                       $10,
-                      u.alert_confirmations, u.notify_recovery, u.renotify_interval_secs
+                      u.alert_confirmations, u.notify_recovery, u.renotify_interval_secs,
+                      u.region_policy
                FROM UNNEST($1::text[], $2::jsonb[], $3::int4[], $4::bool[], $5::jsonb[], $6::jsonb[],
-                           $7::text[], $8::uuid[], $11::int4[], $12::bool[], $13::int4[])
+                           $7::text[], $8::uuid[], $11::int4[], $12::bool[], $13::int4[],
+                           $14::jsonb[], $15::uuid[])
                     AS u(name, check_spec, interval_secs, enabled, tags, alerts,
                          group_name, owner_user_id, alert_confirmations, notify_recovery,
-                         renotify_interval_secs)
+                         renotify_interval_secs, region_policy, id)
                RETURNING id, name, check_spec, interval_secs, enabled, tags, alerts, region_policy,
                       alert_confirmations, notify_recovery, renotify_interval_secs,
                       group_name, owner_user_id,
@@ -776,6 +785,8 @@ impl TargetStore for PostgresTargetStore {
         let mut confirmations: Vec<i32> = Vec::with_capacity(len);
         let mut recoveries: Vec<bool> = Vec::with_capacity(len);
         let mut renotifies: Vec<i32> = Vec::with_capacity(len);
+        let mut policies: Vec<Json<RegionIncidentPolicy>> = Vec::with_capacity(len);
+        let ids: Vec<Uuid> = (0..len).map(|_| Uuid::new_v4()).collect();
 
         let mut tx = self.pool.begin().await.context("bulk create: begin")?;
         let account = accounts::account_for_org(&mut *tx, org).await?;
@@ -831,6 +842,7 @@ impl TargetStore for PostgresTargetStore {
                 confirmations.push(new.alert_confirmations.max(1) as i32);
                 recoveries.push(new.notify_recovery);
                 renotifies.push(new.renotify_interval_secs as i32);
+                policies.push(Json(new.region_policy.unwrap_or_default()));
             }
             sqlx::query_as::<_, TargetRow>(SQL)
                 .bind(&names)
@@ -846,6 +858,8 @@ impl TargetStore for PostgresTargetStore {
                 .bind(&confirmations)
                 .bind(&recoveries)
                 .bind(&renotifies)
+                .bind(&policies)
+                .bind(&ids)
                 .fetch_all(&mut *tx)
                 .await
                 .context("bulk insert targets")?
@@ -865,6 +879,7 @@ impl TargetStore for PostgresTargetStore {
                 confirmations.push(new.alert_confirmations.max(1) as i32);
                 recoveries.push(new.notify_recovery);
                 renotifies.push(new.renotify_interval_secs as i32);
+                policies.push(Json(new.region_policy.unwrap_or_default()));
             }
             sqlx::query_as::<_, TargetRow>(SQL)
                 .bind(&names)
@@ -880,14 +895,44 @@ impl TargetStore for PostgresTargetStore {
                 .bind(&confirmations)
                 .bind(&recoveries)
                 .bind(&renotifies)
+                .bind(&policies)
+                .bind(&ids)
                 .fetch_all(&mut *tx)
                 .await
                 .context("bulk insert targets")?
         };
 
-        let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
-        self.assign_default_region(&mut tx, &ids).await?;
+        let mut target_ids: Vec<Uuid> = Vec::new();
+        let mut region_ids: Vec<&str> = Vec::new();
+        let mut unplaced: Vec<Uuid> = Vec::new();
+        for (id, regions) in ids.iter().zip(&region_sets) {
+            if regions.is_empty() {
+                unplaced.push(*id);
+            }
+            for region in regions {
+                target_ids.push(*id);
+                region_ids.push(region);
+            }
+        }
+        if !target_ids.is_empty() {
+            sqlx::query(
+                "INSERT INTO target_regions (target_id, region) \
+                 SELECT * FROM unnest($1::uuid[], $2::text[])",
+            )
+            .bind(&target_ids)
+            .bind(&region_ids)
+            .execute(&mut *tx)
+            .await
+            .context("bulk create: assign regions")?;
+        }
+        if !unplaced.is_empty() {
+            self.assign_default_region(&mut tx, &unplaced).await?;
+        }
         tx.commit().await.context("bulk create: commit")?;
+        let position: HashMap<Uuid, usize> =
+            ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+        let mut rows = rows;
+        rows.sort_by_key(|r| position[&r.id]);
         self.rows_to_targets(rows)
     }
 

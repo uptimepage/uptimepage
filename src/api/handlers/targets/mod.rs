@@ -17,7 +17,7 @@ use crate::app::AppState;
 use crate::auth::scope::Scope;
 use crate::domain::agent_wire::DispatchKind;
 use crate::domain::{
-    CadenceAdvice, CheckResult, CheckSpec, HeartbeatCheck, NewTarget, OrgId, RegionIncidentPolicy,
+    CadenceAdvice, CheckResult, CheckSpec, HeartbeatCheck, NewTarget, NewTargetWithRegions, OrgId,
     Target, TargetUpdate,
 };
 use crate::error::{AppError, Result};
@@ -892,14 +892,6 @@ pub async fn bulk_create(
     // Quantity-aware friendly pre-check; the store INSERT re-enforces the
     // same `current + n <= limit` bound atomically against a concurrent bulk.
     state.quotas.check_can_create_targets(org, None, n).await?;
-    // Captured before the move so each item's explicit policy survives the
-    // bulk insert and is reapplied once the full region set is assigned.
-    let item_policies: Vec<Option<RegionIncidentPolicy>> =
-        items.iter().map(|i| i.region_policy).collect();
-    let mut item_regions: Vec<Vec<String>> = Vec::with_capacity(items.len());
-    for new in &items {
-        item_regions.push(resolve_create_regions(&state, org, new, &plan, &snapshot).await?);
-    }
     let flow_count = items
         .iter()
         .filter(|i| matches!(&i.check, CheckSpec::Flow(_)))
@@ -910,46 +902,23 @@ pub async fn bulk_create(
             .check_can_create_flow(org, None, flow_count)
             .await?;
     }
+    // A heartbeat's ping row comes from the next scheduler refresh, so bulk
+    // stays one batch.
+    let mut placed = Vec::with_capacity(items.len());
+    for target in items {
+        let regions = resolve_create_regions(&state, org, &target, &plan, &snapshot).await?;
+        placed.push(NewTargetWithRegions { target, regions });
+    }
     let out = state
         .target_store
         .bulk_create(
             org,
-            items,
+            placed,
             source,
             i64::from(plan.max_targets),
             i64::from(plan.max_flow_checks),
         )
         .await?;
-    // Heartbeat items get their ping-token rows from the next scheduler
-    // refresh (self-heal), not a per-item mint loop, so bulk stays one batch.
-    let default_region = state.cfg.scheduler.effective_default_region();
-    for ((t, explicit), assigned) in out.iter().zip(item_policies).zip(item_regions) {
-        // Anything but the seed the insert wrote has to land, one region included:
-        // the operator's default need not be the deployment's.
-        let seeded = assigned.len() == 1 && assigned[0] == default_region;
-        if !t.check.is_passive() && !seeded {
-            state
-                .target_store
-                .set_target_regions(org, t.id, &assigned)
-                .await?;
-        }
-        // The insert omits `region_policy`, so only an item that chose one writes.
-        if let Some(policy) = explicit {
-            state
-                .target_store
-                .update(
-                    org,
-                    t.id,
-                    TargetUpdate {
-                        region_policy: Some(policy),
-                        ..Default::default()
-                    },
-                    Some(source),
-                    None,
-                )
-                .await?;
-        }
-    }
     Ok((StatusCode::CREATED, Redacted::new(out)))
 }
 
@@ -1220,19 +1189,20 @@ pub(crate) async fn resolve_create_regions(
     snapshot: &RegionSnapshot,
 ) -> Result<Vec<String>> {
     let check = &new.check;
-    let regions = match &new.regions {
-        Some(requested) => {
-            if check.is_passive() {
-                return Err(AppError::unprocessable(
-                    codes::REGION_INVALID,
-                    "heartbeat monitors receive pings; they are not probed from regions",
-                ));
-            }
+    let regions = match (&new.regions, check.is_passive()) {
+        (Some(_), true) => {
+            return Err(AppError::unprocessable(
+                codes::REGION_INVALID,
+                "heartbeat monitors receive pings; they are not probed from regions",
+            ));
+        }
+        (None, true) => Vec::new(),
+        (Some(requested), false) => {
             let named = vet_requested_regions(state, org, requested, snapshot).await?;
             snapshot.ensure_flow_runs_in_each(check, &named)?;
             named
         }
-        None => snapshot.default_for(check, plan.max_regions),
+        (None, false) => snapshot.default_for(check, plan.max_regions),
     };
     snapshot.ensure_flow_covered(check, &regions)?;
     Ok(regions)
@@ -1243,7 +1213,7 @@ pub(crate) async fn resolve_create_regions(
 /// the monitor reports a state instead of sitting blank until its next tick.
 /// A caller that only writes the row leaves a monitor that cannot be pinged,
 /// probes from one region, and shows nothing. `regions` comes from
-/// `resolve_create_regions`, never empty.
+/// `resolve_create_regions`, empty only for a heartbeat.
 pub(crate) async fn create_target(
     state: &AppState,
     org: OrgId,
@@ -1267,7 +1237,7 @@ pub(crate) async fn create_target(
     }
     // The store seeds the deployment's default region; only this write makes a
     // set that seed does not contain stick.
-    if !t.check.is_passive() {
+    if !regions.is_empty() {
         state
             .target_store
             .set_target_regions(org, t.id, &regions)

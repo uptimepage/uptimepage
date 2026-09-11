@@ -163,6 +163,14 @@ pub struct NewTarget {
     pub regions: Option<Vec<String>>,
 }
 
+/// A monitor with the regions it probes from, resolved before the write so
+/// both land in one transaction. Empty for a heartbeat, which is pinged.
+#[derive(Debug, Clone)]
+pub struct NewTargetWithRegions {
+    pub target: NewTarget,
+    pub regions: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TargetUpdate {

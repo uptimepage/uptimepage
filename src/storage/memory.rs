@@ -9,7 +9,8 @@ use crate::api::types::{
 };
 use crate::domain::target::MAX_TAGS_PER_TARGET;
 use crate::domain::{
-    CheckResult, CheckStatus, NewTarget, OrgId, Target, TargetUpdate, UserId, WriteSource,
+    CheckResult, CheckStatus, NewTarget, NewTargetWithRegions, OrgId, Target, TargetUpdate, UserId,
+    WriteSource,
 };
 use crate::error::Result;
 use crate::storage::traits::{
@@ -901,7 +902,7 @@ impl TargetStore for InMemoryTargetStore {
     async fn bulk_create(
         &self,
         _org: OrgId,
-        items: Vec<NewTarget>,
+        items: Vec<NewTargetWithRegions>,
         source: WriteSource,
         max_targets: i64,
         max_flow_checks: i64,
@@ -917,7 +918,7 @@ impl TargetStore for InMemoryTargetStore {
         }
         let flow_len = items
             .iter()
-            .filter(|i| matches!(i.check, crate::domain::CheckSpec::Flow(_)))
+            .filter(|i| matches!(i.target.check, crate::domain::CheckSpec::Flow(_)))
             .count() as i64;
         if flow_len > 0 {
             let flow_current = guard
@@ -934,8 +935,8 @@ impl TargetStore for InMemoryTargetStore {
             }
         }
         let mut created = Vec::with_capacity(items.len());
-        for new in items {
-            let target = Self::materialize(new, source);
+        for item in items {
+            let target = Self::materialize(item.target, source);
             guard.push(target.clone());
             created.push(target);
         }

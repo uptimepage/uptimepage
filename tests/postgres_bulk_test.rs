@@ -8,7 +8,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sqlx::PgPool;
-use uptimepage::domain::{CheckSpec, ExpectedStatus, NewTarget, WriteSource};
+use uptimepage::domain::{
+    CheckSpec, ExpectedStatus, NewTarget, NewTargetWithRegions, RegionIncidentPolicy, WriteSource,
+};
 use uptimepage::security::Cipher;
 use uptimepage::storage::{PostgresTargetStore, TargetStore};
 use url::Url;
@@ -37,6 +39,16 @@ async fn store_with_default_org(
     let org_id = uptimepage::domain::OrgId(id);
     let store = PostgresTargetStore::from_pool(pool, cipher);
     (store, org_id)
+}
+
+fn unplaced(items: Vec<NewTarget>) -> Vec<NewTargetWithRegions> {
+    items
+        .into_iter()
+        .map(|target| NewTargetWithRegions {
+            target,
+            regions: Vec::new(),
+        })
+        .collect()
 }
 
 fn make(name: &str, tags: Vec<String>) -> NewTarget {
@@ -123,7 +135,7 @@ async fn bulk_create_with_ragged_tags(pool: PgPool) {
     ];
 
     let created = store
-        .bulk_create(org, items, WriteSource::Ui, i64::MAX, i64::MAX)
+        .bulk_create(org, unplaced(items), WriteSource::Ui, i64::MAX, i64::MAX)
         .await
         .expect("bulk_create succeeds");
 
@@ -134,6 +146,49 @@ async fn bulk_create_with_ragged_tags(pool: PgPool) {
     assert!(created[1].tags.is_empty());
     assert_eq!(created[2].name, "t3");
     assert_eq!(created[2].tags, vec!["only".to_string()]);
+}
+
+/// Regions and the policy land with the rows, so a bulk never leaves a
+/// monitor half-placed.
+#[sqlx::test(migrations = "./migrations/postgres")]
+#[ignore = "requires DATABASE_URL — run via DATABASE_URL=... cargo test -- --ignored"]
+async fn bulk_create_places_each_row_in_one_write(pool: PgPool) {
+    let (store, org) = store_with_default_org(pool.clone(), None).await;
+    for region in ["bulk-eu", "bulk-us"] {
+        sqlx::query("INSERT INTO regions (id, name) VALUES ($1, $1) ON CONFLICT DO NOTHING")
+            .bind(region)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let mut counted = make("counted", vec![]);
+    counted.region_policy = Some(RegionIncidentPolicy::Count(2));
+    let items = vec![
+        NewTargetWithRegions {
+            target: counted,
+            regions: vec!["bulk-eu".into(), "bulk-us".into()],
+        },
+        NewTargetWithRegions {
+            target: make("single", vec![]),
+            regions: vec!["bulk-us".into()],
+        },
+    ];
+
+    let created = store
+        .bulk_create(org, items, WriteSource::Ui, i64::MAX, i64::MAX)
+        .await
+        .expect("bulk_create succeeds");
+
+    assert_eq!(created[0].region_policy, RegionIncidentPolicy::Count(2));
+    assert_eq!(created[1].region_policy, RegionIncidentPolicy::Majority);
+    assert_eq!(
+        store.regions_for_target(org, created[0].id).await.unwrap(),
+        Some(vec!["bulk-eu".to_string(), "bulk-us".to_string()])
+    );
+    assert_eq!(
+        store.regions_for_target(org, created[1].id).await.unwrap(),
+        Some(vec!["bulk-us".to_string()])
+    );
 }
 
 #[sqlx::test(migrations = "./migrations/postgres")]

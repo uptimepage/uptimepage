@@ -376,11 +376,7 @@ impl McpServer {
             name: sanitize_data(&created.name),
             address: sanitize_data(&address),
             interval_secs: created.interval.as_secs(),
-            // A heartbeat is pinged, not probed, so it names no regions at all.
-            regions: match created.check.is_passive() {
-                true => Vec::new(),
-                false => regions,
-            },
+            regions,
             probe: probe.map(|(_, p)| p),
             alerts: match &channel_summary {
                 Some(s) => s.clone(),

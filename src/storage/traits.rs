@@ -10,8 +10,8 @@ use crate::api::types::{
 };
 use crate::domain::agent_wire::FlowRunRecord;
 use crate::domain::{
-    CheckResult, CheckStatus, HeartbeatPingRecord, NewTarget, ObservedCadence, OrgId, Target,
-    TargetUpdate, UserId, WriteSource,
+    CheckResult, CheckStatus, HeartbeatPingRecord, NewTarget, NewTargetWithRegions,
+    ObservedCadence, OrgId, Target, TargetUpdate, UserId, WriteSource,
 };
 use crate::error::Result;
 
@@ -177,11 +177,11 @@ pub trait TargetStore: Send + Sync {
     /// whole-array alert updates. Returns the number of targets touched.
     async fn unbind_channel(&self, org: OrgId, channel_id: Uuid) -> Result<u64>;
     /// Bulk create. Same atomic `(count) + items.len() <= max_targets`
-    /// bound; either all rows insert or none do (`AppError::QuotaExceeded`).
+    /// bound; rows, their region sets and policies land together or not at all.
     async fn bulk_create(
         &self,
         org: OrgId,
-        items: Vec<NewTarget>,
+        items: Vec<NewTargetWithRegions>,
         source: WriteSource,
         max_targets: i64,
         max_flow_checks: i64,
