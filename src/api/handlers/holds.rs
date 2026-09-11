@@ -29,6 +29,7 @@ use crate::api::error::codes;
 use crate::app::AppState;
 use crate::domain::{AccountId, OrgId, UserId};
 use crate::error::{AppError, Result};
+use crate::quotas::PlanSource;
 use crate::web::auth::CurrentUser;
 use crate::web::{OwnerAuthorized, TargetsWrite};
 
@@ -124,7 +125,6 @@ pub async fn set_holds(
     }
     let account = owned_account(&state, org, actor).await?;
     let pool = state.require_db()?;
-    let plan = state.quotas.limit_for_org(org).await?;
     // Stored before reconciling, so the daily sweep reads the same answer and
     // cannot put back on hold what the customer just asked to keep.
     crate::quotas::holds::set_keep(
@@ -134,7 +134,13 @@ pub async fn set_holds(
         body.keep_status_pages.as_deref(),
     )
     .await?;
-    crate::quotas::holds::reconcile_account(pool, account, &plan, Some(actor)).await?;
+    crate::quotas::holds::reconcile_account(
+        pool,
+        account,
+        PlanSource::Resolve(&state.quotas, org),
+        Some(actor),
+    )
+    .await?;
     let (targets, status_pages) = crate::quotas::holds::list_held(pool, account).await?;
     Ok(Json(HoldsResponse {
         targets: targets.into_iter().map(HeldItem::from).collect(),

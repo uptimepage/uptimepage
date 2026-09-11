@@ -3,6 +3,8 @@
 
 mod common;
 
+use std::sync::Arc;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use common::{
@@ -14,8 +16,14 @@ use tower::ServiceExt;
 use uptimepage::config::AppConfig;
 use uptimepage::domain::{AccountId, CheckSpec, ExpectedStatus, OrgId, Plan, UserId};
 use uptimepage::quotas::QuotaService;
-use uptimepage::quotas::holds::{accounts_needing_reconcile, list_held, reconcile_account};
+use uptimepage::quotas::holds::{
+    PlanSource, accounts_needing_reconcile, list_held, reconcile_account,
+};
 use uuid::Uuid;
+
+fn fixed(plan: &Plan) -> PlanSource<'static> {
+    PlanSource::Fixed(Arc::new(plan.clone()))
+}
 
 /// The org's real plan, resolved the way every request resolves it, so a test
 /// that then overrides one cap is still exercising a plan the catalog ships.
@@ -155,7 +163,7 @@ async fn the_newest_monitors_are_held_and_the_oldest_keep_running() {
         ..plan_for(&pool, org).await
     };
 
-    let r = reconcile_account(&pool, account, &plan, None)
+    let r = reconcile_account(&pool, account, fixed(&plan), None)
         .await
         .expect("reconcile");
     assert_eq!(r.held, 2, "two over a cap of three");
@@ -181,10 +189,10 @@ async fn reconciling_twice_changes_nothing() {
         max_targets: 3,
         ..plan_for(&pool, org).await
     };
-    let first = reconcile_account(&pool, account, &plan, None)
+    let first = reconcile_account(&pool, account, fixed(&plan), None)
         .await
         .expect("first");
-    let second = reconcile_account(&pool, account, &plan, None)
+    let second = reconcile_account(&pool, account, fixed(&plan), None)
         .await
         .expect("second");
     assert_eq!(first.held, 2);
@@ -206,7 +214,7 @@ async fn a_plan_growing_back_releases_the_oldest_holds_first() {
         max_targets: 2,
         ..plan_for(&pool, org).await
     };
-    reconcile_account(&pool, account, &small, None)
+    reconcile_account(&pool, account, fixed(&small), None)
         .await
         .expect("hold");
     assert_eq!(held_ids(&pool, org).await.len(), 3);
@@ -215,7 +223,7 @@ async fn a_plan_growing_back_releases_the_oldest_holds_first() {
         max_targets: 4,
         ..plan_for(&pool, org).await
     };
-    let r = reconcile_account(&pool, account, &bigger, None)
+    let r = reconcile_account(&pool, account, fixed(&bigger), None)
         .await
         .expect("release");
     assert_eq!(r.released, 2);
@@ -243,7 +251,7 @@ async fn the_customers_pick_survives_a_reconcile() {
     uptimepage::quotas::holds::set_keep(&pool, account, Some(&[ids[4]]), None)
         .await
         .expect("set keep");
-    reconcile_account(&pool, account, &plan, None)
+    reconcile_account(&pool, account, fixed(&plan), None)
         .await
         .expect("reconcile");
     let held = held_ids(&pool, org).await;
@@ -276,7 +284,7 @@ async fn a_pick_smaller_than_the_plan_leaves_the_spare_seats_empty() {
     uptimepage::quotas::holds::set_keep(&pool, account, Some(&[ids[0], ids[1]]), None)
         .await
         .expect("set keep");
-    reconcile_account(&pool, account, &plan, None)
+    reconcile_account(&pool, account, fixed(&plan), None)
         .await
         .expect("reconcile");
     let mut held = held_ids(&pool, org).await;
@@ -301,7 +309,7 @@ async fn a_plan_that_covers_everything_releases_what_the_pick_left_out() {
     uptimepage::quotas::holds::set_keep(&pool, account, Some(&[ids[0]]), None)
         .await
         .expect("set keep");
-    reconcile_account(&pool, account, &small, None)
+    reconcile_account(&pool, account, fixed(&small), None)
         .await
         .expect("hold");
     assert_eq!(held_ids(&pool, org).await.len(), 4);
@@ -313,7 +321,7 @@ async fn a_plan_that_covers_everything_releases_what_the_pick_left_out() {
         max_targets: 5,
         ..plan_for(&pool, org).await
     };
-    reconcile_account(&pool, account, &big, None)
+    reconcile_account(&pool, account, fixed(&big), None)
         .await
         .expect("release");
     assert!(
@@ -339,7 +347,7 @@ async fn a_flow_cap_holds_flows_before_it_touches_ordinary_monitors() {
         max_flow_checks: 1,
         ..plan_for(&pool, org).await
     };
-    reconcile_account(&pool, account, &plan, None)
+    reconcile_account(&pool, account, fixed(&plan), None)
         .await
         .expect("reconcile");
     let held = held_ids(&pool, org).await;
@@ -369,7 +377,7 @@ async fn a_flow_shortage_does_not_hold_the_monitors_nobody_picked() {
         max_flow_checks: 1,
         ..plan_for(&pool, org).await
     };
-    reconcile_account(&pool, account, &plan, None)
+    reconcile_account(&pool, account, fixed(&plan), None)
         .await
         .expect("reconcile");
     assert_eq!(
@@ -394,7 +402,7 @@ async fn a_pick_is_forgotten_once_the_plan_covers_everything() {
         max_targets: 2,
         ..plan_for(&pool, org).await
     };
-    reconcile_account(&pool, account, &small, None)
+    reconcile_account(&pool, account, fixed(&small), None)
         .await
         .expect("hold");
 
@@ -402,7 +410,7 @@ async fn a_pick_is_forgotten_once_the_plan_covers_everything() {
         max_targets: 10,
         ..plan_for(&pool, org).await
     };
-    reconcile_account(&pool, account, &big, None)
+    reconcile_account(&pool, account, fixed(&big), None)
         .await
         .expect("release");
     let (kept,): (i64,) =
@@ -453,7 +461,7 @@ async fn a_held_monitor_still_counts_against_the_cap() {
         max_targets: 3,
         ..plan_for(&pool, org).await
     };
-    reconcile_account(&pool, account, &plan, None)
+    reconcile_account(&pool, account, fixed(&plan), None)
         .await
         .expect("reconcile");
 
@@ -495,7 +503,7 @@ async fn a_held_monitor_leaves_the_scheduler_set() {
         max_targets: 1,
         ..plan_for(&pool, org).await
     };
-    reconcile_account(&pool, account, &plan, None)
+    reconcile_account(&pool, account, fixed(&plan), None)
         .await
         .expect("reconcile");
 
@@ -538,7 +546,7 @@ async fn a_held_page_stops_resolving_publicly() {
         max_status_pages: 1,
         ..plan_for(&pool, org).await
     };
-    reconcile_account(&pool, account, &plan, None)
+    reconcile_account(&pool, account, fixed(&plan), None)
         .await
         .expect("reconcile");
 
@@ -591,7 +599,7 @@ async fn the_sweep_finds_an_over_cap_account_and_ignores_a_fitting_one() {
         max_targets: 5,
         ..plan_for(&pool, over_org).await
     };
-    reconcile_account(&pool, over, &plan, None)
+    reconcile_account(&pool, over, fixed(&plan), None)
         .await
         .expect("reconcile");
     let (held, _) = list_held(&pool, over).await.expect("held");
@@ -622,10 +630,10 @@ async fn holding_and_releasing_are_both_audited() {
         max_targets: 2,
         ..plan_for(&pool, org).await
     };
-    reconcile_account(&pool, account, &small, None)
+    reconcile_account(&pool, account, fixed(&small), None)
         .await
         .expect("hold");
-    reconcile_account(&pool, account, &plan_for(&pool, org).await, None)
+    reconcile_account(&pool, account, fixed(&plan_for(&pool, org).await), None)
         .await
         .expect("release");
 
@@ -663,7 +671,7 @@ async fn the_customers_pick_survives_the_next_sweep() {
     uptimepage::quotas::holds::set_keep(&pool, account, Some(&[ids[4]]), None)
         .await
         .expect("set keep");
-    reconcile_account(&pool, account, &plan, None)
+    reconcile_account(&pool, account, fixed(&plan), None)
         .await
         .expect("reconcile");
     assert!(!held_ids(&pool, org).await.contains(&ids[4]));
@@ -671,7 +679,7 @@ async fn the_customers_pick_survives_the_next_sweep() {
     // A later run knows nothing about the request that made the choice, so the
     // choice has to live in the row. Reconciling again with the same plan is
     // exactly what the daily sweep does.
-    reconcile_account(&pool, account, &plan, None)
+    reconcile_account(&pool, account, fixed(&plan), None)
         .await
         .expect("again");
     assert!(
@@ -700,7 +708,7 @@ async fn a_paused_monitor_is_held_before_a_live_one() {
         max_targets: 2,
         ..plan_for(&pool, org).await
     };
-    reconcile_account(&pool, account, &plan, None)
+    reconcile_account(&pool, account, fixed(&plan), None)
         .await
         .expect("reconcile");
 
@@ -729,7 +737,7 @@ async fn a_held_monitor_refuses_an_interactive_check() {
         max_targets: 1,
         ..plan_for(&pool, org).await
     };
-    reconcile_account(&pool, account, &plan, None)
+    reconcile_account(&pool, account, fixed(&plan), None)
         .await
         .expect("reconcile");
     assert_eq!(held_ids(&pool, org).await, vec![doomed]);
@@ -793,7 +801,7 @@ async fn an_org_owner_who_is_not_the_account_owner_cannot_touch_the_pool() {
         max_targets: 1,
         ..plan_for(&pool, first).await
     };
-    reconcile_account(&pool, account, &plan, None)
+    reconcile_account(&pool, account, fixed(&plan), None)
         .await
         .expect("reconcile");
     let (held, _) = list_held(&pool, account).await.expect("held");

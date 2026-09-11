@@ -15,6 +15,7 @@ pub mod me;
 pub mod notification_channels;
 pub mod on_call;
 pub mod operator;
+pub mod operator_accounts;
 pub mod orgs;
 pub mod passkeys;
 pub mod public;

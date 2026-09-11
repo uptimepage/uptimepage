@@ -59,9 +59,9 @@ Documentation pages, blog posts and the homepage also answer `Accept: text/markd
 
 ### Instance-admin and agent surfaces
 
-Two surfaces sit outside `/api/v1` with their own auth, used only for multi-region deployments:
+Two surfaces sit outside `/api/v1` with their own auth:
 
-- `/operator/*` — instance-admin regions + agents CRUD, gated by a static bearer secret (`UPTIMEPAGE_OPERATOR__ADMIN_TOKEN`); `404`s when unset.
+- `/operator/*` — instance-admin surface, gated by a static bearer secret (`UPTIMEPAGE_OPERATOR__ADMIN_TOKEN`); `404`s when unset. Regions + agents CRUD for multi-region deployments (see [Multi-region](multi-region.md)), and an account's plan and cap overrides (see [Quotas](quotas.md#moving-an-account-between-plans)).
 - `/api/agent/*` — the pull/ingest endpoints an agent uses, authenticated by its `sm_agent_…` token (not a tenant `api_token`).
 
 Both are documented in [Multi-region probes](multi-region.md).

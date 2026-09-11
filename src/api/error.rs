@@ -251,6 +251,10 @@ pub mod codes {
     pub const REGION_IN_USE: &str = "REGION_IN_USE";
     pub const AGENT_NOT_FOUND: &str = "AGENT_NOT_FOUND";
     pub const AGENT_INVALID: &str = "AGENT_INVALID";
+    pub const ACCOUNT_NOT_FOUND: &str = "ACCOUNT_NOT_FOUND";
+    pub const PLAN_NOT_FOUND: &str = "PLAN_NOT_FOUND";
+    pub const PLAN_OVERRIDE_INVALID: &str = "PLAN_OVERRIDE_INVALID";
+    pub const REASON_INVALID: &str = "REASON_INVALID";
     // Public status-page settings + logo upload.
     pub const BRANDING_INVALID: &str = "BRANDING_INVALID";
     pub const LOGO_MISSING: &str = "LOGO_MISSING";

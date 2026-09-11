@@ -15,11 +15,12 @@
 
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use moka::future::Cache;
 use serde::Deserialize;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 use std::collections::HashMap;
 
@@ -252,6 +253,8 @@ impl From<PlanRow> for Plan {
 struct Resolved {
     account: AccountId,
     plan: Arc<Plan>,
+    /// The invalidation epoch this resolution started reading under.
+    epoch: u64,
 }
 
 #[derive(Clone)]
@@ -267,6 +270,13 @@ pub struct QuotaService {
     /// path that forgets to adjust a counter cannot drift it (the cache
     /// contract).
     usage_cache: Cache<(AccountId, &'static str), u32>,
+    /// Bumped by every account invalidation. A resolution records the value it
+    /// started under, which tells a read that began before a plan change
+    /// committed from one that began after, whatever order their inserts land.
+    epoch: Arc<AtomicU64>,
+    /// Account → epoch of its latest invalidation. Same TTL as the plan cache:
+    /// past it every entry that could predate the change has expired anyway.
+    invalidated: Cache<AccountId, u64>,
 }
 
 /// The account's plan plus its current pooled counts — the totals across
@@ -302,6 +312,11 @@ impl QuotaService {
                 .time_to_live(usage_ttl)
                 .max_capacity(4096)
                 .build(),
+            epoch: Arc::new(AtomicU64::new(0)),
+            invalidated: Cache::builder()
+                .time_to_live(plan_ttl)
+                .max_capacity(10_000)
+                .build(),
         }
     }
 
@@ -321,77 +336,84 @@ impl QuotaService {
         Ok(self.resolve(org).await?.map(|r| r.account))
     }
 
+    /// Drops every cached resolution for the account, so a change lands on the
+    /// next request rather than after the TTL. Call it after the write
+    /// commits: a resolution in flight across the commit may insert the old
+    /// plan after this runs, and only the epoch stamped here lets the lookup
+    /// drop it. Tombstoned orgs are included because one can be restored
+    /// inside its grace window with its old entry still live.
+    pub async fn invalidate_account(&self, account: AccountId) -> Result<()> {
+        let Some(db) = &self.db else {
+            return Ok(());
+        };
+        let epoch = self.epoch.fetch_add(1, Ordering::SeqCst) + 1;
+        self.invalidated.insert(account, epoch).await;
+        for org in crate::storage::accounts::org_ids(db, account).await? {
+            self.plan_cache.invalidate(&org).await;
+        }
+        Ok(())
+    }
+
     /// Org → (account, effective plan), cached. One query joins the org to its
     /// account and plan; the account-scoped override and add-on rows are folded
     /// in before the value is cached, so the TTL bounds every input equally.
+    /// A miss takes a pooled connection only for as long as the load runs.
     async fn resolve(&self, org: OrgId) -> Result<Option<Resolved>> {
         let Some(db) = &self.db else {
             return Ok(None);
         };
+        self.guarded(org, Source::Pool(db)).await.map(Some)
+    }
 
-        let db2 = db.clone();
-        let resolved = self
-            .plan_cache
-            .try_get_with(org, async move {
-                // One join: org row → account → plan. Cached by org id, so a
-                // hit costs zero queries (the cache TTL bounds staleness).
-                let p: PlanRow = sqlx::query_as(
-                    "SELECT o.account_id, \
-                     p.id, p.name, p.description, p.max_targets, \
-                     p.min_check_interval_secs, p.retention_days, p.raw_days, p.evidence_days, \
-                     p.max_members, \
-                     p.max_pending_invitations, p.max_api_tokens_per_user, \
-                     p.max_public_components, p.max_status_pages, \
-                     p.max_share_links_per_monitor, p.max_shared_monitors, \
-                     p.max_maintenance_windows, \
-                     p.max_notification_channels, p.max_escalation_policies, \
-                     p.max_on_call_schedules, \
-                     p.max_logo_size_bytes, p.max_regions, p.max_orgs, \
-                     p.api_writes_per_minute, \
-                     p.api_reads_per_minute, p.bulk_ops_per_minute, \
-                     p.test_now_per_minute, p.check_now_per_minute, \
-                     p.custom_domain_enabled, p.white_label_enabled, \
-                     p.sms_alerts_enabled, p.incident_narration_enabled, \
-                     p.on_call_enabled, p.max_flow_checks, p.max_flow_steps, \
-                     p.is_listed, p.created_at, p.updated_at \
-                     FROM organizations o \
-                     JOIN accounts a ON a.id = o.account_id \
-                     JOIN plans p ON p.id = a.plan_id \
-                     WHERE o.id = $1",
-                )
-                .bind(org.0)
-                .fetch_one(&db2)
-                .await?;
-                let account = AccountId(p.account_id);
-                let mut plan: Plan = p.into();
-                // Per-account exception (beta customers, friends-of-the-
-                // project): a present, unexpired plan_overrides row
-                // replaces the named caps. Folded into the cached value, so
-                // the TTL bounds an override edit/expiry exactly as it
-                // bounds a plans-table edit (same staleness contract).
-                if let Some(ov) = plan_override(&db2, account).await? {
-                    plan = apply_overrides(&plan, &ov);
-                }
-                // Billed add-ons stack on the resolved plan/override base.
-                plan = apply_addons(&plan, &account_addons(&db2, account).await?);
-                // Creation assigns a region regardless, so zero is unhonourable.
-                plan.max_regions = plan.max_regions.max(1);
-                // An account always holds the org being resolved.
-                plan.max_orgs = plan.max_orgs.max(1);
-                Ok::<Resolved, sqlx::Error>(Resolved {
-                    account,
-                    plan: Arc::new(plan),
-                })
-            })
-            .await
-            .map_err(|e| match e.as_ref() {
-                sqlx::Error::RowNotFound => {
-                    AppError::not_found(crate::api::error::codes::ORG_NOT_FOUND, "org not found")
-                }
-                _ => AppError::Other(anyhow::anyhow!("limit_for_org: {e}")),
-            })?;
+    /// [`limit_for_org`] for a caller already holding a connection. A miss
+    /// loads on that connection instead of waiting for a second one from the
+    /// pool while the first sits idle, which is how a handful of such callers
+    /// would exhaust the pool waiting on each other.
+    ///
+    /// [`limit_for_org`]: Self::limit_for_org
+    pub async fn limit_for_org_on(&self, conn: &mut PgConnection, org: OrgId) -> Result<Arc<Plan>> {
+        if self.db.is_none() {
+            return Ok(Arc::new(unlimited_plan()));
+        }
+        Ok(self.guarded(org, Source::Conn(conn)).await?.plan)
+    }
 
-        Ok(Some(resolved))
+    /// The cache lookup with the invalidation guard: an entry that started
+    /// reading before the account's last invalidation is discarded and loaded
+    /// again, since the invalidation cannot see a read still in flight.
+    async fn guarded(&self, org: OrgId, mut source: Source<'_>) -> Result<Resolved> {
+        loop {
+            // Read before the query so a change committed between the two is
+            // caught by the epoch check, never lost to insert order.
+            let started = self.epoch.load(Ordering::SeqCst);
+            let resolved = match &mut source {
+                Source::Pool(db) => self
+                    .plan_cache
+                    .try_get_with(org, async {
+                        let mut conn = db.acquire().await?;
+                        load(&mut conn, org, started).await
+                    })
+                    .await
+                    .map_err(|e| lookup_error(&e))?,
+                // Never joined to a load already running for this org: it may
+                // be queued on the pool, and the pool may be waiting on the
+                // very connection held here.
+                Source::Conn(conn) => match self.plan_cache.get(&org).await {
+                    Some(hit) => hit,
+                    None => {
+                        let loaded = load(conn, org, started)
+                            .await
+                            .map_err(|e| lookup_error(&e))?;
+                        self.plan_cache.insert(org, loaded.clone()).await;
+                        loaded
+                    }
+                },
+            };
+            match self.invalidated.get(&resolved.account).await {
+                Some(at) if resolved.epoch < at => self.plan_cache.invalidate(&org).await,
+                _ => return Ok(resolved),
+            }
+        }
     }
 
     /// Clamp a read range to the org's raw forensics window (raw-table reads).
@@ -823,6 +845,74 @@ pub fn record_quota_event(
     });
 }
 
+fn lookup_error(e: &sqlx::Error) -> AppError {
+    match e {
+        sqlx::Error::RowNotFound => {
+            AppError::not_found(crate::api::error::codes::ORG_NOT_FOUND, "org not found")
+        }
+        _ => AppError::Other(anyhow::anyhow!("limit_for_org: {e}")),
+    }
+}
+
+/// Where a cache miss reads from: a connection taken from the pool for the
+/// duration of the load, or one the caller already holds.
+enum Source<'a> {
+    Pool(&'a PgPool),
+    Conn(&'a mut PgConnection),
+}
+
+/// One org's account and effective plan, read on `conn`: the plan row with
+/// the account's override and add-ons folded in.
+async fn load(conn: &mut PgConnection, org: OrgId, started: u64) -> Result<Resolved, sqlx::Error> {
+    let p: PlanRow = sqlx::query_as(
+        "SELECT o.account_id, \
+         p.id, p.name, p.description, p.max_targets, \
+         p.min_check_interval_secs, p.retention_days, p.raw_days, p.evidence_days, \
+         p.max_members, \
+         p.max_pending_invitations, p.max_api_tokens_per_user, \
+         p.max_public_components, p.max_status_pages, \
+         p.max_share_links_per_monitor, p.max_shared_monitors, \
+         p.max_maintenance_windows, \
+         p.max_notification_channels, p.max_escalation_policies, \
+         p.max_on_call_schedules, \
+         p.max_logo_size_bytes, p.max_regions, p.max_orgs, \
+         p.api_writes_per_minute, \
+         p.api_reads_per_minute, p.bulk_ops_per_minute, \
+         p.test_now_per_minute, p.check_now_per_minute, \
+         p.custom_domain_enabled, p.white_label_enabled, \
+         p.sms_alerts_enabled, p.incident_narration_enabled, \
+         p.on_call_enabled, p.max_flow_checks, p.max_flow_steps, \
+         p.is_listed, p.created_at, p.updated_at \
+         FROM organizations o \
+         JOIN accounts a ON a.id = o.account_id \
+         JOIN plans p ON p.id = a.plan_id \
+         WHERE o.id = $1",
+    )
+    .bind(org.0)
+    .fetch_one(&mut *conn)
+    .await?;
+    let account = AccountId(p.account_id);
+    let mut plan: Plan = p.into();
+    // Per-account exception (beta customers, friends-of-the-project): a
+    // present, unexpired plan_overrides row replaces the named caps. Folded
+    // into the cached value, so the TTL bounds an override edit/expiry exactly
+    // as it bounds a plans-table edit (same staleness contract).
+    if let Some(ov) = plan_override(&mut *conn, account).await? {
+        plan = apply_overrides(&plan, &ov);
+    }
+    // Billed add-ons stack on the resolved plan/override base.
+    plan = apply_addons(&plan, &account_addons(&mut *conn, account).await?);
+    // Creation assigns a region regardless, so zero is unhonourable.
+    plan.max_regions = plan.max_regions.max(1);
+    // An account always holds the org being resolved.
+    plan.max_orgs = plan.max_orgs.max(1);
+    Ok(Resolved {
+        account,
+        plan: Arc::new(plan),
+        epoch: started,
+    })
+}
+
 /// The cap fields a limit override may set. Deserialized from a
 /// `plan_overrides.override_json` row; also the merge input for the
 /// self-host config knob (via `From`), so `apply_overrides` is the one
@@ -832,27 +922,42 @@ pub fn record_quota_event(
 /// to plan defaults. Deliberately has no `enabled` flag — whether an override
 /// applies is the caller's decision (a present unexpired row; or the self-host
 /// gate), never a property of the cap bag itself.
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct PlanOverrides {
-    max_targets: Option<u32>,
-    min_check_interval_secs: Option<u32>,
-    retention_days: Option<u32>,
-    max_members: Option<u32>,
-    max_pending_invitations: Option<u32>,
-    max_api_tokens_per_user: Option<u32>,
-    max_public_components: Option<u32>,
-    max_status_pages: Option<u32>,
-    max_share_links_per_monitor: Option<u32>,
-    max_shared_monitors: Option<u32>,
-    max_maintenance_windows: Option<u32>,
-    max_notification_channels: Option<u32>,
-    max_escalation_policies: Option<u32>,
-    max_on_call_schedules: Option<u32>,
-    max_regions: Option<u32>,
-    max_logo_size_bytes: Option<u32>,
-    max_orgs: Option<u32>,
+///
+/// The field list also names the keys the operator write path accepts, so a
+/// cap cannot be writable without being readable or the other way round.
+macro_rules! override_caps {
+    ($($field:ident),* $(,)?) => {
+        #[derive(Debug, Default, Deserialize)]
+        #[serde(default)]
+        pub(crate) struct PlanOverrides {
+            $(pub(crate) $field: Option<u32>,)*
+        }
+
+        impl PlanOverrides {
+            pub(crate) const KEYS: &'static [&'static str] = &[$(stringify!($field)),*];
+        }
+    };
 }
+
+override_caps!(
+    max_targets,
+    min_check_interval_secs,
+    retention_days,
+    max_members,
+    max_pending_invitations,
+    max_api_tokens_per_user,
+    max_public_components,
+    max_status_pages,
+    max_share_links_per_monitor,
+    max_shared_monitors,
+    max_maintenance_windows,
+    max_notification_channels,
+    max_escalation_policies,
+    max_on_call_schedules,
+    max_regions,
+    max_logo_size_bytes,
+    max_orgs,
+);
 
 fn apply_overrides(base: &Plan, ov: &PlanOverrides) -> Plan {
     let mut p = base.clone();
@@ -891,7 +996,7 @@ fn apply_overrides(base: &Plan, ov: &PlanOverrides) -> Plan {
 /// benign cases are `Ok(None)`: no row, or a malformed `override_json`
 /// (logged) — a bad admin row must never take an org's limits down with it.
 async fn plan_override(
-    db: &PgPool,
+    conn: &mut PgConnection,
     account: AccountId,
 ) -> Result<Option<PlanOverrides>, sqlx::Error> {
     let json: Option<serde_json::Value> = sqlx::query_scalar(
@@ -899,7 +1004,7 @@ async fn plan_override(
          WHERE account_id = $1 AND (expires_at IS NULL OR expires_at > now())",
     )
     .bind(account.0)
-    .fetch_optional(db)
+    .fetch_optional(conn)
     .await?;
     let Some(json) = json else { return Ok(None) };
     match serde_json::from_value::<PlanOverrides>(json) {
@@ -941,12 +1046,15 @@ fn apply_addons(base: &Plan, a: &Addons) -> Plan {
 /// query error propagates (never memoize a degraded plan on a transient blip);
 /// empty is `Ok(default)`. Unknown type (CHECK makes it impossible) is logged +
 /// ignored.
-async fn account_addons(db: &PgPool, account: AccountId) -> Result<Addons, sqlx::Error> {
+async fn account_addons(
+    conn: &mut PgConnection,
+    account: AccountId,
+) -> Result<Addons, sqlx::Error> {
     // PK (account_id, addon_type) → at most one row per type, no aggregation.
     let rows: Vec<(String, i32)> =
         sqlx::query_as("SELECT addon_type, quantity FROM account_addons WHERE account_id = $1")
             .bind(account.0)
-            .fetch_all(db)
+            .fetch_all(conn)
             .await?;
     let mut a = Addons::default();
     for (kind, qty) in rows {

@@ -113,6 +113,40 @@ pub async fn live_org_count<'e, E: PgExecutor<'e>>(exec: E, account: AccountId) 
     Ok(n)
 }
 
+/// Every org the account has ever held, tombstones included: a deleted org
+/// can still be restored inside its grace window, and anything cached under
+/// it must not survive an account change.
+pub async fn org_ids<'e, E: PgExecutor<'e>>(exec: E, account: AccountId) -> Result<Vec<OrgId>> {
+    let rows: Vec<(Uuid,)> = sqlx::query_as(
+        "SELECT /* SAFE: lists one account's own orgs — the account is the tenant key here */ \
+         id FROM organizations WHERE account_id = $1",
+    )
+    .bind(account.0)
+    .fetch_all(exec)
+    .await
+    .context("org_ids")?;
+    Ok(rows.into_iter().map(|(id,)| OrgId(id)).collect())
+}
+
+/// One live org of the account, for resolving its plan through the per-org
+/// cached path; any of them resolves the same plan. `None` when the account
+/// holds no live org.
+pub async fn first_live_org<'e, E: PgExecutor<'e>>(
+    exec: E,
+    account: AccountId,
+) -> Result<Option<OrgId>> {
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT /* SAFE: picks one of the account's own orgs — the account is the tenant key here */ \
+         id FROM organizations WHERE account_id = $1 AND deleted_at IS NULL \
+         ORDER BY created_at ASC, id ASC LIMIT 1",
+    )
+    .bind(account.0)
+    .fetch_optional(exec)
+    .await
+    .context("first_live_org")?;
+    Ok(row.map(|(id,)| OrgId(id)))
+}
+
 /// The account's plan id. Cheap enough to read inside a write transaction
 /// that needs the cap without going through the cached quota service.
 pub async fn plan_id_for_account<'e, E: PgExecutor<'e>>(

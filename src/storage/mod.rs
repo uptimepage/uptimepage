@@ -1,6 +1,7 @@
 pub mod accounts;
 pub mod admin;
 pub mod app_secrets;
+pub mod billing_events;
 pub mod capability_token;
 pub mod channel_link_codes;
 pub mod channel_verification;

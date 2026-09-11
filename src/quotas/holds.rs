@@ -16,6 +16,8 @@
 //!   waiting for; if it did not, an account could hold twenty monitors and
 //!   then create twenty more on top of them.
 
+use std::sync::Arc;
+
 use anyhow::Context;
 use serde_json::json;
 use sqlx::PgPool;
@@ -55,6 +57,14 @@ struct Moved {
 /// they lose" as well as a full list would. Matches the pause audit's bound.
 const AUDIT_SAMPLE: usize = 100;
 
+/// Where a reconcile gets the plan it judges against: resolved once the
+/// account lock is held, or handed in by a test shaping a cap without an
+/// override row.
+pub enum PlanSource<'a> {
+    Fixed(Arc<Plan>),
+    Resolve(&'a crate::quotas::QuotaService, OrgId),
+}
+
 /// Brings one account's holds in line with its plan.
 ///
 /// Idempotent, and deliberately not incremental: each statement recomputes the
@@ -84,10 +94,17 @@ const AUDIT_SAMPLE: usize = 100;
 /// a hold is the plan's mechanism, and a customer who wants a monitor quiet
 /// inside their plan has `enabled` for that. The pick itself is dropped at the
 /// same moment, so it cannot arm a later shortage it was never asked about.
+///
+/// The plan is resolved under the lock, not handed in: reconciles serialise
+/// on the account and the last one decides the final state, so one carrying a
+/// plan resolved before it queued could hold monitors against a plan the
+/// account has already left. It is read on the transaction's own connection,
+/// since holding one pooled connection while waiting for a second is how a
+/// few concurrent reconciles would exhaust the pool.
 pub async fn reconcile_account(
     pool: &PgPool,
     account: AccountId,
-    plan: &Plan,
+    plan: PlanSource<'_>,
     actor: Option<crate::domain::UserId>,
 ) -> Result<Reconciled> {
     let mut tx = pool.begin().await.context("reconcile_account: begin")?;
@@ -97,6 +114,11 @@ pub async fn reconcile_account(
     advisory_xact_lock(&mut *tx, &account_lock_key(account))
         .await
         .context("reconcile_account: lock")?;
+    let plan = match plan {
+        PlanSource::Fixed(plan) => plan,
+        PlanSource::Resolve(quotas, org) => quotas.limit_for_org_on(&mut tx, org).await?,
+    };
+    let plan = &*plan;
 
     let targets = reconcile_targets(&mut tx, account, plan).await?;
     let pages = reconcile_status_pages(&mut tx, account, plan).await?;
@@ -388,10 +410,11 @@ pub async fn accounts_needing_reconcile(pool: &PgPool) -> Result<Vec<(AccountId,
               -- they only ever add, so they can raise an account out of scope
               -- but never hide one that belongs in it.
               --
-              -- The value is hand-written operator JSON with no write path to
-              -- validate it, and a bad cast aborts the whole statement, not one
-              -- row: a single mistyped override would stop holds *and releases*
-              -- for every account until someone found it. Hence the CASE built
+              -- Rows written before the override endpoint existed are
+              -- hand-typed JSON nothing validated, and a bad cast aborts the
+              -- whole statement, not one row: a single mistyped override would
+              -- stop holds *and releases* for every account until someone
+              -- found it. Hence the CASE built
               -- above, and numeric rather than int so a value too large is out
               -- of scope rather than an error.
               OR EXISTS (
@@ -412,9 +435,9 @@ pub async fn accounts_needing_reconcile(pool: &PgPool) -> Result<Vec<(AccountId,
 
 /// One sweep over every account whose holds may have drifted from its plan.
 ///
-/// This is not only the safety net the daily cadence suggests: until a plan
-/// change has a write path of its own, a plan moves by an operator's `UPDATE`,
-/// which notifies nothing. The sweep is what turns that into holds, so a
+/// A plan change reconciles the account itself, so this is the backstop for
+/// whatever bypasses that path: a plan moved by hand, an override that
+/// expired on its own, a reconcile that failed after the change committed. A
 /// downgrade lands within a day whatever route it arrived by.
 ///
 /// One account failing does not stop the others: a plan that will not resolve
@@ -423,18 +446,11 @@ pub async fn accounts_needing_reconcile(pool: &PgPool) -> Result<Vec<(AccountId,
 pub async fn sweep(pool: &PgPool, quotas: &crate::quotas::QuotaService) -> Result<u64> {
     let mut moved = 0u64;
     for (account, org) in accounts_needing_reconcile(pool).await? {
-        let plan = match quotas.limit_for_org(org).await {
-            Ok(p) => p,
-            Err(err) => {
-                tracing::warn!(account = %account.0, error = %err, "plan holds: plan lookup failed");
-                continue;
-            }
-        };
-        match reconcile_account(pool, account, &plan, None).await {
+        match reconcile_account(pool, account, PlanSource::Resolve(quotas, org), None).await {
             Ok(r) => {
                 if r.changed() {
                     tracing::info!(
-                        account = %account.0, plan = %plan.id,
+                        account = %account.0,
                         held = r.held, released = r.released,
                         "plan holds reconciled"
                     );
@@ -556,8 +572,7 @@ pub async fn release_after_delete(pool: &PgPool, quotas: &crate::quotas::QuotaSe
         if !holds_anything(pool, account).await? {
             return Ok(Reconciled::default());
         }
-        let plan = quotas.limit_for_org(org).await?;
-        reconcile_account(pool, account, &plan, None).await
+        reconcile_account(pool, account, PlanSource::Resolve(quotas, org), None).await
     }
     .await;
     match done {
@@ -567,6 +582,23 @@ pub async fn release_after_delete(pool: &PgPool, quotas: &crate::quotas::QuotaSe
         Ok(_) => {}
         Err(err) => tracing::warn!(org = %org.0, error = %err, "plan holds: release after delete"),
     }
+}
+
+/// The step every entitlement change ends with. Cache first, so the reconcile
+/// judges against the plan just written rather than a stale entry. An account
+/// with no live org has nothing to reconcile; its cache is still cleared so a
+/// later restore does not resurrect the old plan.
+pub async fn reconcile_after_change(
+    pool: &PgPool,
+    quotas: &crate::quotas::QuotaService,
+    account: AccountId,
+    actor: Option<crate::domain::UserId>,
+) -> Result<Reconciled> {
+    quotas.invalidate_account(account).await?;
+    let Some(org) = crate::storage::accounts::first_live_org(pool, account).await? else {
+        return Ok(Reconciled::default());
+    };
+    reconcile_account(pool, account, PlanSource::Resolve(quotas, org), actor).await
 }
 
 /// One row in the account's pool, for the picker: everything the caps apply

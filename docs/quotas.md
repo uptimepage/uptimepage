@@ -275,10 +275,49 @@ anything, so a typo fails the boot with the name quoted and leaves nothing
 half-seeded behind.
 
 Quota *values* still live only in Postgres — `default_plan` chooses a plan,
-it does not override any number in one. Raise limits with a `plan_overrides`
-row (keyed by account, `max_orgs` included) naming the cap fields you want
-raised. Edit a shipped `plans` row only if you are prepared to reapply the
+it does not override any number in one. Raise limits with an override (see
+below). Edit a shipped `plans` row only if you are prepared to reapply the
 change: the catalog owns those rows and an upgrade can rewrite them.
+
+## Moving an account between plans
+
+Two operator endpoints, under the same static bearer secret as the rest of
+`/operator` (`UPTIMEPAGE_OPERATOR__ADMIN_TOKEN`; the surface `404`s when it is
+unset). Both are account-scoped: the id is the `accounts.id` behind the
+customer's organizations, not an org id.
+
+| Method | Path | What it does |
+|---|---|---|
+| `PUT` | `/operator/accounts/{id}/plan` | `{ "plan_id", "reason", "fallback_plan_id"? }` — put the account on a plan from the catalog, whether or not it is listed |
+| `PUT` | `/operator/accounts/{id}/overrides` | `{ "caps": { "max_targets": 100, … }, "reason", "expires_at"? }` — replace the account's cap overrides |
+| `DELETE` | `/operator/accounts/{id}/overrides` | remove the overrides, back to the plan's own numbers |
+
+Every call answers with `held` and `released` counts, because a change takes
+effect the moment it returns: the plan cache is dropped for every org the
+account owns, so the next request runs under the new caps instead of waiting
+out the cache TTL, and the holds are reconciled against the plan that now
+applies (a smaller plan holds the newest excess, a larger one releases it).
+Nothing is deleted either way, see the section above.
+
+An override *replaces* the named caps and may lower one as well as raise it.
+`caps` takes the `plans` column names for the count caps (`max_targets`,
+`max_status_pages`, `max_orgs`, `max_regions`, `min_check_interval_secs`, …);
+an unknown name or a value that is not a whole number is `400
+PLAN_OVERRIDE_INVALID` for the whole request, so a typo cannot be stored and
+silently do nothing. An `expires_at` in the past is refused; once it passes
+the override stops applying on its own.
+
+`fallback_plan_id` is where the account lands when paid service ends. Left
+out, the first move away from a plan records that plan and later moves keep
+it, so a founding account that buys a bigger tier and later stops paying
+returns to founding. Name it to say otherwise. Nothing acts on it yet; it is
+recorded now so the history is right when something does.
+
+Every change is written to `account_billing_events` (`plan_changed`,
+`overrides_set`, `overrides_cleared`) with the reason given, alongside the
+per-org audit rows the reconcile itself writes. `accounts.plan_id` has no
+other writer after signup: an `UPDATE` by hand skips the cache drop and the
+reconcile, and leaves the account on its old caps until the daily sweep.
 
 ## When a plan no longer covers what an account has
 
@@ -328,10 +367,10 @@ but not the rows, which would name a sibling organization's monitors. Every hold
 writes an org audit row (`target.plan_hold` / `target.plan_release`, and the
 `status_page.` pair).
 
-Reconciliation runs when a monitor or page is deleted, when the customer picks,
-at startup, and once a day for every account that is over a cap or holding
-something. Those last two are what notice a plan changed by an operator
-`UPDATE`, which notifies nothing on its own.
+Reconciliation runs when the plan or an override changes, when a monitor or
+page is deleted, when the customer picks, at startup, and once a day for every
+account that is over a cap or holding something. The last two are the backstop
+for a plan moved by hand, which notifies nothing on its own.
 
 On-call and escalation are gated separately and at write time only, like text
 message alerts: a plan without `on_call_enabled` refuses a new policy, schedule,

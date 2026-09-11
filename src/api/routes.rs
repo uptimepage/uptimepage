@@ -553,6 +553,15 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
             axum::routing::patch(handlers::operator::update_agent)
                 .delete(handlers::operator::delete_agent),
         )
+        .route(
+            "/accounts/{id}/plan",
+            axum::routing::put(handlers::operator_accounts::set_account_plan),
+        )
+        .route(
+            "/accounts/{id}/overrides",
+            axum::routing::put(handlers::operator_accounts::set_account_overrides)
+                .delete(handlers::operator_accounts::clear_account_overrides),
+        )
         .layer(DefaultBodyLimit::max(SINGLE_BODY_LIMIT));
 
     let mut root = Router::new()

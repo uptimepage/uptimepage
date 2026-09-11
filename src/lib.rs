@@ -4,6 +4,7 @@ pub mod analytics;
 pub mod api;
 pub mod app;
 pub mod auth;
+pub mod billing;
 pub mod bootstrap;
 pub mod config;
 pub mod domain;
