@@ -55,8 +55,14 @@ pub async fn register(
     }
     for uri in &req.redirect_uris {
         if uri.len() > MAX_URI_LEN || !is_acceptable_redirect_uri(uri) {
-            return Err(OAuthError::InvalidRedirectUri
-                .with("each redirect_uri must be https, or http on a loopback host"));
+            // The scheme alone says which client is knocking; the URI would
+            // carry its user id.
+            let scheme = uri.split_once(':').map(|(s, _)| s).unwrap_or("");
+            tracing::info!(target: "oauth", scheme, "client registration refused a redirect_uri");
+            return Err(OAuthError::InvalidRedirectUri.with(
+                "each redirect_uri must be https, http on a loopback host, or a native app \
+                 scheme (reverse-DNS form, or cursor://)",
+            ));
         }
     }
     let client_name = req

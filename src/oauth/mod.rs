@@ -110,9 +110,29 @@ impl OAuthUrls {
     }
 }
 
+/// Loopback per RFC 8252 §7.3, on the typed host so `[::1]` counts.
+pub(crate) fn is_loopback_http(u: &url::Url) -> bool {
+    use url::Host;
+    u.scheme() == "http"
+        && match u.host() {
+            Some(Host::Domain(d)) => d == "localhost",
+            Some(Host::Ipv4(v4)) => v4.is_loopback(),
+            Some(Host::Ipv6(v6)) => v6.is_loopback(),
+            None => false,
+        }
+}
+
+/// Native clients admitted by scheme name. RFC 8252 §7.1 wants a reverse-DNS
+/// scheme, which is admitted by shape below; this list is for the editors
+/// that use a bare name instead, each added once seen on the wire.
+const NATIVE_SCHEMES: &[&str] = &["cursor"];
+
 /// Acceptable redirect-URI shapes for registration + authorize. HTTPS for web
-/// connectors; loopback HTTP for local tooling (mcp-remote). Everything else —
-/// custom/native schemes, non-loopback HTTP, URIs with a fragment — is rejected.
+/// connectors, loopback HTTP for local tooling, and a native app's own scheme.
+/// An allowlist, not a denylist: registration is open and the authorize error
+/// path 303s to the registered URI before any login, so every admitted scheme
+/// is one the app origin may send a browser to with attacker-chosen query
+/// bytes. A scheme hijack on the user's machine still gets no PKCE verifier.
 /// Matching is always exact-string elsewhere; this only gates *registration*.
 fn is_acceptable_redirect_uri(uri: &str) -> bool {
     let Ok(u) = url::Url::parse(uri) else {
@@ -125,8 +145,8 @@ fn is_acceptable_redirect_uri(uri: &str) -> bool {
     }
     match u.scheme() {
         "https" => u.host_str().is_some(),
-        "http" => matches!(u.host_str(), Some("localhost" | "127.0.0.1" | "::1")),
-        _ => false,
+        "http" => is_loopback_http(&u),
+        scheme => scheme.contains('.') || NATIVE_SCHEMES.contains(&scheme),
     }
 }
 
@@ -314,13 +334,30 @@ mod tests {
         assert!(is_acceptable_redirect_uri(
             "https://claude.ai/api/mcp/callback"
         ));
-        // Loopback HTTP (mcp-remote) — accepted.
+        // Loopback HTTP (mcp-remote, VS Code) — accepted, IPv6 included.
         assert!(is_acceptable_redirect_uri("http://localhost:8976/callback"));
         assert!(is_acceptable_redirect_uri("http://127.0.0.1:5000/cb"));
+        assert!(is_acceptable_redirect_uri("http://127.0.0.1:33418"));
+        assert!(is_acceptable_redirect_uri("http://[::1]:8976/cb"));
         // Non-loopback HTTP — rejected (no cleartext over the network).
         assert!(!is_acceptable_redirect_uri("http://evil.example.com/cb"));
-        // Custom/native schemes — rejected for this web connector.
-        assert!(!is_acceptable_redirect_uri("com.evil.app:/cb"));
+        assert!(!is_acceptable_redirect_uri("http://10.0.0.5/cb"));
+        // Native clients: a named editor scheme or the RFC 8252 reverse-DNS shape.
+        assert!(is_acceptable_redirect_uri(
+            "cursor://anysphere.cursor-retrieval/oauth/user-1/callback"
+        ));
+        assert!(is_acceptable_redirect_uri("com.example.app:/cb"));
+        // Every other scheme is a protocol handler the app origin must not
+        // launch: OS handlers, browser-executed, cleartext transports.
+        assert!(!is_acceptable_redirect_uri("ms-msdt:/id PCWDiagnostic"));
+        assert!(!is_acceptable_redirect_uri("javascript:alert(1)"));
+        assert!(!is_acceptable_redirect_uri("data:text/html,hi"));
+        assert!(!is_acceptable_redirect_uri("file:///etc/passwd"));
+        assert!(!is_acceptable_redirect_uri("ftp://evil.example.com/cb"));
+        assert!(!is_acceptable_redirect_uri("ws://evil.example.com/cb"));
+        assert!(!is_acceptable_redirect_uri("windsurf://cb"));
+        // Userinfo on a native scheme is no better than on https.
+        assert!(!is_acceptable_redirect_uri("cursor://u@host/cb"));
         // Userinfo in the authority — rejected (authority-confusion).
         assert!(!is_acceptable_redirect_uri(
             "https://attacker@victim.example/cb"

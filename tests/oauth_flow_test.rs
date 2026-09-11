@@ -58,6 +58,10 @@ fn cfg_oauth(cfg: &mut uptimepage::config::AppConfig) {
 }
 
 async fn register_client(app: &Router) -> String {
+    register_client_at(app, REDIRECT).await
+}
+
+async fn register_client_at(app: &Router, redirect: &str) -> String {
     let resp = send(
         app,
         Request::builder()
@@ -67,7 +71,7 @@ async fn register_client(app: &Router) -> String {
             .body(Body::from(
                 serde_json::json!({
                     "client_name": "Claude",
-                    "redirect_uris": [REDIRECT],
+                    "redirect_uris": [redirect],
                 })
                 .to_string(),
             ))
@@ -250,6 +254,65 @@ async fn full_authorization_code_pkce_flow() {
         resp.status(),
         StatusCode::UNAUTHORIZED,
         "audience-bound token must pass /mcp auth"
+    );
+}
+
+#[tokio::test]
+async fn a_native_client_on_its_own_scheme_completes_the_flow() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (app, _org) = build_test_app_with_pg_store(pool, cfg_oauth).await;
+    let redirect = "cursor://anysphere.cursor-retrieval/oauth/user-7/callback";
+
+    let client_id = register_client_at(&app, redirect).await;
+
+    // Consent renders with the native redirect in its hidden field.
+    let resp = send(
+        &app,
+        Request::builder()
+            .uri(authorize_uri(&client_id, redirect, RESOURCE, CHALLENGE))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let html = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&html).contains(redirect),
+        "consent page carries the redirect"
+    );
+
+    // A pre-login error goes back on the same scheme, as a Location the
+    // server can actually emit.
+    let resp = send(
+        &app,
+        Request::builder()
+            .uri(authorize_uri(
+                &client_id,
+                redirect,
+                "https://other.example/mcp",
+                CHALLENGE,
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let loc = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert!(loc.starts_with(redirect), "{loc}");
+    assert_eq!(query_param(loc, "error").as_deref(), Some("invalid_target"));
+
+    let code = approve(&app, &client_id, redirect).await;
+    let resp = post_token(&app, token_body(&code, redirect, &client_id, VERIFIER)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let j = body_json(resp).await;
+    assert!(
+        j["access_token"]
+            .as_str()
+            .is_some_and(|t| t.starts_with("sm_live_"))
     );
 }
 

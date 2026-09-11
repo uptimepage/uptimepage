@@ -389,8 +389,7 @@ pub fn assert_mcp_oauth_config(cfg: &AppConfig) {
                 "{label} must be a valid absolute URL when mcp.oauth_enabled = true (got {raw:?})"
             )
         });
-        let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
-        if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
+        if url.scheme() != "https" && !crate::oauth::is_loopback_http(&url) {
             panic!(
                 "{label} must be https (or http on loopback for dev) when \
                  mcp.oauth_enabled = true (got {raw:?})"

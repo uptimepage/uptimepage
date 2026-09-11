@@ -144,7 +144,7 @@ Discovery + authorization-server endpoints live on the **app** host (where the s
 | `/oauth/authorize` | app | Login + consent screen (PKCE S256, RFC 8707 `resource`) |
 | `/oauth/token` | app | Issue / refresh the audience-bound token |
 
-Redirect URIs are restricted to HTTPS hosts (web connectors) and loopback HTTP (local tooling); custom schemes, non-loopback cleartext, userinfo, and fragments are rejected at registration.
+Redirect URIs may be HTTPS hosts (web connectors), loopback HTTP including `[::1]` (mcp-remote, VS Code), or a native app's own scheme: the reverse-DNS form RFC 8252 asks for (`com.example.app:/cb`) or `cursor://`, the one editor scheme admitted by name. Everything else is rejected at registration: non-loopback cleartext, any other protocol handler, userinfo, fragments. The list is an allowlist because the authorize error path redirects to the registered URI before login. PKCE is mandatory, which is what makes a native scheme safe once admitted: a program that hijacks the scheme on the user's machine receives the code but cannot redeem it.
 
 ### Consent screen
 
@@ -223,6 +223,10 @@ The deploy pipeline upserts the two switches from repo **variables** (Settings �
 ### claude.ai connector (OAuth)
 
 Settings → Connectors → Add custom connector → URL `https://mcp.{DOMAIN}/mcp` → Connect. You'll be sent to the login + consent screen; approve, and the tools appear. This exercises the full OAuth path and is the recommended end-user flow.
+
+### Cursor, VS Code (OAuth)
+
+Add the server by URL, `https://mcp.{DOMAIN}/mcp`, in the editor's MCP settings. The editor registers itself, opens the login + consent screen in your browser, and returns to the editor once you approve (Cursor on its `cursor://` scheme, VS Code on a loopback port). No token to paste.
 
 ### Claude Desktop / IDE (manual token via mcp-remote)
 
