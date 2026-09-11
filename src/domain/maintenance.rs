@@ -24,6 +24,7 @@ pub struct MaintenanceWindow {
 }
 
 #[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NewMaintenanceWindow {
     #[schema(example = "Database upgrade", max_length = 200)]
     pub title: String,
@@ -46,6 +47,7 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MaintenanceWindowUpdate {
     pub title: Option<String>,
     pub description: Option<String>,

@@ -33,6 +33,7 @@ const MAX_NAME_LEN: usize = 80;
 const MAX_EXPIRY_DAYS: i64 = 365;
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NewApiTokenRequest {
     pub name: String,
     /// Required, non-empty; each must be a known `resource:action` (or
@@ -79,6 +80,7 @@ pub struct ApiTokenView {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RenameApiTokenRequest {
     pub name: String,
 }

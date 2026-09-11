@@ -49,6 +49,7 @@ pub struct Variable {
 
 /// Create body. `is_secret` is fixed at create — to switch, delete and recreate.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NewVariable {
     pub key: String,
     #[serde(default)]

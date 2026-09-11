@@ -131,6 +131,7 @@ pub struct RegionView {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NewRegion {
     pub id: String,
     pub name: String,
@@ -147,6 +148,7 @@ pub struct NewRegion {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateRegion {
     #[serde(default)]
     pub name: Option<String>,
@@ -319,6 +321,7 @@ pub struct AgentView {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NewAgent {
     pub region: String,
     pub name: String,
@@ -335,6 +338,7 @@ pub struct NewAgentResponse {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateAgent {
     #[serde(default)]
     pub name: Option<String>,

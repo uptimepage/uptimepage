@@ -370,6 +370,7 @@ async fn sync_heartbeat_kind(state: &AppState, org: OrgId, t: &Target) -> Result
 
 /// The regions a monitor probes from. A single-region deployment is one entry.
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TargetRegions {
     pub regions: Vec<String>,
 }
@@ -949,7 +950,7 @@ pub async fn bulk_action(
     Json(req): Json<BulkActionRequest>,
 ) -> Result<Json<BulkActionResponse>> {
     scopes.require(match &req.action {
-        BulkAction::Delete => Scope::TargetsDelete,
+        BulkAction::Delete {} => Scope::TargetsDelete,
         _ => Scope::TargetsWrite,
     })?;
     if req.ids.is_empty() {
@@ -967,19 +968,19 @@ pub async fn bulk_action(
 
     let mut over_cap: Vec<Uuid> = Vec::new();
     let succeeded = match &req.action {
-        BulkAction::Enable => {
+        BulkAction::Enable {} => {
             state
                 .target_store
                 .set_enabled(org, &req.ids, true, Some(user))
                 .await?
         }
-        BulkAction::Disable => {
+        BulkAction::Disable {} => {
             state
                 .target_store
                 .set_enabled(org, &req.ids, false, Some(user))
                 .await?
         }
-        BulkAction::Delete => {
+        BulkAction::Delete {} => {
             // Capture curated pages before the cascade drops the join rows.
             let pages = state
                 .status_page_store

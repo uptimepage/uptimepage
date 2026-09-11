@@ -25,24 +25,26 @@ pub struct TargetAlerts(pub Vec<AlertBinding>);
 
 /// Request-side shape. The stored and agent-facing `AlertBinding` stays
 /// lenient so a key added later never breaks an agent still on the old build.
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-struct BindingInput {
+pub struct AlertBindingInput {
+    /// Id of a channel in the caller's org.
+    #[schema(value_type = String, format = "uuid")]
     channel_id: Uuid,
 }
 
 impl TargetAlerts {
     pub(crate) fn deserialize_strict<'de, D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        Vec::<BindingInput>::deserialize(d).map(Self::from_inputs)
+        Vec::<AlertBindingInput>::deserialize(d).map(Self::from_inputs)
     }
 
     pub(crate) fn deserialize_strict_opt<'de, D: Deserializer<'de>>(
         d: D,
     ) -> Result<Option<Self>, D::Error> {
-        Option::<Vec<BindingInput>>::deserialize(d).map(|v| v.map(Self::from_inputs))
+        Option::<Vec<AlertBindingInput>>::deserialize(d).map(|v| v.map(Self::from_inputs))
     }
 
-    fn from_inputs(inputs: Vec<BindingInput>) -> Self {
+    fn from_inputs(inputs: Vec<AlertBindingInput>) -> Self {
         Self(
             inputs
                 .into_iter()

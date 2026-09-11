@@ -33,6 +33,7 @@ use crate::web::{BrowserUser, CurrentUser};
 // ── DTOs ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateOrgRequest {
     /// 3-30 chars, `[a-z0-9-]`, leading letter, no trailing hyphen, no double
     /// hyphens, not in the reserved list.
@@ -44,6 +45,7 @@ pub struct CreateOrgRequest {
 /// stored value alone. A request with neither field set is rejected so the
 /// caller learns the no-op was unintentional rather than silently 200-ing.
 #[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateOrgRequest {
     #[serde(default)]
     pub name: Option<String>,
@@ -107,6 +109,7 @@ pub struct CheckSlugQuery {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SwitchActiveOrgRequest {
     pub org_id: OrgId,
 }
@@ -538,6 +541,7 @@ pub async fn remove_org_member(
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateMemberRoleRequest {
     pub role: Role,
 }

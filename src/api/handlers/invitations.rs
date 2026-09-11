@@ -34,6 +34,7 @@ use crate::storage::orgs as orgs_store;
 use crate::web::{BrowserUser, CurrentUser, VerifiedBrowserUser};
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateInvitationRequest {
     pub email: String,
     pub role: String,
@@ -255,6 +256,7 @@ pub async fn resend(
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TokenBody {
     pub token: String,
 }

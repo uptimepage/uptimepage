@@ -33,6 +33,7 @@ fn validate_reason(reason: &str) -> Result<&str> {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SetPlan {
     pub plan_id: String,
     #[serde(default)]
@@ -81,6 +82,7 @@ pub async fn set_account_plan(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SetOverrides {
     pub caps: serde_json::Value,
     pub reason: String,

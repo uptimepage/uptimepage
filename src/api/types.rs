@@ -54,18 +54,21 @@ pub struct DashboardSummary {
 }
 
 #[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BulkActionRequest {
     /// Up to 10 000 ids per request.
     pub ids: Vec<Uuid>,
     pub action: BulkAction,
 }
 
+/// The bare actions are empty struct variants, not unit ones: serde only
+/// refuses a stray key next to `type` for a variant that has fields.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BulkAction {
-    Enable,
-    Disable,
-    Delete,
+    Enable {},
+    Disable {},
+    Delete {},
     TagAdd {
         tags: Vec<String>,
     },
@@ -92,6 +95,7 @@ pub struct BulkActionFailure {
 }
 
 #[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TestRequest {
     pub check: CheckSpec,
     /// Region to run the test in. Omitted → the control plane's default

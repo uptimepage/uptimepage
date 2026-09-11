@@ -141,3 +141,110 @@ async fn swagger_ui_is_reachable() {
         resp.status()
     );
 }
+
+/// Every request body refuses a key it does not name, so a setting under the
+/// wrong name fails instead of vanishing. Only the stored shapes nested in a
+/// body stay tolerant: what the API returns and agents consume.
+#[tokio::test]
+async fn every_request_body_refuses_unknown_keys() {
+    let resp = app()
+        .oneshot(
+            Request::get("/api/openapi.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let doc = body_json(resp).await;
+    let schemas = &doc["components"]["schemas"];
+    // CheckSpec and ChannelConfig are the stored shapes and stay tolerant on
+    // purpose. The two enums refuse a stray key at runtime (an externally
+    // tagged variant is one key by construction; BulkAction is denied on the
+    // enum) but their schemas do not say so; new_endpoints_test covers them.
+    let tolerant = [
+        "CheckSpec",
+        "ChannelConfig",
+        "RegionIncidentPolicy",
+        "BulkAction",
+    ];
+
+    let mut lenient = Vec::new();
+    for (path, item) in doc["paths"].as_object().unwrap() {
+        for (method, op) in item.as_object().unwrap() {
+            if !matches!(method.as_str(), "post" | "put" | "patch") {
+                continue;
+            }
+            let Some(schema) =
+                op["requestBody"]["content"]["application/json"]["schema"].as_object()
+            else {
+                continue;
+            };
+            let mut seen = Vec::new();
+            walk(
+                &Value::Object(schema.clone()),
+                schemas,
+                &tolerant,
+                &mut seen,
+                &format!("{method} {path}"),
+                &mut lenient,
+            );
+        }
+    }
+    assert!(
+        lenient.is_empty(),
+        "bodies that still ignore unknown keys:\n{}",
+        lenient.join("\n")
+    );
+}
+
+fn walk(
+    schema: &Value,
+    schemas: &Value,
+    tolerant: &[&str],
+    seen: &mut Vec<String>,
+    at: &str,
+    lenient: &mut Vec<String>,
+) {
+    if let Some(reference) = schema["$ref"].as_str() {
+        let name = reference.rsplit('/').next().unwrap();
+        if tolerant.contains(&name) || seen.iter().any(|s| s == name) {
+            return;
+        }
+        seen.push(name.to_string());
+        return walk(
+            &schemas[name],
+            schemas,
+            tolerant,
+            seen,
+            &format!("{at} > {name}"),
+            lenient,
+        );
+    }
+    if let Some(items) = schema.get("items") {
+        return walk(items, schemas, tolerant, seen, at, lenient);
+    }
+    for key in ["oneOf", "anyOf", "allOf"] {
+        if let Some(variants) = schema[key].as_array() {
+            for v in variants {
+                walk(v, schemas, tolerant, seen, at, lenient);
+            }
+            return;
+        }
+    }
+    let Some(properties) = schema["properties"].as_object() else {
+        return;
+    };
+    if schema["additionalProperties"] != Value::Bool(false) {
+        lenient.push(at.to_string());
+    }
+    for (name, prop) in properties {
+        walk(
+            prop,
+            schemas,
+            tolerant,
+            seen,
+            &format!("{at}.{name}"),
+            lenient,
+        );
+    }
+}

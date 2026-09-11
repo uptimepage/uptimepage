@@ -100,6 +100,7 @@ pub struct StatusPageComponent {
 }
 
 #[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NewStatusPageComponent {
     pub target_id: Uuid,
     #[serde(default)]
@@ -118,6 +119,7 @@ pub struct NewStatusPageComponent {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct StatusPageComponentUpdate {
     #[serde(default, deserialize_with = "double_option")]
     #[schema(nullable = true, value_type = Option<String>)]

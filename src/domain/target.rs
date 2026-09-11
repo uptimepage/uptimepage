@@ -137,6 +137,7 @@ pub struct NewTarget {
     #[schema(max_items = 50)]
     pub tags: Vec<String>,
     #[serde(default, deserialize_with = "TargetAlerts::deserialize_strict")]
+    #[schema(value_type = Vec<crate::domain::alert::AlertBindingInput>)]
     pub alerts: TargetAlerts,
     /// Consecutive failing checks before this monitor alerts. Min 1.
     #[serde(default = "default_alert_confirmations")]
@@ -189,6 +190,7 @@ pub struct TargetUpdate {
     #[schema(max_items = 50)]
     pub tags: Option<Vec<String>>,
     #[serde(default, deserialize_with = "TargetAlerts::deserialize_strict_opt")]
+    #[schema(value_type = Option<Vec<crate::domain::alert::AlertBindingInput>>)]
     pub alerts: Option<TargetAlerts>,
     #[serde(default, deserialize_with = "double_option")]
     #[schema(nullable = true, value_type = Option<String>)]

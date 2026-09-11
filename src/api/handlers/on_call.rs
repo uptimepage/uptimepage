@@ -278,6 +278,7 @@ pub async fn who(
 
 /// The channels that page the acting member.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ContactChannels {
     pub channel_ids: Vec<Uuid>,
 }

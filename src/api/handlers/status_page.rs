@@ -72,6 +72,7 @@ pub struct StatusPageView {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreatePageRequest {
     pub slug: String,
     #[schema(max_length = 80)]
@@ -81,6 +82,7 @@ pub struct CreatePageRequest {
 }
 
 #[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdatePageRequest {
     pub name: Option<String>,
     pub slug: Option<String>,
@@ -91,6 +93,7 @@ pub struct UpdatePageRequest {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BrandingInput {
     #[serde(default)]
     pub public_display_name: Option<String>,
@@ -111,6 +114,7 @@ pub struct BrandingInput {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ReorderRequest {
     /// Target ids in their new display order (0-based `sort_order`).
     pub target_ids: Vec<Uuid>,

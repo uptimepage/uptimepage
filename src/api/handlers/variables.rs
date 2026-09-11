@@ -33,6 +33,7 @@ pub struct VariableView {
 
 /// PATCH body: rotate a variable's value. The secret flag is fixed at create.
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct VariableValueUpdate {
     pub value: String,
 }

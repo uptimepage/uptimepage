@@ -169,6 +169,7 @@ pub async fn status(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DelegateCreateRequest {
     #[serde(default)]
     pub name: Option<String>,

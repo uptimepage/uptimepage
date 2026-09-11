@@ -74,6 +74,7 @@ pub struct HoldsResponse {
 /// default order. A caller shown only its monitors therefore cannot wipe the
 /// status page pick, and `{}` is a plain reconcile.
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct KeepRequest {
     #[serde(default)]
     pub keep_monitors: Option<Vec<Uuid>>,

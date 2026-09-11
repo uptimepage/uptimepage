@@ -381,6 +381,7 @@ pub async fn test_send(
 
 /// Body of `POST /test`: a full transport config to exercise without saving.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TestChannelConfigRequest {
     pub config: ChannelConfig,
 }
@@ -638,6 +639,7 @@ const ONE_TAP_LINK_MAX_OUTSTANDING: i64 = 5;
 
 /// Shared by the telegram-link and whatsapp-link mints.
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OneTapLinkRequest {
     /// Optional name for the channel created when the code is consumed;
     /// defaults to the linked chat title / WhatsApp profile name.
@@ -903,6 +905,7 @@ const DELEGATE_LINK_TTL_DAYS: i64 = 7;
 const DELEGATE_LINK_MAX_OUTSTANDING: i64 = 5;
 
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DelegateLinkRequest {
     /// Optional name for the channel the invitee creates.
     #[serde(default)]

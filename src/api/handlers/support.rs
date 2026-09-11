@@ -26,6 +26,7 @@ const MAX_PAGE_URL: usize = 300;
 const UNKNOWN: &str = "unknown";
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SupportRequestBody {
     pub topic: String,
     pub message: String,

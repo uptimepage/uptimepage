@@ -472,6 +472,23 @@ async fn create_refuses_a_key_it_does_not_know() {
     payload["alerts"] = json!([{ "channel_id": uuid::Uuid::nil(), "after_failures": 3 }]);
     let (status, v) = send_json(&app, "POST", "/api/v1/targets", payload).await;
     assert_unknown_key(status, &v, "after_failures");
+
+    let mut payload = http_target_payload("policy-knob");
+    payload["region_policy"] = json!({ "count": 2, "mode": "count" });
+    // An externally tagged variant is one key by construction; serde reports
+    // the second as a syntax error, so this one refuses with 400.
+    let (status, v) = send_json(&app, "POST", "/api/v1/targets", payload).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+    assert_eq!(v["error"]["code"], "INVALID_JSON", "{v}");
+
+    let (status, v) = send_json(
+        &app,
+        "POST",
+        "/api/v1/targets/bulk-action",
+        json!({ "ids": [id], "action": { "type": "enable", "tags": ["prod"] } }),
+    )
+    .await;
+    assert_unknown_key(status, &v, "tags");
 }
 
 #[tokio::test]

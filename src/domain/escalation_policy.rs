@@ -94,6 +94,7 @@ pub struct EscalationPolicySummary {
 
 /// A target to create within a step.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NewEscalationTarget {
     pub target_type: EscalationTargetType,
     #[serde(default)]
@@ -109,6 +110,7 @@ pub struct NewEscalationTarget {
 
 /// A step to create within a policy.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NewEscalationStep {
     pub level: i32,
     #[serde(default = "default_step_delay")]
@@ -123,6 +125,7 @@ fn default_step_delay() -> i32 {
 /// Create or fully replace a policy. PATCH replaces the whole step list so the
 /// builder UI can edit levels/targets in one round-trip (no nested CRUD).
 #[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NewEscalationPolicy {
     pub name: String,
     #[serde(default)]

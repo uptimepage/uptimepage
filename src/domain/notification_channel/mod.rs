@@ -362,6 +362,7 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NewNotificationChannel {
     #[schema(example = "Ops Slack", max_length = 100)]
     pub name: String,
@@ -375,6 +376,7 @@ pub struct NewNotificationChannel {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NotificationChannelUpdate {
     pub name: Option<String>,
     pub config: Option<ChannelConfig>,

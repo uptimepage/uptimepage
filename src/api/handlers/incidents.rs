@@ -213,12 +213,14 @@ pub struct ListIncidentsQuery {
 
 /// Optional operator note attached to a lifecycle action.
 #[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LifecycleBody {
     #[serde(default)]
     pub note: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AssignBody {
     /// The responder to own the incident, or `null` to clear the assignee.
     #[serde(default)]
@@ -226,6 +228,7 @@ pub struct AssignBody {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NoteBody {
     pub message: String,
 }
@@ -233,6 +236,7 @@ pub struct NoteBody {
 /// Optional public narration seeded when publishing. An omitted field leaves
 /// the stored copy unchanged; clearing copy is the narration patch endpoint.
 #[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PublishBody {
     #[serde(default)]
     pub public_title: Option<String>,

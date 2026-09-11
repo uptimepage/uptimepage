@@ -124,6 +124,7 @@ pub fn uptime_pct_from_downtime(downtime_secs: i64, window_secs: i64) -> f64 {
 /// utoipa renders both layers as nullable; the wire shape is identical to a
 /// plain `Option<String>` to clients.
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct IncidentNarrationUpdate {
     #[serde(default, deserialize_with = "double_option")]
     #[schema(nullable = true, value_type = Option<String>)]
@@ -158,6 +159,7 @@ where
 }
 
 #[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NewIncidentUpdate {
     pub phase: IncidentStatusPhase,
     #[schema(min_length = 1, max_length = 2000)]
@@ -616,6 +618,7 @@ fn default_true() -> bool {
 
 /// Operator-declared incident not driven by a monitor's check stream.
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NewManualIncident {
     #[serde(default)]
     #[schema(nullable = true)]
@@ -791,6 +794,36 @@ pub struct ActionItem {
     pub done: bool,
 }
 
+/// Request-side shape. The stored `ActionItem` stays lenient so a key added
+/// later never breaks a read of what is already in the row.
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ActionItemInput {
+    text: String,
+    #[serde(default)]
+    #[schema(nullable = true)]
+    owner_user_id: Option<UserId>,
+    #[serde(default)]
+    done: bool,
+}
+
+impl ActionItem {
+    pub(crate) fn deserialize_strict_list<'de, D: serde::Deserializer<'de>>(
+        d: D,
+    ) -> Result<Vec<Self>, D::Error> {
+        Vec::<ActionItemInput>::deserialize(d).map(|items| {
+            items
+                .into_iter()
+                .map(|i| Self {
+                    text: i.text,
+                    owner_user_id: i.owner_user_id,
+                    done: i.done,
+                })
+                .collect()
+        })
+    }
+}
+
 /// Retrospective document attached to a single incident.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct IncidentPostmortem {
@@ -814,6 +847,7 @@ pub struct IncidentPostmortem {
 /// Operator-supplied postmortem content. Each field replaces the stored value;
 /// `action_items` is the full list every save.
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PostmortemUpsert {
     #[serde(default)]
     pub summary: Option<String>,
@@ -821,7 +855,8 @@ pub struct PostmortemUpsert {
     pub root_cause: Option<String>,
     #[serde(default)]
     pub impact: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "ActionItem::deserialize_strict_list")]
+    #[schema(value_type = Vec<ActionItemInput>)]
     pub action_items: Vec<ActionItem>,
 }
 

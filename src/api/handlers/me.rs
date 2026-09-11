@@ -109,6 +109,7 @@ pub struct ThemeView {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateThemeRequest {
     pub theme: AppTheme,
 }
@@ -145,6 +146,7 @@ pub struct TimeFormatView {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateTimeFormatRequest {
     pub time_format: TimeFormat,
 }

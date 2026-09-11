@@ -43,6 +43,7 @@ const MAX_TARGETS_PER_STEP: usize = 20;
 
 /// Bind a monitor or the org default to a policy (or clear it with `null`).
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyBinding {
     #[serde(default)]
     #[schema(nullable = true)]

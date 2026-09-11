@@ -72,6 +72,7 @@ pub struct CreatedShare {
 
 /// POST body for minting a share.
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NewMonitorShare {
     #[serde(default)]
     #[schema(nullable = true, max_length = 80)]

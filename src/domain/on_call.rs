@@ -124,12 +124,14 @@ pub struct OnCallScheduleSummary {
 // ── Create/replace payloads ──────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NewOnCallParticipant {
     #[schema(value_type = String, format = "uuid")]
     pub user_id: UserId,
 }
 
 #[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NewOnCallLayer {
     #[serde(default)]
     #[schema(nullable = true)]
@@ -146,6 +148,7 @@ pub struct NewOnCallLayer {
 /// Create or fully replace a schedule's metadata + layer stack in one call
 /// (mirrors the escalation-policy builder). Overrides are managed separately.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NewOnCallSchedule {
     pub name: String,
     #[serde(default = "default_timezone")]
@@ -159,6 +162,7 @@ fn default_timezone() -> String {
 }
 
 #[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NewOnCallOverride {
     #[schema(value_type = String, format = "uuid")]
     pub user_id: UserId,

@@ -177,8 +177,9 @@ async fn each_request_gets_its_own_reference() {
 #[tokio::test]
 async fn identity_comes_from_the_session_not_the_request_body() {
     let (app, mail) = configured();
-    // A caller trying to file a request as somebody else, from another org.
-    let (status, _) = post_support(
+    // A caller trying to file a request as somebody else, from another org:
+    // the body has no such keys, so the attempt is refused, not ignored.
+    let (status, body) = post_support(
         &app,
         json!({
             "topic": "billing",
@@ -189,8 +190,16 @@ async fn identity_comes_from_the_session_not_the_request_body() {
         }),
     )
     .await;
-    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(body.contains("INVALID_JSON"), "{body}");
+    assert!(body.contains("unknown field `from_email`"), "{body}");
+    assert!(
+        mail.sent().is_empty(),
+        "nothing is filed from a refused body"
+    );
 
+    let (status, _) = post_support(&app, help_request("billing", "refund me")).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
     let sent = mail.sent();
     let EmailTemplate::SupportRequest {
         from_email, plan, ..
