@@ -1,9 +1,16 @@
-//! Moving an account between plans.
+//! Moving an account between plans, and the paid lifecycle around it.
 //!
 //! `accounts.plan_id` has one writer, [`set_plan`], whoever asks for the move:
-//! an operator today, a payment provider's events later. One path is what
-//! makes every change carry the same guarantees: the ledger row, the cache
-//! drop that applies the new caps on the next request, and the reconcile.
+//! an operator, a payment provider's events, or the lifecycle's own clock.
+//! One path is what makes every change carry the same guarantees: the ledger
+//! row, the cache drop that applies the new caps on the next request, and
+//! the reconcile.
+
+pub mod actions;
+pub mod lifecycle;
+pub mod mail;
+pub mod paddle;
+pub mod provider;
 
 use anyhow::Context;
 use serde::Serialize;
@@ -16,19 +23,28 @@ use crate::error::{AppError, Result};
 use crate::quotas::{QuotaService, Reconciled, reconcile_after_change};
 use crate::storage::billing_events;
 
+pub use lifecycle::Billing;
+
 /// Who asked for the change, as the ledger records it.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Actor {
     Operator,
-    User { id: UserId },
+    User {
+        id: UserId,
+    },
+    Provider {
+        name: &'static str,
+    },
+    /// The lifecycle's own clock: a scheduled change or an expired grace.
+    System,
 }
 
 impl Actor {
     fn user(self) -> Option<UserId> {
         match self {
-            Actor::Operator => None,
             Actor::User { id } => Some(id),
+            _ => None,
         }
     }
 }
@@ -55,6 +71,15 @@ pub struct PlanRequest<'a> {
     pub actor: Actor,
 }
 
+/// The locked write's outcome, before the reconcile.
+#[derive(Debug, Clone)]
+pub struct PlanWrite {
+    pub from: String,
+    pub to: String,
+    pub fallback: Option<String>,
+    pub changed: bool,
+}
+
 #[derive(sqlx::FromRow)]
 struct AccountPlanRow {
     plan_id: String,
@@ -68,12 +93,37 @@ pub async fn set_plan(
     req: PlanRequest<'_>,
 ) -> Result<PlanChange> {
     let mut tx = pool.begin().await.context("set_plan: begin")?;
+    let actor = req.actor;
+    let write = set_plan_tx(&mut tx, account, req).await?;
+    if write.changed {
+        tx.commit().await.context("set_plan: commit")?;
+    } else {
+        drop(tx);
+    }
+    let reconciled = reconcile_after_change(pool, quotas, account, actor.user()).await?;
+    Ok(PlanChange {
+        from: write.from,
+        to: write.to,
+        fallback: write.fallback,
+        reconciled,
+    })
+}
+
+/// The plan write inside a caller's transaction. The caller owns the commit
+/// and must follow it with [`reconcile_after_change`], which is what applies
+/// the new caps; the account row is locked here, so the lifecycle's own lock
+/// on it is simply re-taken.
+pub async fn set_plan_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account: AccountId,
+    req: PlanRequest<'_>,
+) -> Result<PlanWrite> {
     // Row lock only: the account's advisory lock belongs to the reconcile,
     // which takes it against creates the way every cap check does.
     let current: Option<AccountPlanRow> =
         sqlx::query_as("SELECT plan_id, fallback_plan_id FROM accounts WHERE id = $1 FOR UPDATE")
             .bind(account.0)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .context("set_plan: current")?;
     let Some(current) = current else {
@@ -86,7 +136,7 @@ pub async fn set_plan(
         .into_iter()
         .flatten()
     {
-        require_plan(&mut tx, plan).await?;
+        require_plan(tx, plan).await?;
     }
 
     let fallback = req
@@ -94,15 +144,12 @@ pub async fn set_plan(
         .map(str::to_owned)
         .or(current.fallback_plan_id.clone())
         .or_else(|| (current.plan_id != req.plan_id).then(|| current.plan_id.clone()));
-    let unchanged = current.plan_id == req.plan_id && current.fallback_plan_id == fallback;
-    if unchanged {
-        drop(tx);
-        let reconciled = reconcile_after_change(pool, quotas, account, req.actor.user()).await?;
-        return Ok(PlanChange {
+    if current.plan_id == req.plan_id && current.fallback_plan_id == fallback {
+        return Ok(PlanWrite {
             from: current.plan_id.clone(),
             to: current.plan_id,
             fallback,
-            reconciled,
+            changed: false,
         });
     }
 
@@ -112,11 +159,11 @@ pub async fn set_plan(
     .bind(account.0)
     .bind(req.plan_id)
     .bind(&fallback)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await
     .context("set_plan: update")?;
     billing_events::record_tx(
-        &mut tx,
+        tx,
         account,
         billing_events::PLAN_CHANGED,
         json!({
@@ -128,14 +175,11 @@ pub async fn set_plan(
         }),
     )
     .await?;
-    tx.commit().await.context("set_plan: commit")?;
-
-    let reconciled = reconcile_after_change(pool, quotas, account, req.actor.user()).await?;
-    Ok(PlanChange {
+    Ok(PlanWrite {
         from: current.plan_id,
         to: req.plan_id.to_owned(),
         fallback,
-        reconciled,
+        changed: true,
     })
 }
 

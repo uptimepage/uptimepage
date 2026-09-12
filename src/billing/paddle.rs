@@ -1,0 +1,606 @@
+//! Paddle Billing behind [`BillingProvider`]: signature check, event mapping,
+//! and the handful of API calls the lifecycle makes. Paddle is merchant of
+//! record, so tax, invoices and card retries are its; we only learn what it
+//! decided and keep the plan in step.
+
+use async_trait::async_trait;
+use axum::http::HeaderMap;
+use chrono::{DateTime, Utc};
+use hmac::{Hmac, KeyInit, Mac};
+use http_body_util::{BodyExt, Full, Limited};
+use hyper::body::Bytes;
+use hyper::header::{AUTHORIZATION, CONTENT_TYPE};
+use hyper::{Method, Request};
+use secrecy::{ExposeSecret, SecretString};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use sha2::Sha256;
+use subtle::ConstantTimeEq;
+use url::Url;
+use uuid::Uuid;
+
+use super::provider::{
+    BillingProvider, ChangeTiming, CheckoutRequest, EventKind, PortalLinks, ProviderEvent,
+    SubscriptionSnapshot, SubscriptionStatus, WebhookRejected,
+};
+use crate::api::error::codes;
+use crate::domain::AccountId;
+use crate::error::{AppError, Result};
+use crate::http_outbound::{OutboundHttpClient, REQUEST_TIMEOUT};
+
+pub const NAME: &str = "paddle";
+pub const SIGNATURE_HEADER: &str = "paddle-signature";
+/// Paddle's SDKs default to five seconds. Replay is already closed by the
+/// event id, so this only has to bound clock drift, and a few minutes costs
+/// nothing where five seconds would drop every delivery on a skewed host.
+pub const TOLERANCE_SECS: i64 = 5 * 60;
+const MAX_RESPONSE_BYTES: usize = 256 * 1024;
+const CUSTOM_DATA_ACCOUNT: &str = "account_id";
+
+/// `ts=<unix>;h1=<hex>[;h1=<hex>]` over `"{ts}:{body}"`, HMAC-SHA256 keyed by
+/// the endpoint secret as given. More than one `h1` appears during secret
+/// rotation; any of them matching is enough.
+pub fn verify(secret: &str, header: &str, body: &[u8], now: i64) -> bool {
+    let mut ts = None;
+    let mut candidates = Vec::new();
+    for part in header.split(';') {
+        match part.trim().split_once('=') {
+            Some(("ts", v)) => ts = v.parse::<i64>().ok(),
+            Some(("h1", v)) => candidates.push(v.trim().to_owned()),
+            _ => {}
+        }
+    }
+    let Some(ts) = ts else {
+        return false;
+    };
+    if (now - ts).abs() > TOLERANCE_SECS {
+        return false;
+    }
+    let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(secret.as_bytes()) else {
+        return false;
+    };
+    mac.update(ts.to_string().as_bytes());
+    mac.update(b":");
+    mac.update(body);
+    let expected = mac.finalize().into_bytes();
+    candidates
+        .iter()
+        .filter_map(|c| hex::decode(c).ok())
+        .any(|candidate| candidate.ct_eq(&expected).into())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Environment {
+    Sandbox,
+    Live,
+}
+
+impl Environment {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "sandbox" => Some(Environment::Sandbox),
+            "live" => Some(Environment::Live),
+            _ => None,
+        }
+    }
+
+    fn api_base(self) -> &'static str {
+        match self {
+            Environment::Sandbox => "https://sandbox-api.paddle.com",
+            Environment::Live => "https://api.paddle.com",
+        }
+    }
+}
+
+pub struct PaddleProvider {
+    api_key: SecretString,
+    webhook_secret: SecretString,
+    api_base: &'static str,
+    http: OutboundHttpClient,
+}
+
+impl PaddleProvider {
+    pub fn new(
+        environment: Environment,
+        api_key: SecretString,
+        webhook_secret: SecretString,
+        http: OutboundHttpClient,
+    ) -> Self {
+        Self {
+            api_key,
+            webhook_secret,
+            api_base: environment.api_base(),
+            http,
+        }
+    }
+
+    async fn call(&self, method: Method, path: &str, body: Option<Value>) -> Result<Value> {
+        let uri = format!("{}{path}", self.api_base);
+        let payload = match &body {
+            Some(v) => serde_json::to_vec(v).map_err(|e| AppError::Other(e.into()))?,
+            None => Vec::new(),
+        };
+        let req = Request::builder()
+            .method(method)
+            .uri(&uri)
+            .header(
+                AUTHORIZATION,
+                format!("Bearer {}", self.api_key.expose_secret()),
+            )
+            .header("Paddle-Version", "1")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(payload)))
+            .map_err(|e| AppError::Other(anyhow::anyhow!("paddle request: {e}")))?;
+        let at = tokio::time::Instant::now() + REQUEST_TIMEOUT;
+        let resp = tokio::time::timeout_at(at, self.http.request(req))
+            .await
+            .map_err(|_| unreachable(path, "no response"))?
+            .map_err(|e| unreachable(path, e))?;
+        let status = resp.status();
+        let bytes = tokio::time::timeout_at(
+            at,
+            Limited::new(resp.into_body(), MAX_RESPONSE_BYTES).collect(),
+        )
+        .await
+        .map_err(|_| unreachable(path, "body stalled"))?
+        .map_err(|e| unreachable(path, format!("read body: {e}")))?
+        .to_bytes();
+        let parsed: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        if status.is_success() {
+            return Ok(parsed["data"].clone());
+        }
+        let code = parsed["error"]["code"].as_str().unwrap_or("unknown");
+        let detail = parsed["error"]["detail"]
+            .as_str()
+            .unwrap_or("no detail given");
+        let refused = match status.as_u16() {
+            404 => AppError::not_found(codes::SUBSCRIPTION_NOT_FOUND, detail.to_owned()),
+            // Rate limited is a "later", not a "no".
+            429 => return Err(unreachable(path, format!("{status} {code}: {detail}"))),
+            400..=499 => {
+                AppError::conflict(codes::BILLING_PROVIDER_REFUSED, format!("{code}: {detail}"))
+            }
+            _ => return Err(unreachable(path, format!("{status} {code}: {detail}"))),
+        };
+        tracing::warn!(%status, code, detail, path, "paddle refused the call");
+        Err(refused)
+    }
+
+    async fn subscription_call(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<SubscriptionSnapshot> {
+        let data: SubscriptionData =
+            serde_json::from_value(self.call(method, path, body).await?)
+                .map_err(|e| AppError::Other(anyhow::anyhow!("paddle {path}: {e}")))?;
+        Ok(data.snapshot())
+    }
+}
+
+#[derive(Deserialize)]
+struct Envelope {
+    event_id: String,
+    event_type: String,
+    occurred_at: DateTime<Utc>,
+    #[serde(default)]
+    data: Value,
+}
+
+/// The account id we attached at checkout, carried on the transaction and
+/// copied to the subscription it created.
+fn custom_account(data: &Value) -> Option<AccountId> {
+    data.get("custom_data")
+        .and_then(|v| v.get(CUSTOM_DATA_ACCOUNT))
+        .and_then(Value::as_str)
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .map(AccountId)
+}
+
+#[derive(Deserialize)]
+struct TransactionData {
+    #[serde(default)]
+    customer_id: Option<String>,
+    #[serde(default)]
+    subscription_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Period {
+    ends_at: DateTime<Utc>,
+}
+
+#[derive(Deserialize)]
+struct ScheduledChange {
+    action: String,
+    effective_at: DateTime<Utc>,
+}
+
+#[derive(Deserialize)]
+struct Item {
+    #[serde(default = "active")]
+    status: String,
+    price: Price,
+}
+
+fn active() -> String {
+    "active".into()
+}
+
+#[derive(Deserialize)]
+struct Price {
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct SubscriptionData {
+    id: String,
+    status: String,
+    customer_id: String,
+    #[serde(default)]
+    current_billing_period: Option<Period>,
+    #[serde(default)]
+    scheduled_change: Option<ScheduledChange>,
+    #[serde(default)]
+    items: Vec<Item>,
+    updated_at: DateTime<Utc>,
+}
+
+impl SubscriptionData {
+    /// Paddle's `updated_at` on both the webhook and the call path, so
+    /// snapshots order on one clock. A replaced item stays on as `inactive`.
+    fn snapshot(self) -> SubscriptionSnapshot {
+        let status = match self.status.as_str() {
+            "active" => SubscriptionStatus::Active,
+            "trialing" => SubscriptionStatus::Trialing,
+            "past_due" => SubscriptionStatus::PastDue,
+            "paused" => SubscriptionStatus::Paused,
+            _ => SubscriptionStatus::Canceled,
+        };
+        SubscriptionSnapshot {
+            subscription_ref: self.id,
+            customer_ref: self.customer_id,
+            status,
+            price_refs: self
+                .items
+                .into_iter()
+                .filter(|i| matches!(i.status.as_str(), "active" | "trialing"))
+                .map(|i| i.price.id)
+                .collect(),
+            period_end: self.current_billing_period.map(|p| p.ends_at),
+            cancel_at: self
+                .scheduled_change
+                .filter(|c| c.action == "cancel")
+                .map(|c| c.effective_at),
+            taken_at: self.updated_at,
+        }
+    }
+}
+
+fn map_event(envelope: Envelope) -> std::result::Result<ProviderEvent, WebhookRejected> {
+    let malformed = |e: serde_json::Error| WebhookRejected::Malformed(e.to_string());
+    let account = custom_account(&envelope.data);
+    let (customer_ref, subscription_ref, kind) = match envelope.event_type.as_str() {
+        "transaction.completed" | "transaction.payment_failed" => {
+            let t: TransactionData = serde_json::from_value(envelope.data).map_err(malformed)?;
+            let kind = if envelope.event_type == "transaction.completed" {
+                EventKind::Paid
+            } else {
+                EventKind::PaymentFailed
+            };
+            (t.customer_id, t.subscription_id, kind)
+        }
+        kind if kind.starts_with("subscription.") => {
+            let s: SubscriptionData = serde_json::from_value(envelope.data).map_err(malformed)?;
+            let snapshot = s.snapshot();
+            (
+                Some(snapshot.customer_ref.clone()),
+                Some(snapshot.subscription_ref.clone()),
+                EventKind::Subscription(snapshot),
+            )
+        }
+        _ => (None, None, EventKind::Other),
+    };
+    Ok(ProviderEvent {
+        event_id: envelope.event_id,
+        event_type: envelope.event_type,
+        occurred_at: envelope.occurred_at,
+        account,
+        customer_ref,
+        subscription_ref,
+        kind,
+    })
+}
+
+#[async_trait]
+impl BillingProvider for PaddleProvider {
+    fn name(&self) -> &'static str {
+        NAME
+    }
+
+    fn parse_webhook(
+        &self,
+        headers: &HeaderMap,
+        body: &[u8],
+        now: DateTime<Utc>,
+    ) -> std::result::Result<ProviderEvent, WebhookRejected> {
+        let header = headers
+            .get(SIGNATURE_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        if !verify(
+            self.webhook_secret.expose_secret(),
+            header,
+            body,
+            now.timestamp(),
+        ) {
+            return Err(WebhookRejected::Signature);
+        }
+        let envelope: Envelope =
+            serde_json::from_slice(body).map_err(|e| WebhookRejected::Malformed(e.to_string()))?;
+        map_event(envelope)
+    }
+
+    async fn checkout(&self, req: CheckoutRequest<'_>) -> Result<Url> {
+        let mut body = json!({
+            "items": [{ "price_id": req.price_ref, "quantity": 1 }],
+            "custom_data": { CUSTOM_DATA_ACCOUNT: req.account.0.to_string() },
+        });
+        if let Some(customer) = req.customer_ref {
+            body["customer_id"] = json!(customer);
+        }
+        let data = self.call(Method::POST, "/transactions", Some(body)).await?;
+        let url = data["checkout"]["url"].as_str().ok_or_else(|| {
+            AppError::Other(anyhow::anyhow!(
+                "paddle transaction carries no checkout url; is the default payment link set?"
+            ))
+        })?;
+        Url::parse(url).map_err(|e| AppError::Other(anyhow::anyhow!("paddle checkout url: {e}")))
+    }
+
+    async fn portal(
+        &self,
+        customer_ref: &str,
+        subscription_ref: Option<&str>,
+    ) -> Result<PortalLinks> {
+        let body = json!({ "subscription_ids": subscription_ref.into_iter().collect::<Vec<_>>() });
+        let data = self
+            .call(
+                Method::POST,
+                &format!("/customers/{customer_ref}/portal-sessions"),
+                Some(body),
+            )
+            .await?;
+        let link = |v: &Value| v.as_str().and_then(|s| Url::parse(s).ok());
+        let overview = link(&data["urls"]["general"]["overview"]).ok_or_else(|| {
+            AppError::Other(anyhow::anyhow!(
+                "paddle portal session carries no overview url"
+            ))
+        })?;
+        let sub = &data["urls"]["subscriptions"][0];
+        Ok(PortalLinks {
+            overview,
+            update_payment_method: link(&sub["update_subscription_payment_method"]),
+            cancel: link(&sub["cancel_subscription"]),
+        })
+    }
+
+    async fn fetch_subscription(&self, subscription_ref: &str) -> Result<SubscriptionSnapshot> {
+        self.subscription_call(
+            Method::GET,
+            &format!("/subscriptions/{subscription_ref}"),
+            None,
+        )
+        .await
+    }
+
+    async fn change_price(
+        &self,
+        subscription_ref: &str,
+        price_ref: &str,
+        timing: ChangeTiming,
+    ) -> Result<SubscriptionSnapshot> {
+        let proration = match timing {
+            ChangeTiming::Now => "prorated_immediately",
+            ChangeTiming::NextPeriod => "do_not_bill",
+        };
+        self.subscription_call(
+            Method::PATCH,
+            &format!("/subscriptions/{subscription_ref}"),
+            Some(json!({
+                "items": [{ "price_id": price_ref, "quantity": 1 }],
+                "proration_billing_mode": proration,
+            })),
+        )
+        .await
+    }
+
+    async fn cancel(
+        &self,
+        subscription_ref: &str,
+        timing: ChangeTiming,
+    ) -> Result<SubscriptionSnapshot> {
+        let effective_from = match timing {
+            ChangeTiming::Now => "immediately",
+            ChangeTiming::NextPeriod => "next_billing_period",
+        };
+        self.subscription_call(
+            Method::POST,
+            &format!("/subscriptions/{subscription_ref}/cancel"),
+            Some(json!({ "effective_from": effective_from })),
+        )
+        .await
+    }
+
+    async fn revoke_cancel(&self, subscription_ref: &str) -> Result<SubscriptionSnapshot> {
+        self.subscription_call(
+            Method::PATCH,
+            &format!("/subscriptions/{subscription_ref}"),
+            Some(json!({ "scheduled_change": null })),
+        )
+        .await
+    }
+}
+
+/// Logged in full, answered as something to retry: the caller can do
+/// nothing about the provider's silence but wait.
+fn unreachable(path: &str, why: impl std::fmt::Display) -> AppError {
+    tracing::warn!(path, %why, "paddle gave no usable answer");
+    AppError::service_unavailable(
+        codes::BILLING_PROVIDER_UNREACHABLE,
+        "the payment provider did not answer; try again in a moment",
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SECRET: &str = "pdl_ntfset_01gkpjp8bkm3tm53kdgkx6sms7_6h3qd3uFSi9YCD3OLYAShQI90XTI5vEI";
+    const NOW: i64 = 1_700_000_000;
+
+    fn sign(ts: i64, body: &[u8]) -> String {
+        let mut mac = Hmac::<Sha256>::new_from_slice(SECRET.as_bytes()).unwrap();
+        mac.update(format!("{ts}:").as_bytes());
+        mac.update(body);
+        format!("ts={ts};h1={}", hex::encode(mac.finalize().into_bytes()))
+    }
+
+    #[test]
+    fn accepts_a_correctly_signed_delivery_and_a_rotation_pair() {
+        let body = br#"{"event_type":"subscription.updated"}"#;
+        assert!(verify(SECRET, &sign(NOW, body), body, NOW));
+        let rotated = format!("{};h1=00ff", sign(NOW, body));
+        assert!(verify(SECRET, &rotated, body, NOW + 30));
+    }
+
+    #[test]
+    fn rejects_tampering_stale_stamps_and_garbage() {
+        let body = b"x";
+        let good = sign(NOW, body);
+        assert!(!verify(SECRET, &good, b"y", NOW));
+        assert!(!verify("other", &good, body, NOW));
+        assert!(!verify(SECRET, &good, body, NOW + TOLERANCE_SECS + 1));
+        assert!(!verify(SECRET, "h1=abcd", body, NOW));
+        assert!(!verify(SECRET, "ts=soon;h1=abcd", body, NOW));
+        assert!(!verify(SECRET, "", body, NOW));
+    }
+
+    fn envelope(event_type: &str, data: Value) -> Envelope {
+        serde_json::from_value(json!({
+            "event_id": "evt_01",
+            "event_type": event_type,
+            "occurred_at": "2026-09-12T10:00:00Z",
+            "notification_id": "ntf_01",
+            "data": data,
+        }))
+        .unwrap()
+    }
+
+    fn subscription(status: &str, scheduled: Value) -> Value {
+        json!({
+            "id": "sub_01",
+            "status": status,
+            "customer_id": "ctm_01",
+            "custom_data": { "account_id": "0198f0e1-0000-7000-8000-000000000000" },
+            "current_billing_period": {
+                "starts_at": "2026-09-01T00:00:00Z",
+                "ends_at": "2026-10-01T00:00:00Z"
+            },
+            "scheduled_change": scheduled,
+            "items": [
+                { "status": "inactive", "quantity": 1, "price": { "id": "pri_pro_month" } },
+                { "status": "active", "quantity": 1, "price": { "id": "pri_team_month" } }
+            ],
+            "updated_at": "2026-09-12T09:59:58Z"
+        })
+    }
+
+    #[test]
+    fn a_subscription_event_becomes_a_snapshot_with_only_the_billed_price() {
+        let event = map_event(envelope(
+            "subscription.updated",
+            subscription(
+                "active",
+                json!({ "action": "cancel", "effective_at": "2026-10-01T00:00:00Z", "resume_at": null }),
+            ),
+        ))
+        .unwrap();
+        assert_eq!(
+            event.account,
+            Some(AccountId(
+                Uuid::parse_str("0198f0e1-0000-7000-8000-000000000000").unwrap()
+            ))
+        );
+        assert_eq!(event.subscription_ref.as_deref(), Some("sub_01"));
+        let EventKind::Subscription(snap) = event.kind else {
+            panic!("not a snapshot");
+        };
+        assert_eq!(snap.status, SubscriptionStatus::Active);
+        assert_eq!(snap.price_refs, vec!["pri_team_month"]);
+        assert_eq!(
+            snap.cancel_at.map(|t| t.to_rfc3339()),
+            Some("2026-10-01T00:00:00+00:00".into())
+        );
+        assert_eq!(
+            snap.taken_at.to_rfc3339(),
+            "2026-09-12T09:59:58+00:00",
+            "ordered on the provider's clock, not the delivery's"
+        );
+    }
+
+    #[test]
+    fn a_pause_is_not_a_cancel_and_an_unknown_status_ends_service() {
+        let paused = map_event(envelope(
+            "subscription.paused",
+            subscription(
+                "paused",
+                json!({ "action": "pause", "effective_at": "2026-10-01T00:00:00Z", "resume_at": null }),
+            ),
+        ))
+        .unwrap();
+        let EventKind::Subscription(snap) = paused.kind else {
+            panic!("not a snapshot");
+        };
+        assert_eq!(snap.status, SubscriptionStatus::Paused);
+        assert_eq!(snap.cancel_at, None);
+
+        let odd = map_event(envelope(
+            "subscription.updated",
+            subscription("archived", Value::Null),
+        ))
+        .unwrap();
+        let EventKind::Subscription(snap) = odd.kind else {
+            panic!("not a snapshot");
+        };
+        assert_eq!(snap.status, SubscriptionStatus::Canceled);
+    }
+
+    #[test]
+    fn transactions_map_to_paid_and_failed_and_the_rest_is_noise() {
+        let txn = json!({
+            "id": "txn_01",
+            "status": "completed",
+            "customer_id": "ctm_01",
+            "subscription_id": "sub_01",
+            "custom_data": { "account_id": "not-a-uuid" }
+        });
+        let paid = map_event(envelope("transaction.completed", txn.clone())).unwrap();
+        assert_eq!(paid.kind, EventKind::Paid);
+        assert_eq!(paid.account, None);
+        assert_eq!(paid.subscription_ref.as_deref(), Some("sub_01"));
+        let failed = map_event(envelope("transaction.payment_failed", txn)).unwrap();
+        assert_eq!(failed.kind, EventKind::PaymentFailed);
+        let other = map_event(envelope("customer.created", json!({ "id": "ctm_01" }))).unwrap();
+        assert_eq!(other.kind, EventKind::Other);
+        assert_eq!(other.subscription_ref, None);
+    }
+
+    #[test]
+    fn a_subscription_event_missing_its_fields_is_malformed_not_a_panic() {
+        let err =
+            map_event(envelope("subscription.created", json!({ "id": "sub_01" }))).unwrap_err();
+        assert!(matches!(err, WebhookRejected::Malformed(_)));
+    }
+}

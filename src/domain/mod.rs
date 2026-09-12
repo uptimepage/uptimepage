@@ -20,6 +20,7 @@ pub mod reserved_slugs;
 pub mod result;
 pub mod status_page;
 pub mod subscriber;
+pub mod subscription;
 pub mod target;
 pub mod text;
 pub mod user;
@@ -93,6 +94,7 @@ pub use status_page::{
     StatusPageComponentUpdate, StatusPageId, StatusPageUpdate,
 };
 pub use subscriber::{NewSubscriber, Subscriber, SubscriberChannel};
+pub use subscription::{BillingStatus, Subscription};
 pub use target::{NewTarget, NewTargetWithRegions, RegionIncidentPolicy, Target, TargetUpdate};
 pub use user::{AppTheme, User, UserId};
 pub use variable::{

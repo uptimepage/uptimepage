@@ -255,6 +255,18 @@ pub mod codes {
     pub const PLAN_NOT_FOUND: &str = "PLAN_NOT_FOUND";
     pub const PLAN_OVERRIDE_INVALID: &str = "PLAN_OVERRIDE_INVALID";
     pub const REASON_INVALID: &str = "REASON_INVALID";
+    // Subscriptions.
+    /// No payment provider is configured on this install (404).
+    pub const BILLING_UNAVAILABLE: &str = "BILLING_UNAVAILABLE";
+    /// The plan is not sold on that cadence (422).
+    pub const PLAN_NOT_FOR_SALE: &str = "PLAN_NOT_FOR_SALE";
+    /// The account's subscription is not in a state the call applies to (409).
+    pub const SUBSCRIPTION_STATE: &str = "SUBSCRIPTION_STATE";
+    pub const SUBSCRIPTION_NOT_FOUND: &str = "SUBSCRIPTION_NOT_FOUND";
+    /// The provider declined the change and said why (409).
+    pub const BILLING_PROVIDER_REFUSED: &str = "BILLING_PROVIDER_REFUSED";
+    /// The provider gave no usable answer; the call can be retried (503).
+    pub const BILLING_PROVIDER_UNREACHABLE: &str = "BILLING_PROVIDER_UNREACHABLE";
     // Public status-page settings + logo upload.
     pub const BRANDING_INVALID: &str = "BRANDING_INVALID";
     pub const LOGO_MISSING: &str = "LOGO_MISSING";

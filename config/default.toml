@@ -219,6 +219,23 @@ support_address = ""
 # From https://resend.com/api-keys. Required when provider = "resend".
 api_key = ""
 
+[billing]
+# "paddle" turns on checkout, the webhook receiver at /hooks/billing/paddle,
+# the pay page at /pay and the /api/v1/account/billing surface. "none" (the
+# default) leaves all of it absent; a self-host install never needs it.
+provider = "none"
+
+[billing.paddle]
+# "sandbox" or "live". API keys and client tokens are bound to one of them.
+environment = "sandbox"
+# Env-only in production: UPTIMEPAGE_BILLING__PADDLE__API_KEY and
+# UPTIMEPAGE_BILLING__PADDLE__WEBHOOK_SECRET (the notification destination's
+# pdl_ntfset_… secret key).
+api_key = ""
+webhook_secret = ""
+# Client-side token Paddle.js initialises with on /pay. Public by design.
+client_token = ""
+
 [auth]
 # Policy switch per sign-in method. OAuth providers additionally need their
 # client credentials + redirect_url set below (list = policy, creds =

@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::Result;
 
 mod auth;
+mod billing;
 mod limits;
 mod notify;
 mod observability;
@@ -30,6 +31,7 @@ pub use auth::{
     ApiTokensConfig, AuthConfig, BootstrapConfig, GitlabOauthConfig, InvitationsConfig,
     MagicLinkConfig, MicrosoftOauthConfig, OauthClientConfig, SessionConfig,
 };
+pub use billing::{BillingConfig, PaddleConfig};
 pub use limits::{
     AbuseConfig, ApiConfig, CorsConfig, EmailPolicyConfig, PerIpRateLimits, QuotasConfig,
     RateLimitJanitorConfig, RateLimitsConfig, SignupPolicy,
@@ -131,6 +133,8 @@ pub struct AppConfig {
     pub discord_oauth: ConnectOauthConfig,
     #[serde(default)]
     pub bootstrap: BootstrapConfig,
+    #[serde(default)]
+    pub billing: BillingConfig,
 }
 
 impl AppConfig {

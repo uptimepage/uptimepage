@@ -1,0 +1,24 @@
+{% extends "chromeless_base.html" %}
+{# The provider's default payment link. Paddle.js opens the checkout for the
+   transaction named in the query string on its own; the page only has to load
+   it and say what is happening. #}
+{% block title %}Checkout{% endblock %}
+{% block head_scripts %}
+<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
+<script>
+  {% if sandbox %}Paddle.Environment.set("sandbox");{% endif %}
+  Paddle.Initialize({ token: "{{ client_token }}" });
+</script>
+{% endblock %}
+{% block main %}
+    <main class="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-4 px-6 text-center">
+        <h1 class="page-title justify-center"><span class="page-title__prefix" aria-hidden="true">$</span>checkout</h1>
+        <p class="text-sm text-muted">
+            The checkout opens in a moment. If nothing appears, the link may have
+            been used already or has expired.
+        </p>
+        <p class="text-sm">
+            <a href="/settings/usage" class="underline decoration-dotted underline-offset-2">back to the app</a>
+        </p>
+    </main>
+{% endblock %}

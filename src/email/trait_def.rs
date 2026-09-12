@@ -69,7 +69,9 @@ pub enum EmailTemplate {
     },
     /// Account-deletion notification. Restoring is a signed-in confirmation
     /// before the data is permanently purged on `scheduled_purge_at`.
-    AccountDeletion { scheduled_purge_at: DateTime<Utc> },
+    AccountDeletion {
+        scheduled_purge_at: DateTime<Utc>,
+    },
     /// So an account never comes back without its owner hearing about it.
     AccountRestored,
     IdentityLinked {
@@ -155,6 +157,41 @@ pub enum EmailTemplate {
         ends_at: DateTime<Utc>,
         page_url: String,
         unsubscribe_url: String,
+    },
+    /// The account owner's payment failed; full service continues until
+    /// `retry_by`. Sent again at each reminder stage while it stays unpaid.
+    PaymentFailed {
+        plan_name: String,
+        retry_by: DateTime<Utc>,
+        fix_url: String,
+    },
+    PaymentRecovered {
+        plan_name: String,
+    },
+    /// A move to a smaller plan is booked for `at`; what will not fit is
+    /// counted so the owner can pick what to keep before then.
+    DowngradeScheduled {
+        plan_name: String,
+        at: DateTime<Utc>,
+        over_monitors: i64,
+        over_pages: i64,
+        keep_url: String,
+    },
+    /// The account is now on `plan_name`, with `held_monitors` and
+    /// `held_pages` parked, not deleted. `after_grace` tells the owner it was
+    /// the unpaid grace running out rather than a change they asked for.
+    DowngradeApplied {
+        plan_name: String,
+        after_grace: bool,
+        held_monitors: usize,
+        held_pages: usize,
+        keep_url: String,
+    },
+    /// The cancel is booked: paid service ends at `ends_at`, and the account
+    /// falls to `plan_name`.
+    SubscriptionCanceled {
+        plan_name: String,
+        ends_at: DateTime<Utc>,
     },
 }
 
@@ -333,6 +370,49 @@ impl EmailTemplate {
                 page_url,
                 unsubscribe_url,
             ),
+            EmailTemplate::PaymentFailed {
+                plan_name,
+                retry_by,
+                fix_url,
+            } => templates::billing::payment_failed(site_name, plan_name, *retry_by, fix_url),
+            EmailTemplate::PaymentRecovered { plan_name } => {
+                templates::billing::payment_recovered(site_name, plan_name)
+            }
+            EmailTemplate::DowngradeScheduled {
+                plan_name,
+                at,
+                over_monitors,
+                over_pages,
+                keep_url,
+            } => templates::billing::downgrade_scheduled(
+                site_name,
+                plan_name,
+                *at,
+                templates::billing::Excess {
+                    monitors: *over_monitors,
+                    pages: *over_pages,
+                },
+                keep_url,
+            ),
+            EmailTemplate::DowngradeApplied {
+                plan_name,
+                after_grace,
+                held_monitors,
+                held_pages,
+                keep_url,
+            } => templates::billing::downgrade_applied(
+                site_name,
+                plan_name,
+                *after_grace,
+                templates::billing::Excess {
+                    monitors: *held_monitors as i64,
+                    pages: *held_pages as i64,
+                },
+                keep_url,
+            ),
+            EmailTemplate::SubscriptionCanceled { plan_name, ends_at } => {
+                templates::billing::subscription_canceled(site_name, plan_name, *ends_at)
+            }
         }
     }
 
@@ -352,6 +432,12 @@ impl EmailTemplate {
             EmailTemplate::SubscriberIncident { incident_url, .. } => Some(incident_url),
             EmailTemplate::SubscriberMaintenance { page_url, .. } => Some(page_url),
             EmailTemplate::SupportRequest { .. } => None,
+            EmailTemplate::PaymentFailed { fix_url, .. } => Some(fix_url),
+            EmailTemplate::DowngradeScheduled { keep_url, .. }
+            | EmailTemplate::DowngradeApplied { keep_url, .. } => Some(keep_url),
+            EmailTemplate::PaymentRecovered { .. } | EmailTemplate::SubscriptionCanceled { .. } => {
+                None
+            }
         }
     }
 

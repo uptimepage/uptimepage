@@ -24,29 +24,14 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use super::owned_account;
 use crate::api::ApiError;
 use crate::api::error::codes;
 use crate::app::AppState;
-use crate::domain::{AccountId, OrgId, UserId};
 use crate::error::{AppError, Result};
 use crate::quotas::PlanSource;
 use crate::web::auth::CurrentUser;
 use crate::web::{OwnerAuthorized, TargetsWrite};
-
-/// The account behind the caller's active org, but only once the caller is
-/// shown to own that account. An org owner who is not the account owner gets
-/// 403 rather than the account's whole pool.
-async fn owned_account(state: &AppState, org: OrgId, user: UserId) -> Result<AccountId> {
-    let pool = state.require_db()?;
-    let account = crate::storage::accounts::account_for_org(pool, org).await?;
-    if crate::storage::accounts::account_for_user(pool, user).await? != Some(account) {
-        return Err(AppError::forbidden_code(
-            codes::ACCOUNT_OWNER_REQUIRED,
-            "only the account owner can change what the plan keeps",
-        ));
-    }
-    Ok(account)
-}
 
 /// One row a plan is currently holding.
 #[derive(Debug, Clone, Serialize, ToSchema)]

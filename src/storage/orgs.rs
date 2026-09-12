@@ -256,10 +256,13 @@ pub async fn create_signup_org_with_owner_in_tx(
         .context("create_signup_org_with_owner_in_tx: advisory lock")?;
     // A founding account that has since dropped all of its orgs holds no slot:
     // it is on its way out with the purge, matching every other org count.
+    // One paying for a bigger plan still does: it lands back on founding
+    // when paid service ends.
     let (account_id,): (Uuid,) = sqlx::query_as(
         "INSERT INTO accounts (owner_user_id, plan_id) \
          SELECT $1, CASE WHEN \
-           (SELECT count(*) FROM accounts a WHERE a.plan_id = 'founding' \
+           (SELECT count(*) FROM accounts a \
+             WHERE (a.plan_id = 'founding' OR a.fallback_plan_id = 'founding') \
              AND EXISTS (SELECT 1 FROM organizations o \
                           WHERE o.account_id = a.id AND o.deleted_at IS NULL)) < $2 \
            THEN 'founding' ELSE 'free' END \

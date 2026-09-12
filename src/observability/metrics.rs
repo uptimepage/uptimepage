@@ -51,6 +51,12 @@ fn prime_event_counters() {
     // mid-range, and these fire rarely enough that it usually does.
     metrics::counter!(names::ACCOUNT_DELETIONS_REQUESTED).increment(0);
     metrics::counter!(names::ORGS_EMPTIED).increment(0);
+    for outcome in ["applied", "duplicate", "stale", "unmatched", "foreign"] {
+        metrics::counter!(names::BILLING_WEBHOOKS, "outcome" => outcome).increment(0);
+    }
+    for reason in ["signature", "malformed", "failed"] {
+        metrics::counter!(names::BILLING_WEBHOOK_REJECTED, "reason" => reason).increment(0);
+    }
 }
 
 fn register_descriptions() {
@@ -341,6 +347,18 @@ fn register_descriptions() {
         "Unix time of the last refresh that actually replaced the disposable-email corpus. A timestamp rather than an age so `time() - value` stays correct between refreshes, which are hours apart. Only successful refreshes move it, so a stalled upstream or a list the sanity guards keep rejecting shows up here as an age that keeps climbing. Absent until the first refresh lands"
     );
     describe_counter!(
+        "uptimepage_billing_webhooks_total",
+        "Payment-provider webhooks accepted, labelled by `outcome` (applied | duplicate | stale | unmatched | foreign). `applied` is the normal case; `duplicate` and `stale` are the provider's own redelivery and reordering and are routine. `unmatched` names an account we do not know and `foreign` a subscription that is not the account's live one, and neither should be routine"
+    );
+    describe_counter!(
+        "uptimepage_billing_webhook_rejected_total",
+        "Payment-provider webhooks not acted on, labelled by `reason` (signature | malformed | failed). `signature` at a steady trickle means the endpoint secret in config does not match the provider's; `failed` answered 5xx so the provider retries, and a sustained rate means every retry is failing the same way, usually a price the `plan_prices` table does not know"
+    );
+    describe_gauge!(
+        "uptimepage_subscriptions",
+        "Accounts per subscription status (`status` = none | active | past_due | canceled). `past_due` is the number of customers inside their grace window right now"
+    );
+    describe_counter!(
         "uptimepage_email_admission_total",
         "Addresses the email-admission gate acted on, labelled by `surface`, `outcome` (flagged | refused), and `risk` (disposable | no_mx). Only acted-on addresses are counted, so this is a rate to alert on, not a funnel: a clean address increments nothing. `refused` on a signup surface rising sharply is the shape of scripted abuse; a slow trickle of `flagged` is ordinary"
     );
@@ -412,6 +430,9 @@ pub mod names {
     pub const CLICKHOUSE_MAX_PART_COUNT: &str =
         "uptimepage_clickhouse_max_part_count_for_partition";
     pub const ACCOUNT_DELETIONS_REQUESTED: &str = "uptimepage_account_deletions_requested_total";
+    pub const BILLING_WEBHOOKS: &str = "uptimepage_billing_webhooks_total";
+    pub const BILLING_WEBHOOK_REJECTED: &str = "uptimepage_billing_webhook_rejected_total";
+    pub const SUBSCRIPTIONS: &str = "uptimepage_subscriptions";
     /// Labelled `action` (linked/unlinked) + `origin` (signup/email_match/session).
     /// A rise in `linked`+`email_match` without matching sign-ups is what a
     /// provider attesting addresses it should not looks like.

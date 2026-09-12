@@ -11,6 +11,7 @@ use crate::app::AppState;
 use crate::storage::orgs as orgs_store;
 use crate::web::Session;
 use crate::web::error::WebResult;
+use crate::web::views::billing::{BillingNotice, notice_for};
 
 #[derive(Template, WebTemplate)]
 #[template(path = "nav/context.html")]
@@ -22,6 +23,7 @@ pub struct NavContext {
     pub open_incidents: u32,
     pub show_switcher: bool,
     pub orgs: Vec<NavOrg>,
+    pub billing: Option<BillingNotice>,
 }
 
 pub struct NavOrg {
@@ -46,9 +48,12 @@ pub async fn context(State(state): State<AppState>, session: Session) -> WebResu
     let slug = current.map_or_else(|| "—".to_string(), |r| r.org.slug.clone());
     let role = current.map_or("", |r| r.role.as_db_str()).to_string();
     // Meaningful only for a resolvable active org; a wedged session gets 0.
-    let open_incidents = match current {
-        Some(_) => state.open_incident_count(active).await,
-        None => 0,
+    let (open_incidents, billing) = match current {
+        Some(_) => (
+            state.open_incident_count(active).await,
+            notice_for(&state, active, user.id).await,
+        ),
+        None => (0, None),
     };
     Ok(NavContext {
         initials: initials_of(&user.email),
@@ -65,6 +70,7 @@ pub async fn context(State(state): State<AppState>, session: Session) -> WebResu
                 is_active: r.org.id == active,
             })
             .collect(),
+        billing,
     }
     .into_response())
 }
@@ -104,6 +110,7 @@ mod tests {
                     is_active: false,
                 },
             ],
+            billing: None,
         }
     }
 
@@ -145,5 +152,48 @@ mod tests {
         assert_eq!(initials_of("slim@acme.io"), "SL");
         assert_eq!(initials_of("q@x.io"), "Q");
         assert_eq!(initials_of("a.b@x.io"), "AB");
+    }
+
+    #[test]
+    fn a_grace_window_shows_the_days_left_and_the_fix_link_to_the_owner_only() {
+        let mut c = ctx(0, false);
+        c.billing = Some(BillingNotice {
+            past_due_days_left: Some(9),
+            pending_plan: None,
+            owner: true,
+        });
+        let html = c.render().unwrap();
+        assert!(html.contains("9 more days"));
+        assert!(html.contains("/settings/billing/payment-method"));
+
+        let mut c = ctx(0, false);
+        c.billing = Some(BillingNotice {
+            past_due_days_left: Some(9),
+            pending_plan: None,
+            owner: false,
+        });
+        let html = c.render().unwrap();
+        assert!(html.contains("9 more days"));
+        assert!(!html.contains("/settings/billing/payment-method"));
+    }
+
+    #[test]
+    fn a_pending_downgrade_points_at_the_picker() {
+        let mut c = ctx(0, false);
+        c.billing = Some(BillingNotice {
+            past_due_days_left: None,
+            pending_plan: Some("Pro".into()),
+            owner: true,
+        });
+        let html = c.render().unwrap();
+        assert!(html.contains("Pro"));
+        assert!(html.contains("/settings/usage"));
+    }
+
+    #[test]
+    fn no_notice_leaves_the_slot_empty() {
+        let html = ctx(0, false).render().unwrap();
+        assert!(html.contains(r#"id="billing-notice""#));
+        assert!(!html.contains("alert-card--warn"));
     }
 }

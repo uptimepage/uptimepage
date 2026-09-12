@@ -50,18 +50,15 @@ If your plan changes, the floor applies to monitors you already have, not only t
 
 ## If you move to a smaller plan
 
-Nothing is deleted. Whatever no longer fits is put on hold: monitors stop being
-checked and disappear from your status page, extra status pages stop answering,
-and everything keeps its settings exactly as you left them. Moving back up
-releases them as they were.
+Nothing is deleted. Whatever no longer fits is put on hold: monitors stop being checked and disappear from your status page, extra status pages stop answering, and everything keeps its settings exactly as you left them. Moving back up releases them as they were.
 
-We hold the newest first, on the assumption that the ones you set up earliest
-are the ones you rely on. If that is wrong, **Settings → Usage** lets you tick
-exactly what to keep, and we hold the rest. Ticking fewer than your plan allows
-is fine: we do not fill the spare slot back up with something you just chose to
-let go. Once your plan covers everything again, all of it comes back, including
-what you had left unticked. Held items still count toward your limit, so
-freeing a slot means deleting something rather than leaving it parked.
+We hold the newest first, on the assumption that the ones you set up earliest are the ones you rely on. If that is wrong, **Settings → Usage** lets you tick exactly what to keep, and we hold the rest. Ticking fewer than your plan allows is fine: we do not fill the spare slot back up with something you just chose to let go. Once your plan covers everything again, all of it comes back, including what you had left unticked. Held items still count toward your limit, so freeing a slot means deleting something rather than leaving it parked.
+
+## If a payment fails
+
+A failed card never cuts your service the same day. The account stays on its full plan for a two-week grace window while we retry the card and email you, so a card that expires while you are away costs you nothing if you fix it in time. Pay at any point inside the window and it is as if nothing happened.
+
+Only if the window closes unpaid does the plan drop — to the plan you were on before you paid, which for a founding account is founding, never lower. Even then nothing is deleted: whatever no longer fits is held, exactly as above, and paying again releases all of it.
 
 ## Raising a limit
 

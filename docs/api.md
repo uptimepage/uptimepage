@@ -50,6 +50,14 @@ Documentation pages, blog posts and the homepage also answer `Accept: text/markd
 | `POST` | `/api/v1/targets/{id}/shares` | mint a read-only share link; returns the share (token included) |
 | `GET` | `/api/v1/targets/{id}/shares` | list a monitor's live share links (token included, re-copyable) |
 | `DELETE` | `/api/v1/targets/{id}/shares/{share_id}` | revoke a share link |
+| `GET` | `/api/v1/account/holds` | list monitors and status pages the plan is holding |
+| `PUT` | `/api/v1/account/holds` | choose what the plan keeps (`keep_monitors`, `keep_status_pages`) |
+| `GET` | `/api/v1/account/billing` | subscription status, plan, period end, and the plans on sale (session only) |
+| `POST` | `/api/v1/account/billing/checkout` | start a checkout for a plan (`plan_id`, `interval`); returns a provider URL |
+| `POST` | `/api/v1/account/billing/portal` | open the provider's customer portal (invoices, card, cancel) |
+| `PUT` | `/api/v1/account/billing/plan` | move the subscription to another plan — up now, down at period end |
+| `POST` | `/api/v1/account/billing/cancel` | cancel at the end of the paid period |
+| `DELETE` | `/api/v1/account/billing/cancel` | withdraw a scheduled cancel |
 | `GET` | `/api/v1/tags` | tag inventory with target counts (`q` prefix) — paginated |
 | `GET` | `/api/v1/dashboard/summary` | per-org rollup (5-second in-process cache, keyed by `OrgId`) |
 | `GET` | `/healthz` | liveness — always 200 once the process is up |
@@ -157,6 +165,12 @@ A variable is a reusable named value an org's monitors reference as `{{key}}` in
 | `DELETE` | `/api/v1/variables/{id}` | delete; `409 VARIABLE_IN_USE` while a monitor still references it |
 
 A key must match `^[a-z][a-z0-9_]{0,62}$` or the create is `400 INVALID_VARIABLE_KEY`; a duplicate key in the org is `409 VARIABLE_KEY_EXISTS`. The `is_secret` flag is fixed at create. A plain variable returns its `value`; a secret returns `value: null` on every read, including the create and rotate responses. A monitor whose `{{key}}` references do not all resolve (unknown key, or a secret used in a field that forbids it) is rejected at save with `422 UNRESOLVED_VARIABLE`.
+
+### Subscriptions
+
+Present only when the hosted service has a payment provider configured; a self-host build answers `404 BILLING_UNAVAILABLE`. The endpoints under `/api/v1/account/billing` are session-only, like managing API tokens — a scoped API token can never buy, move or cancel a plan — and act on the account behind the caller's active org, which the caller must own; an org owner who is not the account's payer gets `403 ACCOUNT_OWNER_REQUIRED`, the same gate as the holds.
+
+An upgrade applies at once and is prorated by the provider; a downgrade or a cancel takes effect at the end of the paid period, and until then the account keeps what it paid for. Only a strictly bigger plan is charged on the spot: returning to the plan already paid for while a downgrade is booked, or changing cadence, switches the price without a charge and takes effect at the renewal. Deleting the account (`DELETE /api/v1/me`) ends a paid subscription at the provider first, and is refused if the provider will not end it. Nothing is ever deleted: if a smaller plan does not cover everything, the excess is held (see [Quotas](quotas.md#when-a-plan-no-longer-covers-what-an-account-has)) and the owner picks what to keep. The provider's webhook is the authority — the API returns the account's state as it stands after the provider replied, but a change is confirmed by the event that follows, not the button that asked for it. `PLAN_NOT_FOR_SALE` means the plan is not sold on that cadence; `SUBSCRIPTION_STATE` means the action does not apply to where the subscription stands (buying when one is already live, cancelling when none is).
 
 ## Check specs
 
@@ -624,6 +638,12 @@ Common codes: `INVALID_URL_SCHEME`, `INVALID_URL_FORMAT`, `SSRF_BLOCKED`, `INVAL
 | `ABUSE_BLOCKED` | 400 | Target blocked by abuse protection. `details.reason` explains. |
 | `URL_PATTERN_BLOCKED` | 400 | Target URL matched an abuse pattern (recon path). |
 | `DOMAIN_DENYLISTED` | 400 | Target domain (or a parent) is on the deny-list. |
+| `BILLING_UNAVAILABLE` | 404 | No payment provider is configured (a self-host build, or the hosted service before one is wired). |
+| `PLAN_NOT_FOR_SALE` | 422 | The plan is not sold on the requested cadence (`interval`). |
+| `SUBSCRIPTION_STATE` | 409 | The billing action does not apply to the subscription's current state. |
+| `BILLING_PROVIDER_REFUSED` | 409 | The payment provider declined the change; the message carries its reason. |
+| `BILLING_PROVIDER_UNREACHABLE` | 503 | The payment provider gave no usable answer. Retry in a moment. |
+| `ACCOUNT_OWNER_REQUIRED` | 403 | The caller is in the account but does not own it, so cannot change holds or billing. |
 
 See [Quotas & rate limits](quotas.md) for the quota model, the per-minute categories, and the deny-list policy.
 

@@ -258,6 +258,45 @@ impl AppConfig {
         Ok(())
     }
 
+    /// A named provider must come with everything it needs; a half-configured
+    /// one would mint checkouts nobody can complete or drop every webhook.
+    pub fn validate_billing(&self) -> Result<()> {
+        fn err(msg: &str) -> crate::error::AppError {
+            crate::error::AppError::Other(anyhow::anyhow!(msg.to_string()))
+        }
+        let b = &self.billing;
+        match b.provider.as_str() {
+            "none" => return Ok(()),
+            "paddle" => {}
+            other => {
+                return Err(crate::error::AppError::Other(anyhow::anyhow!(
+                    "billing.provider must be \"none\" or \"paddle\" (got {other:?})"
+                )));
+            }
+        }
+        if crate::billing::paddle::Environment::parse(&b.paddle.environment).is_none() {
+            return Err(err(
+                "billing.paddle.environment must be \"sandbox\" or \"live\"",
+            ));
+        }
+        if !b.paddle.complete() {
+            return Err(err(
+                "billing.provider = \"paddle\" needs UPTIMEPAGE_BILLING__PADDLE__API_KEY, \
+                 UPTIMEPAGE_BILLING__PADDLE__WEBHOOK_SECRET and billing.paddle.client_token",
+            ));
+        }
+        let base = self.auth.public_base_url.trim();
+        match url::Url::parse(base) {
+            Ok(u) if u.scheme() == "https" && u.host_str().is_some() => {}
+            _ => {
+                return Err(err(
+                    "auth.public_base_url must be an https:// URL with a host for the billing webhook and pay page",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// An unrecognised `signup_policy` must not fall back to a permissive
     /// default: a typo would silently disable the gate the operator thought
     /// they turned on. Same contract for the source URLs — a malformed one is

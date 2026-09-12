@@ -353,6 +353,46 @@ pub struct AppState {
     /// Keys the acknowledge link pushed to phones. Its own authority: that
     /// link silences an incident, the stop link retires a channel.
     pub incident_ack_secret: String,
+    /// The paid lifecycle behind its provider. `None` when no provider is
+    /// configured, which leaves every billing surface absent.
+    pub billing: Option<Arc<crate::billing::Billing>>,
+}
+
+fn billing_mailer(
+    cfg: &AppConfig,
+    email_sender: &Arc<dyn EmailSender>,
+) -> crate::billing::mail::Mailer {
+    crate::billing::mail::Mailer {
+        delivery: crate::notifier::EmailDelivery {
+            sender: email_sender.clone(),
+            from_address: cfg.email.from_address.clone(),
+            from_name: cfg.email.from_name.clone(),
+        },
+        public_base_url: cfg.auth.public_base_url.clone(),
+    }
+}
+
+/// The configured provider, if any. Config validation has already refused a
+/// half-configured one.
+fn build_billing(
+    cfg: &AppConfig,
+    outbound_http: &OutboundHttpClient,
+    email_sender: &Arc<dyn EmailSender>,
+) -> Option<Arc<crate::billing::Billing>> {
+    if !cfg.billing.enabled() {
+        return None;
+    }
+    let environment = crate::billing::paddle::Environment::parse(&cfg.billing.paddle.environment)?;
+    let provider = crate::billing::paddle::PaddleProvider::new(
+        environment,
+        cfg.billing.paddle.api_key.clone(),
+        cfg.billing.paddle.webhook_secret.clone(),
+        outbound_http.clone(),
+    );
+    Some(Arc::new(crate::billing::Billing {
+        provider: Arc::new(provider),
+        mailer: billing_mailer(cfg, email_sender),
+    }))
 }
 
 /// Run unconditionally at boot after config parse. Encodes the per-org
@@ -653,6 +693,7 @@ impl AppState {
         let rate_limits = Arc::new(RateLimitService::new());
         let abuse = Arc::new(AbuseGuard::from_config(&cfg.abuse));
         let email_policy = Arc::new(crate::security::EmailPolicy::from_config(&cfg.email_policy));
+        let billing = build_billing(&cfg, &outbound_http, &email_sender);
         Self {
             cfg: Arc::new(cfg),
             db,
@@ -709,7 +750,21 @@ impl AppState {
             subscription_unsubscribe_secret: String::new(),
             alert_channel_stop_secret: String::new(),
             incident_ack_secret: String::new(),
+            billing,
         }
+    }
+
+    /// Swaps in a billing provider, for tests that drive the lifecycle
+    /// without a real one.
+    pub fn with_billing_provider(
+        mut self,
+        provider: Arc<dyn crate::billing::provider::BillingProvider>,
+    ) -> Self {
+        self.billing = Some(Arc::new(crate::billing::Billing {
+            provider,
+            mailer: billing_mailer(&self.cfg, &self.email_sender),
+        }));
+        self
     }
 
     /// Set the persisted secret that keys public unsubscribe links.

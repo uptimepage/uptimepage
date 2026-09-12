@@ -1,0 +1,19 @@
+DROP TABLE IF EXISTS provider_events;
+DROP TABLE IF EXISTS plan_prices;
+DROP INDEX IF EXISTS idx_accounts_grace_due;
+DROP INDEX IF EXISTS idx_accounts_cancel_due;
+DROP INDEX IF EXISTS idx_accounts_plan_change_due;
+DROP INDEX IF EXISTS idx_accounts_provider_subscription;
+ALTER TABLE accounts
+    DROP COLUMN IF EXISTS payment_synced_at,
+    DROP COLUMN IF EXISTS subscription_synced_at,
+    DROP COLUMN IF EXISTS provider_subscription_ref,
+    DROP COLUMN IF EXISTS provider_customer_ref,
+    DROP COLUMN IF EXISTS billing_provider,
+    DROP COLUMN IF EXISTS dunning_stage,
+    DROP COLUMN IF EXISTS grace_until,
+    DROP COLUMN IF EXISTS current_period_end,
+    DROP COLUMN IF EXISTS cancel_at,
+    DROP COLUMN IF EXISTS plan_change_at,
+    DROP COLUMN IF EXISTS pending_plan_id,
+    DROP COLUMN IF EXISTS subscription_status;

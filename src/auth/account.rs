@@ -65,27 +65,10 @@ pub async fn request_deletion(
     // Candidate orgs that go down with the account: the caller is the only
     // owner, or the org bills to the caller's account. Either way the org has
     // nobody else who can carry it, so it is tombstoned with the user when it
-    // holds nobody else and blocks the deletion when it does. Ordered by id so
-    // the per-org locks are always taken in a stable order (deadlock-free
-    // against any other multi-org locker). Only the ids are needed here —
-    // slug + the other-member verdict are read back *under the locks* so the
-    // blocking decision can't race a concurrent invite-accept.
-    let candidate_ids: Vec<Uuid> = sqlx::query_scalar(
-        r#"SELECT o.id
-             FROM organizations o
-             JOIN memberships m
-               ON m.org_id = o.id AND m.user_id = $1 AND m.role = 'owner'
-             JOIN accounts a ON a.id = o.account_id
-            WHERE o.deleted_at IS NULL
-              AND (a.owner_user_id = $1
-                   OR (SELECT count(*) FROM memberships mo
-                        WHERE mo.org_id = o.id AND mo.role = 'owner') = 1)
-            ORDER BY o.id"#,
-    )
-    .bind(user_id.0)
-    .fetch_all(&mut *tx)
-    .await
-    .context("delete_account: select orgs that go with the account")?;
+    // holds nobody else and blocks the deletion when it does. Only the ids are
+    // needed here; slug + the other-member verdict are read back *under the
+    // locks* so the blocking decision can't race a concurrent invite-accept.
+    let candidate_ids = candidate_org_ids(&mut *tx, user_id).await?;
 
     // Same `account_lock_key` as `orgs::add_member` / `invitations::create`,
     // so holding it means no member can be added to these orgs until our
@@ -108,38 +91,13 @@ pub async fn request_deletion(
             .context("delete_account: account advisory lock")?;
     }
 
-    // Re-read the candidates *under the locks* in one query, computing the
-    // other-member verdict server-side. Any candidate that still has other
-    // members must be deleted first.
-    let verdicts: Vec<(Uuid, String, bool)> = sqlx::query_as(
-        r#"SELECT o.id, o.slug::text AS slug,
-                  EXISTS (SELECT 1 FROM memberships
-                           WHERE org_id = o.id AND user_id <> $2) AS has_others
-             FROM organizations o
-            WHERE o.id = ANY($1)
-            ORDER BY o.id"#,
-    )
-    .bind(&candidate_ids)
-    .bind(user_id.0)
-    .fetch_all(&mut *tx)
-    .await
-    .context("delete_account: re-check members under locks")?;
-
-    let blocking: Vec<BlockingOrg> = verdicts
-        .iter()
-        .filter(|(_, _, has_others)| *has_others)
-        .map(|(id, slug, _)| BlockingOrg {
-            id: *id,
-            slug: slug.clone(),
-        })
-        .collect();
+    // Re-read the candidates *under the locks*. Any candidate that still has
+    // other members must be deleted first.
+    let verdicts = org_verdicts(&mut *tx, &candidate_ids, user_id).await?;
+    let blocking = blocking_orgs(&verdicts);
     if !blocking.is_empty() {
         tx.rollback().await.ok();
-        return Err(AppError::unprocessable_details(
-            codes::OWNS_SHARED_ORGS,
-            "Delete these organisations before deleting your account.",
-            serde_json::json!({ "orgs": blocking }),
-        ));
+        return Err(owns_shared_orgs(blocking));
     }
 
     // All candidates are now safe to tombstone (none has other members).
@@ -251,6 +209,91 @@ pub async fn request_deletion(
         email,
         grace_deadline,
     })
+}
+
+/// The blocking verdict alone, without locks, for a caller that has to act
+/// outside the database before [`request_deletion`] and cannot take that
+/// action back. The transaction repeats the check under its locks.
+pub async fn ensure_deletable(pool: &PgPool, user_id: UserId) -> Result<()> {
+    let candidate_ids = candidate_org_ids(pool, user_id).await?;
+    let verdicts = org_verdicts(pool, &candidate_ids, user_id).await?;
+    let blocking = blocking_orgs(&verdicts);
+    if blocking.is_empty() {
+        Ok(())
+    } else {
+        Err(owns_shared_orgs(blocking))
+    }
+}
+
+/// Orgs the caller is the only owner of, or that bill to the caller's
+/// account. Ordered by id so the per-org locks are always taken in a stable
+/// order (deadlock-free against any other multi-org locker).
+async fn candidate_org_ids<'e, E>(exec: E, user_id: UserId) -> Result<Vec<Uuid>>
+where
+    E: sqlx::Executor<'e, Database = Postgres>,
+{
+    sqlx::query_scalar(
+        r#"SELECT o.id
+             FROM organizations o
+             JOIN memberships m
+               ON m.org_id = o.id AND m.user_id = $1 AND m.role = 'owner'
+             JOIN accounts a ON a.id = o.account_id
+            WHERE o.deleted_at IS NULL
+              AND (a.owner_user_id = $1
+                   OR (SELECT count(*) FROM memberships mo
+                        WHERE mo.org_id = o.id AND mo.role = 'owner') = 1)
+            ORDER BY o.id"#,
+    )
+    .bind(user_id.0)
+    .fetch_all(exec)
+    .await
+    .context("delete_account: select orgs that go with the account")
+    .map_err(Into::into)
+}
+
+/// Each candidate with its slug and whether anyone but the caller is in it,
+/// computed server-side in one query.
+async fn org_verdicts<'e, E>(
+    exec: E,
+    candidate_ids: &[Uuid],
+    user_id: UserId,
+) -> Result<Vec<(Uuid, String, bool)>>
+where
+    E: sqlx::Executor<'e, Database = Postgres>,
+{
+    sqlx::query_as(
+        r#"SELECT o.id, o.slug::text AS slug,
+                  EXISTS (SELECT 1 FROM memberships
+                           WHERE org_id = o.id AND user_id <> $2) AS has_others
+             FROM organizations o
+            WHERE o.id = ANY($1)
+            ORDER BY o.id"#,
+    )
+    .bind(candidate_ids)
+    .bind(user_id.0)
+    .fetch_all(exec)
+    .await
+    .context("delete_account: check members")
+    .map_err(Into::into)
+}
+
+fn blocking_orgs(verdicts: &[(Uuid, String, bool)]) -> Vec<BlockingOrg> {
+    verdicts
+        .iter()
+        .filter(|(_, _, has_others)| *has_others)
+        .map(|(id, slug, _)| BlockingOrg {
+            id: *id,
+            slug: slug.clone(),
+        })
+        .collect()
+}
+
+fn owns_shared_orgs(blocking: Vec<BlockingOrg>) -> AppError {
+    AppError::unprocessable_details(
+        codes::OWNS_SHARED_ORGS,
+        "Delete these organisations before deleting your account.",
+        serde_json::json!({ "orgs": blocking }),
+    )
 }
 
 #[derive(Debug, Clone)]

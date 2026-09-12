@@ -11,6 +11,16 @@ use crate::error::Result;
 pub const PLAN_CHANGED: &str = "plan_changed";
 pub const OVERRIDES_SET: &str = "overrides_set";
 pub const OVERRIDES_CLEARED: &str = "overrides_cleared";
+pub const GRACE_STARTED: &str = "grace_started";
+pub const GRACE_EXPIRED: &str = "grace_expired";
+pub const PAYMENT_REMINDER: &str = "payment_reminder";
+pub const PAYMENT_RECOVERED: &str = "payment_recovered";
+pub const DOWNGRADE_SCHEDULED: &str = "downgrade_scheduled";
+pub const CANCEL_SCHEDULED: &str = "cancel_scheduled";
+pub const PENDING_CHANGE_CLEARED: &str = "pending_change_cleared";
+pub const SUBSCRIPTION_ENDED: &str = "subscription_ended";
+pub const CHECKOUT_STARTED: &str = "checkout_started";
+pub const FOREIGN_SUBSCRIPTION_IGNORED: &str = "foreign_subscription_ignored";
 
 /// Written inside the transaction that makes the change, so the ledger can
 /// never claim something the commit did not do.

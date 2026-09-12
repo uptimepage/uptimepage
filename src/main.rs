@@ -149,6 +149,7 @@ async fn main() -> Result<()> {
     // Central Telegram bot: a set bot_token without a username / strong
     // webhook secret / https base is a clean startup error, not a half-up bot.
     cfg.validate_telegram()?;
+    cfg.validate_billing()?;
     // Transactional mail: provider = "resend" without key/sender fails here,
     // not on the first verification mail.
     cfg.validate_email()?;
@@ -810,6 +811,23 @@ async fn main() -> Result<()> {
         .with_alert_channel_stop_secret(alert_channel_stop_secret)
         .with_incident_ack_secret(incident_ack_secret)
         .with_shutdown(root.clone());
+    // Scheduled plan changes, grace expiries and payment reminders run on our
+    // clock, not the provider's. From boot, since a deadline can pass while
+    // the process is down.
+    let billing_sweep_handle: Option<JoinHandle<()>> = state
+        .billing
+        .clone()
+        .zip(state.db.clone())
+        .map(|(billing, pool)| {
+            let quotas = Arc::clone(&state.quotas);
+            tokio::spawn(run_purge_loop_from_boot(
+                pool,
+                root.clone(),
+                Duration::from_secs(15 * 60),
+                "billing_sweep",
+                async move |pool: &sqlx::PgPool| billing.sweep(pool, &quotas).await,
+            ))
+        });
     // Hot-reload the abuse deny-lists on SIGHUP when enabled (validate then
     // atomic swap; a bad edit is rejected and the running rules stay).
     let abuse_reload_handle: Option<JoinHandle<()>> = uptimepage::security::abuse_reload::spawn(
@@ -991,6 +1009,9 @@ async fn main() -> Result<()> {
             plan_holds_handle,
         );
         if let Some(h) = magic_link_cleanup_handle {
+            let _ = h.await;
+        }
+        if let Some(h) = billing_sweep_handle {
             let _ = h.await;
         }
         if let Some(h) = abuse_reload_handle {

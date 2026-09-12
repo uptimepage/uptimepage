@@ -489,7 +489,17 @@ pub async fn build_test_app_with_pg_store(
     pool: PgPool,
     mutate: impl FnOnce(&mut AppConfig),
 ) -> (Router, OrgId) {
-    let (app, org) = build_test_app_with_pg_store_anon(pool.clone(), mutate).await;
+    build_test_app_with_pg_store_tweaked(pool, mutate, |state| state).await
+}
+
+/// As [`build_test_app_with_pg_store`], with a hook on the assembled state
+/// for the few tests that swap in a double (a fake billing provider).
+pub async fn build_test_app_with_pg_store_tweaked(
+    pool: PgPool,
+    mutate: impl FnOnce(&mut AppConfig),
+    tweak: impl FnOnce(AppState) -> AppState,
+) -> (Router, OrgId) {
+    let (app, org) = build_test_app_with_pg_store_anon_tweaked(pool.clone(), mutate, tweak).await;
     let owner = make_user(&pool, "owner").await;
     sqlx::query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'owner')")
         .bind(owner.0)
@@ -521,6 +531,14 @@ pub async fn build_test_app_with_pg_store_anon(
     pool: PgPool,
     mutate: impl FnOnce(&mut AppConfig),
 ) -> (Router, OrgId) {
+    build_test_app_with_pg_store_anon_tweaked(pool, mutate, |state| state).await
+}
+
+pub async fn build_test_app_with_pg_store_anon_tweaked(
+    pool: PgPool,
+    mutate: impl FnOnce(&mut AppConfig),
+    tweak: impl FnOnce(AppState) -> AppState,
+) -> (Router, OrgId) {
     let cfg = test_config(mutate);
     let slug = format!("qt{}", uuid::Uuid::now_v7().simple());
     let slug = &slug[..slug.len().min(30)];
@@ -534,7 +552,7 @@ pub async fn build_test_app_with_pg_store_anon(
     .await
     .expect("insert quota-test org");
     let provisioned_org = OrgId(org_uuid);
-    let app = assemble_pg_router(pool, cfg);
+    let app = assemble_pg_router_tweaked(pool, cfg, tweak);
     (app, provisioned_org)
 }
 
@@ -567,6 +585,14 @@ pub async fn build_saas_router_with_pg_cfg(
 /// one for tenancy tests to mean anything: the in-memory stand-in looks rows up
 /// by id alone. Callers own the tenancy prelude that precedes this.
 fn assemble_pg_router(pool: PgPool, cfg: AppConfig) -> Router {
+    assemble_pg_router_tweaked(pool, cfg, |state| state)
+}
+
+fn assemble_pg_router_tweaked(
+    pool: PgPool,
+    cfg: AppConfig,
+    tweak: impl FnOnce(AppState) -> AppState,
+) -> Router {
     let target_store = Arc::new(PostgresTargetStore::from_pool(pool.clone(), None));
     let sink = Arc::new(InMemorySink::new());
     let results_store: Arc<dyn ResultsStore> = sink.clone();
@@ -610,7 +636,7 @@ fn assemble_pg_router(pool: PgPool, cfg: AppConfig) -> Router {
         None,
         quotas,
     );
-    uptimepage::build_app_router(state, CancellationToken::new())
+    uptimepage::build_app_router(tweak(state), CancellationToken::new())
 }
 
 /// Layer that stamps the provided `Session` onto every request's extensions.

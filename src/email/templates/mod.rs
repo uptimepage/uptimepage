@@ -1,5 +1,6 @@
 pub mod account_deletion;
 pub mod account_restored;
+pub mod billing;
 pub mod channel_failing;
 pub mod channel_verification;
 pub mod heartbeat_never_pinged;

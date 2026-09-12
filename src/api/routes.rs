@@ -356,6 +356,20 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
             "/account/holds",
             get(handlers::holds::list_holds).put(handlers::holds::set_holds),
         )
+        .route("/account/billing", get(handlers::billing::get_billing))
+        .route(
+            "/account/billing/checkout",
+            post(handlers::billing::checkout),
+        )
+        .route("/account/billing/portal", post(handlers::billing::portal))
+        .route(
+            "/account/billing/plan",
+            axum::routing::put(handlers::billing::change_plan),
+        )
+        .route(
+            "/account/billing/cancel",
+            post(handlers::billing::cancel).delete(handlers::billing::revoke_cancel),
+        )
         .route("/orgs/{id}/members", get(handlers::orgs::list_org_members))
         .route(
             "/orgs/{id}/members/{user_id}",

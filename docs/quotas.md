@@ -372,6 +372,60 @@ page is deleted, when the customer picks, at startup, and once a day for every
 account that is over a cap or holding something. The last two are the backstop
 for a plan moved by hand, which notifies nothing on its own.
 
+## Paid subscriptions
+
+On the hosted service a plan can also change because a customer paid, stopped
+paying, or asked to move. That path is off entirely unless a payment provider
+is configured (`billing.provider`, see [Configuration](configuration.md#payments));
+a self-host install never has one and manages plans through the operator door
+above.
+
+The provider is the merchant of record and the source of truth. Its webhooks
+arrive at `/hooks/billing/{provider}`, each verified by signature and recorded
+by its own id so a redelivery is acknowledged without being applied twice, and
+a snapshot older than the account's last is dropped rather than rewinding it.
+Whatever the provider decides is mapped onto the account's plan through the same
+`set_plan` path an operator uses, so a paid change carries the same ledger row,
+cache drop and reconcile.
+
+The policy the lifecycle enforces:
+
+- **An upgrade applies at once**, prorated by the provider; holds release
+  immediately.
+- **A downgrade or a cancel takes effect at the end of the paid period.** Until
+  then the account keeps the plan it paid for; the pending move is stored and
+  applied by a sweep when the date passes. A plan is a downgrade when it shrinks
+  any of the caps a hold is judged against (monitors, flow checks, status
+  pages), so a plan that trades more of one for less of another never cuts
+  anything mid-period.
+- **A failed payment opens a 14-day grace window** during which the account
+  keeps full service while the provider retries and dunning mail goes out on
+  days 0, 3, 7 and 12. The first failure fixes the deadline; a later one cannot
+  extend it. Paying inside the window returns the account to `active` with
+  nothing changed.
+- **When the window closes unpaid, or a cancel's period ends, the account falls
+  to its fallback plan** — the plan it held before paying (founding stays
+  founding, everyone else free) — and the excess is held, never deleted. A
+  window closing unpaid also ends the subscription at the provider, so a card
+  that starts working months later is not charged for a plan the account no
+  longer holds; a return is a new checkout.
+- **One subscription per account.** A live account answers only to the
+  subscription that made it so; a second one carrying its id — two checkouts
+  completed back to back, a purchase made from outside — cannot move the plan
+  and is ended at the provider rather than left to charge for nothing. A
+  subscription that never brought the account live cannot take it down either,
+  so a cancel that outruns its own activation moves nothing.
+- **Leaving ends the subscription first.** Deleting the account cancels a
+  paid-up subscription at the end of its period and an unpaid one at once, and
+  the deletion is refused if the provider will not end it.
+
+Every transition writes an `account_billing_events` row, and each mail
+(`payment_failed`, `payment_recovered`, `downgrade_scheduled`,
+`downgrade_applied`, `subscription_canceled`) goes to the account owner. The
+owner drives their own subscription through `/api/v1/account/billing` (see the
+[API reference](api.md#subscriptions)); the console shows a banner while an
+account is in grace or has a downgrade booked.
+
 On-call and escalation are gated separately and at write time only, like text
 message alerts: a plan without `on_call_enabled` refuses a new policy, schedule,
 override or contact wiring with `403 ON_CALL_DISABLED`, while everything already

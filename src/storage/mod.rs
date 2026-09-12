@@ -35,6 +35,7 @@ pub mod status_pages;
 pub mod subscriber_deliveries;
 pub mod subscriber_maintenance;
 pub mod subscribers;
+pub mod subscriptions;
 pub mod traits;
 pub mod users;
 pub mod variables;

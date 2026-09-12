@@ -557,7 +557,8 @@ pub struct DeletionConfirmation {
     tag = "account",
     summary = "Delete the calling user's account (soft delete + 30-day grace)",
     description = "Immediately deactivates the account and schedules a \
-                   permanent purge after the grace period. Cancels sessions, \
+                   permanent purge after the grace period. Ends a paid \
+                   subscription at the provider, cancels sessions, \
                    deletes API tokens, declines pending invitations, and \
                    tombstones organisations the user solely owns. Rejects with \
                    422 OWNS_SHARED_ORGS if the user solely owns organisations \
@@ -567,8 +568,9 @@ pub struct DeletionConfirmation {
                    the deletion.",
     responses(
         (status = 200, body = DeletionConfirmation),
-        (status = 409, body = ApiError, description = "Account already scheduled for deletion"),
+        (status = 409, body = ApiError, description = "Account already scheduled for deletion, or the payment provider refused to end the subscription"),
         (status = 422, body = ApiError, description = "User solely owns orgs with other members"),
+        (status = 503, body = ApiError, description = "The payment provider gave no answer; retry later"),
     ),
 )]
 pub async fn delete_account(
@@ -579,6 +581,16 @@ pub async fn delete_account(
     let pool = state.require_db()?;
     let grace_days = state.cfg.tenancy.deletion_grace_period_days;
 
+    // Three steps, each guarding the next. A blocked deletion must not have
+    // touched the subscription, and a provider refusal must keep the account:
+    // a purged account with a live subscription is charged with nobody to
+    // notice. The deletion repeats the eligibility check under its locks.
+    account::ensure_deletable(pool, user_id).await?;
+    if let Some(billing) = &state.billing
+        && let Some(owned) = crate::storage::accounts::account_for_user(pool, user_id).await?
+    {
+        billing.end_for_deletion(pool, &state.quotas, owned).await?;
+    }
     let outcome = account::request_deletion(pool, user_id, grace_days).await?;
 
     // Nothing else in the stack observes a customer leaving.

@@ -1,5 +1,7 @@
 pub mod alert_channel_stop;
 pub mod auth;
+pub mod billing;
+pub mod billing_hook;
 pub mod connect_oauth;
 pub mod coverage;
 pub mod dashboard;

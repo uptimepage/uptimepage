@@ -242,6 +242,21 @@ pub fn routes(state: AppState) -> Router {
         r = r.route("/hooks/resend", post(views::resend_hook::webhook));
     }
 
+    // Payment-provider receiver, the pay page the provider's checkout opens
+    // on, and the card-update hop. Absent without a provider.
+    if state.billing.is_some() {
+        r = r
+            .route(
+                "/hooks/billing/{provider}",
+                post(views::billing_hook::webhook),
+            )
+            .route("/pay", get(views::billing::pay_page))
+            .route(
+                "/settings/billing/payment-method",
+                get(views::billing::payment_method),
+            );
+    }
+
     // Operator WhatsApp number receiver: Meta's GET subscribe handshake +
     // signed message deliveries. Mounted only when the operator number is
     // configured AND the spend flag is on.

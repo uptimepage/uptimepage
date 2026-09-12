@@ -153,6 +153,15 @@ support_address = ""                 # set it and /help appears; empty = no help
 api_key = ""                         # required when provider = "resend"
 webhook_secret = ""                  # whsec_… of the Resend webhook endpoint
 
+[billing]
+provider = "none"                    # "paddle" turns on checkout + the webhook receiver; "none" leaves it all absent
+
+[billing.paddle]
+environment = "sandbox"              # "sandbox" | "live" — keys are bound to one
+api_key = ""                         # env UPTIMEPAGE_BILLING__PADDLE__API_KEY
+webhook_secret = ""                  # env …__WEBHOOK_SECRET — the destination's pdl_ntfset_… key
+client_token = ""                    # Paddle.js client-side token; public, embedded on /pay
+
 [whatsapp_app]                       # operator WhatsApp number (one-tap linking)
 enabled = false                      # deliberate spend gate — creds alone stay off
 access_token = ""                    # Meta Cloud API token (env-only)
@@ -296,6 +305,14 @@ Open the link to claim the instance. Notes on the shape of this:
 Over plain HTTP on a LAN, also set `auth.session.cookie_secure = false`; the default `true` means the browser drops the session cookie the link issues.
 
 Deleting the seeded owner and letting the purge job clear it past its grace period empties `users` again, and the next restart will seed it afresh from the same config. Clear `bootstrap.email` once the instance is claimed if that is not what you want.
+
+## Payments
+
+`billing.provider = "paddle"` turns on the paid subscription lifecycle: checkout, the webhook receiver at `/hooks/billing/paddle`, the pay page at `/pay`, and the `/api/v1/account/billing` surface. `"none"` (the default) leaves every one of them absent — a self-host install never needs it, since a self-hoster owns the `plans` row directly.
+
+Paddle is the merchant of record, so tax, invoicing and card retries are Paddle's; the app only mirrors what Paddle decides onto the account's plan. Boot refuses a half-configured provider: `paddle` needs an api key, the notification destination's webhook secret, a client token, a valid `environment`, and an `https://` `auth.public_base_url` (the webhook and pay page live on it). All three secrets are env-only in production (`UPTIMEPAGE_BILLING__PADDLE__API_KEY`, `…__WEBHOOK_SECRET`); the client token is public by design.
+
+Which price sells which plan is data, not config: rows in `plan_prices` (`provider`, `price_ref`, `plan_id`, `interval`) map a Paddle price id to a catalog plan, so adding a price or a whole second provider is an INSERT. The account id is attached to the Paddle transaction as `custom_data.account_id` and travels back on every event, so a webhook always resolves to an account without trusting anything the browser sent.
 
 ## Central Telegram bot
 

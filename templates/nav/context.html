@@ -29,3 +29,18 @@
     <div class="nav-identity__meta">{{ slug }}{% if role != "" %} · {{ role }}{% endif %}</div>
     <div class="monitors-popover__sep"></div>
 </div>
+<div id="billing-notice" hx-swap-oob="true">
+    {% if let Some(b) = billing %}
+    {% if let Some(days) = b.past_due_days_left %}
+    <p class="alert-card alert-card--warn mb-5 text-sm" role="status">
+        payment failed &mdash; everything keeps running for {{ days }} more day{% if *days != 1 %}s{% endif %}.
+        {% if b.owner %}<a href="/settings/billing/payment-method" class="underline decoration-dotted underline-offset-2">update card</a>{% else %}ask the account owner to update the card.{% endif %}
+    </p>
+    {% else if let Some(plan) = b.pending_plan %}
+    <p class="alert-card alert-card--muted mb-5 text-sm" role="status">
+        plan moves to <span class="font-mono text-body">{{ plan }}</span> at the end of the paid period.
+        {% if b.owner %}<a href="/settings/usage" class="underline decoration-dotted underline-offset-2">choose what to keep</a>{% endif %}
+    </p>
+    {% endif %}
+    {% endif %}
+</div>
