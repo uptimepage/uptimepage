@@ -825,6 +825,28 @@ pub async fn body_json(resp: axum::http::Response<Body>) -> Value {
     serde_json::from_slice(&bytes).expect("valid json")
 }
 
+/// The process-wide metrics recorder. One per process, so every test in a
+/// binary that reads a metric shares it and must assert on deltas.
+pub fn metrics_handle() -> &'static metrics_exporter_prometheus::PrometheusHandle {
+    static H: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
+        std::sync::OnceLock::new();
+    H.get_or_init(|| {
+        metrics_exporter_prometheus::PrometheusBuilder::new()
+            .install_recorder()
+            .expect("install prometheus test recorder")
+    })
+}
+
+/// The exact value of an unlabelled series in a render, `None` while the
+/// series has not been touched.
+pub fn metric_value(rendered: &str, name: &str) -> Option<f64> {
+    let prefix = format!("{name} ");
+    rendered
+        .lines()
+        .find_map(|l| l.strip_prefix(&prefix))
+        .and_then(|rest| rest.trim().parse().ok())
+}
+
 pub async fn spawn_router(router: Router) -> SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

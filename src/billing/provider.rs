@@ -178,6 +178,9 @@ pub mod fake {
         pub subscriptions: Mutex<HashMap<String, SubscriptionSnapshot>>,
         pub checkout_url: Mutex<Option<String>>,
         pub calls: Mutex<Vec<String>>,
+        /// Answers every cancel with a refusal, the snapshot untouched. A
+        /// cancel while one is booked is refused regardless, as Paddle does.
+        pub cancel_refused: AtomicBool,
         /// Answers every lookup as a timeout would.
         pub fetch_fails: AtomicBool,
     }
@@ -287,14 +290,13 @@ pub mod fake {
             timing: ChangeTiming,
         ) -> Result<SubscriptionSnapshot> {
             self.note(format!("cancel:{subscription_ref}:{timing:?}"));
-            // A cancel while one is booked is refused, as Paddle does.
             let booked = self
                 .subscriptions
                 .lock()
                 .expect("fake provider")
                 .get(subscription_ref)
                 .is_some_and(|s| s.cancel_at.is_some());
-            if booked {
+            if self.cancel_refused.load(Ordering::Relaxed) || booked {
                 return Err(crate::error::AppError::conflict(
                     crate::api::error::codes::BILLING_PROVIDER_REFUSED,
                     "fake provider: cancel refused",

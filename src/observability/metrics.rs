@@ -38,6 +38,11 @@ pub fn init(bind: &str) -> Result<MetricsHandle> {
     register_descriptions();
     prime_event_counters();
     metrics::counter!("uptimepage_build_info", "version" => env!("CARGO_PKG_VERSION")).absolute(1);
+    metrics::gauge!(names::PROCESS_START_TIME).set(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |d| d.as_secs_f64()),
+    );
     tracing::info!(
         // SAFE: operator metrics bind address, not a peer/user IP
         addr = %addr,
@@ -57,6 +62,7 @@ fn prime_event_counters() {
     for reason in ["signature", "malformed", "failed"] {
         metrics::counter!(names::BILLING_WEBHOOK_REJECTED, "reason" => reason).increment(0);
     }
+    metrics::counter!(names::BILLING_PROVIDER_CANCEL_FAILED).increment(0);
 }
 
 fn register_descriptions() {
@@ -355,6 +361,14 @@ fn register_descriptions() {
         "Payment-provider webhooks not acted on, labelled by `reason` (signature | malformed | failed). `signature` at a steady trickle means the endpoint secret in config does not match the provider's; `failed` answered 5xx so the provider retries, and a sustained rate means every retry is failing the same way, usually a price the `plan_prices` table does not know"
     );
     describe_gauge!(
+        "uptimepage_process_start_time_seconds",
+        "Unix time this process started. `changes()` over a window is the restart signal: a counter that reset with the process has no `increase` to show for an event landing before the first scrape"
+    );
+    describe_counter!(
+        "uptimepage_billing_provider_cancel_failed_total",
+        "Subscriptions we decided to end at the payment provider where the cancel call failed and the provider did not show the subscription ended. Each one may keep charging the customer until ended by hand in the provider dashboard, so this should sit at zero; the app log line 'could not end a subscription at the provider' names the account and subscription"
+    );
+    describe_gauge!(
         "uptimepage_subscriptions",
         "Accounts per subscription status (`status` = none | active | past_due | canceled). `past_due` is the number of customers inside their grace window right now"
     );
@@ -427,11 +441,14 @@ pub mod names {
     pub const PG_POOL_IDLE: &str = "uptimepage_pg_pool_idle";
     pub const PG_POOL_IN_USE: &str = "uptimepage_pg_pool_in_use";
     pub const PROCESS_RESIDENT_BYTES: &str = "uptimepage_process_resident_bytes";
+    pub const PROCESS_START_TIME: &str = "uptimepage_process_start_time_seconds";
     pub const CLICKHOUSE_MAX_PART_COUNT: &str =
         "uptimepage_clickhouse_max_part_count_for_partition";
     pub const ACCOUNT_DELETIONS_REQUESTED: &str = "uptimepage_account_deletions_requested_total";
     pub const BILLING_WEBHOOKS: &str = "uptimepage_billing_webhooks_total";
     pub const BILLING_WEBHOOK_REJECTED: &str = "uptimepage_billing_webhook_rejected_total";
+    pub const BILLING_PROVIDER_CANCEL_FAILED: &str =
+        "uptimepage_billing_provider_cancel_failed_total";
     pub const SUBSCRIPTIONS: &str = "uptimepage_subscriptions";
     /// Labelled `action` (linked/unlinked) + `origin` (signup/email_match/session).
     /// A rise in `linked`+`email_match` without matching sign-ups is what a

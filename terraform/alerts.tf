@@ -1371,9 +1371,15 @@ resource "grafana_rule_group" "billing" {
   # An event that named no account we know, or a subscription that is not
   # its account's live one. Both are acknowledged so the provider stops
   # retrying, and a live foreign subscription is ended at the provider, so
-  # each one is a purchase to look at by hand. A counter label is born with
-  # its first event and a one-sample series has no increase yet, so the
-  # first such event after a deploy is caught by the series appearing.
+  # each one is a purchase to look at by hand.
+  #
+  # The second clause covers an event landing before the first scrape of a
+  # fresh process: the counter is primed at boot, but a one-sample series
+  # has no increase, and a same-colour restart whose earlier count equals
+  # the new one shows no reset either. So: nonzero now, and either absent an
+  # hour ago or on a process that started since. Per colour, because the
+  # other colour's primed zero would otherwise stand in for this one's
+  # hour-old sample.
   rule {
     name           = "UptimepageBillingEventUnowned"
     condition      = "C"
@@ -1398,7 +1404,49 @@ resource "grafana_rule_group" "billing" {
       model = jsonencode({
         refId   = "A"
         instant = true
-        expr    = "(sum(increase(uptimepage_billing_webhooks_total{outcome=~\"unmatched|foreign\"}[1h])) > 0) or (sum(uptimepage_billing_webhooks_total{outcome=~\"unmatched|foreign\"}) > 0 unless sum(uptimepage_billing_webhooks_total{outcome=~\"unmatched|foreign\"} offset 1h))"
+        expr    = "(sum by (color) (increase(uptimepage_billing_webhooks_total{outcome=~\"unmatched|foreign\"}[1h])) > 0) or (sum by (color) (uptimepage_billing_webhooks_total{outcome=~\"unmatched|foreign\"}) > 0 unless (sum by (color) (uptimepage_billing_webhooks_total{outcome=~\"unmatched|foreign\"} offset 1h) > 0 and on (color) changes(uptimepage_process_start_time_seconds[1h]) == 0))"
+      })
+    }
+    data {
+      ref_id         = "C"
+      datasource_uid = "__expr__"
+      relative_time_range {
+        from = 0
+        to   = 0
+      }
+      model = local.threshold_c
+    }
+  }
+
+  # A subscription we decided to end (a grace window that ran out, or a
+  # second live subscription serving nobody) that the provider did not show
+  # as ended afterwards. Nothing retries. Same guard as above; the sweep
+  # runs at boot, so a failure before the first scrape is the likely shape.
+  rule {
+    name           = "UptimepageBillingProviderCancelFailed"
+    condition      = "C"
+    for            = "0s"
+    no_data_state  = "OK"
+    exec_err_state = "Error"
+    labels = {
+      severity = "critical"
+      service  = "uptimepage"
+    }
+    annotations = {
+      summary     = "uptimepage: a subscription could not be ended at the payment provider"
+      description = "in the last hour the app tried to end a subscription at the payment provider and the provider did not show it canceled afterwards (the call failed, timed out, or answered with it still live or paused), so that customer may keep being charged. Nothing retries. The app log line 'could not end a subscription at the provider' names the account, subscription_ref and what the provider said; find it in the provider dashboard, cancel it effective immediately if it is still live, and refund anything charged since."
+    }
+    data {
+      ref_id         = "A"
+      datasource_uid = data.grafana_data_source.prometheus.uid
+      relative_time_range {
+        from = 3600
+        to   = 0
+      }
+      model = jsonencode({
+        refId   = "A"
+        instant = true
+        expr    = "(sum by (color) (increase(uptimepage_billing_provider_cancel_failed_total[1h])) > 0) or (sum by (color) (uptimepage_billing_provider_cancel_failed_total) > 0 unless (sum by (color) (uptimepage_billing_provider_cancel_failed_total offset 1h) > 0 and on (color) changes(uptimepage_process_start_time_seconds[1h]) == 0))"
       })
     }
     data {

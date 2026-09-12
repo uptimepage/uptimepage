@@ -30,6 +30,7 @@ use super::{Actor, PlanRequest, set_plan_tx};
 use crate::domain::{AccountId, BillingStatus, Interval, Subscription};
 use crate::email::EmailTemplate;
 use crate::error::{AppError, Result};
+use crate::observability::metrics::names;
 use crate::quotas::{QuotaService, holds, reconcile_after_change};
 use crate::storage::billing_events as ledger;
 use crate::storage::subscriptions::{self as store};
@@ -746,17 +747,16 @@ impl Billing {
             tracing::warn!(account = %sub.account, error = %err, "billing: reconcile after plan move");
         }
         for subscription_ref in fx.cancel_at_provider {
-            if let Err(err) = self
-                .provider
-                .cancel(&subscription_ref, ChangeTiming::Now)
-                .await
+            // Detached so a webhook whose sender hung up mid-call still ends
+            // the subscription; awaited so the caller sees it done.
+            let provider = Arc::clone(&self.provider);
+            let account = sub.account;
+            if let Err(err) = tokio::spawn(async move {
+                end_at_provider(provider.as_ref(), account, &subscription_ref).await
+            })
+            .await
             {
-                tracing::error!(
-                    account = %sub.account,
-                    subscription_ref,
-                    error = %err,
-                    "billing: could not end a subscription at the provider; it keeps charging until ended by hand"
-                );
+                tracing::error!(account = %sub.account, error = %err, "billing: provider cancel task");
             }
         }
         for mail in fx.mails {
@@ -787,6 +787,28 @@ impl Billing {
                 .await;
         }
     }
+}
+
+/// Ends a subscription that can serve nobody. Anything short of the provider
+/// showing it ending is counted, so the page names what to end by hand.
+async fn end_at_provider(
+    provider: &dyn BillingProvider,
+    account: AccountId,
+    subscription_ref: &str,
+) {
+    let refused = match cancel_despite_refusal(provider, subscription_ref, ChangeTiming::Now).await
+    {
+        Ok(snapshot) if snapshot.is_ending() => return,
+        Ok(snapshot) => format!("answered but left it {:?}", snapshot.status),
+        Err(err) => err.to_string(),
+    };
+    metrics::counter!(names::BILLING_PROVIDER_CANCEL_FAILED).increment(1);
+    tracing::error!(
+        account = %account,
+        subscription_ref,
+        refused,
+        "billing: could not end a subscription at the provider; it keeps charging until ended by hand"
+    );
 }
 
 /// A refusal is checked against the provider's own view before it counts:
@@ -838,8 +860,7 @@ async fn publish_status_gauge(pool: &PgPool) -> Result<()> {
             .iter()
             .find(|(s, _)| s == status.as_db_str())
             .map_or(0, |(_, n)| *n);
-        metrics::gauge!(crate::observability::metrics::names::SUBSCRIPTIONS, "status" => status.as_db_str())
-            .set(n as f64);
+        metrics::gauge!(names::SUBSCRIPTIONS, "status" => status.as_db_str()).set(n as f64);
     }
     Ok(())
 }

@@ -15,6 +15,7 @@ use common::{
     default_http_check, drop_test_db, fresh_test_db, make_user, open_test_pool, pg_pool_from_env,
     unique_slug, with_session,
 };
+use common::{metric_value, metrics_handle};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -693,6 +694,135 @@ async fn a_failed_payment_opens_a_grace_window_the_sweep_closes_and_a_payment_re
             .lock()
             .unwrap()
             .contains(&format!("fetch:{fresh}"))
+    );
+    h.finish().await;
+}
+
+const CANCEL_FAILED: &str = "uptimepage_billing_provider_cancel_failed_total";
+
+fn cancel_failures() -> f64 {
+    metric_value(&metrics_handle().render(), CANCEL_FAILED).unwrap_or(0.0)
+}
+
+/// A grace window run out with the provider refusing the cancel, its own
+/// view of the subscription being `status`, or none at all.
+async fn grace_expiry_with_cancel_refused(
+    h: &Harness,
+    status: Option<SubscriptionStatus>,
+) -> AccountId {
+    let (account, _, _) = account(&h.pool, "founding", 52).await;
+    let sub = sub_ref();
+    activate(h, account, &sub, TEAM_MONTH).await;
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::PaymentFailed),
+        )
+        .await
+        .expect("failed");
+    if let Some(status) = status {
+        h.provider
+            .subscriptions
+            .lock()
+            .unwrap()
+            .insert(sub.clone(), snapshot(&sub, status, TEAM_MONTH, Utc::now()));
+    }
+    h.provider.cancel_refused.store(true, Ordering::Relaxed);
+    sqlx::query("UPDATE accounts SET grace_until = now() - interval '1 second' WHERE id = $1")
+        .bind(account.0)
+        .execute(&h.pool)
+        .await
+        .expect("age the grace");
+    assert_eq!(h.billing.sweep(&h.pool, &h.quotas).await.expect("sweep"), 1);
+    let calls = h.provider.calls.lock().unwrap();
+    assert!(calls.contains(&format!("cancel:{sub}:Now")));
+    assert!(
+        calls.contains(&format!("fetch:{sub}")),
+        "a refusal is checked against the provider's view"
+    );
+    account
+}
+
+/// One test: the counter is process-wide, so the cases run in sequence.
+#[tokio::test]
+#[ignore]
+async fn a_refused_cancel_is_counted_unless_the_provider_shows_the_subscription_ended() {
+    let Some(h) = isolated("billing").await else {
+        return;
+    };
+
+    let before = cancel_failures();
+    let account = grace_expiry_with_cancel_refused(&h, Some(SubscriptionStatus::PastDue)).await;
+    let s = row(&h.pool, account).await;
+    assert_eq!(
+        (s.plan_id.as_str(), s.status),
+        ("founding", BillingStatus::Canceled),
+        "our side ends regardless of the provider"
+    );
+    assert_eq!(
+        subjects(&h.mail),
+        vec!["payment_failed", "downgrade_applied"]
+    );
+    assert_eq!(cancel_failures(), before + 1.0, "still live: counted");
+
+    let before = cancel_failures();
+    grace_expiry_with_cancel_refused(&h, Some(SubscriptionStatus::Canceled)).await;
+    assert_eq!(
+        cancel_failures(),
+        before,
+        "already canceled: nobody is charged"
+    );
+
+    let before = cancel_failures();
+    grace_expiry_with_cancel_refused(&h, Some(SubscriptionStatus::Paused)).await;
+    assert_eq!(cancel_failures(), before + 1.0, "paused resumes and bills");
+
+    let before = cancel_failures();
+    grace_expiry_with_cancel_refused(&h, None).await;
+    assert_eq!(
+        cancel_failures(),
+        before + 1.0,
+        "no view of it at all: counted"
+    );
+
+    // Booked through the portal to end with the period: the provider refuses
+    // every other change to an unpaid subscription, so that is the end.
+    h.provider.cancel_refused.store(false, Ordering::Relaxed);
+    let (unpaid, _, _) = self::account(&h.pool, "founding", 52).await;
+    let sub = sub_ref();
+    activate(&h, unpaid, &sub, TEAM_MONTH).await;
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(unpaid, &sub, EventKind::PaymentFailed),
+        )
+        .await
+        .expect("failed");
+    let mut booked = snapshot(&sub, SubscriptionStatus::PastDue, TEAM_MONTH, Utc::now());
+    booked.cancel_at = booked.period_end;
+    h.provider
+        .subscriptions
+        .lock()
+        .unwrap()
+        .insert(sub.clone(), booked);
+    h.provider.calls.lock().unwrap().clear();
+    sqlx::query("UPDATE accounts SET grace_until = now() - interval '1 second' WHERE id = $1")
+        .bind(unpaid.0)
+        .execute(&h.pool)
+        .await
+        .expect("age the grace");
+    let before = cancel_failures();
+    assert_eq!(h.billing.sweep(&h.pool, &h.quotas).await.expect("sweep"), 1);
+    assert_eq!(
+        *h.provider.calls.lock().unwrap(),
+        vec![format!("cancel:{sub}:Now"), format!("fetch:{sub}")]
+    );
+    assert_eq!(
+        cancel_failures(),
+        before,
+        "already ending: nothing to count"
     );
     h.finish().await;
 }
@@ -1455,6 +1585,31 @@ async fn noise_without_an_account_is_not_an_unmatched_purchase() {
         Outcome::Unmatched,
         "money with nobody to give it to"
     );
+
+    // The scheduled end of a purged account's subscription, and the same for
+    // one whose id was never ours.
+    let purged = AccountId(Uuid::now_v7());
+    for (account, status, expected) in [
+        (Some(purged), SubscriptionStatus::Canceled, Outcome::Applied),
+        (None, SubscriptionStatus::Canceled, Outcome::Applied),
+        (Some(purged), SubscriptionStatus::Active, Outcome::Unmatched),
+        (None, SubscriptionStatus::Active, Outcome::Unmatched),
+        (Some(purged), SubscriptionStatus::Paused, Outcome::Unmatched),
+    ] {
+        let snap = snapshot("sub_gone", status, TEAM_MONTH, Utc::now());
+        let mut ev = event(
+            AccountId(Uuid::nil()),
+            "sub_gone",
+            EventKind::Subscription(snap),
+        );
+        ev.account = account;
+        let outcome = h
+            .billing
+            .apply_event(&h.pool, &h.quotas, ev)
+            .await
+            .expect("unowned");
+        assert_eq!(outcome, expected, "{account:?} {status:?}");
+    }
 }
 
 #[tokio::test]
@@ -2106,6 +2261,7 @@ async fn leaving_takes_a_refused_cancel_as_done_when_the_provider_shows_it_endin
             ..snap
         },
     );
+    fake.cancel_refused.store(true, Ordering::Relaxed);
 
     let resp = app
         .oneshot(api("DELETE", "/api/v1/me", None))
@@ -2368,6 +2524,58 @@ async fn leaving_ends_what_the_provider_still_holds_unpaid_or_paused() {
         );
         assert_eq!(row(&pool, account).await.status, BillingStatus::Canceled);
     }
+}
+
+#[tokio::test]
+#[ignore]
+async fn leaving_is_refused_while_the_subscription_cannot_be_ended() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    seed_prices(&pool).await;
+    let fake = Arc::new(FakeProvider::default());
+    let (app, org) = app_with_fake(&pool, fake.clone()).await;
+    let account = owner_account(&pool, org).await;
+    let sub = sub_ref();
+    let snap = snapshot(&sub, SubscriptionStatus::Active, TEAM_MONTH, Utc::now());
+    fake.subscriptions
+        .lock()
+        .unwrap()
+        .insert(sub.clone(), snap.clone());
+    let resp = app
+        .clone()
+        .oneshot(webhook(
+            &event(account, &sub, EventKind::Subscription(snap)),
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    fake.cancel_refused.store(true, Ordering::Relaxed);
+
+    let resp = app
+        .oneshot(api("DELETE", "/api/v1/me", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        body_json(resp).await["error"]["code"],
+        "BILLING_PROVIDER_REFUSED"
+    );
+    assert_eq!(
+        *fake.calls.lock().unwrap(),
+        vec![format!("cancel:{sub}:NextPeriod"), format!("fetch:{sub}")],
+        "a refusal is checked against the provider's view before it counts"
+    );
+    let s = row(&pool, account).await;
+    assert_eq!((s.status, s.pending_plan_id), (BillingStatus::Active, None));
+    let (deleted,): (bool,) =
+        sqlx::query_as("SELECT deleted_at IS NOT NULL FROM users WHERE id = $1")
+            .bind(s.owner.unwrap().0)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!deleted, "a subscription still charging keeps its account");
 }
 
 #[tokio::test]

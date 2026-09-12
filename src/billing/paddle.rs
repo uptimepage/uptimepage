@@ -236,7 +236,7 @@ struct Price {
 #[derive(Deserialize)]
 struct SubscriptionData {
     id: String,
-    status: String,
+    status: SubscriptionStatus,
     customer_id: String,
     #[serde(default)]
     current_billing_period: Option<Period>,
@@ -251,17 +251,10 @@ impl SubscriptionData {
     /// Paddle's `updated_at` on both the webhook and the call path, so
     /// snapshots order on one clock. A replaced item stays on as `inactive`.
     fn snapshot(self) -> SubscriptionSnapshot {
-        let status = match self.status.as_str() {
-            "active" => SubscriptionStatus::Active,
-            "trialing" => SubscriptionStatus::Trialing,
-            "past_due" => SubscriptionStatus::PastDue,
-            "paused" => SubscriptionStatus::Paused,
-            _ => SubscriptionStatus::Canceled,
-        };
         SubscriptionSnapshot {
             subscription_ref: self.id,
             customer_ref: self.customer_id,
-            status,
+            status: self.status,
             price_refs: self
                 .items
                 .into_iter()
@@ -569,12 +562,11 @@ mod tests {
         let odd = map_event(envelope(
             "subscription.updated",
             subscription("archived", Value::Null),
-        ))
-        .unwrap();
-        let EventKind::Subscription(snap) = odd.kind else {
-            panic!("not a snapshot");
-        };
-        assert_eq!(snap.status, SubscriptionStatus::Canceled);
+        ));
+        assert!(
+            matches!(odd, Err(WebhookRejected::Malformed(_))),
+            "a status we cannot read must not end anyone's service"
+        );
     }
 
     #[test]

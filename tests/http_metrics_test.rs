@@ -11,22 +11,10 @@
 
 mod common;
 
-use std::sync::OnceLock;
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use common::build_test_app;
-use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use common::{build_test_app, metric_value, metrics_handle};
 use tower::ServiceExt;
-
-fn handle() -> &'static PrometheusHandle {
-    static H: OnceLock<PrometheusHandle> = OnceLock::new();
-    H.get_or_init(|| {
-        PrometheusBuilder::new()
-            .install_recorder()
-            .expect("install prometheus test recorder")
-    })
-}
 
 fn req(method: &str, path: &str) -> Request<Body> {
     Request::builder()
@@ -37,17 +25,13 @@ fn req(method: &str, path: &str) -> Request<Body> {
 }
 
 fn gauge_value(rendered: &str, name: &str) -> f64 {
-    let prefix = format!("{name} ");
-    rendered
-        .lines()
-        .find_map(|l| l.strip_prefix(&prefix))
-        .and_then(|rest| rest.trim().parse().ok())
+    metric_value(rendered, name)
         .unwrap_or_else(|| panic!("gauge {name} missing from render:\n{rendered}"))
 }
 
 #[tokio::test]
 async fn middleware_pins_all_contracts() {
-    let h = handle();
+    let h = metrics_handle();
     let app = build_test_app(|_| {});
 
     let _ = app
