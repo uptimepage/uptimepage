@@ -1278,6 +1278,141 @@ resource "grafana_rule_group" "churn" {
   }
 }
 
+# Money path. Webhooks are sparse, so these count events over an hour rather
+# than rates, and every one names what the operator has to fix.
+resource "grafana_rule_group" "billing" {
+  name             = "uptimepage-billing"
+  folder_uid       = grafana_folder.obs.uid
+  interval_seconds = 300
+
+  # The provider delivered a verified event and we answered 5xx, so it
+  # retries into the same wall. A customer has usually paid by now and holds
+  # the wrong plan until this is fixed. Critical: it pages.
+  rule {
+    name           = "UptimepageBillingWebhookFailing"
+    condition      = "C"
+    for            = "10m"
+    no_data_state  = "OK"
+    exec_err_state = "Error"
+    labels = {
+      severity = "critical"
+      service  = "uptimepage"
+    }
+    annotations = {
+      summary     = "uptimepage: billing webhooks are failing to apply"
+      description = "three or more payment-provider events answered 5xx in the last hour and the provider is retrying them. Usually a price the plan_prices table does not carry, or a subscription carrying two plan prices; the app log line is 'billing webhook: apply failed'. Runbook: runbooks/grafana-cloud.md."
+    }
+    data {
+      ref_id         = "A"
+      datasource_uid = data.grafana_data_source.prometheus.uid
+      relative_time_range {
+        from = 3600
+        to   = 0
+      }
+      model = jsonencode({
+        refId   = "A"
+        instant = true
+        expr    = "sum(increase(uptimepage_billing_webhook_rejected_total{reason=\"failed\"}[1h])) >= 3"
+      })
+    }
+    data {
+      ref_id         = "C"
+      datasource_uid = "__expr__"
+      relative_time_range {
+        from = 0
+        to   = 0
+      }
+      model = local.threshold_c
+    }
+  }
+
+  # Deliveries we refused before reading them: a signature that does not
+  # verify means the endpoint secret in config disagrees with the
+  # provider's, and every event is being dropped on the floor while the
+  # provider keeps retrying.
+  rule {
+    name           = "UptimepageBillingWebhookRejected"
+    condition      = "C"
+    for            = "5m"
+    no_data_state  = "OK"
+    exec_err_state = "Error"
+    labels = {
+      severity = "warning"
+      service  = "uptimepage"
+    }
+    annotations = {
+      summary     = "uptimepage: billing webhooks rejected before being read"
+      description = "three or more payment-provider deliveries in the last hour failed the signature check or did not parse. Signature ('billing webhook rejected: bad signature'): the notification destination's secret disagrees with UPTIMEPAGE_BILLING__PADDLE__WEBHOOK_SECRET; fix it, then replay the deliveries from the provider dashboard. Malformed ('billing webhook: unparseable event body'): the payload shape changed and the parser needs the fix; a replay repeats the same bytes. Runbook: runbooks/grafana-cloud.md."
+    }
+    data {
+      ref_id         = "A"
+      datasource_uid = data.grafana_data_source.prometheus.uid
+      relative_time_range {
+        from = 3600
+        to   = 0
+      }
+      model = jsonencode({
+        refId   = "A"
+        instant = true
+        expr    = "sum(increase(uptimepage_billing_webhook_rejected_total{reason=~\"signature|malformed\"}[1h])) >= 3"
+      })
+    }
+    data {
+      ref_id         = "C"
+      datasource_uid = "__expr__"
+      relative_time_range {
+        from = 0
+        to   = 0
+      }
+      model = local.threshold_c
+    }
+  }
+
+  # An event that named no account we know, or a subscription that is not
+  # its account's live one. Both are acknowledged so the provider stops
+  # retrying, and a live foreign subscription is ended at the provider, so
+  # each one is a purchase to look at by hand. A counter label is born with
+  # its first event and a one-sample series has no increase yet, so the
+  # first such event after a deploy is caught by the series appearing.
+  rule {
+    name           = "UptimepageBillingEventUnowned"
+    condition      = "C"
+    for            = "0s"
+    no_data_state  = "OK"
+    exec_err_state = "Error"
+    labels = {
+      severity = "warning"
+      service  = "uptimepage"
+    }
+    annotations = {
+      summary     = "uptimepage: a billing event matched no live subscription"
+      description = "a payment-provider event in the last hour named an account we do not have, or a subscription that is not the account's own. Find it in the provider dashboard by the event id in the app log ('billing: event names no account' or 'not the account's'), and in account_billing_events (kind = 'foreign_subscription_ignored')."
+    }
+    data {
+      ref_id         = "A"
+      datasource_uid = data.grafana_data_source.prometheus.uid
+      relative_time_range {
+        from = 3600
+        to   = 0
+      }
+      model = jsonencode({
+        refId   = "A"
+        instant = true
+        expr    = "(sum(increase(uptimepage_billing_webhooks_total{outcome=~\"unmatched|foreign\"}[1h])) > 0) or (sum(uptimepage_billing_webhooks_total{outcome=~\"unmatched|foreign\"}) > 0 unless sum(uptimepage_billing_webhooks_total{outcome=~\"unmatched|foreign\"} offset 1h))"
+      })
+    }
+    data {
+      ref_id         = "C"
+      datasource_uid = "__expr__"
+      relative_time_range {
+        from = 0
+        to   = 0
+      }
+      model = local.threshold_c
+    }
+  }
+}
+
 resource "grafana_contact_point" "default" {
   name = "uptimepage-default"
 

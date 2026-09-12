@@ -1430,6 +1430,35 @@ async fn a_plan_that_shrinks_only_flow_checks_is_a_downgrade() {
 
 #[tokio::test]
 #[ignore]
+async fn noise_without_an_account_is_not_an_unmatched_purchase() {
+    let Some(h) = harness().await else { return };
+    let mut noise = event(AccountId(Uuid::nil()), "sub_none", EventKind::Other);
+    noise.account = None;
+    noise.subscription_ref = None;
+    let outcome = h
+        .billing
+        .apply_event(&h.pool, &h.quotas, noise.clone())
+        .await
+        .expect("noise");
+    assert_eq!(outcome, Outcome::Applied);
+
+    let mut paid = event(AccountId(Uuid::nil()), "sub_none", EventKind::Paid);
+    paid.account = None;
+    paid.subscription_ref = None;
+    let outcome = h
+        .billing
+        .apply_event(&h.pool, &h.quotas, paid)
+        .await
+        .expect("paid");
+    assert_eq!(
+        outcome,
+        Outcome::Unmatched,
+        "money with nobody to give it to"
+    );
+}
+
+#[tokio::test]
+#[ignore]
 async fn two_plan_prices_on_one_subscription_are_refused() {
     let Some(h) = harness().await else { return };
     let (account, _, _) = account(&h.pool, "founding", 0).await;
