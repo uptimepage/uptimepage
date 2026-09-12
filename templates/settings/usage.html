@@ -5,6 +5,7 @@
   <header class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
     <h1 class="page-title"><span class="page-title__prefix" aria-hidden="true">$</span>usage &amp; quotas</h1>
     <span class="usage-plan">plan:{{ plan_name|lower }}</span>
+    {% if ""|billing_ui %}<a href="/settings/billing" class="text-sm text-muted underline decoration-dotted underline-offset-2 hover:text-body">billing</a>{% endif %}
   </header>
 
   <div class="sticker-card overflow-hidden">

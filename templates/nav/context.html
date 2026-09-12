@@ -39,7 +39,7 @@
     {% else if let Some(plan) = b.pending_plan %}
     <p class="alert-card alert-card--muted mb-5 text-sm" role="status">
         plan moves to <span class="font-mono text-body">{{ plan }}</span> at the end of the paid period.
-        {% if b.owner %}<a href="/settings/usage" class="underline decoration-dotted underline-offset-2">choose what to keep</a>{% endif %}
+        {% if b.owner %}<a href="/settings/usage" class="underline decoration-dotted underline-offset-2">choose what to keep</a> · <a href="/settings/billing" class="underline decoration-dotted underline-offset-2">billing</a>{% endif %}
     </p>
     {% endif %}
     {% endif %}

@@ -6,6 +6,29 @@ use serde::{Deserialize, Serialize};
 use super::org::AccountId;
 use super::user::UserId;
 
+/// How often a subscription bills.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Interval {
+    Month,
+    Year,
+}
+
+impl Interval {
+    pub const ALL: [Interval; 2] = [Interval::Month, Interval::Year];
+
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            Interval::Month => "month",
+            Interval::Year => "year",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|v| v.as_db_str() == s)
+    }
+}
+
 /// `None` has never paid. `Canceled` has paid before and sits on its fallback
 /// plan, with the provider's customer kept so a return skips re-entering
 /// details.
@@ -61,6 +84,8 @@ pub struct Subscription {
     pub provider: Option<String>,
     pub customer_ref: Option<String>,
     pub subscription_ref: Option<String>,
+    /// The cadence of the price the plan was resolved through.
+    pub interval: Option<Interval>,
     pub synced_at: Option<DateTime<Utc>>,
     /// Payment events carry no snapshot, so they keep their own watermark.
     pub payment_synced_at: Option<DateTime<Utc>>,

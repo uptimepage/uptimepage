@@ -7,11 +7,9 @@ use sqlx::PgPool;
 use url::Url;
 
 use super::lifecycle::{Billing, cancel_despite_refusal, smaller};
-use super::provider::{
-    ChangeTiming, CheckoutRequest, Interval, SubscriptionSnapshot, SubscriptionStatus,
-};
+use super::provider::{ChangeTiming, CheckoutRequest, SubscriptionSnapshot, SubscriptionStatus};
 use crate::api::error::codes;
-use crate::domain::{AccountId, BillingStatus, Subscription};
+use crate::domain::{AccountId, BillingStatus, Interval, Subscription};
 use crate::error::{AppError, Result};
 use crate::quotas::QuotaService;
 use crate::storage::billing_events as ledger;

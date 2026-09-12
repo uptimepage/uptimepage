@@ -27,7 +27,7 @@ use super::provider::{
     BillingProvider, ChangeTiming, EventKind, ProviderEvent, SubscriptionSnapshot,
 };
 use super::{Actor, PlanRequest, set_plan_tx};
-use crate::domain::{AccountId, BillingStatus, Subscription};
+use crate::domain::{AccountId, BillingStatus, Interval, Subscription};
 use crate::email::EmailTemplate;
 use crate::error::{AppError, Result};
 use crate::quotas::{QuotaService, holds, reconcile_after_change};
@@ -318,8 +318,14 @@ impl Billing {
                     BillingStatus::PastDue => {}
                     _ => sub.status = BillingStatus::Active,
                 }
-                let plan_id = self.plan_for(tx, &snap).await?;
-                self.settle_plan(tx, sub, &plan_id, &snap, now, fx).await?;
+                let price = self.plan_for(tx, &snap).await?;
+                self.settle_plan(tx, sub, &price.plan_id, &snap, now, fx)
+                    .await?;
+                // A booked move reports its price ahead of time; the cadence
+                // shown is the one being paid until it lands.
+                if sub.plan_id == price.plan_id {
+                    sub.interval = Interval::parse(&price.interval);
+                }
             }
             Remote::PastDue => {
                 if sub.status == BillingStatus::Active && after_last_payment {
@@ -343,11 +349,11 @@ impl Billing {
         &self,
         tx: &mut Transaction<'_, Postgres>,
         snap: &SubscriptionSnapshot,
-    ) -> Result<String> {
+    ) -> Result<store::PlanPrice> {
         let mut prices =
             store::plans_for_prices(&mut **tx, self.provider.name(), &snap.price_refs).await?;
         match prices.len() {
-            1 => Ok(prices.remove(0).plan_id),
+            1 => Ok(prices.remove(0)),
             0 => Err(AppError::Other(anyhow::anyhow!(
                 "subscription {} carries no price in plan_prices: {:?}",
                 snap.subscription_ref,
@@ -582,6 +588,7 @@ impl Billing {
             return Ok(());
         }
         sub.status = BillingStatus::Canceled;
+        sub.interval = None;
         sub.current_period_end = None;
         sub.cancel_at = None;
         sub.clear_pending();
@@ -988,6 +995,7 @@ mod tests {
             provider: Some("fake".into()),
             customer_ref: None,
             subscription_ref: bound.map(str::to_owned),
+            interval: None,
             synced_at: None,
             payment_synced_at: None,
         }

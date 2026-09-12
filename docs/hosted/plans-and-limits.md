@@ -62,6 +62,6 @@ Only if the window closes unpaid does the plan drop — to the plan you were on 
 
 ## Raising a limit
 
-Delete monitors you no longer need, or write to us at <hello@uptimepage.dev> and say what you are running into. Paid plans are not open for self-service yet, so limit changes today are a conversation rather than a checkout.
+Move up a plan under **Settings → Billing**: pick Pro or Team, monthly or yearly (a year costs ten months), pay by card, and the new limits apply the moment the payment is confirmed. The same page moves you back down, cancels, or opens the invoices and card. A bigger plan is charged at once, prorated for the days left in your period; a smaller one, or a cancel, waits for the paid period to end, and you keep what you paid for until then. If none of the plans fit what you are running into, write to us at <hello@uptimepage.dev>.
 
 If you would rather have no limits at all, run your own instance. It is the same product under AGPL, with no plan, no seat count, and no account with us. Start at [Deployment](../deployment.md).

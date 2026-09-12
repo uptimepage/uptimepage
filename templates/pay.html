@@ -7,7 +7,14 @@
 <script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
 <script>
   {% if sandbox %}Paddle.Environment.set("sandbox");{% endif %}
-  Paddle.Initialize({ token: "{{ client_token }}" });
+  Paddle.Initialize({
+    token: "{{ client_token }}",
+    eventCallback: function (ev) {
+      if (ev.name === "checkout.completed") {
+        setTimeout(function () { window.location.href = "/settings/billing?paid=1"; }, 1500);
+      }
+    }
+  });
 </script>
 {% endblock %}
 {% block main %}
@@ -18,7 +25,7 @@
             been used already or has expired.
         </p>
         <p class="text-sm">
-            <a href="/settings/usage" class="underline decoration-dotted underline-offset-2">back to the app</a>
+            <a href="/settings/billing" class="underline decoration-dotted underline-offset-2">back to billing</a>
         </p>
     </main>
 {% endblock %}

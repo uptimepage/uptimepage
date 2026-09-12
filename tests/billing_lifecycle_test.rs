@@ -35,6 +35,7 @@ use uuid::Uuid;
 
 const TEAM_MONTH: &str = "pri_team_month";
 const PRO_MONTH: &str = "pri_pro_month";
+const PRO_YEAR: &str = "pri_pro_year";
 
 fn quotas(pool: &PgPool) -> QuotaService {
     let cfg = AppConfig::load().expect("config");
@@ -102,13 +103,19 @@ async fn harness_on(pool: PgPool, own_db: Option<String>) -> Harness {
 }
 
 async fn seed_prices(pool: &PgPool) {
-    for (price, plan) in [(TEAM_MONTH, "team"), (PRO_MONTH, "pro")] {
+    for (price, plan, interval, amount) in [
+        (TEAM_MONTH, "team", "month", 1900),
+        (PRO_MONTH, "pro", "month", 900),
+        (PRO_YEAR, "pro", "year", 9000),
+    ] {
         sqlx::query(
-            "INSERT INTO plan_prices (provider, price_ref, plan_id, interval) \
-             VALUES ('fake', $1, $2, 'month') ON CONFLICT DO NOTHING",
+            "INSERT INTO plan_prices (provider, price_ref, plan_id, interval, amount_minor, currency) \
+             VALUES ('fake', $1, $2, $3, $4, 'USD') ON CONFLICT DO NOTHING",
         )
         .bind(price)
         .bind(plan)
+        .bind(interval)
+        .bind(amount)
         .execute(pool)
         .await
         .expect("seed price");
@@ -265,6 +272,7 @@ async fn a_first_payment_puts_the_account_on_the_plan_and_binds_the_subscription
     assert_eq!(s.status, BillingStatus::Active);
     assert_eq!(s.subscription_ref.as_deref(), Some(sub.as_str()));
     assert_eq!(s.customer_ref.as_deref(), Some("ctm_1"));
+    assert_eq!(s.interval, Some(Interval::Month));
     assert!(s.current_period_end.is_some());
     assert_eq!(ledger_kinds(&h.pool, account).await, vec!["plan_changed"]);
     assert!(
@@ -341,7 +349,7 @@ async fn a_smaller_plan_waits_for_the_period_end_and_the_sweep_then_holds_the_ex
     activate(&h, account, &sub, TEAM_MONTH).await;
     assert_eq!(held_count(&h.pool, org).await, 0);
 
-    let down = snapshot(&sub, SubscriptionStatus::Active, PRO_MONTH, Utc::now());
+    let down = snapshot(&sub, SubscriptionStatus::Active, PRO_YEAR, Utc::now());
     let period_end = down.period_end;
     h.billing
         .apply_event(
@@ -355,6 +363,11 @@ async fn a_smaller_plan_waits_for_the_period_end_and_the_sweep_then_holds_the_ex
     assert_eq!(s.plan_id, "team", "keeps what was paid for");
     assert_eq!(s.pending_plan_id.as_deref(), Some("pro"));
     assert_eq!(s.plan_change_at, period_end);
+    assert_eq!(
+        s.interval,
+        Some(Interval::Month),
+        "the cadence shown is the one being paid"
+    );
     assert_eq!(subjects(&h.mail), vec!["downgrade_scheduled"]);
     match &h.mail.sent()[0].template {
         EmailTemplate::DowngradeScheduled {
@@ -369,7 +382,7 @@ async fn a_smaller_plan_waits_for_the_period_end_and_the_sweep_then_holds_the_ex
     }
 
     // A renewal snapshot on the smaller price must not push the date out.
-    let renewal = snapshot(&sub, SubscriptionStatus::Active, PRO_MONTH, Utc::now());
+    let renewal = snapshot(&sub, SubscriptionStatus::Active, PRO_YEAR, Utc::now());
     h.billing
         .apply_event(
             &h.pool,
@@ -397,6 +410,17 @@ async fn a_smaller_plan_waits_for_the_period_end_and_the_sweep_then_holds_the_ex
         subjects(&h.mail),
         vec!["downgrade_scheduled", "downgrade_applied"]
     );
+    // The provider's next view of the same price now names the cadence.
+    let landed = snapshot(&sub, SubscriptionStatus::Active, PRO_YEAR, Utc::now());
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::Subscription(landed)),
+        )
+        .await
+        .expect("landed");
+    assert_eq!(row(&h.pool, account).await.interval, Some(Interval::Year));
     match &h.mail.sent()[1].template {
         EmailTemplate::DowngradeApplied {
             held_monitors,
@@ -476,8 +500,8 @@ async fn a_move_to_a_fallback_that_is_on_sale_is_a_move_not_a_cancel() {
     assert_eq!(h.billing.sweep(&h.pool, &h.quotas).await.expect("sweep"), 1);
     let s = row(&h.pool, account).await;
     assert_eq!(
-        (s.plan_id.as_str(), s.status),
-        ("pro", BillingStatus::Active),
+        (s.plan_id.as_str(), s.status, s.interval),
+        ("pro", BillingStatus::Active, Some(Interval::Month)),
         "the subscription runs on at the lower price"
     );
     assert_eq!(
@@ -729,9 +753,11 @@ async fn reminders_follow_the_grace_clock() {
     assert_eq!(h.billing.sweep(&h.pool, &h.quotas).await.expect("sweep"), 0);
     assert!(h.mail.is_empty());
 
-    // Three days in: the second reminder.
+    // Three days and an hour in: the second reminder. The hour keeps a
+    // database clock a little ahead of ours from rounding the day down.
     sqlx::query(
-        "UPDATE accounts SET grace_until = now() + make_interval(days => $2) WHERE id = $1",
+        "UPDATE accounts SET grace_until = now() + make_interval(days => $2) - interval '1 hour' \
+         WHERE id = $1",
     )
     .bind(account.0)
     .bind((GRACE_DAYS - 3) as i32)
@@ -1372,8 +1398,8 @@ async fn a_plan_that_shrinks_only_flow_checks_is_a_downgrade() {
     .await
     .expect("plan");
     sqlx::query(
-        "INSERT INTO plan_prices (provider, price_ref, plan_id, interval) \
-         VALUES ('fake', 'pri_team_lite_month', 'team_lite', 'month')",
+        "INSERT INTO plan_prices (provider, price_ref, plan_id, interval, amount_minor, currency) \
+         VALUES ('fake', 'pri_team_lite_month', 'team_lite', 'month', 1500, 'USD')",
     )
     .execute(&h.pool)
     .await
@@ -1442,7 +1468,9 @@ async fn an_unknown_price_is_refused_so_the_provider_retries_after_the_row_is_ad
     assert_eq!(row(&h.pool, account).await.plan_id, "founding");
 
     sqlx::query(
-        "INSERT INTO plan_prices (provider, price_ref, plan_id, interval) VALUES ('fake', $1, 'team', 'year')",
+        "INSERT INTO plan_prices (provider, price_ref, plan_id, interval, amount_minor, currency) \
+         VALUES ('fake', $1, 'team', 'year', 19000, 'USD') \
+         ON CONFLICT (provider, plan_id, interval) DO UPDATE SET price_ref = EXCLUDED.price_ref",
     )
     .bind(&price)
     .execute(&h.pool)
@@ -1567,6 +1595,13 @@ async fn the_receiver_checks_the_signature_then_applies_and_acknowledges() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+async fn body_text(resp: axum::http::Response<Body>) -> String {
+    let bytes = axum::body::to_bytes(resp.into_body(), 8 << 20)
+        .await
+        .expect("body");
+    String::from_utf8(bytes.to_vec()).expect("utf8")
+}
+
 fn api(method: &str, path: &str, body: Option<Value>) -> Request<Body> {
     let mut req = Request::builder()
         .method(method)
@@ -1608,7 +1643,10 @@ async fn the_owner_buys_moves_up_moves_down_and_cancels_through_the_api() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|o| o["plan_id"] == "team" && o["interval"] == "month"),
+            .any(|o| o["plan_id"] == "team"
+                && o["interval"] == "month"
+                && o["amount_minor"] == 1900
+                && o["currency"] == "USD"),
         "{view}"
     );
 
@@ -1689,6 +1727,7 @@ async fn the_owner_buys_moves_up_moves_down_and_cancels_through_the_api() {
     let view = body_json(resp).await;
     assert_eq!(view["plan_id"], "team", "an upgrade applies at once");
     assert_eq!(view["pending_plan_id"], Value::Null);
+    assert_eq!(view["interval"], "month");
     assert!(
         fake.calls
             .lock()
@@ -2358,6 +2397,195 @@ async fn a_blocked_deletion_leaves_the_subscription_alone() {
 
 #[tokio::test]
 #[ignore]
+async fn the_billing_page_shows_the_plans_and_only_the_payers_controls() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    seed_prices(&pool).await;
+    let fake = Arc::new(FakeProvider::default());
+    let (app, org) = app_with_fake(&pool, fake.clone()).await;
+    let account = owner_account(&pool, org).await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get("/settings/billing?plan=pro&interval=year")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let html = body_text(resp).await;
+    assert!(html.contains("plan:free"), "current plan named");
+    assert!(
+        html.contains(r#"value="pro" checked"#),
+        "?plan preselects the card"
+    );
+    assert!(
+        html.contains(r#"value="year" checked"#),
+        "?interval picks the cadence"
+    );
+    assert!(
+        html.contains("$90 / year") && html.contains("save $18 a year"),
+        "{html}"
+    );
+    assert!(
+        html.contains("$19 / month"),
+        "priced from plan_prices: {html}"
+    );
+    assert!(html.contains(r#"data-act="checkout""#), "the owner can buy");
+    assert!(!html.contains(r#"data-act="change""#) || html.contains(r#"data-act="change" hidden"#));
+
+    let sub = sub_ref();
+    let snap = snapshot(&sub, SubscriptionStatus::Active, PRO_MONTH, Utc::now());
+    fake.subscriptions
+        .lock()
+        .unwrap()
+        .insert(sub.clone(), snap.clone());
+    app.clone()
+        .oneshot(webhook(
+            &event(account, &sub, EventKind::Subscription(snap)),
+            true,
+        ))
+        .await
+        .unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get("/settings/billing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let html = body_text(resp).await;
+    assert!(html.contains("plan:pro"), "{html}");
+    assert!(html.contains("billing-status--active"));
+    assert!(
+        html.contains(r#"data-portal="1""#),
+        "portal once a customer exists"
+    );
+    assert!(html.contains(r#"data-interval-current="month""#));
+    assert!(html.contains("renews"));
+
+    // A member of the org sees where it stands, not the buttons.
+    let member = make_user(&pool, "member").await;
+    sqlx::query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'member')")
+        .bind(member.0)
+        .bind(org.0)
+        .execute(&pool)
+        .await
+        .expect("membership");
+    let (anon, _) = build_test_app_with_pg_store_anon_tweaked(
+        pool.clone(),
+        |_| {},
+        move |state| state.with_billing_provider(fake),
+    )
+    .await;
+    let resp = with_session(anon.clone(), member, Some(org), None)
+        .oneshot(
+            Request::get("/settings/billing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let html = body_text(resp).await;
+    assert!(html.contains("only the account owner"), "{html}");
+    assert!(!html.contains("data-act="));
+
+    // The card form is what the payment-failed mail points at; signing in
+    // from that mail has to land there.
+    let resp = anon
+        .oneshot(
+            Request::get("/settings/billing/payment-method")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        resp.headers()[header::LOCATION],
+        "/login?redirect_after=%2Fsettings%2Fbilling%2Fpayment-method"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn the_billing_page_tells_a_booked_move_from_a_booked_cancel() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    seed_prices(&pool).await;
+    let fake = Arc::new(FakeProvider::default());
+    let (app, org) = app_with_fake(&pool, fake.clone()).await;
+    let account = owner_account(&pool, org).await;
+    let sub = sub_ref();
+    let snap = snapshot(&sub, SubscriptionStatus::Active, TEAM_MONTH, Utc::now());
+    fake.subscriptions
+        .lock()
+        .unwrap()
+        .insert(sub.clone(), snap.clone());
+    app.clone()
+        .oneshot(webhook(
+            &event(account, &sub, EventKind::Subscription(snap)),
+            true,
+        ))
+        .await
+        .unwrap();
+    let page = || {
+        Request::get("/settings/billing")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let nav = || {
+        Request::get("/web/partials/nav")
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    let resp = app
+        .clone()
+        .oneshot(api(
+            "PUT",
+            "/api/v1/account/billing/plan",
+            Some(json!({ "plan_id": "pro", "interval": "month" })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let html = body_text(app.clone().oneshot(page()).await.unwrap()).await;
+    assert!(html.contains(r#"data-downgrade-booked="1""#), "{html}");
+    assert!(!html.contains("data-cancel-booked"));
+    assert!(html.contains("moves-to") && html.contains("renews"));
+    let banner = body_text(app.clone().oneshot(nav()).await.unwrap()).await;
+    assert!(
+        banner.contains(r#"plan moves to <span class="font-mono text-body">Pro</span>"#),
+        "{banner}"
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(api("POST", "/api/v1/account/billing/cancel", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let html = body_text(app.clone().oneshot(page()).await.unwrap()).await;
+    assert!(html.contains(r#"data-cancel-booked="1""#), "{html}");
+    assert!(!html.contains("data-downgrade-booked"));
+    assert!(html.contains("paid-until") && html.contains("then"));
+    let banner = body_text(app.oneshot(nav()).await.unwrap()).await;
+    assert!(
+        banner.contains(r#"plan moves to <span class="font-mono text-body">Free</span>"#),
+        "a cancel lands on the fallback, not on the move it outranked: {banner}"
+    );
+}
+
+#[tokio::test]
+#[ignore]
 async fn billing_is_absent_without_a_provider() {
     let Some(pool) = pg_pool_from_env().await else {
         return;
@@ -2373,6 +2601,17 @@ async fn billing_is_absent_without_a_provider() {
         body_json(resp).await["error"]["code"],
         "BILLING_UNAVAILABLE"
     );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get("/settings/billing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
     let resp = app
         .oneshot(

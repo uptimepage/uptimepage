@@ -312,7 +312,15 @@ Deleting the seeded owner and letting the purge job clear it past its grace peri
 
 Paddle is the merchant of record, so tax, invoicing and card retries are Paddle's; the app only mirrors what Paddle decides onto the account's plan. Boot refuses a half-configured provider: `paddle` needs an api key, the notification destination's webhook secret, a client token, a valid `environment`, and an `https://` `auth.public_base_url` (the webhook and pay page live on it). All three secrets are env-only in production (`UPTIMEPAGE_BILLING__PADDLE__API_KEY`, `…__WEBHOOK_SECRET`); the client token is public by design.
 
-Which price sells which plan is data, not config: rows in `plan_prices` (`provider`, `price_ref`, `plan_id`, `interval`) map a Paddle price id to a catalog plan, so adding a price or a whole second provider is an INSERT. The account id is attached to the Paddle transaction as `custom_data.account_id` and travels back on every event, so a webhook always resolves to an account without trusting anything the browser sent.
+Which price sells which plan is data, not config: rows in `plan_prices` (`provider`, `price_ref`, `plan_id`, `interval`, `amount_minor`, `currency`) map a Paddle price id to a catalog plan, with the amount as Paddle quotes it so the billing page can show it without a call. Adding a price or a whole second provider is an INSERT, and only a listed plan (`plans.is_listed`) is offered:
+
+```sql
+INSERT INTO plan_prices (provider, price_ref, plan_id, interval, amount_minor, currency) VALUES
+  ('paddle', 'pri_01abc…', 'pro', 'month',  900, 'USD'),
+  ('paddle', 'pri_01def…', 'pro', 'year',  9000, 'USD');
+```
+
+A plan with only one cadence is sold on that cadence alone; the billing page offers the yearly toggle once any plan carries a `year` row. The account id is attached to the Paddle transaction as `custom_data.account_id` and travels back on every event, so a webhook always resolves to an account without trusting anything the browser sent.
 
 ## Central Telegram bot
 

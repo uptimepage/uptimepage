@@ -3323,6 +3323,66 @@
         color: var(--theme-text-muted);
         text-wrap: pretty;
     }
+    /* Corner tag outside a card's edge, the "last used" mark on the sign-in
+       buttons and "current" on the plan cards. */
+    .card-corner-mark {
+        @apply pointer-events-none absolute -top-2.5 -right-2 rounded-md border px-1.5 py-0.5 font-mono text-[10px] font-medium leading-none tracking-tight text-white shadow-md;
+        border-color: var(--theme-state-ok-line);
+        background: var(--theme-state-ok-strong);
+    }
+    /* Plan cards on /settings/billing: the caps under the price, inheriting
+       the card's ink flip. */
+    .plan-card__lines {
+        @apply mt-1 space-y-0.5 text-[11px] leading-snug;
+        color: var(--theme-text-muted);
+    }
+    .plan-card__lines li::before { content: "· "; opacity: 0.6; }
+    .check-type-card:has(input:checked) .plan-card__lines,
+    .check-type-card--on .plan-card__lines {
+        color: var(--theme-surface);
+        opacity: 0.7;
+    }
+    /* The pitch for the card under the cursor, and the matrix below it. */
+    .plan-pitch { @apply space-y-3 p-5; }
+    .plan-pitch__head { @apply flex flex-wrap items-baseline gap-x-3 gap-y-1; }
+    .plan-pitch__name {
+        @apply font-mono text-lg font-semibold;
+        color: var(--theme-text);
+    }
+    .plan-pitch__price {
+        @apply font-mono text-sm;
+        color: var(--theme-text-muted);
+    }
+    .plan-pitch__tag { @apply max-w-prose text-sm; color: var(--theme-text-muted); }
+    .plan-pitch__list {
+        @apply grid gap-x-6 gap-y-1 font-mono text-sm sm:grid-cols-2;
+        color: var(--theme-text);
+    }
+    .plan-pitch__list li::before { content: "+ "; color: var(--theme-state-ok-fg); }
+    .plan-pitch__list--down li::before { content: "- "; color: var(--theme-state-warn-fg); }
+    .plan-cmp th[data-cmp-col] { @apply align-top; }
+    .plan-cmp__name { @apply block font-mono text-sm font-semibold; color: var(--theme-text); }
+    .plan-cmp__price { @apply block font-mono text-xs font-normal; color: var(--theme-text-muted); }
+    .plan-cmp__mark {
+        @apply ml-1 rounded-sm px-1 font-mono text-[10px] font-medium leading-none;
+        background: var(--theme-ink);
+        color: var(--theme-surface);
+    }
+    .plan-cmp__cell--up { color: var(--theme-state-ok-fg); }
+    .plan-cmp__cell--down { color: var(--theme-state-warn-fg); }
+    .plan-cmp [data-cmp-col].is-target { background: var(--theme-surface-sunk); }
+    .plan-cmp [data-cmp-current] { color: var(--theme-text); }
+    /* The cadence toggle swaps every price on the page by one attribute. */
+    #billing-form[data-interval="month"] .price--year,
+    #billing-form[data-interval="year"] .price--month { display: none; }
+    .plan-pitch__saving {
+        @apply font-mono text-xs;
+        color: var(--theme-state-ok-fg);
+    }
+    .billing-status { color: var(--theme-text-muted); }
+    .billing-status--active { color: var(--theme-state-ok-fg); }
+    .billing-status--past_due { color: var(--theme-state-warn-fg); }
+    .billing-status--canceled { color: var(--theme-state-bad-fg); }
     /* Coverage panel: revealed by script, so the cards arrive rather than pop,
        and dismissal settles instead of cutting. */
     [data-coverage] {

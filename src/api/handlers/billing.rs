@@ -18,8 +18,7 @@ use crate::api::ApiError;
 use crate::api::error::codes;
 use crate::app::AppState;
 use crate::billing::Billing;
-use crate::billing::provider::Interval;
-use crate::domain::{AccountId, BillingStatus, OrgId, Subscription, UserId};
+use crate::domain::{AccountId, BillingStatus, Interval, OrgId, Subscription, UserId};
 use crate::error::{AppError, Result};
 use crate::storage::subscriptions;
 use crate::web::{BrowserUser, CurrentOrg, CurrentUser};
@@ -43,11 +42,15 @@ async fn owned(
     Ok((billing, state.require_db()?, account))
 }
 
-/// A plan and cadence on sale.
+/// A plan and cadence on sale, priced as the provider quotes it.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Offer {
     pub plan_id: String,
     pub interval: Interval,
+    /// In the currency's minor unit: 900 is $9.00.
+    pub amount_minor: i32,
+    /// ISO 4217.
+    pub currency: String,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -63,6 +66,8 @@ pub struct BillingView {
     /// over.
     pub cancel_at: Option<DateTime<Utc>>,
     pub current_period_end: Option<DateTime<Utc>>,
+    /// How the live subscription bills; absent without one.
+    pub interval: Option<Interval>,
     /// Set while a failed payment is being retried; full service until then.
     pub grace_until: Option<DateTime<Utc>>,
     /// Whether the provider's portal (invoices, card, cancel) can be opened.
@@ -75,14 +80,12 @@ async fn view(billing: &Billing, pool: &PgPool, sub: Subscription) -> Result<Bil
         .await?
         .into_iter()
         .filter_map(|p| {
-            let interval = match p.interval.as_str() {
-                "month" => Interval::Month,
-                "year" => Interval::Year,
-                _ => return None,
-            };
+            let interval = Interval::parse(&p.interval)?;
             Some(Offer {
                 plan_id: p.plan_id,
                 interval,
+                amount_minor: p.amount_minor,
+                currency: p.currency,
             })
         })
         .collect();
@@ -94,6 +97,7 @@ async fn view(billing: &Billing, pool: &PgPool, sub: Subscription) -> Result<Bil
         plan_change_at: sub.plan_change_at,
         cancel_at: sub.cancel_at,
         current_period_end: sub.current_period_end,
+        interval: sub.interval,
         grace_until: sub.grace_until,
         portal_available: sub.customer_ref.is_some(),
         offers,

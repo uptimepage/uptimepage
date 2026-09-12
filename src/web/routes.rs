@@ -19,6 +19,7 @@ pub fn routes(state: AppState) -> Router {
     let cfg = &state.cfg;
     crate::web::filters::set_escalation_ui(cfg.escalation.enabled);
     crate::web::filters::set_support_ui(cfg.email.support_enabled());
+    crate::web::filters::set_billing_ui(state.billing.is_some());
     let mut r = Router::new()
         .route("/", get(views::dashboard::root))
         .route("/targets", get(views::targets_list::index))
@@ -251,6 +252,7 @@ pub fn routes(state: AppState) -> Router {
                 post(views::billing_hook::webhook),
             )
             .route("/pay", get(views::billing::pay_page))
+            .route("/settings/billing", get(views::billing::billing_page))
             .route(
                 "/settings/billing/payment-method",
                 get(views::billing::payment_method),

@@ -16,12 +16,7 @@ grace window (their monitoring is paused), which is why restoring one re-checks
 
 ## The seeded plans
 
-Four plans ship seeded: `free`, `founding` (a more generous
-free tier granted to early accounts and kept for life), `pro`, and `team`. Only
-`free` is listed; the others are assigned by signup, by billing, or by the
-self-host boot seed. On the hosted service `free` is sold as **Standard** and
-the rest carry their own names; see the
-[pricing page](https://uptimepage.dev/pricing).
+Four plans ship seeded: `free`, `founding` (a more generous free tier granted to early accounts and kept for life), `pro`, and `team`. `pro` and `team` are listed, which is what puts them on sale once a `plan_prices` row names their price; `free` and `founding` are assigned by signup or by the self-host boot seed. On the hosted service `free` is sold as **Standard** and the rest carry their own names; see the [pricing page](https://uptimepage.dev/pricing).
 
 | Quota | free | founding | pro | team | Meaning |
 |---|---|---|---|---|---|

@@ -99,6 +99,20 @@ mod static_refs {
     pub fn support_ui(_: &str, _: &dyn askama::Values) -> askama::Result<bool> {
         Ok(*SUPPORT_UI.get().unwrap_or(&false))
     }
+
+    static BILLING_UI: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+    /// Set once at startup from whether a payment provider is configured, so
+    /// a self-host install shows no billing entry.
+    pub fn set_billing_ui(enabled: bool) {
+        let _ = BILLING_UI.set(enabled);
+    }
+
+    /// `{% if ""|billing_ui %}` → whether the billing page is on.
+    #[askama::filter_fn]
+    pub fn billing_ui(_: &str, _: &dyn askama::Values) -> askama::Result<bool> {
+        Ok(*BILLING_UI.get().unwrap_or(&false))
+    }
 }
 
 /// Format raw values (timestamps, durations) by writing straight into the

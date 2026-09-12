@@ -16,7 +16,11 @@
 <a href="/settings/organizations" role="menuitem"
    class="monitors-popover__item"{% if active_tab == "organizations" %} aria-current="page"{% endif %}><svg class="mp-icon" aria-hidden="true"><use href="#i-building" /></svg>organizations</a>
 <a href="/settings/usage" role="menuitem"
-   class="monitors-popover__item"{% if active_tab == "usage" %} aria-current="page"{% endif %}><svg class="mp-icon" aria-hidden="true"><use href="#i-gauge" /></svg>usage &amp; billing</a>
+   class="monitors-popover__item"{% if active_tab == "usage" %} aria-current="page"{% endif %}><svg class="mp-icon" aria-hidden="true"><use href="#i-gauge" /></svg>usage</a>
+{% if ""|billing_ui %}
+<a href="/settings/billing" role="menuitem"
+   class="monitors-popover__item"{% if active_tab == "billing" %} aria-current="page"{% endif %}><svg class="mp-icon" aria-hidden="true"><use href="#i-card" /></svg>billing</a>
+{% endif %}
 <a href="/settings/api-tokens" role="menuitem"
    class="monitors-popover__item"{% if active_tab == "settings" %} aria-current="page"{% endif %}><svg class="mp-icon" aria-hidden="true"><use href="#i-key" /></svg>api tokens</a>
 <a href="/settings/account" role="menuitem"

@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% block title %}Billing · Uptimepage{% endblock %}
+{% block content %}
+<section class="space-y-6">
+  <form id="billing-form"
+        data-status="{{ status }}"
+        data-interval="{{ interval }}"
+        {% if let Some(i) = current_interval %}data-interval-current="{{ i }}"{% endif %}
+        {% if owner %}data-owner="1"{% endif %}
+        {% if confirming %}data-confirming="1"{% endif %}
+        {% if portal_available %}data-portal="1"{% endif %}
+        {% if let Some(p) = pending %}{% if p.is_cancel %}data-cancel-booked="1"{% else %}data-downgrade-booked="1"{% endif %}{% endif %}
+        novalidate
+        class="mx-auto w-full max-w-7xl">
+
+    <div class="form-grid grid grid-cols-1 gap-6 lg:grid-cols-[17rem_1fr] lg:items-start lg:gap-8 xl:grid-cols-[17rem_1fr_15rem]">
+
+    <aside class="type-rail lg:sticky lg:top-6">
+      <span class="form-legend">plans</span>
+      {% if yearly_on_sale %}
+      <div class="sm-rail sm-rail--fill mt-3" role="radiogroup" aria-label="Billing cadence" data-interval-rail>
+        <label class="sm-rail__seg">
+          <input type="radio" name="interval" value="month"{% if interval == "month" %} checked{% endif %} class="sr-only">monthly
+        </label>
+        <label class="sm-rail__seg">
+          <input type="radio" name="interval" value="year"{% if interval == "year" %} checked{% endif %} class="sr-only">yearly
+        </label>
+      </div>
+      {% endif %}
+      <div class="check-type-cards check-type-cards--rail mt-3" role="radiogroup" aria-label="Plan">
+        {% for c in cards %}
+        {% if owner && (c.for_sale || c.current) %}
+        <label class="check-type-card" data-plan-card data-plan-name="{{ c.name|lower }}"{% if c.current %} data-plan-current{% endif %}{% if c.price.month.is_some() || !c.for_sale %} data-plan-month{% endif %}{% if c.price.year.is_some() || !c.for_sale %} data-plan-year{% endif %}>
+          <input type="radio" name="plan" value="{{ c.id }}"{% if c.selected %} checked{% endif %} class="sr-only">
+          <span class="check-type-card__name">{{ c.name|lower }}</span>
+          <span class="check-type-card__desc">{% if let Some(m) = c.price.month %}<span class="price--month">{{ m }}</span>{% endif %}{% if let Some(y) = c.price.year %}<span class="price--year">{{ y }}</span>{% endif %}{% if c.price.month.is_none() %}<span class="price--month">not sold monthly</span>{% endif %}{% if c.price.year.is_none() && c.for_sale %}<span class="price--year">not sold yearly</span>{% endif %}</span>
+          <ul class="plan-card__lines">{% for l in c.lines %}<li>{{ l }}</li>{% endfor %}</ul>
+          {% if c.current %}<span class="card-corner-mark">current</span>{% endif %}
+        </label>
+        {% else %}
+        <span class="check-type-card check-type-card--static{% if c.current %} check-type-card--on{% endif %}"{% if c.current %} aria-current="true"{% endif %}>
+          <span class="check-type-card__name">{{ c.name|lower }}</span>
+          <span class="check-type-card__desc">{% if let Some(m) = c.price.month %}<span class="price--month">{{ m }}</span>{% endif %}{% if let Some(y) = c.price.year %}<span class="price--year">{{ y }}</span>{% endif %}{% if c.price.month.is_none() %}<span class="price--month">not sold monthly</span>{% endif %}{% if c.price.year.is_none() && c.for_sale %}<span class="price--year">not sold yearly</span>{% endif %}</span>
+          <ul class="plan-card__lines">{% for l in c.lines %}<li>{{ l }}</li>{% endfor %}</ul>
+          {% if c.current %}<span class="card-corner-mark">current</span>{% endif %}
+        </span>
+        {% endif %}
+        {% endfor %}
+      </div>
+      <p class="mt-2 font-mono text-xs text-quiet"># prices in USD{% if yearly_on_sale %} · <span class="price--year">a year up front</span><span class="price--month">billed monthly</span>{% else %}, billed monthly{% endif %}</p>
+    </aside>
+
+    <div class="space-y-6">
+      <header class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h1 class="page-title"><span class="page-title__prefix" aria-hidden="true">$</span>billing</h1>
+        <span class="usage-plan">plan:{{ plan_name|lower }}</span>
+        <span class="cli-brackets font-mono text-xs billing-status billing-status--{{ status }}" data-billing-status>{{ status }}</span>
+      </header>
+
+      {% if confirming %}
+      <p class="alert-card alert-card--muted text-sm" role="status" data-confirming-note>
+        payment received. waiting for the provider to confirm the subscription&hellip;
+      </p>
+      {% endif %}
+      <div data-billing-error class="alert-card alert-card--error hidden text-sm" role="alert"></div>
+
+      {% for p in pitches %}
+      <div class="sticker-card plan-pitch" data-pitch="{{ p.id }}"{% if !p.shown %} hidden{% endif %}>
+        <div class="plan-pitch__head">
+          <span class="plan-pitch__name">{{ p.name|lower }}</span>
+          <span class="plan-pitch__price cli-brackets">{% if let Some(m) = p.price.month %}<span class="price--month">{{ m }}</span>{% endif %}{% if let Some(y) = p.price.year %}<span class="price--year">{{ y }}</span>{% endif %}</span>
+          {% if let Some(sv) = p.price.saving %}<span class="plan-pitch__saving price--year">{{ sv }}</span>{% endif %}
+        </div>
+        <p class="plan-pitch__tag">{{ p.tagline }}</p>
+        {% if !p.gains.is_empty() %}
+        <p class="form-legend">you get</p>
+        <ul class="plan-pitch__list plan-pitch__list--up">{% for g in p.gains %}<li>{{ g }}</li>{% endfor %}</ul>
+        {% endif %}
+        {% if !p.losses.is_empty() %}
+        <p class="form-legend">you give up</p>
+        <ul class="plan-pitch__list plan-pitch__list--down">{% for l in p.losses %}<li>{{ l }}</li>{% endfor %}</ul>
+        {% endif %}
+      </div>
+      {% endfor %}
+
+      <div class="sticker-card overflow-hidden">
+        <header class="card-band">
+          <h2 class="panel-label">compare</h2>
+        </header>
+        <div class="overflow-x-auto">
+        <table class="plan-cmp w-full text-left text-sm">
+          <thead class="table-head bg-[color:var(--theme-surface-sunk)]">
+            <tr>
+              <th scope="col" class="px-4 py-2"><span class="sr-only">quota</span></th>
+              {% for c in cards %}
+              <th scope="col" class="px-4 py-2" data-cmp-col="{{ c.id }}"{% if c.current %} data-cmp-current{% endif %}>
+                <span class="plan-cmp__name">{{ c.name|lower }}</span>
+                {% if c.current %}<span class="plan-cmp__mark">current</span>{% endif %}
+                <span class="plan-cmp__price">{% if let Some(m) = c.price.month %}<span class="price--month">{{ m }}</span>{% endif %}{% if let Some(y) = c.price.year %}<span class="price--year">{{ y }}</span>{% endif %}</span>
+              </th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[color:var(--theme-line)]">
+            {% for r in rows %}
+            <tr>
+              <th scope="row" class="px-4 py-1.5 font-mono text-xs font-normal text-muted">{{ r.label }}</th>
+              {% for cell in r.cells %}
+              <td class="px-4 py-1.5 font-mono tabular-nums{% if cell.delta != "" %} plan-cmp__cell--{{ cell.delta }}{% endif %}" data-cmp-col="{{ cards[loop.index0].id }}">{{ cell.text }}</td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+      </div>
+
+      <div class="sticker-card overflow-hidden">
+        <header class="card-band">
+          <h2 class="panel-label">subscription</h2>
+        </header>
+        <dl class="px-5 py-3 text-sm">
+          <div class="usage-def"><dt>plan</dt><dd>{{ plan_name|lower }}</dd></div>
+          <div class="usage-def"><dt>status</dt><dd>{{ status }}</dd></div>
+          {% if let Some(i) = current_interval %}
+          <div class="usage-def"><dt>billed</dt><dd>{{ i }}ly</dd></div>
+          {% endif %}
+          {% if let Some(ts) = period_end %}
+          <div class="usage-def"><dt>{% if let Some(p) = pending %}{% if p.is_cancel %}paid-until{% else %}renews{% endif %}{% else %}renews{% endif %}</dt><dd><time datetime="{{ ts|iso_ts }}" data-tz="exact">{{ ts|human_ts }}</time></dd></div>
+          {% endif %}
+          {% if let Some(p) = pending %}
+          <div class="usage-def"><dt>{% if p.is_cancel %}then{% else %}moves-to{% endif %}</dt><dd>{{ p.plan_name|lower }} · <time datetime="{{ p.at|iso_ts }}" data-tz="exact">{{ p.at|human_ts }}</time></dd></div>
+          {% endif %}
+          {% if let Some(ts) = grace_until %}
+          <div class="usage-def"><dt>pay-by</dt><dd><time datetime="{{ ts|iso_ts }}" data-tz="exact">{{ ts|human_ts }}</time></dd></div>
+          {% endif %}
+          <div class="usage-def"><dt>invoices</dt><dd>{% if portal_available %}in the provider portal{% else %}none yet{% endif %}</dd></div>
+        </dl>
+      </div>
+
+      <div class="sticker-card space-y-1 p-4 font-mono text-xs leading-relaxed text-muted">
+        <p class="text-quiet"># billing --help</p>
+        <p># up ......... a bigger plan applies at once, prorated by the provider</p>
+        <p># down ....... a smaller plan waits for the paid period to end</p>
+        <p># cancel ..... paid service runs to the period end, then the account lands on its free plan</p>
+        <p># held ....... whatever a smaller plan does not cover is held, never deleted</p>
+        <p># card ....... invoices, receipts and the card live in the provider portal</p>
+        <p># usage ...... <a class="underline decoration-dotted hover:text-body" href="/settings/usage">what the plan is holding</a></p>
+      </div>
+    </div>
+
+    <aside class="action-rail lg:col-span-2 xl:col-span-1 xl:sticky xl:top-6">
+      <div class="flex flex-wrap items-center gap-3 xl:flex-col xl:items-stretch">
+        {% if owner %}
+        <button type="button" data-act="checkout" hidden
+                class="sticker-btn sticker-btn--primary px-4 py-2 text-sm font-medium motion-safe:hover:-translate-y-0.5">checkout</button>
+        <button type="button" data-act="change" hidden
+                class="sticker-btn sticker-btn--primary px-4 py-2 text-sm font-medium motion-safe:hover:-translate-y-0.5">move plan</button>
+        <a href="/settings/billing/payment-method" data-act="card" hidden
+           class="sticker-btn sticker-btn--highlight px-4 py-2 text-center text-sm font-medium">update card</a>
+        <button type="button" data-act="revoke" hidden
+                class="sticker-btn sticker-btn--accent px-4 py-2 text-sm font-medium">keep my plan</button>
+        <button type="button" data-act="portal" hidden
+                class="sticker-btn sticker-btn--accent px-4 py-2 text-sm font-medium inline-flex items-center justify-center gap-1.5"><span aria-hidden="true">↗</span> invoices &amp; card</button>
+        <button type="button" data-act="cancel" hidden
+                class="btn-ghost px-4 py-2 text-center text-sm">cancel at period end</button>
+        <span data-act-msg class="font-mono text-xs text-quiet xl:text-center" role="status"></span>
+        {% else %}
+        <p class="font-mono text-xs text-quiet"># only the account owner can change the plan</p>
+        {% endif %}
+        <a href="/settings/usage" class="btn-ghost px-4 py-2 text-center text-sm">usage</a>
+      </div>
+    </aside>
+    </div>
+  </form>
+</section>
+{% if owner || confirming %}
+<script defer src="{{ "js/ui/api_form.js"|asset }}"></script>
+<script defer src="{{ "js/ui/billing_page.js"|asset }}"></script>
+{% endif %}
+{% endblock %}

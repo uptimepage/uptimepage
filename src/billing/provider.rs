@@ -12,23 +12,8 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::domain::AccountId;
+pub use crate::domain::Interval;
 use crate::error::Result;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Interval {
-    Month,
-    Year,
-}
-
-impl Interval {
-    pub fn as_db_str(self) -> &'static str {
-        match self {
-            Interval::Month => "month",
-            Interval::Year => "year",
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
