@@ -10,7 +10,7 @@ use hmac::{Hmac, KeyInit, Mac};
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Bytes;
 use hyper::header::{AUTHORIZATION, CONTENT_TYPE};
-use hyper::{Method, Request};
+use hyper::{Method, Request, StatusCode};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -164,17 +164,7 @@ impl PaddleProvider {
         let detail = parsed["error"]["detail"]
             .as_str()
             .unwrap_or("no detail given");
-        let refused = match status.as_u16() {
-            404 => AppError::not_found(codes::SUBSCRIPTION_NOT_FOUND, detail.to_owned()),
-            // Rate limited is a "later", not a "no".
-            429 => return Err(unreachable(path, format!("{status} {code}: {detail}"))),
-            400..=499 => {
-                AppError::conflict(codes::BILLING_PROVIDER_REFUSED, format!("{code}: {detail}"))
-            }
-            _ => return Err(unreachable(path, format!("{status} {code}: {detail}"))),
-        };
-        tracing::warn!(%status, code, detail, path, "paddle refused the call");
-        Err(refused)
+        Err(answer_for(status, path, code, detail))
     }
 
     async fn subscription_call(
@@ -488,6 +478,25 @@ impl BillingProvider for PaddleProvider {
     }
 }
 
+/// What a failed status means to the caller. Only a subscription's own path
+/// says the subscription is gone; a 404 anywhere else (an archived customer's
+/// portal) is a refusal like any other 4xx. Rate limited is a "later", not a
+/// "no".
+fn answer_for(status: StatusCode, path: &str, code: &str, detail: &str) -> AppError {
+    let refused = match status.as_u16() {
+        404 if path.starts_with("/subscriptions/") => {
+            AppError::not_found(codes::SUBSCRIPTION_NOT_FOUND, detail.to_owned())
+        }
+        429 => return unreachable(path, format!("{status} {code}: {detail}")),
+        400..=499 => {
+            AppError::conflict(codes::BILLING_PROVIDER_REFUSED, format!("{code}: {detail}"))
+        }
+        _ => return unreachable(path, format!("{status} {code}: {detail}")),
+    };
+    tracing::warn!(%status, code, detail, path, "paddle refused the call");
+    refused
+}
+
 /// Logged in full, answered as something to retry: the caller can do
 /// nothing about the provider's silence but wait.
 fn unreachable(path: &str, why: impl std::fmt::Display) -> AppError {
@@ -701,6 +710,43 @@ mod tests {
         assert_eq!(other.kind, EventKind::Other);
         assert_eq!(other.account, None, "noise binds nobody, tagged or not");
         assert_eq!(other.subscription_ref, None);
+    }
+
+    #[test]
+    fn only_a_subscriptions_own_path_says_it_is_gone() {
+        let gone = |path: &str| {
+            matches!(
+                answer_for(StatusCode::NOT_FOUND, path, "entity_not_found", "no"),
+                AppError::NotFound { code, .. } if code == codes::SUBSCRIPTION_NOT_FOUND
+            )
+        };
+        assert!(gone("/subscriptions/sub_01"));
+        assert!(gone("/subscriptions/sub_01/cancel"));
+        let portal = answer_for(
+            StatusCode::NOT_FOUND,
+            "/customers/ctm_01/portal-sessions",
+            "entity_not_found",
+            "no",
+        );
+        assert!(
+            matches!(portal, AppError::Conflict { code, .. } if code == codes::BILLING_PROVIDER_REFUSED),
+            "{portal:?}"
+        );
+        let later = answer_for(
+            StatusCode::TOO_MANY_REQUESTS,
+            "/subscriptions/sub_01",
+            "x",
+            "y",
+        );
+        assert!(
+            matches!(later, AppError::ServiceUnavailable { .. }),
+            "{later:?}"
+        );
+        let down = answer_for(StatusCode::BAD_GATEWAY, "/transactions", "x", "y");
+        assert!(
+            matches!(down, AppError::ServiceUnavailable { .. }),
+            "{down:?}"
+        );
     }
 
     #[test]
