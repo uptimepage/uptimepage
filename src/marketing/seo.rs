@@ -90,7 +90,7 @@ const LLMS_FACTS: &[(&str, &str)] = &[
     ),
     (
         "Pricing",
-        "Standard is free with no card. Founding is free for the first 1,000 accounts and kept for life. Pro is $9/month and Team is $19/month, both coming soon. Self-host is free under AGPL.",
+        "Standard is free with no card. Founding is free for the first 1,000 accounts and kept for life. Pro is $9/month or $90/year and Team is $19/month or $190/year; a downgrade or cancel takes effect at the end of the paid period. Self-host is free under AGPL.",
     ),
     (
         "Plan limits",
