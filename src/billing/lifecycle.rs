@@ -320,8 +320,7 @@ impl Billing {
                     _ => sub.status = BillingStatus::Active,
                 }
                 let price = self.plan_for(tx, &snap).await?;
-                self.settle_plan(tx, sub, &price.plan_id, &snap, now, fx)
-                    .await?;
+                self.settle_plan(tx, sub, &price, &snap, now, fx).await?;
                 // A booked move reports its price ahead of time; the cadence
                 // shown is the one being paid until it lands.
                 if sub.plan_id == price.plan_id {
@@ -388,6 +387,8 @@ impl Billing {
         {
             self.move_now(tx, sub, &pending, "scheduled change", Actor::System, fx)
                 .await?;
+            // The provider has billed this cadence since the move was booked.
+            sub.interval = sub.pending_interval.or(sub.interval);
             sub.clear_pending();
             fx.mails.push(Mail::Landed {
                 plan_name: plan_name(&mut **tx, &pending).await?,
@@ -429,11 +430,12 @@ impl Billing {
         &self,
         tx: &mut Transaction<'_, Postgres>,
         sub: &mut Subscription,
-        target: &str,
+        price: &store::PlanPrice,
         snap: &SubscriptionSnapshot,
         now: DateTime<Utc>,
         fx: &mut Effects,
     ) -> Result<()> {
+        let target = price.plan_id.as_str();
         if let Some(at) = snap.cancel_at {
             // A booked move cannot outlive the subscription; the provider
             // reports the price again should the cancel be withdrawn.
@@ -482,8 +484,20 @@ impl Billing {
                 self.move_now(tx, sub, target, "scheduled change", self.actor(), fx)
                     .await?;
                 sub.clear_pending();
+                fx.mails.push(Mail::Landed {
+                    plan_name: plan_name(&mut **tx, target).await?,
+                    after_grace: false,
+                });
             }
-            (true, _) => {}
+            // The same move at the other cadence.
+            (true, Some(at)) => {
+                let cadence = Interval::parse(&price.interval);
+                if sub.pending_interval != cadence {
+                    sub.pending_interval = cadence;
+                    record_booked(tx, sub.account, price, at).await?;
+                }
+            }
+            (true, None) => {}
             _ => match snap.period_end {
                 // No boundary to defer to (a snapshot without a billing period,
                 // e.g. a trialing or paused subscription): keep the plan the
@@ -496,7 +510,7 @@ impl Billing {
                     sub.clear_pending();
                 }
                 Some(at) => {
-                    self.schedule_downgrade(tx, sub, target, at, fx).await?;
+                    self.schedule_downgrade(tx, sub, price, at, fx).await?;
                 }
             },
         }
@@ -507,23 +521,19 @@ impl Billing {
         &self,
         tx: &mut Transaction<'_, Postgres>,
         sub: &mut Subscription,
-        target: &str,
+        price: &store::PlanPrice,
         at: DateTime<Utc>,
         fx: &mut Effects,
     ) -> Result<()> {
+        let target = price.plan_id.as_str();
         sub.pending_plan_id = Some(target.to_owned());
         sub.plan_change_at = Some(at);
+        sub.pending_interval = Interval::parse(&price.interval);
         let brief = store::plan_brief(&mut **tx, target)
             .await?
             .ok_or_else(|| AppError::Other(anyhow::anyhow!("plan {target:?} vanished")))?;
         let counts = pooled_counts(tx, sub.account).await?;
-        ledger::record_tx(
-            tx,
-            sub.account,
-            ledger::DOWNGRADE_SCHEDULED,
-            json!({ "to": target, "at": at }),
-        )
-        .await?;
+        record_booked(tx, sub.account, price, at).await?;
         fx.mail(EmailTemplate::DowngradeScheduled {
             over_monitors: counts.monitors_over(&brief),
             over_pages: (counts.status_pages - i64::from(brief.max_status_pages)).max(0),
@@ -897,6 +907,21 @@ fn reminder_due(grace_until: DateTime<Utc>, now: DateTime<Utc>, sent: i16) -> Op
     (due > sent).then_some(due)
 }
 
+async fn record_booked(
+    tx: &mut Transaction<'_, Postgres>,
+    account: AccountId,
+    price: &store::PlanPrice,
+    at: DateTime<Utc>,
+) -> Result<()> {
+    ledger::record_tx(
+        tx,
+        account,
+        ledger::DOWNGRADE_SCHEDULED,
+        json!({ "to": price.plan_id, "at": at, "interval": price.interval }),
+    )
+    .await
+}
+
 /// A subscription already bound answers to its account whatever the event
 /// says; the account the event names only claims a subscription nobody holds.
 async fn resolve_account<'e, E: PgExecutor<'e>>(
@@ -1020,6 +1045,7 @@ mod tests {
             status,
             pending_plan_id: None,
             plan_change_at: None,
+            pending_interval: None,
             cancel_at: None,
             current_period_end: None,
             grace_until: None,

@@ -75,6 +75,8 @@ pub struct Subscription {
     pub status: BillingStatus,
     pub pending_plan_id: Option<String>,
     pub plan_change_at: Option<DateTime<Utc>>,
+    /// The cadence the booked move lands on.
+    pub pending_interval: Option<Interval>,
     /// A cancel booked with the provider: paid service ends here and the
     /// account lands on its fallback.
     pub cancel_at: Option<DateTime<Utc>>,
@@ -101,6 +103,7 @@ impl Subscription {
     pub fn clear_pending(&mut self) {
         self.pending_plan_id = None;
         self.plan_change_at = None;
+        self.pending_interval = None;
     }
 
     pub fn clear_grace(&mut self) {

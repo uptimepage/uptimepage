@@ -12,7 +12,7 @@ use crate::error::{AppError, Result};
 const COLUMNS: &str = "id, owner_user_id, plan_id, fallback_plan_id, subscription_status, \
      pending_plan_id, plan_change_at, current_period_end, grace_until, dunning_stage, \
      billing_provider, provider_customer_ref, provider_subscription_ref, billing_interval, \
-     subscription_synced_at, payment_synced_at, cancel_at";
+     subscription_synced_at, payment_synced_at, cancel_at, pending_interval";
 
 #[derive(sqlx::FromRow)]
 struct Row {
@@ -31,6 +31,7 @@ struct Row {
     provider_customer_ref: Option<String>,
     provider_subscription_ref: Option<String>,
     billing_interval: Option<String>,
+    pending_interval: Option<String>,
     subscription_synced_at: Option<DateTime<Utc>>,
     payment_synced_at: Option<DateTime<Utc>>,
 }
@@ -54,6 +55,7 @@ impl TryFrom<Row> for Subscription {
             status,
             pending_plan_id: r.pending_plan_id,
             plan_change_at: r.plan_change_at,
+            pending_interval: r.pending_interval.as_deref().and_then(Interval::parse),
             cancel_at: r.cancel_at,
             current_period_end: r.current_period_end,
             grace_until: r.grace_until,
@@ -122,7 +124,7 @@ pub async fn write(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, s: &Subscript
          current_period_end = $5, grace_until = $6, dunning_stage = $7, billing_provider = $8, \
          provider_customer_ref = $9, provider_subscription_ref = $10, \
          subscription_synced_at = $11, billing_interval = $12, payment_synced_at = $13, \
-         cancel_at = $14, updated_at = now() \
+         cancel_at = $14, pending_interval = $15, updated_at = now() \
          WHERE id = $1",
     )
     .bind(s.account.0)
@@ -139,6 +141,7 @@ pub async fn write(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, s: &Subscript
     .bind(s.interval.map(Interval::as_db_str))
     .bind(s.payment_synced_at)
     .bind(s.cancel_at)
+    .bind(s.pending_interval.map(Interval::as_db_str))
     .execute(&mut **tx)
     .await
     .context("subscriptions::write")?;

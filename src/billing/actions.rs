@@ -111,6 +111,20 @@ impl Billing {
                 "a cancel is booked; withdraw it before changing the plan",
             ));
         }
+        if sub.pending_plan_id.is_none() && plan_id == sub.plan_id && sub.interval == Some(interval)
+        {
+            return Err(AppError::conflict(
+                codes::SUBSCRIPTION_STATE,
+                "already on that plan at that cadence",
+            ));
+        }
+        if sub.pending_plan_id.as_deref() == Some(plan_id) && sub.pending_interval == Some(interval)
+        {
+            return Err(AppError::conflict(
+                codes::SUBSCRIPTION_STATE,
+                "that move is already booked",
+            ));
+        }
         let price_ref = self.price_for(pool, plan_id, interval).await?;
         let mut conn = pool
             .acquire()

@@ -7,6 +7,9 @@ ALTER TABLE plan_prices
 UPDATE plans SET is_listed = true, updated_at = now() WHERE id IN ('pro', 'team');
 
 -- The cadence a live subscription bills on, from the price it resolved
--- through, so the billing page can offer the other one.
+-- through, so the billing page can offer the other one; and the cadence a
+-- booked move lands on, which the provider already bills but the account
+-- does not show until the move lands.
 ALTER TABLE accounts
-    ADD COLUMN billing_interval TEXT CHECK (billing_interval IN ('month', 'year'));
+    ADD COLUMN billing_interval TEXT CHECK (billing_interval IN ('month', 'year')),
+    ADD COLUMN pending_interval TEXT CHECK (pending_interval IN ('month', 'year'));

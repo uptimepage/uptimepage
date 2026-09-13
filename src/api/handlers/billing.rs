@@ -59,14 +59,17 @@ pub struct BillingView {
     pub plan_id: String,
     /// Where the account lands when paid service ends.
     pub fallback_plan_id: Option<String>,
-    /// A booked move, applied at `plan_change_at`.
+    /// A booked move, applied at `plan_change_at`, billing on
+    /// `pending_interval` from then.
     pub pending_plan_id: Option<String>,
     pub plan_change_at: Option<DateTime<Utc>>,
+    pub pending_interval: Option<Interval>,
     /// A booked cancel: paid service ends here and `fallback_plan_id` takes
     /// over.
     pub cancel_at: Option<DateTime<Utc>>,
     pub current_period_end: Option<DateTime<Utc>>,
-    /// How the live subscription bills; absent without one.
+    /// How the live subscription bills until a booked move lands; absent
+    /// without one.
     pub interval: Option<Interval>,
     /// Set while a failed payment is being retried; full service until then.
     pub grace_until: Option<DateTime<Utc>>,
@@ -95,6 +98,7 @@ async fn view(billing: &Billing, pool: &PgPool, sub: Subscription) -> Result<Bil
         fallback_plan_id: sub.fallback_plan_id,
         pending_plan_id: sub.pending_plan_id,
         plan_change_at: sub.plan_change_at,
+        pending_interval: sub.pending_interval,
         cancel_at: sub.cancel_at,
         current_period_end: sub.current_period_end,
         interval: sub.interval,
@@ -192,7 +196,7 @@ pub async fn portal(
     request_body = PlanChoice,
     responses(
         (status = 200, body = BillingView),
-        (status = 409, body = ApiError, description = "no active subscription, or the provider declined"),
+        (status = 409, body = ApiError, description = "no active subscription, nothing to change, a cancel booked, or the provider declined"),
         (status = 422, body = ApiError),
         (status = 503, body = ApiError, description = "the provider gave no answer; retry later"),
     ),

@@ -364,6 +364,7 @@ async fn a_smaller_plan_waits_for_the_period_end_and_the_sweep_then_holds_the_ex
     assert_eq!(s.plan_id, "team", "keeps what was paid for");
     assert_eq!(s.pending_plan_id.as_deref(), Some("pro"));
     assert_eq!(s.plan_change_at, period_end);
+    assert_eq!(s.pending_interval, Some(Interval::Year));
     assert_eq!(
         s.interval,
         Some(Interval::Month),
@@ -405,6 +406,12 @@ async fn a_smaller_plan_waits_for_the_period_end_and_the_sweep_then_holds_the_ex
     let s = row(&h.pool, account).await;
     assert_eq!(s.plan_id, "pro");
     assert_eq!(s.pending_plan_id, None);
+    assert_eq!(s.pending_interval, None);
+    assert_eq!(
+        s.interval,
+        Some(Interval::Year),
+        "landed on the cadence the move was booked at"
+    );
     assert_eq!(s.status, BillingStatus::Active);
     assert_eq!(held_count(&h.pool, org).await, 2);
     assert_eq!(
@@ -431,6 +438,53 @@ async fn a_smaller_plan_waits_for_the_period_end_and_the_sweep_then_holds_the_ex
         other => panic!("{other:?}"),
     }
     h.finish().await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn a_booked_move_landed_by_the_providers_renewal_mails_what_was_held() {
+    let Some(h) = harness().await else { return };
+    let (account, org, _) = account(&h.pool, "founding", 52).await;
+    let sub = sub_ref();
+    activate(&h, account, &sub, TEAM_MONTH).await;
+    let down = snapshot(&sub, SubscriptionStatus::Active, PRO_YEAR, Utc::now());
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::Subscription(down)),
+        )
+        .await
+        .expect("book");
+    sqlx::query("UPDATE accounts SET plan_change_at = now() - interval '1 second' WHERE id = $1")
+        .bind(account.0)
+        .execute(&h.pool)
+        .await
+        .expect("age the change");
+
+    let renewal = snapshot(&sub, SubscriptionStatus::Active, PRO_YEAR, Utc::now());
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::Subscription(renewal)),
+        )
+        .await
+        .expect("renewal");
+    let s = row(&h.pool, account).await;
+    assert_eq!(s.plan_id, "pro");
+    assert_eq!(s.pending_plan_id, None);
+    assert_eq!(s.interval, Some(Interval::Year));
+    assert_eq!(held_count(&h.pool, org).await, 2);
+    assert_eq!(
+        subjects(&h.mail),
+        vec!["downgrade_scheduled", "downgrade_applied"],
+        "whichever lands it, the mail names what was held"
+    );
+    match &h.mail.sent()[1].template {
+        EmailTemplate::DowngradeApplied { held_monitors, .. } => assert_eq!(*held_monitors, 2),
+        other => panic!("{other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -1947,6 +2001,20 @@ async fn the_owner_buys_moves_up_moves_down_and_cancels_through_the_api() {
             .any(|c| *c == format!("change:{sub}:pri_team_month:Now"))
     );
 
+    let calls_before = fake.calls.lock().unwrap().len();
+    let resp = app
+        .clone()
+        .oneshot(api(
+            "PUT",
+            "/api/v1/account/billing/plan",
+            Some(json!({ "plan_id": "team", "interval": "month" })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT, "nothing to change");
+    assert_eq!(body_json(resp).await["error"]["code"], "SUBSCRIPTION_STATE");
+    assert_eq!(fake.calls.lock().unwrap().len(), calls_before);
+
     let resp = app
         .clone()
         .oneshot(api(
@@ -1960,12 +2028,68 @@ async fn the_owner_buys_moves_up_moves_down_and_cancels_through_the_api() {
     let view = body_json(resp).await;
     assert_eq!(view["plan_id"], "team", "a downgrade waits");
     assert_eq!(view["pending_plan_id"], "pro");
+    assert_eq!(view["pending_interval"], "month");
     assert!(
         fake.calls
             .lock()
             .unwrap()
             .iter()
             .any(|c| *c == format!("change:{sub}:pri_pro_month:NextPeriod"))
+    );
+
+    let calls_before = fake.calls.lock().unwrap().len();
+    let resp = app
+        .clone()
+        .oneshot(api(
+            "PUT",
+            "/api/v1/account/billing/plan",
+            Some(json!({ "plan_id": "pro", "interval": "month" })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT, "that move is booked");
+    assert_eq!(body_json(resp).await["error"]["code"], "SUBSCRIPTION_STATE");
+    assert_eq!(fake.calls.lock().unwrap().len(), calls_before);
+    let resp = app
+        .clone()
+        .oneshot(api(
+            "PUT",
+            "/api/v1/account/billing/plan",
+            Some(json!({ "plan_id": "pro", "interval": "year" })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "the same move, yearly");
+    let view = body_json(resp).await;
+    assert_eq!(view["pending_plan_id"], "pro");
+    assert_eq!(view["pending_interval"], "year");
+    assert_eq!(view["interval"], "month", "still paying monthly");
+    assert_eq!(
+        ledger_kinds(&pool, account)
+            .await
+            .iter()
+            .filter(|k| *k == "downgrade_scheduled")
+            .count(),
+        2,
+        "the switch of cadence is on the ledger"
+    );
+    assert_eq!(
+        fake.calls.lock().unwrap().last().unwrap(),
+        &format!("change:{sub}:pri_pro_year:NextPeriod")
+    );
+    let resp = app
+        .clone()
+        .oneshot(api(
+            "PUT",
+            "/api/v1/account/billing/plan",
+            Some(json!({ "plan_id": "pro", "interval": "year" })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::CONFLICT,
+        "booked at that cadence now"
     );
 
     let resp = app
