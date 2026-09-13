@@ -26,6 +26,8 @@
     function busy(on) {
         form.querySelectorAll("[data-act]").forEach(b => { b.disabled = on; });
         if (msg) msg.textContent = on ? "talking to the provider…" : "";
+        // Enabling every button again would undo what layout() decided.
+        if (!on) layout();
     }
 
     async function call(method, path, body) {
@@ -99,8 +101,13 @@
         const otherPlan = pick && pick.id !== currentId;
         const otherCadence = pick && !otherPlan && currentInterval && interval() !== currentInterval;
         const other = otherPlan || otherCadence;
+        const pendingPlan = form.dataset.pendingPlan || null;
         // The current plan again, while a move away is booked: undo the move.
-        const stay = pick && !other && form.dataset.downgradeBooked === "1";
+        const stay = pick && !other && pendingPlan !== null;
+        // The booked move itself: dead at the cadence it is booked on, a
+        // cadence switch at the other.
+        const rebook = otherPlan && pick.id === pendingPlan;
+        const booked = rebook && interval() === form.dataset.pendingInterval;
         spotlight(pick);
         const checkout = act("checkout");
         const change = act("change");
@@ -116,8 +123,10 @@
         }
         if (change) {
             change.hidden = !live;
-            change.disabled = !(other || stay) || form.dataset.cancelBooked === "1";
-            change.textContent = otherPlan ? `move to ${pick.name}`
+            change.disabled = !(other || stay) || booked || form.dataset.cancelBooked === "1";
+            change.textContent = booked ? `${pick.name} is booked`
+                : rebook ? `bill the booked ${pick.name} ${interval()}ly`
+                : otherPlan ? `move to ${pick.name}`
                 : otherCadence ? `switch to ${interval()}ly billing`
                 : stay ? `keep ${pick.name}`
                 : "move plan";

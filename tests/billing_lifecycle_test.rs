@@ -2946,8 +2946,28 @@ async fn the_billing_page_tells_a_booked_move_from_a_booked_cancel() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let html = body_text(app.clone().oneshot(page()).await.unwrap()).await;
-    assert!(html.contains(r#"data-downgrade-booked="1""#), "{html}");
+    assert!(
+        html.contains(r#"data-pending-plan="pro" data-pending-interval="month""#),
+        "{html}"
+    );
     assert!(!html.contains("data-cancel-booked"));
+    let resp = app
+        .clone()
+        .oneshot(api(
+            "PUT",
+            "/api/v1/account/billing/plan",
+            Some(json!({ "plan_id": "pro", "interval": "year" })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let html = body_text(app.clone().oneshot(page()).await.unwrap()).await;
+    assert!(
+        html.contains(r#"data-pending-plan="pro" data-pending-interval="year""#),
+        "{html}"
+    );
+    assert!(html.contains(r#"data-interval-current="month""#), "{html}");
+    assert!(html.contains("pro · yearly ·"), "{html}");
     assert!(html.contains("moves-to") && html.contains("renews"));
     let banner = body_text(app.clone().oneshot(nav()).await.unwrap()).await;
     assert!(
@@ -2963,7 +2983,7 @@ async fn the_billing_page_tells_a_booked_move_from_a_booked_cancel() {
     assert_eq!(resp.status(), StatusCode::OK);
     let html = body_text(app.clone().oneshot(page()).await.unwrap()).await;
     assert!(html.contains(r#"data-cancel-booked="1""#), "{html}");
-    assert!(!html.contains("data-downgrade-booked"));
+    assert!(!html.contains("data-pending-plan"));
     assert!(html.contains("paid-until") && html.contains("then"));
     let banner = body_text(app.oneshot(nav()).await.unwrap()).await;
     assert!(

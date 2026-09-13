@@ -75,10 +75,15 @@ pub struct Pitch {
     pub shown: bool,
 }
 
+/// Where the account is headed: the booked move's target, or the fallback
+/// under a booked cancel.
 pub struct PendingView {
+    pub plan_id: String,
     pub plan_name: String,
     pub at: DateTime<Utc>,
     pub is_cancel: bool,
+    /// The cadence a booked move lands on; a cancel has none.
+    pub interval: Option<&'static str>,
 }
 
 #[derive(Template, WebTemplate)]
@@ -197,22 +202,29 @@ async fn pending_view(
     pool: &sqlx::PgPool,
     sub: &Subscription,
 ) -> crate::error::Result<Option<PendingView>> {
-    let (plan_id, at, is_cancel) = match (
+    let (plan_id, at, is_cancel, interval) = match (
         sub.cancel_at,
         sub.pending_plan_id.as_deref(),
         sub.plan_change_at,
     ) {
-        (Some(at), _, _) => (sub.landing_plan(), at, true),
-        (None, Some(plan_id), Some(at)) => (plan_id, at, false),
+        (Some(at), _, _) => (sub.landing_plan(), at, true, None),
+        (None, Some(plan_id), Some(at)) => (
+            plan_id,
+            at,
+            false,
+            sub.pending_interval.map(Interval::as_db_str),
+        ),
         _ => return Ok(None),
     };
     let plan_name = subscriptions::plan_brief(pool, plan_id)
         .await?
         .map_or_else(|| plan_id.to_owned(), |p| p.name);
     Ok(Some(PendingView {
+        plan_id: plan_id.to_owned(),
         plan_name,
         at,
         is_cancel,
+        interval,
     }))
 }
 
