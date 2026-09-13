@@ -405,12 +405,15 @@ app.{$UPTIMEPAGE_DOMAIN} {
 	# ─── Security headers ───────────────────────────────────────────────
 	# The operator app is a private surface: keep it out of search indexes so
 	# its login and legal pages don't duplicate the marketing site.
+	# payment: Paddle.js probes ApplePaySession on /pay itself and opens the
+	# checkout in a buy.paddle.com iframe with allow="payment"; a blanket
+	# payment=() hides Apple Pay and Google Pay from the checkout.
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
-		Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+		Permissions-Policy `geolocation=(), microphone=(), camera=(), payment=(self "https://buy.paddle.com" "https://sandbox-buy.paddle.com")`
 		X-Robots-Tag "noindex"
 		-Server
 		-X-Powered-By
