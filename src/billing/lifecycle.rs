@@ -15,6 +15,10 @@
 //!   is dropped rather than rewinding the account.
 
 use std::sync::Arc;
+use std::time::Duration as StdDuration;
+
+use tokio::sync::Semaphore;
+use tokio_util::task::TaskTracker;
 
 use anyhow::Context;
 use chrono::{DateTime, Duration, Utc};
@@ -46,6 +50,27 @@ const SWEEP_BATCH: i64 = 500;
 pub struct Billing {
     pub provider: Arc<dyn BillingProvider>,
     pub mailer: Mailer,
+    /// The after-effects the receiver answered ahead of, so a shutdown can
+    /// wait for them and a burst of deliveries settles a few at a time.
+    settling: TaskTracker,
+    settle_slots: Arc<Semaphore>,
+}
+
+impl Billing {
+    pub fn new(provider: Arc<dyn BillingProvider>, mailer: Mailer) -> Self {
+        Self {
+            provider,
+            mailer,
+            settling: TaskTracker::new(),
+            settle_slots: Arc::new(Semaphore::new(SETTLE_SLOTS)),
+        }
+    }
+
+    /// Waits for every after-effect the receiver has answered ahead of.
+    pub async fn drain(&self) {
+        self.settling.close();
+        self.settling.wait().await;
+    }
 }
 
 /// What became of one delivery, for the receiver's log line.
@@ -64,6 +89,14 @@ pub enum Outcome {
     Unchanged,
 }
 
+/// The provider counts an answer later than five seconds as none, so a
+/// delivery gets this long to be committed; past it the delivery is refused
+/// and comes again, landing as a duplicate if the commit had gone through.
+pub const ACK_BUDGET: StdDuration = StdDuration::from_secs(3);
+/// After-effects settled at once, so a replayed batch of deliveries does not
+/// hit the provider and the mailer with everything at the same time.
+const SETTLE_SLOTS: usize = 4;
+
 /// Side effects the transaction defers until it has committed.
 #[derive(Default)]
 struct Effects {
@@ -71,6 +104,12 @@ struct Effects {
     mails: Vec<Mail>,
     /// Left alone, each of these keeps charging.
     cancel_at_provider: Vec<String>,
+}
+
+impl Effects {
+    fn is_empty(&self) -> bool {
+        !self.plan_moved && self.mails.is_empty() && self.cancel_at_provider.is_empty()
+    }
 }
 
 enum Mail {
@@ -88,6 +127,12 @@ impl Effects {
     }
 }
 
+/// What a committed change leaves to do outside its transaction.
+struct Aftermath {
+    sub: Subscription,
+    fx: Effects,
+}
+
 enum Input {
     Event(Box<ProviderEvent>, Option<Box<SubscriptionSnapshot>>),
     Snapshot(Box<SubscriptionSnapshot>),
@@ -95,26 +140,71 @@ enum Input {
 }
 
 impl Billing {
-    /// Applies one verified delivery. The returned outcome is informational;
-    /// every `Ok` is an acknowledgement, and an `Err` asks the provider to
-    /// deliver again.
+    /// Applies one verified delivery and everything that follows from it.
+    /// The returned outcome is informational; every `Ok` is an
+    /// acknowledgement, and an `Err` asks the provider to deliver again.
     pub async fn apply_event(
         &self,
         pool: &PgPool,
         quotas: &QuotaService,
         event: ProviderEvent,
     ) -> Result<Outcome> {
+        let (outcome, after) = self.take_in(pool, event).await?;
+        if let Some(after) = after {
+            self.settle(pool, quotas, &after.sub, after.fx).await;
+        }
+        Ok(outcome)
+    }
+
+    /// The receiver's path: the delivery is acknowledged once its change is
+    /// committed, within [`ACK_BUDGET`], and what follows (the reconcile, the
+    /// mails, a cancel at the provider) runs on its own, since the provider
+    /// counts a slow answer as no answer and delivers again.
+    pub async fn receive(
+        self: &Arc<Self>,
+        pool: &PgPool,
+        quotas: &Arc<QuotaService>,
+        event: ProviderEvent,
+    ) -> Result<Outcome> {
+        let event_id = event.event_id.clone();
+        let Ok(taken) = tokio::time::timeout(ACK_BUDGET, self.take_in(pool, event)).await else {
+            tracing::warn!(
+                event_id,
+                "billing: delivery not committed within the budget"
+            );
+            return Err(AppError::service_unavailable(
+                crate::api::error::codes::BILLING_PROVIDER_UNREACHABLE,
+                "the delivery could not be committed in time",
+            ));
+        };
+        let (outcome, after) = taken?;
+        if let Some(after) = after {
+            let billing = Arc::clone(self);
+            let pool = pool.clone();
+            let quotas = Arc::clone(quotas);
+            self.settling.spawn(async move {
+                let _slot = billing.settle_slots.acquire().await;
+                billing.settle(&pool, &quotas, &after.sub, after.fx).await;
+            });
+        }
+        Ok(outcome)
+    }
+
+    async fn take_in(
+        &self,
+        pool: &PgPool,
+        event: ProviderEvent,
+    ) -> Result<(Outcome, Option<Aftermath>)> {
         let provider = self.provider.name();
         let Some(account) = resolve_account(pool, provider, &event).await? else {
             self.acknowledge_unmatched(pool, &event).await?;
-            return Ok(unowned(&event.kind));
+            return Ok((unowned(&event.kind), None));
         };
         // A first payment can land before the subscription event it belongs
         // to. The provider is asked once, before any lock is held.
         let fetched = self.fetch_for_paid(pool, account, &event).await?;
-        self.apply(
+        self.commit(
             pool,
-            quotas,
             account,
             Input::Event(Box::new(event), fetched.map(Box::new)),
         )
@@ -160,6 +250,19 @@ impl Billing {
         account: AccountId,
         input: Input,
     ) -> Result<Outcome> {
+        let (outcome, after) = self.commit(pool, account, input).await?;
+        if let Some(after) = after {
+            self.settle(pool, quotas, &after.sub, after.fx).await;
+        }
+        Ok(outcome)
+    }
+
+    async fn commit(
+        &self,
+        pool: &PgPool,
+        account: AccountId,
+        input: Input,
+    ) -> Result<(Outcome, Option<Aftermath>)> {
         let now = Utc::now();
         let mut tx = pool.begin().await.context("billing apply: begin")?;
         if let Input::Event(event, _) = &input
@@ -172,14 +275,15 @@ impl Billing {
             )
             .await?
         {
-            return Ok(Outcome::Duplicate);
+            return Ok((Outcome::Duplicate, None));
         }
         let Some(mut sub) = store::lock(&mut tx, account).await? else {
             tx.commit().await.context("billing apply: commit")?;
-            return Ok(match &input {
+            let outcome = match &input {
                 Input::Event(event, _) => unowned(&event.kind),
                 _ => Outcome::Unmatched,
-            });
+            };
+            return Ok((outcome, None));
         };
         let before = sub.clone();
         let mut fx = Effects::default();
@@ -207,8 +311,8 @@ impl Billing {
             store::write(&mut tx, &sub).await?;
         }
         tx.commit().await.context("billing apply: commit")?;
-        self.settle(pool, quotas, &sub, fx).await;
-        Ok(outcome)
+        let after = (!fx.is_empty()).then_some(Aftermath { sub, fx });
+        Ok((outcome, after))
     }
 
     async fn on_event(
@@ -757,8 +861,9 @@ impl Billing {
             tracing::warn!(account = %sub.account, error = %err, "billing: reconcile after plan move");
         }
         for subscription_ref in fx.cancel_at_provider {
-            // Detached so a webhook whose sender hung up mid-call still ends
-            // the subscription; awaited so the caller sees it done.
+            // Detached so an owner's request dropped mid-call (a plan change,
+            // a checkout) still ends the subscription; awaited so the caller
+            // sees it done. The receiver has already answered by now.
             let provider = Arc::clone(&self.provider);
             let account = sub.account;
             if let Err(err) = tokio::spawn(async move {

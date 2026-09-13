@@ -59,7 +59,7 @@ fn prime_event_counters() {
     for outcome in ["applied", "duplicate", "stale", "unmatched", "foreign"] {
         metrics::counter!(names::BILLING_WEBHOOKS, "outcome" => outcome).increment(0);
     }
-    for reason in ["signature", "malformed", "failed"] {
+    for reason in ["signature", "malformed", "failed", "stalled"] {
         metrics::counter!(names::BILLING_WEBHOOK_REJECTED, "reason" => reason).increment(0);
     }
     metrics::counter!(names::BILLING_PROVIDER_CANCEL_FAILED).increment(0);

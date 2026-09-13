@@ -10,7 +10,7 @@ default-run = "uptimepage"
 [dependencies]
 # Async runtime
 tokio = { version = "1.52", features = ["full"] }
-tokio-util = "0.7"
+tokio-util = { version = "0.7", features = ["rt"] }
 futures = "0.3"
 
 # Headless CDP client for browser-driven flow monitors (drives a Lightpanda

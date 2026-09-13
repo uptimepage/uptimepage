@@ -819,6 +819,7 @@ async fn main() -> Result<()> {
         .with_incident_ack_secret(incident_ack_secret)
         .with_billing_checkout_secret(billing_checkout_secret)
         .with_shutdown(root.clone());
+    let billing_for_drain = state.billing.clone();
     // Scheduled plan changes, grace expiries and payment reminders run on our
     // clock, not the provider's. From boot, since a deadline can pass while
     // the process is down.
@@ -1021,6 +1022,9 @@ async fn main() -> Result<()> {
         }
         if let Some(h) = billing_sweep_handle {
             let _ = h.await;
+        }
+        if let Some(billing) = billing_for_drain {
+            billing.drain().await;
         }
         if let Some(h) = abuse_reload_handle {
             let _ = h.await;

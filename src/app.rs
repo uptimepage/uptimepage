@@ -392,10 +392,10 @@ fn build_billing(
         checkout_secret.into(),
         outbound_http.clone(),
     );
-    Some(Arc::new(crate::billing::Billing {
-        provider: Arc::new(provider),
-        mailer: billing_mailer(cfg, email_sender),
-    }))
+    Some(Arc::new(crate::billing::Billing::new(
+        Arc::new(provider),
+        billing_mailer(cfg, email_sender),
+    )))
 }
 
 /// Run unconditionally at boot after config parse. Encodes the per-org
@@ -773,10 +773,10 @@ impl AppState {
         mut self,
         provider: Arc<dyn crate::billing::provider::BillingProvider>,
     ) -> Self {
-        self.billing = Some(Arc::new(crate::billing::Billing {
+        self.billing = Some(Arc::new(crate::billing::Billing::new(
             provider,
-            mailer: billing_mailer(&self.cfg, &self.email_sender),
-        }));
+            billing_mailer(&self.cfg, &self.email_sender),
+        )));
         self
     }
 

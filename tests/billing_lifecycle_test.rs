@@ -19,7 +19,7 @@ use common::{metric_value, metrics_handle};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
-use uptimepage::billing::lifecycle::{GRACE_DAYS, Outcome};
+use uptimepage::billing::lifecycle::{ACK_BUDGET, GRACE_DAYS, Outcome};
 use uptimepage::billing::mail::Mailer;
 use uptimepage::billing::provider::fake::{FakeProvider, SIGNATURE, SIGNATURE_HEADER};
 use uptimepage::billing::provider::{
@@ -82,9 +82,9 @@ async fn harness_on(pool: PgPool, own_db: Option<String>) -> Harness {
     seed_prices(&pool).await;
     let provider = Arc::new(FakeProvider::default());
     let mail = InMemoryEmailSender::new();
-    let billing = Billing {
-        provider: provider.clone(),
-        mailer: Mailer {
+    let billing = Billing::new(
+        provider.clone(),
+        Mailer {
             delivery: EmailDelivery {
                 sender: Arc::new(mail.clone()),
                 from_address: "no-reply@example.test".into(),
@@ -92,7 +92,7 @@ async fn harness_on(pool: PgPool, own_db: Option<String>) -> Harness {
             },
             public_base_url: "https://app.example.test".into(),
         },
-    };
+    );
     Harness {
         quotas: quotas(&pool),
         pool,
@@ -1788,6 +1788,9 @@ async fn an_operator_move_keeps_the_fallback_a_later_cancel_lands_on() {
 
 // The HTTP surface: the receiver and the owner's actions.
 
+/// The receiver answers before its after-effects run, so a test that posts
+/// a webhook asserts rows; provider calls and mails are asserted through the
+/// harness, whose `apply_event` waits for them.
 async fn app_with_fake(pool: &PgPool, fake: Arc<FakeProvider>) -> (axum::Router, OrgId) {
     build_test_app_with_pg_store_tweaked(
         pool.clone(),
@@ -1858,6 +1861,51 @@ async fn the_receiver_checks_the_signature_then_applies_and_acknowledges() {
         .unwrap();
     let resp = app.oneshot(other).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[ignore]
+async fn a_first_payment_whose_lookup_stalls_is_refused_within_the_providers_patience() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    seed_prices(&pool).await;
+    let fake = Arc::new(FakeProvider::default());
+    let (app, org) = app_with_fake(&pool, fake.clone()).await;
+    let account = owner_account(&pool, org).await;
+    let sub = sub_ref();
+    fake.subscriptions.lock().unwrap().insert(
+        sub.clone(),
+        snapshot(&sub, SubscriptionStatus::Active, TEAM_MONTH, Utc::now()),
+    );
+    let paid = event(account, &sub, EventKind::Paid);
+    let stalled = || {
+        metric_value(
+            &metrics_handle().render(),
+            r#"uptimepage_billing_webhook_rejected_total{reason="stalled"}"#,
+        )
+        .unwrap_or(0.0)
+    };
+    let before = stalled();
+
+    fake.fetch_stalls.store(true, Ordering::Relaxed);
+    let asked = std::time::Instant::now();
+    let resp = app.clone().oneshot(webhook(&paid, true)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(
+        asked.elapsed() < ACK_BUDGET + std::time::Duration::from_secs(1),
+        "answered in {:?}",
+        asked.elapsed()
+    );
+    assert_eq!(row(&pool, account).await.status, BillingStatus::None);
+    assert_eq!(stalled(), before + 1.0, "counted apart from a failure");
+
+    fake.fetch_stalls.store(false, Ordering::Relaxed);
+    let resp = app.clone().oneshot(webhook(&paid, true)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "the redelivery is taken");
+    let s = row(&pool, account).await;
+    assert_eq!(s.status, BillingStatus::Active);
+    assert_eq!(s.plan_id, "team");
 }
 
 async fn body_text(resp: axum::http::Response<Body>) -> String {

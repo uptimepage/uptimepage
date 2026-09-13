@@ -11,6 +11,7 @@ use chrono::Utc;
 use crate::app::AppState;
 use crate::billing::lifecycle::Outcome;
 use crate::billing::provider::WebhookRejected;
+use crate::error::AppError;
 use crate::observability::metrics::names;
 
 pub async fn webhook(
@@ -43,7 +44,7 @@ pub async fn webhook(
     };
     let event_id = event.event_id.clone();
     let event_type = event.event_type.clone();
-    match billing.apply_event(pool, &state.quotas, event).await {
+    match billing.receive(pool, &state.quotas, event).await {
         Ok(outcome) => {
             let label = match outcome {
                 Outcome::Applied => "applied",
@@ -62,6 +63,13 @@ pub async fn webhook(
             );
             metrics::counter!(names::BILLING_WEBHOOKS, "outcome" => label).increment(1);
             StatusCode::OK
+        }
+        // A stall heals itself on the provider's redelivery; only a failure
+        // to apply is worth waking anyone for.
+        Err(err @ AppError::ServiceUnavailable { .. }) => {
+            tracing::warn!(provider, event_id, event_type, error = %err, "billing webhook: not committed in time");
+            metrics::counter!(names::BILLING_WEBHOOK_REJECTED, "reason" => "stalled").increment(1);
+            StatusCode::SERVICE_UNAVAILABLE
         }
         Err(err) => {
             tracing::error!(provider, event_id, event_type, error = %err, "billing webhook: apply failed");

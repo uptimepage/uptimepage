@@ -184,6 +184,9 @@ pub mod fake {
         pub cancel_refused: AtomicBool,
         /// Answers every lookup as a timeout would.
         pub fetch_fails: AtomicBool,
+        /// Answers every lookup only after a stalled connection's worth of
+        /// waiting.
+        pub fetch_stalls: AtomicBool,
     }
 
     impl FakeProvider {
@@ -264,6 +267,9 @@ pub mod fake {
 
         async fn fetch_subscription(&self, subscription_ref: &str) -> Result<SubscriptionSnapshot> {
             self.note(format!("fetch:{subscription_ref}"));
+            if self.fetch_stalls.load(Ordering::Relaxed) {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
             if self.fetch_fails.load(Ordering::Relaxed) {
                 return Err(crate::error::AppError::service_unavailable(
                     crate::api::error::codes::BILLING_PROVIDER_UNREACHABLE,
