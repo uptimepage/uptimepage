@@ -24,6 +24,7 @@ use super::provider::{
     SubscriptionSnapshot, SubscriptionStatus, WebhookRejected,
 };
 use crate::api::error::codes;
+use crate::auth::mac::hmac_sha256_hex;
 use crate::domain::AccountId;
 use crate::error::{AppError, Result};
 use crate::http_outbound::{OutboundHttpClient, REQUEST_TIMEOUT};
@@ -36,6 +37,7 @@ pub const SIGNATURE_HEADER: &str = "paddle-signature";
 pub const TOLERANCE_SECS: i64 = 5 * 60;
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 const CUSTOM_DATA_ACCOUNT: &str = "account_id";
+const CUSTOM_DATA_TAG: &str = "account_sig";
 
 /// `ts=<unix>;h1=<hex>[;h1=<hex>]` over `"{ts}:{body}"`, HMAC-SHA256 keyed by
 /// the endpoint secret as given. More than one `h1` appears during secret
@@ -53,7 +55,11 @@ pub fn verify(secret: &str, header: &str, body: &[u8], now: i64) -> bool {
     let Some(ts) = ts else {
         return false;
     };
-    if (now - ts).abs() > TOLERANCE_SECS {
+    if now
+        .checked_sub(ts)
+        .and_then(i64::checked_abs)
+        .is_none_or(|drift| drift > TOLERANCE_SECS)
+    {
         return false;
     }
     let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(secret.as_bytes()) else {
@@ -95,6 +101,9 @@ impl Environment {
 pub struct PaddleProvider {
     api_key: SecretString,
     webhook_secret: SecretString,
+    /// Keys the account claim on a checkout. Ours and never rotated with the
+    /// endpoint secret, so a rotation strands no checkout in flight.
+    checkout_secret: SecretString,
     api_base: &'static str,
     http: OutboundHttpClient,
 }
@@ -104,11 +113,13 @@ impl PaddleProvider {
         environment: Environment,
         api_key: SecretString,
         webhook_secret: SecretString,
+        checkout_secret: SecretString,
         http: OutboundHttpClient,
     ) -> Self {
         Self {
             api_key,
             webhook_secret,
+            checkout_secret,
             api_base: environment.api_base(),
             http,
         }
@@ -188,14 +199,44 @@ struct Envelope {
     data: Value,
 }
 
+/// Paddle.js lets any visitor open a checkout carrying custom data of their
+/// choosing, so the account id travels with a tag only this server can make.
+/// It does not expire: a checkout link paid late must still land, and a
+/// subscription once bound answers to its account whatever the tag says.
+fn account_tag(secret: &str, account: AccountId) -> String {
+    hmac_sha256_hex(
+        secret.as_bytes(),
+        &[b"checkout-account:", account.0.as_bytes()],
+    )
+}
+
+fn account_tag_verifies(secret: &str, account: AccountId, tag: &str) -> bool {
+    let expected = account_tag(secret, account);
+    bool::from(tag.as_bytes().ct_eq(expected.as_bytes()))
+}
+
 /// The account id we attached at checkout, carried on the transaction and
-/// copied to the subscription it created.
-fn custom_account(data: &Value) -> Option<AccountId> {
-    data.get("custom_data")
-        .and_then(|v| v.get(CUSTOM_DATA_ACCOUNT))
+/// copied to the subscription it created. Honoured only under its tag.
+fn custom_account(secret: &str, event_id: &str, data: &Value) -> Option<AccountId> {
+    let custom = data.get("custom_data")?;
+    let account = custom
+        .get(CUSTOM_DATA_ACCOUNT)
         .and_then(Value::as_str)
         .and_then(|s| Uuid::parse_str(s).ok())
-        .map(AccountId)
+        .map(AccountId)?;
+    let tag = custom
+        .get(CUSTOM_DATA_TAG)
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !account_tag_verifies(secret, account, tag) {
+        tracing::warn!(
+            event_id,
+            %account,
+            "paddle: custom data names an account without our tag"
+        );
+        return None;
+    }
+    Some(account)
 }
 
 #[derive(Deserialize)]
@@ -271,12 +312,14 @@ impl SubscriptionData {
     }
 }
 
-fn map_event(envelope: Envelope) -> std::result::Result<ProviderEvent, WebhookRejected> {
+fn map_event(
+    secret: &str,
+    envelope: Envelope,
+) -> std::result::Result<ProviderEvent, WebhookRejected> {
     let malformed = |e: serde_json::Error| WebhookRejected::Malformed(e.to_string());
-    let account = custom_account(&envelope.data);
     let (customer_ref, subscription_ref, kind) = match envelope.event_type.as_str() {
         "transaction.completed" | "transaction.payment_failed" => {
-            let t: TransactionData = serde_json::from_value(envelope.data).map_err(malformed)?;
+            let t = TransactionData::deserialize(&envelope.data).map_err(malformed)?;
             let kind = if envelope.event_type == "transaction.completed" {
                 EventKind::Paid
             } else {
@@ -285,8 +328,9 @@ fn map_event(envelope: Envelope) -> std::result::Result<ProviderEvent, WebhookRe
             (t.customer_id, t.subscription_id, kind)
         }
         kind if kind.starts_with("subscription.") => {
-            let s: SubscriptionData = serde_json::from_value(envelope.data).map_err(malformed)?;
-            let snapshot = s.snapshot();
+            let snapshot = SubscriptionData::deserialize(&envelope.data)
+                .map_err(malformed)?
+                .snapshot();
             (
                 Some(snapshot.customer_ref.clone()),
                 Some(snapshot.subscription_ref.clone()),
@@ -294,6 +338,11 @@ fn map_event(envelope: Envelope) -> std::result::Result<ProviderEvent, WebhookRe
             )
         }
         _ => (None, None, EventKind::Other),
+    };
+    // Noise is applied to nobody, so its claim is not even read.
+    let account = match kind {
+        EventKind::Other => None,
+        _ => custom_account(secret, &envelope.event_id, &envelope.data),
     };
     Ok(ProviderEvent {
         event_id: envelope.event_id,
@@ -332,13 +381,16 @@ impl BillingProvider for PaddleProvider {
         }
         let envelope: Envelope =
             serde_json::from_slice(body).map_err(|e| WebhookRejected::Malformed(e.to_string()))?;
-        map_event(envelope)
+        map_event(self.checkout_secret.expose_secret(), envelope)
     }
 
     async fn checkout(&self, req: CheckoutRequest<'_>) -> Result<Url> {
         let mut body = json!({
             "items": [{ "price_id": req.price_ref, "quantity": 1 }],
-            "custom_data": { CUSTOM_DATA_ACCOUNT: req.account.0.to_string() },
+            "custom_data": {
+                CUSTOM_DATA_ACCOUNT: req.account.0.to_string(),
+                CUSTOM_DATA_TAG: account_tag(self.checkout_secret.expose_secret(), req.account),
+            },
         });
         if let Some(customer) = req.customer_ref {
             body["customer_id"] = json!(customer);
@@ -478,6 +530,24 @@ mod tests {
         assert!(!verify(SECRET, "h1=abcd", body, NOW));
         assert!(!verify(SECRET, "ts=soon;h1=abcd", body, NOW));
         assert!(!verify(SECRET, "", body, NOW));
+        for extreme in [i64::MIN, i64::MAX] {
+            assert!(!verify(SECRET, &sign(extreme, body), body, NOW));
+            assert!(!verify(SECRET, &sign(NOW, body), body, extreme));
+        }
+    }
+
+    const ACCOUNT: &str = "0198f0e1-0000-7000-8000-000000000000";
+
+    fn account() -> AccountId {
+        AccountId(Uuid::parse_str(ACCOUNT).unwrap())
+    }
+
+    fn custom_data(tag: &str) -> Value {
+        json!({ "account_id": ACCOUNT, "account_sig": tag })
+    }
+
+    fn signed_custom_data() -> Value {
+        custom_data(&account_tag(SECRET, account()))
     }
 
     fn envelope(event_type: &str, data: Value) -> Envelope {
@@ -496,7 +566,7 @@ mod tests {
             "id": "sub_01",
             "status": status,
             "customer_id": "ctm_01",
-            "custom_data": { "account_id": "0198f0e1-0000-7000-8000-000000000000" },
+            "custom_data": signed_custom_data(),
             "current_billing_period": {
                 "starts_at": "2026-09-01T00:00:00Z",
                 "ends_at": "2026-10-01T00:00:00Z"
@@ -512,20 +582,18 @@ mod tests {
 
     #[test]
     fn a_subscription_event_becomes_a_snapshot_with_only_the_billed_price() {
-        let event = map_event(envelope(
-            "subscription.updated",
-            subscription(
-                "active",
-                json!({ "action": "cancel", "effective_at": "2026-10-01T00:00:00Z", "resume_at": null }),
+        let event = map_event(
+            SECRET,
+            envelope(
+                "subscription.updated",
+                subscription(
+                    "active",
+                    json!({ "action": "cancel", "effective_at": "2026-10-01T00:00:00Z", "resume_at": null }),
+                ),
             ),
-        ))
+        )
         .unwrap();
-        assert_eq!(
-            event.account,
-            Some(AccountId(
-                Uuid::parse_str("0198f0e1-0000-7000-8000-000000000000").unwrap()
-            ))
-        );
+        assert_eq!(event.account, Some(account()));
         assert_eq!(event.subscription_ref.as_deref(), Some("sub_01"));
         let EventKind::Subscription(snap) = event.kind else {
             panic!("not a snapshot");
@@ -544,14 +612,47 @@ mod tests {
     }
 
     #[test]
+    fn an_account_id_is_honoured_only_under_our_tag() {
+        let with = |custom: Value| {
+            let mut data = subscription("active", Value::Null);
+            data["custom_data"] = custom;
+            map_event(SECRET, envelope("subscription.created", data))
+                .unwrap()
+                .account
+        };
+        assert_eq!(with(signed_custom_data()), Some(account()));
+        assert_eq!(with(json!({ "account_id": ACCOUNT })), None, "no tag");
+        assert_eq!(with(custom_data("")), None, "empty tag");
+        assert_eq!(
+            with(custom_data(&account_tag(SECRET, account()).to_uppercase())),
+            None,
+            "a tag in another spelling"
+        );
+        let other = AccountId(Uuid::parse_str("0198f0e1-0000-7000-8000-000000000001").unwrap());
+        assert_eq!(
+            with(custom_data(&account_tag(SECRET, other))),
+            None,
+            "a tag minted for another account"
+        );
+        assert_eq!(
+            with(custom_data(&account_tag("other", account()))),
+            None,
+            "a tag under another secret"
+        );
+    }
+
+    #[test]
     fn a_pause_is_not_a_cancel_and_an_unknown_status_ends_service() {
-        let paused = map_event(envelope(
-            "subscription.paused",
-            subscription(
-                "paused",
-                json!({ "action": "pause", "effective_at": "2026-10-01T00:00:00Z", "resume_at": null }),
+        let paused = map_event(
+            SECRET,
+            envelope(
+                "subscription.paused",
+                subscription(
+                    "paused",
+                    json!({ "action": "pause", "effective_at": "2026-10-01T00:00:00Z", "resume_at": null }),
+                ),
             ),
-        ))
+        )
         .unwrap();
         let EventKind::Subscription(snap) = paused.kind else {
             panic!("not a snapshot");
@@ -559,10 +660,13 @@ mod tests {
         assert_eq!(snap.status, SubscriptionStatus::Paused);
         assert_eq!(snap.cancel_at, None);
 
-        let odd = map_event(envelope(
-            "subscription.updated",
-            subscription("archived", Value::Null),
-        ));
+        let odd = map_event(
+            SECRET,
+            envelope(
+                "subscription.updated",
+                subscription("archived", Value::Null),
+            ),
+        );
         assert!(
             matches!(odd, Err(WebhookRejected::Malformed(_))),
             "a status we cannot read must not end anyone's service"
@@ -571,28 +675,41 @@ mod tests {
 
     #[test]
     fn transactions_map_to_paid_and_failed_and_the_rest_is_noise() {
-        let txn = json!({
+        let mut txn = json!({
             "id": "txn_01",
             "status": "completed",
             "customer_id": "ctm_01",
             "subscription_id": "sub_01",
-            "custom_data": { "account_id": "not-a-uuid" }
+            "custom_data": signed_custom_data()
         });
-        let paid = map_event(envelope("transaction.completed", txn.clone())).unwrap();
+        let paid = map_event(SECRET, envelope("transaction.completed", txn.clone())).unwrap();
         assert_eq!(paid.kind, EventKind::Paid);
-        assert_eq!(paid.account, None);
+        assert_eq!(paid.account, Some(account()));
         assert_eq!(paid.subscription_ref.as_deref(), Some("sub_01"));
-        let failed = map_event(envelope("transaction.payment_failed", txn)).unwrap();
+        txn["custom_data"] = json!({ "account_id": "not-a-uuid" });
+        let failed = map_event(SECRET, envelope("transaction.payment_failed", txn)).unwrap();
         assert_eq!(failed.kind, EventKind::PaymentFailed);
-        let other = map_event(envelope("customer.created", json!({ "id": "ctm_01" }))).unwrap();
+        assert_eq!(failed.account, None);
+        let other = map_event(
+            SECRET,
+            envelope(
+                "transaction.created",
+                json!({ "id": "txn_02", "custom_data": signed_custom_data() }),
+            ),
+        )
+        .unwrap();
         assert_eq!(other.kind, EventKind::Other);
+        assert_eq!(other.account, None, "noise binds nobody, tagged or not");
         assert_eq!(other.subscription_ref, None);
     }
 
     #[test]
     fn a_subscription_event_missing_its_fields_is_malformed_not_a_panic() {
-        let err =
-            map_event(envelope("subscription.created", json!({ "id": "sub_01" }))).unwrap_err();
+        let err = map_event(
+            SECRET,
+            envelope("subscription.created", json!({ "id": "sub_01" })),
+        )
+        .unwrap_err();
         assert!(matches!(err, WebhookRejected::Malformed(_)));
     }
 }

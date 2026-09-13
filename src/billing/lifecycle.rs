@@ -897,20 +897,31 @@ fn reminder_due(grace_until: DateTime<Utc>, now: DateTime<Utc>, sent: i16) -> Op
     (due > sent).then_some(due)
 }
 
+/// A subscription already bound answers to its account whatever the event
+/// says; the account the event names only claims a subscription nobody holds.
 async fn resolve_account<'e, E: PgExecutor<'e>>(
     exec: E,
     provider: &str,
     event: &ProviderEvent,
 ) -> Result<Option<AccountId>> {
-    if let Some(account) = event.account {
-        return Ok(Some(account));
-    }
-    match &event.subscription_ref {
-        Some(subscription_ref) => {
-            store::account_for_subscription_ref(exec, provider, subscription_ref).await
+    if let Some(subscription_ref) = &event.subscription_ref
+        && let Some(bound) =
+            store::account_for_subscription_ref(exec, provider, subscription_ref).await?
+    {
+        if let Some(named) = event.account
+            && named != bound
+        {
+            tracing::warn!(
+                event_id = %event.event_id,
+                subscription_ref,
+                account = %bound,
+                %named,
+                "billing: event names another account than the one holding the subscription"
+            );
         }
-        None => Ok(None),
+        return Ok(Some(bound));
     }
+    Ok(event.account)
 }
 
 async fn plan_name<'e, E: PgExecutor<'e>>(exec: E, plan_id: &str) -> Result<String> {

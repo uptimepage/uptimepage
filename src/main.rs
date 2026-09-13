@@ -638,6 +638,13 @@ async fn main() -> Result<()> {
     )
     .await
     .map_err(|e| AppError::Other(anyhow::anyhow!("unsubscribe secret: {e}")))?;
+    let billing_checkout_secret = uptimepage::storage::app_secrets::ensure_secret(
+        &pg_pool_for_stores,
+        cipher.as_deref(),
+        "billing_checkout",
+    )
+    .await
+    .map_err(|e| AppError::Other(anyhow::anyhow!("billing checkout secret: {e}")))?;
 
     let prefix_len = cfg.auth.api_tokens.prefix_visible_chars as usize;
     if prefix_len < uptimepage::auth::api_tokens::MIN_PREFIX_VISIBLE_CHARS {
@@ -810,6 +817,7 @@ async fn main() -> Result<()> {
         .with_subscription_unsubscribe_secret(unsubscribe_secret)
         .with_alert_channel_stop_secret(alert_channel_stop_secret)
         .with_incident_ack_secret(incident_ack_secret)
+        .with_billing_checkout_secret(billing_checkout_secret)
         .with_shutdown(root.clone());
     // Scheduled plan changes, grace expiries and payment reminders run on our
     // clock, not the provider's. From boot, since a deadline can pass while

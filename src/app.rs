@@ -353,8 +353,9 @@ pub struct AppState {
     /// Keys the acknowledge link pushed to phones. Its own authority: that
     /// link silences an incident, the stop link retires a channel.
     pub incident_ack_secret: String,
-    /// The paid lifecycle behind its provider. `None` when no provider is
-    /// configured, which leaves every billing surface absent.
+    /// The paid lifecycle behind its provider. `None` until
+    /// [`Self::with_billing_checkout_secret`] builds it, and for good when no
+    /// provider is configured, which leaves every billing surface absent.
     pub billing: Option<Arc<crate::billing::Billing>>,
 }
 
@@ -378,6 +379,7 @@ fn build_billing(
     cfg: &AppConfig,
     outbound_http: &OutboundHttpClient,
     email_sender: &Arc<dyn EmailSender>,
+    checkout_secret: String,
 ) -> Option<Arc<crate::billing::Billing>> {
     if !cfg.billing.enabled() {
         return None;
@@ -387,6 +389,7 @@ fn build_billing(
         environment,
         cfg.billing.paddle.api_key.clone(),
         cfg.billing.paddle.webhook_secret.clone(),
+        checkout_secret.into(),
         outbound_http.clone(),
     );
     Some(Arc::new(crate::billing::Billing {
@@ -693,7 +696,6 @@ impl AppState {
         let rate_limits = Arc::new(RateLimitService::new());
         let abuse = Arc::new(AbuseGuard::from_config(&cfg.abuse));
         let email_policy = Arc::new(crate::security::EmailPolicy::from_config(&cfg.email_policy));
-        let billing = build_billing(&cfg, &outbound_http, &email_sender);
         Self {
             cfg: Arc::new(cfg),
             db,
@@ -750,8 +752,19 @@ impl AppState {
             subscription_unsubscribe_secret: String::new(),
             alert_channel_stop_secret: String::new(),
             incident_ack_secret: String::new(),
-            billing,
+            billing: None,
         }
+    }
+
+    /// Builds the configured billing provider around the persisted secret
+    /// that keys the account claim on a checkout. A provider already swapped
+    /// in stays.
+    pub fn with_billing_checkout_secret(mut self, secret: String) -> Self {
+        if self.billing.is_none() {
+            self.billing =
+                build_billing(&self.cfg, &self.outbound_http, &self.email_sender, secret);
+        }
+        self
     }
 
     /// Swaps in a billing provider, for tests that drive the lifecycle
@@ -865,6 +878,27 @@ mod tests {
     };
     use crate::config::AppConfig;
     use crate::storage::{InMemorySink, InMemoryTargetStore, ResultsStore, TargetStore};
+
+    #[test]
+    fn the_configured_provider_is_built_around_the_checkout_secret() {
+        let http = crate::http_outbound::build_outbound_client(
+            crate::security::SsrfGuard::operator_configured_target(),
+        );
+        let sender: Arc<dyn crate::email::EmailSender> =
+            Arc::new(crate::email::InMemoryEmailSender::new());
+        let mut cfg = AppConfig::load().expect("config");
+        assert!(
+            super::build_billing(&cfg, &http, &sender, "s".into()).is_none(),
+            "no provider configured"
+        );
+        cfg.billing.provider = "paddle".into();
+        cfg.billing.paddle.environment = "sandbox".into();
+        cfg.billing.paddle.api_key = "pdl_sdbx_apikey".into();
+        cfg.billing.paddle.webhook_secret = "pdl_ntfset_secret".into();
+        cfg.billing.paddle.client_token = "test_token".into();
+        let billing = super::build_billing(&cfg, &http, &sender, "s".into());
+        assert_eq!(billing.map(|b| b.provider.name()), Some("paddle"));
+    }
 
     #[tokio::test]
     async fn probe_readiness_reports_reachable_stores_as_up() {

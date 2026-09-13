@@ -1037,6 +1037,33 @@ async fn a_payment_naming_no_subscription_cannot_touch_a_live_account() {
 
 #[tokio::test]
 #[ignore]
+async fn a_bound_subscription_answers_to_its_account_whatever_the_event_names() {
+    let Some(h) = harness().await else { return };
+    let (holder, _, _) = account(&h.pool, "founding", 0).await;
+    let (named, _, _) = account(&h.pool, "free", 0).await;
+    let sub = sub_ref();
+    activate(&h, holder, &sub, TEAM_MONTH).await;
+
+    let ended = snapshot(&sub, SubscriptionStatus::Canceled, TEAM_MONTH, Utc::now());
+    let outcome = h
+        .billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(named, &sub, EventKind::Subscription(ended)),
+        )
+        .await
+        .expect("apply");
+    assert_eq!(outcome, Outcome::Applied);
+    assert_eq!(row(&h.pool, holder).await.status, BillingStatus::Canceled);
+    let other = row(&h.pool, named).await;
+    assert_eq!(other.status, BillingStatus::None);
+    assert_eq!(other.subscription_ref, None);
+    assert_eq!(subjects(&h.mail), vec!["downgrade_applied"]);
+}
+
+#[tokio::test]
+#[ignore]
 async fn a_strangers_subscription_cannot_touch_a_live_account_and_is_ended() {
     let Some(h) = harness().await else { return };
     let (account, _, _) = account(&h.pool, "founding", 0).await;

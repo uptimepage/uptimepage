@@ -320,7 +320,7 @@ INSERT INTO plan_prices (provider, price_ref, plan_id, interval, amount_minor, c
   ('paddle', 'pri_01def…', 'pro', 'year',  9000, 'USD');
 ```
 
-A plan with only one cadence is sold on that cadence alone; the billing page offers the yearly toggle once any plan carries a `year` row. The account id is attached to the Paddle transaction as `custom_data.account_id` and travels back on every event, so a webhook always resolves to an account without trusting anything the browser sent.
+A plan with only one cadence is sold on that cadence alone; the billing page offers the yearly toggle once any plan carries a `year` row. The account id is attached to the Paddle transaction as `custom_data.account_id`, next to an HMAC tag keyed by a secret the server generates on first boot and keeps in its database, and travels back on every event. A webhook honours the id only under that tag, since Paddle.js lets any visitor open a checkout with custom data of their own; a subscription already bound to an account answers to that account whatever the event names, so the tag only ever decides a first binding.
 
 ## Central Telegram bot
 

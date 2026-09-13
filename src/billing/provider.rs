@@ -69,9 +69,10 @@ pub enum EventKind {
     Other,
 }
 
-/// One verified webhook, in our terms. `account` is whatever the provider
-/// carried back from checkout; a subscription event can also be matched by
-/// `subscription_ref` when it is missing.
+/// One verified webhook, in our terms. `account` is the claim the provider
+/// carried back from checkout, already checked by the provider as its own;
+/// the lifecycle honours it only for a subscription nobody holds yet, since a
+/// bound `subscription_ref` answers to its account whatever the event says.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderEvent {
     pub event_id: String,
