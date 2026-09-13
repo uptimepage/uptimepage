@@ -412,14 +412,9 @@ fn pitch(card: &PlanCard, current: Option<&PlanCard>) -> Pitch {
 }
 
 fn card_lines(c: &PlanCard) -> Vec<String> {
-    let every = if c.min_check_interval_secs % 60 == 0 {
-        format!("{} min", c.min_check_interval_secs / 60)
-    } else {
-        format!("{} sec", c.min_check_interval_secs)
-    };
     let mut lines = vec![
         format!("{} monitors", c.max_targets),
-        format!("checks every {every}"),
+        Metric::Interval(c.min_check_interval_secs).gain(""),
         format!(
             "{} status page{}",
             c.max_status_pages,
