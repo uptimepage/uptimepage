@@ -260,12 +260,18 @@ fn custom_account(secret: &str, event_id: &str, data: &Value) -> Option<AccountI
     Some(account)
 }
 
+/// Saving a card runs a zero-value transaction that completes or fails like
+/// any other; it settles nothing, so it is neither a payment nor a missed one.
+const CARD_CHANGE_ORIGIN: &str = "subscription_payment_method_change";
+
 #[derive(Deserialize)]
 struct TransactionData {
     #[serde(default)]
     customer_id: Option<String>,
     #[serde(default)]
     subscription_id: Option<String>,
+    #[serde(default)]
+    origin: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -341,12 +347,16 @@ fn map_event(
     let (customer_ref, subscription_ref, kind) = match envelope.event_type.as_str() {
         "transaction.completed" | "transaction.payment_failed" => {
             let t = TransactionData::deserialize(&envelope.data).map_err(malformed)?;
-            let kind = if envelope.event_type == "transaction.completed" {
-                EventKind::Paid
+            if t.origin.as_deref() == Some(CARD_CHANGE_ORIGIN) {
+                (None, None, EventKind::Other)
             } else {
-                EventKind::PaymentFailed
-            };
-            (t.customer_id, t.subscription_id, kind)
+                let kind = if envelope.event_type == "transaction.completed" {
+                    EventKind::Paid
+                } else {
+                    EventKind::PaymentFailed
+                };
+                (t.customer_id, t.subscription_id, kind)
+            }
         }
         kind if kind.starts_with("subscription.") => {
             let snapshot = SubscriptionData::deserialize(&envelope.data)
@@ -843,6 +853,24 @@ mod tests {
         assert_eq!(other.kind, EventKind::Other);
         assert_eq!(other.account, None, "noise binds nobody, tagged or not");
         assert_eq!(other.subscription_ref, None);
+    }
+
+    #[test]
+    fn a_card_change_settles_nothing() {
+        let txn = json!({
+            "id": "txn_01",
+            "status": "completed",
+            "origin": CARD_CHANGE_ORIGIN,
+            "customer_id": "ctm_01",
+            "subscription_id": "sub_01",
+            "custom_data": signed_custom_data()
+        });
+        for event_type in ["transaction.completed", "transaction.payment_failed"] {
+            let saved = map_event(SECRET, envelope(event_type, txn.clone())).unwrap();
+            assert_eq!(saved.kind, EventKind::Other, "{event_type}");
+            assert_eq!(saved.account, None);
+            assert_eq!(saved.subscription_ref, None);
+        }
     }
 
     #[test]
