@@ -1283,6 +1283,8 @@ html:has(.marketing-shell) {
     .mk-price--feature { --mk-price-pad-block: 2.5rem; margin-block: -0.5rem; }
 }
 /* Recede by surface: opacity would dim the border and badge and soften glyphs. */
+.mk-price--soon { background: var(--mk-bg); }
+.mk-price--soon .mk-price__name { color: var(--mk-ink-soft); }
 /* Centred in the top padding band; at 0.9rem it overlapped the tier name. */
 .mk-price__badge {
     position: absolute; top: calc(var(--mk-price-pad-block) - 1.625rem); right: 1.75rem;
@@ -1293,6 +1295,7 @@ html:has(.marketing-shell) {
 }
 /* Ink fill, echoing the primary CTA below it. */
 .mk-price__badge--pop { color: var(--mk-bg); background: var(--mk-ink); border-color: var(--mk-ink); font-weight: 600; }
+.mk-price__badge--quiet { color: var(--mk-quiet); border-color: var(--mk-rule); }
 .mk-price__name { font-family: var(--mk-font-mono); font-weight: 600; font-size: 1.0625rem; color: var(--mk-ink); }
 .mk-price__name::before { content: "// "; color: var(--mk-faint); font-weight: 500; }
 .mk-price__tag { font-size: 0.8125rem; color: var(--mk-quiet); line-height: 1.5; }

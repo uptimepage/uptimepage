@@ -913,12 +913,23 @@ async fn main() -> Result<()> {
             &state.cfg.public_status.base_domain,
         )
         .map_err(|e| AppError::Other(anyhow::anyhow!("HostScheme: {e}")))?;
+        // A provider with an empty catalog would send pricing-page visitors to
+        // a billing page with nothing to buy.
+        let checkout_open = match (&state.billing, &state.db) {
+            (Some(billing), Some(pool)) => {
+                !storage::subscriptions::priced_plans(pool, billing.provider.name())
+                    .await?
+                    .is_empty()
+            }
+            _ => false,
+        };
         let marketing_cfg = marketing::MarketingCfg {
             app_url: state.cfg.marketing.app_url.clone(),
             canonical_origin: state.cfg.marketing.canonical_origin.clone(),
             blog_enabled: state.cfg.marketing.blog_enabled,
             mcp_url: (state.cfg.mcp.enabled && !state.cfg.mcp.resource_uri.is_empty())
                 .then(|| state.cfg.mcp.resource_uri.clone()),
+            checkout_open,
             trusted_proxies: state.cfg.security.trusted_proxies.clone(),
         };
         // Pre-warm the in-memory post cache so the first /blog hit

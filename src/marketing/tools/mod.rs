@@ -1314,6 +1314,7 @@ mod tests {
             canonical_origin: "https://uptimepage.dev".into(),
             blog_enabled: false,
             mcp_url: None,
+            checkout_open: false,
             trusted_proxies: Vec::new(),
         }
     }

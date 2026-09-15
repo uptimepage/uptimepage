@@ -89,6 +89,11 @@ pub struct MarketingCfg {
     /// This deployment's MCP endpoint. Never falls back to [`MCP_URL`]:
     /// the catalog is a machine contract, that constant is hosted-only copy.
     pub mcp_url: Option<String>,
+    /// The app sells the paid plans: a payment provider is configured and at
+    /// least one plan is priced, so the pricing page may send a visitor to
+    /// checkout. Off, the pro and team cards say "soon". Read once at boot,
+    /// like the page it gates.
+    pub checkout_open: bool,
     /// Reverse proxies whose `X-Forwarded-For` may be believed. Empty means
     /// the TCP peer is the client. Read by the tools that open an outbound
     /// socket, to key their per-IP budget on the visitor rather than on Caddy.

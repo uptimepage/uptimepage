@@ -1143,6 +1143,7 @@ mod tests {
             canonical_origin: "https://uptimepage.dev".into(),
             blog_enabled: false,
             mcp_url: None,
+            checkout_open: false,
             trusted_proxies: Vec::new(),
         };
         let txt = String::from_utf8(build_llms_full(&cfg).to_vec()).expect("llms-full is UTF-8");
@@ -1168,6 +1169,7 @@ mod tests {
             canonical_origin: "https://uptimepage.dev".into(),
             blog_enabled: false,
             mcp_url: None,
+            checkout_open: false,
             trusted_proxies: Vec::new(),
         };
         let xml = build_sitemap(&cfg);
@@ -1196,6 +1198,7 @@ mod tests {
             canonical_origin: "https://uptimepage.dev".into(),
             blog_enabled: false,
             mcp_url: None,
+            checkout_open: false,
             trusted_proxies: Vec::new(),
         };
         let xml = build_sitemap(&cfg);
@@ -1222,6 +1225,7 @@ mod tests {
             canonical_origin: "https://uptimepage.dev".into(),
             blog_enabled: true,
             mcp_url: None,
+            checkout_open: false,
             trusted_proxies: Vec::new(),
         };
         let xml = build_sitemap(&cfg);

@@ -463,6 +463,7 @@ const PRICING_FAQS: &[(&str, &str)] = &[
 #[template(path = "marketing/pricing.html")]
 struct PricingPage {
     app_url: String,
+    checkout_open: bool,
     canonical_url: String,
     og: OpenGraph,
     breadcrumb_json_ld: JsonLd,
@@ -493,6 +494,7 @@ fn render_pricing(cfg: &MarketingCfg) -> CachedRender {
         .to_string();
     let page = PricingPage {
         app_url: cfg.app_url.clone(),
+        checkout_open: cfg.checkout_open,
         breadcrumb_json_ld: json_ld_breadcrumb(&cfg.canonical_origin, "Pricing", "/pricing"),
         software_json_ld: json_ld_software_application(&cfg.canonical_origin),
         webpage_json_ld: json_ld_webpage(
@@ -601,6 +603,7 @@ mod tests {
             canonical_origin: canonical_origin.into(),
             blog_enabled: true,
             mcp_url: None,
+            checkout_open: false,
             trusted_proxies: Vec::new(),
         }
     }
@@ -614,6 +617,31 @@ mod tests {
     fn not_found_html(canonical_origin: &str) -> String {
         String::from_utf8(render_not_found(&cfg_for(canonical_origin)).body.to_vec())
             .expect("utf8 body")
+    }
+
+    fn pricing_html(checkout_open: bool) -> String {
+        let cfg = MarketingCfg {
+            checkout_open,
+            ..cfg_for("https://uptimepage.dev")
+        };
+        String::from_utf8(render_pricing(&cfg).body.to_vec()).expect("utf8 body")
+    }
+
+    /// The paid cards may only send a visitor to checkout while the app
+    /// serves one; otherwise the link would land on a 404 after sign-in.
+    #[test]
+    fn paid_plans_sell_only_while_checkout_is_open() {
+        let open = pricing_html(true);
+        assert!(open.contains("redirect_after=%2Fsettings%2Fbilling%3Fplan%3Dpro"));
+        assert!(open.contains("data-cadence>"));
+        assert!(!open.contains("mk-price--soon"));
+
+        let closed = pricing_html(false);
+        assert!(!closed.contains("settings%2Fbilling"));
+        assert!(!closed.contains("data-cadence>"));
+        assert!(!closed.contains("pricing.js"));
+        assert_eq!(closed.matches("mk-price--soon").count(), 2);
+        assert!(closed.contains("Tell%20me%20when%20Team%20launches"));
     }
 
     fn architecture_html(canonical_origin: &str) -> String {

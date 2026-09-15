@@ -295,6 +295,7 @@ fn every_landing_renders() {
         canonical_origin: "https://uptimepage.dev".into(),
         blog_enabled: false,
         mcp_url: None,
+        checkout_open: false,
         trusted_proxies: Vec::new(),
     };
     for (path, page) in render_all(&cfg) {
@@ -366,6 +367,7 @@ fn only_the_author_page_carries_the_person_node() {
         canonical_origin: "https://uptimepage.dev".into(),
         blog_enabled: false,
         mcp_url: None,
+        checkout_open: false,
         trusted_proxies: Vec::new(),
     };
     let rendered = render_all(&cfg);

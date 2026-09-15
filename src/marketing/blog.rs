@@ -942,6 +942,7 @@ mod tests {
             canonical_origin: "https://uptimepage.dev".into(),
             blog_enabled: true,
             mcp_url: None,
+            checkout_open: false,
             trusted_proxies: Vec::new(),
         };
         let mut rendered = 0usize;

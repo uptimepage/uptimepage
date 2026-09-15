@@ -18,6 +18,7 @@ fn router() -> axum::Router {
         canonical_origin: "https://uptimepage.dev".into(),
         blog_enabled: true,
         mcp_url: Some("https://mcp.uptimepage.dev/mcp".into()),
+        checkout_open: false,
         trusted_proxies: Vec::new(),
     })
 }

@@ -37,10 +37,12 @@
     </section>
 
     <section class="space-y-4">
+        {% if checkout_open %}
         <div class="mk-cadence" role="group" aria-label="Billing cadence" data-cadence>
             <button type="button" class="mk-cadence__seg is-on" data-cadence-pick="month" aria-pressed="true">monthly</button>
             <button type="button" class="mk-cadence__seg" data-cadence-pick="year" aria-pressed="false">yearly <span class="mk-cadence__hint">2 months free</span></button>
         </div>
+        {% endif %}
         <div class="mk-price-grid grid gap-4 sm:grid-cols-2 lg:grid-cols-4" data-cadence-grid>
             <div class="mk-price mk-price--stack">
                 <div class="mk-price__name">standard</div>
@@ -81,15 +83,21 @@
                     <li class="mk-price__line"><span>bring your own SMS</span></li>
                 </ul>
             </div>
-            <div class="mk-price mk-price--stack">
+            <div class="mk-price mk-price--stack{% if !checkout_open %} mk-price--soon{% endif %}">
+                {% if !checkout_open %}<span class="mk-price__badge mk-price__badge--quiet">soon</span>{% endif %}
                 <div class="mk-price__name">pro</div>
                 <p class="mk-price__tag">For a product that needs the status page on your own domain.</p>
-                <div class="mk-price__amt mk-cad--month"><b>$9</b><span>/ month</span></div>
+                <div class="mk-price__amt{% if checkout_open %} mk-cad--month{% endif %}"><b>$9</b><span>/ month</span></div>
+                {% if checkout_open %}
                 <div class="mk-price__amt mk-cad--year"><b>$90</b><span>/ year</span></div>
                 <p class="mk-price__note mk-cad--month">billed monthly · cancel any time</p>
                 <p class="mk-price__note mk-cad--year">$7.50 a month, paid yearly</p>
                 <a href="{{ app_url }}/login?redirect_after=%2Fsettings%2Fbilling%3Fplan%3Dpro%26interval%3Dmonth" class="mk-cta mk-cta--ghost mk-cta--block mk-cad--month" data-umami-event="checkout-start" data-umami-event-plan="pro" data-umami-event-interval="month">choose pro</a>
                 <a href="{{ app_url }}/login?redirect_after=%2Fsettings%2Fbilling%3Fplan%3Dpro%26interval%3Dyear" class="mk-cta mk-cta--ghost mk-cta--block mk-cad--year" data-umami-event="checkout-start" data-umami-event-plan="pro" data-umami-event-interval="year">choose pro</a>
+                {% else %}
+                <p class="mk-price__note">billed monthly or yearly</p>
+                <a href="mailto:hello@uptimepage.dev?subject=Tell%20me%20when%20Pro%20launches" class="mk-cta mk-cta--ghost mk-cta--block" data-umami-event="plan-notify" data-umami-event-plan="pro">notify me</a>
+                {% endif %}
                 <p class="mk-price__head">everything in standard, plus</p>
                 <ul class="mk-price__list">
                     <li class="mk-price__line"><span><b>50</b> monitors</span></li>
@@ -105,15 +113,21 @@
                     <li class="mk-price__line"><span>custom domain on your status page</span></li>
                 </ul>
             </div>
-            <div class="mk-price mk-price--stack">
+            <div class="mk-price mk-price--stack{% if !checkout_open %} mk-price--soon{% endif %}">
+                {% if !checkout_open %}<span class="mk-price__badge mk-price__badge--quiet">soon</span>{% endif %}
                 <div class="mk-price__name">team</div>
                 <p class="mk-price__tag">For teams running this in production at real scale.</p>
-                <div class="mk-price__amt mk-cad--month"><b>$19</b><span>/ month</span></div>
+                <div class="mk-price__amt{% if checkout_open %} mk-cad--month{% endif %}"><b>$19</b><span>/ month</span></div>
+                {% if checkout_open %}
                 <div class="mk-price__amt mk-cad--year"><b>$190</b><span>/ year</span></div>
                 <p class="mk-price__note mk-cad--month">billed monthly · cancel any time</p>
                 <p class="mk-price__note mk-cad--year">$15.83 a month, paid yearly</p>
                 <a href="{{ app_url }}/login?redirect_after=%2Fsettings%2Fbilling%3Fplan%3Dteam%26interval%3Dmonth" class="mk-cta mk-cta--ghost mk-cta--block mk-cad--month" data-umami-event="checkout-start" data-umami-event-plan="team" data-umami-event-interval="month">choose team</a>
                 <a href="{{ app_url }}/login?redirect_after=%2Fsettings%2Fbilling%3Fplan%3Dteam%26interval%3Dyear" class="mk-cta mk-cta--ghost mk-cta--block mk-cad--year" data-umami-event="checkout-start" data-umami-event-plan="team" data-umami-event-interval="year">choose team</a>
+                {% else %}
+                <p class="mk-price__note">billed monthly or yearly</p>
+                <a href="mailto:hello@uptimepage.dev?subject=Tell%20me%20when%20Team%20launches" class="mk-cta mk-cta--ghost mk-cta--block" data-umami-event="plan-notify" data-umami-event-plan="team">notify me</a>
+                {% endif %}
                 <p class="mk-price__head">everything in pro, plus</p>
                 <ul class="mk-price__list">
                     <li class="mk-price__line"><span><b>150</b> monitors</span></li>
@@ -129,7 +143,7 @@
             </div>
 
         </div>
-        <p class="mk-price__legal">Prices are in USD. Yearly is ten months for twelve. Founding accounts keep the founding limits for life, at no cost.</p>
+        <p class="mk-price__legal">Prices are in USD.{% if checkout_open %} Yearly is ten months for twelve.{% endif %} Founding accounts keep the founding limits for life, at no cost.</p>
     </section>
 
     <section class="space-y-8">
@@ -211,5 +225,5 @@
     </section>
 
 </div>
-<script defer src="{{ "js/marketing/pricing.js"|asset }}"></script>
+{% if checkout_open %}<script defer src="{{ "js/marketing/pricing.js"|asset }}"></script>{% endif %}
 {% endblock %}
