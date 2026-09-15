@@ -144,11 +144,15 @@ pub trait BillingProvider: Send + Sync {
 
     async fn fetch_subscription(&self, subscription_ref: &str) -> Result<SubscriptionSnapshot>;
 
+    /// `NextPeriod` keeps the period end the customer paid through when the
+    /// swap moves it (a price on another cadence does): `paid_until` as the
+    /// caller's row has it while still ahead, the provider's own otherwise.
     async fn change_price(
         &self,
         subscription_ref: &str,
         price_ref: &str,
         timing: ChangeTiming,
+        paid_until: Option<DateTime<Utc>>,
     ) -> Result<SubscriptionSnapshot>;
 
     async fn cancel(
@@ -167,7 +171,7 @@ pub trait BillingProvider: Send + Sync {
 pub mod fake {
     use std::collections::HashMap;
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     use super::*;
 
@@ -187,6 +191,11 @@ pub mod fake {
         /// Answers every lookup only after a stalled connection's worth of
         /// waiting.
         pub fetch_stalls: AtomicBool,
+        /// Answers a price change only after this many milliseconds, long
+        /// enough for a webhook or a second change to try to get in first;
+        /// `change_entered` says the pause has begun.
+        pub change_stall_ms: AtomicU64,
+        pub change_entered: tokio::sync::Notify,
     }
 
     impl FakeProvider {
@@ -284,10 +293,19 @@ pub mod fake {
             subscription_ref: &str,
             price_ref: &str,
             timing: ChangeTiming,
+            paid_until: Option<DateTime<Utc>>,
         ) -> Result<SubscriptionSnapshot> {
             self.note(format!("change:{subscription_ref}:{price_ref}:{timing:?}"));
+            let stall = self.change_stall_ms.load(Ordering::Relaxed);
+            if stall > 0 {
+                self.change_entered.notify_one();
+                tokio::time::sleep(std::time::Duration::from_millis(stall)).await;
+            }
             self.update(subscription_ref, |s| {
-                s.price_refs = vec![price_ref.to_owned()]
+                s.price_refs = vec![price_ref.to_owned()];
+                if timing == ChangeTiming::NextPeriod && paid_until.is_some() {
+                    s.period_end = paid_until;
+                }
             })
         }
 

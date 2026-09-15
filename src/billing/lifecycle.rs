@@ -14,7 +14,8 @@
 //!   id before it is applied, and one older than the last applied observation
 //!   is dropped rather than rewinding the account.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
 
 use tokio::sync::Semaphore;
@@ -31,6 +32,7 @@ use super::provider::{
     BillingProvider, ChangeTiming, EventKind, ProviderEvent, SubscriptionSnapshot,
 };
 use super::{Actor, PlanRequest, set_plan_tx};
+use crate::api::error::codes;
 use crate::domain::{AccountId, BillingStatus, Interval, Subscription};
 use crate::email::EmailTemplate;
 use crate::error::{AppError, Result};
@@ -54,7 +56,17 @@ pub struct Billing {
     /// wait for them and a burst of deliveries settles a few at a time.
     settling: TaskTracker,
     settle_slots: Arc<Semaphore>,
+    /// One account's changes, webhooks and sweeps take turns, so a change
+    /// made of several provider requests is never read in between. Held in
+    /// this process only; two processes can still interleave, and a move
+    /// read in between then lands on the period end the row already paid
+    /// for, not the restarted one the snapshot shows.
+    turns: Turns,
 }
+
+type Turns = Arc<Mutex<HashMap<AccountId, Arc<tokio::sync::Mutex<()>>>>>;
+/// An account's turn, held until dropped.
+type Turn = tokio::sync::OwnedMutexGuard<()>;
 
 impl Billing {
     pub fn new(provider: Arc<dyn BillingProvider>, mailer: Mailer) -> Self {
@@ -63,7 +75,38 @@ impl Billing {
             mailer,
             settling: TaskTracker::new(),
             settle_slots: Arc::new(Semaphore::new(SETTLE_SLOTS)),
+            turns: Arc::default(),
         }
+    }
+
+    /// Entries nobody holds or waits on (a holder or waiter keeps its own
+    /// handle) go the next time any account's is taken.
+    fn slot(&self, account: AccountId) -> Arc<tokio::sync::Mutex<()>> {
+        let mut turns = self.turns.lock().unwrap_or_else(|p| p.into_inner());
+        turns.retain(|_, m| Arc::strong_count(m) > 1);
+        Arc::clone(turns.entry(account).or_default())
+    }
+
+    async fn turn(&self, account: AccountId) -> Turn {
+        self.slot(account).lock_owned().await
+    }
+
+    /// The turn only if nobody has it: the sweep passes a busy account by
+    /// and finds it next tick.
+    fn try_turn(&self, account: AccountId) -> Option<Turn> {
+        self.slot(account).try_lock_owned().ok()
+    }
+
+    /// The turn, or a refusal once `patience` is up.
+    async fn turn_within(&self, account: AccountId, patience: StdDuration) -> Result<Turn> {
+        tokio::time::timeout(patience, self.turn(account))
+            .await
+            .map_err(|_| {
+                AppError::conflict(
+                    codes::SUBSCRIPTION_STATE,
+                    "another change to the subscription is still being applied; try again in a moment",
+                )
+            })
     }
 
     /// Waits for every after-effect the receiver has answered ahead of.
@@ -96,6 +139,10 @@ pub const ACK_BUDGET: StdDuration = StdDuration::from_secs(3);
 /// After-effects settled at once, so a replayed batch of deliveries does not
 /// hit the provider and the mailer with everything at the same time.
 const SETTLE_SLOTS: usize = 4;
+/// How long a change waits for the account's turn: one change ahead of it,
+/// so a client that resends cannot line up changes that outlive it and hold
+/// the account against its webhooks.
+const CHANGE_PATIENCE: StdDuration = StdDuration::from_secs(5);
 
 /// Side effects the transaction defers until it has committed.
 #[derive(Default)]
@@ -135,6 +182,7 @@ struct Aftermath {
 
 enum Input {
     Event(Box<ProviderEvent>, Option<Box<SubscriptionSnapshot>>),
+    /// The provider's view: looked up, or its answer to the app's own change.
     Snapshot(Box<SubscriptionSnapshot>),
     Clock(DateTime<Utc>),
 }
@@ -196,6 +244,12 @@ impl Billing {
         event: ProviderEvent,
     ) -> Result<(Outcome, Option<Aftermath>)> {
         let provider = self.provider.name();
+        // A redelivery of an event already applied is answered without the
+        // account's turn or a provider call; `claim_event` still decides
+        // for two deliveries of one event racing each other.
+        if store::event_seen(pool, provider, &event.event_id).await? {
+            return Ok((Outcome::Duplicate, None));
+        }
         let Some(account) = resolve_account(pool, provider, &event).await? else {
             self.acknowledge_unmatched(pool, &event).await?;
             return Ok((unowned(&event.kind), None));
@@ -211,9 +265,9 @@ impl Billing {
         .await
     }
 
-    /// Applies a snapshot the provider returned to a call we made, so the
-    /// caller sees the change without waiting for the webhook that follows.
-    pub async fn apply_snapshot(
+    /// Applies a snapshot the provider returned to a lookup, so the caller
+    /// sees the provider's view without waiting for a webhook.
+    pub(super) async fn apply_snapshot(
         &self,
         pool: &PgPool,
         quotas: &QuotaService,
@@ -222,6 +276,55 @@ impl Billing {
     ) -> Result<Outcome> {
         self.apply(pool, quotas, account, Input::Snapshot(Box::new(snapshot)))
             .await
+    }
+
+    /// Asks the provider for a change and applies its answer in the
+    /// account's turn. `call` gets the row as it is in that turn and the
+    /// provider, decides, and answers with the snapshot to apply, or none
+    /// when there is nothing to do. The webhooks a change sets off can land
+    /// before the call returns, and a change made in more than one request
+    /// is wrong in between; they wait for the turn, and the in-between ones
+    /// then read as older than the answer and are dropped, while the last
+    /// repeats it. Turn, call and commit run as one detached task, so a
+    /// request dropped mid-change still finishes every step at the provider
+    /// with the account held throughout. A turn not had within
+    /// [`CHANGE_PATIENCE`] is a change refused, not queued. An answer the
+    /// row would not take (another process moved it on first) is logged,
+    /// since the provider call was still made.
+    pub async fn change<Fut>(
+        self: &Arc<Self>,
+        pool: &PgPool,
+        quotas: &QuotaService,
+        account: AccountId,
+        call: impl FnOnce(Subscription, Arc<dyn BillingProvider>) -> Fut + Send + 'static,
+    ) -> Result<()>
+    where
+        Fut: Future<Output = Result<Option<SubscriptionSnapshot>>> + Send,
+    {
+        let this = Arc::clone(self);
+        let pool = pool.clone();
+        let quotas = quotas.clone();
+        self.settling
+            .spawn(async move {
+                let turn = this.turn_within(account, CHANGE_PATIENCE).await?;
+                let sub = this.subscription(&pool, account).await?;
+                let Some(snapshot) = call(sub, Arc::clone(&this.provider)).await? else {
+                    return Ok(());
+                };
+                let (outcome, after) = this
+                    .commit_in_turn(&pool, account, Input::Snapshot(Box::new(snapshot)))
+                    .await?;
+                drop(turn);
+                if outcome != Outcome::Applied {
+                    tracing::warn!(account = %account, ?outcome, "billing: the provider's answer to a change was not taken");
+                }
+                if let Some(after) = after {
+                    this.settle(&pool, &quotas, &after.sub, after.fx).await;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|e| AppError::Other(anyhow::anyhow!("billing: provider change task: {e}")))?
     }
 
     /// Applies what the clock owes: scheduled changes that are due, grace
@@ -258,6 +361,26 @@ impl Billing {
     }
 
     async fn commit(
+        &self,
+        pool: &PgPool,
+        account: AccountId,
+        input: Input,
+    ) -> Result<(Outcome, Option<Aftermath>)> {
+        let _turn = match &input {
+            Input::Clock(_) => match self.try_turn(account) {
+                Some(turn) => turn,
+                None => {
+                    tracing::debug!(account = %account, "billing sweep: account busy, next tick");
+                    return Ok((Outcome::Unchanged, None));
+                }
+            },
+            Input::Snapshot(_) => self.turn_within(account, CHANGE_PATIENCE).await?,
+            Input::Event(..) => self.turn(account).await,
+        };
+        self.commit_in_turn(pool, account, input).await
+    }
+
+    async fn commit_in_turn(
         &self,
         pool: &PgPool,
         account: AccountId,
@@ -408,7 +531,6 @@ impl Billing {
             sub.provider = Some(self.provider.name().to_owned());
             sub.customer_ref = Some(snap.customer_ref.clone());
             sub.subscription_ref = Some(snap.subscription_ref.clone());
-            sub.current_period_end = snap.period_end;
         }
 
         // A failed or recovered payment arrives twice, as an event and as a
@@ -423,8 +545,8 @@ impl Billing {
                     BillingStatus::PastDue => {}
                     _ => sub.status = BillingStatus::Active,
                 }
-                let price = self.plan_for(tx, &snap).await?;
-                self.settle_plan(tx, sub, &price, &snap, now, fx).await?;
+                let price = self.settle_plan(tx, sub, &snap, now, fx).await?;
+                sub.current_period_end = snap.period_end;
                 // A booked move reports its price ahead of time; the cadence
                 // shown is the one being paid until it lands.
                 if sub.plan_id == price.plan_id {
@@ -432,6 +554,9 @@ impl Billing {
                 }
             }
             Remote::PastDue => {
+                if live {
+                    sub.current_period_end = snap.period_end;
+                }
                 if sub.status == BillingStatus::Active && after_last_payment {
                     self.start_grace(tx, sub, now, fx).await?;
                 }
@@ -529,16 +654,23 @@ impl Billing {
 
     /// Decides what the provider's plan means for the account's own: now for
     /// a bigger plan, at period end for a smaller one, and a scheduled cancel
-    /// over either.
+    /// over either; answers the price the snapshot names.
+    /// Runs before the row takes the snapshot's period end: a smaller plan
+    /// lands on the period end the row already paid for, since a change
+    /// made in more than one provider request shows a restarted period in
+    /// between, in either direction, and the snapshot's own period end is
+    /// only trusted once the row's is over. A smaller price put on in the
+    /// provider's dashboard with immediate proration lands on the old date
+    /// for the same reason; such moves are made through the app.
     async fn settle_plan(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         sub: &mut Subscription,
-        price: &store::PlanPrice,
         snap: &SubscriptionSnapshot,
         now: DateTime<Utc>,
         fx: &mut Effects,
-    ) -> Result<()> {
+    ) -> Result<store::PlanPrice> {
+        let price = self.plan_for(tx, snap).await?;
         let target = price.plan_id.as_str();
         if let Some(at) = snap.cancel_at {
             // A booked move cannot outlive the subscription; the provider
@@ -563,7 +695,7 @@ impl Billing {
                 self.move_now(tx, sub, target, "provider subscription", self.actor(), fx)
                     .await?;
             }
-            return Ok(());
+            return Ok(price);
         }
         if sub.cancel_at.take().is_some() {
             ledger::record_tx(tx, sub.account, ledger::PENDING_CHANGE_CLEARED, json!({})).await?;
@@ -574,13 +706,13 @@ impl Billing {
                 ledger::record_tx(tx, sub.account, ledger::PENDING_CHANGE_CLEARED, json!({}))
                     .await?;
             }
-            return Ok(());
+            return Ok(price);
         }
         if !smaller(tx, target, &sub.plan_id).await? {
             self.move_now(tx, sub, target, "provider subscription", self.actor(), fx)
                 .await?;
             sub.clear_pending();
-            return Ok(());
+            return Ok(price);
         }
         let already = sub.pending_plan_id.as_deref() == Some(target);
         match (already, sub.plan_change_at) {
@@ -598,11 +730,14 @@ impl Billing {
                 let cadence = Interval::parse(&price.interval);
                 if sub.pending_interval != cadence {
                     sub.pending_interval = cadence;
-                    record_booked(tx, sub.account, price, at).await?;
+                    record_booked(tx, sub.account, &price, at).await?;
                 }
             }
             (true, None) => {}
-            _ => match snap.period_end {
+            _ => match snap
+                .period_end
+                .map(|end| sub.current_period_end.filter(|at| *at > now).unwrap_or(end))
+            {
                 // No boundary to defer to (a snapshot without a billing period,
                 // e.g. a trialing or paused subscription): keep the plan the
                 // customer paid for and wait for a snapshot that carries one,
@@ -614,11 +749,11 @@ impl Billing {
                     sub.clear_pending();
                 }
                 Some(at) => {
-                    self.schedule_downgrade(tx, sub, price, at, fx).await?;
+                    self.schedule_downgrade(tx, sub, &price, at, fx).await?;
                 }
             },
         }
-        Ok(())
+        Ok(price)
     }
 
     async fn schedule_downgrade(
@@ -812,12 +947,6 @@ impl Billing {
         else {
             return Ok(None);
         };
-        // A redelivery of an event already applied would otherwise pay for an
-        // outbound provider call before `apply` reaches `claim_event` and
-        // returns Duplicate.
-        if store::event_seen(pool, self.provider.name(), &event.event_id).await? {
-            return Ok(None);
-        }
         let Some(sub) = store::get(pool, account).await? else {
             return Ok(None);
         };

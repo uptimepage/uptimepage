@@ -568,7 +568,7 @@ pub struct DeletionConfirmation {
                    the deletion.",
     responses(
         (status = 200, body = DeletionConfirmation),
-        (status = 409, body = ApiError, description = "Account already scheduled for deletion, or the payment provider refused to end the subscription"),
+        (status = 409, body = ApiError, description = "Account already scheduled for deletion, the payment provider refused to end the subscription, or another change to the subscription is still being applied"),
         (status = 422, body = ApiError, description = "User solely owns orgs with other members"),
         (status = 503, body = ApiError, description = "The payment provider gave no answer; retry later"),
     ),

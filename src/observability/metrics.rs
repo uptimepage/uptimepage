@@ -63,6 +63,7 @@ fn prime_event_counters() {
         metrics::counter!(names::BILLING_WEBHOOK_REJECTED, "reason" => reason).increment(0);
     }
     metrics::counter!(names::BILLING_PROVIDER_CANCEL_FAILED).increment(0);
+    metrics::counter!(names::BILLING_PROVIDER_DATE_FAILED).increment(0);
 }
 
 fn register_descriptions() {
@@ -358,11 +359,15 @@ fn register_descriptions() {
     );
     describe_counter!(
         "uptimepage_billing_webhook_rejected_total",
-        "Payment-provider webhooks not acted on, labelled by `reason` (signature | malformed | failed). `signature` at a steady trickle means the endpoint secret in config does not match the provider's; `failed` answered 5xx so the provider retries, and a sustained rate means every retry is failing the same way, usually a price the `plan_prices` table does not know"
+        "Payment-provider webhooks not acted on, labelled by `reason` (signature | malformed | failed | stalled). `signature` at a steady trickle means the endpoint secret in config does not match the provider's; `failed` answered 5xx so the provider retries, and a sustained rate means every retry is failing the same way, usually a price the `plan_prices` table does not know; `stalled` answered 503 past the provider's patience, usually a delivery queued behind the same account's plan change, healed by the redelivery"
     );
     describe_gauge!(
         "uptimepage_process_start_time_seconds",
         "Unix time this process started. `changes()` over a window is the restart signal: a counter that reset with the process has no `increase` to show for an event landing before the first scrape"
+    );
+    describe_counter!(
+        "uptimepage_billing_provider_date_failed_total",
+        "Price changes booked for the next period that may have left the payment provider's billing date moved: the provider restarted the billing period and the call to put the date back failed, or the change itself went unanswered and could not be confirmed. Each one can bill the customer a whole cadence early or late until the date is checked and set by hand in the provider dashboard, so this should sit at zero; the app log line 'billing date left moved by a price change' names the subscription and the date it should have"
     );
     describe_counter!(
         "uptimepage_billing_provider_cancel_failed_total",
@@ -449,6 +454,7 @@ pub mod names {
     pub const BILLING_WEBHOOK_REJECTED: &str = "uptimepage_billing_webhook_rejected_total";
     pub const BILLING_PROVIDER_CANCEL_FAILED: &str =
         "uptimepage_billing_provider_cancel_failed_total";
+    pub const BILLING_PROVIDER_DATE_FAILED: &str = "uptimepage_billing_provider_date_failed_total";
     pub const SUBSCRIPTIONS: &str = "uptimepage_subscriptions";
     /// Labelled `action` (linked/unlinked) + `origin` (signup/email_match/session).
     /// A rise in `linked`+`email_match` without matching sign-ups is what a

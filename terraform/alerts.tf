@@ -1459,6 +1459,47 @@ resource "grafana_rule_group" "billing" {
       model = local.threshold_c
     }
   }
+  # A price change booked for the next period where the provider restarted
+  # the billing period (a price on the other cadence does) and the call
+  # putting the billing date back failed, with the provider still showing
+  # the moved date afterwards. Nothing retries. Same guard as above.
+  rule {
+    name           = "UptimepageBillingProviderDateFailed"
+    condition      = "C"
+    for            = "0s"
+    no_data_state  = "OK"
+    exec_err_state = "Error"
+    labels = {
+      severity = "critical"
+      service  = "uptimepage"
+    }
+    annotations = {
+      summary     = "uptimepage: a subscription's billing date may be left moved by a price change"
+      description = "in the last hour a customer booked a price for the next period and the app could not make sure the billing date still ends the period already paid for: the payment provider restarted the billing period (a price on the other cadence does) and the call putting the date back failed, or the change went unanswered and could not be confirmed. That subscription may now bill a whole cadence early or late. Nothing retries. The app log line 'billing date left moved by a price change' names the subscription_ref and the date it should carry; open it in the provider dashboard and set the next billing date to that date if it differs."
+    }
+    data {
+      ref_id         = "A"
+      datasource_uid = data.grafana_data_source.prometheus.uid
+      relative_time_range {
+        from = 3600
+        to   = 0
+      }
+      model = jsonencode({
+        refId   = "A"
+        instant = true
+        expr    = "(sum by (color) (increase(uptimepage_billing_provider_date_failed_total[1h])) > 0) or (sum by (color) (uptimepage_billing_provider_date_failed_total) > 0 unless (sum by (color) (uptimepage_billing_provider_date_failed_total offset 1h) > 0 and on (color) changes(uptimepage_process_start_time_seconds[1h]) == 0))"
+      })
+    }
+    data {
+      ref_id         = "C"
+      datasource_uid = "__expr__"
+      relative_time_range {
+        from = 0
+        to   = 0
+      }
+      model = local.threshold_c
+    }
+  }
 }
 
 resource "grafana_contact_point" "default" {

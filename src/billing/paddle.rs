@@ -28,6 +28,7 @@ use crate::auth::mac::hmac_sha256_hex;
 use crate::domain::AccountId;
 use crate::error::{AppError, Result};
 use crate::http_outbound::{OutboundHttpClient, REQUEST_TIMEOUT};
+use crate::observability::metrics::names;
 
 pub const NAME: &str = "paddle";
 pub const SIGNATURE_HEADER: &str = "paddle-signature";
@@ -36,6 +37,12 @@ pub const SIGNATURE_HEADER: &str = "paddle-signature";
 /// nothing where five seconds would drop every delivery on a skewed host.
 pub const TOLERANCE_SECS: i64 = 5 * 60;
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
+/// Before the one retry of a call that failed, long enough for a rate
+/// limit or a lock the previous call left to clear.
+const RETRY_PAUSE: std::time::Duration = std::time::Duration::from_secs(1);
+/// A period end this close is a renewal about to run, which a swap would
+/// race.
+const RENEWAL_MARGIN: chrono::Duration = chrono::Duration::minutes(1);
 const CUSTOM_DATA_ACCOUNT: &str = "account_id";
 const CUSTOM_DATA_TAG: &str = "account_sig";
 
@@ -104,8 +111,9 @@ pub struct PaddleProvider {
     /// Keys the account claim on a checkout. Ours and never rotated with the
     /// endpoint secret, so a rotation strands no checkout in flight.
     checkout_secret: SecretString,
-    api_base: &'static str,
+    api_base: String,
     http: OutboundHttpClient,
+    retry_pause: std::time::Duration,
 }
 
 impl PaddleProvider {
@@ -120,8 +128,21 @@ impl PaddleProvider {
             api_key,
             webhook_secret,
             checkout_secret,
-            api_base: environment.api_base(),
+            api_base: environment.api_base().to_owned(),
             http,
+            retry_pause: RETRY_PAUSE,
+        }
+    }
+
+    #[cfg(test)]
+    fn at(api_base: String, http: OutboundHttpClient) -> Self {
+        Self {
+            api_key: SecretString::from("key"),
+            webhook_secret: SecretString::from("secret"),
+            checkout_secret: SecretString::from("checkout"),
+            api_base,
+            http,
+            retry_pause: std::time::Duration::ZERO,
         }
     }
 
@@ -165,6 +186,16 @@ impl PaddleProvider {
             .as_str()
             .unwrap_or("no detail given");
         Err(answer_for(status, path, code, detail))
+    }
+
+    /// A look that is tried twice, for a state a call may have changed
+    /// without answering.
+    async fn look_again(&self, subscription_ref: &str) -> Result<SubscriptionSnapshot> {
+        if let Ok(seen) = self.fetch_subscription(subscription_ref).await {
+            return Ok(seen);
+        }
+        tokio::time::sleep(self.retry_pause).await;
+        self.fetch_subscription(subscription_ref).await
     }
 
     async fn subscription_call(
@@ -430,25 +461,117 @@ impl BillingProvider for PaddleProvider {
         .await
     }
 
+    /// Paddle swaps the item at once either way; `NextPeriod` only tells it
+    /// not to bill. A price on another cadence also restarts the billing
+    /// period from now, which would push the next charge a whole cadence
+    /// out (or pull it in) for nothing paid, so the period end is read
+    /// first and put back when the swap has moved it, and only then, so a
+    /// period Paddle holds differently from the row is left alone. It has
+    /// to be a second request: Paddle answers `items` with `next_billed_at`
+    /// in one with 400 "not possible to change items and billing date in
+    /// the same request", and only `prorated_immediately`,
+    /// `full_immediately` and `do_not_bill` are allowed when the billing
+    /// cycle changes. The date put back is the caller's row's while still
+    /// ahead, since Paddle's own is the one a swap that was never put back
+    /// has moved; Paddle's is taken when the row's is over. A period end
+    /// about to pass is a renewal in flight, which the swap would race, so
+    /// the change is refused until it settles. A swap that fails to answer
+    /// is checked against what Paddle now holds, since a call can land and
+    /// still not answer; one that cannot be checked either is counted, as
+    /// it may have moved the date with nobody to put it back. Once the swap
+    /// is in, a date that will not go back is counted for someone to set by
+    /// hand, and the answer is the swap with the period end the customer
+    /// paid through, as retrying cannot put it back and the move must still
+    /// land on that date.
     async fn change_price(
         &self,
         subscription_ref: &str,
         price_ref: &str,
         timing: ChangeTiming,
+        paid_until: Option<DateTime<Utc>>,
     ) -> Result<SubscriptionSnapshot> {
-        let proration = match timing {
-            ChangeTiming::Now => "prorated_immediately",
-            ChangeTiming::NextPeriod => "do_not_bill",
+        let path = format!("/subscriptions/{subscription_ref}");
+        let (proration, before) = match timing {
+            ChangeTiming::Now => ("prorated_immediately", None),
+            ChangeTiming::NextPeriod => {
+                let end = self.fetch_subscription(subscription_ref).await?.period_end;
+                if end.is_some_and(|at| at <= Utc::now() + RENEWAL_MARGIN) {
+                    return Err(AppError::conflict(
+                        codes::SUBSCRIPTION_STATE,
+                        "the subscription is renewing right now; try again in a minute",
+                    ));
+                }
+                ("do_not_bill", end)
+            }
         };
-        self.subscription_call(
-            Method::PATCH,
-            &format!("/subscriptions/{subscription_ref}"),
-            Some(json!({
-                "items": [{ "price_id": price_ref, "quantity": 1 }],
-                "proration_billing_mode": proration,
-            })),
-        )
-        .await
+        let paid_until = before.map(|end| paid_until.unwrap_or(end));
+        let swapped = self
+            .subscription_call(
+                Method::PATCH,
+                &path,
+                Some(json!({
+                    "items": [{ "price_id": price_ref, "quantity": 1 }],
+                    "proration_billing_mode": proration,
+                })),
+            )
+            .await;
+        let changed = match swapped {
+            Ok(changed) => changed,
+            Err(err @ AppError::ServiceUnavailable { .. }) => {
+                match self.look_again(subscription_ref).await {
+                    Ok(seen) if seen.price_refs == [price_ref] => seen,
+                    Ok(_) => return Err(err),
+                    Err(_) => {
+                        if let Some(at) = paid_until {
+                            metrics::counter!(names::BILLING_PROVIDER_DATE_FAILED).increment(1);
+                            tracing::error!(
+                                subscription_ref,
+                                %at,
+                                error = %err,
+                                "paddle: billing date left moved by a price change if it landed unanswered; check and put it back by hand"
+                            );
+                        }
+                        return Err(err);
+                    }
+                }
+            }
+            Err(err) => return Err(err),
+        };
+        let moved = changed.period_end != before;
+        let Some(at) = paid_until.filter(|at| moved && changed.period_end != Some(*at)) else {
+            return Ok(changed);
+        };
+        let pin = json!({ "next_billed_at": at, "proration_billing_mode": "do_not_bill" });
+        let mut answer = self
+            .subscription_call(Method::PATCH, &path, Some(pin.clone()))
+            .await;
+        if answer.as_ref().is_err_and(worth_another_try) {
+            tokio::time::sleep(self.retry_pause).await;
+            answer = self
+                .subscription_call(Method::PATCH, &path, Some(pin))
+                .await;
+        }
+        let why = match answer {
+            Ok(pinned) if pinned.period_end == Some(at) => return Ok(pinned),
+            Ok(pinned) => format!("answered with {:?}", pinned.period_end),
+            Err(err) => err.to_string(),
+        };
+        if let Ok(seen) = self.fetch_subscription(subscription_ref).await
+            && seen.period_end == Some(at)
+        {
+            return Ok(seen);
+        }
+        metrics::counter!(names::BILLING_PROVIDER_DATE_FAILED).increment(1);
+        tracing::error!(
+            subscription_ref,
+            %at,
+            why,
+            "paddle: billing date left moved by a price change; put it back by hand"
+        );
+        Ok(SubscriptionSnapshot {
+            period_end: Some(at),
+            ..changed
+        })
     }
 
     async fn cancel(
@@ -495,6 +618,16 @@ fn answer_for(status: StatusCode, path: &str, code: &str, detail: &str) -> AppEr
     };
     tracing::warn!(%status, code, detail, path, "paddle refused the call");
     refused
+}
+
+/// No answer, or a lock the previous call left (`subscription_locked_*`)
+/// that clears on its own; a refusal proper answers the same way again.
+fn worth_another_try(err: &AppError) -> bool {
+    match err {
+        AppError::ServiceUnavailable { .. } => true,
+        AppError::Conflict { message, .. } => message.starts_with("subscription_locked"),
+        _ => false,
+    }
 }
 
 /// Logged in full, answered as something to retry: the caller can do
@@ -757,5 +890,473 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, WebhookRejected::Malformed(_)));
+    }
+
+    /// Answers each request from the script in order and keeps what was
+    /// asked: `METHOD /path` and the JSON body.
+    async fn scripted_api(
+        script: Vec<(StatusCode, Value)>,
+    ) -> (
+        String,
+        std::sync::Arc<std::sync::Mutex<Vec<(String, Value)>>>,
+    ) {
+        use std::sync::{Arc, Mutex};
+        let asked: Arc<Mutex<Vec<(String, Value)>>> = Arc::default();
+        let script = Arc::new(Mutex::new(script.into_iter()));
+        let seen = asked.clone();
+        let app = axum::Router::new().fallback(
+            move |method: Method, uri: axum::http::Uri, body: String| {
+                let seen = seen.clone();
+                let script = script.clone();
+                async move {
+                    let body: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+                    seen.lock()
+                        .unwrap()
+                        .push((format!("{method} {}", uri.path()), body));
+                    let (status, answer) = script
+                        .lock()
+                        .unwrap()
+                        .next()
+                        .unwrap_or((StatusCode::INTERNAL_SERVER_ERROR, json!({})));
+                    (status, axum::Json(answer))
+                }
+            },
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}"), asked)
+    }
+
+    fn sub(price: &str, ends_at: DateTime<Utc>) -> Value {
+        json!({ "data": {
+            "id": "sub_01",
+            "status": "active",
+            "customer_id": "ctm_01",
+            "current_billing_period": { "starts_at": "2026-09-14T12:00:00Z", "ends_at": ends_at },
+            "scheduled_change": null,
+            "items": [{ "status": "active", "price": { "id": price } }],
+            "updated_at": "2026-09-14T12:30:00Z"
+        }})
+    }
+
+    fn from_now(ahead: chrono::Duration) -> DateTime<Utc> {
+        use chrono::Timelike;
+        (Utc::now() + ahead).with_nanosecond(0).unwrap()
+    }
+
+    fn days_from_now(days: i64) -> DateTime<Utc> {
+        from_now(chrono::Duration::days(days))
+    }
+
+    fn provider_at(base: String) -> PaddleProvider {
+        let http = crate::http_outbound::build_outbound_client(
+            crate::security::SsrfGuard::relaxed_for_tests(),
+        );
+        PaddleProvider::at(base, http)
+    }
+
+    fn down() -> (StatusCode, Value) {
+        (
+            StatusCode::BAD_GATEWAY,
+            json!({ "error": { "code": "internal", "detail": "x" } }),
+        )
+    }
+
+    fn refused() -> (StatusCode, Value) {
+        (
+            StatusCode::BAD_REQUEST,
+            json!({ "error": { "code": "bad_request", "detail": "no" } }),
+        )
+    }
+
+    fn locked() -> (StatusCode, Value) {
+        (
+            StatusCode::CONFLICT,
+            json!({ "error": { "code": "subscription_locked_processing", "detail": "wait" } }),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_price_on_another_cadence_keeps_the_paid_period_end() {
+        let (paid, moved) = (days_from_now(29), days_from_now(365));
+        let (base, asked) = scripted_api(vec![
+            (StatusCode::OK, sub("pri_team_month", paid)),
+            (StatusCode::OK, sub("pri_pro_year", moved)),
+            (StatusCode::OK, sub("pri_pro_year", paid)),
+        ])
+        .await;
+        let snapshot = provider_at(base)
+            .change_price(
+                "sub_01",
+                "pri_pro_year",
+                ChangeTiming::NextPeriod,
+                Some(paid),
+            )
+            .await
+            .unwrap();
+
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked.len(), 3, "read, change, pin: {asked:?}");
+        assert_eq!(asked[0].0, "GET /subscriptions/sub_01");
+        assert_eq!(asked[1].0, "PATCH /subscriptions/sub_01");
+        assert_eq!(asked[1].1["proration_billing_mode"], "do_not_bill");
+        assert_eq!(asked[2].0, "PATCH /subscriptions/sub_01");
+        assert_eq!(
+            asked[2].1,
+            json!({ "next_billed_at": paid, "proration_billing_mode": "do_not_bill" })
+        );
+        assert_eq!(snapshot.period_end, Some(paid));
+        assert_eq!(snapshot.price_refs, vec!["pri_pro_year"]);
+    }
+
+    #[tokio::test]
+    async fn the_date_put_back_is_the_rows_not_the_one_paddle_held() {
+        let (paid, drifted, moved) = (days_from_now(29), days_from_now(60), days_from_now(365));
+        let (base, asked) = scripted_api(vec![
+            (StatusCode::OK, sub("pri_team_month", drifted)),
+            (StatusCode::OK, sub("pri_pro_year", moved)),
+            (StatusCode::OK, sub("pri_pro_year", paid)),
+        ])
+        .await;
+        let snapshot = provider_at(base)
+            .change_price(
+                "sub_01",
+                "pri_pro_year",
+                ChangeTiming::NextPeriod,
+                Some(paid),
+            )
+            .await
+            .unwrap();
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked.len(), 3, "read, change, pin: {asked:?}");
+        assert_eq!(asked[2].1["next_billed_at"], json!(paid));
+        assert_eq!(snapshot.period_end, Some(paid));
+    }
+
+    #[tokio::test]
+    async fn a_row_whose_period_is_over_has_paddle_asked_for_it_first() {
+        let (paid, moved) = (days_from_now(29), days_from_now(365));
+        let (base, asked) = scripted_api(vec![
+            (StatusCode::OK, sub("pri_team_month", paid)),
+            (StatusCode::OK, sub("pri_pro_year", moved)),
+            (StatusCode::OK, sub("pri_pro_year", paid)),
+        ])
+        .await;
+        let snapshot = provider_at(base)
+            .change_price("sub_01", "pri_pro_year", ChangeTiming::NextPeriod, None)
+            .await
+            .unwrap();
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked.len(), 3, "read, change, pin: {asked:?}");
+        assert_eq!(asked[2].1["next_billed_at"], json!(paid));
+        assert_eq!(snapshot.period_end, Some(paid));
+    }
+
+    #[tokio::test]
+    async fn a_price_on_the_same_cadence_keeps_its_period_and_needs_no_pin() {
+        let paid = days_from_now(29);
+        let (base, asked) = scripted_api(vec![
+            (StatusCode::OK, sub("pri_team_month", paid)),
+            (StatusCode::OK, sub("pri_pro_month", paid)),
+        ])
+        .await;
+        let snapshot = provider_at(base)
+            .change_price(
+                "sub_01",
+                "pri_pro_month",
+                ChangeTiming::NextPeriod,
+                Some(paid),
+            )
+            .await
+            .unwrap();
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked.len(), 2, "read, change: {asked:?}");
+        assert_eq!(asked[1].1["proration_billing_mode"], "do_not_bill");
+        assert_eq!(snapshot.period_end, Some(paid));
+    }
+
+    #[tokio::test]
+    async fn a_period_paddle_holds_differently_is_left_alone_when_the_swap_kept_it() {
+        let (paid, drifted) = (days_from_now(29), days_from_now(60));
+        let (base, asked) = scripted_api(vec![
+            (StatusCode::OK, sub("pri_team_month", drifted)),
+            (StatusCode::OK, sub("pri_pro_month", drifted)),
+        ])
+        .await;
+        let snapshot = provider_at(base)
+            .change_price(
+                "sub_01",
+                "pri_pro_month",
+                ChangeTiming::NextPeriod,
+                Some(paid),
+            )
+            .await
+            .unwrap();
+        assert_eq!(asked.lock().unwrap().len(), 2, "no pin");
+        assert_eq!(snapshot.period_end, Some(drifted));
+    }
+
+    #[tokio::test]
+    async fn an_immediate_change_that_landed_without_an_answer_is_found_by_asking() {
+        let (base, asked) = scripted_api(vec![
+            down(),
+            (StatusCode::OK, sub("pri_team_year", days_from_now(365))),
+        ])
+        .await;
+        let snapshot = provider_at(base)
+            .change_price("sub_01", "pri_team_year", ChangeTiming::Now, None)
+            .await
+            .unwrap();
+        assert_eq!(asked.lock().unwrap().len(), 2);
+        assert_eq!(snapshot.price_refs, vec!["pri_team_year"]);
+    }
+
+    #[tokio::test]
+    async fn an_immediate_change_is_one_prorated_call() {
+        let (base, asked) = scripted_api(vec![(
+            StatusCode::OK,
+            sub("pri_team_year", days_from_now(365)),
+        )])
+        .await;
+        provider_at(base)
+            .change_price(
+                "sub_01",
+                "pri_team_year",
+                ChangeTiming::Now,
+                Some(days_from_now(29)),
+            )
+            .await
+            .unwrap();
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked.len(), 1);
+        assert_eq!(asked[0].1["proration_billing_mode"], "prorated_immediately");
+    }
+
+    #[tokio::test]
+    async fn a_pin_that_fails_once_is_tried_again() {
+        let (paid, moved) = (days_from_now(29), days_from_now(365));
+        for first in [down(), locked()] {
+            let (base, asked) = scripted_api(vec![
+                (StatusCode::OK, sub("pri_team_month", paid)),
+                (StatusCode::OK, sub("pri_pro_year", moved)),
+                first,
+                (StatusCode::OK, sub("pri_pro_year", paid)),
+            ])
+            .await;
+            let snapshot = provider_at(base)
+                .change_price(
+                    "sub_01",
+                    "pri_pro_year",
+                    ChangeTiming::NextPeriod,
+                    Some(paid),
+                )
+                .await
+                .unwrap();
+            assert_eq!(asked.lock().unwrap().len(), 4);
+            assert_eq!(snapshot.period_end, Some(paid));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_pin_refused_outright_is_not_tried_again_but_checked() {
+        let (paid, moved) = (days_from_now(29), days_from_now(365));
+        let (base, asked) = scripted_api(vec![
+            (StatusCode::OK, sub("pri_team_month", paid)),
+            (StatusCode::OK, sub("pri_pro_year", moved)),
+            refused(),
+            (StatusCode::OK, sub("pri_pro_year", moved)),
+        ])
+        .await;
+        let snapshot = provider_at(base)
+            .change_price(
+                "sub_01",
+                "pri_pro_year",
+                ChangeTiming::NextPeriod,
+                Some(paid),
+            )
+            .await
+            .unwrap();
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked.len(), 4, "read, change, pin, look: {asked:?}");
+        assert_eq!(asked[3].0, "GET /subscriptions/sub_01");
+        assert_eq!(snapshot.period_end, Some(paid));
+    }
+
+    #[tokio::test]
+    async fn a_pin_that_keeps_failing_is_checked_counted_and_the_swap_stands() {
+        let (paid, moved) = (days_from_now(29), days_from_now(365));
+        let (base, asked) = scripted_api(vec![
+            (StatusCode::OK, sub("pri_team_month", paid)),
+            (StatusCode::OK, sub("pri_pro_year", moved)),
+            down(),
+            down(),
+            (StatusCode::OK, sub("pri_pro_year", moved)),
+        ])
+        .await;
+        let snapshot = provider_at(base)
+            .change_price(
+                "sub_01",
+                "pri_pro_year",
+                ChangeTiming::NextPeriod,
+                Some(paid),
+            )
+            .await
+            .unwrap();
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked.len(), 5, "read, change, pin, pin, look: {asked:?}");
+        assert_eq!(asked[4].0, "GET /subscriptions/sub_01");
+        assert_eq!(snapshot.price_refs, vec!["pri_pro_year"]);
+        assert_eq!(
+            snapshot.period_end,
+            Some(paid),
+            "the swap is in force and the move lands on the date paid through; Paddle's is the operator's to fix"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pin_answered_with_another_date_is_checked_and_counted() {
+        let (paid, moved) = (days_from_now(29), days_from_now(365));
+        let (base, asked) = scripted_api(vec![
+            (StatusCode::OK, sub("pri_team_month", paid)),
+            (StatusCode::OK, sub("pri_pro_year", moved)),
+            (StatusCode::OK, sub("pri_pro_year", moved)),
+            (StatusCode::OK, sub("pri_pro_year", moved)),
+        ])
+        .await;
+        let snapshot = provider_at(base)
+            .change_price(
+                "sub_01",
+                "pri_pro_year",
+                ChangeTiming::NextPeriod,
+                Some(paid),
+            )
+            .await
+            .unwrap();
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked.len(), 4, "read, change, pin, look: {asked:?}");
+        assert_eq!(asked[3].0, "GET /subscriptions/sub_01");
+        assert_eq!(snapshot.period_end, Some(paid));
+    }
+
+    #[tokio::test]
+    async fn a_renewal_in_flight_or_about_to_run_refuses_the_change_before_the_swap() {
+        for end in [days_from_now(-1), from_now(chrono::Duration::seconds(30))] {
+            let (base, asked) =
+                scripted_api(vec![(StatusCode::OK, sub("pri_team_month", end))]).await;
+            let err = provider_at(base)
+                .change_price(
+                    "sub_01",
+                    "pri_pro_year",
+                    ChangeTiming::NextPeriod,
+                    Some(days_from_now(29)),
+                )
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(&err, AppError::Conflict { code, .. } if *code == codes::SUBSCRIPTION_STATE),
+                "{err:?}"
+            );
+            assert_eq!(asked.lock().unwrap().len(), 1, "read only");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_pin_that_landed_without_an_answer_is_found_by_asking() {
+        let (paid, moved) = (days_from_now(29), days_from_now(365));
+        let (base, asked) = scripted_api(vec![
+            (StatusCode::OK, sub("pri_team_month", paid)),
+            (StatusCode::OK, sub("pri_pro_year", moved)),
+            down(),
+            refused(),
+            (StatusCode::OK, sub("pri_pro_year", paid)),
+        ])
+        .await;
+        let snapshot = provider_at(base)
+            .change_price(
+                "sub_01",
+                "pri_pro_year",
+                ChangeTiming::NextPeriod,
+                Some(paid),
+            )
+            .await
+            .unwrap();
+        assert_eq!(asked.lock().unwrap().len(), 5);
+        assert_eq!(snapshot.period_end, Some(paid));
+    }
+
+    #[tokio::test]
+    async fn an_item_change_that_landed_without_an_answer_is_still_pinned() {
+        let (paid, moved) = (days_from_now(29), days_from_now(365));
+        let (base, asked) = scripted_api(vec![
+            (StatusCode::OK, sub("pri_team_month", paid)),
+            down(),
+            (StatusCode::OK, sub("pri_pro_year", moved)),
+            (StatusCode::OK, sub("pri_pro_year", paid)),
+        ])
+        .await;
+        let snapshot = provider_at(base)
+            .change_price(
+                "sub_01",
+                "pri_pro_year",
+                ChangeTiming::NextPeriod,
+                Some(paid),
+            )
+            .await
+            .unwrap();
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked.len(), 4, "read, change, look, pin: {asked:?}");
+        assert_eq!(asked[3].1["next_billed_at"], json!(paid));
+        assert_eq!(snapshot.period_end, Some(paid));
+    }
+
+    #[tokio::test]
+    async fn an_item_change_neither_answered_nor_confirmed_is_looked_for_twice_then_the_callers_error()
+     {
+        let (base, asked) = scripted_api(vec![
+            (StatusCode::OK, sub("pri_team_month", days_from_now(29))),
+            down(),
+            down(),
+            down(),
+        ])
+        .await;
+        let err = provider_at(base)
+            .change_price(
+                "sub_01",
+                "pri_pro_year",
+                ChangeTiming::NextPeriod,
+                Some(days_from_now(29)),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::ServiceUnavailable { .. }),
+            "{err:?}"
+        );
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked.len(), 4, "read, change, look, look: {asked:?}");
+        assert_eq!(asked[3].0, "GET /subscriptions/sub_01");
+    }
+
+    #[tokio::test]
+    async fn an_item_change_refused_outright_is_the_callers_error() {
+        let (base, asked) = scripted_api(vec![
+            (StatusCode::OK, sub("pri_team_month", days_from_now(29))),
+            refused(),
+        ])
+        .await;
+        let err = provider_at(base)
+            .change_price(
+                "sub_01",
+                "pri_pro_year",
+                ChangeTiming::NextPeriod,
+                Some(days_from_now(29)),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::Conflict { .. }), "{err:?}");
+        assert_eq!(asked.lock().unwrap().len(), 2, "a refusal is not re-read");
     }
 }

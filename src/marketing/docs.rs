@@ -436,7 +436,7 @@ pub const DOCS: &[DocPage] = &[
         blurb: "The Prometheus series the service exposes and how to ship traces off the box.",
         section: Section::SelfHosting,
         scope: Scope::SelfHosting,
-        lastmod: "2026-09-13",
+        lastmod: "2026-09-15",
         source: include_str!("../../docs/metrics.md"),
         dir: "",
     },

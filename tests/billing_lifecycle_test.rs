@@ -35,6 +35,7 @@ use uptimepage::storage::subscriptions;
 use uuid::Uuid;
 
 const TEAM_MONTH: &str = "pri_team_month";
+const TEAM_YEAR: &str = "pri_team_year";
 const PRO_MONTH: &str = "pri_pro_month";
 const PRO_YEAR: &str = "pri_pro_year";
 
@@ -47,7 +48,7 @@ struct Harness {
     pool: PgPool,
     quotas: QuotaService,
     provider: Arc<FakeProvider>,
-    billing: Billing,
+    billing: Arc<Billing>,
     mail: InMemoryEmailSender,
     own_db: Option<String>,
 }
@@ -82,7 +83,7 @@ async fn harness_on(pool: PgPool, own_db: Option<String>) -> Harness {
     seed_prices(&pool).await;
     let provider = Arc::new(FakeProvider::default());
     let mail = InMemoryEmailSender::new();
-    let billing = Billing::new(
+    let billing = Arc::new(Billing::new(
         provider.clone(),
         Mailer {
             delivery: EmailDelivery {
@@ -92,7 +93,7 @@ async fn harness_on(pool: PgPool, own_db: Option<String>) -> Harness {
             },
             public_base_url: "https://app.example.test".into(),
         },
-    );
+    ));
     Harness {
         quotas: quotas(&pool),
         pool,
@@ -106,6 +107,7 @@ async fn harness_on(pool: PgPool, own_db: Option<String>) -> Harness {
 async fn seed_prices(pool: &PgPool) {
     for (price, plan, interval, amount) in [
         (TEAM_MONTH, "team", "month", 1900),
+        (TEAM_YEAR, "team", "year", 19000),
         (PRO_MONTH, "pro", "month", 900),
         (PRO_YEAR, "pro", "year", 9000),
     ] {
@@ -185,6 +187,14 @@ fn snapshot(
 
 fn sub_ref() -> String {
     format!("sub_{}", Uuid::now_v7().simple())
+}
+
+/// Now as the row will hand it back: Postgres keeps microseconds.
+fn now_us() -> DateTime<Utc> {
+    use chrono::Timelike;
+    let now = Utc::now();
+    now.with_nanosecond(now.nanosecond() / 1000 * 1000)
+        .expect("in range")
 }
 
 fn event(account: AccountId, subscription_ref: &str, kind: EventKind) -> ProviderEvent {
@@ -349,9 +359,9 @@ async fn a_smaller_plan_waits_for_the_period_end_and_the_sweep_then_holds_the_ex
     let sub = sub_ref();
     activate(&h, account, &sub, TEAM_MONTH).await;
     assert_eq!(held_count(&h.pool, org).await, 0);
+    let period_end = row(&h.pool, account).await.current_period_end;
 
     let down = snapshot(&sub, SubscriptionStatus::Active, PRO_YEAR, Utc::now());
-    let period_end = down.period_end;
     h.billing
         .apply_event(
             &h.pool,
@@ -1908,6 +1918,351 @@ async fn a_first_payment_whose_lookup_stalls_is_refused_within_the_providers_pat
     assert_eq!(s.plan_id, "team");
 }
 
+/// A price on another cadence is two provider requests, and the webhook for
+/// the first lands before the second returns. It waits for the change's
+/// turn, then reads as older than the answer already written, so the
+/// landing date and the one mail carry the paid period end, not the
+/// provider's in-between state.
+#[tokio::test]
+#[ignore]
+async fn a_webhook_racing_a_change_waits_and_is_then_stale() {
+    let Some(h) = isolated("billing").await else {
+        return;
+    };
+    let (account, _, _) = account(&h.pool, "founding", 0).await;
+    let sub = sub_ref();
+    let live = snapshot(&sub, SubscriptionStatus::Active, TEAM_MONTH, now_us());
+    let paid_until = live.period_end.expect("a billed period");
+    h.provider
+        .subscriptions
+        .lock()
+        .unwrap()
+        .insert(sub.clone(), live.clone());
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::Subscription(live)),
+        )
+        .await
+        .expect("apply");
+    h.provider.change_stall_ms.store(2000, Ordering::Relaxed);
+
+    let (changed, raced) = tokio::join!(
+        h.billing
+            .change_plan(&h.pool, &h.quotas, account, "pro", Interval::Year),
+        async {
+            h.provider.change_entered.notified().await;
+            let mut between = snapshot(&sub, SubscriptionStatus::Active, PRO_YEAR, now_us());
+            between.period_end = Some(paid_until + Duration::days(335));
+            h.billing
+                .apply_event(
+                    &h.pool,
+                    &h.quotas,
+                    event(account, &sub, EventKind::Subscription(between)),
+                )
+                .await
+        }
+    );
+    changed.expect("change");
+    assert_eq!(raced.expect("webhook"), Outcome::Stale);
+
+    let s = row(&h.pool, account).await;
+    assert_eq!(s.plan_id, "team");
+    assert_eq!(s.pending_plan_id.as_deref(), Some("pro"));
+    assert_eq!(s.pending_interval, Some(Interval::Year));
+    assert_eq!(s.plan_change_at, Some(paid_until));
+    assert_eq!(subjects(&h.mail), vec!["downgrade_scheduled"]);
+    match &h.mail.sent()[0].template {
+        EmailTemplate::DowngradeScheduled { at, .. } => assert_eq!(*at, paid_until),
+        other => panic!("{other:?}"),
+    }
+    h.finish().await;
+}
+
+/// Two processes hold no common turn, so the in-between state of a change
+/// can still be read first there. A move read that way lands on the period
+/// end the row already paid for, whichever way the provider's restarted
+/// period points, and a later period end never pushes a booked move out.
+#[tokio::test]
+#[ignore]
+async fn a_move_read_in_between_lands_on_the_period_paid_for() {
+    let Some(h) = isolated("billing").await else {
+        return;
+    };
+    for (paid, booked, restarted) in [
+        (TEAM_MONTH, PRO_YEAR, Duration::days(365)),
+        (TEAM_YEAR, PRO_MONTH, Duration::days(30)),
+    ] {
+        let (account, _, _) = account(&h.pool, "founding", 0).await;
+        let sub = sub_ref();
+        let mut live = snapshot(&sub, SubscriptionStatus::Active, paid, now_us());
+        if paid == TEAM_YEAR {
+            live.period_end = Some(live.taken_at + Duration::days(365));
+        }
+        let paid_until = live.period_end.expect("a billed period");
+        h.billing
+            .apply_event(
+                &h.pool,
+                &h.quotas,
+                event(account, &sub, EventKind::Subscription(live)),
+            )
+            .await
+            .expect("apply");
+        h.mail.clear();
+
+        let mut between = snapshot(&sub, SubscriptionStatus::Active, booked, now_us());
+        between.period_end = Some(between.taken_at + restarted);
+        h.billing
+            .apply_event(
+                &h.pool,
+                &h.quotas,
+                event(account, &sub, EventKind::Subscription(between)),
+            )
+            .await
+            .expect("apply");
+        let s = row(&h.pool, account).await;
+        assert_eq!(s.plan_id, "team");
+        assert_eq!(s.pending_plan_id.as_deref(), Some("pro"));
+        assert_eq!(s.plan_change_at, Some(paid_until), "{paid} -> {booked}");
+        assert_eq!(subjects(&h.mail), vec!["downgrade_scheduled"]);
+        match &h.mail.sent()[0].template {
+            EmailTemplate::DowngradeScheduled { at, .. } => assert_eq!(*at, paid_until),
+            other => panic!("{other:?}"),
+        }
+
+        let mut pinned = snapshot(&sub, SubscriptionStatus::Active, booked, now_us());
+        pinned.period_end = Some(paid_until);
+        h.billing
+            .apply_event(
+                &h.pool,
+                &h.quotas,
+                event(account, &sub, EventKind::Subscription(pinned)),
+            )
+            .await
+            .expect("apply");
+        let mut renewal = snapshot(&sub, SubscriptionStatus::Active, booked, now_us());
+        renewal.period_end = Some(paid_until + Duration::days(400));
+        h.billing
+            .apply_event(
+                &h.pool,
+                &h.quotas,
+                event(account, &sub, EventKind::Subscription(renewal)),
+            )
+            .await
+            .expect("apply");
+        let s = row(&h.pool, account).await;
+        assert_eq!(s.plan_change_at, Some(paid_until), "{paid} -> {booked}");
+        assert_eq!(subjects(&h.mail), vec!["downgrade_scheduled"], "told once");
+    }
+    h.finish().await;
+}
+
+/// Two submissions for one account decide one after the other, on the row
+/// as the first left it: the second cannot pass a check the first just
+/// closed, nor bill at once for a price the first made a cadence change.
+#[tokio::test]
+#[ignore]
+async fn a_second_change_decides_on_the_row_the_first_left() {
+    let Some(h) = isolated("billing").await else {
+        return;
+    };
+    let (account, _, _) = account(&h.pool, "founding", 0).await;
+    let sub = sub_ref();
+    let live = snapshot(&sub, SubscriptionStatus::Active, PRO_MONTH, Utc::now());
+    h.provider
+        .subscriptions
+        .lock()
+        .unwrap()
+        .insert(sub.clone(), live.clone());
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::Subscription(live)),
+        )
+        .await
+        .expect("apply");
+    h.provider.change_stall_ms.store(2000, Ordering::Relaxed);
+
+    let (first, second) = tokio::join!(
+        h.billing
+            .change_plan(&h.pool, &h.quotas, account, "team", Interval::Month),
+        async {
+            h.provider.change_entered.notified().await;
+            h.billing
+                .change_plan(&h.pool, &h.quotas, account, "team", Interval::Year)
+                .await
+        }
+    );
+    first.expect("first");
+    second.expect("second");
+    let calls = h.provider.calls.lock().unwrap().clone();
+    assert_eq!(
+        calls,
+        vec![
+            format!("change:{sub}:pri_team_month:Now"),
+            format!("change:{sub}:pri_team_year:NextPeriod"),
+        ],
+        "the yearly price is a cadence change on the plan already bought, not an upgrade to bill now"
+    );
+    h.finish().await;
+}
+
+/// A move is booked on the period end the row already paid for, whatever
+/// period the provider shows for it; only a row whose period is over takes
+/// the provider's, since that is a renewal the row has not heard of.
+#[tokio::test]
+#[ignore]
+async fn a_move_lands_on_the_rows_period_end_unless_that_is_over() {
+    let Some(h) = isolated("billing").await else {
+        return;
+    };
+    let (account, _, _) = account(&h.pool, "founding", 0).await;
+    let sub = sub_ref();
+    let mut live = snapshot(&sub, SubscriptionStatus::Active, TEAM_MONTH, now_us());
+    live.period_end = Some(live.taken_at - Duration::days(1));
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::Subscription(live.clone())),
+        )
+        .await
+        .expect("apply");
+    let renewed_until = live.taken_at + Duration::days(29);
+    let mut renewed = live.clone();
+    renewed.period_end = Some(renewed_until);
+    h.provider
+        .subscriptions
+        .lock()
+        .unwrap()
+        .insert(sub.clone(), renewed);
+
+    h.billing
+        .change_plan(&h.pool, &h.quotas, account, "pro", Interval::Month)
+        .await
+        .expect("book");
+    let s = row(&h.pool, account).await;
+    assert_eq!(s.pending_plan_id.as_deref(), Some("pro"));
+    assert_eq!(
+        s.plan_change_at,
+        Some(renewed_until),
+        "the provider's, the row's being over"
+    );
+    assert_eq!(s.current_period_end, Some(renewed_until));
+
+    h.provider
+        .subscriptions
+        .lock()
+        .unwrap()
+        .get_mut(&sub)
+        .unwrap()
+        .period_end = Some(renewed_until + Duration::days(335));
+    h.billing
+        .change_plan(&h.pool, &h.quotas, account, "pro", Interval::Year)
+        .await
+        .expect("rebook");
+    let s = row(&h.pool, account).await;
+    assert_eq!(s.pending_interval, Some(Interval::Year));
+    assert_eq!(
+        s.plan_change_at,
+        Some(renewed_until),
+        "the row's, still ahead"
+    );
+    assert_eq!(s.current_period_end, Some(renewed_until));
+    assert_eq!(subjects(&h.mail), vec!["downgrade_scheduled"], "told once");
+    h.finish().await;
+}
+
+/// A redelivery of an event already applied is answered at once, without
+/// waiting for a change that holds the account.
+#[tokio::test]
+#[ignore]
+async fn a_redelivery_is_answered_without_the_accounts_turn() {
+    let Some(h) = isolated("billing").await else {
+        return;
+    };
+    let (account, _, _) = account(&h.pool, "founding", 0).await;
+    let sub = sub_ref();
+    let live = snapshot(&sub, SubscriptionStatus::Active, TEAM_MONTH, Utc::now());
+    h.provider
+        .subscriptions
+        .lock()
+        .unwrap()
+        .insert(sub.clone(), live.clone());
+    let ev = event(account, &sub, EventKind::Subscription(live));
+    h.billing
+        .apply_event(&h.pool, &h.quotas, ev.clone())
+        .await
+        .expect("apply");
+    h.provider.change_stall_ms.store(2000, Ordering::Relaxed);
+
+    let (changed, again) = tokio::join!(
+        h.billing
+            .change_plan(&h.pool, &h.quotas, account, "pro", Interval::Month),
+        async {
+            h.provider.change_entered.notified().await;
+            let started = std::time::Instant::now();
+            let outcome = h.billing.apply_event(&h.pool, &h.quotas, ev).await;
+            (outcome, started.elapsed())
+        }
+    );
+    changed.expect("change");
+    let (outcome, took) = again;
+    assert_eq!(outcome.expect("redelivery"), Outcome::Duplicate);
+    assert!(took < std::time::Duration::from_secs(1), "waited {took:?}");
+    h.finish().await;
+}
+
+/// A change waits for the one ahead of it, no longer: past the patience it
+/// is refused rather than queued behind a provider that is slow to answer.
+#[tokio::test]
+#[ignore]
+async fn a_change_behind_a_slow_one_is_refused_not_queued() {
+    let Some(h) = isolated("billing").await else {
+        return;
+    };
+    let (account, _, _) = account(&h.pool, "founding", 0).await;
+    let sub = sub_ref();
+    let live = snapshot(&sub, SubscriptionStatus::Active, PRO_MONTH, Utc::now());
+    h.provider
+        .subscriptions
+        .lock()
+        .unwrap()
+        .insert(sub.clone(), live.clone());
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::Subscription(live)),
+        )
+        .await
+        .expect("apply");
+    h.provider.change_stall_ms.store(6000, Ordering::Relaxed);
+
+    let (first, second) = tokio::join!(
+        h.billing
+            .change_plan(&h.pool, &h.quotas, account, "team", Interval::Month),
+        async {
+            h.provider.change_entered.notified().await;
+            h.billing
+                .change_plan(&h.pool, &h.quotas, account, "team", Interval::Year)
+                .await
+        }
+    );
+    first.expect("first");
+    let err = second.expect_err("second");
+    assert!(
+        matches!(&err, uptimepage::error::AppError::Conflict { code, .. } if *code == "SUBSCRIPTION_STATE"),
+        "{err:?}"
+    );
+    let calls = h.provider.calls.lock().unwrap().clone();
+    assert_eq!(calls, vec![format!("change:{sub}:pri_team_month:Now")]);
+    assert_eq!(row(&h.pool, account).await.plan_id, "team");
+    h.finish().await;
+}
+
 async fn body_text(resp: axum::http::Response<Body>) -> String {
     let bytes = axum::body::to_bytes(resp.into_body(), 8 << 20)
         .await
@@ -2156,7 +2511,7 @@ async fn the_owner_buys_moves_up_moves_down_and_cancels_through_the_api() {
     assert_eq!(
         fake.calls.lock().unwrap().last().unwrap(),
         &format!("change:{sub}:pri_team_month:NextPeriod"),
-        "no proration on a period already paid at that price"
+        "no proration on a period already paid at that price; the booked yearly price is what the provider bills on"
     );
 
     let resp = app

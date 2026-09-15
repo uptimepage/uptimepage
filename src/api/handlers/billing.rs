@@ -196,7 +196,7 @@ pub async fn portal(
     request_body = PlanChoice,
     responses(
         (status = 200, body = BillingView),
-        (status = 409, body = ApiError, description = "no active subscription, nothing to change, a cancel booked, or the provider declined"),
+        (status = 409, body = ApiError, description = "no active subscription, nothing to change, a cancel booked, another change still being applied, or the provider declined"),
         (status = 422, body = ApiError),
         (status = 503, body = ApiError, description = "the provider gave no answer; retry later"),
     ),
@@ -225,7 +225,7 @@ pub async fn change_plan(
     summary = "Cancel at the end of the paid period",
     responses(
         (status = 200, body = BillingView),
-        (status = 409, body = ApiError),
+        (status = 409, body = ApiError, description = "no active subscription, another change still being applied, or the provider declined"),
         (status = 503, body = ApiError, description = "the provider gave no answer; retry later"),
     ),
 )]
@@ -244,7 +244,7 @@ pub async fn cancel(
     summary = "Withdraw a scheduled cancel",
     responses(
         (status = 200, body = BillingView),
-        (status = 409, body = ApiError),
+        (status = 409, body = ApiError, description = "no cancel scheduled, another change still being applied, or the provider declined"),
         (status = 503, body = ApiError, description = "the provider gave no answer; retry later"),
     ),
 )]
