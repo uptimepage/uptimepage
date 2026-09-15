@@ -63,6 +63,10 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_started
+    # Local secrets (payment provider keys); the long form needs Compose 2.24+.
+    env_file:
+      - path: .env
+        required: false
     environment:
       UPTIMEPAGE_STORAGE__POSTGRES__URL: postgres://monitor:monitor@postgres:5432/monitor
       UPTIMEPAGE_STORAGE__CLICKHOUSE__URL: http://clickhouse:8123
