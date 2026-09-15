@@ -192,6 +192,17 @@ pub async fn event_seen<'e, E: PgExecutor<'e>>(
     Ok(row.is_some())
 }
 
+/// Forgets event ids the provider stopped redelivering long ago, so the
+/// ledger stays one retention window deep.
+pub async fn prune_events(pool: &PgPool, before: DateTime<Utc>) -> Result<u64> {
+    let done = sqlx::query("DELETE FROM provider_events WHERE received_at < $1")
+        .bind(before)
+        .execute(pool)
+        .await
+        .context("subscriptions::prune_events")?;
+    Ok(done.rows_affected())
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct PlanPrice {
     pub price_ref: String,

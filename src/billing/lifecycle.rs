@@ -48,6 +48,10 @@ pub const REMINDER_DAYS: [i64; 4] = [0, 3, 7, 12];
 /// Accounts one sweep tick looks at. Far above any real backlog; the rest
 /// is picked up next tick.
 const SWEEP_BATCH: i64 = 500;
+/// How long a provider event id is remembered. Paddle redelivers for three
+/// days; a month also covers a destination that was down for a while and
+/// leaves a trail to read when a customer asks what happened.
+pub const EVENT_RETENTION_DAYS: i64 = 30;
 
 pub struct Billing {
     pub provider: Arc<dyn BillingProvider>,
@@ -341,6 +345,10 @@ impl Billing {
                     tracing::warn!(account = %account, error = %err, "billing sweep: account skipped")
                 }
             }
+        }
+        let pruned = store::prune_events(pool, now - Duration::days(EVENT_RETENTION_DAYS)).await?;
+        if pruned > 0 {
+            tracing::debug!(pruned, "billing sweep: old provider events dropped");
         }
         publish_status_gauge(pool).await?;
         Ok(changed)

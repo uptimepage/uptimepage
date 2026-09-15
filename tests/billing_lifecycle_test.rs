@@ -19,7 +19,7 @@ use common::{metric_value, metrics_handle};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
-use uptimepage::billing::lifecycle::{ACK_BUDGET, GRACE_DAYS, Outcome};
+use uptimepage::billing::lifecycle::{ACK_BUDGET, EVENT_RETENTION_DAYS, GRACE_DAYS, Outcome};
 use uptimepage::billing::mail::Mailer;
 use uptimepage::billing::provider::fake::{FakeProvider, SIGNATURE, SIGNATURE_HEADER};
 use uptimepage::billing::provider::{
@@ -642,6 +642,42 @@ async fn a_scheduled_cancel_landing_by_the_clock_ends_service_not_a_plain_downgr
         subjects(&h.mail),
         vec!["subscription_canceled", "downgrade_applied"],
         "nothing is booked or announced twice"
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn the_sweep_forgets_events_the_provider_stopped_redelivering() {
+    let Some(h) = isolated("billing").await else {
+        return;
+    };
+    let remember = |event_id: &'static str, age: Duration| {
+        sqlx::query(
+            "INSERT INTO provider_events (provider, event_id, event_type, occurred_at, received_at) \
+             VALUES ('fake', $1, 'transaction.completed', now() - $2, now() - $2)",
+        )
+        .bind(event_id)
+        .bind(age)
+        .execute(&h.pool)
+    };
+    remember("evt_old", Duration::days(EVENT_RETENTION_DAYS + 1))
+        .await
+        .expect("old event");
+    remember("evt_recent", Duration::days(EVENT_RETENTION_DAYS - 1))
+        .await
+        .expect("recent event");
+
+    h.billing.sweep(&h.pool, &h.quotas).await.expect("sweep");
+
+    let seen = |id| subscriptions::event_seen(&h.pool, "fake", id);
+    assert!(
+        !seen("evt_old").await.expect("old"),
+        "past retention is forgotten"
+    );
+    assert!(
+        seen("evt_recent").await.expect("recent"),
+        "inside retention is kept"
     );
     h.finish().await;
 }
