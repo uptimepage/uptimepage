@@ -1832,6 +1832,298 @@ async fn an_operator_move_keeps_the_fallback_a_later_cancel_lands_on() {
     assert_eq!(row(&h.pool, account).await.plan_id, "founding");
 }
 
+#[tokio::test]
+#[ignore]
+async fn an_operator_cannot_move_a_paying_account() {
+    let Some(h) = harness().await else { return };
+    let (account, _, _) = account(&h.pool, "founding", 0).await;
+    let sub = sub_ref();
+    activate(&h, account, &sub, TEAM_MONTH).await;
+    let grant = || PlanRequest {
+        plan_id: "pro",
+        fallback_plan_id: None,
+        reason: "granted",
+        actor: Actor::Operator,
+    };
+    let refused = |err: uptimepage::error::AppError| matches!(err, uptimepage::error::AppError::Conflict { code, .. } if code == "SUBSCRIPTION_STATE");
+
+    let err = set_plan(&h.pool, &h.quotas, account, grant())
+        .await
+        .expect_err("paid");
+    assert!(refused(err));
+    assert_eq!(row(&h.pool, account).await.plan_id, "team");
+    set_plan(
+        &h.pool,
+        &h.quotas,
+        account,
+        PlanRequest {
+            plan_id: "team",
+            fallback_plan_id: Some("pro"),
+            reason: "lands on pro when this ends",
+            actor: Actor::Operator,
+        },
+    )
+    .await
+    .expect("the fallback alone is still the operator's");
+    let s = row(&h.pool, account).await;
+    assert_eq!(
+        (s.plan_id.as_str(), s.fallback_plan_id.as_deref()),
+        ("team", Some("pro"))
+    );
+
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::PaymentFailed),
+        )
+        .await
+        .expect("failed");
+    let err = set_plan(&h.pool, &h.quotas, account, grant())
+        .await
+        .expect_err("unpaid still holds the plan");
+    assert!(refused(err));
+
+    let ended = snapshot(&sub, SubscriptionStatus::Canceled, TEAM_MONTH, Utc::now());
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::Subscription(ended)),
+        )
+        .await
+        .expect("ended");
+    set_plan(&h.pool, &h.quotas, account, grant())
+        .await
+        .expect("nothing paid any more");
+    assert_eq!(row(&h.pool, account).await.plan_id, "pro");
+}
+
+#[tokio::test]
+#[ignore]
+async fn the_provider_ending_an_unpaid_subscription_says_the_payment_never_came() {
+    let Some(h) = harness().await else { return };
+    let (account, org, _) = account(&h.pool, "founding", 52).await;
+    let sub = sub_ref();
+    activate(&h, account, &sub, TEAM_MONTH).await;
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::PaymentFailed),
+        )
+        .await
+        .expect("failed");
+
+    let ended = snapshot(&sub, SubscriptionStatus::Canceled, TEAM_MONTH, Utc::now());
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::Subscription(ended)),
+        )
+        .await
+        .expect("ended");
+    let s = row(&h.pool, account).await;
+    assert_eq!(
+        (s.plan_id.as_str(), s.status, s.grace_until),
+        ("founding", BillingStatus::Canceled, None)
+    );
+    assert_eq!(held_count(&h.pool, org).await, 2);
+    assert_eq!(
+        subjects(&h.mail),
+        vec!["payment_failed", "downgrade_applied"]
+    );
+    assert!(matches!(
+        h.mail.sent()[1].template,
+        EmailTemplate::DowngradeApplied {
+            after_grace: true,
+            ..
+        }
+    ));
+    let kinds = ledger_kinds(&h.pool, account).await;
+    assert!(!kinds.contains(&"grace_expired".to_string()), "{kinds:?}");
+
+    // The same ending with a cancel booked is that cancel landing.
+    let (other, _, _) = crate::account(&h.pool, "founding", 0).await;
+    let sub = sub_ref();
+    activate(&h, other, &sub, TEAM_MONTH).await;
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(other, &sub, EventKind::PaymentFailed),
+        )
+        .await
+        .expect("failed");
+    let mut booked = snapshot(&sub, SubscriptionStatus::PastDue, TEAM_MONTH, Utc::now());
+    booked.cancel_at = Some(Utc::now() + Duration::days(3));
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(other, &sub, EventKind::Subscription(booked)),
+        )
+        .await
+        .expect("booked");
+    let ended = snapshot(&sub, SubscriptionStatus::Canceled, TEAM_MONTH, Utc::now());
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(other, &sub, EventKind::Subscription(ended)),
+        )
+        .await
+        .expect("ended");
+    assert_eq!(row(&h.pool, other).await.status, BillingStatus::Canceled);
+    assert!(matches!(
+        h.mail.sent().last().expect("landed").template,
+        EmailTemplate::DowngradeApplied {
+            after_grace: false,
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+#[ignore]
+async fn an_unpaid_account_leaving_is_not_told_its_payment_missed_a_deadline() {
+    let Some(h) = harness().await else { return };
+    let (account, _, _) = account(&h.pool, "founding", 0).await;
+    let sub = sub_ref();
+    activate(&h, account, &sub, TEAM_MONTH).await;
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::PaymentFailed),
+        )
+        .await
+        .expect("failed");
+    h.provider.subscriptions.lock().unwrap().insert(
+        sub.clone(),
+        snapshot(&sub, SubscriptionStatus::PastDue, TEAM_MONTH, Utc::now()),
+    );
+    h.billing
+        .end_for_deletion(&h.pool, &h.quotas, account)
+        .await
+        .expect("ended");
+    let s = row(&h.pool, account).await;
+    assert_eq!(
+        (s.plan_id.as_str(), s.status),
+        ("founding", BillingStatus::Canceled)
+    );
+    assert!(matches!(
+        h.mail.sent().last().expect("landed").template,
+        EmailTemplate::DowngradeApplied {
+            after_grace: false,
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+#[ignore]
+async fn a_cancel_booked_while_unpaid_lands_on_the_row_and_can_be_withdrawn() {
+    let Some(h) = harness().await else { return };
+    let (account, _, _) = account(&h.pool, "founding", 0).await;
+    let sub = sub_ref();
+    activate(&h, account, &sub, TEAM_MONTH).await;
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::PaymentFailed),
+        )
+        .await
+        .expect("failed");
+
+    let deadline = row(&h.pool, account).await.grace_until.expect("grace");
+    let ends_at = now_us() + Duration::days(30);
+    let mut booked = snapshot(&sub, SubscriptionStatus::PastDue, TEAM_MONTH, Utc::now());
+    booked.cancel_at = Some(ends_at);
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::Subscription(booked)),
+        )
+        .await
+        .expect("booked");
+    let s = row(&h.pool, account).await;
+    assert_eq!(
+        (s.status, s.cancel_at, s.plan_id.as_str()),
+        (BillingStatus::PastDue, Some(ends_at), "team")
+    );
+    assert_eq!(
+        subjects(&h.mail),
+        vec!["payment_failed", "subscription_canceled"]
+    );
+    assert!(
+        matches!(
+            h.mail.sent()[1].template,
+            EmailTemplate::SubscriptionCanceled { ends_at, .. } if ends_at == deadline
+        ),
+        "service ends at the deadline unless paid, whatever the cancel date"
+    );
+    assert!(
+        ledger_kinds(&h.pool, account)
+            .await
+            .contains(&"cancel_scheduled".to_string())
+    );
+
+    let withdrawn = snapshot(&sub, SubscriptionStatus::PastDue, TEAM_MONTH, Utc::now());
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::Subscription(withdrawn)),
+        )
+        .await
+        .expect("withdrawn");
+    let s = row(&h.pool, account).await;
+    assert_eq!((s.status, s.cancel_at), (BillingStatus::PastDue, None));
+    assert_eq!(
+        ledger_kinds(&h.pool, account)
+            .await
+            .last()
+            .map(String::as_str),
+        Some("pending_change_cleared")
+    );
+
+    // A view whose cancel date has passed is over, not a booking to announce.
+    let mut over = snapshot(&sub, SubscriptionStatus::PastDue, TEAM_MONTH, Utc::now());
+    over.cancel_at = Some(Utc::now() - Duration::seconds(1));
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::Subscription(over)),
+        )
+        .await
+        .expect("over");
+    let s = row(&h.pool, account).await;
+    assert_eq!(
+        (s.plan_id.as_str(), s.status, s.cancel_at),
+        ("founding", BillingStatus::Canceled, None)
+    );
+    assert_eq!(
+        subjects(&h.mail),
+        vec![
+            "payment_failed",
+            "subscription_canceled",
+            "downgrade_applied"
+        ]
+    );
+    assert!(matches!(
+        h.mail.sent()[2].template,
+        EmailTemplate::DowngradeApplied {
+            after_grace: false,
+            ..
+        }
+    ));
+}
+
 // The HTTP surface: the receiver and the owner's actions.
 
 /// The receiver answers before its after-effects run, so a test that posts

@@ -18,10 +18,10 @@ use serde_json::json;
 use sqlx::PgPool;
 
 use crate::api::error::codes;
-use crate::domain::{AccountId, UserId};
+use crate::domain::{AccountId, BillingStatus, UserId};
 use crate::error::{AppError, Result};
 use crate::quotas::{QuotaService, Reconciled, reconcile_after_change};
-use crate::storage::billing_events;
+use crate::storage::{billing_events, subscriptions};
 
 pub use lifecycle::Billing;
 
@@ -94,6 +94,7 @@ pub async fn set_plan(
 ) -> Result<PlanChange> {
     let mut tx = pool.begin().await.context("set_plan: begin")?;
     let actor = req.actor;
+    refuse_a_paid_plan_change(&mut tx, account, req.plan_id).await?;
     let write = set_plan_tx(&mut tx, account, req).await?;
     if write.changed {
         tx.commit().await.context("set_plan: commit")?;
@@ -107,6 +108,29 @@ pub async fn set_plan(
         fallback: write.fallback,
         reconciled,
     })
+}
+
+/// A paid plan is the provider's, in grace as much as paid up: the lifecycle
+/// puts the paid price back on the next event, so a write here would hold
+/// until then and mail the owner about a move nobody asked for. The fallback
+/// alone may still be named. A courtesy on top of what is paid is an
+/// override; a different plan is a price change at the provider once paid.
+async fn refuse_a_paid_plan_change(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account: AccountId,
+    plan_id: &str,
+) -> Result<()> {
+    let Some(sub) = subscriptions::lock(tx, account).await? else {
+        return Ok(());
+    };
+    let paid = matches!(sub.status, BillingStatus::Active | BillingStatus::PastDue);
+    if paid && sub.plan_id != plan_id {
+        return Err(AppError::conflict(
+            codes::SUBSCRIPTION_STATE,
+            "the account holds a paid plan; change the price at the payment provider once it is paid up, or grant caps as an override",
+        ));
+    }
+    Ok(())
 }
 
 /// The plan write inside a caller's transaction. The caller owns the commit

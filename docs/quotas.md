@@ -283,7 +283,7 @@ customer's organizations, not an org id.
 
 | Method | Path | What it does |
 |---|---|---|
-| `PUT` | `/operator/accounts/{id}/plan` | `{ "plan_id", "reason", "fallback_plan_id"? }` — put the account on a plan from the catalog, whether or not it is listed |
+| `PUT` | `/operator/accounts/{id}/plan` | `{ "plan_id", "reason", "fallback_plan_id"? }` — put the account on a plan from the catalog, whether or not it is listed; `409 SUBSCRIPTION_STATE` for a different plan while the account holds a paid one (`active` or in grace), since the payment provider decides that one: change the price there once it is paid up, or grant caps as an override. Naming the fallback alone is still taken |
 | `PUT` | `/operator/accounts/{id}/overrides` | `{ "caps": { "max_targets": 100, … }, "reason", "expires_at"? }` — replace the account's cap overrides |
 | `DELETE` | `/operator/accounts/{id}/overrides` | remove the overrides, back to the plan's own numbers |
 
@@ -305,8 +305,8 @@ the override stops applying on its own.
 `fallback_plan_id` is where the account lands when paid service ends. Left
 out, the first move away from a plan records that plan and later moves keep
 it, so a founding account that buys a bigger tier and later stops paying
-returns to founding. Name it to say otherwise. Nothing acts on it yet; it is
-recorded now so the history is right when something does.
+returns to founding. Name it to say otherwise; on a paid account that is the
+one thing this endpoint still writes.
 
 Every change is written to `account_billing_events` (`plan_changed`,
 `overrides_set`, `overrides_cleared`) with the reason given, alongside the
@@ -380,8 +380,9 @@ arrive at `/hooks/billing/{provider}`, each verified by signature and recorded
 by its own id so a redelivery is acknowledged without being applied twice, and
 a snapshot older than the account's last is dropped rather than rewinding it.
 Whatever the provider decides is mapped onto the account's plan through the same
-`set_plan` path an operator uses, so a paid change carries the same ledger row,
-cache drop and reconcile.
+plan write an operator's call ends in, so a paid change carries the same ledger
+row, cache drop and reconcile; the operator endpoint itself stands aside while
+the plan is paid for.
 
 The policy the lifecycle enforces:
 

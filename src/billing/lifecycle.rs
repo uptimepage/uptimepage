@@ -186,8 +186,10 @@ struct Aftermath {
 
 enum Input {
     Event(Box<ProviderEvent>, Option<Box<SubscriptionSnapshot>>),
-    /// The provider's view: looked up, or its answer to the app's own change.
+    /// The provider's view, looked up.
     Snapshot(Box<SubscriptionSnapshot>),
+    /// The provider's answer to a change the app asked for.
+    Answer(Box<SubscriptionSnapshot>),
     Clock(DateTime<Utc>),
 }
 
@@ -337,7 +339,7 @@ impl Billing {
                     return Ok(());
                 };
                 let (outcome, after) = this
-                    .commit_in_turn(&pool, account, Input::Snapshot(Box::new(snapshot)))
+                    .commit_in_turn(&pool, account, Input::Answer(Box::new(snapshot)))
                     .await?;
                 drop(turn);
                 if outcome != Outcome::Applied {
@@ -403,7 +405,9 @@ impl Billing {
                     return Ok((Outcome::Unchanged, None));
                 }
             },
-            Input::Snapshot(_) => self.turn_within(account, CHANGE_PATIENCE).await?,
+            Input::Snapshot(_) | Input::Answer(_) => {
+                self.turn_within(account, CHANGE_PATIENCE).await?
+            }
             Input::Event(..) => self.turn(account).await,
         };
         self.commit_in_turn(pool, account, input).await
@@ -446,7 +450,11 @@ impl Billing {
                     .await?
             }
             Input::Snapshot(snapshot) => {
-                self.on_snapshot(&mut tx, &mut sub, *snapshot, now, &mut fx)
+                self.on_snapshot(&mut tx, &mut sub, *snapshot, false, now, &mut fx)
+                    .await?
+            }
+            Input::Answer(snapshot) => {
+                self.on_snapshot(&mut tx, &mut sub, *snapshot, true, now, &mut fx)
                     .await?
             }
             Input::Clock(now) => {
@@ -508,7 +516,7 @@ impl Billing {
                 match (sub.status, fetched) {
                     (BillingStatus::PastDue, _) => self.recover(tx, sub, fx).await?,
                     (BillingStatus::None | BillingStatus::Canceled, Some(snapshot)) => {
-                        return self.on_snapshot(tx, sub, snapshot, now, fx).await;
+                        return self.on_snapshot(tx, sub, snapshot, false, now, fx).await;
                     }
                     _ => {}
                 }
@@ -520,18 +528,21 @@ impl Billing {
                 }
             }
             EventKind::Subscription(snapshot) => {
-                return self.on_snapshot(tx, sub, snapshot, now, fx).await;
+                return self.on_snapshot(tx, sub, snapshot, false, now, fx).await;
             }
             EventKind::Other => {}
         }
         Ok(Outcome::Applied)
     }
 
+    /// `asked` is the provider answering a change the app made: an ending it
+    /// reports then is the app's own, not its retry schedule giving up.
     async fn on_snapshot(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         sub: &mut Subscription,
         snap: SubscriptionSnapshot,
+        asked: bool,
         now: DateTime<Utc>,
         fx: &mut Effects,
     ) -> Result<Outcome> {
@@ -554,8 +565,8 @@ impl Billing {
         let live = matches!(sub.status, BillingStatus::Active | BillingStatus::PastDue);
         // A cancel whose date has come is over, whatever status the provider
         // still shows until its own event lands.
-        let going_live = matches!(snap.status, Remote::Active | Remote::Trialing)
-            && snap.cancel_at.is_none_or(|at| at > now);
+        let over = snap.cancel_at.is_some_and(|at| at <= now);
+        let going_live = matches!(snap.status, Remote::Active | Remote::Trialing) && !over;
         if live || going_live {
             sub.provider = Some(self.provider.name().to_owned());
             sub.customer_ref = Some(snap.customer_ref.clone());
@@ -582,19 +593,24 @@ impl Billing {
                     sub.interval = Interval::parse(&price.interval);
                 }
             }
-            Remote::PastDue => {
+            Remote::PastDue if !over => {
                 if live {
                     sub.current_period_end = snap.period_end;
+                    self.settle_cancel(tx, sub, &snap, fx).await?;
                 }
                 if sub.status == BillingStatus::Active && after_last_payment {
                     self.start_grace(tx, sub, now, fx).await?;
                 }
             }
             // A cancel that outran its own activation, or a stray purchase
-            // ending, has no plan of its own to remove.
+            // ending, has no plan of its own to remove. An unpaid subscription
+            // the provider ends on its own, with no cancel booked and none
+            // asked for here, ends for the payment that never came.
             _ => {
                 if live {
-                    self.end_service(tx, sub, false, fx).await?;
+                    let booked = sub.cancel_at.is_some() || snap.cancel_at.is_some();
+                    let unpaid = sub.status == BillingStatus::PastDue && !booked && !asked;
+                    self.end_service(tx, sub, unpaid, fx).await?;
                 }
             }
         }
@@ -681,6 +697,48 @@ impl Billing {
         Ok(())
     }
 
+    /// A cancel booked or withdrawn at the provider lands on the row whatever
+    /// the payment state; answers whether one stands. A booked move cannot
+    /// outlive the subscription. An unpaid account is told the earlier of the
+    /// cancel date and its grace deadline, since service ends at the deadline
+    /// unless paid.
+    async fn settle_cancel(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        sub: &mut Subscription,
+        snap: &SubscriptionSnapshot,
+        fx: &mut Effects,
+    ) -> Result<bool> {
+        let Some(at) = snap.cancel_at else {
+            if sub.cancel_at.take().is_some() {
+                ledger::record_tx(tx, sub.account, ledger::PENDING_CHANGE_CLEARED, json!({}))
+                    .await?;
+            }
+            return Ok(false);
+        };
+        if sub.cancel_at != Some(at) {
+            sub.cancel_at = Some(at);
+            sub.clear_pending();
+            let landing = sub.landing_plan().to_owned();
+            ledger::record_tx(
+                tx,
+                sub.account,
+                ledger::CANCEL_SCHEDULED,
+                json!({ "ends_at": at, "then": landing }),
+            )
+            .await?;
+            let ends_at = match (sub.status, sub.grace_until) {
+                (BillingStatus::PastDue, Some(deadline)) => at.min(deadline),
+                _ => at,
+            };
+            fx.mail(EmailTemplate::SubscriptionCanceled {
+                plan_name: plan_name(&mut **tx, &landing).await?,
+                ends_at,
+            });
+        }
+        Ok(true)
+    }
+
     /// Decides what the provider's plan means for the account's own: now for
     /// a bigger plan, at period end for a smaller one, and a scheduled cancel
     /// over either; answers the price the snapshot names.
@@ -701,33 +759,12 @@ impl Billing {
     ) -> Result<store::PlanPrice> {
         let price = self.plan_for(tx, snap).await?;
         let target = price.plan_id.as_str();
-        if let Some(at) = snap.cancel_at {
-            // A booked move cannot outlive the subscription; the provider
-            // reports the price again should the cancel be withdrawn.
-            if sub.cancel_at != Some(at) {
-                sub.cancel_at = Some(at);
-                sub.clear_pending();
-                let landing = sub.landing_plan().to_owned();
-                ledger::record_tx(
-                    tx,
-                    sub.account,
-                    ledger::CANCEL_SCHEDULED,
-                    json!({ "ends_at": at, "then": landing }),
-                )
-                .await?;
-                fx.mail(EmailTemplate::SubscriptionCanceled {
-                    plan_name: plan_name(&mut **tx, &landing).await?,
-                    ends_at: at,
-                });
-            }
+        if self.settle_cancel(tx, sub, snap, fx).await? {
             if target != sub.plan_id && !smaller(tx, target, &sub.plan_id).await? {
                 self.move_now(tx, sub, target, "provider subscription", self.actor(), fx)
                     .await?;
             }
             return Ok(price);
-        }
-        if sub.cancel_at.take().is_some() {
-            ledger::record_tx(tx, sub.account, ledger::PENDING_CHANGE_CLEARED, json!({})).await?;
         }
         if target == sub.plan_id {
             if sub.pending_plan_id.is_some() {

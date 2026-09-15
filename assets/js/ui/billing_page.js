@@ -127,6 +127,7 @@
             change.textContent = booked ? `${pick.name} is booked`
                 : rebook ? `bill the booked ${pick.name} ${interval()}ly`
                 : otherPlan ? `move to ${pick.name}`
+                : otherCadence && pendingPlan !== null ? `keep ${pick.name}, billed ${interval()}ly`
                 : otherCadence ? `switch to ${interval()}ly billing`
                 : stay ? `keep ${pick.name}`
                 : "move plan";
