@@ -211,7 +211,11 @@ impl Billing {
     /// The receiver's path: the delivery is acknowledged once its change is
     /// committed, within [`ACK_BUDGET`], and what follows (the reconcile, the
     /// mails, a cancel at the provider) runs on its own, since the provider
-    /// counts a slow answer as no answer and delivers again.
+    /// counts a slow answer as no answer and delivers again. The whole
+    /// delivery is one detached task: a budget that runs out, or a sender
+    /// that hangs up, leaves the commit and its after-effects to finish,
+    /// where a dropped future could have committed and lost them, with the
+    /// redelivery then answered as a duplicate.
     pub async fn receive(
         self: &Arc<Self>,
         pool: &PgPool,
@@ -219,27 +223,44 @@ impl Billing {
         event: ProviderEvent,
     ) -> Result<Outcome> {
         let event_id = event.event_id.clone();
-        let Ok(taken) = tokio::time::timeout(ACK_BUDGET, self.take_in(pool, event)).await else {
-            tracing::warn!(
-                event_id,
-                "billing: delivery not committed within the budget"
-            );
-            return Err(AppError::service_unavailable(
-                crate::api::error::codes::BILLING_PROVIDER_UNREACHABLE,
-                "the delivery could not be committed in time",
-            ));
-        };
-        let (outcome, after) = taken?;
-        if let Some(after) = after {
-            let billing = Arc::clone(self);
-            let pool = pool.clone();
-            let quotas = Arc::clone(quotas);
-            self.settling.spawn(async move {
+        let billing = Arc::clone(self);
+        let pool = pool.clone();
+        let quotas = Arc::clone(quotas);
+        let (answer, answered) = tokio::sync::oneshot::channel();
+        self.settling.spawn(async move {
+            let after = match billing.take_in(&pool, event).await {
+                Ok((outcome, after)) => {
+                    let _ = answer.send(Ok(outcome));
+                    after
+                }
+                Err(err) => {
+                    if let Err(Err(err)) = answer.send(Err(err)) {
+                        tracing::warn!(error = %err, "billing: a delivery answered as late then failed");
+                    }
+                    None
+                }
+            };
+            if let Some(after) = after {
                 let _slot = billing.settle_slots.acquire().await;
                 billing.settle(&pool, &quotas, &after.sub, after.fx).await;
-            });
+            }
+        });
+        match tokio::time::timeout(ACK_BUDGET, answered).await {
+            Ok(Ok(taken)) => taken,
+            Ok(Err(_)) => Err(AppError::Other(anyhow::anyhow!(
+                "billing: the delivery's task ended without an answer"
+            ))),
+            Err(_) => {
+                tracing::warn!(
+                    event_id,
+                    "billing: delivery not committed within the budget"
+                );
+                Err(AppError::service_unavailable(
+                    codes::BILLING_PROVIDER_UNREACHABLE,
+                    "the delivery could not be committed in time",
+                ))
+            }
         }
-        Ok(outcome)
     }
 
     async fn take_in(
