@@ -1368,6 +1368,49 @@ resource "grafana_rule_group" "billing" {
     }
   }
 
+  # Deliveries we could not commit inside the provider's patience, answered
+  # 503 so it redelivers. One or two an hour is an account's plan change and
+  # its webhook taking turns, healed by the redelivery. A sustained count
+  # means every redelivery stalls again: the provider's API or the database
+  # is slow, and a customer's paid change is not landing.
+  rule {
+    name           = "UptimepageBillingWebhookStalling"
+    condition      = "C"
+    for            = "10m"
+    no_data_state  = "OK"
+    exec_err_state = "Error"
+    labels = {
+      severity = "warning"
+      service  = "uptimepage"
+    }
+    annotations = {
+      summary     = "uptimepage: billing webhooks keep stalling"
+      description = "five or more payment-provider deliveries in the last hour were not committed within the ack budget and answered 503; the provider redelivers, so a count this high means the redeliveries stall too. The app log line 'billing webhook: not committed in time' names each event. Check the provider's status page and the Postgres latency panel; a single account stalling on every retry has a plan change holding its turn ('billing: delivery not committed within the budget' with the same event_id). Runbook: runbooks/grafana-cloud.md."
+    }
+    data {
+      ref_id         = "A"
+      datasource_uid = data.grafana_data_source.prometheus.uid
+      relative_time_range {
+        from = 3600
+        to   = 0
+      }
+      model = jsonencode({
+        refId   = "A"
+        instant = true
+        expr    = "sum(increase(uptimepage_billing_webhook_rejected_total{reason=\"stalled\"}[1h])) >= 5"
+      })
+    }
+    data {
+      ref_id         = "C"
+      datasource_uid = "__expr__"
+      relative_time_range {
+        from = 0
+        to   = 0
+      }
+      model = local.threshold_c
+    }
+  }
+
   # An event that named no account we know, or a subscription that is not
   # its account's live one. Both are acknowledged so the provider stops
   # retrying, and a live foreign subscription is ended at the provider, so
