@@ -56,7 +56,7 @@ Documentation pages, blog posts and the homepage also answer `Accept: text/markd
 | `POST` | `/api/v1/account/billing/checkout` | start a checkout for a plan (`plan_id`, `interval`); returns a provider URL |
 | `POST` | `/api/v1/account/billing/portal` | open the provider's customer portal (invoices, card, cancel) |
 | `PUT` | `/api/v1/account/billing/plan` | move the subscription to another plan — up now, down at period end |
-| `POST` | `/api/v1/account/billing/cancel` | cancel at the end of the paid period |
+| `POST` | `/api/v1/account/billing/cancel` | cancel: at the end of the paid period, or at once while the last payment failed |
 | `DELETE` | `/api/v1/account/billing/cancel` | withdraw a scheduled cancel |
 | `GET` | `/api/v1/tags` | tag inventory with target counts (`q` prefix) — paginated |
 | `GET` | `/api/v1/dashboard/summary` | per-org rollup (5-second in-process cache, keyed by `OrgId`) |

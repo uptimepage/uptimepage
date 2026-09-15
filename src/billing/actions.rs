@@ -159,22 +159,31 @@ impl Billing {
         account: AccountId,
     ) -> Result<Subscription> {
         self.change(pool, quotas, account, |sub, provider| async move {
-            let subscription_ref = live_subscription_ref(&sub)?;
-            cancel_despite_refusal(
-                provider.as_ref(),
-                subscription_ref,
-                ChangeTiming::NextPeriod,
-            )
-            .await
-            .map(Some)
+            let (subscription_ref, timing) = ending(&sub)?;
+            // Paid-up and already ending: the row says so, nothing to ask.
+            // Unpaid asks anyway, since the provider may end it now.
+            if timing == ChangeTiming::NextPeriod && booked_to_end(&sub) {
+                return Ok(None);
+            }
+            cancel_despite_refusal(provider.as_ref(), subscription_ref, timing)
+                .await
+                .map(Some)
         })
         .await?;
-        self.subscription(pool, account).await
+        let sub = self.subscription(pool, account).await?;
+        // An unpaid account asked to end now. What the provider answered
+        // has landed on the row, a booked end included; one still unpaid is
+        // that booked end, with the card retried until its date.
+        if sub.status == BillingStatus::PastDue {
+            return Err(AppError::conflict(
+                codes::BILLING_PROVIDER_REFUSED,
+                "the provider keeps the subscription until its booked end",
+            ));
+        }
+        Ok(sub)
     }
 
-    /// Paid-up ends at the period boundary so a change of heart inside the
-    /// deletion grace loses nothing; unpaid ends at once so the provider
-    /// stops retrying the card. A `Canceled` row first takes what the
+    /// Ends as `ending` says. A `Canceled` row first takes what the
     /// provider still holds, so the row is right even if the cancel then
     /// fails to answer.
     pub async fn end_for_deletion(
@@ -186,24 +195,26 @@ impl Billing {
         let sub = self.subscription(pool, account).await?;
         let seen = self.lingering(pool, quotas, &sub).await?;
         self.change(pool, quotas, account, move |sub, provider| async move {
-            let Some(subscription_ref) = sub.subscription_ref.as_deref() else {
-                return Ok(None);
-            };
-            let timing = match sub.status {
-                BillingStatus::Active => ChangeTiming::NextPeriod,
-                BillingStatus::PastDue => ChangeTiming::Now,
+            let (subscription_ref, timing) = match sub.status {
+                BillingStatus::Active | BillingStatus::PastDue => ending(&sub)?,
                 BillingStatus::None => return Ok(None),
                 // What the provider's view did not bring back to life
                 // (unpaid, paused, or an older view) still has to end.
-                BillingStatus::Canceled => match seen.map(|s| s.status) {
-                    None | Some(SubscriptionStatus::Canceled) => return Ok(None),
-                    Some(SubscriptionStatus::Active | SubscriptionStatus::Trialing) => {
-                        ChangeTiming::NextPeriod
-                    }
-                    Some(SubscriptionStatus::PastDue | SubscriptionStatus::Paused) => {
-                        ChangeTiming::Now
-                    }
-                },
+                BillingStatus::Canceled => {
+                    let Some(subscription_ref) = sub.subscription_ref.as_deref() else {
+                        return Ok(None);
+                    };
+                    let timing = match seen.map(|s| s.status) {
+                        None | Some(SubscriptionStatus::Canceled) => return Ok(None),
+                        Some(SubscriptionStatus::Active | SubscriptionStatus::Trialing) => {
+                            ChangeTiming::NextPeriod
+                        }
+                        Some(SubscriptionStatus::PastDue | SubscriptionStatus::Paused) => {
+                            ChangeTiming::Now
+                        }
+                    };
+                    (subscription_ref, timing)
+                }
             };
             cancel_despite_refusal(provider.as_ref(), subscription_ref, timing)
                 .await
@@ -281,16 +292,33 @@ fn booked_to_end(sub: &Subscription) -> bool {
     sub.cancel_at.is_some()
 }
 
-fn live_subscription_ref(sub: &Subscription) -> Result<&str> {
+/// How the subscription ends: paid-up at the period boundary, so nothing
+/// paid for is lost and a change of heart costs nothing; unpaid at once, so
+/// the provider stops retrying the card. Unpaid means the renewal failed,
+/// so no paid time is left to run out.
+fn ending(sub: &Subscription) -> Result<(&str, ChangeTiming)> {
     match (sub.status, sub.subscription_ref.as_deref()) {
-        (BillingStatus::Active, Some(subscription_ref)) => Ok(subscription_ref),
-        (BillingStatus::PastDue, _) => Err(AppError::conflict(
-            codes::SUBSCRIPTION_STATE,
-            "the last payment failed; update the payment method first",
-        )),
+        (BillingStatus::Active, Some(subscription_ref)) => {
+            Ok((subscription_ref, ChangeTiming::NextPeriod))
+        }
+        (BillingStatus::PastDue, Some(subscription_ref)) => {
+            Ok((subscription_ref, ChangeTiming::Now))
+        }
         _ => Err(AppError::conflict(
             codes::SUBSCRIPTION_STATE,
             "the account has no active subscription",
+        )),
+    }
+}
+
+/// A change needs a paid-up subscription: the provider refuses every change
+/// but a cancel to one whose payment failed.
+fn live_subscription_ref(sub: &Subscription) -> Result<&str> {
+    match ending(sub)? {
+        (subscription_ref, ChangeTiming::NextPeriod) => Ok(subscription_ref),
+        (_, ChangeTiming::Now) => Err(AppError::conflict(
+            codes::SUBSCRIPTION_STATE,
+            "the last payment failed; update the payment method first",
         )),
     }
 }

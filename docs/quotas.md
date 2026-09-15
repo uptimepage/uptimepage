@@ -390,7 +390,8 @@ The policy the lifecycle enforces:
   immediately.
 - **A downgrade or a cancel takes effect at the end of the paid period.** Until
   then the account keeps the plan it paid for; the pending move is stored and
-  applied by a sweep when the date passes. A plan is a downgrade when it shrinks
+  applied by a sweep when the date passes. A cancel while the last payment
+  failed ends at once instead, and the card is not retried. A plan is a downgrade when it shrinks
   any of the caps a hold is judged against (monitors, flow checks, status
   pages), so a plan that trades more of one for less of another never cuts
   anything mid-period.
@@ -398,7 +399,7 @@ The policy the lifecycle enforces:
   keeps full service while the provider retries and dunning mail goes out on
   days 0, 3, 7 and 12. The first failure fixes the deadline; a later one cannot
   extend it. Paying inside the window returns the account to `active` with
-  nothing changed.
+  nothing changed; cancelling inside it ends service now.
 - **When the window closes unpaid, or a cancel's period ends, the account falls
   to its fallback plan** — the plan it held before paying (founding stays
   founding, everyone else free) — and the excess is held, never deleted. A

@@ -6,6 +6,7 @@ use thiserror::Error;
 
 use super::templates;
 pub use super::templates::incident_alert::IncidentAlert;
+use crate::domain::Landing;
 
 pub type EmailResult<T> = Result<T, EmailError>;
 
@@ -178,11 +179,10 @@ pub enum EmailTemplate {
         keep_url: String,
     },
     /// The account is now on `plan_name`, with `held_monitors` and
-    /// `held_pages` parked, not deleted. `after_grace` tells the owner it was
-    /// the unpaid grace running out rather than a change they asked for.
+    /// `held_pages` parked, not deleted; `landing` says why.
     DowngradeApplied {
         plan_name: String,
-        after_grace: bool,
+        landing: Landing,
         held_monitors: usize,
         held_pages: usize,
         keep_url: String,
@@ -396,14 +396,14 @@ impl EmailTemplate {
             ),
             EmailTemplate::DowngradeApplied {
                 plan_name,
-                after_grace,
+                landing,
                 held_monitors,
                 held_pages,
                 keep_url,
             } => templates::billing::downgrade_applied(
                 site_name,
                 plan_name,
-                *after_grace,
+                *landing,
                 templates::billing::Excess {
                     monitors: *held_monitors as i64,
                     pages: *held_pages as i64,

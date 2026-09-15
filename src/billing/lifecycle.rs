@@ -33,7 +33,7 @@ use super::provider::{
 };
 use super::{Actor, PlanRequest, set_plan_tx};
 use crate::api::error::codes;
-use crate::domain::{AccountId, BillingStatus, Interval, Subscription};
+use crate::domain::{AccountId, BillingStatus, Interval, Landing, Subscription};
 use crate::email::EmailTemplate;
 use crate::error::{AppError, Result};
 use crate::observability::metrics::names;
@@ -168,7 +168,7 @@ enum Mail {
     /// Needs the held counts, which exist only after the reconcile.
     Landed {
         plan_name: String,
-        after_grace: bool,
+        landing: Landing,
     },
 }
 
@@ -609,8 +609,14 @@ impl Billing {
             _ => {
                 if live {
                     let booked = sub.cancel_at.is_some() || snap.cancel_at.is_some();
-                    let unpaid = sub.status == BillingStatus::PastDue && !booked && !asked;
-                    self.end_service(tx, sub, unpaid, fx).await?;
+                    let landing = match snap.status {
+                        _ if sub.status == BillingStatus::PastDue && !booked && !asked => {
+                            Landing::Unpaid
+                        }
+                        Remote::Paused => Landing::Paused,
+                        _ => Landing::Canceled,
+                    };
+                    self.end_service(tx, sub, landing, fx).await?;
                 }
             }
         }
@@ -655,7 +661,7 @@ impl Billing {
             // to `canceled` and holds the excess; the provider's own
             // `subscription.canceled` sets the same state when it arrives,
             // whichever lands first.
-            self.end_service(tx, sub, false, fx).await?;
+            self.end_service(tx, sub, Landing::Canceled, fx).await?;
         } else if let (Some(pending), Some(at)) = (sub.pending_plan_id.clone(), sub.plan_change_at)
             && at <= now
         {
@@ -666,7 +672,7 @@ impl Billing {
             sub.clear_pending();
             fx.mails.push(Mail::Landed {
                 plan_name: plan_name(&mut **tx, &pending).await?,
-                after_grace: false,
+                landing: Landing::Scheduled,
             });
         }
         if sub.status == BillingStatus::PastDue
@@ -674,7 +680,7 @@ impl Billing {
         {
             if grace_until <= now {
                 ledger::record_tx(tx, sub.account, ledger::GRACE_EXPIRED, json!({})).await?;
-                self.end_service(tx, sub, true, fx).await?;
+                self.end_service(tx, sub, Landing::Unpaid, fx).await?;
                 // A card retry succeeding months later would charge for a
                 // plan the account no longer holds.
                 fx.cancel_at_provider.extend(sub.subscription_ref.clone());
@@ -788,7 +794,7 @@ impl Billing {
                 sub.clear_pending();
                 fx.mails.push(Mail::Landed {
                     plan_name: plan_name(&mut **tx, target).await?,
-                    after_grace: false,
+                    landing: Landing::Scheduled,
                 });
             }
             // The same move at the other cadence.
@@ -896,11 +902,11 @@ impl Billing {
         &self,
         tx: &mut Transaction<'_, Postgres>,
         sub: &mut Subscription,
-        after_grace: bool,
+        landing: Landing,
         fx: &mut Effects,
     ) -> Result<()> {
-        let landing = sub.landing_plan().to_owned();
-        if sub.status == BillingStatus::Canceled && sub.plan_id == landing {
+        let plan = sub.landing_plan().to_owned();
+        if sub.status == BillingStatus::Canceled && sub.plan_id == plan {
             return Ok(());
         }
         sub.status = BillingStatus::Canceled;
@@ -909,29 +915,28 @@ impl Billing {
         sub.cancel_at = None;
         sub.clear_pending();
         sub.clear_grace();
-        let moved = sub.plan_id != landing;
+        let moved = sub.plan_id != plan;
         if moved {
-            let reason = if after_grace {
-                "grace expired"
-            } else {
-                "subscription ended"
+            let reason = match landing {
+                Landing::Unpaid => "grace expired",
+                Landing::Canceled | Landing::Paused | Landing::Scheduled => "subscription ended",
             };
-            self.move_now(tx, sub, &landing, reason, Actor::System, fx)
+            self.move_now(tx, sub, &plan, reason, Actor::System, fx)
                 .await?;
         }
         ledger::record_tx(
             tx,
             sub.account,
             ledger::SUBSCRIPTION_ENDED,
-            json!({ "plan": landing, "after_grace": after_grace }),
+            json!({ "plan": plan, "landing": landing.as_str() }),
         )
         .await?;
         // Already told when the scheduled move landed; the status flip alone
         // is not news.
         if moved {
             fx.mails.push(Mail::Landed {
-                plan_name: plan_name(&mut **tx, &landing).await?,
-                after_grace,
+                plan_name: plan_name(&mut **tx, &plan).await?,
+                landing,
             });
         }
         Ok(())
@@ -1072,10 +1077,7 @@ impl Billing {
         for mail in fx.mails {
             let template = match mail {
                 Mail::Ready(template) => *template,
-                Mail::Landed {
-                    plan_name,
-                    after_grace,
-                } => {
+                Mail::Landed { plan_name, landing } => {
                     let (targets, pages) = match holds::list_held(pool, sub.account).await {
                         Ok(held) => held,
                         Err(err) => {
@@ -1085,7 +1087,7 @@ impl Billing {
                     };
                     EmailTemplate::DowngradeApplied {
                         plan_name,
-                        after_grace,
+                        landing,
                         held_monitors: targets.len(),
                         held_pages: pages.len(),
                         keep_url: self.mailer.keep_url(),
@@ -1125,10 +1127,11 @@ async fn end_at_provider(
 /// the second of a purchase's two events, a customer who cancelled through
 /// the portal meanwhile, or an earlier attempt that landed there but not
 /// here, all arrive after the subscription is already ending. A cancel
-/// booked for the period end is refused a second one, and is the most an
-/// unpaid subscription allows, since the provider refuses every change to
-/// one until it is paid. Only an answer is worth checking; a timeout would
-/// time out again.
+/// booked for the period end is refused a second one, unpaid or not, and
+/// the caller decides whether that booked end is enough: the sweep takes
+/// it, since a card retry that succeeds before the date brings the account
+/// back live for the time it paid; the owner asking to end now is told.
+/// Only an answer is worth checking; a timeout would time out again.
 pub(super) async fn cancel_despite_refusal(
     provider: &dyn BillingProvider,
     subscription_ref: &str,
@@ -1357,6 +1360,16 @@ mod tests {
             synced_at: None,
             payment_synced_at: None,
         }
+    }
+
+    #[test]
+    fn an_account_that_never_paid_is_shown_landing_where_it_stands() {
+        let mut never = sub(BillingStatus::None, None);
+        never.fallback_plan_id = None;
+        assert_eq!(never.landing_plan(), "free");
+        assert_eq!(never.landing_plan_preview(), "team");
+        let paying = sub(BillingStatus::Active, Some("sub_1"));
+        assert_eq!(paying.landing_plan_preview(), "founding");
     }
 
     #[test]

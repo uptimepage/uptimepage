@@ -93,6 +93,8 @@ pub struct BillingPage {
     pub owner: bool,
     pub status: &'static str,
     pub plan_name: String,
+    /// Where the account lands once paid service ends.
+    pub fallback_name: String,
     pub cards: Vec<CardView>,
     pub rows: Vec<CompareRow>,
     pub pitches: Vec<Pitch>,
@@ -149,6 +151,10 @@ pub async fn billing_page(
         .find(|c| c.id == sub.plan_id)
         .map_or_else(|| sub.plan_id.clone(), |c| c.name.clone());
     let pending = pending_view(pool, &sub).await?;
+    let fallback_name = match &pending {
+        Some(p) if p.is_cancel => p.plan_name.clone(),
+        _ => name_of(pool, sub.landing_plan_preview()).await?,
+    };
     let current = cards.iter().find(|c| c.id == sub.plan_id);
     let rows = compare_rows(&cards, current);
     let pitches = cards
@@ -181,6 +187,7 @@ pub async fn billing_page(
         owner,
         status: sub.status.as_db_str(),
         plan_name,
+        fallback_name,
         cards,
         rows,
         pitches,
@@ -216,9 +223,7 @@ async fn pending_view(
         ),
         _ => return Ok(None),
     };
-    let plan_name = subscriptions::plan_brief(pool, plan_id)
-        .await?
-        .map_or_else(|| plan_id.to_owned(), |p| p.name);
+    let plan_name = name_of(pool, plan_id).await?;
     Ok(Some(PendingView {
         plan_id: plan_id.to_owned(),
         plan_name,
@@ -226,6 +231,13 @@ async fn pending_view(
         is_cancel,
         interval,
     }))
+}
+
+/// A plan's display name, or its id for one the catalog no longer carries.
+async fn name_of(pool: &sqlx::PgPool, plan_id: &str) -> crate::error::Result<String> {
+    Ok(subscriptions::plan_brief(pool, plan_id)
+        .await?
+        .map_or_else(|| plan_id.to_owned(), |p| p.name))
 }
 
 fn money(amount: i32, currency: &str) -> String {

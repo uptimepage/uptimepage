@@ -94,7 +94,7 @@ pub use status_page::{
     StatusPageComponentUpdate, StatusPageId, StatusPageUpdate,
 };
 pub use subscriber::{NewSubscriber, Subscriber, SubscriberChannel};
-pub use subscription::{BillingStatus, Interval, Subscription};
+pub use subscription::{BillingStatus, Interval, Landing, Subscription};
 pub use target::{NewTarget, NewTargetWithRegions, RegionIncidentPolicy, Target, TargetUpdate};
 pub use user::{AppTheme, User, UserId};
 pub use variable::{

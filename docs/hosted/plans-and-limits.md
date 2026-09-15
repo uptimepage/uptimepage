@@ -56,7 +56,7 @@ We hold the newest first, on the assumption that the ones you set up earliest ar
 
 ## If a payment fails
 
-A failed card never cuts your service the same day. The account stays on its full plan for a two-week grace window while we retry the card and email you, so a card that expires while you are away costs you nothing if you fix it in time. Pay at any point inside the window and it is as if nothing happened.
+A failed card never cuts your service the same day. The account stays on its full plan for a two-week grace window while we retry the card and email you, so a card that expires while you are away costs you nothing if you fix it in time. Pay at any point inside the window and it is as if nothing happened; cancel from the billing page inside it and service ends right away, with no further attempt on the card (a cancel made in the provider's portal is booked for the period end instead, and the card is retried until then).
 
 Only if the window closes unpaid does the plan drop — to the plan you were on before you paid, which for a founding account is founding, never lower. Even then nothing is deleted: whatever no longer fits is held, exactly as above, and paying again releases all of it.
 

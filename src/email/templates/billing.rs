@@ -3,6 +3,7 @@
 
 use chrono::{DateTime, Utc};
 
+use crate::domain::Landing;
 use crate::email::templates::layout::{self, ButtonStyle, Page, Tone};
 use crate::email::templates::{html_escape, utc_stamp};
 use crate::email::trait_def::RenderedEmail;
@@ -217,17 +218,26 @@ pub fn downgrade_scheduled(
 pub fn downgrade_applied(
     site_name: &str,
     plan_name: &str,
-    after_grace: bool,
+    landing: Landing,
     held: Excess,
     keep_url: &str,
 ) -> RenderedEmail {
     let subject = format!("Your {site_name} account is now on the {plan_name} plan");
 
-    let why = if after_grace {
-        "The payment for your previous plan was not received before the deadline, so the \
-         account has moved to the plan it had before paying."
-    } else {
-        "Your subscription has moved to this plan."
+    let why = match landing {
+        Landing::Scheduled => "Your subscription has moved to this plan.",
+        Landing::Canceled => {
+            "Your subscription was cancelled, so the account is back on the plan it had \
+             before paying."
+        }
+        Landing::Paused => {
+            "Your subscription is paused at the payment provider, so the account is back on \
+             the plan it had before paying until it resumes."
+        }
+        Landing::Unpaid => {
+            "The payment for your previous plan was not received before the deadline, so the \
+             account has moved to the plan it had before paying."
+        }
     };
     let held_text = if held.is_empty() {
         "Everything you have fits this plan, so nothing is held.".to_string()
@@ -260,7 +270,11 @@ pub fn downgrade_applied(
         preheader: why,
         signature: Some(site_name),
         header: layout::band(
-            if after_grace { Tone::Warn } else { Tone::Info },
+            if landing == Landing::Unpaid {
+                Tone::Warn
+            } else {
+                Tone::Info
+            },
             "PLAN CHANGED",
             &format!("Now on {plan_name}"),
             None,
@@ -383,18 +397,26 @@ mod tests {
     }
 
     #[test]
-    fn grace_expiry_explains_itself() {
-        let r = downgrade_applied(
-            "Uptimepage",
-            "Founding",
-            true,
-            Excess {
-                monitors: 1,
-                pages: 0,
-            },
-            "https://app/settings/usage",
-        );
-        assert!(r.text_body.contains("not received before the deadline"));
-        assert!(r.text_body.contains("Now held: 1 monitor."));
+    fn each_landing_explains_itself() {
+        let held = Excess {
+            monitors: 1,
+            pages: 0,
+        };
+        let text = |landing| {
+            downgrade_applied(
+                "Uptimepage",
+                "Founding",
+                landing,
+                held,
+                "https://app/settings/usage",
+            )
+            .text_body
+        };
+        let unpaid = text(Landing::Unpaid);
+        assert!(unpaid.contains("not received before the deadline"));
+        assert!(unpaid.contains("Now held: 1 monitor."));
+        assert!(text(Landing::Canceled).contains("was cancelled"));
+        assert!(text(Landing::Paused).contains("is paused"));
+        assert!(text(Landing::Scheduled).contains("has moved to this plan"));
     }
 }

@@ -27,7 +27,9 @@ use uptimepage::billing::provider::{
 };
 use uptimepage::billing::{Actor, Billing, PlanRequest, set_plan};
 use uptimepage::config::AppConfig;
-use uptimepage::domain::{AccountId, BillingStatus, CheckSpec, ExpectedStatus, OrgId, UserId};
+use uptimepage::domain::{
+    AccountId, BillingStatus, CheckSpec, ExpectedStatus, Landing, OrgId, UserId,
+};
 use uptimepage::email::{EmailTemplate, InMemoryEmailSender};
 use uptimepage::notifier::EmailDelivery;
 use uptimepage::quotas::QuotaService;
@@ -442,9 +444,9 @@ async fn a_smaller_plan_waits_for_the_period_end_and_the_sweep_then_holds_the_ex
     match &h.mail.sent()[1].template {
         EmailTemplate::DowngradeApplied {
             held_monitors,
-            after_grace,
+            landing,
             ..
-        } => assert_eq!((*held_monitors, *after_grace), (2, false)),
+        } => assert_eq!((*held_monitors, *landing), (2, Landing::Scheduled)),
         other => panic!("{other:?}"),
     }
     h.finish().await;
@@ -746,7 +748,7 @@ async fn a_failed_payment_opens_a_grace_window_the_sweep_closes_and_a_payment_re
     assert!(matches!(
         h.mail.sent()[1].template,
         EmailTemplate::DowngradeApplied {
-            after_grace: true,
+            landing: Landing::Unpaid,
             ..
         }
     ));
@@ -886,8 +888,9 @@ async fn a_refused_cancel_is_counted_unless_the_provider_shows_the_subscription_
         "no view of it at all: counted"
     );
 
-    // Booked through the portal to end with the period: the provider refuses
-    // every other change to an unpaid subscription, so that is the end.
+    // Booked through the portal to end with the period: the sweep takes that
+    // end, since a card retry succeeding before the date brings the account
+    // back live for the time it paid.
     h.provider.cancel_refused.store(false, Ordering::Relaxed);
     let (unpaid, _, _) = self::account(&h.pool, "founding", 52).await;
     let sub = sub_ref();
@@ -1937,7 +1940,7 @@ async fn the_provider_ending_an_unpaid_subscription_says_the_payment_never_came(
     assert!(matches!(
         h.mail.sent()[1].template,
         EmailTemplate::DowngradeApplied {
-            after_grace: true,
+            landing: Landing::Unpaid,
             ..
         }
     ));
@@ -1979,7 +1982,7 @@ async fn the_provider_ending_an_unpaid_subscription_says_the_payment_never_came(
     assert!(matches!(
         h.mail.sent().last().expect("landed").template,
         EmailTemplate::DowngradeApplied {
-            after_grace: false,
+            landing: Landing::Canceled,
             ..
         }
     ));
@@ -2016,7 +2019,7 @@ async fn an_unpaid_account_leaving_is_not_told_its_payment_missed_a_deadline() {
     assert!(matches!(
         h.mail.sent().last().expect("landed").template,
         EmailTemplate::DowngradeApplied {
-            after_grace: false,
+            landing: Landing::Canceled,
             ..
         }
     ));
@@ -2118,7 +2121,7 @@ async fn a_cancel_booked_while_unpaid_lands_on_the_row_and_can_be_withdrawn() {
     assert!(matches!(
         h.mail.sent()[2].template,
         EmailTemplate::DowngradeApplied {
-            after_grace: false,
+            landing: Landing::Canceled,
             ..
         }
     ));
@@ -2927,6 +2930,130 @@ async fn the_owner_buys_moves_up_moves_down_and_cancels_through_the_api() {
     );
 }
 
+/// An owner whose renewal failed, as the receiver saw it: bound by an active
+/// view, then a failed payment, with the fake now holding the subscription
+/// unpaid. Answers the subscription ref with the provider's call log empty.
+async fn unpaid_owner(
+    app: &axum::Router,
+    fake: &FakeProvider,
+    pool: &PgPool,
+    account: AccountId,
+) -> String {
+    let sub = sub_ref();
+    let snap = snapshot(&sub, SubscriptionStatus::Active, TEAM_MONTH, Utc::now());
+    fake.subscriptions
+        .lock()
+        .unwrap()
+        .insert(sub.clone(), snap.clone());
+    for kind in [EventKind::Subscription(snap), EventKind::PaymentFailed] {
+        let resp = app
+            .clone()
+            .oneshot(webhook(&event(account, &sub, kind), true))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+    fake.subscriptions
+        .lock()
+        .unwrap()
+        .get_mut(&sub)
+        .unwrap()
+        .status = SubscriptionStatus::PastDue;
+    let before = row(pool, account).await;
+    assert_eq!(before.status, BillingStatus::PastDue);
+    assert!(before.grace_until.is_some());
+    fake.calls.lock().unwrap().clear();
+    sub
+}
+
+#[tokio::test]
+#[ignore]
+async fn an_unpaid_owner_leaves_at_once_and_nothing_is_booked() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    seed_prices(&pool).await;
+    let fake = Arc::new(FakeProvider::default());
+    let (app, org) = app_with_fake(&pool, fake.clone()).await;
+    let account = owner_account(&pool, org).await;
+    let sub = unpaid_owner(&app, &fake, &pool, account).await;
+
+    let resp = app
+        .clone()
+        .oneshot(api("POST", "/api/v1/account/billing/cancel", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let view = body_json(resp).await;
+    assert_eq!(
+        (&view["status"], &view["plan_id"]),
+        (&json!("canceled"), &view["fallback_plan_id"]),
+        "{view}"
+    );
+    assert_eq!(
+        *fake.calls.lock().unwrap(),
+        vec![format!("cancel:{sub}:Now")],
+        "unpaid ends now, nothing is booked"
+    );
+    let after = row(&pool, account).await;
+    assert_eq!(
+        (after.status, after.grace_until, after.cancel_at),
+        (BillingStatus::Canceled, None, None)
+    );
+    assert!(
+        ledger_kinds(&pool, account)
+            .await
+            .contains(&"subscription_ended".to_string())
+    );
+
+    let resp = app
+        .oneshot(api("POST", "/api/v1/account/billing/cancel", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT, "nothing left to end");
+    assert_eq!(body_json(resp).await["error"]["code"], "SUBSCRIPTION_STATE");
+}
+
+#[tokio::test]
+#[ignore]
+async fn an_unpaid_owner_whose_end_is_booked_is_told_the_provider_keeps_it() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    seed_prices(&pool).await;
+    let fake = Arc::new(FakeProvider::default());
+    let (app, org) = app_with_fake(&pool, fake.clone()).await;
+    let account = owner_account(&pool, org).await;
+    let sub = unpaid_owner(&app, &fake, &pool, account).await;
+    // Booked through the provider's portal, so this side never saw it.
+    {
+        let mut subs = fake.subscriptions.lock().unwrap();
+        let held = subs.get_mut(&sub).unwrap();
+        held.cancel_at = held.period_end;
+    }
+
+    let resp = app
+        .oneshot(api("POST", "/api/v1/account/billing/cancel", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        body_json(resp).await["error"]["code"],
+        "BILLING_PROVIDER_REFUSED"
+    );
+    assert_eq!(
+        *fake.calls.lock().unwrap(),
+        vec![format!("cancel:{sub}:Now"), format!("fetch:{sub}")],
+        "asked to end now, shown the booked end instead"
+    );
+    let s = row(&pool, account).await;
+    assert_eq!(s.status, BillingStatus::PastDue);
+    assert!(
+        s.cancel_at.is_some(),
+        "the booked end the answer showed landed"
+    );
+}
+
 #[tokio::test]
 #[ignore]
 async fn only_the_payer_sees_or_moves_the_subscription() {
@@ -3173,29 +3300,13 @@ async fn leaving_while_unpaid_takes_a_booked_end_as_the_most_the_provider_allows
     let fake = Arc::new(FakeProvider::default());
     let (app, org) = app_with_fake(&pool, fake.clone()).await;
     let account = owner_account(&pool, org).await;
-    let sub = sub_ref();
-    let snap = snapshot(&sub, SubscriptionStatus::Active, TEAM_MONTH, Utc::now());
-    fake.subscriptions
-        .lock()
-        .unwrap()
-        .insert(sub.clone(), snap.clone());
-    for kind in [EventKind::Subscription(snap), EventKind::PaymentFailed] {
-        let resp = app
-            .clone()
-            .oneshot(webhook(&event(account, &sub, kind), true))
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-    }
+    let sub = unpaid_owner(&app, &fake, &pool, account).await;
     // Booked through the provider's portal, so this side never saw it.
     {
         let mut subs = fake.subscriptions.lock().unwrap();
         let held = subs.get_mut(&sub).unwrap();
-        held.status = SubscriptionStatus::PastDue;
         held.cancel_at = held.period_end;
     }
-    assert_eq!(row(&pool, account).await.status, BillingStatus::PastDue);
-    fake.calls.lock().unwrap().clear();
 
     let resp = app
         .oneshot(api("DELETE", "/api/v1/me", None))

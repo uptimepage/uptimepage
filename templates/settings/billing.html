@@ -9,6 +9,7 @@
         {% if owner %}data-owner="1"{% endif %}
         {% if confirming %}data-confirming="1"{% endif %}
         {% if portal_available %}data-portal="1"{% endif %}
+        data-fallback="{{ fallback_name|lower }}"
         {% if let Some(p) = pending %}{% if p.is_cancel %}data-cancel-booked="1"{% else %}data-pending-plan="{{ p.plan_id }}"{% if let Some(i) = p.interval %} data-pending-interval="{{ i }}"{% endif %}{% endif %}{% endif %}
         novalidate
         class="mx-auto w-full max-w-7xl">
@@ -142,7 +143,7 @@
         <p class="text-quiet"># billing --help</p>
         <p># up ......... a bigger plan applies at once, prorated by the provider</p>
         <p># down ....... a smaller plan waits for the paid period to end</p>
-        <p># cancel ..... paid service runs to the period end, then the account lands on its free plan</p>
+        <p># cancel ..... paid service runs to the period end, then the account lands on {{ fallback_name|lower }}; unpaid ends now</p>
         <p># held ....... whatever a smaller plan does not cover is held, never deleted</p>
         <p># card ....... invoices, receipts and the card live in the provider portal</p>
         <p># usage ...... <a class="underline decoration-dotted hover:text-body" href="/settings/usage">what the plan is holding</a></p>

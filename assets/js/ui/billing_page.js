@@ -12,6 +12,9 @@
         "X-Requested-With": "uptimepage",
     };
     const status = form.dataset.status;
+    const live = status === "active";
+    const unpaid = status === "past_due";
+    const fallback = form.dataset.fallback;
     const owner = form.dataset.owner === "1";
     const errorBox = form.querySelector("[data-billing-error]");
     const msg = form.querySelector("[data-act-msg]");
@@ -115,9 +118,8 @@
         const revoke = act("revoke");
         const portal = act("portal");
         const card = act("card");
-        const live = status === "active";
         if (checkout) {
-            checkout.hidden = live || status === "past_due";
+            checkout.hidden = live || unpaid;
             checkout.disabled = !other;
             checkout.textContent = other ? `checkout ${pick.name}` : "checkout";
         }
@@ -132,9 +134,12 @@
                 : stay ? `keep ${pick.name}`
                 : "move plan";
         }
-        if (card) card.hidden = status !== "past_due";
+        if (card) card.hidden = !unpaid;
         if (revoke) revoke.hidden = !(live && form.dataset.cancelBooked === "1");
-        if (cancel) cancel.hidden = !(live && form.dataset.cancelBooked !== "1");
+        if (cancel) {
+            cancel.hidden = !((live || unpaid) && form.dataset.cancelBooked !== "1");
+            cancel.textContent = unpaid ? "cancel now" : "cancel at period end";
+        }
         if (portal) portal.hidden = form.dataset.portal !== "1";
     }
 
@@ -173,8 +178,10 @@
     act("cancel")?.addEventListener("click", async () => {
         const ok = await window.smConfirm({
             title: "Cancel the subscription?",
-            body: "Paid service runs to the end of the period you already paid for. After that the account lands on its free plan and anything the free plan does not cover is held, not deleted.",
-            confirmLabel: "cancel at period end",
+            body: unpaid
+                ? `Service ends now and the card is not retried. The account lands on ${fallback}, and anything ${fallback} does not cover is held, not deleted.`
+                : `Paid service runs to the end of the period you already paid for. After that the account lands on ${fallback}, and anything ${fallback} does not cover is held, not deleted.`,
+            confirmLabel: unpaid ? "cancel now" : "cancel at period end",
             danger: true,
         });
         if (!ok) return;

@@ -222,10 +222,10 @@ pub async fn change_plan(
 
 #[utoipa::path(
     post, path = "/api/v1/account/billing/cancel", tag = "account",
-    summary = "Cancel at the end of the paid period",
+    summary = "Cancel: at the end of the paid period, or at once while unpaid",
     responses(
         (status = 200, body = BillingView),
-        (status = 409, body = ApiError, description = "no active subscription, another change still being applied, or the provider declined"),
+        (status = 409, body = ApiError, description = "no subscription to end, another change still being applied, or the provider declined"),
         (status = 503, body = ApiError, description = "the provider gave no answer; retry later"),
     ),
 )]

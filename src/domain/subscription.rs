@@ -93,11 +93,44 @@ pub struct Subscription {
     pub payment_synced_at: Option<DateTime<Utc>>,
 }
 
+/// Why paid service ended and the account is on its landing plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Landing {
+    /// A move the owner booked reached its date.
+    Scheduled,
+    /// The subscription was cancelled, by the owner or at the provider.
+    Canceled,
+    /// The provider paused the subscription; it may resume.
+    Paused,
+    /// The unpaid grace ran out, or the provider gave up on the card.
+    Unpaid,
+}
+
+impl Landing {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Landing::Scheduled => "scheduled",
+            Landing::Canceled => "canceled",
+            Landing::Paused => "paused",
+            Landing::Unpaid => "unpaid",
+        }
+    }
+}
+
 impl Subscription {
     /// Where the account lands when paid service ends: what it had before
     /// paying, or the free tier for an account that was created paying.
     pub fn landing_plan(&self) -> &str {
         self.fallback_plan_id.as_deref().unwrap_or("free")
+    }
+
+    /// The landing plan as a purchase would record it: an account that has
+    /// never paid keeps what it holds now.
+    pub fn landing_plan_preview(&self) -> &str {
+        match self.status {
+            BillingStatus::None => self.fallback_plan_id.as_deref().unwrap_or(&self.plan_id),
+            _ => self.landing_plan(),
+        }
     }
 
     pub fn clear_pending(&mut self) {
