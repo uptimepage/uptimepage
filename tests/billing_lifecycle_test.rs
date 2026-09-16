@@ -1012,7 +1012,7 @@ async fn a_cancel_is_booked_for_the_period_end_and_can_be_withdrawn() {
     let sub = sub_ref();
     activate(&h, account, &sub, TEAM_MONTH).await;
 
-    let mut canceling = snapshot(&sub, SubscriptionStatus::Active, TEAM_MONTH, Utc::now());
+    let mut canceling = snapshot(&sub, SubscriptionStatus::Active, TEAM_MONTH, now_us());
     canceling.cancel_at = canceling.period_end;
     let ends_at = canceling.period_end;
     h.billing
