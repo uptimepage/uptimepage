@@ -524,7 +524,7 @@ impl TargetStore for PostgresTargetStore {
         .bind(&new.tags)
         .bind(alerts_json)
         .bind(&new.group_name)
-        .bind(new.owner_user_id)
+        .bind(new.owner())
         .bind(source.as_str())
         .bind(region_policy_json)
         .bind(new.alert_confirmations.max(1) as i32)
@@ -838,7 +838,7 @@ impl TargetStore for PostgresTargetStore {
                 tags_json.push(Json(new.tags));
                 alerts_json.push(Json(new.alerts));
                 group_name.push(new.group_name);
-                owner_user_id.push(new.owner_user_id);
+                owner_user_id.push(new.owner_user_id.flatten());
                 confirmations.push(new.alert_confirmations.max(1) as i32);
                 recoveries.push(new.notify_recovery);
                 renotifies.push(new.renotify_interval_secs as i32);
@@ -875,7 +875,7 @@ impl TargetStore for PostgresTargetStore {
                 tags_json.push(Json(new.tags));
                 alerts_json.push(Json(new.alerts));
                 group_name.push(new.group_name);
-                owner_user_id.push(new.owner_user_id);
+                owner_user_id.push(new.owner_user_id.flatten());
                 confirmations.push(new.alert_confirmations.max(1) as i32);
                 recoveries.push(new.notify_recovery);
                 renotifies.push(new.renotify_interval_secs as i32);

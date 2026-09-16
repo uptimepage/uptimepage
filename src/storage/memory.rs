@@ -615,7 +615,7 @@ impl InMemoryTargetStore {
             renotify_interval_secs: new.renotify_interval_secs,
             region_policy: new.region_policy.unwrap_or_default(),
             group_name: new.group_name,
-            owner_user_id: new.owner_user_id,
+            owner_user_id: new.owner_user_id.flatten(),
             write_source: source,
             created_at: now,
             updated_at: now,

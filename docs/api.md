@@ -378,7 +378,9 @@ Use a dedicated low-privilege test account, never a real or admin credential: th
                              // region cap. Every id must be enabled, the set
                              // must fit the cap, and a heartbeat may name none.
   "group_name": "API",       // optional, at most 50 characters; null clears
-  "owner_user_id": "…",      // optional member of the org; null clears
+  "owner_user_id": "…",      // optional member of the org. Left out on create,
+                             // the caller owns it (Terraform excepted); null
+                             // leaves it unowned, and clears it on PATCH
   "alerts": [ /* optional, see below */ ],
   "alert_confirmations": 2,   // see "Alert config" below, with
   "notify_recovery": true     // renotify_interval_secs and region_policy

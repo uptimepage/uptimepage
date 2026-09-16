@@ -297,6 +297,7 @@ impl McpServer {
             owner_user_id: None,
             regions: args.regions.clone(),
         };
+        new.default_owner(auth.user_id, WriteSource::Api);
         rest::vet_new_target(&self.state, auth.org, &mut new, &plan)
             .await
             .map_err(config_error)?;

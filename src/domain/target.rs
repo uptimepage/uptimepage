@@ -9,6 +9,7 @@ use super::WriteSource;
 use super::alert::TargetAlerts;
 use super::check::CheckSpec;
 use super::result::CheckStatus;
+use super::user::UserId;
 
 /// Tag bounds, applied by every write path.
 pub const MAX_TAGS_PER_TARGET: usize = 50;
@@ -155,13 +156,30 @@ pub struct NewTarget {
     #[serde(default)]
     #[schema(nullable = true, max_length = 50)]
     pub group_name: Option<String>,
-    #[serde(default)]
-    #[schema(nullable = true)]
-    pub owner_user_id: Option<Uuid>,
+    /// Owning member. Omit to own it yourself, null to leave it unowned; a
+    /// Terraform apply keeps whatever the plan says.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(nullable = true, value_type = Option<Uuid>)]
+    pub owner_user_id: Option<Option<Uuid>>,
     /// Probe regions to assign at creation. Omit for the default set; refused on a heartbeat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(nullable = true)]
     pub regions: Option<Vec<String>>,
+}
+
+impl NewTarget {
+    /// Makes the caller the owner when the body left the field out. An
+    /// explicit null stays unowned. Terraform keeps the field on the plan's
+    /// terms, so a value it never set would read as drift on the next refresh.
+    pub fn default_owner(&mut self, caller: UserId, source: WriteSource) {
+        if source != WriteSource::Terraform {
+            self.owner_user_id.get_or_insert(Some(caller.0));
+        }
+    }
+
+    pub fn owner(&self) -> Option<Uuid> {
+        self.owner_user_id.flatten()
+    }
 }
 
 /// A monitor with the regions it probes from, resolved before the write so
@@ -332,5 +350,58 @@ mod region_fold_tests {
     fn quorum_denominator_is_what_reported() {
         use CheckStatus::*;
         assert_eq!(fold(P, &[Up, Down]), Some(Degraded));
+    }
+}
+
+#[cfg(test)]
+mod default_owner_tests {
+    use super::*;
+
+    fn new_target() -> NewTarget {
+        serde_json::from_value(serde_json::json!({
+            "name": "api",
+            "check": {"type": "tcp", "host": "db", "port": 5432, "timeout": 1000},
+            "interval": 60
+        }))
+        .expect("minimal body")
+    }
+
+    #[test]
+    fn caller_owns_what_the_body_left_out() {
+        let caller = UserId(Uuid::new_v4());
+        for source in [WriteSource::Ui, WriteSource::Api] {
+            let mut new = new_target();
+            new.default_owner(caller, source);
+            assert_eq!(new.owner(), Some(caller.0), "{source:?}");
+        }
+    }
+
+    #[test]
+    fn explicit_null_stays_unowned() {
+        let mut new: NewTarget = serde_json::from_value(serde_json::json!({
+            "name": "api",
+            "check": {"type": "tcp", "host": "db", "port": 5432, "timeout": 1000},
+            "interval": 60,
+            "owner_user_id": null
+        }))
+        .expect("null owner");
+        new.default_owner(UserId(Uuid::new_v4()), WriteSource::Ui);
+        assert_eq!(new.owner(), None);
+    }
+
+    #[test]
+    fn named_owner_wins_over_the_caller() {
+        let named = Uuid::new_v4();
+        let mut new = new_target();
+        new.owner_user_id = Some(Some(named));
+        new.default_owner(UserId(Uuid::new_v4()), WriteSource::Ui);
+        assert_eq!(new.owner(), Some(named));
+    }
+
+    #[test]
+    fn terraform_keeps_the_plan_unowned() {
+        let mut new = new_target();
+        new.default_owner(UserId(Uuid::new_v4()), WriteSource::Terraform);
+        assert_eq!(new.owner(), None);
     }
 }

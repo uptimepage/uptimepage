@@ -87,6 +87,8 @@ This is a hygiene rule, not a security boundary: it gates the five header names 
 
 The confirmation names the channels rather than listing ids, and says outright when one is disabled or is an email address that was never verified, since either delivers nothing.
 
+**The connecting user owns what it creates.** A monitor made here carries the user behind the token as its owner, the same default the console form applies, so the owner column says who added it.
+
 **A vague ask gets a named starter set.** "Add monitoring on my SaaS" carries one URL and no check list, so the server instructions name the set worth creating from it: an `http` check on the public URL, a `tls_cert` check on its host, and a `domain_expiry` check on its domain. The last two are there because a certificate or a registration lapsing is the outage that arrives with no warning and no bad deploy to blame, and because they are the two a caller working from a single URL would not think to ask for. Anything past that waits for an endpoint the user names.
 
 The interval defaults to where the app's own picker opens a monitor of that kind, held up to the plan's floor — not to the hard minimum, which is legal but would probe a certificate twelve times more often than any other front door does. For a heartbeat it is capped at `period + grace`, since a tick coarser than the window could never judge it.

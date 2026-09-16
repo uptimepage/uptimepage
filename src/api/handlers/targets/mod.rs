@@ -198,6 +198,7 @@ pub async fn get(
 pub async fn create(
     State(state): State<AppState>,
     Authorized(org, _): Authorized<TargetsWrite>,
+    CurrentUser(user): CurrentUser,
     RequestSource(source): RequestSource,
     Json(mut new): Json<NewTarget>,
 ) -> Result<(
@@ -210,7 +211,8 @@ pub async fn create(
     gate_flow(&new.check, &plan)?;
     vet_new_target(&state, org, &mut new, &plan).await?;
     verify_alert_channels(&state, org, &new.alerts).await?;
-    validate_owner_is_member(&state, org, new.owner_user_id).await?;
+    validate_owner_is_member(&state, org, new.owner()).await?;
+    new.default_owner(user, source);
     if matches!(&new.check, CheckSpec::Flow(_)) {
         state.quotas.check_can_create_flow(org, None, 1).await?;
     }
@@ -845,6 +847,7 @@ async fn note_if_emptied(state: &AppState, org: OrgId, deleted: usize) {
 pub async fn bulk_create(
     State(state): State<AppState>,
     Authorized(org, _): Authorized<TargetsWrite>,
+    CurrentUser(user): CurrentUser,
     RequestSource(source): RequestSource,
     Json(mut items): Json<Vec<NewTarget>>,
 ) -> Result<(StatusCode, Redacted<Vec<Target>>)> {
@@ -873,7 +876,7 @@ pub async fn bulk_create(
         validate_variable_refs(&state, org, &new.check).await?;
     }
     let owner_ids: std::collections::HashSet<Uuid> =
-        items.iter().filter_map(|t| t.owner_user_id).collect();
+        items.iter().filter_map(NewTarget::owner).collect();
     if !owner_ids.is_empty() {
         let pool = state.require_db()?;
         let members = crate::storage::orgs::list_members(pool, org).await?;
@@ -888,6 +891,9 @@ pub async fn bulk_create(
                 ));
             }
         }
+    }
+    for new in &mut items {
+        new.default_owner(user, source);
     }
     let n = items.len() as i64;
     // Quantity-aware friendly pre-check; the store INSERT re-enforces the

@@ -161,6 +161,52 @@ async fn bulk_create_rejects_empty() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+fn tcp_target(name: &str) -> Value {
+    json!({
+        "name": name,
+        "check": {"type": "tcp", "host": "db.example.com", "port": 5432, "timeout": 1000},
+        "interval": 60
+    })
+}
+
+#[tokio::test]
+async fn create_without_owner_is_owned_by_the_caller() {
+    let created = post_and_body(app(), tcp_target("db")).await;
+    assert_eq!(
+        created["owner_user_id"],
+        json!(common::test_user_id().0.to_string())
+    );
+}
+
+#[tokio::test]
+async fn create_with_null_owner_stays_unowned() {
+    let mut payload = tcp_target("db");
+    payload["owner_user_id"] = Value::Null;
+    let created = post_and_body(app(), payload).await;
+    assert_eq!(created["owner_user_id"], Value::Null);
+}
+
+#[tokio::test]
+async fn bulk_create_owner_default_follows_each_item() {
+    let mut unowned = tcp_target("b");
+    unowned["owner_user_id"] = Value::Null;
+    let resp = app()
+        .oneshot(common::json_request(
+            "POST",
+            "/api/v1/targets/bulk",
+            json!([tcp_target("a"), unowned]),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let items = body_json(resp).await;
+    assert_eq!(
+        items[0]["owner_user_id"],
+        json!(common::test_user_id().0.to_string())
+    );
+    assert_eq!(items[1]["owner_user_id"], Value::Null);
+}
+
 /// The bulk INSERT omits the column, so a dropped follow-up write leaves the
 /// monitor on the default quorum without saying so.
 #[tokio::test]

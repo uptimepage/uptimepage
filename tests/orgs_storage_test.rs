@@ -440,7 +440,7 @@ fn http_target(name: &str, owner: Option<UserId>) -> NewTarget {
         notify_recovery: true,
         renotify_interval_secs: 3600,
         group_name: None,
-        owner_user_id: owner.map(|u| u.0),
+        owner_user_id: Some(owner.map(|u| u.0)),
         regions: None,
     }
 }
