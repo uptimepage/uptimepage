@@ -1,12 +1,12 @@
 //! Single source of truth for assembling the merged app router
 //! (API + web UI) with the cross-cutting layers applied. `main.rs`
 //! and every test-harness call site routes through here so a future
-//! site can't silently miss CSRF or tenant-host isolation.
+//! site can't silently miss CSRF or host isolation.
 //!
 //! Layer order (outermost first, runs earliest on request):
 //!   1. http metrics — records every matched request, including ones
 //!      the inner guards subsequently reject
-//!   2. tenant-host isolation — 404s operator surface on tenant hosts
+//!   2. host isolation — 404s the operator surface on tenant and MCP hosts
 //!   3. CSRF — rejects state-changing requests without the custom header
 //!
 //! CSRF wraps the *merged* router so any future state-changing route
@@ -33,9 +33,9 @@ pub fn build_app_router(state: AppState, shutdown: CancellationToken) -> Router 
         crate::oauth::spawn_sweeper(pool, shutdown.clone());
     }
     let merged = api::build_router(state.clone(), shutdown).merge(web::routes(state.clone()));
-    // Read MCP server at `/mcp` (no-op unless `cfg.mcp.enabled`). Mounted before
-    // the cross-cutting layers so CSRF (Bearer-exempt) and tenant-host isolation
-    // (`mcp` is an operator label) wrap it like the rest of the surface.
+    // MCP server at `/mcp` (no-op unless `cfg.mcp.enabled`). Mounted before the
+    // cross-cutting layers so CSRF (Bearer-exempt) and host isolation, which
+    // narrows the MCP host to this mount plus discovery, wrap it like the rest.
     let merged = crate::mcp::mount(merged, state.clone());
     apply_cross_cutting_layers(merged, state)
 }
@@ -50,7 +50,7 @@ pub fn build_app_router_api_only(state: AppState, shutdown: CancellationToken) -
 fn apply_cross_cutting_layers(router: Router, state: AppState) -> Router {
     // Last `.layer()` is OUTERMOST in axum — http_metrics runs first
     // (observes every routed request, including ones the guards below
-    // subsequently reject), then tenant_host_isolation, then CSRF.
+    // subsequently reject), then host_isolation, then CSRF.
     // 404ing a tenant-host operator route still beats running CSRF's
     // constant-time header compare; reordering reverses request semantics.
     router
@@ -58,6 +58,6 @@ fn apply_cross_cutting_layers(router: Router, state: AppState) -> Router {
             state.clone(),
             web::auth::csrf::middleware,
         ))
-        .layer(from_fn_with_state(state, web::host::tenant_host_isolation))
+        .layer(from_fn_with_state(state, web::host::host_isolation))
         .layer(from_fn(http_metrics::middleware))
 }

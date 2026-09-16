@@ -214,7 +214,8 @@ services:
       # deploy.yml upserts UPTIMEPAGE_MCP_ENABLED / _OAUTH_ENABLED from the repo
       # variables MCP_ENABLED / MCP_OAUTH_ENABLED (default off here when unset).
       # The OAuth resource id is the canonical /mcp URI on the `mcp` subdomain
-      # (served by the *.{domain} wildcard; `mcp` is an operator label). The
+      # (its own Caddy site block; the app serves only the transport and
+      # discovery on that label). The
       # issuer is UPTIMEPAGE_AUTH_PUBLIC_BASE_URL above — which MUST be https
       # when OAuth is on, or the app refuses to boot.
       UPTIMEPAGE_MCP__ENABLED: ${UPTIMEPAGE_MCP_ENABLED:-false}

@@ -136,12 +136,12 @@ The manual path works but pushes a long-lived bearer token through copy-paste an
 
 ### OAuth endpoints
 
-Discovery + authorization-server endpoints live on the **app** host (where the session cookie lives); the protected resource is `/mcp` on its own host.
+The authorization-server endpoints live on the **app** host (where the session cookie lives); the protected resource is `/mcp` on its own host. Every `/.well-known/*` document is served on both hosts, because a client starts discovery at whichever origin it was given; the MCP host serves nothing else besides `/mcp`.
 
 | Endpoint | Host | Purpose |
 |---|---|---|
-| `/.well-known/oauth-protected-resource` | resource (`mcp.`) | RFC 9728 resource metadata (resource id, authorization servers, scopes) |
-| `/.well-known/oauth-authorization-server` | app | RFC 8414 AS metadata (PKCE S256 only, public clients, code + refresh grants) |
+| `/.well-known/oauth-protected-resource` | resource (`mcp.`) and app | RFC 9728 resource metadata (resource id, authorization servers, scopes) |
+| `/.well-known/oauth-authorization-server` | app and resource | RFC 8414 AS metadata (PKCE S256 only, public clients, code + refresh grants) |
 | `/oauth/register` | app | RFC 7591 Dynamic Client Registration (open; a client nobody approves, and nobody has opened the consent screen for in a week, is dropped) |
 | `/oauth/authorize` | app | Login + consent screen (PKCE S256, RFC 8707 `resource`) |
 | `/oauth/token` | app | Issue / refresh the audience-bound token |
@@ -218,7 +218,7 @@ The deploy pipeline upserts the two switches from repo **variables** (Settings â
 - `MCP_ENABLED=true`
 - `MCP_OAUTH_ENABLED=true`
 
-`deploy.yml` writes the corresponding `UPTIMEPAGE_MCP_*` keys into the server `.env` on each deploy. The resource URI defaults to `https://mcp.{UPTIMEPAGE_DOMAIN}/mcp`; `mcp.{DOMAIN}` rides the existing `*.{DOMAIN}` wildcard cert + Caddy route (no new DNS). See `deployment/.env.example` and [Deployment](deployment.md).
+`deploy.yml` writes the corresponding `UPTIMEPAGE_MCP_*` keys into the server `.env` on each deploy. The resource URI defaults to `https://mcp.{UPTIMEPAGE_DOMAIN}/mcp`; `mcp.{DOMAIN}` resolves through the existing `*.{DOMAIN}` wildcard record (no new DNS) and has its own Caddy site block with a per-host cert. The app serves only `/mcp` and `/.well-known/*` on that host; the operator UI, API and OAuth endpoints answer 404 there. See `deployment/.env.example` and [Deployment](deployment.md).
 
 ## Connecting a client
 

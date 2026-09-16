@@ -384,6 +384,118 @@ async fn tenant_host_isolates_operator_surface() {
 
 #[tokio::test]
 #[ignore]
+async fn mcp_host_serves_only_the_connector_surface() {
+    // `mcp.{base}` is an operator label, so without its own gate it would
+    // carry the whole operator surface: a login clone on a second host,
+    // and a second `Host` every per-IP edge limit on `app.{base}` could be
+    // sidestepped through. Only the transport and discovery may answer.
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (app, _default) = common::build_test_app_with_pg(pool.clone(), |cfg| {
+        saas_subdomain(cfg);
+        cfg.mcp.enabled = true;
+        cfg.mcp.oauth_enabled = true;
+        cfg.mcp.resource_uri = format!("https://mcp.{BASE_DOMAIN}/mcp");
+        cfg.auth.public_base_url = format!("https://app.{BASE_DOMAIN}");
+    })
+    .await;
+    let mcp_host = format!("mcp.{BASE_DOMAIN}");
+    let operator_host = format!("app.{BASE_DOMAIN}");
+
+    // Bearer auth answers, so the transport is reachable.
+    assert_eq!(
+        get_path(&app, "/mcp", Some(&mcp_host)).await,
+        StatusCode::UNAUTHORIZED,
+        "/mcp must reach the transport on the MCP host"
+    );
+    for path in [
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp",
+        "/.well-known/oauth-authorization-server",
+        "/.well-known/mcp/server-card.json",
+    ] {
+        assert_eq!(
+            get_path(&app, path, Some(&mcp_host)).await,
+            StatusCode::OK,
+            "{path} must be served on the MCP host"
+        );
+    }
+
+    for path in [
+        "/",
+        "/login",
+        "/auth/github/login",
+        "/oauth/authorize",
+        "/invitations/accept?token=x",
+        "/settings/account",
+        "/api/v1/targets",
+        "/m/token",
+    ] {
+        assert_eq!(
+            get_path(&app, path, Some(&mcp_host)).await,
+            StatusCode::NOT_FOUND,
+            "{path} must 404 on the MCP host (operator-surface leak)"
+        );
+    }
+    // The AS endpoints live on the issuer; a registration aimed at the MCP
+    // host must not create a client row.
+    let register = |host: &str| {
+        app.clone().oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/oauth/register")
+                .header("host", host)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"redirect_uris":["https://client.example/cb"]}"#,
+                ))
+                .unwrap(),
+        )
+    };
+    assert_eq!(
+        register(&mcp_host).await.expect("oneshot").status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        register(&operator_host).await.expect("oneshot").status(),
+        StatusCode::CREATED,
+        "the same registration must still work on the issuer host"
+    );
+
+    assert_eq!(
+        get_path(&app, "/healthz", Some(&mcp_host)).await,
+        StatusCode::OK,
+        "/healthz must bypass host isolation"
+    );
+
+    // The shipped self-host compose sets the base domain with the subdomain
+    // surface off; the MCP gate must not hinge on the tenant one.
+    let (self_host, _default) = common::build_test_app_with_pg(pool, |cfg| {
+        saas_subdomain(cfg);
+        cfg.tenancy.subdomain_public_routes = false;
+        cfg.tenancy.path_based_public_routes = true;
+        cfg.mcp.enabled = true;
+        cfg.mcp.resource_uri = format!("https://mcp.{BASE_DOMAIN}/mcp");
+    })
+    .await;
+    assert_eq!(
+        get_path(&self_host, "/login", Some(&mcp_host)).await,
+        StatusCode::NOT_FOUND,
+        "/login must 404 on the MCP host with the subdomain surface off"
+    );
+    assert_eq!(
+        get_path(&self_host, "/mcp", Some(&mcp_host)).await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        get_path(&self_host, "/login", Some(&operator_host)).await,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+#[ignore]
 async fn root_routes_operator_host_to_dashboard_non_operator_slugs_to_404() {
     // The two security-relevant branches:
     //  * `app.{base_domain}` (operator label) → dashboard. No session cookie

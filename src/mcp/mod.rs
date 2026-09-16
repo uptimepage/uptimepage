@@ -34,6 +34,9 @@ use rmcp::transport::streamable_http_server::tower::{
 use crate::app::AppState;
 use server::McpServer;
 
+/// Where the transport listens; the MCP host serves this and discovery only.
+pub const MCP_PATH: &str = "/mcp";
+
 /// Mount the read MCP server at `/mcp` when `cfg.mcp.enabled`. No-op otherwise,
 /// so a deployment without the dedicated host + Caddy route never exposes it.
 ///
@@ -46,7 +49,7 @@ pub fn mount(router: Router, state: AppState) -> Router {
     }
     let svc = build_service(state.clone());
     let mcp = Router::new()
-        .nest_service("/mcp", svc)
+        .nest_service(MCP_PATH, svc)
         // Added inner→outer: rate-limit first (inner) so auth runs before it
         // and the limiter sees the resolved org/user, never the TCP peer.
         .layer(from_fn_with_state(

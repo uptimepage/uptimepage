@@ -21,6 +21,7 @@ use crate::api::handlers::health::is_health_path;
 use crate::api::public_error::PublicAppError;
 use crate::api::subdomain_public_routes_enabled;
 use crate::app::AppState;
+use crate::config::AppConfig;
 use crate::domain::{OrgId, PageRef, StatusPageId};
 
 /// Subdomain labels that route to the operator surface (dashboard + auth +
@@ -32,8 +33,11 @@ use crate::domain::{OrgId, PageRef, StatusPageId};
 /// `hetzner`, `gdpr`) to the operator login page, multiplying the
 /// operator surface across dozens of hosts and leaking the reserved list
 /// via response codes. Keep this set minimal — only labels actually
-/// served by the operator front door.
-const OPERATOR_LABELS: &[&str] = &["app", "mcp"];
+/// served by the operator front door. `mcp` is the connector host: it
+/// reaches the app router like `app` but [`host_isolation`] narrows it to
+/// the transport and its discovery documents.
+const MCP_LABEL: &str = "mcp";
+const OPERATOR_LABELS: &[&str] = &["app", MCP_LABEL];
 
 /// Marketing labels — apex (empty) and `www` route to the marketing site,
 /// not to a tenant. Kept tight (only `www`); deeper aliases would
@@ -335,12 +339,30 @@ where
 /// operator surface (login, API, settings) across dozens of hosts and
 /// leak the reserved set via response-code fingerprints.
 pub fn is_subdomain_public_request(state: &AppState, headers: &HeaderMap) -> bool {
-    if !subdomain_public_routes_enabled(&state.cfg) {
-        return false;
-    }
+    host_surface(state, headers) == HostSurface::Tenant
+}
+
+/// The slice of the app router a request's `Host` may reach.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostSurface {
+    /// Dashboard, auth, API: `app.{base}`, and every host once the SaaS
+    /// subdomain surface is off.
+    Operator,
+    /// The public-status allow-list only.
+    Tenant,
+    /// The MCP transport and its discovery documents only.
+    Mcp,
+}
+
+/// Tenant hosts exist only with the SaaS subdomain surface on; the MCP host
+/// is narrowed whenever it is distinct from the app host ([`is_mcp_host`]).
+fn host_surface(state: &AppState, headers: &HeaderMap) -> HostSurface {
     let Some(host) = headers.get(HOST).and_then(|h| h.to_str().ok()) else {
-        return false;
+        return HostSurface::Operator;
     };
+    if is_mcp_host(&state.cfg, host) {
+        return HostSurface::Mcp;
+    }
     // Slug-shaped non-operator hosts (including `www` and any marketing
     // label) belong on the public dispatcher — even when the upstream
     // marketing router isn't wired up. Routing them to the operator `/`
@@ -348,9 +370,42 @@ pub fn is_subdomain_public_request(state: &AppState, headers: &HeaderMap) -> boo
     // labels (`admin.{base}`, `www.{base}`). When marketing IS enabled,
     // `RouteByHost` intercepts those hosts before this code runs.
     match parse_host_shape(host, &state.cfg.public_status.base_domain) {
-        HostShape::Subdomain(slug) => !is_operator_label(slug),
-        _ => false,
+        HostShape::Subdomain(slug)
+            if subdomain_public_routes_enabled(&state.cfg) && !is_operator_label(slug) =>
+        {
+            HostSurface::Tenant
+        }
+        _ => HostSurface::Operator,
     }
+}
+
+/// The host of `mcp.resource_uri` is the connector host, unless it is the
+/// app host itself (dev serves both on one origin, and narrowing it would
+/// 404 the dashboard). The `mcp` label under the base domain is narrowed
+/// regardless: the wildcard record and the Caddy site block answer for it
+/// whether or not the connector is on.
+fn is_mcp_host(cfg: &AppConfig, host: &str) -> bool {
+    if matches!(
+        parse_host_shape(host, &cfg.public_status.base_domain),
+        HostShape::Subdomain(slug) if slug.eq_ignore_ascii_case(MCP_LABEL)
+    ) {
+        return true;
+    }
+    let Some(resource) = url_host(&cfg.mcp.resource_uri) else {
+        return false;
+    };
+    let host = normalize_host(host);
+    host.eq_ignore_ascii_case(resource)
+        && !url_host(&cfg.auth.public_base_url).is_some_and(|app| app.eq_ignore_ascii_case(host))
+}
+
+/// Host of an absolute URL, port and trailing dot stripped; `None` when the
+/// value is empty or has no authority.
+fn url_host(url: &str) -> Option<&str> {
+    let authority = url.trim().split_once("://")?.1;
+    let authority = authority.split(['/', '?', '#']).next()?;
+    let host = normalize_host(authority);
+    (!host.is_empty()).then_some(host)
 }
 
 /// Exact paths the public tenant surface (`{slug}.{base_domain}`) is
@@ -394,30 +449,39 @@ fn is_public_tenant_path(path: &str) -> bool {
         || PUBLIC_TENANT_PREFIXES.iter().any(|p| path.starts_with(p))
 }
 
-/// Default-deny middleware on tenant subdomain hosts (`{slug}.{base}`).
-/// Any request whose path isn't in the public-tenant allow-list (see
-/// [`PUBLIC_TENANT_EXACT`] + [`PUBLIC_TENANT_PREFIXES`]) returns 404 —
-/// otherwise `acme.{base}/login` would render the operator login form
-/// (a phishing-friendly clone), `/api/v1/*` would reveal 401s a probe
-/// can map, `/settings/*` would 302 to `/login` and leak the route's
-/// existence. The session cookie is host-scoped, so this is not a
-/// credential-hijack vector; the gate exists to keep the operator
-/// *surface* off tenant hosts.
+/// The transport itself plus its discovery documents: the RFC 9728 / RFC 8414
+/// metadata and the server card are all `/.well-known/` files, public by
+/// definition.
+fn is_mcp_host_path(path: &str) -> bool {
+    path == crate::mcp::MCP_PATH || path.starts_with("/.well-known/")
+}
+
+/// Default-deny middleware on the non-operator hosts. A tenant subdomain
+/// (`{slug}.{base}`) serves only the public-tenant allow-list (see
+/// [`PUBLIC_TENANT_EXACT`] + [`PUBLIC_TENANT_PREFIXES`]) and the MCP host
+/// only the transport plus discovery ([`is_mcp_host_path`]); everything
+/// else returns 404 — otherwise `acme.{base}/login` or `mcp.{base}/login`
+/// would render the operator login form (a phishing-friendly clone),
+/// `/api/v1/*` would reveal 401s a probe can map, `/settings/*` would 302
+/// to `/login` and leak the route's existence, and every per-IP edge limit
+/// declared on `app.{base}` could be sidestepped by switching the `Host`.
+/// The session cookie is host-scoped, so this is not a credential-hijack
+/// vector; the gate exists to keep the operator *surface* single-host.
 ///
 /// Applies to the merged app router so it covers both the web UI and
 /// the JSON API. Health probes bypass unconditionally so a misrouted
-/// probe doesn't take the upstream down. No-op when SaaS subdomain
-/// mode is off — every request passes through unmodified.
-pub async fn tenant_host_isolation(
-    State(state): State<AppState>,
-    req: Request,
-    next: Next,
-) -> Response {
+/// probe doesn't take the upstream down. The tenant gate is a no-op when
+/// SaaS subdomain mode is off; the MCP gate needs only a base domain, so
+/// a self-host that turns the connector on gets it too.
+pub async fn host_isolation(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let path = req.uri().path();
-    if is_health_path(path) || !is_subdomain_public_request(&state, req.headers()) {
-        return next.run(req).await;
-    }
-    if !is_public_tenant_path(path) {
+    let allowed = is_health_path(path)
+        || match host_surface(&state, req.headers()) {
+            HostSurface::Operator => true,
+            HostSurface::Tenant => is_public_tenant_path(path),
+            HostSurface::Mcp => is_mcp_host_path(path),
+        };
+    if !allowed {
         return StatusCode::NOT_FOUND.into_response();
     }
     next.run(req).await
@@ -426,6 +490,46 @@ pub async fn tenant_host_isolation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_host_follows_the_resource_uri_and_the_mcp_label() {
+        let mut cfg = AppConfig::load().expect("config");
+        cfg.public_status.base_domain = "example.com".into();
+        cfg.auth.public_base_url = "https://app.example.com".into();
+        cfg.mcp.resource_uri = "https://connector.example.net/mcp".into();
+        assert!(is_mcp_host(&cfg, "connector.example.net"));
+        assert!(is_mcp_host(&cfg, "Connector.Example.NET:443"));
+        assert!(is_mcp_host(&cfg, "mcp.example.com"));
+        assert!(!is_mcp_host(&cfg, "app.example.com"));
+        assert!(!is_mcp_host(&cfg, "acme.example.com"));
+        assert!(!is_mcp_host(&cfg, "example.net"));
+
+        // Dev serves the transport on the app origin: never narrow that one.
+        cfg.mcp.resource_uri = "http://app.lvh.me:8080/mcp".into();
+        cfg.auth.public_base_url = "http://app.lvh.me:8080".into();
+        assert!(!is_mcp_host(&cfg, "app.lvh.me:8080"));
+
+        cfg.mcp.resource_uri = String::new();
+        cfg.public_status.base_domain = String::new();
+        assert!(!is_mcp_host(&cfg, "mcp.example.com"));
+    }
+
+    #[test]
+    fn mcp_host_serves_transport_and_discovery_only() {
+        assert!(is_mcp_host_path("/mcp"));
+        assert!(is_mcp_host_path("/.well-known/oauth-protected-resource"));
+        assert!(is_mcp_host_path("/.well-known/mcp/server-card.json"));
+        for path in [
+            "/",
+            "/mcp/",
+            "/mcpx",
+            "/login",
+            "/oauth/register",
+            "/api/v1/targets",
+        ] {
+            assert!(!is_mcp_host_path(path), "{path} must stay off the MCP host");
+        }
+    }
 
     #[test]
     fn extracts_slug_from_well_formed_host() {

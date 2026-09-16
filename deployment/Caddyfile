@@ -4,14 +4,17 @@
 #   app.{domain}              → Operator UI + API (the app gates its own
 #                               routes; no edge credential), plus the
 #                               single-org /status page in self-host mode
+#   mcp.{domain}              → MCP connector transport + its discovery
+#                               documents; the app 404s everything else
 #   *.{domain}                → Per-org public status pages (wildcard cert,
 #                               apex-wildcard shape — `acme.{domain}`, not
 #                               `acme.status.{domain}`)
 #
 # What this does:
 #   - Automatic HTTPS via Let's Encrypt (HTTP/2 and HTTP/3)
-#   - app.{domain} cert on its own block (per-host HTTP-01) — kept off the
-#     wildcard so a leak of the wildcard key never touches the operator host
+#   - app.{domain} and mcp.{domain} certs on their own blocks (per-host
+#     HTTP-01) — kept off the wildcard so a leak of the wildcard key never
+#     touches the operator host or the bearer tokens the connector carries
 #   - *.{domain} wildcard cert via Hetzner DNS-01 (scoped to that site —
 #     self-host needs no DNS token)
 #   - Operator UI + API behind the app's GitHub OAuth session (no edge auth)
@@ -88,27 +91,6 @@
 	}
 }
 
-# Open by design (RFC 7591), one row per call; the app sweeps unapproved rows,
-# this caps the inflow. Public tier: MCP clients share their vendor's egress IP.
-# Imported by both site blocks because mcp.{domain} is served by the wildcard.
-(oauth_register) {
-	@oauth_register {
-		method POST
-		path /oauth/register
-	}
-	handle @oauth_register {
-		rate_limit {
-			zone oauth_register {
-				key {remote_host}
-				ipv6_prefix 64
-				events 30
-				window 1m
-			}
-		}
-		import app_upstream
-	}
-}
-
 # ═══════════════════════════════════════════════════════════════════════
 # Operator UI + API
 # ═══════════════════════════════════════════════════════════════════════
@@ -170,8 +152,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 	# ─── Per-IP limits on the abuse-sensitive endpoints ─────────────────
 	# Caddy owns the per-IP tier (it sees the real peer; the app keys on
 	# org/user, never the TCP peer). The app-side per-org/user limits live
-	# in the plans table. Zones are process-global, so a name is shared
-	# across sites only where one budget is meant (oauth_register).
+	# in the plans table. Distinct zone names — zones are process-global.
 	# `ipv6_prefix 64`: a v6 client rotates addresses inside its routed
 	# prefix at will, so a per-address bucket caps nothing.
 	@auth path /auth/* /api/v1/me
@@ -187,7 +168,24 @@ app.{$UPTIMEPAGE_DOMAIN} {
 		import app_upstream
 	}
 
-	import oauth_register
+	# Open by design (RFC 7591), one row per call; the app sweeps unapproved
+	# rows, this caps the inflow. Public tier: MCP clients register from
+	# their vendor's shared egress IP.
+	@oauth_register {
+		method POST
+		path /oauth/register
+	}
+	handle @oauth_register {
+		rate_limit {
+			zone oauth_register {
+				key {remote_host}
+				ipv6_prefix 64
+				events 30
+				window 1m
+			}
+		}
+		import app_upstream
+	}
 
 	# Org creation — strict speedbump against naive mass-signup abuse.
 	@org_creation {
@@ -461,14 +459,70 @@ app.{$UPTIMEPAGE_DOMAIN} {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
+# MCP connector host
+# ═══════════════════════════════════════════════════════════════════════
+# `mcp` is an operator label, so the app router serves it, narrowed to /mcp
+# and /.well-known/* (`host_isolation` in src/web/host.rs); the edge repeats
+# that allow-list so the operator UI, API and OAuth endpoints, and the per-IP
+# zones they sit behind, never answer on a second host. Own per-host cert:
+# every request here carries a bearer token.
+mcp.{$UPTIMEPAGE_DOMAIN} {
+	encode gzip zstd
+
+	# ─── Transport — per-IP backstop ahead of the app's per-org limiter ─
+	# Auth runs before the app limiter, so a flood of bogus bearers never
+	# reaches a key it can count; this bounds it per IP. Generous: one
+	# vendor egress IP (claude.ai, Cursor) carries every user of that
+	# client, and a 429 there stalls all of them at once.
+	@transport path /mcp
+	handle @transport {
+		rate_limit {
+			zone mcp_transport {
+				key {remote_host}
+				ipv6_prefix 64
+				events 600
+				window 1m
+			}
+		}
+		import app_upstream
+	}
+
+	# ─── Discovery — RFC 9728 / RFC 8414 metadata, the server card ──────
+	@discovery path /.well-known/*
+	handle @discovery {
+		import app_upstream
+	}
+
+	handle {
+		respond "Not Found" 404
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		-Server
+		-X-Powered-By
+	}
+
+	log {
+		output file /var/log/caddy/access-mcp.log {
+			roll_size 20MiB
+			roll_keep 5
+			roll_keep_for 336h
+		}
+		format json
+	}
+}
+
+# ═══════════════════════════════════════════════════════════════════════
 # Public per-org status pages — apex wildcard
 # ═══════════════════════════════════════════════════════════════════════
-# Every {slug}.{domain} resolves here EXCEPT app.{domain}, which Caddy
-# matches more-specific-first against the operator site block above (Caddy
-# routes the exact host before the wildcard, so the wildcard cert never
-# covers the operator host). The Rust app reads the original Host header to
-# map the slug → org; an unknown or opted-out slug is a 404 from the app,
-# never a cert error (the wildcard cert covers all valid labels).
+# Every {slug}.{domain} resolves here EXCEPT the labels with their own site
+# block above (app, mcp), which Caddy matches more-specific-first (the exact
+# host wins over the wildcard, so the wildcard cert never covers them). The
+# Rust app reads the original Host header to map the slug → org; an unknown
+# or opted-out slug is a 404 from the app, never a cert error (the wildcard
+# cert covers all valid labels).
 *.{$UPTIMEPAGE_DOMAIN} {
 	encode gzip zstd
 
@@ -521,8 +575,6 @@ app.{$UPTIMEPAGE_DOMAIN} {
 		}
 		format json
 	}
-
-	import oauth_register
 
 	# The app reads the original Host to map slug → org; Caddy forwards it
 	# upstream by default.

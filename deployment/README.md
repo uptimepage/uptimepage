@@ -12,7 +12,8 @@ PostgreSQL, and ClickHouse.
 | HTTP/2 + HTTP/3 | Enabled by default in Caddy |
 | Authentication | The app's own sign-in on `app.{domain}` (UI + operator API). The edge adds no second gate |
 | Public status surface | Self-host: `/status` on `app.{domain}`. SaaS: each org at `{slug}.{domain}` (apex wildcard) |
-| TLS for status pages | Wildcard cert for `*.{domain}` via Let's Encrypt + Hetzner DNS-01; `app.{domain}` kept on its own per-host HTTP-01 cert |
+| TLS for status pages | Wildcard cert for `*.{domain}` via Let's Encrypt + Hetzner DNS-01; `app.{domain}` and `mcp.{domain}` kept on their own per-host HTTP-01 certs |
+| MCP connector host | `mcp.{domain}` serves only `/mcp` and `/.well-known/*`; the app answers 404 for everything else there, so the operator surface and its edge limits stay single-host |
 | Public rate limit | Per-IP 60 req/min on the public surface (custom Caddy image, built automatically) |
 | Auth-endpoint rate limit | Per-IP 10 req/min on `/auth/*` and `/api/v1/me`; invitation accept has its own zone at 30/min |
 | Org-creation rate limit | Per-IP 3 per 24 h on `POST /api/v1/orgs` (signup-abuse speedbump) |
@@ -34,6 +35,8 @@ PostgreSQL, and ClickHouse.
   Cloud DNS-01 API):
   - `app.{domain}` → A/AAAA to this host (explicit record, beats the
     wildcard for the operator host)
+  - `mcp.{domain}` → resolves through the wildcard below; Caddy still
+    issues it a per-host HTTP-01 cert from its own site block
   - `*.{domain}` → A/AAAA to this host (SaaS mode; the apex wildcard
     sends every `{slug}.{domain}` here and the app maps slug → org)
 
@@ -51,8 +54,11 @@ PostgreSQL, and ClickHouse.
     same project (zone → Actions → Transfer to project). The legacy
     `dns.hetzner.com` DNS Console and its API were retired 2026-05.
 
-  Self-host (single org) needs only the `app.{domain}` record and no DNS
-  token — the status page is served at `https://app.{domain}/status`.
+  Self-host (single org) needs the `app.{domain}` and `mcp.{domain}`
+  records and no DNS token — the status page is served at
+  `https://app.{domain}/status`. Caddy asks Let's Encrypt for the
+  `mcp.{domain}` cert at start whether or not the connector is on, so
+  without that record it retries and logs the failure until you add it.
 
 ## First-time setup
 
@@ -149,7 +155,7 @@ echo | openssl s_client -connect app.example.com:443 2>/dev/null \
 # Wildcard cert — any slug, even one that doesn't exist as an org, must
 # present a *.example.com cert (the app returns 404 for unknown slugs,
 # but TLS is served by the wildcard regardless). Use a name that is NOT
-# `app.` so Caddy serves the wildcard block, not the per-host operator
+# `app.` or `mcp.` so Caddy serves the wildcard block, not a per-host
 # cert.
 echo | openssl s_client -servername anything.example.com \
     -connect anything.example.com:443 2>/dev/null \
@@ -308,11 +314,11 @@ app. Passwords and bcrypt hashes are not part of this stack.
 
 ### Per-IP rate limits (Caddy)
 
-The edge enforces sixteen per-IP zones (keyed on `{remote_host}`) in
+The edge enforces seventeen per-IP zones (keyed on `{remote_host}`) in
 `Caddyfile`; the four most load-bearing are below, and the rest cover
 `/login`, invitations, share links, heartbeat pings, on-demand checks,
-channel verification, status-page subscribe, delegate connect and the three
-inbound webhooks. They sit on top of the per-org / per-user budgets the app enforces from
+channel verification, status-page subscribe, delegate connect, the MCP
+transport and the three inbound webhooks. They sit on top of the per-org / per-user budgets the app enforces from
 the org's plan (see [Quotas & rate limits](../docs/quotas.md)). Per-IP is
 the edge's job because behind the proxy the app sees only the proxy as the
 peer; the two tiers are complementary, not redundant.
@@ -321,7 +327,7 @@ peer; the two tiers are complementary, not redundant.
 |---|---|---|---|
 | `status_path` | public status surface (`/status`, `/api/public/*`, assets) | 60 / 1 min | Cheap unauthenticated reads, bot-heavy |
 | `auth_endpoints` | `/auth/*`, `/api/v1/me` | 10 / 1 min | Throttle credential stuffing / token probing |
-| `oauth_register` | `POST /oauth/register` (app and wildcard hosts, one bucket) | 30 / 1 min | Open MCP client registration writes a row per call; the app drops rows nobody authorizes, this caps how fast they arrive. Public tier because MCP clients register from shared vendor egress |
+| `oauth_register` | `POST /oauth/register` | 30 / 1 min | Open MCP client registration writes a row per call; the app drops rows nobody authorizes, this caps how fast they arrive. Public tier because MCP clients register from shared vendor egress |
 | `org_creation` | `POST /api/v1/orgs` | 3 / 24 h | Signup-abuse speedbump; with email verification, mass org creation needs many real mailboxes |
 
 These blocks already exist in the shipped `Caddyfile` — no manual step.
@@ -581,7 +587,7 @@ This deployment is right-sized for **single-tenant, small-team operator use**:
   Cloud, Altinity) — but you lose the single-VM simplicity.
 - **No SAML / enterprise SSO.** Sign-in is OAuth (GitHub, Google,
   Microsoft, GitLab), passkeys and magic-link mail. No SCIM provisioning.
-- **Per-IP throttling is targeted, not blanket.** Fifteen named zones cover
+- **Per-IP throttling is targeted, not blanket.** Seventeen named zones cover
   the surfaces worth bounding (see the table above); everything else falls
   through unthrottled. To bound another path, add its own `handle` block
   with a matcher, a `rate_limit` and `import app_upstream` — do not put

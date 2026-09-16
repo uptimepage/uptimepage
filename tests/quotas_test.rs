@@ -777,6 +777,10 @@ fn caddyfile_declares_per_ip_zones() {
         caddy.contains("zone oauth_register"),
         "oauth-registration per-IP zone missing"
     );
+    assert!(
+        caddy.contains("zone mcp_transport"),
+        "MCP transport per-IP zone missing"
+    );
     // The removed peer-IP app layer must not silently come back as a
     // second, topology-blind limiter.
     assert!(
