@@ -403,7 +403,7 @@ pub const DOCS: &[DocPage] = &[
         blurb: "Running the production stack: Caddy, TLS, the public status surface, and email.",
         section: Section::SelfHosting,
         scope: Scope::SelfHosting,
-        lastmod: "2026-08-28",
+        lastmod: "2026-09-16",
         source: include_str!("../../docs/deployment.md"),
         dir: "",
     },

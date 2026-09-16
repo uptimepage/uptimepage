@@ -86,7 +86,7 @@ EOF
 
 Then point the `caddy` service in `deployment/docker-compose.yml` at `custom-caddy:2`. Full procedure (including the opt-out path that drops the rate-limit block) is in [`deployment/README.md`](https://github.com/uptimepage/uptimepage/tree/main/deployment).
 
-The same custom image carries two more per-IP zones: `auth_endpoints` (10/min on `/auth/*`, `/api/v1/me`, invitation accept) and `org_creation` (3 per 24 h on `POST /api/v1/orgs`). These are the edge tier; the per-org / per-user budgets the service enforces from each org's plan are the [Quotas & rate limits](quotas.md) tier — complementary, since behind the proxy the app sees only the proxy as the peer.
+The same custom image carries the other per-IP zones, among them `auth_endpoints` (10/min on `/auth/*`, `/api/v1/me`, invitation accept), `oauth_register` (30/min on `POST /oauth/register`, the open MCP client registration) and `org_creation` (3 per 24 h on `POST /api/v1/orgs`); the full list is in [`deployment/README.md`](https://github.com/uptimepage/uptimepage/tree/main/deployment). These are the edge tier; the per-org / per-user budgets the service enforces from each org's plan are the [Quotas & rate limits](quotas.md) tier — complementary, since behind the proxy the app sees only the proxy as the peer.
 
 #### Per-org subdomains (SaaS)
 

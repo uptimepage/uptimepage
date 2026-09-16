@@ -308,8 +308,8 @@ app. Passwords and bcrypt hashes are not part of this stack.
 
 ### Per-IP rate limits (Caddy)
 
-The edge enforces fifteen per-IP zones (keyed on `{remote_host}`) in
-`Caddyfile`; the three most load-bearing are below, and the rest cover
+The edge enforces sixteen per-IP zones (keyed on `{remote_host}`) in
+`Caddyfile`; the four most load-bearing are below, and the rest cover
 `/login`, invitations, share links, heartbeat pings, on-demand checks,
 channel verification, status-page subscribe, delegate connect and the three
 inbound webhooks. They sit on top of the per-org / per-user budgets the app enforces from
@@ -321,6 +321,7 @@ peer; the two tiers are complementary, not redundant.
 |---|---|---|---|
 | `status_path` | public status surface (`/status`, `/api/public/*`, assets) | 60 / 1 min | Cheap unauthenticated reads, bot-heavy |
 | `auth_endpoints` | `/auth/*`, `/api/v1/me` | 10 / 1 min | Throttle credential stuffing / token probing |
+| `oauth_register` | `POST /oauth/register` (app and wildcard hosts, one bucket) | 30 / 1 min | Open MCP client registration writes a row per call; the app drops rows nobody authorizes, this caps how fast they arrive. Public tier because MCP clients register from shared vendor egress |
 | `org_creation` | `POST /api/v1/orgs` | 3 / 24 h | Signup-abuse speedbump; with email verification, mass org creation needs many real mailboxes |
 
 These blocks already exist in the shipped `Caddyfile` — no manual step.

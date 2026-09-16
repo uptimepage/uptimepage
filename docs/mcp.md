@@ -142,7 +142,7 @@ Discovery + authorization-server endpoints live on the **app** host (where the s
 |---|---|---|
 | `/.well-known/oauth-protected-resource` | resource (`mcp.`) | RFC 9728 resource metadata (resource id, authorization servers, scopes) |
 | `/.well-known/oauth-authorization-server` | app | RFC 8414 AS metadata (PKCE S256 only, public clients, code + refresh grants) |
-| `/oauth/register` | app | RFC 7591 Dynamic Client Registration |
+| `/oauth/register` | app | RFC 7591 Dynamic Client Registration (open; a client nobody approves, and nobody has opened the consent screen for in a week, is dropped) |
 | `/oauth/authorize` | app | Login + consent screen (PKCE S256, RFC 8707 `resource`) |
 | `/oauth/token` | app | Issue / refresh the audience-bound token |
 

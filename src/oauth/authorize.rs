@@ -55,6 +55,11 @@ pub struct AuthorizeParams {
     resource: Option<String>,
 }
 
+/// Also what a connector sees after the sweeper dropped the client_id it
+/// cached, so it says how to recover.
+const UNKNOWN_CLIENT: &str =
+    "unknown or expired client_id: remove this connector from your client and add it again";
+
 /// Minimal, safe error page for failures that must NOT redirect (untrusted
 /// client/redirect_uri). Plain text, no reflection of attacker input.
 fn error_page(msg: &'static str) -> Response {
@@ -120,7 +125,7 @@ pub async fn authorize_page(
     // 1) Validate client + redirect_uri BEFORE trusting redirect_uri.
     let client = match store::get_client(pool, &p.client_id).await {
         Ok(Some(c)) => c,
-        Ok(None) => return error_page("unknown client_id"),
+        Ok(None) => return error_page(UNKNOWN_CLIENT),
         Err(e) => {
             tracing::warn!(target: "oauth", error = %e, "get_client failed");
             return error_page("internal error");
@@ -184,6 +189,9 @@ pub async fn authorize_page(
             tracing::warn!(target: "oauth", error = %e, "membership check failed");
             return error_page("internal error");
         }
+    }
+    if let Err(e) = store::touch_client(pool, &p.client_id).await {
+        tracing::warn!(target: "oauth", error = %e, "touch_client failed");
     }
     let org_name = match get_org(pool, org).await {
         Ok(Some(o)) => o.name,
@@ -255,7 +263,7 @@ pub async fn decision(
     // posted hidden fields to redirect anywhere).
     let client = match store::get_client(pool, &req.client_id).await {
         Ok(Some(c)) => c,
-        Ok(None) => return error_page("unknown client_id"),
+        Ok(None) => return error_page(UNKNOWN_CLIENT),
         Err(e) => {
             tracing::warn!(target: "oauth", error = %e, "get_client failed");
             return error_page("internal error");
@@ -326,9 +334,13 @@ pub async fn decision(
         expires_at: now + Duration::seconds(CODE_TTL_SECS),
         refresh_expires_at,
     };
-    if let Err(e) = store::insert_code(pool, &code_hash, &auth_code).await {
-        tracing::warn!(target: "oauth", error = %e, "insert_code failed");
-        return error_page("internal error");
+    match store::insert_code(pool, &code_hash, &auth_code).await {
+        Ok(true) => {}
+        Ok(false) => return error_page(UNKNOWN_CLIENT),
+        Err(e) => {
+            tracing::warn!(target: "oauth", error = %e, "insert_code failed");
+            return error_page("internal error");
+        }
     }
 
     Json(json!({

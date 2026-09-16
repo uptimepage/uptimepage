@@ -474,3 +474,137 @@ async fn wrong_resource_is_rejected() {
     assert!(loc.starts_with(REDIRECT));
     assert_eq!(query_param(loc, "error").as_deref(), Some("invalid_target"));
 }
+
+async fn client_exists(pool: &sqlx::PgPool, client_id: &str) -> bool {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM oauth_clients WHERE client_id = $1)",
+    )
+    .bind(client_id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+async fn set_last_seen_days_ago(pool: &sqlx::PgPool, client_id: &str, days: i32) {
+    sqlx::query(
+        "UPDATE oauth_clients SET last_seen_at = now() - ($2::int * INTERVAL '1 day') \
+         WHERE client_id = $1",
+    )
+    .bind(client_id)
+    .bind(days)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn last_seen_is_recent(pool: &sqlx::PgPool, client_id: &str) -> bool {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT last_seen_at > now() - INTERVAL '1 minute' FROM oauth_clients WHERE client_id = $1",
+    )
+    .bind(client_id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+async fn unmark_client(pool: &sqlx::PgPool, client_id: &str) {
+    sqlx::query("UPDATE oauth_clients SET last_authorized_at = NULL WHERE client_id = $1")
+        .bind(client_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn sweep_drops_only_stale_unauthorized_clients() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (app, _org) = build_test_app_with_pg_store(pool.clone(), cfg_oauth).await;
+
+    let stale = register_client(&app).await;
+    let approved = register_client(&app).await;
+    let seen = register_client(&app).await;
+    let holds_refresh = register_client(&app).await;
+    let holds_token = register_client(&app).await;
+    let fresh = register_client(&app).await;
+
+    approve(&app, &approved, REDIRECT).await;
+    for id in [&holds_refresh, &holds_token] {
+        let code = approve(&app, id, REDIRECT).await;
+        let resp = post_token(&app, token_body(&code, REDIRECT, id, VERIFIER)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+    sqlx::query("DELETE FROM api_tokens WHERE oauth_client_id = $1")
+        .bind(&holds_refresh)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM oauth_refresh_tokens WHERE client_id = $1")
+        .bind(&holds_token)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    for id in [&stale, &approved, &holds_refresh, &holds_token] {
+        set_last_seen_days_ago(&pool, id, 8).await;
+    }
+    // Unmarked as a binary predating the mark would leave them.
+    unmark_client(&pool, &holds_refresh).await;
+    unmark_client(&pool, &holds_token).await;
+    // Kept inside the window while aged, since every test app's sweeper
+    // shares this database.
+    set_last_seen_days_ago(&pool, &seen, 6).await;
+    let resp = send(
+        &app,
+        Request::builder()
+            .uri(authorize_uri(&seen, REDIRECT, RESOURCE, CHALLENGE))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(
+        last_seen_is_recent(&pool, &seen).await,
+        "consent render must restart the window"
+    );
+
+    uptimepage::oauth::sweep(&pool).await;
+
+    assert!(
+        !client_exists(&pool, &stale).await,
+        "stale unauthorized client must be swept"
+    );
+    assert!(
+        client_exists(&pool, &approved).await,
+        "an approved client is never swept"
+    );
+    assert!(
+        client_exists(&pool, &seen).await,
+        "a recently viewed client is kept"
+    );
+    assert!(
+        client_exists(&pool, &holds_refresh).await,
+        "a client holding a live refresh token is kept"
+    );
+    assert!(
+        client_exists(&pool, &holds_token).await,
+        "a client holding a live access token is kept"
+    );
+    assert!(
+        client_exists(&pool, &fresh).await,
+        "a client inside the window is kept"
+    );
+
+    let ids = [approved, seen, holds_refresh, holds_token, fresh];
+    sqlx::query("DELETE FROM api_tokens WHERE oauth_client_id = ANY($1)")
+        .bind(&ids[..])
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM oauth_clients WHERE client_id = ANY($1)")
+        .bind(&ids[..])
+        .execute(&pool)
+        .await
+        .unwrap();
+}

@@ -88,6 +88,27 @@
 	}
 }
 
+# Open by design (RFC 7591), one row per call; the app sweeps unapproved rows,
+# this caps the inflow. Public tier: MCP clients share their vendor's egress IP.
+# Imported by both site blocks because mcp.{domain} is served by the wildcard.
+(oauth_register) {
+	@oauth_register {
+		method POST
+		path /oauth/register
+	}
+	handle @oauth_register {
+		rate_limit {
+			zone oauth_register {
+				key {remote_host}
+				ipv6_prefix 64
+				events 30
+				window 1m
+			}
+		}
+		import app_upstream
+	}
+}
+
 # ═══════════════════════════════════════════════════════════════════════
 # Operator UI + API
 # ═══════════════════════════════════════════════════════════════════════
@@ -149,7 +170,8 @@ app.{$UPTIMEPAGE_DOMAIN} {
 	# ─── Per-IP limits on the abuse-sensitive endpoints ─────────────────
 	# Caddy owns the per-IP tier (it sees the real peer; the app keys on
 	# org/user, never the TCP peer). The app-side per-org/user limits live
-	# in the plans table. Distinct zone names — zones are process-global.
+	# in the plans table. Zones are process-global, so a name is shared
+	# across sites only where one budget is meant (oauth_register).
 	# `ipv6_prefix 64`: a v6 client rotates addresses inside its routed
 	# prefix at will, so a per-address bucket caps nothing.
 	@auth path /auth/* /api/v1/me
@@ -164,6 +186,8 @@ app.{$UPTIMEPAGE_DOMAIN} {
 		}
 		import app_upstream
 	}
+
+	import oauth_register
 
 	# Org creation — strict speedbump against naive mass-signup abuse.
 	@org_creation {
@@ -497,6 +521,8 @@ app.{$UPTIMEPAGE_DOMAIN} {
 		}
 		format json
 	}
+
+	import oauth_register
 
 	# The app reads the original Host to map slug → org; Caddy forwards it
 	# upstream by default.

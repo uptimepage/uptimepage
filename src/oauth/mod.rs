@@ -39,6 +39,10 @@ use crate::config::AppConfig;
 /// How often the sweeper purges expired authorization codes + refresh tokens.
 const SWEEP_INTERVAL_SECS: u64 = 3600;
 
+/// A week, so a consent abandoned over a weekend still completes against the
+/// client_id the connector cached.
+const UNAUTHORIZED_CLIENT_TTL_DAYS: i32 = 7;
+
 /// Scopes a connector gets by default (no `scope` requested) — read-only.
 const DEFAULT_SCOPES: &[Scope] = &[
     Scope::TargetsRead,
@@ -200,12 +204,16 @@ fn grant_scope(requested: Option<&str>) -> String {
 }
 
 /// Periodic cleanup of dead OAuth rows: authorization codes past their (~60s)
-/// TTL and refresh tokens past their family deadline. Bounds table growth from
-/// abandoned consents + rotation churn. Like the rate-limit janitor, it is
-/// bound to the shutdown token so it can't outlive the process.
+/// TTL, refresh tokens past their family deadline, and unapproved clients from
+/// the open registration endpoint. Bounds table growth from abandoned
+/// consents, rotation churn, and anonymous registration floods. Like the
+/// rate-limit janitor, it is bound to the shutdown token so it can't outlive
+/// the process.
 /// Expired refresh rows are safe to drop wholesale: once `expires_at` passes,
 /// the whole family is dead, so removing its (used + current) rows costs no
-/// replay-detection coverage.
+/// replay-detection coverage. A client still holding a grant is kept even
+/// when unmarked, so a binary that predates the mark cannot orphan a live
+/// connection.
 pub fn spawn_sweeper(pool: PgPool, shutdown: CancellationToken) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(SWEEP_INTERVAL_SECS));
@@ -218,7 +226,7 @@ pub fn spawn_sweeper(pool: PgPool, shutdown: CancellationToken) {
     });
 }
 
-async fn sweep(pool: &PgPool) {
+pub async fn sweep(pool: &PgPool) {
     for sql in [
         "DELETE FROM oauth_authorization_codes WHERE expires_at < now()",
         "DELETE FROM oauth_refresh_tokens WHERE expires_at < now()",
@@ -226,6 +234,24 @@ async fn sweep(pool: &PgPool) {
         if let Err(e) = sqlx::query(sql).execute(pool).await {
             tracing::warn!(target: "oauth", error = %e, "oauth sweep failed");
         }
+    }
+    match sqlx::query(
+        "DELETE FROM oauth_clients c \
+         WHERE c.last_authorized_at IS NULL \
+           AND c.last_seen_at < now() - ($1::int * INTERVAL '1 day') \
+           AND NOT EXISTS (SELECT 1 FROM oauth_authorization_codes a WHERE a.client_id = c.client_id) \
+           AND NOT EXISTS (SELECT 1 FROM oauth_refresh_tokens r WHERE r.client_id = c.client_id) \
+           AND NOT EXISTS (SELECT 1 FROM api_tokens t WHERE t.oauth_client_id = c.client_id)",
+    )
+    .bind(UNAUTHORIZED_CLIENT_TTL_DAYS)
+    .execute(pool)
+    .await
+    {
+        Ok(res) if res.rows_affected() > 0 => {
+            tracing::info!(target: "oauth", swept = res.rows_affected(), "unauthorized oauth clients swept");
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!(target: "oauth", error = %e, "oauth client sweep failed"),
     }
 }
 

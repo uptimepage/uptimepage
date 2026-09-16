@@ -1,6 +1,7 @@
 //! Dynamic Client Registration (RFC 7591). Open + unauthenticated, as the MCP
-//! connector flow requires; Caddy applies the per-IP backstop. Registers a
-//! public client (PKCE, no secret) with an exact-match redirect-URI allow-list.
+//! connector flow requires; Caddy applies the per-IP backstop and the sweeper
+//! drops any client no user goes on to authorize. Registers a public client
+//! (PKCE, no secret) with an exact-match redirect-URI allow-list.
 
 use axum::Json;
 use axum::extract::State;

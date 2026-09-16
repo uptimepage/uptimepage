@@ -35,6 +35,20 @@ pub async fn insert_client(
     Ok(())
 }
 
+/// Restarts the sweep window of a still-unapproved client; called when its
+/// consent screen renders.
+pub async fn touch_client(pool: &PgPool, client_id: &str) -> Result<()> {
+    sqlx::query(
+        "UPDATE oauth_clients SET last_seen_at = now() \
+         WHERE client_id = $1 AND last_authorized_at IS NULL",
+    )
+    .bind(client_id)
+    .execute(pool)
+    .await
+    .context("oauth::touch_client")?;
+    Ok(())
+}
+
 pub async fn get_client(pool: &PgPool, client_id: &str) -> Result<Option<OAuthClient>> {
     let row: Option<(Option<String>, sqlx::types::Json<Vec<String>>)> =
         sqlx::query_as("SELECT client_name, redirect_uris FROM oauth_clients WHERE client_id = $1")
@@ -64,12 +78,18 @@ pub struct AuthCode {
     pub refresh_expires_at: DateTime<Utc>,
 }
 
-pub async fn insert_code(pool: &PgPool, code_hash: &str, c: &AuthCode) -> Result<()> {
-    sqlx::query(
-        "INSERT INTO oauth_authorization_codes \
+/// Issues the code and marks the client approved in one statement. `false`
+/// means the client is gone (swept mid-consent).
+pub async fn insert_code(pool: &PgPool, code_hash: &str, c: &AuthCode) -> Result<bool> {
+    let res = sqlx::query(
+        "WITH client AS (\
+           UPDATE oauth_clients SET last_authorized_at = now() \
+           WHERE client_id = $2 RETURNING client_id\
+         ) \
+         INSERT INTO oauth_authorization_codes \
            (code_hash, client_id, redirect_uri, code_challenge, scope, resource, \
             user_id, org_id, expires_at, refresh_expires_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+         SELECT $1, client_id, $3, $4, $5, $6, $7, $8, $9, $10 FROM client",
     )
     .bind(code_hash)
     .bind(&c.client_id)
@@ -84,7 +104,7 @@ pub async fn insert_code(pool: &PgPool, code_hash: &str, c: &AuthCode) -> Result
     .execute(pool)
     .await
     .context("oauth::insert_code")?;
-    Ok(())
+    Ok(res.rows_affected() == 1)
 }
 
 /// Atomically consume a code (DELETE-RETURNING) so it can never replay, even
