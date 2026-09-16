@@ -209,6 +209,9 @@ pub mod codes {
     pub const INVALID_STATE: &str = "INVALID_STATE";
     pub const SESSION_NOT_FOUND: &str = "SESSION_NOT_FOUND";
     pub const INVALID_TOKEN: &str = "INVALID_TOKEN";
+    /// Token minted for the MCP resource (RFC 8707 audience) presented to the
+    /// REST API (401).
+    pub const TOKEN_AUDIENCE: &str = "TOKEN_AUDIENCE";
     pub const ORG_REQUIRED: &str = "ORG_REQUIRED";
     pub const ORG_HEADER_INVALID: &str = "ORG_HEADER_INVALID";
     /// Org-bound token addressed a different org (via header or path) than the

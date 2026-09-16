@@ -14,8 +14,9 @@
 //!  2. [`McpAuth`] — what a tool reads back from its `RequestContext` to get the
 //!     org + scopes and to scope-gate itself.
 //!
-//! The OAuth 2.1 resource-server path (Phase 3) plugs in here later; this static
-//! token path is the dev/bring-up front door.
+//! Hand-minted and OAuth-minted tokens take the same path: the lookup binds
+//! the audience, so a token minted for this resource is refused by the REST
+//! API and one minted elsewhere is refused here.
 
 use axum::extract::{Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
@@ -182,26 +183,19 @@ async fn authenticate(state: AppState, mut req: Request, next: Next) -> Response
     };
 
     let prefix_len = state.cfg.auth.api_tokens.prefix_visible_chars as usize;
-    let row = match api_tokens::lookup_by_raw(pool, raw, prefix_len).await {
+    // Audience binding (RFC 8707): an OAuth-minted token carries the MCP
+    // resource URI and must match ours; a static token carries none.
+    let resource = Some(state.cfg.mcp.resource_uri.as_str());
+    let row = match api_tokens::lookup_by_raw(pool, raw, prefix_len, resource).await {
         Ok(api_tokens::LookupOutcome::Active(row)) => row,
-        Ok(api_tokens::LookupOutcome::Invalid) => return challenge(&state),
+        Ok(api_tokens::LookupOutcome::Invalid | api_tokens::LookupOutcome::WrongAudience) => {
+            return challenge(&state);
+        }
         Err(err) => {
             tracing::warn!(target: "mcp", error = %err, "mcp token lookup failed");
             return challenge(&state);
         }
     };
-
-    // Audience binding (RFC 8707): an OAuth-minted token carries the MCP
-    // resource URI; it must match ours. A token minted for any other resource
-    // is rejected — we never honour a token issued for a different audience. A
-    // `None` audience is a manually-minted static token (the documented non-
-    // OAuth convenience), accepted as before.
-    if let Some(aud) = row.audience.as_deref() {
-        let resource = state.cfg.mcp.resource_uri.trim_end_matches('/');
-        if resource.is_empty() || aud.trim_end_matches('/') != resource {
-            return challenge(&state);
-        }
-    }
 
     // The connector is single-org: the org comes from the token binding only.
     let Some(org) = row.org else {

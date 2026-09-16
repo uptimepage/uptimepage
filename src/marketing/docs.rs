@@ -282,7 +282,7 @@ pub const DOCS: &[DocPage] = &[
         blurb: "OAuth sign-in, passkeys, magic links, API tokens, and the scopes that bound them.",
         section: Section::Reference,
         scope: Scope::Everyone,
-        lastmod: "2026-08-24",
+        lastmod: "2026-09-16",
         source: include_str!("../../docs/authentication.md"),
         dir: "",
     },

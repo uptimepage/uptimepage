@@ -319,6 +319,10 @@ A token is user-scoped, so each request names an org via the `X-Uptimepage-Org: 
 
 A token may carry an expiry (1–365 days); an expired token authenticates as invalid. Tokens without an expiry never lapse — prefer a bounded lifetime.
 
+#### Audience
+
+A token the [MCP server](mcp.md) mints through OAuth is stamped with the MCP endpoint as its audience (RFC 8707). The REST API refuses it with `401 TOKEN_AUDIENCE`, whatever scopes it carries: an MCP consent grants an LLM client the MCP tools, not the API. Tokens minted in the UI carry no audience and work on both.
+
 #### Managing tokens
 
 Token management — create, list, rename, revoke — is **browser-session only**: these endpoints read the session cookie and reject bearer tokens, so a token can never mint another token (which would escape its own scopes) or reach account/org administration. Mint tokens in the UI at **Settings → API tokens** (a verified email is required).

@@ -118,7 +118,7 @@ The `/mcp` endpoint is an OAuth 2.1 protected resource. It accepts an `Authoriza
 - a live scoped [API token](authentication.md#api-token-auth),
 - **bound to one org** (an unbound token is rejected — the connection has no org header to fall back on), held by a current member of that org,
 - carrying the scope each tool requires (else `403 insufficient_scope`), and
-- when OAuth is configured, stamped with this endpoint as its `audience` (RFC 8707) — a token minted for a different audience is refused.
+- when OAuth is configured, stamped with this endpoint as its `audience` (RFC 8707) — a token minted for a different audience is refused here, and a token minted here is refused by the REST API (`401 TOKEN_AUDIENCE`).
 
 A request with no/invalid token gets `401` with a `WWW-Authenticate: Bearer …` header pointing at the resource metadata, which kicks off discovery for OAuth clients.
 
@@ -155,7 +155,7 @@ Redirect URIs may be HTTPS hosts (web connectors), loopback HTTP including `[::1
 It shows:
 
 - **Who and what** — the client name and the single org it's connecting to. Access is always scoped to that one org.
-- **Granted abilities** — one line per scope, in plain language (e.g. "Read your monitors and their current status", "Pause and resume your monitors"). Write abilities are flagged with a ⚠ marker, and a warning banner appears at the top stating the connection can make changes — each of which still asks for per-action confirmation.
+- **Granted abilities** — one line per scope, in plain language (e.g. "Read your monitors and their current status", "Pause and resume your monitors"). Write abilities are flagged with a ⚠ marker, and a warning banner appears at the top stating the connection can make changes and should only be approved if the user started it from a client they trust.
 - **Connection expires** — a picker (30 / 60 / 90 / 365 days, default 90) that sets the refresh-token (connection) lifetime. There is no "never".
 - **Approve / Deny** — Deny aborts the flow; Approve mints the org-bound scoped token and returns the user to the client.
 
@@ -177,7 +177,7 @@ The connector advertises nine grantable scopes. A request with no `scope` (or on
 | `status_page:write` | `create_status_page`, `update_status_page`, `add_status_page_components`, `update_status_page_component` — **and** the caller must be an owner of the org, the same bar `/api/v1` holds the public brand surface to | opt-in |
 | `variables:read` | `list_variables` — variable keys only, never a value | opt-in |
 
-A granted write scope is **necessary but not sufficient** — every write tool still asks the user to confirm the specific action at call time.
+A granted write scope is **necessary but not sufficient** — every write tool still asks the user to confirm the specific action at call time. That prompt is shown by the client, so it guards against a model acting on its own, not against a client the user should never have approved; the consent screen is where a hostile client is stopped.
 
 `variables:write` is deliberately absent. Creating or rotating a variable means carrying its value, which is the one thing this surface will not do; variables are managed in the app or over [`/api/v1`](api.md#operator-endpoints-variables).
 

@@ -608,3 +608,70 @@ async fn sweep_drops_only_stale_unauthorized_clients() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn oauth_token_is_refused_by_the_rest_api() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (app, _org) = build_test_app_with_pg_store(pool, cfg_oauth).await;
+    let client_id = register_client(&app).await;
+    let code = approve(&app, &client_id, REDIRECT).await;
+    let resp = post_token(&app, token_body(&code, REDIRECT, &client_id, VERIFIER)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let token = body_json(resp).await["access_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = send(
+        &app,
+        Request::builder()
+            .uri("/api/v1/targets")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(body_json(resp).await["error"]["code"], "TOKEN_AUDIENCE");
+}
+
+#[tokio::test]
+async fn token_for_another_resource_is_refused_at_mcp() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (app, _org) = build_test_app_with_pg_store(pool.clone(), cfg_oauth).await;
+    let client_id = register_client(&app).await;
+    let code = approve(&app, &client_id, REDIRECT).await;
+    let resp = post_token(&app, token_body(&code, REDIRECT, &client_id, VERIFIER)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let token = body_json(resp).await["access_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    sqlx::query(
+        "UPDATE api_tokens SET audience = 'https://other.example/mcp' WHERE oauth_client_id = $1",
+    )
+    .bind(&client_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let resp = send(
+        &app,
+        Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .body(Body::from(
+                r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}

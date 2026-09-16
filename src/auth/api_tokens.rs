@@ -50,6 +50,8 @@ pub const MIN_PREFIX_VISIBLE_CHARS: usize = 16;
 #[derive(Debug)]
 pub enum LookupOutcome {
     Active(ApiTokenRow),
+    /// Live token minted for a different resource (RFC 8707).
+    WrongAudience,
     Invalid,
 }
 
@@ -62,10 +64,6 @@ pub struct ApiTokenRow {
     pub scopes: ScopeSet,
     /// Org binding: `Some` pins the token to one org; `None` is unbound.
     pub org: Option<OrgId>,
-    /// RFC 8707 audience for OAuth-minted tokens (the MCP resource URI). `None`
-    /// for manually-minted tokens. The MCP resource server requires this to
-    /// match its canonical URI when present.
-    pub audience: Option<String>,
 }
 
 /// One row returned by [`list_for_user`]. `token_prefix` is the only piece of
@@ -351,10 +349,16 @@ pub async fn list_for_user(pool: &PgPool, user: UserId) -> Result<Vec<ApiTokenLi
 /// visible prefix per config, fetches candidate rows (bounded by the
 /// per-user token cap), and argon2-verifies each. Verification is
 /// constant-time; the loop runs at most that many iterations.
+///
+/// `resource` is the RFC 8707 audience the caller serves. `None` serves no
+/// OAuth resource, so a token minted for one is refused; `Some` accepts an
+/// unbound token or one bound to exactly that resource. Every consumer states
+/// this, so none can honour an MCP token by omission.
 pub async fn lookup_by_raw(
     pool: &PgPool,
     raw: &str,
     prefix_visible_chars: usize,
+    resource: Option<&str>,
 ) -> Result<LookupOutcome> {
     if !raw.starts_with(TOKEN_PREFIX) {
         return Ok(LookupOutcome::Invalid);
@@ -386,6 +390,9 @@ pub async fn lookup_by_raw(
             continue;
         }
         if token_hash::verify(raw, &hash) {
+            if !audience_accepted(audience.as_deref(), resource) {
+                return Ok(LookupOutcome::WrongAudience);
+            }
             return Ok(LookupOutcome::Active(ApiTokenRow {
                 id,
                 user_id: UserId(user_id),
@@ -393,11 +400,20 @@ pub async fn lookup_by_raw(
                 expires_at,
                 scopes: ScopeSet::from_strs(scopes.0.iter().map(String::as_str)),
                 org: org_id.map(OrgId),
-                audience,
             }));
         }
     }
     Ok(LookupOutcome::Invalid)
+}
+
+fn audience_accepted(audience: Option<&str>, resource: Option<&str>) -> bool {
+    match (audience, resource) {
+        (None, _) => true,
+        (Some(_), None) => false,
+        (Some(aud), Some(res)) => {
+            !res.is_empty() && aud.trim_end_matches('/') == res.trim_end_matches('/')
+        }
+    }
 }
 
 /// Synchronous check: would a `touch_last_used_debounced` call actually
@@ -466,6 +482,24 @@ pub async fn delete_for_user(pool: &PgPool, user: UserId, token_id: Uuid) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audience_accepted_refuses_every_mismatch() {
+        let mcp = "https://mcp.example/mcp";
+        assert!(audience_accepted(None, None));
+        assert!(audience_accepted(None, Some(mcp)));
+        assert!(audience_accepted(Some(mcp), Some(mcp)));
+        assert!(audience_accepted(
+            Some("https://mcp.example/mcp/"),
+            Some(mcp)
+        ));
+        assert!(!audience_accepted(Some(mcp), None));
+        assert!(!audience_accepted(Some(mcp), Some("")));
+        assert!(!audience_accepted(
+            Some("https://other.example/mcp"),
+            Some(mcp)
+        ));
+    }
 
     #[test]
     fn generate_raw_is_sm_live_prefixed_51_chars() {

@@ -8,7 +8,8 @@
 //! extractor handles cookies later.
 //!
 //! Invalid tokens (no row, all rows failed verify) short-circuit with 401
-//! `INVALID_TOKEN`. A missing or non-Bearer `Authorization` header is **not**
+//! `INVALID_TOKEN`; a token minted for the MCP resource with 401
+//! `TOKEN_AUDIENCE`. A missing or non-Bearer `Authorization` header is **not**
 //! an error — the cookie path may still succeed.
 //!
 //! [`BrowserUser`] / [`VerifiedBrowserUser`] gate account-administration
@@ -47,7 +48,7 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
         return unauthorized();
     };
     let prefix_len = state.cfg.auth.api_tokens.prefix_visible_chars as usize;
-    match api_tokens::lookup_by_raw(pool, raw, prefix_len).await {
+    match api_tokens::lookup_by_raw(pool, raw, prefix_len, None).await {
         Ok(api_tokens::LookupOutcome::Active(row)) => {
             let token_id = row.id;
             req.extensions_mut().insert(AuthContext::ApiToken {
@@ -77,6 +78,7 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
             next.run(req).await
         }
         Ok(api_tokens::LookupOutcome::Invalid) => unauthorized(),
+        Ok(api_tokens::LookupOutcome::WrongAudience) => wrong_audience(),
         Err(err) => {
             tracing::warn!(error = %err, "api token lookup failed");
             unauthorized()
@@ -85,8 +87,19 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
 }
 
 fn unauthorized() -> Response {
+    reject(codes::INVALID_TOKEN, "API token is invalid or expired")
+}
+
+fn wrong_audience() -> Response {
+    reject(
+        codes::TOKEN_AUDIENCE,
+        "this token was issued to an MCP connector and is only accepted at the MCP endpoint",
+    )
+}
+
+fn reject(code: &'static str, message: &str) -> Response {
     let body = ApiError {
-        error: ApiErrorBody::new(codes::INVALID_TOKEN, "API token is invalid or expired"),
+        error: ApiErrorBody::new(code, message),
     };
     (StatusCode::UNAUTHORIZED, Json(body)).into_response()
 }

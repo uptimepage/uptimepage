@@ -54,7 +54,7 @@ async fn create_then_lookup_and_revoke_roundtrip() {
     assert_eq!(created.token.len(), 8 + 43);
     assert_eq!(created.prefix.len(), PREFIX_LEN);
 
-    let outcome = api_tokens::lookup_by_raw(&pool, &created.token, PREFIX_LEN)
+    let outcome = api_tokens::lookup_by_raw(&pool, &created.token, PREFIX_LEN, None)
         .await
         .expect("lookup");
     match outcome {
@@ -62,7 +62,7 @@ async fn create_then_lookup_and_revoke_roundtrip() {
             assert_eq!(row.id, created.id);
             assert_eq!(row.user_id.0, user.0);
         }
-        api_tokens::LookupOutcome::Invalid => panic!("lookup should match"),
+        other => panic!("lookup should match, got {other:?}"),
     }
 
     // Wrong-token returns Invalid (not the matching row), even if same prefix.
@@ -70,7 +70,7 @@ async fn create_then_lookup_and_revoke_roundtrip() {
         "{}wrongwrongwrongwrongwrongwrongwrongwrong",
         &created.prefix
     );
-    let bogus_outcome = api_tokens::lookup_by_raw(&pool, &bogus, PREFIX_LEN)
+    let bogus_outcome = api_tokens::lookup_by_raw(&pool, &bogus, PREFIX_LEN, None)
         .await
         .expect("lookup");
     assert!(matches!(bogus_outcome, api_tokens::LookupOutcome::Invalid));
@@ -80,7 +80,7 @@ async fn create_then_lookup_and_revoke_roundtrip() {
         .expect("delete");
     assert!(removed);
 
-    let after = api_tokens::lookup_by_raw(&pool, &created.token, PREFIX_LEN)
+    let after = api_tokens::lookup_by_raw(&pool, &created.token, PREFIX_LEN, None)
         .await
         .expect("lookup");
     assert!(matches!(after, api_tokens::LookupOutcome::Invalid));
@@ -124,12 +124,12 @@ async fn forced_prefix_collision_still_finds_correct_token() {
     .await
     .unwrap();
 
-    let outcome = api_tokens::lookup_by_raw(&pool, &created.token, PREFIX_LEN)
+    let outcome = api_tokens::lookup_by_raw(&pool, &created.token, PREFIX_LEN, None)
         .await
         .expect("lookup");
     match outcome {
         api_tokens::LookupOutcome::Active(row) => assert_eq!(row.id, created.id),
-        api_tokens::LookupOutcome::Invalid => panic!("must find the real token"),
+        other => panic!("must find the real token, got {other:?}"),
     }
 
     pool.close().await;
@@ -304,7 +304,7 @@ async fn expired_token_lookup_returns_invalid() {
         .execute(&pool)
         .await
         .unwrap();
-    let outcome = api_tokens::lookup_by_raw(&pool, &tok.token, PREFIX_LEN)
+    let outcome = api_tokens::lookup_by_raw(&pool, &tok.token, PREFIX_LEN, None)
         .await
         .unwrap();
     assert!(matches!(outcome, api_tokens::LookupOutcome::Invalid));
