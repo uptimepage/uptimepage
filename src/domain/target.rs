@@ -156,8 +156,7 @@ pub struct NewTarget {
     #[serde(default)]
     #[schema(nullable = true, max_length = 50)]
     pub group_name: Option<String>,
-    /// Owning member. Omit to own it yourself, null to leave it unowned; a
-    /// Terraform apply keeps whatever the plan says.
+    /// Owning member. Omit to own it yourself, null to leave it unowned.
     #[serde(default, deserialize_with = "double_option")]
     #[schema(nullable = true, value_type = Option<Uuid>)]
     pub owner_user_id: Option<Option<Uuid>>,
@@ -169,12 +168,9 @@ pub struct NewTarget {
 
 impl NewTarget {
     /// Makes the caller the owner when the body left the field out. An
-    /// explicit null stays unowned. Terraform keeps the field on the plan's
-    /// terms, so a value it never set would read as drift on the next refresh.
-    pub fn default_owner(&mut self, caller: UserId, source: WriteSource) {
-        if source != WriteSource::Terraform {
-            self.owner_user_id.get_or_insert(Some(caller.0));
-        }
+    /// explicit null stays unowned.
+    pub fn default_owner(&mut self, caller: UserId) {
+        self.owner_user_id.get_or_insert(Some(caller.0));
     }
 
     pub fn owner(&self) -> Option<Uuid> {
@@ -369,11 +365,9 @@ mod default_owner_tests {
     #[test]
     fn caller_owns_what_the_body_left_out() {
         let caller = UserId(Uuid::new_v4());
-        for source in [WriteSource::Ui, WriteSource::Api] {
-            let mut new = new_target();
-            new.default_owner(caller, source);
-            assert_eq!(new.owner(), Some(caller.0), "{source:?}");
-        }
+        let mut new = new_target();
+        new.default_owner(caller);
+        assert_eq!(new.owner(), Some(caller.0));
     }
 
     #[test]
@@ -385,7 +379,7 @@ mod default_owner_tests {
             "owner_user_id": null
         }))
         .expect("null owner");
-        new.default_owner(UserId(Uuid::new_v4()), WriteSource::Ui);
+        new.default_owner(UserId(Uuid::new_v4()));
         assert_eq!(new.owner(), None);
     }
 
@@ -394,14 +388,7 @@ mod default_owner_tests {
         let named = Uuid::new_v4();
         let mut new = new_target();
         new.owner_user_id = Some(Some(named));
-        new.default_owner(UserId(Uuid::new_v4()), WriteSource::Ui);
+        new.default_owner(UserId(Uuid::new_v4()));
         assert_eq!(new.owner(), Some(named));
-    }
-
-    #[test]
-    fn terraform_keeps_the_plan_unowned() {
-        let mut new = new_target();
-        new.default_owner(UserId(Uuid::new_v4()), WriteSource::Terraform);
-        assert_eq!(new.owner(), None);
     }
 }

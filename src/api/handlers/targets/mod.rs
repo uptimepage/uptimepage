@@ -212,7 +212,7 @@ pub async fn create(
     vet_new_target(&state, org, &mut new, &plan).await?;
     verify_alert_channels(&state, org, &new.alerts).await?;
     validate_owner_is_member(&state, org, new.owner()).await?;
-    new.default_owner(user, source);
+    new.default_owner(user);
     if matches!(&new.check, CheckSpec::Flow(_)) {
         state.quotas.check_can_create_flow(org, None, 1).await?;
     }
@@ -893,7 +893,7 @@ pub async fn bulk_create(
         }
     }
     for new in &mut items {
-        new.default_owner(user, source);
+        new.default_owner(user);
     }
     let n = items.len() as i64;
     // Quantity-aware friendly pre-check; the store INSERT re-enforces the
