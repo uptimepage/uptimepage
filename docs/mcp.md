@@ -154,7 +154,7 @@ Redirect URIs may be HTTPS hosts (web connectors), loopback HTTP including `[::1
 
 It shows:
 
-- **Who and what** — the client name and the single org it's connecting to. Access is always scoped to that one org.
+- **Who and what** — the client name, the single org it's connecting to, and where the browser goes after Approve or Deny: the redirect host, or for a loopback or native-scheme callback a note that it stays on this computer. The client registers both its name and that URI, but the code is delivered to the URI, so the page cannot show one destination and send the code to another; a name that does not match the host is the tell. Access is always scoped to that one org.
 - **Granted abilities** — one line per scope, in plain language (e.g. "Read your monitors and their current status", "Pause and resume your monitors"). Write abilities are flagged with a ⚠ marker, and a warning banner appears at the top stating the connection can make changes and should only be approved if the user started it from a client they trust.
 - **Connection expires** — a picker (30 / 60 / 90 / 365 days, default 90) that sets the refresh-token (connection) lifetime. There is no "never".
 - **Approve / Deny** — Deny aborts the flow; Approve mints the org-bound scoped token and returns the user to the client.

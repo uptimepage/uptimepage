@@ -154,6 +154,24 @@ fn is_acceptable_redirect_uri(uri: &str) -> bool {
     }
 }
 
+/// Where an accepted redirect_uri sends the user, for the consent screen.
+/// The client picks both its name and this URI, but the code is delivered
+/// here, so the page cannot show one destination and send the code to
+/// another. Loopback and native targets name no app: any process on the
+/// machine can own them.
+pub(crate) fn redirect_destination(uri: &str) -> String {
+    let Ok(u) = url::Url::parse(uri) else {
+        return "an unknown destination".to_string();
+    };
+    if is_loopback_http(&u) {
+        return "an app on this computer".to_string();
+    }
+    match u.scheme() {
+        "http" | "https" => u.host_str().unwrap_or("an unknown host").to_string(),
+        scheme => format!("the app on this computer that handles {scheme}: links"),
+    }
+}
+
 /// Scheme+host(+port) of a URL, no path. Used to anchor metadata on the
 /// resource origin.
 fn resource_origin(uri: &str) -> Option<String> {
@@ -305,6 +323,38 @@ pub fn routes(cfg: &AppConfig) -> Router<AppState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redirect_destination_names_what_the_user_can_check() {
+        assert_eq!(
+            redirect_destination("https://claude.ai/api/mcp/auth/callback"),
+            "claude.ai"
+        );
+        assert_eq!(
+            redirect_destination("https://attacker.example.com:8443/cb?x=1"),
+            "attacker.example.com"
+        );
+        assert_eq!(
+            redirect_destination("http://127.0.0.1:33418/callback"),
+            "an app on this computer"
+        );
+        assert_eq!(
+            redirect_destination("http://[::1]:33418/callback"),
+            "an app on this computer"
+        );
+        assert_eq!(
+            redirect_destination("http://evil.example/cb"),
+            "evil.example"
+        );
+        assert_eq!(
+            redirect_destination("cursor://anysphere.cursor-mcp/oauth/callback"),
+            "the app on this computer that handles cursor: links"
+        );
+        assert_eq!(
+            redirect_destination("com.example.app:/cb"),
+            "the app on this computer that handles com.example.app: links"
+        );
+    }
 
     #[test]
     fn grant_scope_defaults_to_full_read_set() {

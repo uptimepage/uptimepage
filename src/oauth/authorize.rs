@@ -28,7 +28,7 @@ use crate::web::filters;
 use super::error::OAuthError;
 use super::{
     CODE_TTL_SECS, DEFAULT_TOKEN_TTL_DAYS, MAX_TOKEN_TTL_DAYS, OAuthUrls, grant_scope,
-    is_acceptable_redirect_uri, store,
+    is_acceptable_redirect_uri, redirect_destination, store,
 };
 
 /// Upper bound on the opaque `state` we round-trip — generous for real clients,
@@ -215,6 +215,7 @@ pub async fn authorize_page(
         org_name,
         scopes,
         has_write,
+        destination: redirect_destination(&p.redirect_uri),
         client_id: p.client_id,
         redirect_uri: p.redirect_uri,
         code_challenge: p.code_challenge,
@@ -385,6 +386,7 @@ struct ConsentPage {
     org_name: String,
     scopes: Vec<ConsentScope>,
     has_write: bool,
+    destination: String,
     client_id: String,
     redirect_uri: String,
     code_challenge: String,

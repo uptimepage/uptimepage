@@ -207,7 +207,8 @@ async fn full_authorization_code_pkce_flow() {
 
     let client_id = register_client(&app).await;
 
-    // Consent screen renders for the logged-in owner.
+    // Consent screen renders for the logged-in owner and names where the code
+    // goes, which the client cannot misrepresent.
     let resp = send(
         &app,
         Request::builder()
@@ -217,6 +218,15 @@ async fn full_authorization_code_pkce_flow() {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
+    let html = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    assert!(
+        std::str::from_utf8(&html)
+            .unwrap()
+            .contains("sends you back to <strong>claude.ai</strong>"),
+        "consent page must show the redirect host"
+    );
 
     let code = approve(&app, &client_id, REDIRECT).await;
 
