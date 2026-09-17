@@ -250,7 +250,7 @@ async fn a_resolution_is_the_line_the_next_open_must_start_after_pg() {
     };
     let (org, target_id) = seed(&pool, "iwline").await;
     let store = PgIncidentStore::new(pool.clone());
-    let now = chrono::Utc::now();
+    let now = now_us();
     let at = |secs_ago: i64| now - chrono::Duration::seconds(secs_ago);
     let started = |secs_ago: i64| NewOpenIncident {
         started_at: at(secs_ago),
@@ -317,6 +317,14 @@ async fn a_resolution_is_the_line_the_next_open_must_start_after_pg() {
     assert_eq!(open_incident_count(&pool, org, target_id).await, 1);
 }
 
+/// Now as the row will hand it back: Postgres keeps microseconds.
+fn now_us() -> chrono::DateTime<chrono::Utc> {
+    use chrono::Timelike;
+    let now = chrono::Utc::now();
+    now.with_nanosecond(now.nanosecond() / 1000 * 1000)
+        .expect("in range")
+}
+
 async fn closed_incident(
     pool: &PgPool,
     org: OrgId,
@@ -348,7 +356,7 @@ async fn the_line_is_the_greatest_close_when_starts_repeat_pg() {
     };
     let (org, target_id) = seed(&pool, "iwtie").await;
     let store = PgIncidentStore::new(pool.clone());
-    let now = chrono::Utc::now();
+    let now = now_us();
     let at = |secs_ago: i64| now - chrono::Duration::seconds(secs_ago);
 
     // The way a resolve-reopen loop leaves them: one start, three closes,
@@ -400,7 +408,7 @@ async fn a_resolution_that_lands_while_the_insert_waits_still_wins_pg() {
     };
     let (org, target_id) = seed(&pool, "iwrace").await;
     let store = std::sync::Arc::new(PgIncidentStore::new(pool.clone()));
-    let now = chrono::Utc::now();
+    let now = now_us();
     let started_at = now - chrono::Duration::seconds(600);
     let first = store
         .insert_open(
