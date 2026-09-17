@@ -636,7 +636,7 @@ pub(super) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "Which MCP clients work with it?",
-                "Any client that speaks Model Context Protocol over streamable HTTP, including Claude and MCP-capable IDEs. Connect at mcp.uptimepage.dev/mcp with one-click OAuth, or paste a scoped API token. A client that cannot show a confirmation prompt is offered the fifteen read tools only, since every write would refuse anyway.",
+                "Any client that speaks Model Context Protocol over streamable HTTP, including Claude, Grok and MCP-capable IDEs. Connect at mcp.uptimepage.dev/mcp with one-click OAuth, or paste a scoped API token. Grok's custom connector asks for a client id instead of registering itself; the MCP docs list the shared one to paste. A client that cannot show a confirmation prompt is offered the fifteen read tools only, since every write would refuse anyway.",
             ),
             (
                 "How do I connect Claude to my uptime monitoring?",

@@ -1,6 +1,6 @@
 # MCP server
 
-uptimepage exposes a [Model Context Protocol](https://modelcontextprotocol.io/docs/getting-started/intro) server so an LLM client — the [claude.ai](https://claude.ai) connector, Claude Desktop, an IDE, or MCP Inspector — can answer operational questions about **one organization** and take a few guarded actions, through typed, authorized, audited tools.
+uptimepage exposes a [Model Context Protocol](https://modelcontextprotocol.io/docs/getting-started/intro) server so an LLM client — the [claude.ai](https://claude.ai) connector, [Grok](https://grok.com/connectors), Claude Desktop, an IDE, or MCP Inspector — can answer operational questions about **one organization** and take a few guarded actions, through typed, authorized, audited tools.
 
 It is another authorized front door to the same stores the web app and [`/api/v1`](api.md) use, not a bypass: tenant isolation, scopes, rate limits, and audit all apply. Every tool takes the org from the credential — never from a tool argument — so a connection can only ever see and touch its own org.
 
@@ -229,6 +229,29 @@ Settings → Connectors → Add custom connector → URL `https://mcp.{DOMAIN}/m
 ### Cursor, VS Code (OAuth)
 
 Add the server by URL, `https://mcp.{DOMAIN}/mcp`, in the editor's MCP settings. The editor registers itself, opens the login + consent screen in your browser, and returns to the editor once you approve (Cursor on its `cursor://` scheme, VS Code on a loopback port). No token to paste.
+
+### Grok (OAuth, shared client id)
+
+Grok's custom connector (grok.com → Connectors → New Connector → Custom) does not register itself: its form asks for a client id. Paste the shared one below. Publishing it is safe because it is a public client with no secret, the only redirect on record is grok.com so the code can go nowhere else, and PKCE lets only the Grok session that started the flow redeem it. As with any client, approve only a connection you started yourself. Consent, scopes, org binding and the expiry picker are the same as for any other client.
+
+| Field | Value |
+|---|---|
+| MCP server URL | `https://mcp.uptimepage.dev/mcp` |
+| Client ID | `ump_DWhz9cACC1T6Tr-5oEw2qw` |
+| Authorization endpoint | `https://app.uptimepage.dev/oauth/authorize` |
+| Token endpoint | `https://app.uptimepage.dev/oauth/token` |
+| Token auth method | None (PKCE) |
+| Scopes | `targets:read status_page:read incidents:read`, plus a write scope only if Grok should act |
+
+Save, log in, approve the consent screen (it names grok.com as where you return to), and the tools appear in the chat.
+
+Self-hosted: register your own client once and paste the returned `client_id` into the same form, with your own hosts for the two endpoints. Approve it once right after: a client nobody has approved within a week of registering is dropped.
+
+```bash
+curl -X POST https://app.{DOMAIN}/oauth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"client_name":"Grok","redirect_uris":["https://grok.com/connectors-oauth-exchange-code/"]}'
+```
 
 ### Claude Desktop / IDE (manual token via mcp-remote)
 
