@@ -2542,7 +2542,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "topk(8, uptimepage_http_request_duration_ms{quantile=\"0.99\"})",
+          "expr": "topk(8, uptimepage_http_request_duration_ms{quantile=\"0.99\", route!=\"/api/agent/dispatch\"})",
           "legendFormat": "{{method}} {{route}}",
           "range": true,
           "refId": "A"

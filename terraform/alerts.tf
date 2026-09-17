@@ -433,6 +433,8 @@ resource "grafana_rule_group" "pipeline" {
   # `max(... {quantile="0.99"})` rather than histogram_quantile because
   # the exporter emits summaries (see docs/metrics.md). 1s for 15m is
   # the warning floor; tighten as steady-state baselines settle in.
+  # The agent claim route is a long-poll held for its full window when
+  # nothing is queued, so its p99 is the hold, not a slow handler.
   rule {
     name           = "UptimepageHttpLatencyHigh"
     condition      = "C"
@@ -457,7 +459,7 @@ resource "grafana_rule_group" "pipeline" {
       model = jsonencode({
         refId   = "A"
         instant = true
-        expr    = "max(uptimepage_http_request_duration_ms{quantile=\"0.99\"}) > 1000"
+        expr    = "max(uptimepage_http_request_duration_ms{quantile=\"0.99\", route!=\"/api/agent/dispatch\"}) > 1000"
       })
     }
     data {
