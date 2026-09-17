@@ -290,6 +290,138 @@ fn the_landing_page_names_every_tool_this_server_serves() {
     );
 }
 
+/// Every page under `/mcp-server` counts the tools in prose and names some by
+/// hand. A count other than the live one, or a name the router does not
+/// serve, fails here rather than in a reader's chat window.
+#[test]
+fn the_mcp_pages_count_and_name_only_the_tools_this_server_serves() {
+    let tools = McpServer::tool_router().list_all();
+    let reads = tools
+        .iter()
+        .filter(|t| {
+            t.annotations
+                .as_ref()
+                .is_some_and(|a| a.read_only_hint == Some(true))
+        })
+        .count();
+    let writes = tools.len() - reads;
+    let names: std::collections::HashSet<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
+    let live = [tools.len(), reads, writes];
+
+    for page in crate::marketing::landings::LANDINGS
+        .iter()
+        .filter(|l| l.path.starts_with("/mcp-server"))
+    {
+        let faqs = crate::marketing::landings::page_faqs(page.path);
+        let mut text = String::new();
+        text.push_str(page.meta_description);
+        text.push(' ');
+        text.push_str(page.lede);
+        for f in page.features {
+            text.push(' ');
+            text.push_str(f.value);
+        }
+        for s in page.sections {
+            text.push(' ');
+            text.push_str(s.body);
+        }
+        for (q, a) in faqs {
+            text.push(' ');
+            text.push_str(q);
+            text.push(' ');
+            text.push_str(a);
+        }
+        // Word-bounded: "16 read" must not match "6 read".
+        let lower: String = std::iter::once(' ')
+            .chain(text.chars().map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' {
+                    c.to_ascii_lowercase()
+                } else {
+                    ' '
+                }
+            }))
+            .collect();
+
+        for n in 5..=60usize {
+            if live.contains(&n) {
+                continue;
+            }
+            for spelled in [n.to_string(), number_word(n)] {
+                for unit in ["tools", "read", "write", "that read", "that act", "can act"] {
+                    let needle = format!(" {spelled} {unit}");
+                    assert!(
+                        !lower.contains(&needle),
+                        "{} says {needle:?}; the server has {} tools, {reads} read, {writes} write",
+                        page.path,
+                        tools.len()
+                    );
+                }
+            }
+        }
+
+        for word in text
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .filter(|w| w.contains('_') && w.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+        {
+            let looks_like_tool = [
+                "get_",
+                "list_",
+                "create_",
+                "update_",
+                "pause_",
+                "resume_",
+                "run_",
+                "acknowledge_",
+                "resolve_",
+                "publish_",
+                "unpublish_",
+                "post_",
+                "add_",
+            ]
+            .iter()
+            .any(|p| word.starts_with(p));
+            if looks_like_tool {
+                assert!(
+                    names.contains(word),
+                    "{} names {word}, which this server does not serve",
+                    page.path
+                );
+            }
+        }
+    }
+}
+
+fn number_word(n: usize) -> String {
+    const ONES: [&str; 20] = [
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+    ];
+    const TENS: [&str; 7] = ["", "", "twenty", "thirty", "forty", "fifty", "sixty"];
+    match n {
+        0..=19 => ONES[n].to_string(),
+        _ if n.is_multiple_of(10) => TENS[n / 10].to_string(),
+        _ => format!("{}-{}", TENS[n / 10], ONES[n % 10]),
+    }
+}
+
 fn http_check() -> CheckSpec {
     use crate::domain::{HttpCheck, HttpMethod};
     CheckSpec::Http(HttpCheck {

@@ -13,8 +13,8 @@ use axum::routing::get;
 use crate::marketing::config::{BRAND, MarketingCfg};
 use crate::marketing::pages::{CachedRender, cached_render, serve_cached};
 use crate::marketing::seo::{
-    AUTHOR_PAGE, JsonLd, OpenGraph, json_ld_breadcrumb, json_ld_faqpage, json_ld_person,
-    json_ld_webpage,
+    AUTHOR_PAGE, JsonLd, OpenGraph, json_ld_breadcrumb, json_ld_breadcrumb_trail, json_ld_faqpage,
+    json_ld_person, json_ld_webpage,
 };
 use crate::web::filters;
 
@@ -50,7 +50,7 @@ struct LandingDoc {
     fit: Option<&'static str>,
     mock_rows: &'static [MockRow],
     figures: &'static [Figure],
-    resources: &'static [ResourceLink],
+    resources: Vec<ResourceLink>,
     cta: &'static str,
     canonical_url: String,
     og: OpenGraph,
@@ -64,6 +64,52 @@ struct LandingDoc {
 }
 
 static RENDERED: OnceLock<HashMap<&'static str, CachedRender>> = OnceLock::new();
+
+/// The landing one level up (`/mcp-server` for `/mcp-server/cursor`), when
+/// that is itself a landing.
+pub(super) fn parent(l: &Landing) -> Option<&'static Landing> {
+    let (parent_path, _) = l.path.rsplit_once('/')?;
+    LANDINGS.iter().find(|p| p.path == parent_path)
+}
+
+/// A landing's own links, then its family: a hub gets every child, a child
+/// gets the hub and every sibling. A new child page is linked from the whole
+/// family without editing each one.
+fn resources_with_family(l: &Landing) -> Vec<ResourceLink> {
+    let mut out: Vec<ResourceLink> = l
+        .resources
+        .iter()
+        .map(|r| ResourceLink {
+            label: r.label,
+            href: r.href,
+        })
+        .collect();
+    let hub = parent(l).unwrap_or(l);
+    if hub.path != l.path {
+        out.push(ResourceLink {
+            label: hub.title,
+            href: hub.path,
+        });
+    }
+    let prefix = format!("{}/", hub.path);
+    out.extend(
+        LANDINGS
+            .iter()
+            .filter(|s| s.path.starts_with(&prefix) && s.path != l.path)
+            .map(|s| ResourceLink {
+                label: s.title,
+                href: s.path,
+            }),
+    );
+    out
+}
+
+fn breadcrumb(origin: &str, l: &Landing) -> JsonLd {
+    match parent(l) {
+        Some(hub) => json_ld_breadcrumb_trail(origin, &[(hub.h1, hub.path), (l.h1, l.path)]),
+        None => json_ld_breadcrumb(origin, l.h1, l.path),
+    }
+}
 
 pub(super) fn render_all(cfg: &MarketingCfg) -> HashMap<&'static str, CachedRender> {
     LANDINGS
@@ -90,11 +136,11 @@ pub(super) fn render_all(cfg: &MarketingCfg) -> HashMap<&'static str, CachedRend
                 fit: page_fit(l.path),
                 mock_rows: MOCK_ROWS,
                 figures: page_figures(l.path),
-                resources: l.resources,
+                resources: resources_with_family(l),
                 cta: l.cta,
                 canonical_url,
                 og,
-                breadcrumb_json_ld: json_ld_breadcrumb(&cfg.canonical_origin, l.h1, l.path),
+                breadcrumb_json_ld: breadcrumb(&cfg.canonical_origin, l),
                 webpage_json_ld: json_ld_webpage(
                     &cfg.canonical_origin,
                     l.path,

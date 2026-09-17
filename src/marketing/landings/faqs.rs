@@ -34,6 +34,10 @@ pub(super) const FAQ_PATHS: &[&str] = &[
     "/status-page-for-saas",
     "/status-page-for-agencies",
     "/mcp-server",
+    "/mcp-server/claude",
+    "/mcp-server/cursor",
+    "/mcp-server/vscode",
+    "/mcp-server/grok",
     "/vs/pingdom",
     "/terraform-uptime-monitoring",
     "/why-uptimepage",
@@ -43,7 +47,7 @@ pub(super) const FAQ_PATHS: &[&str] = &[
 /// comparison answers describe Uptimepage only, matching the neutral-comparison
 /// rule above; the head-to-head page's answers also state verifiable, dated
 /// competitor facts, in step with its matrix.
-pub(super) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
+pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
     match path {
         "/compare/openstatus-vs-uptime-kuma" => &[
             (
@@ -613,6 +617,74 @@ pub(super) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
                 "Yes. The hosted tier is $0 a month with no credit card, and the AGPL source is free to self-host.",
             ),
         ],
+        "/mcp-server/claude" => &[
+            (
+                "Does the claude.ai connector need an API token?",
+                "No. Add the server URL under Settings, Connectors, in claude.ai or Claude Desktop, and Claude registers itself, sends you to the Uptimepage login you already have, and mints an org-bound token behind the consent screen. A token is only for a plan without connectors, where Claude Desktop reaches the server through mcp-remote.",
+            ),
+            (
+                "Can Claude change my monitors?",
+                "Only if two things are true: the connection was granted a write scope on the consent screen, and you approve that specific action when Claude proposes it. Claude shows the confirmation, including the trial check result for a monitor about to be created. Read scopes alone let it answer questions and nothing more.",
+            ),
+            (
+                "Which organization does the connection see?",
+                "The one that was active in the app when you approved. The consent screen names it, and get_org_usage repeats it later. To connect another org, switch to it in the app first and add the connector again.",
+            ),
+            (
+                "How long does the connection last?",
+                "As long as you chose on the consent screen: 30, 60, 90 or 365 days, default 90. There is no never. The access token itself is short-lived and refreshes on its own inside that window.",
+            ),
+        ],
+        "/mcp-server/cursor" => &[
+            (
+                "Do I need to paste a token into Cursor?",
+                "No. Cursor registers itself with the authorization server, opens your browser for the sign-in, and returns on its cursor:// scheme. The token is minted behind the consent screen and refreshed by Cursor.",
+            ),
+            (
+                "Does Cursor show the confirmation before a write?",
+                "Yes. Cursor has supported MCP elicitation since version 1.5, so every tool that changes something asks you first, inside Cursor, and a monitor about to be created shows the result of the check it already ran.",
+            ),
+            (
+                "Can I share the server with my team through the repo?",
+                "Yes. Put the config in .cursor/mcp.json at the root of the project. Each teammate signs in with their own Uptimepage login, so tokens are personal and revoked one at a time.",
+            ),
+            (
+                "Is returning on a cursor:// link safe?",
+                "Yes. PKCE is mandatory, so an authorization code delivered to a hijacked scheme handler cannot be redeemed without the verifier Cursor holds, and the consent screen says before you approve where the flow returns: the Cursor site, or an app on this computer.",
+            ),
+        ],
+        "/mcp-server/vscode" => &[
+            (
+                "How do I add the server in VS Code?",
+                "Run MCP: Add Server from the Command Palette, choose HTTP, and paste https://mcp.uptimepage.dev/mcp. Or write it into .vscode/mcp.json as a server of type http. VS Code signs you in through the browser on first use.",
+            ),
+            (
+                "Does it work in Copilot agent mode?",
+                "Yes. The tools appear in the agent mode tools picker once the server is running, and the agent calls them like any other MCP tool. Writes show their confirmation as a native VS Code dialog.",
+            ),
+            (
+                "Can I commit the config so the team gets it?",
+                "Yes. A .vscode/mcp.json in the repo gives every teammate the server when they open the workspace, and each signs in as themselves. Put the same file in your user profile for every workspace instead.",
+            ),
+        ],
+        "/mcp-server/grok" => &[
+            (
+                "Why does Grok ask for a client id?",
+                "Grok's custom connector does not do dynamic client registration, so it cannot register itself the way other clients do. The shared client id on this page is registered for Grok's callback; paste it with the two endpoints and the scopes.",
+            ),
+            (
+                "Is it safe that the client id is public?",
+                "Yes. It is a public client with no secret, the only redirect on record is grok.com, and PKCE lets only the Grok session that started the flow redeem the code. Nothing is granted until you sign in and approve the consent screen yourself.",
+            ),
+            (
+                "Which scopes should I paste?",
+                "targets:read status_page:read incidents:read answers every question; channels:read and variables:read add the channel inventory and variable keys. Grant a write scope only once Grok has shown you a confirmation prompt, and note that creating a monitor needs targets:execute next to targets:write. The consent screen lists exactly what is being granted.",
+            ),
+            (
+                "Can I use it with Grok Build instead?",
+                "Yes. Grok Build sends a static Authorization header, so mint an org-bound, read-only, expiring API token in the app and set the header to Bearer followed by the token. No OAuth form involved.",
+            ),
+        ],
         "/mcp-server" => &[
             (
                 "What can an AI assistant actually do with my monitoring over MCP?",
@@ -628,7 +700,7 @@ pub(super) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "Does the assistant get my credentials or webhook tokens?",
-                "No. It cannot put request headers, auth tokens or browser-flow passwords on a monitor, and it cannot create a notification channel, because that would mean handing it a Slack webhook or a bot token. Name a channel you already made and it binds that one, by looking the name up in an inventory that gives it ids and never the webhook URLs, bot tokens or addresses behind them.",
+                "No. A header that carries a credential must reference an org variable rather than the value, the basic-auth and bearer fields and browser-flow passwords are app-only, a URL with a password in it is refused, and it cannot create a notification channel, because that would mean handing it a Slack webhook or a bot token. Name a channel you already made and it binds that one, by looking the name up in an inventory that gives it ids and never the webhook URLs, bot tokens or addresses behind them.",
             ),
             (
                 "Is it safe from prompt injection?",

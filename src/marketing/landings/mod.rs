@@ -16,6 +16,8 @@ mod sections;
 mod tests;
 
 pub use catalog::LANDINGS;
+#[cfg(test)]
+pub(crate) use faqs::page_faqs;
 pub use model::{CodeSample, Feature, Landing, ResourceLink, Section};
 pub use render::mount;
 

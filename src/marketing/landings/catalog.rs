@@ -2234,11 +2234,11 @@ resource "uptimepage_target" "api" {
     Landing {
         path: "/mcp-server",
         created: "2026-06-18",
-        lastmod: "2026-08-18",
+        lastmod: "2026-09-17",
         title: "MCP Server for Uptime Monitoring",
         eyebrow: "for ai & llm workflows",
         h1: "Ask an AI what’s broken, over MCP",
-        meta_description: "Model Context Protocol server for uptime monitoring. 25 tools read monitors, incidents and status pages, and write only with your approval. Free, no card.",
+        meta_description: "Model Context Protocol server for uptime monitoring. 31 tools read monitors, incidents and status pages, and write only with your approval. Free, no card.",
         lede: "Point a Model Context Protocol client (Claude, an IDE, anything that speaks MCP) at your monitoring and ask it what’s down in plain language. The answers come from your real monitors, not from the model’s imagination, and nothing changes without your approval.",
         features: &[
             Feature {
@@ -2259,7 +2259,7 @@ resource "uptimepage_target" "api" {
             },
             Feature {
                 label: "Clients",
-                value: "Claude, IDEs, any MCP client",
+                value: "Claude, Cursor, VS Code, Grok, any MCP client",
             },
             Feature {
                 label: "MCP registry",
@@ -2289,7 +2289,7 @@ resource "uptimepage_target" "api" {
             },
             Section {
                 heading: "It never holds your secrets",
-                body: "The assistant cannot put credentials on a monitor: no request headers, no auth tokens, no browser-flow passwords. Those you type once into the app, rather than passing them through a chat log. It cannot create a notification channel either, because that means handing it a Slack webhook or a bot token. What it can do is bind a monitor to a channel you already made, by name, and tell you when that channel is disabled or is an email address nobody verified, since either one delivers nothing and an outage is a bad time to find out.",
+                body: "The assistant cannot paste a credential onto a monitor. A header that carries one must reference an org variable, as Bearer {{ api_key }}; the basic-auth and bearer fields and browser-flow passwords are typed once into the app, never passed through a chat log. It cannot create a notification channel either, because that means handing it a Slack webhook or a bot token. What it can do is bind a monitor to a channel you already made, by name, and tell you when that channel is disabled or is an email address nobody verified, since either one delivers nothing and an outage is a bad time to find out.",
             },
             Section {
                 heading: "It says why, not just down",
@@ -2301,7 +2301,7 @@ resource "uptimepage_target" "api" {
             },
             Section {
                 heading: "Actions stay behind a human",
-                body: "Ten tools can act: create a monitor, run a check now, pause or resume a monitor, retune how loudly one is watched, acknowledge or resolve an incident, publish one to your status page or take it back down, post an update to one. None of them can fire on its own. The token must carry the right scope, you must approve the exact action in the moment, and every outcome writes one audit row. There is no \"remember my choice\"; each action is its own decision. We let the AI pause a monitor. We did not let it pause a monitor without asking you. Those are different sentences, and the gap between them is most of the design.",
+                body: "Fifteen tools can act: create a monitor or a batch of them, run a check now, pause or resume a monitor, retune how loudly one is watched, acknowledge or resolve an incident, publish one to your status page or take it back down, post an update to one, create or edit a status page and the components on it. None of them can fire on its own. The token must carry the right scope, you must approve the exact action in the moment, and every outcome writes one audit row. There is no \"remember my choice\"; each action is its own decision. We let the AI pause a monitor. We did not let it pause a monitor without asking you. Those are different sentences, and the gap between them is most of the design.",
             },
             Section {
                 heading: "Your data can’t hijack the assistant",
@@ -2358,6 +2358,364 @@ resource "uptimepage_target" "api" {
             ResourceLink {
                 label: "Monitoring as code",
                 href: "/terraform-uptime-monitoring",
+            },
+        ],
+        cta: "Start free",
+    },
+    Landing {
+        path: "/mcp-server/claude",
+        created: "2026-09-17",
+        lastmod: "2026-09-17",
+        title: "Uptime Monitoring MCP for Claude",
+        eyebrow: "for claude.ai, claude code and claude desktop",
+        h1: "Connect Claude to your uptime monitoring",
+        meta_description: "Add Uptimepage to Claude over MCP: one click in claude.ai, one command in Claude Code, a scoped token for Claude Desktop. Reads free, every write asks first.",
+        lede: "Claude is the client this server was built against first. In claude.ai and Claude Desktop the connector is one click and a consent screen. In Claude Code it is one command and a sign-in. Connected that way, Claude sees all 31 tools, and every one that changes something stops and asks you before it runs. A plan without connectors still gets the read tools through mcp-remote and a scoped token.",
+        features: &[
+            Feature {
+                label: "Server URL",
+                value: "https://mcp.uptimepage.dev/mcp",
+            },
+            Feature {
+                label: "claude.ai",
+                value: "Settings, Connectors, add custom connector",
+            },
+            Feature {
+                label: "Claude Code",
+                value: "claude mcp add --transport http",
+            },
+            Feature {
+                label: "Claude Desktop",
+                value: "Connectors, or mcp-remote with a token",
+            },
+            Feature {
+                label: "Sign-in",
+                value: "OAuth consent, your existing login",
+            },
+            Feature {
+                label: "Confirmations",
+                value: "shown, so all 31 tools are offered",
+            },
+            Feature {
+                label: "OAuth connection lifetime",
+                value: "30 to 365 days, your pick",
+            },
+            Feature {
+                label: "Price to start",
+                value: "free, no card",
+            },
+        ],
+        sections: &[
+            Section {
+                heading: "claude.ai: one click",
+                body: "Open Settings, then Connectors, then Add custom connector, and paste https://mcp.uptimepage.dev/mcp. Claude discovers the server, registers itself, and sends you to the Uptimepage login you already have. The consent screen names the organization the connection will be bound to, lists every ability being granted in plain words, and shows where you go after Approve: claude.ai. Pick how long the connection lives (30 to 365 days, no never) and approve. Tools appear in the chat with nothing to paste.",
+            },
+            Section {
+                heading: "Claude Code: one command",
+                body: "Run claude mcp add --transport http uptimepage https://mcp.uptimepage.dev/mcp, then type /mcp inside a session and choose the server to sign in. The browser opens on the same consent screen, and the connection comes back to the terminal on a loopback port. From then on the tools are available in every session in that scope, and a write shows its confirmation prompt right there in the terminal, with the check result for a monitor about to be created.",
+            },
+            Section {
+                heading: "Claude Desktop: Connectors, or mcp-remote",
+                body: "On a plan with connectors, Claude Desktop has the same Settings, Connectors entry as claude.ai: add the URL there and sign in through the same consent screen. Without it, bridge the endpoint with mcp-remote and a token you mint in the app under Settings, then API tokens: org-bound, expiring, and read-only. targets:read, status_page:read and incidents:read cover 14 of the 16 read tools; the channel inventory and variable keys need channels:read and variables:read. Leave write scopes off a token that lives in a config file on a shared machine; the OAuth path is where writes belong, because each one is confirmed in the moment.",
+            },
+            Section {
+                heading: "What Claude can do once connected",
+                body: "Claude negotiates elicitation at connect time, so the server lists all 31 tools: 16 that read and 15 that act. Ask what is down and Claude calls get_org_health, then get_monitor_history for the one that matters, and reads the DNS, connect, TLS and first-byte timings apart. Ask it to cover a new service and it proposes the monitors, runs each check once, and shows you the result inside the confirmation before anything is saved. There is no remember-my-choice: every write is its own approval.",
+            },
+            Section {
+                heading: "Three prompts to start with",
+                body: "\"Is anything down right now, and since when?\" pulls the org health and the worst failing monitors with their open incidents. \"Why was the checkout flow failing at 3am?\" reads the browser flow runs step by step and names the step it stopped on. \"Watch api.example.com, its certificate and its domain, and alert the on-call Slack channel\" creates three monitors behind one confirmation and binds the channel you already made by name.",
+            },
+            Section {
+                heading: "Which organization Claude sees",
+                body: "A connection is bound to one organization, fixed at the moment you approve, from whichever org was active in the app. The consent screen names it. To connect a different org, switch to it in the app first, then reconnect; get_org_usage tells Claude which one it is bound to, which is the quickest answer to why a monitor seems missing. The connection sees only that org, whatever else you belong to.",
+            },
+        ],
+        code: Some(CodeSample {
+            caption: "Claude Desktop config (claude_desktop_config.json)",
+            body: r#"{
+  "mcpServers": {
+    "uptimepage": {
+      "command": "npx",
+      "args": [
+        "-y", "mcp-remote",
+        "https://mcp.uptimepage.dev/mcp",
+        "--header", "Authorization: Bearer sm_live_YOUR_TOKEN"
+      ]
+    }
+  }
+}"#,
+        }),
+        resources: &[
+            ResourceLink {
+                label: "claude.ai connector, step by step",
+                href: "/docs/mcp#claudeai-connector-oauth",
+            },
+            ResourceLink {
+                label: "Claude Desktop via mcp-remote",
+                href: "/docs/mcp#claude-desktop--ide-manual-token-via-mcp-remote",
+            },
+            ResourceLink {
+                label: "What every tool returns",
+                href: "/docs/mcp#read-tools",
+            },
+        ],
+        cta: "Start free",
+    },
+    Landing {
+        path: "/mcp-server/cursor",
+        created: "2026-09-17",
+        lastmod: "2026-09-17",
+        title: "Uptime Monitoring MCP for Cursor",
+        eyebrow: "for cursor",
+        h1: "Connect Cursor to your uptime monitoring",
+        meta_description: "Add Uptimepage to Cursor as an MCP server by URL. Cursor registers itself, you sign in once, and the agent reads your monitors and incidents as you code. Free.",
+        lede: "Cursor takes the server by URL, registers itself over OAuth, and opens your browser for a sign-in you already have. After that the agent can ask your monitoring questions from inside the editor: what is down, why that flow failed last night, whether the endpoint you just changed is still up. Writes show a confirmation in Cursor before they run.",
+        features: &[
+            Feature {
+                label: "Server URL",
+                value: "https://mcp.uptimepage.dev/mcp",
+            },
+            Feature {
+                label: "Where",
+                value: "Cursor Settings, or mcp.json",
+            },
+            Feature {
+                label: "Sign-in",
+                value: "OAuth in the browser, back on cursor://",
+            },
+            Feature {
+                label: "Token to paste",
+                value: "none",
+            },
+            Feature {
+                label: "Confirmations",
+                value: "Cursor 1.5 and later show them",
+            },
+            Feature {
+                label: "Per project",
+                value: ".cursor/mcp.json in the repo",
+            },
+            Feature {
+                label: "Price to start",
+                value: "free, no card",
+            },
+        ],
+        sections: &[
+            Section {
+                heading: "Add it by URL",
+                body: "Add a new server from the MCP section of Cursor Settings and give it https://mcp.uptimepage.dev/mcp, or write the config below into mcp.json: ~/.cursor/mcp.json for every project, or .cursor/mcp.json at the root of one repo so the server is there for everyone who opens it, each signing in as themselves. The connection is bound to the organization active in the app when you approve; the consent screen names it. Cursor handles the rest: it discovers the server, registers itself with the Uptimepage authorization server, and opens your browser on the login and consent screen. Approve, and the tools show up in the agent's tool list. Nothing to paste and nothing to rotate.",
+            },
+            Section {
+                heading: "Why the cursor:// callback is fine",
+                body: "Cursor returns from the sign-in on its own cursor:// scheme, alongside a web callback and a loopback port. Uptimepage admits that scheme by name at registration, and PKCE is mandatory, so a program on your machine that hijacked the cursor:// handler would receive an authorization code it cannot redeem: the code is bound to the verifier Cursor holds. The consent screen says where you go after Approve, and for a native scheme it says so plainly: the app on this computer.",
+            },
+            Section {
+                heading: "What the agent can do",
+                body: "Cursor has supported MCP elicitation since 1.5, so the server offers all 31 tools: 16 that read and 15 that act, each write behind a prompt Cursor shows you before it runs. Ask about the endpoint you are editing and the agent calls get_monitor for its full config, get_monitor_history for its last 24 hours with timings split into DNS, connect, TLS and first byte, and names the region where it fails if it only fails from one. A monitor it creates runs its check first and shows the result in the confirmation.",
+            },
+            Section {
+                heading: "Prompts that fit an editor",
+                body: "\"Is anything monitored in this repo down right now?\" reads org health and filters by the tag you use for the project. \"Add a monitor for the health endpoint I just wrote, from the same regions as the others\" creates it behind one confirmation, with the trial check result in the prompt. \"Why did the login flow fail at 03:10?\" reads that run step by step. \"Pause the staging monitors while I redeploy, then resume them\" pauses behind a prompt and resumes behind another.",
+            },
+        ],
+        code: Some(CodeSample {
+            caption: ".cursor/mcp.json",
+            body: r#"{
+  "mcpServers": {
+    "uptimepage": {
+      "url": "https://mcp.uptimepage.dev/mcp"
+    }
+  }
+}"#,
+        }),
+        resources: &[
+            ResourceLink {
+                label: "Cursor and VS Code, in the docs",
+                href: "/docs/mcp#cursor-vs-code-oauth",
+            },
+            ResourceLink {
+                label: "Redirect URIs the server accepts",
+                href: "/docs/mcp#oauth-endpoints",
+            },
+            ResourceLink {
+                label: "What every tool returns",
+                href: "/docs/mcp#read-tools",
+            },
+        ],
+        cta: "Start free",
+    },
+    Landing {
+        path: "/mcp-server/vscode",
+        created: "2026-09-17",
+        lastmod: "2026-09-17",
+        title: "Uptime Monitoring MCP for VS Code",
+        eyebrow: "for vs code and copilot agent mode",
+        h1: "Connect VS Code to your uptime monitoring",
+        meta_description: "Add Uptimepage to VS Code as an HTTP MCP server. Sign in once, then Copilot agent mode reads your monitors and incidents and asks before a write. Free, no card.",
+        lede: "VS Code adds the server as type http, signs you in through the browser, and comes back on a loopback port. Commit the config to .vscode/mcp.json and the whole team gets the server with the repo, each person signing in as themselves. Confirmations render as native VS Code dialogs, so the 15 tools that act are offered and each one asks.",
+        features: &[
+            Feature {
+                label: "Server URL",
+                value: "https://mcp.uptimepage.dev/mcp",
+            },
+            Feature {
+                label: "Where",
+                value: "MCP: Add Server, or .vscode/mcp.json",
+            },
+            Feature {
+                label: "Transport",
+                value: "http, streamable",
+            },
+            Feature {
+                label: "Sign-in",
+                value: "OAuth in the browser, back on 127.0.0.1",
+            },
+            Feature {
+                label: "Confirmations",
+                value: "native dialogs, all 31 tools offered",
+            },
+            Feature {
+                label: "Shared with the team",
+                value: "commit .vscode/mcp.json",
+            },
+            Feature {
+                label: "Price to start",
+                value: "free, no card",
+            },
+        ],
+        sections: &[
+            Section {
+                heading: "Add it as an HTTP server",
+                body: "Open the Command Palette, run MCP: Add Server, choose HTTP, and paste https://mcp.uptimepage.dev/mcp. Or write the config below into .vscode/mcp.json. On first use VS Code registers itself with the Uptimepage authorization server, opens your browser on the login and consent screen, and returns on a loopback port. Approve once; the connection lives as long as you chose on that screen, 30 to 365 days, and refreshes itself in between.",
+            },
+            Section {
+                heading: "In Copilot agent mode",
+                body: "Once the server is running, its tools show in the tools picker of agent mode and the agent calls them like any other. VS Code supports MCP elicitation, so the server lists all 31 tools and every write shows its confirmation as a native dialog: the monitor about to be created, with the result of the check it already ran; the incident about to be resolved; the update about to be posted. Cancel the dialog and nothing happens. There is no remember-my-choice.",
+            },
+            Section {
+                heading: "Per repo, per person",
+                body: "A .vscode/mcp.json checked into the repo gives every teammate the server the moment they open the workspace, and each of them signs in with their own Uptimepage login, so tokens are personal and revoked one at a time. Put the same file in your user profile instead if you want the server in every workspace. Either way the connection is bound to one organization, the one active in the app when you approved, and the consent screen names it.",
+            },
+            Section {
+                heading: "Prompts that fit an editor",
+                body: "\"Which of our monitors is failing, and from which region?\" reads org health and the per-region split. \"Show me the full config of the monitor for this service\" returns what the check asserts: expected status, body match, timeout, TLS options, regions, and which channels it alerts, with credentials masked. \"Run the check on staging now\" runs it behind a prompt and returns the result. \"Create a status page for the API and add the two public monitors to it\" is two confirmations, then a page you enable when ready.",
+            },
+            Section {
+                heading: "What it never gets",
+                body: "The agent cannot paste a credential onto a monitor. A request header that carries one must reference an org variable, as Bearer {{ api_key }}, so the secret never crosses the chat; the basic-auth and bearer fields and browser flow passwords are set in the app only, and a URL with a password in it is refused. It cannot create a notification channel either, because that means carrying a webhook or a bot token through the chat. It can bind a monitor to a channel you already made, by name. Header values and request bodies come back masked when it reads a monitor, and what a browser flow types is never returned.",
+            },
+        ],
+        code: Some(CodeSample {
+            caption: ".vscode/mcp.json",
+            body: r#"{
+  "servers": {
+    "uptimepage": {
+      "type": "http",
+      "url": "https://mcp.uptimepage.dev/mcp"
+    }
+  }
+}"#,
+        }),
+        resources: &[
+            ResourceLink {
+                label: "Cursor and VS Code, in the docs",
+                href: "/docs/mcp#cursor-vs-code-oauth",
+            },
+            ResourceLink {
+                label: "Confirmations, in the docs",
+                href: "/docs/mcp#confirmations",
+            },
+            ResourceLink {
+                label: "What every tool returns",
+                href: "/docs/mcp#read-tools",
+            },
+        ],
+        cta: "Start free",
+    },
+    Landing {
+        path: "/mcp-server/grok",
+        created: "2026-09-17",
+        lastmod: "2026-09-17",
+        title: "Uptime Monitoring MCP for Grok",
+        eyebrow: "for grok custom connectors",
+        h1: "Connect Grok to your uptime monitoring",
+        meta_description: "Add Uptimepage as a Grok custom connector. Grok's form wants a client id: here are the shared one, the endpoints and the scopes to paste. Free, no card.",
+        lede: "Grok's custom connector does not register itself the way Claude, Cursor and VS Code do. Its form asks for a client id, two endpoint URLs and a scope list. Paste the values below, save, sign in with your Uptimepage login, approve the consent screen, and Grok can read your monitors, incidents and status pages in the chat.",
+        features: &[
+            Feature {
+                label: "MCP server URL",
+                value: "https://mcp.uptimepage.dev/mcp",
+            },
+            Feature {
+                label: "Client ID",
+                value: "ump_DWhz9cACC1T6Tr-5oEw2qw",
+            },
+            Feature {
+                label: "Authorization endpoint",
+                value: "https://app.uptimepage.dev/oauth/authorize",
+            },
+            Feature {
+                label: "Token endpoint",
+                value: "https://app.uptimepage.dev/oauth/token",
+            },
+            Feature {
+                label: "Token auth method",
+                value: "none (PKCE)",
+            },
+            Feature {
+                label: "Scopes",
+                value: "targets:read status_page:read incidents:read",
+            },
+            Feature {
+                label: "Callback on record",
+                value: "grok.com only",
+            },
+            Feature {
+                label: "Price to start",
+                value: "free, no card",
+            },
+        ],
+        sections: &[
+            Section {
+                heading: "Fill in the connector form",
+                body: "On grok.com open Connectors, then New Connector, then Custom. Give it the MCP server URL, and in the OAuth section paste the client id, the authorization endpoint and the token endpoint from the table above. Token auth method is none, with PKCE. For scopes, targets:read status_page:read incidents:read answers every question; add channels:read for the notification channel inventory and variables:read for variable keys. Grant a write scope only once you have seen Grok show a confirmation prompt, since without one the write tools are not offered at all: incidents:write to acknowledge, resolve or publish, status_page:write to build a page, and targets:write together with targets:execute to create a monitor, because creating one runs its check first. The consent screen shows exactly what is being granted. Save, and Grok sends you to sign in.",
+            },
+            Section {
+                heading: "Why a published client id is safe",
+                body: "The id belongs to a public client with no secret, so it grants nothing by itself. The only redirect registered for it is grok.com, which means an authorization code can go nowhere else. PKCE lets only the Grok session that started the flow redeem the code. And the consent screen is still yours: it names your organization, lists the abilities, says you will return to grok.com, and mints nothing until you click Approve. Approve only a connection you started yourself.",
+            },
+            Section {
+                heading: "What Grok can do",
+                body: "Ask what is down and Grok calls get_org_health, then get_monitor_history for the monitor that matters, with response time split into DNS, connect, TLS and first byte. Ask about an incident and it reads the timeline and the operator updates. Ask for the month's numbers and get_incident_metrics returns MTTA, MTTR and the noisiest monitors. The 15 tools that act are offered only to a client that can show a confirmation prompt; a client that cannot is given the 16 read tools, which is where most of the value is anyway.",
+            },
+            Section {
+                heading: "Three prompts to start with",
+                body: "\"What is broken right now and for how long?\" \"Compare this week's incidents with last week's and tell me which monitor caused the most.\" \"Is the checkout flow slower than it was a month ago, and which step?\" The last one reads get_flow_step_trend, which reports per step how the mean duration moved and how many runs passed or failed it, so a login that still passes but takes twice as long shows up before it fails.",
+            },
+            Section {
+                heading: "Grok Build and other clients that take a header",
+                body: "A client that sends a static Authorization header instead of running OAuth, Grok Build among them, works with a scoped API token: mint an org-bound, read-only, expiring token in the app under Settings, then API tokens, and set the header to Bearer followed by the token. Self-hosters register their own client once with the command below and paste the returned client_id into the same form, with their own hosts for the two endpoints. Approve it once right after: a client nobody has approved within a week of registering is dropped.",
+            },
+        ],
+        code: Some(CodeSample {
+            caption: "Self-hosted: register your own Grok client",
+            body: r#"curl -X POST https://app.example.com/oauth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"client_name":"Grok","redirect_uris":["https://grok.com/connectors-oauth-exchange-code/"]}'"#,
+        }),
+        resources: &[
+            ResourceLink {
+                label: "Grok, in the docs",
+                href: "/docs/mcp#grok-oauth-shared-client-id",
+            },
+            ResourceLink {
+                label: "Scopes and what each grants",
+                href: "/docs/mcp#scopes",
+            },
+            ResourceLink {
+                label: "What every tool returns",
+                href: "/docs/mcp#read-tools",
             },
         ],
         cta: "Start free",

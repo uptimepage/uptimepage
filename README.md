@@ -198,7 +198,7 @@ resource "uptimepage_target" "api" {
 
 ## MCP server
 
-An [MCP](https://modelcontextprotocol.io/docs/getting-started/intro) server lets an LLM client (the claude.ai connector, Claude Desktop, an IDE) answer questions about one org's monitors and take a few guarded actions, over Streamable HTTP at `/mcp`. Fifteen read-only tools plus ten write tools (each scope-gated, confirmed per action, and audited; a client that can't show a confirmation is offered the read tools only). Auth is an org-bound scoped token — paste one by hand, or use the one-click OAuth 2.1 connector. Off by default; enable with `UPTIMEPAGE_MCP_ENABLED=true` (`+ MCP_OAUTH_ENABLED` for the connector). See [docs/mcp.md](docs/mcp.md).
+An [MCP](https://modelcontextprotocol.io/docs/getting-started/intro) server lets an LLM client (the claude.ai connector, Claude Desktop, an IDE) answer questions about one org's monitors and take a few guarded actions, over Streamable HTTP at `/mcp`. Sixteen read-only tools plus fifteen write tools (each scope-gated, confirmed per action, and audited; a client that can't show a confirmation is offered the read tools only). Auth is an org-bound scoped token — paste one by hand, or use the one-click OAuth 2.1 connector. Off by default; enable with `UPTIMEPAGE_MCP_ENABLED=true` (`+ MCP_OAUTH_ENABLED` for the connector). See [docs/mcp.md](docs/mcp.md).
 
 ## Self-host
 
