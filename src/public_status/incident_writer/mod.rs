@@ -61,8 +61,18 @@ pub trait IncidentStore: Send + Sync {
         &self,
         pairs: &[(OrgId, Uuid)],
     ) -> Result<std::collections::HashMap<(OrgId, Uuid), Vec<OpenIncident>>>;
-    /// `None` = a concurrent writer already holds the open incident for this
-    /// target (the DB unique index won the race); the caller must not page.
+    /// When each pair's latest monitor-origin incident ended. Results at or
+    /// before that instant were already judged, or were what a human resolved,
+    /// so only newer ones may open the next incident. Pairs with no closed
+    /// incident are absent.
+    async fn last_closed_for_pairs(
+        &self,
+        pairs: &[(OrgId, Uuid)],
+    ) -> Result<std::collections::HashMap<(OrgId, Uuid), DateTime<Utc>>>;
+    /// `None` = no row written: a concurrent writer already holds the open
+    /// incident for this target (the DB unique index won the race), or an
+    /// incident for it closed at or after `started_at`, so the evidence
+    /// predates a resolution. The caller must not page.
     async fn insert_open(&self, org: OrgId, new: NewOpenIncident) -> Result<Option<Uuid>>;
     /// `true` = this call flipped the incident to resolved; `false` = it was
     /// already closed (lost the race), so the caller must not page.
@@ -244,16 +254,26 @@ impl IncidentWriter {
             cursor = Some(PublicTargetCursor::after(last.0, last.1.id));
 
             let pairs: Vec<(OrgId, Uuid)> = page.iter().map(|(o, t)| (*o, t.id)).collect();
-            let open_map = Arc::new(self.incident_store.open_for_pairs(&pairs).await?);
-            let results = Arc::new(self.load_page_results(&page, now).await?);
+            let (open_map, closed_map, results) = tokio::try_join!(
+                self.incident_store.open_for_pairs(&pairs),
+                self.incident_store.last_closed_for_pairs(&pairs),
+                self.load_page_results(&page, now),
+            )?;
+            let (open_map, closed_map, results) =
+                (Arc::new(open_map), Arc::new(closed_map), Arc::new(results));
 
             stream::iter(page.into_iter().map(|(org, target)| {
                 let open_map = open_map.clone();
+                let closed_map = closed_map.clone();
                 let results = results.clone();
                 async move {
                     let open = open_map.get(&(org, target.id)).cloned().unwrap_or_default();
+                    let last_closed = closed_map.get(&(org, target.id)).copied();
                     let tagged = results.get(&target.id).cloned().unwrap_or_default();
-                    if let Err(err) = self.process_target(org, &target, open, tagged, now).await {
+                    if let Err(err) = self
+                        .process_target(org, &target, open, last_closed, tagged, now)
+                        .await
+                    {
                         tracing::warn!(
                             %org,
                             target_id = %target.id,
@@ -317,16 +337,19 @@ impl IncidentWriter {
         org: OrgId,
         target: &Target,
         open: Vec<OpenIncident>,
+        last_closed: Option<DateTime<Utc>>,
         tagged: Vec<(String, CheckResult)>,
         now: DateTime<Utc>,
     ) -> Result<()> {
         // The tier read can be wider than this target's window; trim to its own.
         let cutoff = now - self.lookback_for(target);
-        // Each region evaluated on its own ASC run, never interleaved.
+        // Each region evaluated on its own ASC run, never interleaved. A result
+        // from before the last incident closed was either judged already or
+        // resolved by hand; counting it again would reopen the same outage.
         let mut by_region: std::collections::BTreeMap<String, Vec<CheckResult>> =
             std::collections::BTreeMap::new();
         for (region, r) in tagged {
-            if r.timestamp >= cutoff {
+            if r.timestamp >= cutoff && last_closed.is_none_or(|closed| r.timestamp > closed) {
                 by_region.entry(region).or_default().push(r);
             }
         }

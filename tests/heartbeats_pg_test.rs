@@ -15,7 +15,7 @@ use uptimepage::domain::{
     CheckSpec, ExpectedStatus, HeartbeatCheck, NewTarget, OrgId, PingSignal, TargetUpdate, UserId,
     WriteSource,
 };
-use uptimepage::storage::admin::AdminRepo;
+use uptimepage::storage::admin::{AdminRepo, EnabledTargetSource, HeartbeatTargetSource};
 use uptimepage::storage::{
     HeartbeatStore, PgHeartbeatStore, PostgresTargetStore, RestoreOutcome, TargetStore,
     create_org_with_owner, restore_org, soft_delete_org,
@@ -1512,4 +1512,136 @@ async fn rotation_keeps_the_incidents_shares_and_page_binding_live_pg() {
     assert_eq!(bound, 1, "the monitor keeps its place on the status page");
 
     cleanup(&pool, &[org_a, org_b], &[user_a, user_b]).await;
+}
+
+/// The interval column is the evaluation cadence. A row coarser than the
+/// cadence its window calls for is handed out at that cadence, so a missed
+/// ping is judged within minutes whatever the row says.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL; run via DATABASE_URL=... cargo test -- --ignored"]
+async fn a_coarse_stored_interval_is_evaluated_at_the_windows_cadence_live_pg() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (org_a, org_b, user_a, user_b) = two_orgs(&pool, "hb-cadence").await;
+    let store = PgHeartbeatStore::new(pool.clone(), None);
+    let targets = PostgresTargetStore::from_pool(pool.clone(), None);
+    let mut coarse = heartbeat_target("coarse", true);
+    coarse.interval = Duration::from_secs(60_000);
+    let coarse = targets
+        .create(org_a, coarse, WriteSource::Ui, i64::MAX, i64::MAX)
+        .await
+        .expect("create target")
+        .id;
+    let token = store
+        .ensure(org_a, coarse)
+        .await
+        .unwrap()
+        .unwrap()
+        .token
+        .unwrap();
+    let accepted = store
+        .record_signal_by_token(&token, PingSignal::Success, None)
+        .await
+        .unwrap()
+        .expect("token resolves");
+    assert_eq!(
+        accepted.check.map(|c| c.period),
+        Some(Duration::from_secs(300)),
+        "the ping carries the window it is judged against"
+    );
+
+    let runtime = std::sync::Arc::new(uptimepage::worker::heartbeat::HeartbeatRuntime::default());
+    let source = HeartbeatTargetSource::new(
+        AdminRepo::new(pool.clone(), None, "heartbeat_cadence"),
+        runtime,
+    );
+    let handed_out = source
+        .list_all_enabled_targets()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|(_, t)| t.id == coarse)
+        .map(|(_, t)| t.interval)
+        .expect("a wired heartbeat is dispatched");
+    assert_eq!(handed_out, Duration::from_secs(60));
+
+    cleanup(&pool, &[org_a, org_b], &[user_a, user_b]).await;
+}
+
+/// The shipped text, not a copy that could drift from it.
+const MIGRATION_071: &str =
+    include_str!("../migrations/postgres/071_heartbeat_evaluation_cadence.up.sql");
+
+/// Rows the first heartbeat form wrote carry an interval of hours. The
+/// migration lowers each to its window's cadence, keeps the plan floor, and
+/// leaves finer rows and other kinds alone.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL; run via DATABASE_URL=... cargo test -- --ignored"]
+async fn migration_071_lowers_coarse_heartbeat_intervals_live_pg() {
+    let Some((pool, db)) = isolated_pool("hb_mig071").await else {
+        return;
+    };
+    let (org_a, _org_b, _user_a, _user_b) = two_orgs(&pool, "hb-mig071").await;
+    let floor: i32 = sqlx::query_scalar(
+        "SELECT p.min_check_interval_secs FROM organizations o \
+         JOIN accounts a ON a.id = o.account_id JOIN plans p ON p.id = a.plan_id \
+         WHERE o.id = $1",
+    )
+    .bind(org_a.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let insert = |name: &'static str, spec: &'static str, interval: i32| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO targets (org_id, name, check_spec, interval_secs) \
+                 VALUES ($1, $2, $3::jsonb, $4)",
+            )
+            .bind(org_a.0)
+            .bind(name)
+            .bind(spec)
+            .bind(interval)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    let login = r#"{"type":"heartbeat","period":900000,"grace":1200000}"#;
+    let worker = r#"{"type":"heartbeat","period":300000,"grace":180000}"#;
+    let daily = r#"{"type":"heartbeat","period":86400000,"grace":3600000}"#;
+    insert("login-coarse", login, 60_000).await;
+    insert("login-fine", login, 60).await;
+    insert("worker-coarse", worker, 60_000).await;
+    insert("daily-coarse", daily, 3_600).await;
+    insert(
+        "http-coarse",
+        r#"{"type":"http","url":"https://example.com/"}"#,
+        60_000,
+    )
+    .await;
+
+    sqlx::raw_sql(MIGRATION_071).execute(&pool).await.unwrap();
+
+    let rows: Vec<(String, i32)> =
+        sqlx::query_as("SELECT name, interval_secs FROM targets WHERE org_id = $1 ORDER BY name")
+            .bind(org_a.0)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let got: Vec<(&str, i32)> = rows.iter().map(|(n, i)| (n.as_str(), *i)).collect();
+    assert_eq!(
+        got,
+        vec![
+            ("daily-coarse", 300),
+            ("http-coarse", 60_000),
+            ("login-coarse", 210.max(floor)),
+            ("login-fine", 60),
+            ("worker-coarse", 60.max(floor)),
+        ]
+    );
+
+    common::drop_test_db(&db).await;
 }

@@ -1249,15 +1249,22 @@ fn an_omitted_interval_opens_where_the_picker_does() {
          a certificate twelve times harder"
     );
 
-    // A heartbeat cannot tick slower than the window it judges, even when
-    // the kind's opening is coarser than the window the caller gave.
+    // A heartbeat ticks at the cadence its window calls for, a tenth of it
+    // floored at a minute, not at the kind's coarser opening.
     let hb = new_check_spec(&NewCheck::Heartbeat {
         period_secs: 60,
         grace_secs: 30,
         max_runtime_secs: None,
     })
     .unwrap();
-    assert_eq!(default_interval_secs(&hb, 10), 90);
+    assert_eq!(default_interval_secs(&hb, 10), 60);
+    let slow = new_check_spec(&NewCheck::Heartbeat {
+        period_secs: 900,
+        grace_secs: 1200,
+        max_runtime_secs: None,
+    })
+    .unwrap();
+    assert_eq!(default_interval_secs(&slow, 10), 210);
     // ...but never under the plan floor, which would be refused as an
     // interval the caller never sent.
     assert_eq!(default_interval_secs(&hb, 180), 180);

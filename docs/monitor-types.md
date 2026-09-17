@@ -249,7 +249,7 @@ Every kind has a floor, and your plan sets its own on top. The effective minimum
 |---|---|---|
 | HTTP, TCP, Ping | 10 seconds | 60 seconds |
 | DNS | 10 seconds | 5 minutes |
-| Heartbeat | 60 seconds (evaluation cadence) | n/a, you set period and grace |
+| Heartbeat | 60 seconds (evaluation cadence, at most a tenth of period + grace, capped at 5 minutes) | n/a, you set period and grace |
 | Flow | 5 minutes | 15 minutes |
 | TLS certificate | 1 hour | 12 hours |
 | Domain expiry | 12 hours | 24 hours |

@@ -91,20 +91,28 @@ fn heartbeat_spec(period_s: u64, grace_s: u64) -> CheckSpec {
 }
 
 #[test]
-fn an_interval_coarser_than_the_heartbeat_window_is_refused() {
-    let spec = heartbeat_spec(60, 60);
-    let err = validate_heartbeat_cadence(&spec, std::time::Duration::from_secs(300))
-        .expect_err("300s cannot judge a 120s window");
-    assert!(format!("{err:?}").contains("longer than the heartbeat window"));
+fn an_interval_coarser_than_the_evaluation_cadence_is_refused() {
+    let secs = std::time::Duration::from_secs;
+    // A 2100s window is judged every 210s.
+    let spec = heartbeat_spec(900, 1200);
+    let err = validate_heartbeat_cadence(&spec, secs(300), 60)
+        .expect_err("300s is coarser than the 210s cadence");
+    assert!(format!("{err:?}").contains("coarser than the evaluation cadence"));
+    validate_heartbeat_cadence(&spec, secs(210), 60).unwrap();
+    validate_heartbeat_cadence(&spec, secs(60), 60).unwrap();
 
-    // Equal is fine: the tick lands exactly when the window closes.
-    validate_heartbeat_cadence(&spec, std::time::Duration::from_secs(120)).unwrap();
-    // The default pairing, and every kind that is not a heartbeat.
-    validate_heartbeat_cadence(
-        &heartbeat_spec(86_400, 3_600),
-        std::time::Duration::from_secs(300),
-    )
-    .unwrap();
+    // A small window floors the cadence at a minute.
+    validate_heartbeat_cadence(&heartbeat_spec(60, 60), secs(120), 60)
+        .expect_err("120s cannot judge a 120s window in time");
+    validate_heartbeat_cadence(&heartbeat_spec(60, 60), secs(60), 60).unwrap();
+
+    // A plan floor above the cadence is allowed, not refused as too coarse.
+    validate_heartbeat_cadence(&heartbeat_spec(300, 180), secs(180), 180).unwrap();
+    validate_heartbeat_cadence(&heartbeat_spec(300, 180), secs(300), 180)
+        .expect_err("300s is above both the cadence and the floor");
+
+    // A day-long window caps at five minutes, and other kinds are not judged.
+    validate_heartbeat_cadence(&heartbeat_spec(86_400, 3_600), secs(300), 60).unwrap();
 }
 
 #[test]
@@ -114,6 +122,7 @@ fn the_form_default_pairs_with_the_default_interval() {
     validate_heartbeat_cadence(
         &heartbeat_spec(hb.period_s, hb.grace_s),
         std::time::Duration::from_secs(interval),
+        60,
     )
     .unwrap();
 }

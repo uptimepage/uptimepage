@@ -88,7 +88,7 @@ pub fn min_interval_secs_for_kind(kind: &str) -> u64 {
         "tls_cert" => 3_600,
         // A headless-browser run is far heavier than a single probe.
         "flow" => 300,
-        "heartbeat" => 60,
+        "heartbeat" => EVALUATION_CADENCE_MIN_SECS,
         _ => 10,
     }
 }
@@ -249,7 +249,23 @@ impl HeartbeatCheck {
         let due = anchor + span(self.period);
         (due, due + span(self.grace))
     }
+
+    /// How often the silence rule is judged: a tenth of `period + grace`,
+    /// held between a minute and five. A coarser stored interval is lowered
+    /// to this on load, since a tick that lands long after the window closes
+    /// only delays the alarm, and the judgement itself costs nothing.
+    pub fn evaluation_cadence(&self) -> Duration {
+        let window = self.period.as_secs().saturating_add(self.grace.as_secs());
+        Duration::from_secs(
+            window
+                .div_ceil(10)
+                .clamp(EVALUATION_CADENCE_MIN_SECS, EVALUATION_CADENCE_MAX_SECS),
+        )
+    }
 }
+
+pub const EVALUATION_CADENCE_MIN_SECS: u64 = 60;
+pub const EVALUATION_CADENCE_MAX_SECS: u64 = 300;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TlsCertCheck {

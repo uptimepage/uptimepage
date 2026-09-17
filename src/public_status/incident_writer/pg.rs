@@ -103,6 +103,38 @@ impl IncidentStore for PgIncidentStore {
         Ok(out)
     }
 
+    async fn last_closed_for_pairs(
+        &self,
+        pairs: &[(OrgId, Uuid)],
+    ) -> Result<std::collections::HashMap<(OrgId, Uuid), DateTime<Utc>>> {
+        if pairs.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        // The greatest close, not the latest started: incidents reopened from
+        // the same evidence share a start, so start order says nothing about
+        // which closed last. `idx_incidents_last_close` answers the max in
+        // one probe per pair.
+        let (orgs, targets): (Vec<Uuid>, Vec<Uuid>) = pairs.iter().map(|(o, t)| (o.0, *t)).unzip();
+        let rows: Vec<(Uuid, Uuid, DateTime<Utc>)> = sqlx::query_as(
+            r#"SELECT pairs.org_id, pairs.target_id, c.ended_at
+               FROM unnest($1::uuid[], $2::uuid[]) AS pairs(org_id, target_id)
+               JOIN LATERAL (
+                   SELECT max(i.ended_at) AS ended_at FROM incidents i
+                   WHERE i.org_id = pairs.org_id AND i.target_id = pairs.target_id
+                     AND i.origin = 'monitor' AND i.ended_at IS NOT NULL
+               ) c ON c.ended_at IS NOT NULL"#,
+        )
+        .bind(&orgs)
+        .bind(&targets)
+        .fetch_all(&self.pool)
+        .await
+        .context("incident last_closed_for_pairs")?;
+        Ok(rows
+            .into_iter()
+            .map(|(org, target, ended)| ((OrgId(org), target), ended))
+            .collect())
+    }
+
     async fn insert_open(&self, org: OrgId, new: NewOpenIncident) -> Result<Option<Uuid>> {
         let status_at_start = status_to_db(new.status_at_start)
             .ok_or_else(|| anyhow::anyhow!("cannot open incident from status=up"))?;
@@ -110,10 +142,22 @@ impl IncidentStore for PgIncidentStore {
         // guarantee: a concurrent writer yields no row → None → no page. Scoped
         // to monitor origin so an operator's open declaration cannot shadow a
         // real detection.
+        // The NOT EXISTS is the same line the writer draws when it reads: a
+        // tick that loaded its evidence before a human resolved the incident
+        // must not reopen it from that evidence after. It is judged on the
+        // statement's snapshot, which can predate that resolution while the
+        // insert itself waits on the conflict with the incident being resolved
+        // and lands once it commits; the check after the insert sees that
+        // commit, so the transaction is rolled back rather than paging.
         // Visibility is derived here, not by the caller: an incident is public
         // only while its monitor is a component of an enabled status page that
         // the plan still covers. A held page shows nobody anything, so an
         // incident opened behind one starts internal and is not fanned out.
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .context("incident insert_open: begin")?;
         let row: Option<(Uuid,)> = sqlx::query_as(
             r#"INSERT INTO incidents (org_id, target_id, started_at, status_at_start, check_count, error_sample, region, regions_down, regions_up, origin, visibility)
                SELECT $6, $1, $2, $3, $4, $5, $7, $8, $9, 'monitor',
@@ -123,6 +167,11 @@ impl IncidentStore for PgIncidentStore {
                           WHERE spc.target_id = $1 AND spc.org_id = $6 AND sp.enabled = true
                             AND sp.plan_hold_at IS NULL
                       ) THEN 'public' ELSE 'internal' END
+               WHERE NOT EXISTS (
+                   SELECT 1 FROM incidents c
+                   WHERE c.org_id = $6 AND c.target_id = $1 AND c.origin = 'monitor'
+                     AND c.ended_at >= $2
+               )
                ON CONFLICT (org_id, target_id) WHERE ended_at IS NULL AND origin = 'monitor'
                DO NOTHING
                RETURNING id"#,
@@ -136,10 +185,37 @@ impl IncidentStore for PgIncidentStore {
         .bind(new.region)
         .bind(&new.regions_down)
         .bind(&new.regions_up)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .context("incident insert_open")?;
-        Ok(row.map(|r| r.0))
+        let Some((id,)) = row else {
+            tx.rollback()
+                .await
+                .context("incident insert_open: rollback")?;
+            return Ok(None);
+        };
+        let covered: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                 SELECT 1 FROM incidents c
+                 WHERE c.org_id = $1 AND c.target_id = $2 AND c.origin = 'monitor'
+                   AND c.id <> $3 AND c.ended_at >= $4
+             )",
+        )
+        .bind(org.0)
+        .bind(new.target_id)
+        .bind(id)
+        .bind(new.started_at)
+        .fetch_one(&mut *tx)
+        .await
+        .context("incident insert_open: recheck")?;
+        if covered {
+            tx.rollback()
+                .await
+                .context("incident insert_open: rollback")?;
+            return Ok(None);
+        }
+        tx.commit().await.context("incident insert_open: commit")?;
+        Ok(Some(id))
     }
 
     async fn close(&self, org: OrgId, incident_id: Uuid, ended_at: DateTime<Utc>) -> Result<bool> {

@@ -154,16 +154,14 @@ pub(super) fn build_monitor_patch(
 /// The cadence a caller gets for omitting one: where the app's own picker opens
 /// a monitor of this kind, raised to the plan floor. The hard minimum would be
 /// legal but far noisier, probing a certificate twelve times more often than
-/// any other front door does. A heartbeat is capped at its own window, since a
-/// tick coarser than that could never judge it.
+/// any other front door does. A heartbeat gets the cadence its window calls
+/// for, since a coarser tick only delays the alarm.
 pub(super) fn default_interval_secs(check: &CheckSpec, plan_floor_secs: u64) -> u64 {
     let opening = plan_floor_secs.max(crate::domain::interval_hints_for_kind(check.kind()).default);
     match check.as_heartbeat() {
         // Never below the floor: a default the plan forbids would be refused
         // as an argument the caller never sent.
-        Some(hb) => opening
-            .min(hb.period.as_secs().saturating_add(hb.grace.as_secs()))
-            .max(plan_floor_secs),
+        Some(hb) => hb.evaluation_cadence().as_secs().max(plan_floor_secs),
         None => opening,
     }
 }

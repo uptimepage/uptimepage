@@ -237,3 +237,229 @@ async fn widen_is_a_union_and_leaves_a_closed_incident_alone_pg() {
         "a closed incident keeps its breakdown"
     );
 }
+
+/// A human resolved the outage while it was still failing. The next tick may
+/// still hold the evidence that opened it; neither the read nor the write
+/// side may turn that into a second incident. A declared incident is not a
+/// line: it is the operator's narrative, not the monitor's verdict.
+#[tokio::test]
+#[ignore]
+async fn a_resolution_is_the_line_the_next_open_must_start_after_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, target_id) = seed(&pool, "iwline").await;
+    let store = PgIncidentStore::new(pool.clone());
+    let now = chrono::Utc::now();
+    let at = |secs_ago: i64| now - chrono::Duration::seconds(secs_ago);
+    let started = |secs_ago: i64| NewOpenIncident {
+        started_at: at(secs_ago),
+        ..new_open(target_id)
+    };
+
+    assert!(
+        store
+            .last_closed_for_pairs(&[(org, target_id)])
+            .await
+            .expect("last_closed_for_pairs")
+            .is_empty(),
+        "nothing has closed yet"
+    );
+    let first = store
+        .insert_open(org, started(600))
+        .await
+        .expect("insert_open")
+        .expect("first open");
+    assert!(store.close(org, first, at(300)).await.expect("close"));
+
+    // A declaration resolved later than the monitor incident does not move
+    // the line: only monitor-origin closes count.
+    sqlx::query(
+        "INSERT INTO incidents (org_id, target_id, started_at, ended_at, status_at_start, \
+                                check_count, state, visibility, origin, counts_as_downtime) \
+         VALUES ($1, $2, $3, $4, 'down', 0, 'resolved', 'internal', 'manual', false)",
+    )
+    .bind(org.0)
+    .bind(target_id)
+    .bind(at(250))
+    .bind(at(100))
+    .execute(&pool)
+    .await
+    .expect("declare and resolve");
+
+    let closed = store
+        .last_closed_for_pairs(&[(org, target_id)])
+        .await
+        .expect("last_closed_for_pairs");
+    assert_eq!(closed.get(&(org, target_id)).copied(), Some(at(300)));
+
+    assert!(
+        store
+            .insert_open(org, started(600))
+            .await
+            .expect("insert_open")
+            .is_none(),
+        "the evidence that opened the resolved incident cannot open another"
+    );
+    assert!(
+        store
+            .insert_open(org, started(300))
+            .await
+            .expect("insert_open")
+            .is_none(),
+        "evidence from the instant of the resolution is still covered by it"
+    );
+    let fresh = store
+        .insert_open(org, started(200))
+        .await
+        .expect("insert_open");
+    assert!(fresh.is_some(), "evidence after the resolution opens");
+    assert_eq!(open_incident_count(&pool, org, target_id).await, 1);
+}
+
+async fn closed_incident(
+    pool: &PgPool,
+    org: OrgId,
+    target_id: Uuid,
+    started_at: chrono::DateTime<chrono::Utc>,
+    ended_at: chrono::DateTime<chrono::Utc>,
+) {
+    sqlx::query(
+        "INSERT INTO incidents (org_id, target_id, started_at, ended_at, status_at_start, \
+                                check_count, state, visibility, origin, counts_as_downtime) \
+         VALUES ($1, $2, $3, $4, 'down', 2, 'resolved', 'internal', 'monitor', true)",
+    )
+    .bind(org.0)
+    .bind(target_id)
+    .bind(started_at)
+    .bind(ended_at)
+    .execute(pool)
+    .await
+    .expect("insert closed incident");
+}
+
+/// Incidents reopened from one stale run all share a start, so the line is
+/// the greatest close, not the close on the latest-started row.
+#[tokio::test]
+#[ignore]
+async fn the_line_is_the_greatest_close_when_starts_repeat_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, target_id) = seed(&pool, "iwtie").await;
+    let store = PgIncidentStore::new(pool.clone());
+    let now = chrono::Utc::now();
+    let at = |secs_ago: i64| now - chrono::Duration::seconds(secs_ago);
+
+    // The way a resolve-reopen loop leaves them: one start, three closes,
+    // inserted latest-close first so row order cannot stand in for time.
+    for closed_ago in [300, 500, 400] {
+        closed_incident(&pool, org, target_id, at(600), at(closed_ago)).await;
+    }
+    let closed = store
+        .last_closed_for_pairs(&[(org, target_id)])
+        .await
+        .expect("last_closed_for_pairs");
+    assert_eq!(closed.get(&(org, target_id)).copied(), Some(at(300)));
+
+    // Evidence after the greatest close opens; evidence the middle close
+    // covers, which the wrong row would have let through, does not.
+    let stale = NewOpenIncident {
+        started_at: at(350),
+        ..new_open(target_id)
+    };
+    assert!(
+        store
+            .insert_open(org, stale)
+            .await
+            .expect("insert_open")
+            .is_none()
+    );
+    let fresh = NewOpenIncident {
+        started_at: at(200),
+        ..new_open(target_id)
+    };
+    assert!(
+        store
+            .insert_open(org, fresh)
+            .await
+            .expect("insert_open")
+            .is_some()
+    );
+}
+
+/// The writer loaded stale evidence, then a human resolved the incident
+/// while the writer's insert was already waiting on the open-incident
+/// conflict. The insert's own snapshot predates the resolution, so only a
+/// check after the insert can see it.
+#[tokio::test]
+#[ignore]
+async fn a_resolution_that_lands_while_the_insert_waits_still_wins_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, target_id) = seed(&pool, "iwrace").await;
+    let store = std::sync::Arc::new(PgIncidentStore::new(pool.clone()));
+    let now = chrono::Utc::now();
+    let started_at = now - chrono::Duration::seconds(600);
+    let first = store
+        .insert_open(
+            org,
+            NewOpenIncident {
+                started_at,
+                ..new_open(target_id)
+            },
+        )
+        .await
+        .expect("insert_open")
+        .expect("first open");
+
+    // The resolve is in flight: its row lock holds any insert that conflicts
+    // on the open-incident index until it commits.
+    let mut resolving = pool.begin().await.expect("begin resolve");
+    sqlx::query(
+        "UPDATE incidents SET ended_at = now(), state = 'resolved', resolved_by = NULL \
+         WHERE id = $1",
+    )
+    .bind(first)
+    .execute(&mut *resolving)
+    .await
+    .expect("resolve uncommitted");
+
+    let stale_writer = {
+        let store = store.clone();
+        tokio::spawn(async move {
+            store
+                .insert_open(
+                    org,
+                    NewOpenIncident {
+                        started_at,
+                        ..new_open(target_id)
+                    },
+                )
+                .await
+                .expect("insert_open")
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !stale_writer.is_finished(),
+        "the insert must wait on the resolve"
+    );
+    resolving.commit().await.expect("commit resolve");
+
+    let reopened = stale_writer.await.expect("writer task");
+    assert!(
+        reopened.is_none(),
+        "the evidence the resolution covered must not reopen"
+    );
+    let total: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM incidents WHERE org_id = $1 AND target_id = $2")
+            .bind(org.0)
+            .bind(target_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+    assert_eq!(total, 1);
+    assert_eq!(open_incident_count(&pool, org, target_id).await, 0);
+}

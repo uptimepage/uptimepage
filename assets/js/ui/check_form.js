@@ -89,21 +89,22 @@
         if (def) def.checked = true;
     }
 
-    // A heartbeat's cadence rail is hidden, so the form owns the value. A new
-    // monitor derives one; an existing one keeps what it has, lowered only if
-    // it is coarser than the window it judges, which the API refuses.
+    // A heartbeat's cadence rail is hidden, so the form owns the value: the
+    // cadence its window calls for, a tenth of it between a minute and five.
+    // An existing monitor keeps a finer stored value; a coarser one is lowered,
+    // since the API refuses it.
     function heartbeatInterval(data, minInterval) {
         const period = parseDuration(data.get("heartbeat_period_s"));
         const grace = parseDuration(data.get("heartbeat_grace_s"));
         if (period === null || grace === null || period === 0) {
             return parseInt(form.dataset.interval, 10) || minInterval;
         }
-        const window = period + grace;
+        const cadence = Math.min(300, Math.max(60, Math.ceil((period + grace) / 10)));
         const stored = parseInt(form.dataset.interval, 10);
         const base = form.dataset.mode === "create" || !Number.isInteger(stored)
-            ? Math.min(300, Math.max(60, Math.ceil(window / 10)))
-            : stored;
-        return Math.max(minInterval, Math.min(base, window));
+            ? cadence
+            : Math.min(stored, cadence);
+        return Math.max(minInterval, base);
     }
 
     // Heartbeat is passive: no test-now, no cadence to pick (fixed floor), no

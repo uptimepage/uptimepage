@@ -594,7 +594,7 @@ impl McpServer {
             .channels_for_binding(auth, args.channel_ids.is_some() || retags)
             .await?;
 
-        let (update, changes) = build_monitor_patch(
+        let (mut update, changes) = build_monitor_patch(
             args,
             &target,
             &channels,
@@ -622,7 +622,7 @@ impl McpServer {
             rest::validate_region_policy(update.region_policy, available.len())
                 .map_err(config_error)?;
         }
-        rest::validate_patch_interval(&self.state, auth.org, id, &update, Some(&target))
+        rest::validate_patch_interval(&self.state, auth.org, id, &mut update, Some(&target))
             .await
             .map_err(config_error)?;
 

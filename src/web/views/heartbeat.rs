@@ -12,7 +12,7 @@ use futures::StreamExt;
 
 use crate::app::AppState;
 use crate::auth::sha256_hex;
-use crate::domain::{HeartbeatPingRecord, Ping};
+use crate::domain::{CheckResult, HeartbeatPingRecord, Ping};
 use crate::storage::heartbeats::PingAccepted;
 
 /// Excess is drained and dropped, never refused: a 413 on a success ping would
@@ -27,8 +27,8 @@ const BODY_DRAIN_LIMIT: usize = 256 * 1024;
 const BODY_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Shorter than the sink's own retry budget, so a wedged store sheds these
-/// rather than accumulating a task per newly wired monitor.
-const FIRST_RESULT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+/// rather than accumulating a task per signal that changed a verdict.
+const PING_RESULT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// First half of the token's SHA-256, so GCRA runs before any database work.
 fn token_key(raw: &str) -> u128 {
@@ -81,8 +81,10 @@ async fn record(state: &AppState, token: String, ping: Ping, body: Body) -> Resp
         .heartbeat_runtime
         .record(accepted.target_id, accepted.state);
 
-    if accepted.first && accepted.enabled {
-        spawn_first_result(state, &accepted, ping);
+    if accepted.enabled
+        && let Some(result) = ping_result(&accepted, ping)
+    {
+        spawn_result_write(state, result);
     }
 
     if let Some(sink) = &state.heartbeat_ping_sink {
@@ -105,24 +107,39 @@ async fn record(state: &AppState, token: String, ping: Ping, body: Body) -> Resp
     (StatusCode::OK, "ok").into_response()
 }
 
-/// Detached: the sink retries a degraded ClickHouse for up to 30s, and the
-/// caller of this route is a cron job holding a `curl` open at the end of its
-/// run. The scheduler reports on its own tick if this never lands.
-fn spawn_first_result(state: &AppState, accepted: &PingAccepted, ping: Ping) {
-    let Some(result) = crate::worker::heartbeat::first_ping_result(
+/// What this signal says on its own: the wiring ping's verdict, or a later
+/// one that changed the verdict, so a job that recovers is seen when it
+/// speaks rather than at the scheduler's next look.
+fn ping_result(accepted: &PingAccepted, ping: Ping) -> Option<CheckResult> {
+    if accepted.first {
+        return crate::worker::heartbeat::first_ping_result(
+            accepted.target_id,
+            accepted.org_id.0,
+            accepted.at,
+            ping.signal,
+            ping.exit_code,
+        );
+    }
+    let check = accepted.check.as_ref()?;
+    crate::worker::heartbeat::transition_result(
         accepted.target_id,
         accepted.org_id.0,
         accepted.at,
-        ping.signal,
-        ping.exit_code,
-    ) else {
-        return;
-    };
+        &accepted.prev,
+        &accepted.state,
+        check,
+    )
+}
+
+/// Detached: the sink retries a degraded ClickHouse for up to 30s, and the
+/// caller of this route is a cron job holding a `curl` open at the end of its
+/// run. The scheduler reports on its own tick if this never lands.
+fn spawn_result_write(state: &AppState, result: CheckResult) {
     let sink = state.result_sink.clone();
-    let target_id = accepted.target_id;
+    let target_id = result.target_id;
     tokio::spawn(async move {
         let write = sink.write_batch(std::slice::from_ref(&result));
-        let outcome = match tokio::time::timeout(FIRST_RESULT_WRITE_TIMEOUT, write).await {
+        let outcome = match tokio::time::timeout(PING_RESULT_WRITE_TIMEOUT, write).await {
             Ok(Ok(())) => return,
             Ok(Err(err)) => err.to_string(),
             Err(_) => "timed out".to_string(),
@@ -130,7 +147,7 @@ fn spawn_first_result(state: &AppState, accepted: &PingAccepted, ping: Ping) {
         tracing::warn!(
             target_id = %target_id,
             error = %outcome,
-            "heartbeat first-ping result not written; the scheduler reports on its own tick"
+            "heartbeat ping result not written; the scheduler reports on its own tick"
         );
     });
 }

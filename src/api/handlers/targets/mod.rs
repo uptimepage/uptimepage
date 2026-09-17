@@ -323,7 +323,7 @@ pub async fn update(
     if let Some(Some(uid)) = update.owner_user_id {
         validate_owner_is_member(&state, org, Some(uid)).await?;
     }
-    validate_patch_interval(&state, org, id, &update, stored_target.as_ref()).await?;
+    validate_patch_interval(&state, org, id, &mut update, stored_target.as_ref()).await?;
     // The disabled→enabled re-arm is folded into the store's enable statement,
     // so this path (and every other enable surface) inherits it.
     let check_rewritten = update.check.is_some();

@@ -115,12 +115,35 @@ impl IncidentStore for InMemoryIncidentStore {
         Ok(open)
     }
 
+    async fn last_closed_for_pairs(
+        &self,
+        pairs: &[(OrgId, Uuid)],
+    ) -> Result<std::collections::HashMap<(OrgId, Uuid), DateTime<Utc>>> {
+        let g = self.inner.lock();
+        Ok(pairs
+            .iter()
+            .filter_map(|(org, target)| {
+                let ended = g
+                    .by_target
+                    .get(target)?
+                    .iter()
+                    .filter_map(|i| i.ended_at)
+                    .max()?;
+                Some(((*org, *target), ended))
+            })
+            .collect())
+    }
+
     async fn insert_open(&self, _org: OrgId, new: NewOpenIncident) -> Result<Option<Uuid>> {
         let mut g = self.inner.lock();
         let bucket = g.by_target.entry(new.target_id).or_default();
-        // Mirrors the DB unique index: a target already holding an open
-        // incident yields None so the racer never pages.
-        if bucket.iter().any(|i| i.ended_at.is_none()) {
+        // Mirrors the DB unique index and the last-close guard: a target
+        // already holding an open incident, or one that closed at or after
+        // this evidence began, yields None so the caller never pages.
+        if bucket
+            .iter()
+            .any(|i| i.ended_at.is_none_or(|ended| ended >= new.started_at))
+        {
             return Ok(None);
         }
         let id = Uuid::now_v7();

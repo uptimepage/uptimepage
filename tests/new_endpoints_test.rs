@@ -385,6 +385,47 @@ async fn create_refuses_a_region_it_cannot_serve() {
     );
 }
 
+/// A heartbeat's interval is its evaluation cadence, bounded by the window.
+/// Shrinking the window through `check` alone must not be refused on a field
+/// the caller never sent; the stored cadence follows the window down.
+#[tokio::test]
+async fn shrinking_a_heartbeat_window_lowers_the_cadence_it_left_unsaid() {
+    let app = app();
+    let (status, created) = post_json(
+        &app,
+        "/api/v1/targets",
+        json!({
+            "name": "nightly",
+            "check": { "type": "heartbeat", "period": 3_600_000, "grace": 600_000 },
+            "interval": 300
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = created["id"].as_str().unwrap();
+
+    let (status, v) = send_json(
+        &app,
+        "PATCH",
+        &format!("/api/v1/targets/{id}"),
+        json!({ "check": { "type": "heartbeat", "period": 600_000, "grace": 300_000 } }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["interval"], 90, "a 900s window is judged every 90s");
+
+    // Named outright, a coarser interval is still the caller's mistake.
+    let (status, v) = send_json(
+        &app,
+        "PATCH",
+        &format!("/api/v1/targets/{id}"),
+        json!({ "interval": 300 }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+    assert_eq!(v["error"]["code"], "INVALID_HEARTBEAT_PARAMS");
+}
+
 #[tokio::test]
 async fn create_refuses_regions_on_a_heartbeat() {
     let app = app();

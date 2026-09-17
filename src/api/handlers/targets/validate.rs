@@ -224,12 +224,14 @@ pub(crate) fn check_abuse(
 /// The PATCH counterpart of the floor check in [`validate_new_target`]. A kind
 /// change is validated against the stored interval, since switching to a slower
 /// kind while omitting `interval` would otherwise keep a cadence that kind
-/// rejects. A missing target is left for the update itself to 404.
+/// rejects. A heartbeat window that shrinks with no interval sent lowers the
+/// stored interval to the new cadence, rather than refusing a field the
+/// caller never named. A missing target is left for the update itself to 404.
 pub(crate) async fn validate_patch_interval(
     state: &AppState,
     org: OrgId,
     id: Uuid,
-    update: &TargetUpdate,
+    update: &mut TargetUpdate,
     prefetched: Option<&Target>,
 ) -> Result<()> {
     let requested = update.interval.map(|i| i.as_secs() as i64);
@@ -267,13 +269,22 @@ pub(crate) async fn validate_patch_interval(
     }
     // Either half can arrive alone, so the pairing is judged on the merge of
     // the request and the stored row.
-    if let Some(check) = update.check.as_ref().or(stored.map(|t| &t.check)) {
-        validate_heartbeat_cadence(
-            check,
-            std::time::Duration::from_secs(requested.max(0) as u64),
-        )?;
+    let Some(check) = update.check.as_ref().or(stored.map(|t| &t.check)) else {
+        return Ok(());
+    };
+    let mut interval = std::time::Duration::from_secs(requested.max(0) as u64);
+    if update.interval.is_none()
+        && let Some(hb) = check.as_heartbeat()
+    {
+        let cadence = hb
+            .evaluation_cadence()
+            .max(std::time::Duration::from_secs(effective_floor.max(0) as u64));
+        if interval > cadence {
+            interval = cadence;
+            update.interval = Some(cadence);
+        }
     }
-    Ok(())
+    validate_heartbeat_cadence(check, interval, effective_floor as u64)
 }
 
 pub(crate) fn validate_new_target(
@@ -292,7 +303,7 @@ pub(crate) fn validate_new_target(
         ));
     }
     validate_check(&new.check, guard)?;
-    validate_heartbeat_cadence(&new.check, new.interval)?;
+    validate_heartbeat_cadence(&new.check, new.interval, effective_floor as u64)?;
     new.tags = normalize_tags(&new.tags)?;
     validate_alerts(&new.alerts)?;
     validate_alert_confirmations(Some(new.alert_confirmations))?;
@@ -300,21 +311,25 @@ pub(crate) fn validate_new_target(
     validate_group_name(new.group_name.as_deref())
 }
 
+/// The interval is the evaluation cadence, so it may not be coarser than the
+/// cadence the window calls for. A plan floor above that cadence wins, since
+/// the floor is the plan's to set; the evaluator still runs at the cadence.
 pub(crate) fn validate_heartbeat_cadence(
     check: &CheckSpec,
     interval: std::time::Duration,
+    floor_secs: u64,
 ) -> Result<()> {
     let Some(hb) = check.as_heartbeat() else {
         return Ok(());
     };
-    let window = hb.period.as_secs().saturating_add(hb.grace.as_secs());
-    if interval.as_secs() > window {
+    let cap = hb.evaluation_cadence().as_secs().max(floor_secs);
+    if interval.as_secs() > cap {
         return Err(AppError::bad_request_field(
             codes::INVALID_HEARTBEAT_PARAMS,
             format!(
-                "check interval ({}s) is longer than the heartbeat window it judges ({}s) — lower the interval or raise the period",
+                "check interval ({}s) is coarser than the evaluation cadence for this heartbeat window ({}s) — lower the interval or raise the period",
                 interval.as_secs(),
-                window
+                cap
             ),
             "interval",
         ));

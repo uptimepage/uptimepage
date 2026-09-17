@@ -1252,6 +1252,104 @@ async fn re_running_after_close_is_noop() {
     assert_eq!(incidents.close_count(), baseline_closes);
 }
 
+/// A human resolved the incident while the monitor was still failing. The
+/// downs that opened it are still inside the lookback, and must not open it
+/// again; only failures observed after the resolution may.
+#[tokio::test]
+async fn a_resolution_draws_a_line_the_old_evidence_cannot_cross() {
+    let target = make_public_target("api");
+    let target_id = target.id;
+    let now = Utc::now();
+    let targets = Arc::new(InMemoryTargetStore::from_vec(vec![target]));
+    let sink = Arc::new(InMemorySink::new());
+    let incidents = Arc::new(InMemoryIncidentStore::new());
+    let at = |secs_ago: i64| now - ChronoDuration::seconds(secs_ago);
+    seed_results(
+        &sink,
+        vec![
+            result(target_id, at(300), CheckStatus::Down),
+            result(target_id, at(240), CheckStatus::Down),
+        ],
+    )
+    .await;
+    let w = writer(targets, sink.clone(), incidents.clone());
+    w.tick_once().await.expect("open");
+    let opened = incidents.all_for(target_id);
+    assert_eq!(opened.len(), 1);
+
+    // Resolved by hand at -180s, with no recovery in the results.
+    let org = OrgId(Uuid::nil());
+    assert!(incidents.close(org, opened[0].id, at(180)).await.unwrap());
+    for _ in 0..3 {
+        w.tick_once().await.expect("tick after resolve");
+    }
+    assert_eq!(
+        incidents.insert_count(),
+        1,
+        "the downs from before the resolution must not reopen the incident"
+    );
+
+    // One fresh failure is not yet a confirmed run.
+    seed_results(&sink, vec![result(target_id, at(120), CheckStatus::Down)]).await;
+    w.tick_once().await.expect("tick on one fresh down");
+    assert_eq!(incidents.insert_count(), 1);
+
+    // Two are, and the new incident starts at the first of them, not at the
+    // old evidence.
+    seed_results(&sink, vec![result(target_id, at(60), CheckStatus::Down)]).await;
+    w.tick_once().await.expect("tick on a confirmed fresh run");
+    let all = incidents.all_for(target_id);
+    assert_eq!(all.len(), 2);
+    assert_eq!(all[1].started_at, at(120));
+    assert!(all[1].ended_at.is_none());
+}
+
+/// The writer loaded its evidence, then a human resolved the incident before
+/// it wrote. The store refuses the row, so the tick cannot reopen from what
+/// the resolution already covered.
+#[tokio::test]
+async fn the_store_refuses_an_open_from_evidence_a_resolution_covered() {
+    let target_id = Uuid::now_v7();
+    let org = OrgId(Uuid::nil());
+    let now = Utc::now();
+    let incidents = InMemoryIncidentStore::new();
+    let first = incidents
+        .insert_open(org, new_open(target_id, now - ChronoDuration::seconds(300)))
+        .await
+        .unwrap()
+        .expect("first open");
+    assert!(
+        incidents
+            .close(org, first, now - ChronoDuration::seconds(100))
+            .await
+            .unwrap()
+    );
+
+    let stale = incidents
+        .insert_open(org, new_open(target_id, now - ChronoDuration::seconds(300)))
+        .await
+        .unwrap();
+    assert!(stale.is_none(), "evidence from before the close is refused");
+    let fresh = incidents
+        .insert_open(org, new_open(target_id, now - ChronoDuration::seconds(50)))
+        .await
+        .unwrap();
+    assert!(fresh.is_some(), "evidence after the close opens");
+}
+
+fn new_open(target_id: Uuid, started_at: DateTime<Utc>) -> NewOpenIncident {
+    NewOpenIncident {
+        target_id,
+        started_at,
+        status_at_start: CheckStatus::Down,
+        check_count: 2,
+        error_sample: None,
+        region: None,
+        regions_down: vec![],
+        regions_up: vec![],
+    }
+}
+
 #[tokio::test]
 async fn shutdown_cancels_run_loop() {
     let targets = Arc::new(InMemoryTargetStore::new());

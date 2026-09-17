@@ -130,11 +130,16 @@ async fn enabled_heartbeats_synced(
     repo: &AdminRepo,
     runtime: &crate::worker::heartbeat::HeartbeatRuntime,
 ) -> Result<Vec<(OrgId, Target)>> {
-    let (targets, states) = tokio::try_join!(
+    let (mut targets, states) = tokio::try_join!(
         repo.list_enabled_heartbeat_targets(),
         repo.sync_heartbeat_rows(),
     )?;
     runtime.sync_states(states.into_iter().collect());
+    for (_, target) in &mut targets {
+        if let Some(hb) = target.check.as_heartbeat() {
+            target.interval = target.interval.min(hb.evaluation_cadence());
+        }
+    }
     Ok(targets)
 }
 

@@ -138,11 +138,20 @@ pub fn execute_heartbeat_check(
             "heartbeat state unavailable on this node",
         );
     };
-    let error = verdict(now, &state, check);
+    passive_result(target_id, org_id, now, verdict(now, &state, check))
+}
+
+/// A heartbeat verdict as a result row: nothing was probed, so no timings.
+fn passive_result(
+    target_id: Uuid,
+    org_id: Uuid,
+    at: DateTime<Utc>,
+    error: Option<String>,
+) -> CheckResult {
     CheckResult {
         target_id,
         org_id,
-        timestamp: now,
+        timestamp: at,
         status: if error.is_none() {
             CheckStatus::Up
         } else {
@@ -177,25 +186,27 @@ pub fn first_ping_result(
         // A run that announced itself has not reported an outcome yet.
         PingSignal::Start => return None,
     };
-    Some(CheckResult {
-        target_id,
-        org_id,
-        timestamp: at,
-        status: if error.is_none() {
-            CheckStatus::Up
-        } else {
-            CheckStatus::Down
-        },
-        duration_ms: 0,
-        dns_ms: None,
-        connect_ms: None,
-        tls_ms: None,
-        ttfb_ms: None,
-        response_code: None,
-        response_size: None,
-        diagnostic: None,
-        error,
-    })
+    Some(passive_result(target_id, org_id, at, error))
+}
+
+/// The verdict a later signal changed, so a job that recovers or reports a
+/// failure is seen when it speaks, not at the scheduler's next look. Judged
+/// at the signal's own instant on both states; an unchanged verdict reports
+/// nothing, since the scheduler carries a steady state on its own.
+pub fn transition_result(
+    target_id: Uuid,
+    org_id: Uuid,
+    at: DateTime<Utc>,
+    prev: &PingState,
+    state: &PingState,
+    check: &HeartbeatCheck,
+) -> Option<CheckResult> {
+    let before = verdict(at, prev, check);
+    let after = verdict(at, state, check);
+    if before.is_some() == after.is_some() {
+        return None;
+    }
+    Some(passive_result(target_id, org_id, at, after))
 }
 
 fn failure_message(exit_code: Option<u8>) -> String {
@@ -505,7 +516,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod first_ping_tests {
+mod ping_tests {
     use super::*;
     use chrono::Utc;
 
@@ -552,6 +563,70 @@ mod first_ping_tests {
         let scheduled = verdict(Utc::now(), &state, &check(60, 30));
         let on_ping = result(PingSignal::Fail, Some(3)).unwrap().error;
         assert_eq!(scheduled, on_ping);
+    }
+
+    fn transition(prev: PingState, state: PingState) -> Option<CheckResult> {
+        transition_result(
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            Utc::now(),
+            &prev,
+            &state,
+            &check(60, 30),
+        )
+    }
+
+    /// The scheduler judged silence; the ping that ends it is the recovery.
+    #[test]
+    fn a_success_after_silence_reports_up_at_once() {
+        let r = transition(
+            PingState::from_success(ago(600)),
+            PingState::from_success(Utc::now()),
+        )
+        .expect("the verdict changed");
+        assert_eq!(r.status, CheckStatus::Up);
+        assert!(r.error.is_none());
+    }
+
+    #[test]
+    fn a_failure_signal_reports_down_at_once() {
+        let prev = PingState::from_success(ago(10));
+        let state = PingState {
+            fail: Some(Failure {
+                at: Utc::now(),
+                exit_code: Some(2),
+            }),
+            ..prev
+        };
+        let r = transition(prev, state).expect("the verdict changed");
+        assert_eq!(r.status, CheckStatus::Down);
+        assert_eq!(r.error.as_deref(), Some("job reported failure (exit 2)"));
+    }
+
+    /// A routine ping on a healthy job, and a ping that leaves it failing,
+    /// say nothing new: the scheduler carries a steady state.
+    #[test]
+    fn an_unchanged_verdict_reports_nothing() {
+        assert!(
+            transition(
+                PingState::from_success(ago(20)),
+                PingState::from_success(Utc::now()),
+            )
+            .is_none()
+        );
+        let failing = PingState {
+            success_at: ago(600),
+            start_at: None,
+            fail: Some(Failure {
+                at: ago(300),
+                exit_code: None,
+            }),
+        };
+        let still_failing = PingState {
+            start_at: Some(Utc::now()),
+            ..failing
+        };
+        assert!(transition(failing, still_failing).is_none());
     }
 
     fn ago(secs: i64) -> DateTime<Utc> {

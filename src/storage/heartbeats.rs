@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::domain::{OrgId, PingSignal, UserId};
+use crate::domain::{CheckSpec, HeartbeatCheck, OrgId, PingSignal, UserId};
 use crate::error::{AppError, Result};
 use crate::security::Cipher;
 use crate::storage::capability_token;
@@ -102,12 +102,18 @@ fn run_ms_of(prev: &PingState, signal: PingSignal, at: DateTime<Utc>) -> Option<
         })
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct PingAccepted {
     pub org_id: OrgId,
     pub target_id: Uuid,
     pub at: DateTime<Utc>,
     pub state: PingState,
+    /// The state this signal replaced, so a verdict it changed can be
+    /// reported without waiting for the scheduler.
+    pub prev: PingState,
+    /// The window the monitor is judged against. `None` when the row is no
+    /// longer a heartbeat, or where no targets table backs the store.
+    pub check: Option<HeartbeatCheck>,
     /// `None` on a start, and on a finish whose start never arrived.
     pub run_ms: Option<u32>,
     /// The signal that ended the pending wait. Nothing else reports on this
@@ -337,7 +343,7 @@ impl HeartbeatStore for PgHeartbeatStore {
         let row: Option<AcceptedRow> = sqlx::query_as(
             "WITH prev AS ( \
                  SELECT hm.target_id, hm.last_ping_at, hm.last_start_at, hm.last_fail_at, \
-                        hm.armed_at, hm.first_ping_at, t.enabled \
+                        hm.armed_at, hm.first_ping_at, t.enabled, t.check_spec \
                  FROM heartbeat_monitors hm \
                  JOIN organizations o ON o.id = hm.org_id AND o.deleted_at IS NULL \
                  JOIN targets t ON t.id = hm.target_id \
@@ -361,7 +367,7 @@ impl HeartbeatStore for PgHeartbeatStore {
                        hm.last_fail_at, hm.last_exit_code, \
                        prev.last_ping_at AS prev_ping_at, prev.last_start_at AS prev_start_at, \
                        prev.last_fail_at AS prev_fail_at, prev.armed_at AS prev_armed_at, \
-                       prev.first_ping_at AS prev_first_ping_at, prev.enabled",
+                       prev.first_ping_at AS prev_first_ping_at, prev.enabled, prev.check_spec",
         )
         .bind(capability_token::hash(raw_token))
         .bind(signal.as_str())
@@ -388,6 +394,7 @@ struct AcceptedRow {
     prev_armed_at: DateTime<Utc>,
     prev_first_ping_at: Option<DateTime<Utc>>,
     enabled: bool,
+    check_spec: serde_json::Value,
 }
 
 impl AcceptedRow {
@@ -413,12 +420,19 @@ impl AcceptedRow {
             self.prev_fail_at,
             None,
         );
+        // A heartbeat spec holds no credential, so it decodes without the
+        // cipher; any other kind, or a spec that fails to decode, judges nothing.
+        let check = serde_json::from_value::<CheckSpec>(self.check_spec)
+            .ok()
+            .and_then(|spec| spec.as_heartbeat().cloned());
         PingAccepted {
             org_id: OrgId(self.org_id),
             target_id: self.target_id,
             at,
             state,
             run_ms: run_ms_of(&prev, signal, at),
+            prev,
+            check,
             first: self.prev_first_ping_at.is_none(),
             enabled: self.enabled,
         }
@@ -606,8 +620,11 @@ impl HeartbeatStore for InMemoryHeartbeatStore {
                     at: now,
                     state: m.monitor.ping_state(),
                     run_ms: run_ms_of(&prev, signal, now),
+                    prev,
+                    // No targets table here: the pause path and the window
+                    // are live-PG concerns.
+                    check: None,
                     first,
-                    // No targets table here; the pause path is a live-PG concern.
                     enabled: true,
                 }
             }))
