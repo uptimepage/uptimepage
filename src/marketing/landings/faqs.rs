@@ -616,7 +616,7 @@ pub(super) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
         "/mcp-server" => &[
             (
                 "What can an AI assistant actually do with my monitoring over MCP?",
-                "Twenty-five tools. Fifteen read: what is down and since when, each check's full configuration, history region by region with DNS, connect, TLS and first-byte timing split out, incidents and their metrics, status pages, and usage against your plan. Ten write: create a monitor, run a check now, pause or resume one, retune how loudly it is watched, acknowledge or resolve an incident, publish it to your status page or take it down, and post an update.",
+                "Thirty-one tools. Sixteen read: what is down and since when, each check's full configuration, history region by region with DNS, connect, TLS and first-byte timing split out, browser flow runs step by step, incidents and their metrics, status pages, the channel inventory, variable keys, and usage against your plan. Fifteen write: create one monitor or a batch, run a check now, pause or resume one, retune how loudly it is watched, acknowledge or resolve an incident, publish it to your status page or take it down, post an update, and create or edit a status page and its components.",
             ),
             (
                 "Can the AI change my monitoring without asking me?",
@@ -636,7 +636,7 @@ pub(super) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "Which MCP clients work with it?",
-                "Any client that speaks Model Context Protocol over streamable HTTP, including Claude, Grok and MCP-capable IDEs. Connect at mcp.uptimepage.dev/mcp with one-click OAuth, or paste a scoped API token. Grok's custom connector asks for a client id instead of registering itself; the MCP docs list the shared one to paste. A client that cannot show a confirmation prompt is offered the fifteen read tools only, since every write would refuse anyway.",
+                "Any client that speaks Model Context Protocol over streamable HTTP, including Claude, Grok and MCP-capable IDEs. Connect at mcp.uptimepage.dev/mcp with one-click OAuth, or paste a scoped API token. Grok's custom connector asks for a client id instead of registering itself; the MCP docs list the shared one to paste. A client that cannot show a confirmation prompt is offered the sixteen read tools only, since every write would refuse anyway.",
             ),
             (
                 "How do I connect Claude to my uptime monitoring?",
@@ -648,7 +648,7 @@ pub(super) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "What permissions does the connector ask for?",
-                "The connector can be granted seven of them, and three come by default, all read: targets:read, status_page:read and incidents:read. The other four are never granted unless your client asks for them and you approve the request: channels:read for the notification channel inventory, targets:write, targets:execute and incidents:write. Approval is for the whole set your client asked for, so check what it wants before you accept it, and a granted write scope is still not enough on its own, because every write asks you to approve that specific action as well. API tokens draw on a wider set of permissions than the connector can ever request.",
+                "The connector can be granted nine of them, and three come by default, all read: targets:read, status_page:read and incidents:read. The other six are never granted unless your client asks for them and you approve the request: channels:read for the notification channel inventory, variables:read for variable keys and never their values, targets:write, targets:execute, incidents:write, and status_page:write, which also needs you to own the org. Approval is for the whole set your client asked for, so check what it wants before you accept it, and a granted write scope is still not enough on its own, because every write asks you to approve that specific action as well. API tokens draw on a wider set of permissions than the connector can ever request.",
             ),
             (
                 "Can I self-host the MCP server?",
