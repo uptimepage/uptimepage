@@ -127,3 +127,34 @@ pub(super) async fn page(State(cfg): State<Arc<MarketingCfg>>, headers: HeaderMa
     let cached = SECURITY_CHECKER_CACHED.get_or_init(|| render(&cfg));
     serve_cached(&headers, cached, &TOOL_CACHE_CONTROL)
 }
+
+#[cfg(test)]
+mod tests {
+    /// The edge must keep serving what this checker grades as a pass, or
+    /// the dogfood report on our own hosts regresses without a test failing.
+    #[test]
+    fn the_edge_csp_passes_our_own_checker() {
+        let caddy =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/deployment/Caddyfile"))
+                .expect("read Caddyfile");
+        let policies: Vec<&str> = caddy
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("Content-Security-Policy "))
+            .collect();
+        assert_eq!(
+            policies.len(),
+            2,
+            "marketing apex and tenant hosts each carry a CSP"
+        );
+        for policy in policies {
+            assert!(policy.contains("object-src 'none'"), "{policy}");
+            assert!(policy.contains("base-uri 'none'"), "{policy}");
+            assert!(policy.contains("script-src 'self'"), "{policy}");
+            assert!(
+                !policy.contains("script-src 'self' 'unsafe-inline'"),
+                "{policy}"
+            );
+        }
+    }
+}

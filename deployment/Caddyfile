@@ -91,6 +91,18 @@
 	}
 }
 
+# Headers every host answers with. HSTS stays per host because only the
+# marketing apex is on the preload list. The deletions make Caddy defer
+# the block, so the values replace whatever the upstream sent.
+(hardening_headers) {
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+		-X-Powered-By
+	}
+}
+
 # ═══════════════════════════════════════════════════════════════════════
 # Operator UI + API
 # ═══════════════════════════════════════════════════════════════════════
@@ -430,15 +442,13 @@ app.{$UPTIMEPAGE_DOMAIN} {
 	# payment: Paddle.js probes ApplePaySession on /pay itself and opens the
 	# checkout in a buy.paddle.com iframe with allow="payment"; a blanket
 	# payment=() hides Apple Pay and Google Pay from the checkout.
+	import hardening_headers
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
-		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy `geolocation=(), microphone=(), camera=(), payment=(self "https://buy.paddle.com" "https://sandbox-buy.paddle.com")`
 		X-Robots-Tag "noindex"
-		-Server
-		-X-Powered-By
+		defer
 	}
 
 	# ─── Access logs ────────────────────────────────────────────────────
@@ -497,12 +507,8 @@ mcp.{$UPTIMEPAGE_DOMAIN} {
 		respond "Not Found" 404
 	}
 
-	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		X-Content-Type-Options "nosniff"
-		-Server
-		-X-Powered-By
-	}
+	import hardening_headers
+	header >Strict-Transport-Security "max-age=31536000; includeSubDomains"
 
 	log {
 		output file /var/log/caddy/access-mcp.log {
@@ -554,17 +560,22 @@ mcp.{$UPTIMEPAGE_DOMAIN} {
 		}
 	}
 
-	# Public cache hints — the app also has its own short-TTL page cache.
-	header Cache-Control "public, max-age=10, stale-while-revalidate=30"
+	# Public cache hint, a default only: the app stamps its own value on
+	# every public API route, and the logo carries a longer immutable one.
+	header ?Cache-Control "public, max-age=10, stale-while-revalidate=30"
 
-	# Strict CSP for the public page.
-	header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
-
-	# No identifiable headers.
+	import hardening_headers
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		-Server
-		-X-Powered-By
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+		# Strict CSP for the public page. style-src keeps 'unsafe-inline'
+		# because each page carries its own colours. No frame-ancestors on
+		# purpose: the badge is meant to be embedded on other sites, and a
+		# customer may frame the whole page the same way. The one form here
+		# is the double-opt-in subscribe box, pinned same-origin by
+		# form-action.
+		Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; form-action 'self'; object-src 'none'; base-uri 'none'"
+		defer
 	}
 
 	log {
@@ -616,10 +627,9 @@ www.{$UPTIMEPAGE_DOMAIN} {
 	}
 
 	# Marketing surfaces are public, cacheable, JS-free; no edge auth.
+	import hardening_headers
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-		X-Content-Type-Options "nosniff"
-		Referrer-Policy "strict-origin-when-cross-origin"
 		X-Frame-Options "DENY"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
 		# CSP for the marketing surface: same-origin static + JSON-LD inline
@@ -629,8 +639,8 @@ www.{$UPTIMEPAGE_DOMAIN} {
 		# redirect chain, and /start hands the hero's URL to the app's login.
 		# connect-src names the two DoH resolvers the DNS tool reads from the
 		# visitor's own browser, which is why that tool needs no egress here.
-		Content-Security-Policy "default-src 'self'; img-src 'self' data: https://uptimepage.{$UPTIMEPAGE_DOMAIN}; style-src 'self'; script-src 'self' https://analytics.{$UPTIMEPAGE_DOMAIN}; connect-src 'self' https://analytics.{$UPTIMEPAGE_DOMAIN} https://cloudflare-dns.com https://dns.google; base-uri 'self'; form-action 'self' https://app.{$UPTIMEPAGE_DOMAIN}; frame-ancestors 'none'"
-		-Server
+		Content-Security-Policy "default-src 'self'; img-src 'self' data: https://uptimepage.{$UPTIMEPAGE_DOMAIN}; style-src 'self'; script-src 'self' https://analytics.{$UPTIMEPAGE_DOMAIN}; connect-src 'self' https://analytics.{$UPTIMEPAGE_DOMAIN} https://cloudflare-dns.com https://dns.google; base-uri 'none'; form-action 'self' https://app.{$UPTIMEPAGE_DOMAIN}; frame-ancestors 'none'; object-src 'none'"
+		defer
 	}
 
 	log {
@@ -680,10 +690,7 @@ analytics.{$UPTIMEPAGE_DOMAIN} {
 
 	reverse_proxy umami:3000
 
-	header {
-		-Server
-		-X-Powered-By
-	}
+	import hardening_headers
 
 	log {
 		output file /var/log/caddy/access-analytics.log {
