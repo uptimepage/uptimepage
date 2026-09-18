@@ -76,18 +76,25 @@ pub(crate) fn reject_passive_probe(check: &CheckSpec) -> Result<()> {
 }
 
 /// Apply the plan's flow limits: whether the kind is available at all, and how
-/// long a journey it may declare. Runs on every admission path (create, update,
-/// bulk, test) so a flow the plan would refuse to save is also refused a test.
+/// long a journey it may declare. Runs on every admission path that can add a
+/// flow (create, bulk, test) so a flow the plan would refuse to save is also
+/// refused a test. An edit goes through [`gate_flow_steps`] alone.
 pub(crate) fn gate_flow(check: &CheckSpec, plan: &crate::domain::Plan) -> Result<()> {
-    let CheckSpec::Flow(flow) = check else {
-        return Ok(());
-    };
-    if plan.max_flow_checks <= 0 {
+    if matches!(check, CheckSpec::Flow(_)) && plan.max_flow_checks <= 0 {
         return Err(AppError::forbidden_code(
             codes::FLOW_CHECKS_DISABLED,
             "flow monitors are not available on your plan",
         ));
     }
+    gate_flow_steps(check, plan)
+}
+
+/// The step half of [`gate_flow`], on its own for an edit: a downgraded org
+/// keeps fixing a flow it already runs, but cannot grow one past the plan.
+pub(crate) fn gate_flow_steps(check: &CheckSpec, plan: &crate::domain::Plan) -> Result<()> {
+    let CheckSpec::Flow(flow) = check else {
+        return Ok(());
+    };
     let allowed = crate::domain::FlowCheck::allowed_steps(plan.max_flow_steps);
     if flow.steps.len() > allowed {
         return Err(AppError::bad_request_field(
@@ -221,12 +228,12 @@ pub(crate) fn check_abuse(
     Err(hit.into_app_error())
 }
 
-/// The PATCH counterpart of the floor check in [`validate_new_target`]. A kind
-/// change is validated against the stored interval, since switching to a slower
-/// kind while omitting `interval` would otherwise keep a cadence that kind
-/// rejects. A heartbeat window that shrinks with no interval sent lowers the
-/// stored interval to the new cadence, rather than refusing a field the
-/// caller never named. A missing target is left for the update itself to 404.
+/// The PATCH counterpart of the floor check in [`validate_new_target`]. Either
+/// half can arrive alone, so the floor and the heartbeat pairing are judged on
+/// the merge of the request and the stored row. A heartbeat window that shrinks
+/// with no interval sent lowers the stored interval to the new cadence, rather
+/// than refusing a field the caller never named. A missing target is left for
+/// the update itself to 404.
 pub(crate) async fn validate_patch_interval(
     state: &AppState,
     org: OrgId,

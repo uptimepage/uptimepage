@@ -390,6 +390,8 @@ Use a dedicated low-privilege test account, never a real or admin credential: th
 
 Server returns the full `Target` including `id` (UUIDv7), `created_at`, `updated_at`, and `write_source`. The assigned regions are read back from `GET /api/v1/targets/{id}/regions` and changed with `PUT` on the same path; a `regions` array that names an unknown or disabled id, or any id on a heartbeat, is `422 REGION_INVALID`, and one wider than the plan allows is `422 QUOTA_EXCEEDED`. A `POST /api/v1/targets/bulk` item takes the same field; an item without it shares the default set.
 
+A monitor's kind is fixed after creation. A `check` sent on `PATCH` must keep the stored `type`; one whose `type` differs is `400 Bad Request` (`CHECK_KIND_IMMUTABLE`, `field: check.type`), since the monitor keeps its id and would otherwise carry two kinds' results in one history. Create a new monitor to watch something else.
+
 Every JSON request body, on `/api/v1` and on the operator and sign-in endpoints alike, may carry only the keys its resource documents. Anything else, a misspelt key or a read-only field echoed back from a `GET` such as `id` or `write_source`, is `422 INVALID_JSON` naming the key, so a setting under the wrong name fails loudly rather than silently leaving the default in place. A body that is not JSON at all is `400 INVALID_JSON`; one sent without `Content-Type: application/json` is `415 INVALID_CONTENT_TYPE`. A key inside a nested object is refused the same way and named by its path, `check.timeuot` or `check.steps[1].selctor`; the message lists what that object accepts. Map keys, such as the names under `check.headers`, are free.
 
 `write_source` is a read-only field recording where the resource was last
@@ -447,7 +449,7 @@ after it is created.
 
 ### Validation errors
 
-`POST` and `PUT` return `400 Bad Request` for:
+`POST` and `PATCH` return `400 Bad Request` for:
 
 - Unsupported URL scheme (`url scheme '...' not allowed` — only `http` and `https`)
 - Missing URL host, empty TCP host, or TCP/TLS port `0`
@@ -457,6 +459,7 @@ after it is created.
 - `domain_expiry` create is refused when the domain's TLD registry publishes no expiry data: the check could never succeed
 - **SSRF guard** — `target address ... is in a blocked range`. Triggered when the URL or TCP host is an IP literal that resolves to loopback / private / link-local / reserved space (see [Configuration → `security.allow_private_targets`](configuration.md)). Hostname literals are checked again at connect time after DNS resolution, so DNS rebinding cannot bypass the guard.
 - **Redaction sentinel** — `basic_auth contains redaction sentinel — re-supply the real credential` or the equivalent for `bearer_token`. Rejected to prevent a `GET` → `PATCH` round-trip from silently overwriting the stored credential with `"***"`.
+- **Kind change** (`PATCH` only) — `a monitor's check type is fixed after creation; create a new monitor to watch something else` (`CHECK_KIND_IMMUTABLE`). The stored `check.type` is the only one a `PATCH` may send.
 - **TLS verification + credentials** — `verify_tls = false cannot be combined with basic_auth or bearer_token over https`. When verification is disabled any host presenting a forged certificate can collect the stored credential on every check interval. Set `verify_tls = true` (recommended) or remove the credential from the target.
 
 ## Notification channels
@@ -628,7 +631,7 @@ Every 4xx and 5xx response uses one wire shape:
 - `details` carries optional structured context (e.g., `{ "range": "127.0.0.0/8" }` for SSRF rejections).
 - `trace_id` is the W3C `traceparent` when tracing is enabled.
 
-Common codes: `INVALID_URL_SCHEME`, `INVALID_URL_FORMAT`, `SSRF_BLOCKED`, `INVALID_INTERVAL`, `INVALID_TIMEOUT`, `INVALID_TCP_PORT`, `INVALID_TCP_HOST`, `INVALID_PING_HOST`, `INVALID_HEARTBEAT_PARAMS`, `HEARTBEAT_NOT_PROBEABLE`, `INVALID_STATUS_RANGE`, `INVALID_TLS_CERT_PARAMS`, `INVALID_DOMAIN_PARAMS`, `INVALID_FLOW_PARAMS`, `FLOW_CHECKS_DISABLED`, `NO_FLOW_CAPABLE_AGENT`, `SMS_ALERTS_DISABLED`, `INVALID_TLS_CRED_COMBO`, `INVALID_ALERT_CONFIG`, `REDACTION_SENTINEL`, `BULK_EMPTY`, `BULK_TOO_LARGE`, `BAD_TIME_RANGE`, `TARGET_NOT_FOUND`, `CHANNEL_NOT_FOUND`, `CHANNEL_NAME_TAKEN`, `CHANNEL_NAME_INVALID`, `CHANNEL_QUOTA_EXCEEDED`, `INVALID_CHANNEL_CONFIG`, `CHANNEL_TEST_FAILED`, `CIRCUIT_OPEN`, `DEPENDENCY_DOWN`, `INTERNAL`.
+Common codes: `INVALID_URL_SCHEME`, `INVALID_URL_FORMAT`, `SSRF_BLOCKED`, `INVALID_INTERVAL`, `INVALID_TIMEOUT`, `INVALID_TCP_PORT`, `INVALID_TCP_HOST`, `INVALID_PING_HOST`, `INVALID_HEARTBEAT_PARAMS`, `HEARTBEAT_NOT_PROBEABLE`, `INVALID_STATUS_RANGE`, `INVALID_TLS_CERT_PARAMS`, `INVALID_DOMAIN_PARAMS`, `INVALID_FLOW_PARAMS`, `FLOW_CHECKS_DISABLED`, `NO_FLOW_CAPABLE_AGENT`, `SMS_ALERTS_DISABLED`, `INVALID_TLS_CRED_COMBO`, `INVALID_ALERT_CONFIG`, `REDACTION_SENTINEL`, `CHECK_KIND_IMMUTABLE`, `BULK_EMPTY`, `BULK_TOO_LARGE`, `BAD_TIME_RANGE`, `TARGET_NOT_FOUND`, `CHANNEL_NOT_FOUND`, `CHANNEL_NAME_TAKEN`, `CHANNEL_NAME_INVALID`, `CHANNEL_QUOTA_EXCEEDED`, `INVALID_CHANNEL_CONFIG`, `CHANNEL_TEST_FAILED`, `CIRCUIT_OPEN`, `DEPENDENCY_DOWN`, `INTERNAL`.
 
 ### Quota, rate-limit and abuse codes
 

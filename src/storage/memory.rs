@@ -835,6 +835,13 @@ impl TargetStore for InMemoryTargetStore {
         let Some(t) = guard.iter_mut().find(|t| t.id == id) else {
             return Ok(None);
         };
+        if update
+            .check
+            .as_ref()
+            .is_some_and(|c| c.kind() != t.check.kind())
+        {
+            return Err(crate::error::AppError::check_kind_immutable());
+        }
         if let Some(n) = update.name {
             t.name = n;
         }
@@ -1169,6 +1176,86 @@ impl crate::storage::admin::EnabledTargetStream for InMemoryTargetStore {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    /// The row keeps its id, so the store itself holds the kind: a writer that
+    /// skips the API guard is refused the same way.
+    #[tokio::test]
+    async fn an_update_refuses_a_check_of_another_kind() {
+        use crate::domain::CheckSpec;
+
+        let store = InMemoryTargetStore::new();
+        let org = OrgId(Uuid::nil());
+        let tcp = |port: u16| {
+            CheckSpec::Tcp(crate::domain::TcpCheck {
+                host: "example.com".into(),
+                port,
+                timeout: std::time::Duration::from_secs(3),
+            })
+        };
+        let id = store
+            .create(
+                org,
+                NewTarget {
+                    name: "m".into(),
+                    check: tcp(443),
+                    interval: std::time::Duration::from_secs(60),
+                    enabled: true,
+                    tags: vec![],
+                    alerts: Default::default(),
+                    region_policy: None,
+                    alert_confirmations: 2,
+                    notify_recovery: true,
+                    renotify_interval_secs: 3600,
+                    group_name: None,
+                    owner_user_id: None,
+                    regions: None,
+                },
+                WriteSource::Ui,
+                i64::MAX,
+                i64::MAX,
+            )
+            .await
+            .unwrap()
+            .id;
+        let patch = |check: CheckSpec| TargetUpdate {
+            check: Some(check),
+            ..Default::default()
+        };
+
+        let refused = store
+            .update(
+                org,
+                id,
+                TargetUpdate {
+                    name: Some("renamed".into()),
+                    ..patch(CheckSpec::Ping(crate::domain::PingCheck {
+                        host: "example.com".into(),
+                        timeout: std::time::Duration::from_secs(3),
+                    }))
+                },
+                None,
+                None,
+            )
+            .await
+            .expect_err("kind swap");
+        assert!(matches!(
+            refused,
+            crate::error::AppError::BadRequest {
+                code: "CHECK_KIND_IMMUTABLE",
+                ..
+            }
+        ));
+        let kept = store.get(org, id).await.unwrap().unwrap();
+        assert_eq!(kept.check.kind(), "tcp");
+        assert_eq!(kept.name, "m", "a refused update writes nothing");
+
+        let edited = store
+            .update(org, id, patch(tcp(8443)), None, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(edited.check.kind(), "tcp");
+    }
 
     /// A bulk add merges into what each monitor already carries, so a legal
     /// request can still produce an illegal list. The cap lands on the result,

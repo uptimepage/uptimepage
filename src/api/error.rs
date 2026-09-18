@@ -86,6 +86,8 @@ pub mod codes {
     pub const EMPTY_NAME: &str = "EMPTY_NAME";
     pub const INVALID_NAME: &str = "INVALID_NAME";
     pub const REDACTION_SENTINEL: &str = "REDACTION_SENTINEL";
+    /// A PATCH `check` whose `type` differs from the stored monitor's.
+    pub const CHECK_KIND_IMMUTABLE: &str = "CHECK_KIND_IMMUTABLE";
     pub const BULK_EMPTY: &str = "BULK_EMPTY";
     pub const BULK_VALIDATION: &str = "BULK_VALIDATION";
     pub const BULK_TOO_LARGE: &str = "BULK_TOO_LARGE";

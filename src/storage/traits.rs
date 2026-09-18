@@ -160,7 +160,8 @@ pub trait TargetStore: Send + Sync {
     /// must not claim authorship and erase another tool's marker. An update that
     /// flips `enabled` writes a `target.paused`/`target.resumed` audit row in the
     /// same transaction, since a paused monitor simply stops reporting and
-    /// nothing else records who stopped it.
+    /// nothing else records who stopped it. A `check` of another kind is
+    /// refused (`CHECK_KIND_IMMUTABLE`): the row keeps its id and its history.
     async fn update(
         &self,
         org: OrgId,

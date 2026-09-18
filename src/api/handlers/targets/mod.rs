@@ -43,7 +43,7 @@ mod validate;
 use dispatch::{dispatch_first_check, pick_flow_region};
 use validate::{
     canonicalize_check, carry_credentials, carry_flags, carry_flow_secrets, check_abuse,
-    ensure_flow_regions_covered, gate_flow, reject_passive_probe, ssrf_guard,
+    ensure_flow_regions_covered, gate_flow, gate_flow_steps, reject_passive_probe, ssrf_guard,
     take_cleared_credentials, validate_alerts, validate_check, validate_new_target,
     validate_owner_is_member, verify_alert_channels,
 };
@@ -234,7 +234,7 @@ pub async fn create(
     path = "/api/v1/targets/{id}",
     tag = "targets",
     summary = "Partial update of a target",
-    description = "Omit fields you don't want to change. For HTTP credentials: omit `basic_auth`/`bearer_token` (or send null) to keep the stored value, send an empty sentinel (`[\"\",\"\"]` / `\"\"`) to clear it, or a real value to replace it. The redaction sentinels `[\"***\",\"***\"]` / `\"***\"` return 400, so never echo them back.",
+    description = "Omit fields you don't want to change. A `check` must keep the stored `type`: a monitor's kind is fixed after creation (400 `CHECK_KIND_IMMUTABLE`), so create a new monitor to watch something else. For HTTP credentials: omit `basic_auth`/`bearer_token` (or send null) to keep the stored value, send an empty sentinel (`[\"\",\"\"]` / `\"\"`) to clear it, or a real value to replace it. The redaction sentinels `[\"***\",\"***\"]` / `\"***\"` return 400, so never echo them back.",
     params(("id" = Uuid, Path)),
     request_body(content = TargetUpdate, example = json!({
         "enabled": false,
@@ -242,7 +242,7 @@ pub async fn create(
     })),
     responses(
         (status = 200, body = Target),
-        (status = 400, description = "Validation error; includes REDACTION_SENTINEL code if `***` submitted", body = ApiError, example = json!({
+        (status = 400, description = "Validation error; REDACTION_SENTINEL if `***` submitted, CHECK_KIND_IMMUTABLE if `check.type` differs from the stored kind", body = ApiError, example = json!({
             "error": {"code": "REDACTION_SENTINEL", "message": "bearer_token contains redaction sentinel", "field": "check.bearer_token", "details": null, "trace_id": null}
         })),
         (status = 404, body = ApiError),
@@ -256,53 +256,49 @@ pub async fn update(
     Path(id): Path<Uuid>,
     Json(mut update): Json<TargetUpdate>,
 ) -> Result<Redacted<Target>> {
-    // Read once and share: the flow paths, the credential carry, and the
-    // interval floor all want the same row.
+    // Read once and share: the kind guard, the credential carry, the flow
+    // secret carry, and the interval floor all want the same row.
     let mut stored_target: Option<Target> = None;
     if let Some(check) = update.check.as_mut() {
         canonicalize_check(check)?;
-        if let crate::domain::CheckSpec::Http(http) = check {
+        let stored = state
+            .target_store
+            .get(org, id)
+            .await?
+            .ok_or_else(|| AppError::not_found(codes::TARGET_NOT_FOUND, "target not found"))?;
+        if check.kind() != stored.check.kind() {
+            return Err(AppError::check_kind_immutable());
+        }
+        if let CheckSpec::Http(http) = check {
             let (cleared_basic, cleared_bearer) = take_cleared_credentials(http);
             let (carry_basic, carry_bearer) = carry_flags(http, cleared_basic, cleared_bearer);
             if (carry_basic || carry_bearer)
-                && let Some(existing) = state.target_store.get(org, id).await?
-                && let crate::domain::CheckSpec::Http(stored) = &existing.check
+                && let CheckSpec::Http(stored_http) = &stored.check
             {
-                carry_credentials(http, stored, carry_basic, carry_bearer);
+                carry_credentials(http, stored_http, carry_basic, carry_bearer);
             }
         }
-        // For a flow edit, read the stored monitor once: carry masked fill
-        // secrets forward (an untouched `***` keeps the stored value) before
-        // validation, and reuse it to tell a net-new flow from an edit.
-        if matches!(check, crate::domain::CheckSpec::Flow(_)) {
-            stored_target = state.target_store.get(org, id).await?;
-        }
-        if let crate::domain::CheckSpec::Flow(flow) = check
-            && let Some(existing) = &stored_target
-            && let crate::domain::CheckSpec::Flow(stored) = &existing.check
+        // An untouched `***` keeps the stored fill value, so carry before
+        // validation.
+        if let CheckSpec::Flow(flow) = check
+            && let CheckSpec::Flow(stored_flow) = &stored.check
         {
-            carry_flow_secrets(flow, stored);
+            carry_flow_secrets(flow, stored_flow);
         }
         validate_check(check, &ssrf_guard(&state))?;
         check_abuse(&state, org, check)?;
         validate_variable_refs(&state, org, check).await?;
-        if matches!(check, crate::domain::CheckSpec::Flow(_)) {
-            let was_flow = matches!(
-                stored_target.as_ref().map(|t| &t.check),
-                Some(crate::domain::CheckSpec::Flow(_))
-            );
-            // Gate + count only a net-new flow; editing an existing one stays
-            // allowed even if the plan has since dropped the capability, so a
-            // downgraded org can still fix a monitor it already runs.
-            if !was_flow {
-                let plan = state.quotas.limit_for_org(org).await?;
-                gate_flow(check, &plan)?;
-                state.quotas.check_can_create_flow(org, None, 1).await?;
-            }
+        // A flow edit is never a net-new flow, so the capability and the count
+        // are not re-checked: a downgraded org can still fix a monitor it
+        // already runs. The step cap still binds.
+        if matches!(check, CheckSpec::Flow(_)) {
+            let plan = state.quotas.limit_for_org(org).await?;
+            gate_flow_steps(check, &plan)?;
             if let Some(regions) = state.target_store.regions_for_target(org, id).await? {
                 ensure_flow_regions_covered(&state, check, &regions).await?;
             }
         }
+        stored_target = Some(stored);
     }
     if let Some(alerts) = &update.alerts {
         validate_alerts(alerts)?;
@@ -326,16 +322,12 @@ pub async fn update(
     validate_patch_interval(&state, org, id, &mut update, stored_target.as_ref()).await?;
     // The disabled→enabled re-arm is folded into the store's enable statement,
     // so this path (and every other enable surface) inherits it.
-    let check_rewritten = update.check.is_some();
     match state
         .target_store
         .update(org, id, update, Some(source), Some(user))
         .await?
     {
         Some(t) => {
-            if check_rewritten {
-                sync_heartbeat_kind(&state, org, &t).await?;
-            }
             invalidate_pages_for(&state, org, &[id]).await;
             Ok(Redacted::new(t))
         }
@@ -355,18 +347,6 @@ async fn ensure_heartbeat(state: &AppState, org: OrgId, target_id: Uuid) -> Resu
         .ensure(org, target_id)
         .await?
         .ok_or_else(|| AppError::Other(anyhow::anyhow!("heartbeat row missing for {target_id}")))?;
-    Ok(())
-}
-
-/// Reconcile heartbeat state after a check rewrite: a heartbeat kind keeps the
-/// ping token, any other kind revokes it. Idempotent, so concurrent rewrites
-/// converge on the final kind.
-async fn sync_heartbeat_kind(state: &AppState, org: OrgId, t: &Target) -> Result<()> {
-    if t.check.is_passive() {
-        ensure_heartbeat(state, org, t.id).await?;
-    } else {
-        state.heartbeat_store.remove(org, t.id).await?;
-    }
     Ok(())
 }
 

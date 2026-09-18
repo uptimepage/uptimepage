@@ -2,7 +2,8 @@
 //! single-statement ping recording (unknown / deleted-target / deleted-org →
 //! None), the store-level disabled→enabled re-arm, per-org isolation, the
 //! refresh-time row self-heal, the never-pinged dispatch gate, token rotation
-//! (overlap, revoke-now, expiry, audit), and migrations 031 and 047.
+//! (overlap, revoke-now, expiry, audit), the kind guard on the target row, and
+//! migrations 031 and 047.
 //!
 //! Live-PG ignored: needs `DATABASE_URL`. Migrations auto-apply on first
 //! connect. Point it at a throwaway DB to also validate migration 031.
@@ -294,7 +295,7 @@ async fn dead_tokens_stop_recording_and_sync_heals_rows_live_pg() {
             .is_none()
     );
 
-    // Kind switch away: remove() revokes the token.
+    // A kind switch is refused at the row, so the token keeps recording.
     let switched = make_heartbeat_target(&pool, org_a, "switched", true).await;
     let tok_switched = store
         .ensure(org_a, switched)
@@ -304,7 +305,7 @@ async fn dead_tokens_stop_recording_and_sync_heals_rows_live_pg() {
         .token
         .unwrap();
     let url = url::Url::parse("https://example.com/").unwrap();
-    targets
+    let refused = targets
         .update(
             org_a,
             switched,
@@ -319,14 +320,23 @@ async fn dead_tokens_stop_recording_and_sync_heals_rows_live_pg() {
             None,
         )
         .await
-        .unwrap();
-    assert!(store.remove(org_a, switched).await.unwrap());
+        .expect_err("the store refuses a check of another kind");
+    assert!(
+        matches!(
+            refused,
+            uptimepage::error::AppError::BadRequest {
+                code: "CHECK_KIND_IMMUTABLE",
+                ..
+            }
+        ),
+        "{refused:?}"
+    );
     assert!(
         store
             .record_signal_by_token(&tok_switched, PingSignal::Success, None)
             .await
             .unwrap()
-            .is_none()
+            .is_some()
     );
 
     // Refresh-time self-heal: a heartbeat target with a lost row gets one

@@ -667,3 +667,38 @@ async fn accepts_verify_tls_false_without_credentials() {
     });
     assert_eq!(post_target(payload).await, StatusCode::CREATED);
 }
+
+/// The monitor keeps its id across a PATCH, so a swapped kind would pile a
+/// second kind's results onto the first one's history.
+#[tokio::test]
+async fn patch_refuses_a_check_of_another_kind() {
+    let app = app();
+    let id = post_and_body(app.clone(), tcp_target("db")).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let path = format!("/api/v1/targets/{id}");
+    let swapped = json!({ "check": ssrf_payload("https://example.com/")["check"] });
+    let resp = app
+        .clone()
+        .oneshot(common::json_request("PATCH", &path, swapped))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let err = body_json(resp).await["error"].clone();
+    assert_eq!(err["code"], "CHECK_KIND_IMMUTABLE");
+    assert_eq!(err["field"], "check.type");
+
+    let same_kind = json!({
+        "check": {"type": "tcp", "host": "db.example.com", "port": 5433, "timeout": 1000}
+    });
+    let resp = app
+        .oneshot(common::json_request("PATCH", &path, same_kind))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["check"]["type"], "tcp");
+    assert_eq!(body["check"]["port"], 5433);
+}

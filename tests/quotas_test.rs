@@ -445,51 +445,6 @@ async fn hourly_interval_rejected_on_domain_expiry_patch() {
     assert_eq!(body_json(resp).await["error"]["code"], "MIN_CHECK_INTERVAL");
 }
 
-/// Switching kind without restating the interval must not keep a cadence the
-/// new kind rejects.
-#[tokio::test]
-async fn kind_change_revalidates_the_stored_interval_on_patch() {
-    let Some(pool) = pg_pool_from_env().await else {
-        return;
-    };
-    let (app, _org) = build_test_app_with_pg_store(pool.clone(), |_| {}).await;
-    let created = app
-        .clone()
-        .oneshot(
-            Request::post("/api/v1/targets")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    target_payload(&format!("http-{}", Uuid::now_v7()), 300).to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(created.status(), StatusCode::CREATED);
-    let id = body_json(created).await["id"].as_str().unwrap().to_string();
-
-    let patch = json!({
-        "check": {
-            "type": "domain_expiry",
-            "domain": "example.com",
-            "warn_days": 30,
-            "critical_days": 7,
-            "timeout": 5000
-        }
-    });
-    let resp = app
-        .oneshot(
-            Request::patch(format!("/api/v1/targets/{id}"))
-                .header("content-type", "application/json")
-                .body(Body::from(patch.to_string()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(body_json(resp).await["error"]["code"], "MIN_CHECK_INTERVAL");
-}
-
 // ── the floor is enforced on the *bulk* path too ────────────────
 #[tokio::test]
 async fn sub_minimum_interval_rejected_on_bulk() {

@@ -129,8 +129,6 @@ pub trait HeartbeatStore: Send + Sync {
     async fn ensure(&self, org: OrgId, target_id: Uuid) -> Result<Option<HeartbeatMonitor>>;
     /// Never mints, so a read-scoped credential can't create a write capability.
     async fn get(&self, org: OrgId, target_id: Uuid) -> Result<Option<HeartbeatMonitor>>;
-    /// Target deletes cascade via the FK; this is for a kind switched away.
-    async fn remove(&self, org: OrgId, target_id: Uuid) -> Result<bool>;
     /// Same row, new token. The old one keeps pinging for
     /// [`PREV_TOKEN_OVERLAP`] unless `revoke_previous`. `None` outside `org`.
     async fn rotate(
@@ -239,17 +237,6 @@ impl HeartbeatStore for PgHeartbeatStore {
         .await
         .map_err(db_err)?;
         Ok(row.map(|r| r.into_monitor(self.cipher.as_deref())))
-    }
-
-    async fn remove(&self, org: OrgId, target_id: Uuid) -> Result<bool> {
-        let res =
-            sqlx::query("DELETE FROM heartbeat_monitors WHERE org_id = $1 AND target_id = $2")
-                .bind(org.0)
-                .bind(target_id)
-                .execute(&self.pool)
-                .await
-                .map_err(db_err)?;
-        Ok(res.rows_affected() > 0)
     }
 
     async fn rotate(
@@ -522,13 +509,6 @@ impl HeartbeatStore for InMemoryHeartbeatStore {
             .map(|m| m.monitor.clone()))
     }
 
-    async fn remove(&self, org: OrgId, target_id: Uuid) -> Result<bool> {
-        let mut st = self.inner.lock().unwrap();
-        let before = st.len();
-        st.retain(|m| !(m.org == org && m.target_id == target_id));
-        Ok(st.len() < before)
-    }
-
     async fn rotate(
         &self,
         org: OrgId,
@@ -732,22 +712,6 @@ mod tests {
             store.get(org, target).await.unwrap().unwrap().first_ping_at,
             wired,
             "later pings leave the wired-up point alone"
-        );
-    }
-
-    #[tokio::test]
-    async fn removed_token_stops_recording() {
-        let store = InMemoryHeartbeatStore::new();
-        let org = OrgId(Uuid::new_v4());
-        let target = Uuid::new_v4();
-        let m = store.ensure(org, target).await.unwrap().unwrap();
-        assert!(store.remove(org, target).await.unwrap());
-        assert!(
-            store
-                .record_signal_by_token(m.token.as_deref().unwrap(), PingSignal::Success, None)
-                .await
-                .unwrap()
-                .is_none()
         );
     }
 

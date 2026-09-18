@@ -284,6 +284,15 @@ fn a_plan_cannot_buy_more_steps_than_the_engine_runs() {
 }
 
 #[test]
+fn an_edit_keeps_the_step_cap_but_not_the_capability_check() {
+    let downgraded = plan_with_flow(0, 3);
+    gate_flow(&flow_of(3), &downgraded).expect_err("a new flow is refused outright");
+    gate_flow_steps(&flow_of(3), &downgraded).expect("an existing flow can still be edited");
+    let err = gate_flow_steps(&flow_of(4), &downgraded).expect_err("but not grown past the plan");
+    assert_bad_request_with_field(err, "check.steps");
+}
+
+#[test]
 fn a_non_flow_check_ignores_the_flow_limits() {
     gate_flow(&head_spec(None), &plan_with_flow(0, 1)).expect("http is not gated by flow caps");
 }

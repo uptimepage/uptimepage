@@ -5,11 +5,13 @@
 
 mod common;
 
+use std::time::Duration;
+
 use axum::body::Body;
-use axum::http::{Method, Request, StatusCode};
+use axum::http::{HeaderValue, Method, Request, StatusCode};
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
-use uptimepage::domain::OrgId;
+use uptimepage::domain::{CheckSpec, HeartbeatCheck, NewTarget, OrgId, WriteSource};
 use uuid::Uuid;
 
 use common::build_test_app_state;
@@ -527,20 +529,43 @@ async fn rotation_routes_refuse_a_monitor_that_is_not_a_heartbeat() {
 
 /// A row lost to a partial create has never shown a URL, so rotate mints one
 /// and stops rather than spending the overlap slot on a token nobody holds.
+/// The target is written straight to the store, the state a create that died
+/// before minting leaves behind.
 #[tokio::test]
 async fn rotating_a_healed_row_mints_without_parking_a_phantom_overlap() {
     let state = common::build_test_app_state(|_| {});
     let router = authed(&state);
-    let id = create_heartbeat(&router, "healed").await;
-    let target_id = Uuid::parse_str(&id).unwrap();
-    assert!(
-        state
-            .heartbeat_store
-            .remove(common::test_org_id(), target_id)
-            .await
-            .unwrap(),
-        "drop the row the way a partial create would"
-    );
+    let id = state
+        .target_store
+        .create(
+            common::test_org_id(),
+            NewTarget {
+                name: "healed".into(),
+                check: CheckSpec::Heartbeat(HeartbeatCheck {
+                    period: Duration::from_secs(300),
+                    grace: Duration::from_secs(300),
+                    max_runtime: None,
+                }),
+                interval: Duration::from_secs(60),
+                enabled: true,
+                tags: vec![],
+                alerts: Default::default(),
+                region_policy: Default::default(),
+                alert_confirmations: 2,
+                notify_recovery: true,
+                renotify_interval_secs: 3600,
+                group_name: None,
+                owner_user_id: None,
+                regions: None,
+            },
+            WriteSource::Api,
+            i64::MAX,
+            i64::MAX,
+        )
+        .await
+        .unwrap()
+        .id
+        .to_string();
 
     let res = rotate(&router, &id, Some(serde_json::json!({}))).await;
     assert_eq!(res.status(), StatusCode::OK);
@@ -555,4 +580,55 @@ async fn rotating_a_healed_row_mints_without_parking_a_phantom_overlap() {
         ping(&router, &token_of(&info["ping_url"])).await,
         StatusCode::OK
     );
+}
+
+/// A refused kind swap leaves the token in place, and a same-kind edit never
+/// touches it, so a cron that pings the old URL keeps counting.
+#[tokio::test]
+async fn a_kind_swap_is_refused_and_the_ping_token_survives_a_check_edit() {
+    let state = common::build_test_app_state(|_| {});
+    let router = authed(&state);
+    let id = create_heartbeat(&router, "cron").await;
+    let token = token_of(&heartbeat_of(&router, &id).await["ping_url"]);
+
+    let patch = |body: serde_json::Value| {
+        let router = router.clone();
+        let mut req = common::json_request("PATCH", &format!("/api/v1/targets/{id}"), body);
+        req.headers_mut()
+            .insert("X-Requested-With", HeaderValue::from_static("uptimepage"));
+        async move { router.oneshot(req).await.unwrap() }
+    };
+
+    let res = patch(serde_json::json!({
+        "check": {
+            "type": "http",
+            "url": "https://example.com/",
+            "method": "GET",
+            "timeout": 5000,
+            "follow_redirects": false,
+            "max_redirects": 0,
+            "expected_status": { "kind": "exact", "value": 200 },
+            "headers": {},
+            "verify_tls": true
+        }
+    }))
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        common::body_json(res).await["error"]["code"],
+        "CHECK_KIND_IMMUTABLE"
+    );
+    assert_eq!(ping(&router, &token).await, StatusCode::OK);
+
+    let res = patch(serde_json::json!({
+        "check": { "type": "heartbeat", "period": 600000, "grace": 300000 }
+    }))
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        token_of(&heartbeat_of(&router, &id).await["ping_url"]),
+        token,
+        "a same-kind edit keeps the token"
+    );
+    assert_eq!(ping(&router, &token).await, StatusCode::OK);
 }

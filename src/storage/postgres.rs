@@ -57,6 +57,12 @@ fn owner_not_member() -> AppError {
     )
 }
 
+fn kind_changed(e: &sqlx::Error) -> bool {
+    e.as_database_error().is_some_and(|d| {
+        d.code().as_deref() == Some("23514") && d.constraint() == Some("targets_kind_immutable")
+    })
+}
+
 impl PostgresTargetStore {
     /// Open the pool and run Postgres migrations. Returns just the pool so
     /// startup can provision the default org before constructing the store.
@@ -648,9 +654,14 @@ impl TargetStore for PostgresTargetStore {
             Some(tx) => query.fetch_optional(&mut **tx).await,
             None => query.fetch_optional(&self.pool).await,
         }
-        .map_err(|e| match owner_left_the_org(&e) {
-            true => owner_not_member(),
-            false => anyhow::Error::new(e).context("update target").into(),
+        .map_err(|e| {
+            if owner_left_the_org(&e) {
+                owner_not_member()
+            } else if kind_changed(&e) {
+                AppError::check_kind_immutable()
+            } else {
+                anyhow::Error::new(e).context("update target").into()
+            }
         })?;
         if let Some(mut tx) = tx {
             // Only the enabled flip is audited here. The rest of an edit is

@@ -237,6 +237,17 @@ impl AppError {
         }
     }
 
+    /// A `check` whose `type` differs from the monitor's stored kind. The row
+    /// keeps its id, so a swapped kind would pile a second kind's results onto
+    /// the first one's history.
+    pub fn check_kind_immutable() -> Self {
+        Self::bad_request_field(
+            codes::CHECK_KIND_IMMUTABLE,
+            "a monitor's check type is fixed after creation; create a new monitor to watch something else",
+            "check.type",
+        )
+    }
+
     /// Build the specific `MIN_CHECK_INTERVAL` 422 (requested interval below
     /// the plan floor).
     pub fn min_check_interval(requested: i64, minimum: i64, plan: impl Into<String>) -> Self {
