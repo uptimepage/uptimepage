@@ -1,7 +1,7 @@
 +++
 title = "Why I dropped reqwest for hyper in my Rust uptime prober"
 date = "2026-07-07"
-updated = "2026-09-05"
+updated = "2026-09-18"
 slug = "http-prober-in-rust-no-reqwest"
 excerpt = "I swapped reqwest for raw hyper to probe uptime in Rust. Four things it taught me, each one a detail a normal HTTP client hides from you."
 tags = ["rust", "hyper", "monitoring", "devops"]
@@ -87,7 +87,7 @@ let addrs: Vec<SocketAddr> = p
     .collect();
 ```
 
-Resolve first, filter every resolved IP, then connect only to what survives. And because each redirect hop reconnects through this same guarded path, a `Location:` header pointing at `169.254.169.254` gets rejected exactly like a directly typed one. The safety sits in the single place all connections pass through, so there is nothing to forget on the redirect path. If you ever fetch a user-supplied URL server-side, this is the check that matters, and the hostname version is not it. The [HTTP header and redirect checker](/tools/http-header-checker) is this connector pointed at whatever URL you paste: every hop guarded the same way, and the chain printed rather than followed silently.
+Resolve first, filter every resolved IP, then connect only to what survives. And because each redirect hop reconnects through this same guarded path, a `Location:` header pointing at `169.254.169.254` gets rejected exactly like a directly typed one. The safety sits in the single place all connections pass through, so there is nothing to forget on the redirect path. If you ever fetch a user-supplied URL server-side, this is the check that matters, and the hostname version is not it. The [HTTP header and redirect checker](/tools/http-header-checker) is this connector pointed at whatever URL you paste: every hop guarded the same way, and the chain printed rather than followed silently. The [website security checker](/tools/website-security-checker) adds no probe of its own: it calls this one and the certificate reader, then grades the answers in the browser.
 
 ## 4. Stop grepping your error strings
 

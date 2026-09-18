@@ -439,7 +439,7 @@ docker compose up -d"#,
     Landing {
         path: "/uptime-monitoring-for-developers",
         created: "2026-07-01",
-        lastmod: "2026-09-05",
+        lastmod: "2026-09-18",
         title: "Uptime Monitoring for Developers, as Code",
         eyebrow: "for developers",
         h1: "Uptime monitoring built for developers",
@@ -549,8 +549,16 @@ docker compose up -d"#,
                 href: "/tools/ssl-certificate-checker",
             },
             ResourceLink {
+                label: "Domain expiry checker",
+                href: "/tools/domain-expiry-checker",
+            },
+            ResourceLink {
                 label: "HTTP header checker",
                 href: "/tools/http-header-checker",
+            },
+            ResourceLink {
+                label: "Website security checker",
+                href: "/tools/website-security-checker",
             },
             ResourceLink {
                 label: "DNS lookup",

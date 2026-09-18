@@ -1,6 +1,7 @@
 +++
 title = "How to monitor SSL certificate expiry when auto-renewal fails"
 date = "2026-09-05"
+updated = "2026-09-18"
 slug = "how-to-monitor-ssl-certificate-expiry"
 excerpt = "Check the certificate your server serves, catch failed renewals before expiry, and set up TLS alerts alongside HTTPS monitoring. Includes OpenSSL checks."
 tags = ["ssl", "tls", "certificates", "monitoring", "reliability"]
@@ -76,6 +77,8 @@ A certificate can have weeks left and still fail for your customers. It may cove
 Uptimepage's TLS expiry monitor deliberately accepts the presented chain so it can read the date even from an expired or self-signed certificate. Its day-count result is not a trust verdict. The [TLS API reference](/docs/api#tls-certificate-expiry) documents this behavior.
 
 Keep an HTTP monitor on the HTTPS URL with TLS verification enabled. It catches certificate validation failures as they happen; the expiry monitor gives advance warning about the date. An HTTPS check that validates certificates can detect expiry once it breaks the connection. It does not necessarily warn you days beforehand.
+
+To see both views for one hostname before you set the monitors up, run it through the [website security checker](/tools/website-security-checker). It reads the certificate dates, makes a validated HTTPS request, follows the redirect from plain HTTP, and reports whether the headers keep browsers on HTTPS afterwards.
 
 If a CDN terminates TLS, a public-hostname check reads the CDN's certificate. The origin can have a separate certificate and renewal process. Monitor each TLS endpoint you depend on from somewhere that can reach it, using the expected server name. A healthy edge certificate does not establish that the origin certificate is healthy.
 
