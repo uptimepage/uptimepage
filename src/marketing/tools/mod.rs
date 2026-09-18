@@ -6,6 +6,7 @@
 pub mod domain_expiry;
 pub mod http_headers;
 mod probe;
+pub mod security;
 pub mod ssl;
 
 use std::sync::Arc;
@@ -1126,13 +1127,20 @@ pub const TOOLS: &[ToolMeta] = &[
         description: domain_expiry::DOMAIN_CHECKER_DESCRIPTION,
         lastmod: domain_expiry::DOMAIN_CHECKER_LASTMOD,
     },
+    ToolMeta {
+        path: security::SECURITY_CHECKER_PATH,
+        title: security::SECURITY_CHECKER_TITLE,
+        label: security::SECURITY_CHECKER_LABEL,
+        description: security::SECURITY_CHECKER_DESCRIPTION,
+        lastmod: security::SECURITY_CHECKER_LASTMOD,
+    },
 ];
 
 // ── Tools index ───────────────────────────────────────────────────────
 
 pub const TOOLS_INDEX_PATH: &str = "/tools";
 const TOOLS_INDEX_CREATED: &str = "2026-07-09";
-pub const TOOLS_INDEX_LASTMOD: &str = "2026-09-05";
+pub const TOOLS_INDEX_LASTMOD: &str = "2026-09-18";
 const TOOLS_INDEX_TITLE: &str = "Free Tools for Developers & SREs";
 const TOOLS_INDEX_DESCRIPTION: &str = "Free, no sign-up calculators and generators for uptime, reliability and scheduling. Built for our own work and kept open for yours.";
 
@@ -1207,6 +1215,10 @@ pub fn mount(router: axum::Router<Arc<MarketingCfg>>) -> axum::Router<Arc<Market
         .route(INCIDENT_UPDATE_PATH, axum::routing::get(incident_update))
         .route(DNS_LOOKUP_PATH, axum::routing::get(dns_lookup))
         .route(ssl::SSL_CHECKER_PATH, axum::routing::get(ssl::page))
+        .route(
+            security::SECURITY_CHECKER_PATH,
+            axum::routing::get(security::page),
+        )
         .route(ssl::SSL_PROBE_PATH, axum::routing::get(ssl::probe))
         .route(
             domain_expiry::DOMAIN_CHECKER_PATH,
@@ -1234,6 +1246,7 @@ pub(crate) fn warm(cfg: &MarketingCfg) {
     INCIDENT_UPDATE_CACHED.get_or_init(|| render_incident_update(cfg));
     DNS_LOOKUP_CACHED.get_or_init(|| render_dns_lookup(cfg));
     ssl::warm(cfg);
+    security::warm(cfg);
     domain_expiry::warm(cfg);
     http_headers::warm(cfg);
 }
@@ -1331,6 +1344,7 @@ mod tests {
             (INCIDENT_UPDATE_PATH, render_incident_update(&cfg)),
             (DNS_LOOKUP_PATH, render_dns_lookup(&cfg)),
             (ssl::SSL_CHECKER_PATH, ssl::render(&cfg)),
+            (security::SECURITY_CHECKER_PATH, security::render(&cfg)),
             (
                 domain_expiry::DOMAIN_CHECKER_PATH,
                 domain_expiry::render(&cfg),

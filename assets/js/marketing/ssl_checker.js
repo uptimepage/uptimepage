@@ -181,5 +181,13 @@ function render(r) {
     cta.dataset.umamiEventPosition = "tool-ssl-result";
     frag.append(cta);
 
+    if (r.port === 443) {
+        const next = el("p", "tool-dns__note");
+        const link = el("a", "mk-link", "Check this website’s HTTPS and security headers");
+        link.href = `/tools/website-security-checker?url=${encodeURIComponent(`https://${r.host}/`)}`;
+        next.append(link);
+        frag.append(next);
+    }
+
     return frag;
 }

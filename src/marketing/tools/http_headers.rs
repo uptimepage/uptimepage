@@ -43,7 +43,7 @@ use super::{TOOL_CACHE_CONTROL, TOOLS, ToolMeta};
 pub const HEADER_CHECKER_PATH: &str = "/tools/http-header-checker";
 pub const HEADER_PROBE_PATH: &str = "/tools/http-header-checker/probe";
 const HEADER_CHECKER_CREATED: &str = "2026-09-05";
-pub const HEADER_CHECKER_LASTMOD: &str = "2026-09-05";
+pub const HEADER_CHECKER_LASTMOD: &str = "2026-09-18";
 pub const HEADER_CHECKER_TITLE: &str = "HTTP Header & Redirect Chain Checker";
 pub const HEADER_CHECKER_LABEL: &str = "HTTP header checker";
 pub const HEADER_CHECKER_DESCRIPTION: &str = "See every redirect hop, the final status code and the response headers a URL returns, the way an uptime monitor sees them. Free, no sign-up.";
@@ -56,11 +56,15 @@ const ALLOWED_PORTS: &[u16] = &[80, 443, 8080, 8443];
 /// chain a check would walk; a site that needs more is broken either way.
 const MAX_HOPS: usize = 10;
 
-/// Tighter than the certificate checker's because one probe here can cost up
-/// to [`MAX_HOPS`] outbound requests. Hops past the first are charged back
-/// after the walk, so a long chain spends what it actually used.
+/// The per-minute rate is tighter than the certificate checker's because one
+/// probe here can cost up to [`MAX_HOPS`] outbound requests. Hops past the
+/// first are charged back after the walk, so a long chain spends what it
+/// actually used. A security-checker run spends one cell per probe plus one
+/// per redirect hop: three for a site with no redirects, five with an
+/// apex-to-www hop. The burst covers two plain runs and stays below
+/// [`MAX_CONCURRENT_PROBES`], so one address can never hold every permit.
 const PROBES_PER_MIN: u32 = 6;
-const PROBE_BURST: u32 = 3;
+const PROBE_BURST: u32 = 7;
 
 /// Ceiling on outbound requests in flight across every visitor at once.
 /// Per-IP budgets bound one stranger; this bounds all of them together.
@@ -71,8 +75,10 @@ const PROBE_DEADLINE: Duration = Duration::from_secs(12);
 
 /// A hostile server can answer with as many headers as it likes. The page
 /// shows a response, not a payload, so both the count and each value are cut.
+/// The value cap leaves room for a real Content-Security-Policy, which runs
+/// to a few kilobytes on the sites that bother with one.
 const MAX_HEADERS_REPORTED: usize = 60;
-const MAX_HEADER_VALUE_CHARS: usize = 512;
+const MAX_HEADER_VALUE_CHARS: usize = 4096;
 
 static LIMITER: LazyLock<ProbeLimiter> =
     LazyLock::new(|| probe::limiter(PROBES_PER_MIN, PROBE_BURST));
@@ -685,7 +691,8 @@ mod tests {
 
     #[test]
     fn a_tls_failure_names_the_certificate() {
-        assert!(classify("invalid peer certificate: Expired").contains("certificate"));
+        // The security checker grades this sentence as a validation failure.
+        assert!(classify("invalid peer certificate: Expired").contains("TLS handshake"));
         assert!(classify("connection refused").contains("accepted a connection"));
     }
 }

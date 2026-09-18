@@ -531,6 +531,26 @@ html:has(.marketing-shell) {
 .tool-domain__form .mk-start__input { min-height: 2.75rem; }
 .tool-domain__form button:disabled { cursor: wait; opacity: 0.65; }
 
+/* Security report: text labels accompany every status color. */
+.tool-security__result:empty { display: none; }
+.tool-security__result { margin-top: 1.5rem; text-align: left; }
+.tool-security__scope { margin-block: 0.75rem; font-size: 0.8125rem; color: var(--mk-quiet); overflow-wrap: anywhere; }
+.tool-security__findings { list-style: none; padding: 0; margin: 1.5rem 0; }
+.tool-security__finding { padding: 1.25rem 0; border-top: 1px solid var(--mk-rule); }
+.tool-security__heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem 0.75rem; }
+.tool-security__title { font-weight: 600; font-size: 1rem; text-wrap: balance; }
+.tool-security__badge { font-size: 0.75rem; font-weight: 600; }
+.tool-security__finding--pass .tool-security__badge { color: color-mix(in oklch, var(--mk-ok) 85%, var(--mk-ink)); }
+.tool-security__finding--fail .tool-security__badge { color: color-mix(in oklch, var(--mk-down) 90%, var(--mk-ink)); }
+.tool-security__finding--warning .tool-security__badge { color: color-mix(in oklch, var(--mk-warn) 55%, var(--mk-ink)); }
+.tool-security__finding--unknown .tool-security__badge { color: var(--mk-quiet); }
+.tool-security__evidence { margin-block: 0.65rem; font-size: 0.8125rem; overflow-wrap: anywhere; white-space: pre-wrap; font-variant-numeric: tabular-nums; }
+.tool-security__chain { margin: 1rem 0; padding-left: 1.25rem; font-size: 0.8125rem; overflow-wrap: anywhere; }
+.tool-security__chain li + li { margin-top: 0.75rem; }
+.tool-security__actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1.5rem; }
+.tool-security__actions .mk-cta { min-height: 2.75rem; white-space: normal; text-align: center; }
+#security-status { margin-top: 1.25rem; font-variant-numeric: tabular-nums; }
+
 /* ── DNS lookup tool ──────────────────────────────────────────────── */
 .tool-dns__row {
     display: flex;

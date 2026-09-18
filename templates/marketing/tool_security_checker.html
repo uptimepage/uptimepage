@@ -1,0 +1,74 @@
+{% extends "marketing/base.html" %}
+{% block title %}{{ og.title }}{% endblock %}
+{% block description %}{{ og.description }}{% endblock %}
+{% block head %}
+<script type="application/ld+json">{{ breadcrumb_json_ld.as_str()|safe }}</script>
+<script type="application/ld+json">{{ web_application_json_ld.as_str()|safe }}</script>
+<script type="application/ld+json">{{ webpage_json_ld.as_str()|safe }}</script>
+<script type="application/ld+json">{{ faq_json_ld.as_str()|safe }}</script>
+<script defer src="{{ "js/marketing/security_checker.js"|asset }}"></script>
+{% endblock %}
+{% block content %}
+<div class="space-y-20 sm:space-y-24">
+    <section class="mx-auto max-w-3xl text-center space-y-5">
+        <h1 class="mk-display">Website security checker</h1>
+        <p class="mk-lede mx-auto">Check your SSL certificate, HTTPS redirects and security headers in one report. See what needs attention, the evidence behind each finding, and what to fix first.</p>
+    </section>
+
+    <section class="mx-auto max-w-3xl" aria-label="Check your website">
+        <div class="tool-calc mk-panel rounded-sm">
+            <form id="security-form" class="tool-domain__form" data-ssl-probe="{{ ssl_probe_path }}" data-header-probe="{{ header_probe_path }}">
+                <label for="security-url" class="tool-metric__label">Website URL</label>
+                <div class="tool-dns__row">
+                    <span class="mk-start__field">
+                        <span class="mk-start__prompt" aria-hidden="true">&gt;</span>
+                        <input class="mk-start__input" id="security-url" name="url" type="text" inputmode="url" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" maxlength="2048" placeholder="example.com" required aria-describedby="security-scope">
+                    </span>
+                    <button id="security-submit" type="submit" class="mk-cta mk-cta--primary">Check website</button>
+                </div>
+            </form>
+            <p id="security-scope" class="tool-dns__note mk-mono">free · no sign-up · public websites on ports 80 and 443</p>
+            <p id="security-status" class="tool-dns__empty mk-mono" role="status">Enter a website to check its public security configuration.</p>
+            <div id="security-result" class="tool-security__result" aria-label="Security report"></div>
+            <noscript><p class="mk-body">Enable JavaScript to run the check. The coverage and reference below remain available.</p></noscript>
+        </div>
+    </section>
+
+    <section class="mx-auto max-w-3xl space-y-5">
+        <h2 class="mk-h2">What your report covers</h2>
+        <div class="overflow-x-auto">
+            <table class="cmp">
+                <thead><tr><th>check</th><th>what we look for</th></tr></thead>
+                <tbody>
+                    <tr><th>SSL certificate</th><td>Expiry, validity dates and hostname coverage for the host you enter. A separate HTTPS request checks whether our client accepts the certificate chain.</td></tr>
+                    <tr><th>HTTPS and redirects</th><td>Whether HTTPS responds, HTTP redirects to HTTPS, and either observed chain returns to unencrypted HTTP.</td></tr>
+                    <tr><th>HSTS</th><td>Whether the final HTTPS response tells browsers to remember HTTPS, and for how long.</td></tr>
+                    <tr><th>Content Security Policy</th><td>Whether an enforced policy is present and whether common script restrictions need review. This is a basic policy review, not a complete CSP audit.</td></tr>
+                    <tr><th>Framing protection</th><td>Whether CSP frame-ancestors or X-Frame-Options restricts which sites can embed the page.</td></tr>
+                    <tr><th>Content type and referrer</th><td>Whether nosniff is configured and an explicit referrer policy limits URL details sent to other sites.</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <p class="mk-body">Results describe the responses received from one probe location at the time of the check. A missing header is a configuration finding, not proof of an exploitable vulnerability. An error page or bot challenge can have different headers from your application.</p>
+    </section>
+
+    <section class="mx-auto max-w-3xl space-y-4">
+        <h2 class="mk-h2">Start with the findings that affect access</h2>
+        <p class="mk-body">Fix expired certificates, hostname mismatches and HTTPS downgrades first. Then review header warnings against how your application works. Test policy changes before applying them to production: a restrictive CSP can block scripts your page needs, and framing restrictions can prevent intentional embedding.</p>
+        <p class="mk-body">The report places failures first, followed by warnings, incomplete checks and passes. Every pass applies to one stated check. This tool does not scan for malware or application vulnerabilities, inspect logged-in sessions, detect mixed content, or certify that a website is safe.</p>
+        <p class="mk-body">For the individual evidence, use the <a href="/tools/ssl-certificate-checker" class="mk-link">SSL certificate checker</a> or <a href="/tools/http-header-checker" class="mk-link">HTTP header and redirect checker</a>. Follow the <a href="/blog/how-to-monitor-ssl-certificate-expiry" class="mk-link">certificate monitoring guide</a> to get expiry alerts.</p>
+        <p class="mk-body">Header behavior references: <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Strict-Transport-Security" class="mk-link">MDN on HSTS</a>, <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy" class="mk-link">Content Security Policy</a>, and <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Referrer-Policy" class="mk-link">Referrer-Policy</a>.</p>
+    </section>
+
+    <section id="faq" class="mx-auto max-w-3xl space-y-6">
+        <h2 class="mk-h2">Questions about the security check</h2>
+        <div>{% for faq in faqs %}<details class="mk-faq"><summary>{{ faq.0 }}</summary><div class="mk-faq__body">{{ faq.1 }}</div></details>{% endfor %}</div>
+    </section>
+    <section class="mx-auto max-w-3xl text-center space-y-5">
+        <h2 class="mk-h2">Keep watching uptime and certificate expiry</h2>
+        <p class="mk-lede mx-auto">This report is a snapshot. Set up monitoring to know when your site stops responding or its certificate approaches expiry.</p>
+        <a href="{{ app_url }}/login?redirect_after=%2F" class="mk-cta mk-cta--primary" data-umami-event="signup-start" data-umami-event-position="tool-footer">Start monitoring free</a>
+        {% include "marketing/_tool_siblings.html" %}
+    </section>
+</div>
+{% endblock %}

@@ -905,6 +905,37 @@ async fn ssl_checker_renders_without_db() {
 }
 
 #[tokio::test]
+async fn website_security_checker_renders_and_is_discoverable() {
+    let path = "/tools/website-security-checker";
+    let (status, body, headers) = get(path).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("<h1 class=\"mk-display\">Website security checker</h1>"));
+    assert!(body.contains("security_checker"));
+    assert!(body.contains("data-ssl-probe=\"/tools/ssl-certificate-checker/probe\""));
+    assert!(body.contains("data-header-probe=\"/tools/http-header-checker/probe\""));
+    assert!(body.contains("https://uptimepage.dev/tools/website-security-checker"));
+    for schema in ["WebApplication", "FAQPage", "BreadcrumbList", "WebPage"] {
+        assert!(body.contains(schema), "missing {schema}");
+    }
+    assert!(!body.contains("render failed"));
+    assert!(!body.contains("<script>"));
+    assert!(!body.contains("style="));
+    assert!(headers.contains_key(header::ETAG));
+    for source in [
+        "/tools",
+        "/tools/ssl-certificate-checker",
+        "/tools/http-header-checker",
+        "/sitemap.xml",
+        "/llms.txt",
+    ] {
+        assert!(
+            get(source).await.1.contains(path),
+            "{source} must link the checker"
+        );
+    }
+}
+
+#[tokio::test]
 async fn domain_expiry_checker_renders_and_is_discoverable() {
     let path = "/tools/domain-expiry-checker";
     let (status, body, _) = get(path).await;
