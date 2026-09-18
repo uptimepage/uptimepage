@@ -1,0 +1,33 @@
+{% extends "marketing/base.html" %}
+{% block title %}Changelog · Uptimepage{% endblock %}
+{% block description %}{{ og.description }}{% endblock %}
+{% block head %}
+<link rel="alternate" type="application/atom+xml" title="Uptimepage changelog" href="/changelog.xml">
+<script type="application/ld+json">{{ breadcrumb_ld.as_str()|safe }}</script>
+{% endblock %}
+{% block content %}
+<section class="mx-auto max-w-3xl space-y-10">
+    <header class="space-y-3 text-center">
+        <h1 class="mk-display">
+            what <span class="mk-display-em">shipped</span>, when.
+        </h1>
+        <p class="mk-lede mx-auto">
+            One dated entry per change that reaches you. Also posted to
+            <a href="https://github.com/uptimepage/uptimepage/discussions/categories/announcements" class="mk-link" rel="noopener" target="_blank">GitHub Discussions</a>
+            and as an <a href="/changelog.xml" class="mk-link">Atom feed</a>.
+        </p>
+    </header>
+
+    <div class="mk-log" data-link-region="changelog-index">
+        {% for e in entries %}
+        <article class="mk-log__entry" id="{{ e.slug }}">
+            <p class="mk-log__date"><time datetime="{{ e.date }}">{{ e.date }}</time></p>
+            <div class="mk-log__body">
+                <h2 class="mk-log__title"><a href="{{ e.path() }}">{{ e.title }}</a></h2>
+                <div class="mk-article">{{ e.body_html|safe }}</div>
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}

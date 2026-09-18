@@ -1,0 +1,23 @@
+{% extends "marketing/base.html" %}
+{% block title %}{{ entry.title }} · Uptimepage changelog{% endblock %}
+{% block description %}{{ og.description }}{% endblock %}
+{% block head %}
+<link rel="alternate" type="application/atom+xml" title="Uptimepage changelog" href="/changelog.xml">
+<script type="application/ld+json">{{ article_ld.as_str()|safe }}</script>
+<script type="application/ld+json">{{ breadcrumb_ld.as_str()|safe }}</script>
+{% endblock %}
+{% block content %}
+<article class="mx-auto max-w-3xl space-y-10">
+    <header class="space-y-4 text-center">
+        <p class="mk-blog-row__date"><a href="/changelog" class="mk-backlink">changelog</a> · <time datetime="{{ entry.date }}">{{ entry.date }}</time></p>
+        <h1 class="mk-display mk-blog-title">{{ entry.title }}</h1>
+        <p class="mk-lede mx-auto">{{ entry.summary }}</p>
+    </header>
+    <div class="mk-article">
+        {{ entry.body_html|safe }}
+    </div>
+    <p class="mk-rule-top text-center pt-4">
+        <a href="/changelog" class="mk-mono text-xs mk-quiet mk-backlink">← All changes</a>
+    </p>
+</article>
+{% endblock %}

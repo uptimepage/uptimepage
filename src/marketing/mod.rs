@@ -25,6 +25,7 @@
 //! content is third-party PR input and has a different trust model.
 
 pub mod blog;
+pub mod changelog;
 pub mod config;
 pub mod discovery;
 pub mod dispatch;
@@ -80,6 +81,7 @@ pub fn router(cfg: MarketingCfg) -> Router {
     r = landings::mount(r);
     r = tools::mount(r);
     r = docs::mount(r);
+    r = changelog::mount(r);
     if state.blog_enabled {
         r = r
             .route("/blog", get(blog::index))
@@ -110,6 +112,7 @@ fn warm_caches(state: &Arc<MarketingCfg>) {
     landings::warm(state);
     tools::warm(state);
     docs::warm(state);
+    changelog::warm(state);
     discovery::warm(state);
     if state.blog_enabled {
         blog::warm(state);

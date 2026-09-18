@@ -18,6 +18,7 @@ use bytes::Bytes;
 use serde::Serialize;
 
 use super::blog::list_published;
+use super::changelog;
 use super::config::{
     AUTHOR, BRAND, CONTACT_EMAIL, META_DESCRIPTION, MarketingCfg, ORG_COUNTRY, ORG_FOUNDING_DATE,
     ORG_LOCALITY, SOURCE_URL, TAGLINE, TERRAFORM_URL,
@@ -406,6 +407,35 @@ pub fn json_ld_tech_article(
     JsonLd::from_value(payload)
 }
 
+/// `Article` for a changelog entry: dated first-party prose about the
+/// product, so it is neither a `BlogPosting` (editorial) nor a `TechArticle`
+/// (reference).
+pub fn json_ld_article(
+    canonical_origin: &str,
+    path: &str,
+    headline: &str,
+    description: &str,
+    date: &str,
+) -> JsonLd {
+    let payload = serde_json::json!({
+        "@context": "https://schema.org",
+        "@type": "Article",
+        "@id": format!("{canonical_origin}{path}#article"),
+        "headline": headline,
+        "description": description,
+        "url": format!("{canonical_origin}{path}"),
+        "mainEntityOfPage": format!("{canonical_origin}{path}"),
+        "datePublished": iso_datetime(date),
+        "dateModified": iso_datetime(date),
+        "inLanguage": "en",
+        "isPartOf": { "@id": format!("{canonical_origin}/#website") },
+        "about": { "@id": format!("{canonical_origin}/#software") },
+        "author": author(canonical_origin),
+        "publisher": { "@id": format!("{canonical_origin}/#organization") },
+    });
+    JsonLd::from_value(payload)
+}
+
 pub fn json_ld_website(canonical_origin: &str) -> JsonLd {
     let payload = serde_json::json!({
         "@context": "https://schema.org",
@@ -726,6 +756,22 @@ fn build_llms(cfg: &MarketingCfg) -> Bytes {
         }
     }
 
+    s.push_str("## Changelog\n");
+    s.push_str(&format!(
+        "- [What shipped, dated]({origin}{}): {}\n",
+        changelog::INDEX_PATH,
+        changelog::INDEX_DESCRIPTION,
+    ));
+    for e in changelog::entries() {
+        s.push_str(&format!(
+            "- [{}]({origin}{}): {}\n",
+            e.title,
+            e.path(),
+            e.summary,
+        ));
+    }
+    s.push('\n');
+
     s.push_str("## Documentation\n");
     s.push_str(&format!(
         "Index: {origin}{}\n",
@@ -862,6 +908,12 @@ fn build_llms_full(cfg: &MarketingCfg) -> Bytes {
         }
     }
 
+    for e in changelog::entries() {
+        s.push_str(&format!("---\n\n## Changelog: {}\n", e.title));
+        s.push_str(&format!("URL: {origin}{}\n", e.path()));
+        s.push_str(&format!("Date: {}\n\n{}\n\n", e.date, e.body_md));
+    }
+
     Bytes::from(s)
 }
 
@@ -967,6 +1019,16 @@ fn build_sitemap(cfg: &MarketingCfg) -> String {
             Some(doc.lastmod.to_string()),
         ));
     }
+    urls.push(SitemapUrl::new(
+        format!("{origin}{}", changelog::INDEX_PATH),
+        changelog::latest_date().map(str::to_string),
+    ));
+    for e in changelog::entries() {
+        urls.push(SitemapUrl::new(
+            format!("{origin}{}", e.path()),
+            Some(e.date.clone()),
+        ));
+    }
     for route in legal::ROUTES {
         urls.push(SitemapUrl::new(format!("{origin}{}", route.path), None));
     }
@@ -1028,7 +1090,7 @@ fn iso_datetime(date: &str) -> Cow<'_, str> {
     }
 }
 
-fn xml_escape(s: &str) -> Cow<'_, str> {
+pub(crate) fn xml_escape(s: &str) -> Cow<'_, str> {
     if !s
         .bytes()
         .any(|b| matches!(b, b'&' | b'<' | b'>' | b'"' | b'\''))

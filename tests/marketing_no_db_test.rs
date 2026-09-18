@@ -10,7 +10,7 @@ use tower::util::ServiceExt;
 
 use uptimepage::domain::check::CheckSpec;
 use uptimepage::marketing::config::META_DESCRIPTION;
-use uptimepage::marketing::{self, MarketingCfg, blog, landings, tools};
+use uptimepage::marketing::{self, MarketingCfg, blog, changelog, landings, tools};
 
 fn router() -> axum::Router {
     marketing::router(MarketingCfg {
@@ -715,6 +715,105 @@ async fn blog_prose_links_resolve() {
                 "/blog/{} links to {href}, which does not resolve",
                 post.slug
             );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked > 0,
+        "extracted no links, so the guard proved nothing"
+    );
+}
+
+#[tokio::test]
+async fn changelog_index_lists_every_entry_in_full() {
+    let (status, body, _) = get("/changelog").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("rel=\"alternate\" type=\"application/atom+xml\""));
+    assert!(body.contains("<a href=\"/changelog\" class=\"mk-footer-link\">changelog</a>"));
+    let entries = changelog::entries();
+    assert!(!entries.is_empty());
+    for e in entries {
+        assert!(
+            body.contains(&format!("href=\"{}\"", e.path())),
+            "{} unlinked",
+            e.slug
+        );
+        assert!(
+            body.contains(&e.body_html),
+            "{} body missing from index",
+            e.slug
+        );
+    }
+}
+
+#[tokio::test]
+async fn changelog_entries_serve_html_and_markdown_and_404_otherwise() {
+    for e in changelog::entries() {
+        let (status, body, _) = get(&e.path()).await;
+        assert_eq!(status, StatusCode::OK, "{}", e.slug);
+        assert!(body.contains(&format!(
+            "<link rel=\"canonical\" href=\"https://uptimepage.dev{}\">",
+            e.path()
+        )));
+        assert!(
+            body.contains("\"@type\":\"Article\""),
+            "{}: no Article JSON-LD",
+            e.slug
+        );
+        let (_, md, _) = get_as_markdown(&e.path()).await;
+        assert!(
+            md.starts_with(&format!("# {}\n", e.title)),
+            "{}: {md:.60}",
+            e.slug
+        );
+    }
+    let (status, _, _) = get("/changelog/does-not-exist").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn changelog_feed_is_atom() {
+    let (status, body, headers) = get("/changelog.xml").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers[header::CONTENT_TYPE],
+        "application/atom+xml; charset=utf-8"
+    );
+    assert!(body.contains(
+        "<feed xmlns=\"http://www.w3.org/2005/Atom\" xml:base=\"https://uptimepage.dev/\">"
+    ));
+    assert_eq!(body.matches("<entry>").count(), changelog::entries().len());
+}
+
+#[tokio::test]
+async fn changelog_is_in_the_sitemap_and_llms_index() {
+    let (_, sitemap, _) = get("/sitemap.xml").await;
+    assert!(sitemap.contains("<loc>https://uptimepage.dev/changelog</loc>"));
+    let (_, llms, _) = get("/llms.txt").await;
+    assert!(llms.contains("## Changelog\n"));
+    for e in changelog::entries() {
+        assert!(
+            sitemap.contains(&format!("<loc>https://uptimepage.dev{}</loc>", e.path())),
+            "{}",
+            e.slug
+        );
+        assert!(
+            llms.contains(&format!("](https://uptimepage.dev{}): ", e.path())),
+            "{}",
+            e.slug
+        );
+    }
+}
+
+/// An entry names the docs, tools and setup pages it ships with; a renamed
+/// path would rot the whole point of a changelog on the site.
+#[tokio::test]
+async fn changelog_prose_links_resolve() {
+    let mut checked = 0;
+    for e in changelog::entries() {
+        for href in internal_hrefs(&e.body_html) {
+            let (status, _, _) = get(&href).await;
+            assert_eq!(status, StatusCode::OK, "{} links to {href}", e.slug);
             checked += 1;
         }
     }

@@ -2097,6 +2097,38 @@ html:has(.marketing-shell) {
 .mk-author__links a { color: var(--mk-ok); text-decoration: none; }
 .mk-author__links a:hover { text-decoration: underline; }
 
+/* Changelog: a date rail beside each entry, stacking on narrow screens */
+.mk-log__entry {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.5rem 2rem;
+    padding: 2rem 0;
+    border-top: 1px solid var(--mk-rule);
+}
+.mk-log__entry:last-child { border-bottom: 1px solid var(--mk-rule); }
+.mk-log__date {
+    font-family: var(--mk-font-mono);
+    font-size: 0.6875rem;
+    color: var(--mk-quiet);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding-top: 0.35rem;
+}
+.mk-log__title {
+    font-family: var(--mk-font-mono);
+    font-weight: 600;
+    font-size: 1.25rem;
+    line-height: 1.3;
+    letter-spacing: -0.005em;
+    margin-bottom: 0.75rem;
+}
+.mk-log__title a { color: var(--mk-ink); text-decoration: none; transition: color 160ms ease; }
+.mk-log__title a:hover { color: var(--mk-ok); }
+.mk-log__body .mk-article > :last-child { margin-bottom: 0; }
+@media (min-width: 40rem) {
+    .mk-log__entry { grid-template-columns: 7.5rem minmax(0, 1fr); }
+}
+
 /* Long-form article (blog post + legal) */
 .mk-article {
     font-family: var(--mk-font-body);

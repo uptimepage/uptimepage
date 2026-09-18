@@ -214,7 +214,7 @@ fn parse_post(raw: &str, stem: &str) -> anyhow::Result<Post> {
     })
 }
 
-fn split_front_matter(raw: &str) -> Option<(&str, &str)> {
+pub(super) fn split_front_matter(raw: &str) -> Option<(&str, &str)> {
     let stripped = raw.strip_prefix("+++\n")?;
     let end = stripped.find("\n+++\n")?;
     let front = &stripped[..end];
