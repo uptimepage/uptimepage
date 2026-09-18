@@ -8,8 +8,10 @@ window.tagReferralSource = (_type, payload) => {
 
   if (ref && SOURCE.test(ref) && !url.searchParams.has("utm_source")) {
     url.searchParams.set("utm_source", ref);
-    payload.url = url.pathname + url.search + url.hash;
   }
+  // Tool pages hand a visitor's own input along as `?url=`. It is theirs.
+  url.searchParams.delete("url");
+  payload.url = url.pathname + url.search + url.hash;
 
   return payload;
 };

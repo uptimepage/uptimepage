@@ -31,12 +31,12 @@ export function validReport(kind, r) {
     const webURL = value => {
         try { return ["http:", "https:"].includes(new URL(value).protocol); } catch { return false; }
     };
-    return webURL(r.final_url) && Number.isInteger(r.final_status) &&
+    return webURL(r.final_url) && Number.isInteger(r.final_status) && Number.isInteger(r.total_ms) &&
         typeof r.redirect_loop === "boolean" && typeof r.hop_limit_hit === "boolean" &&
         typeof r.headers_truncated === "boolean" && Array.isArray(r.headers) &&
         r.headers.every(pair => Array.isArray(pair) && pair.length === 2 && pair.every(v => typeof v === "string")) &&
         Array.isArray(r.hops) && r.hops.length > 0 &&
-        r.hops.every(h => webURL(h.url) && Number.isInteger(h.status));
+        r.hops.every(h => webURL(h.url) && Number.isInteger(h.status) && Number.isInteger(h.ms));
 }
 
 const finding = (id, status, title, evidence, advice) => ({ id, status, title, evidence, advice });

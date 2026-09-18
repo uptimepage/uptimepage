@@ -1,3 +1,4 @@
+import { chain } from "./_redirect_chain.js";
 import { toolError, toolUsed } from "./_tool_event.js";
 import { assess, targetURLs, validReport } from "./_security_checks.js";
 
@@ -8,7 +9,7 @@ const button = document.getElementById("security-submit");
 const status = document.getElementById("security-status");
 const out = document.getElementById("security-result");
 let running = false;
-const labels = { fail: "Fail", warning: "Warning", unknown: "Not checked", pass: "Pass" };
+const labels = { fail: "fail", warning: "warning", unknown: "not checked", pass: "pass" };
 
 if (form && input && button && status && out) {
     // Prefill the handoff from the SSL checker, but never run a scan on a GET.
@@ -60,11 +61,10 @@ async function run() {
     }
     running = true;
     button.disabled = true;
-    button.textContent = "Checking…";
     input.setAttribute("aria-invalid", "false");
     form.setAttribute("aria-busy", "true");
     out.replaceChildren();
-    status.textContent = "Checking the certificate and HTTPS response…";
+    status.textContent = "reading the certificate and following https…";
     toolUsed(TOOL); // Never send the submitted domain, path or query to analytics.
     try {
         const [ssl, https] = await Promise.all([
@@ -73,61 +73,119 @@ async function run() {
         ]);
         // Reuse the same header limiter, sequentially. Long chains can consume
         // its remaining budget; that produces an explicit incomplete check.
-        status.textContent = "Checking whether HTTP redirects to HTTPS…";
+        status.textContent = "following http…";
         const http = await probe(`${form.dataset.headerProbe}?url=${encodeURIComponent(target.http)}`, "headers");
         const checks = assess(target, ssl, https, http);
         render(target, checks, https.report, http.report);
-        const counts = Object.fromEntries(Object.keys(labels).map(key => [key, checks.filter(c => c.status === key).length]));
-        status.textContent = `${checks.length} checks: ${counts.fail} failed, ${counts.warning} warnings, ${counts.unknown} not checked, ${counts.pass} passed.`;
+        status.textContent = "report ready";
     } catch {
         status.textContent = "The report could not be completed. Try again.";
         toolError(TOOL, { reason: "report-error" });
     } finally {
         running = false;
         button.disabled = false;
-        button.textContent = "Check website";
         form.setAttribute("aria-busy", "false");
     }
 }
 
-function render(target, checks, https, http) {
-    const fragment = document.createDocumentFragment();
-    fragment.append(el("h2", "mk-h2", "Your security configuration report"));
-    fragment.append(el("p", "tool-security__scope mk-mono", `Certificate: ${target.host}:443`));
-    if (https) fragment.append(el("p", "tool-security__scope mk-mono", `Final HTTPS-request response: ${https.final_url}`));
-    fragment.append(el("p", "tool-security__scope mk-mono", `Checked ${new Date().toLocaleString()}. One location; no login or browser rendering.`));
+// One line a person can act on before reading anything else: what failed,
+// or what is left to look at.
+function headline(counts, total) {
+    if (counts.fail) return [`${counts.fail} failed`, "down"];
+    if (counts.warning) return [`${counts.warning} to review`, "warn"];
+    if (counts.unknown) return [`${counts.unknown} not checked`, "quiet"];
+    return [`all ${total} passed`, "ok"];
+}
 
+function plural(n, word) {
+    return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+function verdict(target, checks, https) {
+    const counts = Object.fromEntries(Object.keys(labels).map(key => [key, checks.filter(c => c.status === key).length]));
+    const [text, tone] = headline(counts, checks.length);
+    const block = el("div", `tool-security__verdict mk-mono tool-security__verdict--${tone}`);
+    block.append(el("p", "tool-security__headline", text));
+    block.append(el("p", "tool-security__counts",
+        `${plural(checks.length, "check")} · ${counts.fail} failed · ${plural(counts.warning, "warning")} · ${counts.unknown} not checked · ${counts.pass} passed`));
+    if (https && https.final_url !== target.https) {
+        block.append(el("p", "tool-security__counts", `headers read from ${https.final_url}`));
+    }
+    return block;
+}
+
+function findings(checks) {
     const list = el("ol", "tool-security__findings");
     for (const check of checks) {
         const item = el("li", `tool-security__finding tool-security__finding--${check.status}`);
-        const head = el("div", "tool-security__heading");
-        head.append(el("span", "tool-security__badge mk-mono", labels[check.status]));
-        head.append(el("h3", "tool-security__title", check.title));
-        item.append(head, el("p", "tool-security__evidence mk-mono", check.evidence), el("p", "mk-body", check.advice));
+        item.append(el("span", "tool-security__badge mk-mono", labels[check.status]));
+        item.append(el("h3", "tool-security__title", check.title));
+        item.append(el("p", "tool-security__evidence mk-mono", check.evidence));
+        item.append(el("p", "tool-security__advice mk-body", check.advice));
         list.append(item);
     }
-    fragment.append(list);
-    for (const [label, report] of [["HTTPS request chain", https], ["HTTP request chain", http]]) {
+    return list;
+}
+
+function chains(https, http) {
+    const frag = document.createDocumentFragment();
+    for (const [label, report] of [["https request chain", https], ["http request chain", http]]) {
         if (!report) continue;
-        const details = el("details", "mk-faq");
-        details.append(el("summary", "", label));
-        const hops = el("ol", "tool-security__chain mk-mono");
-        for (const hop of report.hops) hops.append(el("li", "", `${hop.status} · ${hop.url}`));
-        details.append(hops);
-        fragment.append(details);
+        const details = el("details", "tool-security__chain");
+        details.append(el("summary", "mk-mono", `${label} · ${plural(report.hops.length, "request")} · ${report.total_ms} ms`));
+        details.append(chain(report));
+        frag.append(details);
     }
-    fragment.append(el("p", "tool-security__scope", "Pass means only that the stated check passed. Malware, application vulnerabilities, mixed content, cookies and authenticated pages were not tested."));
+    return frag;
+}
+
+// Plain text for a ticket or a message to whoever runs the server.
+function plainText(target, checks) {
+    const lines = [`website security check · ${target.host}`, `${new Date().toISOString()} · ${location.origin}${location.pathname}`, ""];
+    for (const check of checks) {
+        lines.push(`[${labels[check.status]}] ${check.title}`, `  ${check.evidence}`, `  ${check.advice}`, "");
+    }
+    return lines.join("\n");
+}
+
+function copyButton(target, checks) {
+    const copy = el("button", "mk-cta mk-cta--ghost", "copy report");
+    copy.type = "button";
+    copy.addEventListener("click", async () => {
+        window.umami?.track("tool-copy", { tool: TOOL });
+        try {
+            await navigator.clipboard.writeText(plainText(target, checks));
+            copy.textContent = "copied";
+        } catch {
+            copy.textContent = "press ctrl+c";
+        }
+        setTimeout(() => { copy.textContent = "copy report"; }, 1600);
+    });
+    return copy;
+}
+
+function render(target, checks, https, http) {
+    const fragment = document.createDocumentFragment();
+    const head = el("p", "tool-dns__head mk-mono");
+    head.append(el("span", "tool-dns__q", target.host));
+    fragment.append(head, verdict(target, checks, https), findings(checks), chains(https, http));
+    fragment.append(el("p", "tool-dns__note", "A pass covers the stated check only. Malware, application vulnerabilities, mixed content, cookies and signed-in pages were not tested."));
+
+    const actions = el("div", "tool-security__actions");
     // Only offer a handoff when at least one probe returned usable evidence.
     if (checks.some(c => c.status !== "unknown")) {
-        const actions = el("div", "tool-security__actions");
-        for (const [text, kind, value] of [["Monitor certificate expiry", "tls_cert", target.host], ["Monitor website uptime", "http", target.https]]) {
-            const link = el("a", "mk-cta mk-cta--primary", text);
+        for (const [text, kind, value, cls] of [
+            ["monitor this website", "http", target.https, "mk-cta--primary"],
+            ["monitor its certificate", "tls_cert", target.host, "mk-cta--ghost"],
+        ]) {
+            const link = el("a", `mk-cta ${cls}`, text);
             link.href = `/start?kind=${kind}&url=${encodeURIComponent(value)}`;
             link.dataset.umamiEvent = "signup-start";
             link.dataset.umamiEventPosition = "tool-security-result";
             actions.append(link);
         }
-        fragment.append(actions);
+        actions.append(copyButton(target, checks));
     }
+    fragment.append(actions);
     out.replaceChildren(fragment);
 }

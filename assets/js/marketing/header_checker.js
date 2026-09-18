@@ -1,6 +1,7 @@
 // Walks a URL through our own probe and prints the chain it took. The browser
 // cannot do this itself: fetch follows redirects opaquely and hides both the
 // intermediate hops and the response headers behind CORS.
+import { chain, statusClass } from "./_redirect_chain.js";
 import { toolError, toolUsed } from "./_tool_event.js";
 
 const TOOL = "header-checker";
@@ -88,36 +89,12 @@ function failureReason(res, body) {
 
 // A redirect is neither good nor bad on its own, so it stays neutral until the
 // walk ends somewhere. Only the final code is coloured.
-function statusClass(code) {
-    if (code >= 200 && code < 300) return "tool-hdr__code--ok";
-    if (code >= 300 && code < 400) return "tool-hdr__code--hop";
-    if (code >= 400 && code < 500) return "tool-hdr__code--warn";
-    return "tool-hdr__code--down";
-}
-
 function host(url) {
     try {
         return new URL(url).host;
     } catch {
         return "";
     }
-}
-
-function chain(r) {
-    const list = el("ol", "tool-hdr__chain mk-mono");
-    for (const hop of r.hops) {
-        const row = el("li", "tool-hdr__hop");
-        row.append(el("span", `tool-hdr__code ${statusClass(hop.status)}`, String(hop.status)));
-        row.append(el("span", "tool-hdr__url", hop.url));
-        row.append(el("span", "tool-hdr__ms", `${hop.ms} ms`));
-        // The raw value, not the resolved one: a relative Location that a
-        // browser joins differently is the bug people come here to find.
-        if (hop.location) {
-            row.append(el("span", "tool-hdr__loc", `→ ${hop.location}`));
-        }
-        list.append(row);
-    }
-    return list;
 }
 
 // Each of these is something the final status code alone does not say.

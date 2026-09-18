@@ -11,8 +11,9 @@ class Element {
     addEventListener(name, fn) { this[name] = fn; }
     focus() { this.focused = true; }
 }
-const checksSource = readFileSync(new URL("../../assets/js/marketing/_security_checks.js", import.meta.url), "utf8").replaceAll("export function", "function");
-const source = readFileSync(new URL("../../assets/js/marketing/security_checker.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "");
+const module = name => readFileSync(new URL(`../../assets/js/marketing/${name}.js`, import.meta.url), "utf8").replaceAll("export function", "function");
+const checksSource = module("_security_checks") + "\n" + module("_redirect_chain");
+const source = module("security_checker").replace(/^import .*;\n/gm, "");
 function harness(fetcher, search = "") {
     const ids = Object.fromEntries(["security-form", "security-url", "security-submit", "security-status", "security-result"].map(id => [id, new Element()]));
     ids["security-form"].dataset = { sslProbe: "/ssl", headerProbe: "/headers" };
@@ -25,8 +26,8 @@ function harness(fetcher, search = "") {
     return { ids, context, events };
 }
 const nodes = root => [root, ...root.children.flatMap(nodes)];
-const answer = { ok: true, final_url: "https://example.com/", final_status: 200, redirect_loop: false, hop_limit_hit: false, headers_truncated: false,
-    headers: [["content-security-policy", "<img src=x onerror=alert(1)>"]], hops: [{ url: "https://example.com/", status: 200 }] };
+const answer = { ok: true, final_url: "https://example.com/", final_status: 200, total_ms: 90, redirect_loop: false, hop_limit_hit: false, headers_truncated: false,
+    headers: [["content-security-policy", "<img src=x onerror=alert(1)>"]], hops: [{ url: "https://example.com/", status: 200, ms: 90 }] };
 const response = body => ({ ok: true, status: 200, json: async () => body });
 
 test("partial results survive a TLS error, hostile values remain text, analytics omit input", async () => {
@@ -35,8 +36,11 @@ test("partial results survive a TLS error, hostile values remain text, analytics
     const rendered = nodes(h.ids["security-result"]);
     assert(rendered.some(n => n.textContent.includes("<img src=x")));
     assert(!rendered.some(n => n.tagName === "img"));
-    assert(rendered.some(n => n.textContent === "Not checked"));
+    assert(rendered.some(n => n.textContent === "not checked"));
+    assert(rendered.some(n => /^\d+ to review$/.test(n.textContent) && n.className.includes("headline")));
     assert(rendered.some(n => n.href === "/start?kind=tls_cert&url=example.com"));
+    assert(rendered.some(n => n.textContent === "copy report"));
+    assert(rendered.some(n => n.tagName === "details" && n.children.some(c => c.tagName === "ol")));
     assert(!JSON.stringify(h.events).includes("example.com"));
     assert(!JSON.stringify(h.events).includes("private"));
     assert.equal(h.ids["security-submit"].disabled, false);
@@ -70,10 +74,13 @@ test("rate limits, invalid JSON, timeouts and invalid data render unknown, never
         const h = harness(fetcher);
         await vm.runInContext("run()", h.context);
         const rendered = nodes(h.ids["security-result"]);
-        assert(!rendered.some(n => n.textContent === "Pass"));
+        assert(!rendered.some(n => n.textContent === "pass"));
         assert(!rendered.some(n => n.href?.startsWith("/start")));
+        assert(!rendered.some(n => n.textContent === "copy report"));
+        assert(rendered.some(n => /· 0 passed$/.test(n.textContent)));
+        assert(rendered.some(n => /not checked$/.test(n.textContent) && n.className.includes("headline")));
         assert.equal(h.ids["security-submit"].disabled, false);
-        assert.match(h.ids["security-status"].textContent, /0 passed/);
+        assert.equal(h.ids["security-status"].textContent, "report ready");
     }
 });
 

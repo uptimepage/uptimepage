@@ -13,10 +13,10 @@ const headers = [
     ["x-content-type-options", "nosniff"], ["referrer-policy", "strict-origin-when-cross-origin"],
 ];
 function web(overrides = {}) {
-    return { ok: true, final_url: target.https, final_status: 200, redirect_loop: false, hop_limit_hit: false,
-        headers_truncated: false, headers, hops: [{ url: target.https, status: 200 }], ...overrides };
+    return { ok: true, final_url: target.https, final_status: 200, total_ms: 120, redirect_loop: false, hop_limit_hit: false,
+        headers_truncated: false, headers, hops: [{ url: target.https, status: 200, ms: 120 }], ...overrides };
 }
-function checks(r = web(), c = cert, h = web({ hops: [{ url: target.http, status: 301 }, { url: target.https, status: 200 }] })) {
+function checks(r = web(), c = cert, h = web({ hops: [{ url: target.http, status: 301, ms: 40 }, { url: target.https, status: 200, ms: 80 }] })) {
     return assess(target, c ? { report: c } : { error: "TLS read failed" }, r ? { report: r } : { error: "HTTPS unavailable" },
         h ? { report: h } : { error: "Rate limited" }, Date.parse("2026-09-18T00:00:00Z"));
 }
@@ -53,7 +53,7 @@ test("unavailable probes yield unknowns; certificate evidence survives HTTP fail
 
 test("a rejected TLS handshake fails validation even when the unvalidated read looks fine", () => {
     const rejected = assess(target, { report: cert }, { error: "The host refused the TLS handshake. Its certificate may be expired, self-signed or missing an intermediate." },
-        { report: web({ hops: [{ url: target.http, status: 301 }, { url: target.https, status: 200 }] }) }, Date.parse("2026-09-18T00:00:00Z"));
+        { report: web({ hops: [{ url: target.http, status: 301, ms: 1 }, { url: target.https, status: 200, ms: 1 }] }) }, Date.parse("2026-09-18T00:00:00Z"));
     assert.equal(rejected[0].id, "trust");
     assert.equal(rejected[0].status, "fail");
     assert.equal(byId(rejected, "certificate").status, "pass");
@@ -63,7 +63,7 @@ test("a rejected TLS handshake fails validation even when the unvalidated read l
 });
 
 test("downgrades that later return to HTTPS still fail", () => {
-    const chain = web({ hops: [{ url: target.https, status: 302 }, { url: target.http, status: 301 }, { url: target.https, status: 200 }] });
+    const chain = web({ hops: [{ url: target.https, status: 302, ms: 1 }, { url: target.http, status: 301, ms: 1 }, { url: target.https, status: 200, ms: 1 }] });
     assert.equal(byId(checks(chain), "https").status, "fail");
     assert.equal(byId(checks(web(), cert, chain), "http").status, "fail");
     assert.equal(byId(checks(web({ final_url: target.http })), "hsts").status, "unknown");
@@ -145,4 +145,5 @@ test("error responses are identified and incomplete data is rejected", () => {
     assert(!validReport("ssl", { ...cert, not_before: "invalid" }));
     assert(!validReport("headers", { ok: true }));
     assert(!validReport("headers", web({ headers: [["name", null]] })));
+    assert(!validReport("headers", web({ hops: [{ url: target.https, status: 200 }] })));
 });
