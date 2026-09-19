@@ -22,138 +22,14 @@ use moka::future::Cache;
 use serde::Deserialize;
 use sqlx::{PgConnection, PgPool};
 
-use std::collections::HashMap;
-
-use anyhow::Context;
 use uuid::Uuid;
 
 use crate::config::AppConfig;
-use crate::domain::quota::{Plan, evidence_ttl_days, raw_ttl_days};
+use crate::domain::quota::{Plan, usage_keys};
 use crate::domain::{AccountId, OrgId, UserId};
 use crate::error::{AppError, Result};
+use crate::storage::count_sql;
 use crate::storage::{ClampedRange, TimeRange};
-
-/// The two physical windows a written row is stamped with: how long the row
-/// lives, and how long a failed flow run's page snapshot lives inside it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RetentionDays {
-    pub row: u16,
-    pub evidence: u16,
-}
-
-/// Bulk `org_id → physical retention days`, one query, the same ceilings as
-/// [`Plan::raw_window_days`] via [`raw_ttl_days`] / [`evidence_ttl_days`]. Feeds
-/// the write-path TTL snapshot ([`crate::storage::org_ttl`]), which must read
-/// every active org without thrashing the plan cache. Plan-level:
-/// neither column carries an override or add-on today, so no override
-/// folding is applied.
-pub async fn retention_days_by_org(pool: &PgPool) -> Result<HashMap<Uuid, RetentionDays>> {
-    let rows: Vec<(Uuid, i32, i32)> = sqlx::query_as(
-        "SELECT o.id, p.raw_days, p.evidence_days \
-         FROM organizations o \
-         JOIN accounts a ON a.id = o.account_id \
-         JOIN plans p ON p.id = a.plan_id",
-    )
-    .fetch_all(pool)
-    .await
-    .context("load retention days by org")?;
-    Ok(rows
-        .into_iter()
-        .map(|(id, raw, evidence)| {
-            (
-                id,
-                RetentionDays {
-                    row: raw_ttl_days(raw),
-                    evidence: evidence_ttl_days(evidence, raw),
-                },
-            )
-        })
-        .collect())
-}
-
-/// Cache-key tags for the usage cache. One vocabulary, equal to the
-/// `plans` column names so the transparency endpoint, the UI, and any
-/// future invalidation hook all name a quota the same way.
-pub mod usage_keys {
-    pub const TARGETS: &str = "max_targets";
-    pub const MEMBERS: &str = "max_members";
-    pub const PENDING_INVITATIONS: &str = "max_pending_invitations";
-    /// Not a `plans` column: an abuse ceiling, equal for every plan.
-    pub const INVITATION_SENDS: &str = "invitation_sends_per_window";
-    pub const PUBLIC_COMPONENTS: &str = "max_public_components";
-    pub const STATUS_PAGES: &str = "max_status_pages";
-    pub const MAINTENANCE_WINDOWS: &str = "max_maintenance_windows";
-    pub const NOTIFICATION_CHANNELS: &str = "max_notification_channels";
-    pub const ESCALATION_POLICIES: &str = "max_escalation_policies";
-    pub const ON_CALL_SCHEDULES: &str = "max_on_call_schedules";
-    pub const FLOW_CHECKS: &str = "max_flow_checks";
-    pub const ORGS: &str = "max_orgs";
-}
-
-/// The account-pooled count queries: `$1` is the account, and each counts
-/// across its live orgs via [`crate::storage::accounts::live_orgs`]. Declared
-/// once and shared by the atomic friendly-check path, the store-side race-safe
-/// guards, *and* the usage snapshot, so the number a customer is blocked at
-/// always equals the number the usage page shows (single source).
-pub(crate) mod count_sql {
-    use crate::storage::accounts::live_orgs;
-
-    macro_rules! pooled {
-        ($name:ident, $sql:literal) => {
-            pub fn $name() -> String {
-                format!($sql, orgs = live_orgs("$1"))
-            }
-        };
-    }
-
-    pooled!(
-        targets,
-        "SELECT count(*) FROM targets WHERE org_id IN ({orgs})"
-    );
-    pooled!(
-        flow,
-        "SELECT count(*) FROM targets WHERE org_id IN ({orgs}) AND kind = 'flow'"
-    );
-    // Public components are distinct monitors curated onto any page — the cap
-    // counts a monitor once no matter how many pages it sits on.
-    pooled!(
-        public_components,
-        "SELECT count(DISTINCT target_id) FROM status_page_components WHERE org_id IN ({orgs})"
-    );
-    pooled!(
-        status_pages,
-        "SELECT count(*) FROM status_pages WHERE org_id IN ({orgs})"
-    );
-    pooled!(
-        maintenance_windows,
-        "SELECT count(*) FROM maintenance_windows WHERE org_id IN ({orgs})"
-    );
-    pooled!(
-        notification_channels,
-        "SELECT count(*) FROM notification_channels WHERE org_id IN ({orgs})"
-    );
-    pooled!(
-        escalation_policies,
-        "SELECT count(*) FROM escalation_policies WHERE org_id IN ({orgs}) AND deleted_at IS NULL"
-    );
-    pooled!(
-        on_call_schedules,
-        "SELECT count(*) FROM on_call_schedules WHERE org_id IN ({orgs}) AND deleted_at IS NULL"
-    );
-    // Seats are people, not memberships: one person in three of the account's
-    // orgs takes one seat.
-    pooled!(
-        members,
-        "SELECT count(DISTINCT user_id) FROM memberships WHERE org_id IN ({orgs})"
-    );
-    // Same "pending" predicate as `auth::invitations`, so the usage view and
-    // the atomic invite-cap enforcer agree on what counts.
-    pooled!(
-        pending_invitations,
-        "SELECT count(*) FROM invitations WHERE org_id IN ({orgs}) \
-         AND accepted_at IS NULL AND declined_at IS NULL AND expires_at > now()"
-    );
-}
 
 /// Storage-layer row for `plans`. The domain `Plan` stays `sqlx`-free
 /// (per the domain/storage split); this is the only place that maps the
@@ -436,7 +312,7 @@ impl QuotaService {
         ))
     }
 
-    /// Run one pooled count for an account. `sql` comes from [`count_sql`],
+    /// Run one pooled count for an account. `sql` comes from [`crate::storage::count_sql`],
     /// where `$1` is always the account.
     async fn count(&self, sql: &str, account: AccountId) -> Result<i64> {
         let Some(db) = &self.db else { return Ok(0) };

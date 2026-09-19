@@ -5,10 +5,10 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::domain::agent_wire::{FlowRunRecord, StepOutcome};
+use crate::domain::quota::RetentionDays;
 use crate::domain::{CheckResult, HeartbeatPingRecord};
 use crate::error::Result;
 use crate::observability::metrics::names;
-use crate::quotas::service::RetentionDays;
 use crate::storage::org_ttl::OrgTtlDays;
 use crate::storage::traits::{FlowRunSink, HeartbeatPingSink, ResultSink};
 

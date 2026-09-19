@@ -452,7 +452,7 @@ fn is_public_tenant_path(path: &str) -> bool {
 /// metadata and the server card are all `/.well-known/` files, public by
 /// definition.
 fn is_mcp_host_path(path: &str) -> bool {
-    path == crate::mcp::MCP_PATH || path.starts_with("/.well-known/")
+    path == crate::request::MCP_PATH || path.starts_with("/.well-known/")
 }
 
 /// Default-deny middleware on the non-operator hosts. A tenant subdomain

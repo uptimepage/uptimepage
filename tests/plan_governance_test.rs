@@ -15,8 +15,9 @@ use common::{
 use sqlx::PgPool;
 use tower::ServiceExt;
 use uptimepage::config::AppConfig;
+use uptimepage::domain::quota::RegionCaps;
 use uptimepage::domain::{CheckSpec, ExpectedStatus, HeartbeatCheck, OrgId, Target, UserId};
-use uptimepage::quotas::effective::{RegionCaps, plan_digest, region_targets, resolve_plans};
+use uptimepage::quotas::effective::{plan_digest, region_targets, resolve_plans};
 use uptimepage::quotas::{PlanGoverned, QuotaService, governed_interval};
 use uptimepage::storage::admin::{AdminRepo, EnabledTargetStream};
 use uuid::Uuid;
@@ -156,7 +157,7 @@ async fn drop_region(pool: &PgPool, region: &str) {
         .await;
 }
 
-async fn region_plans(pool: &PgPool, region: &str) -> uptimepage::quotas::effective::PlanMap {
+async fn region_plans(pool: &PgPool, region: &str) -> uptimepage::domain::quota::PlanMap {
     let cfg = AppConfig::load().expect("config");
     let quotas = QuotaService::new(&cfg, Some(pool.clone()));
     let repo = AdminRepo::new(pool.clone(), None, "plan_governance_test");

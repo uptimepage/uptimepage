@@ -6,6 +6,7 @@ pub mod app;
 pub mod auth;
 pub mod billing;
 pub mod bootstrap;
+pub mod channels;
 pub mod config;
 pub mod domain;
 pub mod email;

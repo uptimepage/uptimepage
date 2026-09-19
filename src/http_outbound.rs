@@ -335,11 +335,11 @@ fn error_body_summary(bytes: &[u8]) -> String {
                 _ => continue,
             };
             if !text.is_empty() {
-                return crate::notifier::truncate_bytes(&text, CAP);
+                return crate::text::truncate_bytes(&text, CAP);
             }
         }
     }
-    crate::notifier::truncate_bytes(String::from_utf8_lossy(bytes).trim(), CAP)
+    crate::text::truncate_bytes(String::from_utf8_lossy(bytes).trim(), CAP)
 }
 
 #[cfg(test)]

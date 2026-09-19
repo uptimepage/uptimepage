@@ -79,7 +79,7 @@ pub async fn ensure_send_window(pool: &PgPool, org: OrgId, inviter: UserId) -> R
         Some(org),
         Some(inviter),
         "quota_exceeded",
-        Some(crate::quotas::service::usage_keys::INVITATION_SENDS),
+        Some(crate::domain::quota::usage_keys::INVITATION_SENDS),
         serde_json::json!({ "current": sent, "limit": MAX_SENDS_PER_WINDOW }),
         None,
     );
@@ -182,12 +182,11 @@ pub async fn create(
         ));
     }
 
-    let (pending,): (i64,) =
-        sqlx::query_as(&crate::quotas::service::count_sql::pending_invitations())
-            .bind(account.0)
-            .fetch_one(&mut *tx)
-            .await
-            .context("invitations::create: count pending")?;
+    let (pending,): (i64,) = sqlx::query_as(&crate::storage::count_sql::pending_invitations())
+        .bind(account.0)
+        .fetch_one(&mut *tx)
+        .await
+        .context("invitations::create: count pending")?;
     if u32::try_from(pending).unwrap_or(u32::MAX) >= max_pending {
         tx.rollback().await.ok();
         crate::quotas::service::record_quota_event(

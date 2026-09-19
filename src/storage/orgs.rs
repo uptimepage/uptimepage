@@ -16,8 +16,8 @@ use crate::domain::{
     UserId,
 };
 use crate::error::{AppError, Result};
-use crate::quotas::service::count_sql;
 use crate::storage::accounts;
+use crate::storage::count_sql;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock, signup_lock_key, user_lock_key};
 
 /// Returns the id of the single live (non-soft-deleted) organisation, or
@@ -933,7 +933,7 @@ struct PooledCounts {
 impl PooledCounts {
     /// The first cap this breaches, if any.
     fn first_breach(&self, plan: &Plan) -> Option<(&'static str, i64, i64)> {
-        use crate::quotas::service::usage_keys as k;
+        use crate::domain::quota::usage_keys as k;
         [
             (k::TARGETS, self.targets, plan.max_targets),
             (k::FLOW_CHECKS, self.flow, plan.max_flow_checks),
@@ -974,7 +974,7 @@ impl PooledCounts {
 /// Pooled counts for one account (`$1`), assembled from the same per-quota
 /// queries every other enforcement site runs.
 fn pooled_counts_sql() -> String {
-    use crate::quotas::service::count_sql as c;
+    use crate::storage::count_sql as c;
     format!(
         "SELECT ({}) AS targets, ({}) AS flow, ({}) AS status_pages, \
          ({}) AS public_components, ({}) AS notification_channels, \

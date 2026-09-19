@@ -12,8 +12,9 @@ use common::{make_user, unique_slug};
 use sqlx::PgPool;
 use uptimepage::config::AppConfig;
 use uptimepage::domain::OrgId;
+use uptimepage::domain::quota::RegionCaps;
 use uptimepage::quotas::QuotaService;
-use uptimepage::quotas::effective::{RegionCaps, resolve_plans};
+use uptimepage::quotas::effective::resolve_plans;
 use uptimepage::storage::{PgSilenceStore, SilenceStore};
 use uuid::Uuid;
 

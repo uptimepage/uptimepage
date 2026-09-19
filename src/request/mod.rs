@@ -34,6 +34,9 @@ pub use host::{ResolvedStatusPage, StatusPageHost, extract_status_slug};
 /// happened because the marketing dispatcher was missing this check).
 pub const HEALTH_PATHS: &[&str] = &["/healthz", "/readyz"];
 
+/// Where the MCP transport listens; the MCP host serves this and discovery only.
+pub const MCP_PATH: &str = "/mcp";
+
 /// True when `path` is one of [`HEALTH_PATHS`]. Cheap `contains` over a
 /// 2-element slice — fine on the per-request hot path.
 pub fn is_health_path(path: &str) -> bool {

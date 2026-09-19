@@ -34,8 +34,7 @@ use rmcp::transport::streamable_http_server::tower::{
 use crate::app::AppState;
 use server::McpServer;
 
-/// Where the transport listens; the MCP host serves this and discovery only.
-pub const MCP_PATH: &str = "/mcp";
+use crate::request::MCP_PATH;
 
 /// Mount the read MCP server at `/mcp` when `cfg.mcp.enabled`. No-op otherwise,
 /// so a deployment without the dedicated host + Caddy route never exposes it.

@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -193,4 +196,67 @@ pub struct QuotaEvent {
     pub details: serde_json::Value,
     pub ip_hash: Option<String>,
     pub occurred_at: DateTime<Utc>,
+}
+
+/// The two physical windows a written row is stamped with: how long the row
+/// lives, and how long a failed flow run's page snapshot lives inside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetentionDays {
+    pub row: u16,
+    pub evidence: u16,
+}
+
+/// Cache-key tags for the usage cache. One vocabulary, equal to the
+/// `plans` column names so the transparency endpoint, the UI, and any
+/// future invalidation hook all name a quota the same way.
+pub mod usage_keys {
+    pub const TARGETS: &str = "max_targets";
+    pub const MEMBERS: &str = "max_members";
+    pub const PENDING_INVITATIONS: &str = "max_pending_invitations";
+    /// Not a `plans` column: an abuse ceiling, equal for every plan.
+    pub const INVITATION_SENDS: &str = "invitation_sends_per_window";
+    pub const PUBLIC_COMPONENTS: &str = "max_public_components";
+    pub const STATUS_PAGES: &str = "max_status_pages";
+    pub const MAINTENANCE_WINDOWS: &str = "max_maintenance_windows";
+    pub const NOTIFICATION_CHANNELS: &str = "max_notification_channels";
+    pub const ESCALATION_POLICIES: &str = "max_escalation_policies";
+    pub const ON_CALL_SCHEDULES: &str = "max_on_call_schedules";
+    pub const FLOW_CHECKS: &str = "max_flow_checks";
+    pub const ORGS: &str = "max_orgs";
+}
+
+/// Every org's resolved plan, absent where resolution failed.
+pub type PlanMap = HashMap<OrgId, Option<Arc<Plan>>>;
+
+/// Per-org ceiling on how many of a monitor's regions are probed. An org whose
+/// plan did not resolve is absent, which the query reads as no ceiling.
+///
+/// The two arrays are bound to a single `unnest`, which pads the shorter one
+/// with NULLs rather than erroring — a length that drifted would silently lift
+/// the ceiling for whichever orgs fell off the end. They are private and only
+/// [`RegionCaps::from`] fills them, so the lengths cannot disagree.
+#[derive(Debug, Default, Clone)]
+pub struct RegionCaps {
+    org_ids: Vec<uuid::Uuid>,
+    limits: Vec<i32>,
+}
+
+impl RegionCaps {
+    /// The org ids and their ceilings, positionally paired for `unnest`.
+    pub fn arrays(&self) -> (&[uuid::Uuid], &[i32]) {
+        (&self.org_ids, &self.limits)
+    }
+}
+
+impl From<&PlanMap> for RegionCaps {
+    fn from(plans: &PlanMap) -> Self {
+        let mut caps = Self::default();
+        for (org, plan) in plans {
+            if let Some(plan) = plan {
+                caps.org_ids.push(org.0);
+                caps.limits.push(plan.max_regions);
+            }
+        }
+        caps
+    }
 }

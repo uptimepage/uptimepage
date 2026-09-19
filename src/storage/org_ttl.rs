@@ -8,8 +8,10 @@ use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use anyhow::Context;
+
+use crate::domain::quota::{RetentionDays, evidence_ttl_days, raw_ttl_days};
 use crate::error::Result;
-use crate::quotas::service::{RetentionDays, retention_days_by_org};
 
 /// Stamped on rows whose org isn't in the snapshot yet (just-created org, or a
 /// boot before the first load). Matches the column DEFAULTs, so an unknown org
@@ -78,4 +80,35 @@ pub fn spawn_refresh(ttl: OrgTtlDays, pool: PgPool, shutdown: CancellationToken)
             }
         }
     })
+}
+
+/// Bulk `org_id → physical retention days`, one query, the same ceilings as
+/// [`crate::domain::Plan::raw_window_days`] via [`raw_ttl_days`] / [`evidence_ttl_days`]. Feeds
+/// the write-path TTL snapshot ([`OrgTtlDays`]), which must read
+/// every active org without thrashing the plan cache. Plan-level:
+/// neither column carries an override or add-on today, so no override
+/// folding is applied.
+pub async fn retention_days_by_org(pool: &PgPool) -> Result<HashMap<Uuid, RetentionDays>> {
+    let rows: Vec<(Uuid, i32, i32)> = sqlx::query_as(
+        "SELECT /* SAFE: every org's physical retention window, read once per refresh for the write-path TTL snapshot; returns plan numbers, no tenant data */ \
+         o.id, p.raw_days, p.evidence_days \
+         FROM organizations o \
+         JOIN accounts a ON a.id = o.account_id \
+         JOIN plans p ON p.id = a.plan_id",
+    )
+    .fetch_all(pool)
+    .await
+    .context("load retention days by org")?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, raw, evidence)| {
+            (
+                id,
+                RetentionDays {
+                    row: raw_ttl_days(raw),
+                    evidence: evidence_ttl_days(evidence, raw),
+                },
+            )
+        })
+        .collect())
 }

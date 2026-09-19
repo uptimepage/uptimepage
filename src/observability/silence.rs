@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::config::WhatsAppAppBotConfig;
+use crate::domain::quota::RegionCaps;
 use crate::domain::{IncidentOrigin, IncidentSeverity, IncidentUrgency, NotificationReason, OrgId};
 use crate::error::Result;
 use crate::http_outbound::OutboundHttpClient;
@@ -30,7 +31,6 @@ use crate::notifier::event::IncidentNotice;
 use crate::notifier::{CentralBotDelivery, EmailDelivery, build_notifier};
 use crate::observability::metrics::names;
 use crate::quotas::QuotaService;
-use crate::quotas::effective::RegionCaps;
 use crate::storage::{NotificationChannelStore, SilenceStore, TargetStore};
 
 const TICK: Duration = Duration::from_secs(30);

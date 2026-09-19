@@ -7,6 +7,7 @@ pub mod channel_link_codes;
 pub mod channel_verification;
 pub mod clickhouse;
 pub mod contacts;
+pub mod count_sql;
 pub mod disposable_domains;
 pub mod domain_expiry_state;
 pub mod escalation_policies;

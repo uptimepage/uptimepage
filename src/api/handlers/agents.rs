@@ -64,7 +64,7 @@ pub async fn pull_targets(
     let etag = repo
         .region_pull_etag(
             &region,
-            &crate::quotas::effective::RegionCaps::from(&plans),
+            &crate::domain::quota::RegionCaps::from(&plans),
             &crate::quotas::effective::plan_digest(&plans),
         )
         .await?;

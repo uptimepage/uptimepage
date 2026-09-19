@@ -21,8 +21,8 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::domain::OrgId;
+use crate::domain::quota::RegionCaps;
 use crate::error::Result;
-use crate::quotas::effective::RegionCaps;
 use crate::storage::admin::{NOT_HELD_PREDICATE, REGION_CAP_JOIN, REGION_CAP_PREDICATE};
 
 /// An open (unresolved) silence row. `notified` = the customer was already told.

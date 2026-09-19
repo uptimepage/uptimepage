@@ -23,9 +23,9 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::domain::quota::RegionCaps;
 use crate::domain::{OrgId, Target};
 use crate::error::Result;
-use crate::quotas::effective::RegionCaps;
 use crate::security::Cipher;
 use crate::storage::postgres::{TargetRow, decode_target_row};
 

@@ -1,17 +1,15 @@
 //! Plan ceilings applied to handed-out work. Never written back to the row.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 
+use crate::domain::quota::{PlanMap, RegionCaps};
 use crate::domain::{OrgId, Plan, Target, min_interval_secs_for_kind};
 use crate::error::Result;
 use crate::quotas::QuotaService;
 use crate::storage::admin::{AdminRepo, EnabledTargetStream, PublicTargetCursor};
-
-pub type PlanMap = HashMap<OrgId, Option<Arc<Plan>>>;
 
 /// The same floor the write path enforces: a row stored below its kind's
 /// minimum predates that minimum, and handing it out unclamped would probe at
@@ -68,39 +66,6 @@ pub fn govern_with(plans: &PlanMap, targets: &mut [(OrgId, Target)]) {
         if let Some(Some(plan)) = plans.get(org) {
             target.interval = governed_interval(target.interval, plan, target.check.kind());
         }
-    }
-}
-
-/// Per-org ceiling on how many of a monitor's regions are probed. An org whose
-/// plan did not resolve is absent, which the query reads as no ceiling.
-///
-/// The two arrays are bound to a single `unnest`, which pads the shorter one
-/// with NULLs rather than erroring — a length that drifted would silently lift
-/// the ceiling for whichever orgs fell off the end. They are private and only
-/// [`RegionCaps::from`] fills them, so the lengths cannot disagree.
-#[derive(Debug, Default, Clone)]
-pub struct RegionCaps {
-    org_ids: Vec<uuid::Uuid>,
-    limits: Vec<i32>,
-}
-
-impl RegionCaps {
-    /// The org ids and their ceilings, positionally paired for `unnest`.
-    pub fn arrays(&self) -> (&[uuid::Uuid], &[i32]) {
-        (&self.org_ids, &self.limits)
-    }
-}
-
-impl From<&PlanMap> for RegionCaps {
-    fn from(plans: &PlanMap) -> Self {
-        let mut caps = Self::default();
-        for (org, plan) in plans {
-            if let Some(plan) = plan {
-                caps.org_ids.push(org.0);
-                caps.limits.push(plan.max_regions);
-            }
-        }
-        caps
     }
 }
 

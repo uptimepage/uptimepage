@@ -1297,7 +1297,7 @@ impl PooledCounts {
 }
 
 async fn pooled_counts(conn: &mut sqlx::PgConnection, account: AccountId) -> Result<PooledCounts> {
-    use crate::quotas::service::count_sql as c;
+    use crate::storage::count_sql as c;
     sqlx::query_as(&format!(
         "SELECT ({}) AS targets, ({}) AS flows, ({}) AS status_pages",
         c::targets(),

@@ -18,9 +18,9 @@ use crate::domain::{
     TargetUpdate, UserId, WriteSource,
 };
 use crate::error::{AppError, Result};
-use crate::quotas::service::count_sql;
 use crate::security::Cipher;
 use crate::storage::accounts;
+use crate::storage::count_sql;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock};
 use crate::storage::postgres_secrets::{decrypt_in_place, encrypt_in_place};
 use crate::storage::traits::{RegionOption, TagAddOutcome, TargetFilter, TargetSort, TargetStore};
