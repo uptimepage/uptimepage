@@ -97,6 +97,7 @@ impl McpServer {
         let target = self.load_target(auth.org, id).await?;
         require_confirmation(
             ctx,
+            auth,
             format!(
                 "Run a check now on monitor \"{}\"? It probes the target immediately and \
                  records the result; a failure may trigger your alerts.",
@@ -148,6 +149,7 @@ impl McpServer {
         };
         require_confirmation(
             ctx,
+            auth,
             format!(
                 "{verb} monitor \"{}\"? {effect}",
                 sanitize_prompt(&target.name)
@@ -191,8 +193,8 @@ impl McpServer {
         // against the same probe budget the REST dry run spends.
         auth.require(Scope::TargetsExecute)?;
 
-        let prepared = self.prepare_create(ctx, auth, args).await?;
-        require_confirmation(ctx, prepared.prompt()).await?;
+        let prepared = self.prepare_create(auth, args).await?;
+        require_confirmation(ctx, auth, prepared.prompt()).await?;
         self.persist_create(auth, prepared).await
     }
 
@@ -200,7 +202,6 @@ impl McpServer {
     /// on many monitors instead of one each.
     async fn prepare_create(
         &self,
-        ctx: &RequestContext<RoleServer>,
         auth: &McpAuth,
         args: &CreateMonitorArgs,
     ) -> Result<PreparedCreate, McpToolError> {
@@ -311,18 +312,6 @@ impl McpServer {
             .await
             .map_err(config_error)?;
 
-        // Ahead of the probe, not after it: a client that can never confirm must
-        // not be able to spend probes at addresses it chooses. Behind argument
-        // validation, which has no outward effect and is worth answering.
-        if !crate::mcp::confirm::client_can_confirm(ctx) {
-            return Err(McpToolError::new(
-                codes::ELICITATION_UNSUPPORTED,
-                "this MCP client cannot prompt for confirmation, and no monitor is \
-                 created without one; create it in the Uptimepage app",
-                false,
-            ));
-        }
-
         let address = describe_check(&new.check).1;
         let probe = if new.check.is_passive() {
             None
@@ -418,7 +407,7 @@ impl McpServer {
         let mut slots: Vec<Result<PreparedCreate, MonitorCreateOutcome>> =
             Vec::with_capacity(args.monitors.len());
         for item in &args.monitors {
-            match self.prepare_create(ctx, auth, item).await {
+            match self.prepare_create(auth, item).await {
                 Ok(p) => slots.push(Ok(p)),
                 Err(e) if e.is_fatal_to_batch() => return Err(e),
                 Err(e) => slots.push(Err(MonitorCreateOutcome {
@@ -451,6 +440,7 @@ impl McpServer {
         let count = prepared.len();
         require_confirmation(
             ctx,
+            auth,
             format!("Create {count} monitors?\n\n{}", lines.join("\n")),
         )
         .await?;
@@ -628,6 +618,7 @@ impl McpServer {
 
         require_confirmation(
             ctx,
+            auth,
             format!(
                 "Change monitor \"{}\"?\n\n{}",
                 sanitize_prompt(&target.name),

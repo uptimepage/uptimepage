@@ -108,12 +108,10 @@ async fn tool_names_for_client(elicitation: bool) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn tool_catalog_hides_writes_from_a_client_that_cannot_confirm() {
-    let names = tool_names_for_client(false).await;
-    assert!(
-        names.contains(&"list_monitors".to_string()),
-        "read tools stay: {names:?}"
-    );
+async fn tool_catalog_is_the_same_whether_or_not_the_client_can_confirm() {
+    let without = tool_names_for_client(false).await;
+    let with = tool_names_for_client(true).await;
+    assert_eq!(without, with);
     for write in [
         "pause_monitor",
         "run_check_now",
@@ -121,17 +119,9 @@ async fn tool_catalog_hides_writes_from_a_client_that_cannot_confirm() {
         "post_incident_update",
     ] {
         assert!(
-            !names.contains(&write.to_string()),
-            "{write} needs a confirmation this client can't show: {names:?}"
+            without.contains(&write.to_string()),
+            "{write} in {without:?}"
         );
-    }
-}
-
-#[tokio::test]
-async fn tool_catalog_keeps_writes_for_an_elicitation_capable_client() {
-    let names = tool_names_for_client(true).await;
-    for write in ["pause_monitor", "publish_incident", "unpublish_incident"] {
-        assert!(names.contains(&write.to_string()), "{write} in {names:?}");
     }
 }
 

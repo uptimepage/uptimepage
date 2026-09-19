@@ -18,6 +18,8 @@
 //! the audience, so a token minted for this resource is refused by the REST
 //! API and one minted elsewhere is refused here.
 
+use std::sync::OnceLock;
+
 use axum::extract::{Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::Next;
@@ -41,6 +43,20 @@ pub struct McpAuth {
     pub scopes: ScopeSet,
     pub user_id: UserId,
     pub token_id: Uuid,
+    /// `name/version` from the client's `initialize`.
+    pub client: Option<String>,
+    /// Why a write went ahead with no person answering the prompt.
+    unconfirmed: OnceLock<String>,
+}
+
+fn client_label(ctx: &RequestContext<RoleServer>) -> Option<String> {
+    ctx.peer.peer_info().map(|info| {
+        format!("{}/{}", info.client_info.name, info.client_info.version)
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(120)
+            .collect()
+    })
 }
 
 impl McpAuth {
@@ -64,6 +80,8 @@ impl McpAuth {
                 scopes: scopes.clone(),
                 user_id: *user_id,
                 token_id: *token_id,
+                client: client_label(ctx),
+                unconfirmed: OnceLock::new(),
             }),
             // The middleware guarantees a bound ApiToken before any tool runs;
             // anything else is a server bug, not a caller error.
@@ -81,6 +99,14 @@ impl McpAuth {
         } else {
             Err(McpToolError::insufficient_scope(required.as_str()))
         }
+    }
+
+    pub fn note_unconfirmed(&self, reason: String) {
+        let _ = self.unconfirmed.set(reason);
+    }
+
+    pub fn unconfirmed(&self) -> Option<&str> {
+        self.unconfirmed.get().map(String::as_str)
     }
 }
 
@@ -259,6 +285,8 @@ mod tests {
             scopes: ScopeSet::from_strs(scopes.iter().copied()),
             user_id: UserId(uuid::Uuid::nil()),
             token_id: uuid::Uuid::nil(),
+            client: None,
+            unconfirmed: OnceLock::new(),
         }
     }
 

@@ -46,6 +46,7 @@ pub async fn record(
         token_id = %auth.token_id,
         user_id = %auth.user_id.0,
         org_id = %auth.org.0,
+        client = auth.client.as_deref().unwrap_or(""),
         tool,
         outcome = outcome.as_str(),
         detail = detail.unwrap_or(""),
@@ -53,12 +54,13 @@ pub async fn record(
     );
     let res = sqlx::query(
         "INSERT INTO mcp_audit \
-           (token_id, user_id, org_id, tool, arguments, outcome, detail) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+           (token_id, user_id, org_id, client, tool, arguments, outcome, detail) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     )
     .bind(auth.token_id)
     .bind(auth.user_id.0)
     .bind(auth.org.0)
+    .bind(auth.client.as_deref())
     .bind(tool)
     .bind(sqlx::types::Json(arguments))
     .bind(outcome.as_str())

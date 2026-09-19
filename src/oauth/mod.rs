@@ -52,9 +52,9 @@ const DEFAULT_SCOPES: &[Scope] = &[
 
 /// Every scope a connector MAY request. Write scopes are opt-in: granted only
 /// when the client explicitly asks for them, and surfaced distinctly on the
-/// consent screen. The write tools are each still scope-gated AND elicitation-
-/// confirmed per action, so a granted write scope is necessary but not
-/// sufficient to mutate anything.
+/// consent screen. Through a client that cannot show a prompt the granted
+/// scope alone authorises a write, so the consent screen is where an
+/// over-broad grant has to be stopped.
 const GRANTABLE_SCOPES: &[Scope] = &[
     Scope::TargetsRead,
     Scope::StatusPageRead,

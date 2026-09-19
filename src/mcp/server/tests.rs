@@ -152,6 +152,15 @@ fn a_probe_refusal_is_not_retryable_but_a_missing_agent_is() {
 }
 
 #[test]
+fn an_argument_rejection_audits_its_reason() {
+    let err = parse_incident_state_filter(Some("resolved")).unwrap_err();
+    assert_eq!(
+        err.audit_detail(),
+        format!("invalid_argument:{}", err.message)
+    );
+}
+
+#[test]
 fn incident_state_filter_defaults_to_open() {
     assert!(parse_incident_state_filter(None).unwrap());
     assert!(parse_incident_state_filter(Some("open")).unwrap());
@@ -211,7 +220,7 @@ fn public_text_trims_blank_and_caps_length() {
 }
 
 #[test]
-fn write_tools_are_filtered_out_for_a_client_that_cannot_confirm() {
+fn the_read_only_hint_marks_exactly_the_tools_that_do_not_mutate() {
     let tools = McpServer::tool_router().list_all();
     let (read, write): (Vec<_>, Vec<_>) = tools.iter().partition(|t| is_read_only(t));
     assert!(!write.is_empty());

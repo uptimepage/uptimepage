@@ -47,6 +47,7 @@ impl McpServer {
         let note = clean_incident_note(args.note.as_deref())?;
         require_confirmation(
             ctx,
+            auth,
             "Acknowledge this incident (take ownership, stop escalation)?".to_string(),
         )
         .await?;
@@ -71,7 +72,7 @@ impl McpServer {
             .await?;
         let id = parse_uuid(&args.id, "incident id")?;
         let note = clean_incident_note(args.note.as_deref())?;
-        require_confirmation(ctx, "Resolve this incident?".to_string()).await?;
+        require_confirmation(ctx, auth, "Resolve this incident?".to_string()).await?;
         let outcome = self
             .state
             .incident_ops_store
@@ -130,6 +131,7 @@ impl McpServer {
         let label = self.label_for(auth.org, &incident).await?;
         require_confirmation(
             ctx,
+            auth,
             format!(
                 "Publish this update on your public status page, on {label}?\n\n\"{}\"",
                 sanitize_prompt(&message)
@@ -176,6 +178,7 @@ impl McpServer {
         let opening = opening_update_message(title.as_deref(), description.as_deref());
         require_confirmation(
             ctx,
+            auth,
             format!(
                 "Publish {label} on your public status pages?{}\n\nSubscribers receive:\n\n\"{}\"",
                 match &title {
@@ -209,7 +212,12 @@ impl McpServer {
             .await?;
         let id = parse_uuid(&args.id, "incident id")?;
         let label = self.incident_label(auth.org, id).await?;
-        require_confirmation(ctx, format!("Hide {label} from your public status pages?")).await?;
+        require_confirmation(
+            ctx,
+            auth,
+            format!("Hide {label} from your public status pages?"),
+        )
+        .await?;
         let incident = self
             .state
             .incident_ops_store

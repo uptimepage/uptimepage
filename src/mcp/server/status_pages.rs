@@ -134,6 +134,7 @@ impl McpServer {
         };
         require_confirmation(
             ctx,
+            auth,
             format!(
                 "Create status page \"{}\" at {}? {visibility}",
                 sanitize_prompt(&name),
@@ -218,6 +219,7 @@ impl McpServer {
         }
         require_confirmation(
             ctx,
+            auth,
             format!(
                 "Update status page \"{}\": {}?",
                 sanitize_prompt(&page.name),
@@ -297,6 +299,7 @@ impl McpServer {
         }
         require_confirmation(
             ctx,
+            auth,
             format!(
                 "Add {} monitor(s) to status page \"{}\"? {published}\n\n{}",
                 prepared.len(),
@@ -460,6 +463,7 @@ impl McpServer {
 
         require_confirmation(
             ctx,
+            auth,
             format!(
                 "Change how {} is presented on status page \"{}\"?",
                 self.monitor_label(auth.org, target_id).await,

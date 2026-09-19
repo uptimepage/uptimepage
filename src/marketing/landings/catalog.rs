@@ -2428,7 +2428,7 @@ resource "uptimepage_target" "api" {
             },
             Section {
                 heading: "What Claude can do once connected",
-                body: "Claude negotiates elicitation at connect time, so the server lists all 31 tools: 16 that read and 15 that act. Ask what is down and Claude calls get_org_health, then get_monitor_history for the one that matters, and reads the DNS, connect, TLS and first-byte timings apart. Ask it to cover a new service and it proposes the monitors, runs each check once, and shows you the result inside the confirmation before anything is saved. There is no remember-my-choice: every write is its own approval.",
+                body: "Claude negotiates elicitation at connect time, so each of the 15 tools that act asks you before it runs, alongside the 16 that read. Ask what is down and Claude calls get_org_health, then get_monitor_history for the one that matters, and reads the DNS, connect, TLS and first-byte timings apart. Ask it to cover a new service and it proposes the monitors, runs each check once, and shows you the result inside the confirmation before anything is saved. There is no remember-my-choice: every write is its own approval.",
             },
             Section {
                 heading: "Three prompts to start with",
@@ -2520,7 +2520,7 @@ resource "uptimepage_target" "api" {
             },
             Section {
                 heading: "What the agent can do",
-                body: "Cursor has supported MCP elicitation since 1.5, so the server offers all 31 tools: 16 that read and 15 that act, each write behind a prompt Cursor shows you before it runs. Ask about the endpoint you are editing and the agent calls get_monitor for its full config, get_monitor_history for its last 24 hours with timings split into DNS, connect, TLS and first byte, and names the region where it fails if it only fails from one. A monitor it creates runs its check first and shows the result in the confirmation.",
+                body: "Cursor has supported MCP elicitation since 1.5, so each of the 15 tools that act sits behind a prompt Cursor shows you before it runs, alongside the 16 that read. Ask about the endpoint you are editing and the agent calls get_monitor for its full config, get_monitor_history for its last 24 hours with timings split into DNS, connect, TLS and first byte, and names the region where it fails if it only fails from one. A monitor it creates runs its check first and shows the result in the confirmation.",
             },
             Section {
                 heading: "Prompts that fit an editor",
@@ -2599,7 +2599,7 @@ resource "uptimepage_target" "api" {
             },
             Section {
                 heading: "In Copilot agent mode",
-                body: "Once the server is running, its tools show in the tools picker of agent mode and the agent calls them like any other. VS Code supports MCP elicitation, so the server lists all 31 tools and every write shows its confirmation as a native dialog: the monitor about to be created, with the result of the check it already ran; the incident about to be resolved; the update about to be posted. Cancel the dialog and nothing happens. There is no remember-my-choice.",
+                body: "Once the server is running, its tools show in the tools picker of agent mode and the agent calls them like any other. VS Code supports MCP elicitation, so every write shows its confirmation as a native dialog: the monitor about to be created, with the result of the check it already ran; the incident about to be resolved; the update about to be posted. Cancel the dialog and nothing happens. There is no remember-my-choice.",
             },
             Section {
                 heading: "Per repo, per person",

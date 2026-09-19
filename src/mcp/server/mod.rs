@@ -6,8 +6,7 @@
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{ServerCapabilities, ServerInfo};
-use rmcp::service::RequestContext;
-use rmcp::{RoleServer, ServerHandler, tool_handler};
+use rmcp::{ServerHandler, tool_handler};
 
 use crate::api::handlers::validation::MAX_MESSAGE;
 use crate::app::AppState;
@@ -55,27 +54,6 @@ impl McpServer {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for McpServer {
-    /// Hide the write tools from a client that can't confirm them: without
-    /// elicitation every one of them refuses, so advertising them only invites
-    /// a failed call. Presentation only — [`crate::mcp::confirm::require_confirmation`] is still
-    /// what makes a write safe, and a client that calls a hidden tool anyway
-    /// gets the same refusal.
-    async fn list_tools(
-        &self,
-        _request: Option<rmcp::model::PaginatedRequestParams>,
-        context: RequestContext<RoleServer>,
-    ) -> Result<rmcp::model::ListToolsResult, rmcp::ErrorData> {
-        let mut tools = self.tool_router.list_all();
-        if !super::confirm::client_can_confirm(&context) {
-            tools.retain(is_read_only);
-        }
-        Ok(rmcp::model::ListToolsResult {
-            tools,
-            meta: None,
-            next_cursor: None,
-        })
-    }
-
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::default();
         info.capabilities = ServerCapabilities::builder()
@@ -90,10 +68,12 @@ impl ServerHandler for McpServer {
              Most tools are read-only; a few perform actions (create a monitor, pause/resume \
              one, retune how loudly one is watched, run a check, publish an incident, post an \
              incident update, create or edit a status page and the components on it) and each \
-             asks the user to confirm before it runs, so they need a \
-             client that supports elicitation. Creating a monitor runs its check once and shows \
-             the result in that confirmation; when the user names more than one thing to watch, \
-             `create_monitors` does the whole set behind a single prompt instead of one each. \
+             asks the user to confirm before it runs when the client can show a prompt; a \
+             client that cannot relay one runs them on the token's scopes alone, and the audit \
+             trail records that no prompt was answered. Creating a monitor runs its check once \
+             and shows the result in that confirmation; when the user names more than one thing \
+             to watch, `create_monitors` does the whole set behind a single prompt instead of \
+             one each. \
              `get_org_usage` names the organization this connector is bound to; a token carries \
              one org and cannot switch, so when the user means a different org they must select \
              it in the app and reconnect. \
@@ -127,6 +107,7 @@ impl ServerHandler for McpServer {
 
 /// The `readOnlyHint` annotation is the single source of truth for "does this
 /// mutate", so adding a write tool needs no second list to maintain.
+#[cfg(test)]
 fn is_read_only(tool: &rmcp::model::Tool) -> bool {
     tool.annotations
         .as_ref()

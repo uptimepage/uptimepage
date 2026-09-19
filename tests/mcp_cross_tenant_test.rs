@@ -28,10 +28,8 @@ use uptimepage::storage::{PostgresTargetStore, TargetStore, create_org_with_owne
 use url::Url;
 use uuid::Uuid;
 
-/// A client that declares no elicitation capability: every write tool refuses
-/// at the confirmation gate, which is exactly what makes the contrast in
-/// `a_write_finds_nothing_to_publish_in_another_org` legible. The org checks
-/// run before that gate, so a foreign id still has to fail as `not_found`.
+/// No elicitation capability: a write on the org's own row goes ahead
+/// unconfirmed, while a foreign id still fails as `not_found` first.
 const INITIALIZE: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"tenancy-probe","version":"0"}}}"#;
 
 struct Connector {
@@ -80,6 +78,20 @@ impl Connector {
         serde_json::from_str(frame).expect("tool result json")
     }
 }
+
+async fn latest_audit_detail(pool: &PgPool, org: OrgId, tool: &str) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT detail FROM mcp_audit WHERE org_id = $1 AND tool = $2 \
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(org.0)
+    .bind(tool)
+    .fetch_one(pool)
+    .await
+    .expect("audit row")
+}
+
+const UNCONFIRMED: &str = "unconfirmed:no_elicitation";
 
 /// The `{code, message, retryable}` a tool-execution error carries, or `None`
 /// when the call succeeded.
@@ -329,9 +341,6 @@ async fn listings_carry_only_the_tokens_own_org() {
     assert!(!names.contains(&"mcp-tenancy-b"), "{names:?}");
 }
 
-/// The org lookup runs before the confirmation gate, so the two failures are
-/// distinguishable: A's own incident gets as far as asking the user (and this
-/// client can't answer), while B's never resolves to a row at all.
 #[tokio::test]
 #[ignore]
 async fn a_write_finds_nothing_to_publish_in_another_org() {
@@ -342,13 +351,15 @@ async fn a_write_finds_nothing_to_publish_in_another_org() {
     let (_, a_incident) = seed_monitor_with_incident(&pool, org_a).await;
     let (b_target, b_incident) = seed_monitor_with_incident(&pool, org_b).await;
 
+    let published = mcp
+        .call("publish_incident", json!({ "id": a_incident }))
+        .await;
+    assert_eq!(error_code(&published), None, "{published}");
     assert_eq!(
-        error_code(
-            &mcp.call("publish_incident", json!({ "id": a_incident }))
-                .await
-        )
-        .as_deref(),
-        Some("elicitation_unsupported"),
+        latest_audit_detail(&pool, org_a, "publish_incident")
+            .await
+            .as_deref(),
+        Some(UNCONFIRMED)
     );
     for (tool, args) in [
         ("publish_incident", json!({ "id": b_incident })),
@@ -376,8 +387,6 @@ async fn a_write_finds_nothing_to_publish_in_another_org() {
     assert!(enabled);
 }
 
-/// The Terraform refusal runs before the confirmation gate, so a client that
-/// cannot confirm still hits it.
 #[tokio::test]
 #[ignore]
 async fn no_write_touches_a_terraform_managed_monitor() {
@@ -413,22 +422,27 @@ async fn no_write_touches_a_terraform_managed_monitor() {
         );
     }
 
-    // An editable monitor gets as far as asking, which this client cannot answer.
     let editable = store
         .create(org_a, secret_monitor(), WriteSource::Ui, i64::MAX, i64::MAX)
         .await
         .expect("insert ui target")
         .id;
-    assert_eq!(
-        error_code(
-            &mcp.call(
-                "update_monitor",
-                json!({ "id": editable, "interval_secs": 300 })
-            )
-            .await
+    let retuned = mcp
+        .call(
+            "update_monitor",
+            json!({ "id": editable, "interval_secs": 300 }),
         )
-        .as_deref(),
-        Some("elicitation_unsupported"),
+        .await;
+    assert_eq!(error_code(&retuned), None, "{retuned}");
+    assert_eq!(
+        store.get(org_a, editable).await.unwrap().unwrap().interval,
+        Duration::from_secs(300)
+    );
+    assert_eq!(
+        latest_audit_detail(&pool, org_a, "update_monitor")
+            .await
+            .as_deref(),
+        Some(UNCONFIRMED)
     );
 
     // Nothing above may have changed the declared row on its way to failing.
@@ -521,26 +535,29 @@ async fn a_monitor_is_not_created_when_the_check_is_refused_or_cannot_be_tried()
         );
     }
 
-    // This harness never negotiated elicitation. The refusal must come from
-    // that, before any probe is dispatched at a caller-supplied address —
-    // asserting `probe_unavailable` here would pin the suite to whether a live
-    // agent happens to serve the region.
-    let untried = mcp
-        .call(
-            "create_monitor",
-            json!({ "name": "shop", "check": { "type": "http", "url": "https://example.com/" } }),
-        )
-        .await;
-    assert_eq!(
-        error_code(&untried).as_deref(),
-        Some("elicitation_unsupported"),
-        "{untried}"
-    );
-
     assert_eq!(
         store.list(org_a, Default::default()).await.unwrap().len(),
         before,
         "no refusal may leave a monitor behind"
+    );
+
+    // A heartbeat needs no probe, so no dependence on a live agent.
+    let created = mcp
+        .call(
+            "create_monitor",
+            json!({ "name": "nightly", "check": { "type": "heartbeat", "period_secs": 86_400, "grace_secs": 3_600 } }),
+        )
+        .await;
+    assert_eq!(error_code(&created), None, "{created}");
+    assert_eq!(
+        store.list(org_a, Default::default()).await.unwrap().len(),
+        before + 1
+    );
+    assert_eq!(
+        latest_audit_detail(&pool, org_a, "create_monitor")
+            .await
+            .as_deref(),
+        Some(UNCONFIRMED)
     );
 }
 
@@ -578,23 +595,23 @@ async fn a_channel_from_another_org_cannot_be_bound() {
         );
     }
 
-    // The org's own channel gets as far as the confirmation this client cannot
-    // answer. Without this the suite would pass on a binding that can never
-    // succeed, since every refusal above looks the same as a broken diff.
-    let asked = mcp
+    // Without a binding that lands, every refusal above could be a broken diff.
+    let bound = mcp
         .call(
             "update_monitor",
             json!({ "id": id, "channel_ids": [a_channel] }),
         )
         .await;
+    assert_eq!(error_code(&bound), None, "{bound}");
+    let after = store.get(org_a, id).await.unwrap().expect("still there");
     assert_eq!(
-        error_code(&asked).as_deref(),
-        Some("elicitation_unsupported"),
-        "{asked}"
+        after
+            .alerts
+            .iter()
+            .map(|a| a.channel_id)
+            .collect::<Vec<_>>(),
+        vec![a_channel]
     );
-
-    let unchanged = store.get(org_a, id).await.unwrap().expect("still there");
-    assert!(unchanged.alerts.is_empty(), "{:?}", unchanged.alerts);
 }
 
 /// The tag bounds hold at the MCP door, ahead of the confirmation gate.

@@ -129,25 +129,29 @@ impl McpServer {
         args_json: serde_json::Value,
         result: Result<T, McpToolError>,
     ) -> Result<T, McpToolError> {
+        let unconfirmed = auth
+            .unconfirmed()
+            .map(|reason| format!("unconfirmed:{reason}"));
         let (outcome, detail) = match &result {
-            Ok(_) => (Outcome::Success, None),
+            Ok(_) => (Outcome::Success, unconfirmed),
             Err(e) => {
-                // A client that can't confirm can't write at all — worth seeing
-                // in the dashboards, not only in one caller's transcript.
-                if matches!(
-                    e.code,
-                    codes::ELICITATION_UNSUPPORTED | codes::CONFIRMATION_FAILED
-                ) {
+                if e.code == codes::CONFIRMATION_FAILED {
                     tracing::warn!(
                         target: "mcp",
                         org_id = %auth.org.0,
                         token_id = %auth.token_id,
+                        client = auth.client.as_deref().unwrap_or(""),
                         tool,
                         detail = e.audit_detail(),
                         "mcp write refused: client could not confirm"
                     );
                 }
-                (outcome_for(e), Some(e.audit_detail()))
+                // Appended, so the refusal code still leads.
+                let detail = match unconfirmed {
+                    Some(u) => format!("{};{u}", e.audit_detail()),
+                    None => e.audit_detail(),
+                };
+                (outcome_for(e), Some(detail))
             }
         };
         audit::record(pool, auth, tool, args_json, outcome, detail.as_deref()).await;

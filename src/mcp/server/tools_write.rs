@@ -28,7 +28,7 @@ use super::args::requested_fields;
 #[tool_router(router = write_router, vis = "pub(super)")]
 impl McpServer {
     #[tool(
-        description = "Run a check on a monitor immediately and record the result. Requires user confirmation; a down result may fire the org's normal alerts. Heartbeat monitors cannot be probed (they wait for your systems to ping them). Not read-only.",
+        description = "Run a check on a monitor immediately and record the result. Asks for confirmation where the client can show a prompt; otherwise runs on the token's scope. A down result may fire the org's normal alerts. Heartbeat monitors cannot be probed (they wait for your systems to ping them). Not read-only.",
         title = "Run check now",
         annotations(
             read_only_hint = false,
@@ -50,7 +50,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Pause a monitor (stop its checks until resumed). Requires user confirmation. Not read-only; idempotent.",
+        description = "Pause a monitor (stop its checks until resumed). Asks for confirmation where the client can show a prompt; otherwise runs on the token's scope. Not read-only; idempotent.",
         title = "Pause monitor",
         annotations(
             read_only_hint = false,
@@ -74,7 +74,7 @@ impl McpServer {
     /// Create a monitor. The check runs once first and its result is shown in
     /// the confirmation, so a misconfigured check is visible before it exists.
     #[tool(
-        description = "Create a monitor for an http, tcp, ping, dns, tls_cert, domain_expiry or heartbeat check. The check is run once before anything is saved and the result is shown to the user along with every setting it would apply; nothing is created unless they approve. Bind it to alerts as you create it: pass channel_ids from list_notification_channels (this needs the channels:read scope), and if the org has no channel yet, say so rather than leaving a monitor that pages nobody. Leave regions unset unless the user named where they want the check to run from — omitted, it probes from the operator's default set, which is already the intended coverage; naming more regions than the plan allows is refused outright. Request headers and a request body can be set, but a credential must be referenced rather than pasted: write `Bearer {{ my_key }}` and call list_variables for the keys this org has. A URL carrying a username or password is refused, and browser flows cannot be created here — add those in the app. Not read-only.",
+        description = "Create a monitor for an http, tcp, ping, dns, tls_cert, domain_expiry or heartbeat check. The check is run once before anything is saved and the result is shown to the user along with every setting it would apply; where the client can show a prompt, nothing is created unless they approve; otherwise the monitor is created on the token's scope and the trial result comes back with it. Bind it to alerts as you create it: pass channel_ids from list_notification_channels (this needs the channels:read scope), and if the org has no channel yet, say so rather than leaving a monitor that pages nobody. Leave regions unset unless the user named where they want the check to run from — omitted, it probes from the operator's default set, which is already the intended coverage; naming more regions than the plan allows is refused outright. Request headers and a request body can be set, but a credential must be referenced rather than pasted: write `Bearer {{ my_key }}` and call list_variables for the keys this org has. A URL carrying a username or password is refused, and browser flows cannot be created here — add those in the app. Not read-only.",
         title = "Create monitor",
         annotations(
             read_only_hint = false,
@@ -110,7 +110,7 @@ impl McpServer {
     /// Retune an existing monitor's alerting and cadence. Read it first with
     /// `get_monitor`: tags and channel bindings are replaced whole, not merged.
     #[tool(
-        description = "Change how loudly a monitor is watched: check interval, alert confirmations, recovery notices, reminder interval, tags, group, the multi-region detection quorum, and which notification channels it alerts (channel_ids replaces the whole set, and needs the channels:read scope). It cannot change what the check watches — name, address, assertions, expected status, headers, body, probe regions and owner are refused. A monitor managed by Terraform is refused outright. Shows the old and new value of every field before it runs, and requires confirmation. Not read-only.",
+        description = "Change how loudly a monitor is watched: check interval, alert confirmations, recovery notices, reminder interval, tags, group, the multi-region detection quorum, and which notification channels it alerts (channel_ids replaces the whole set, and needs the channels:read scope). It cannot change what the check watches — name, address, assertions, expected status, headers, body, probe regions and owner are refused. A monitor managed by Terraform is refused outright. Shows the old and new value of every field before it runs, where the client can show a prompt; otherwise runs on the token's scope. Not read-only.",
         title = "Retune monitor",
         annotations(
             read_only_hint = false,
@@ -137,7 +137,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Resume a paused monitor (restart its checks). Requires user confirmation. Not read-only; idempotent.",
+        description = "Resume a paused monitor (restart its checks). Asks for confirmation where the client can show a prompt; otherwise runs on the token's scope. Not read-only; idempotent.",
         title = "Resume monitor",
         annotations(
             read_only_hint = false,
@@ -159,7 +159,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Acknowledge an incident: take ownership and halt escalation. Internal/operational only — does NOT post anything to the public status page. Use post_incident_update for customer-facing updates. Requires confirmation. Not read-only.",
+        description = "Acknowledge an incident: take ownership and halt escalation. Internal/operational only — does NOT post anything to the public status page. Use post_incident_update for customer-facing updates. Asks for confirmation where the client can show a prompt; otherwise runs on the token's scope. Not read-only.",
         title = "Acknowledge incident",
         annotations(
             read_only_hint = false,
@@ -181,7 +181,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Resolve an incident (mark the operational state resolved). Internal only — does not post to the public status page. Requires confirmation. Not read-only.",
+        description = "Resolve an incident (mark the operational state resolved). Internal only — does not post to the public status page. Asks for confirmation where the client can show a prompt; otherwise runs on the token's scope. Not read-only.",
         title = "Resolve incident",
         // Closing a live incident ends the escalation that would page someone.
         annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true)
@@ -200,7 +200,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Post a public, customer-facing update to an incident's status-page timeline (phase + message). This is what your subscribers and status-page visitors see. Requires confirmation. Not read-only.",
+        description = "Post a public, customer-facing update to an incident's status-page timeline (phase + message). This is what your subscribers and status-page visitors see. Asks for confirmation where the client can show a prompt; otherwise runs on the token's scope. Not read-only.",
         title = "Post incident update",
         annotations(
             read_only_hint = false,
@@ -222,7 +222,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Publish an incident so it appears on every status page carrying the affected monitor, optionally seeding the public title and description. Status-page subscribers may be notified. Requires confirmation. Not read-only; idempotent.",
+        description = "Publish an incident so it appears on every status page carrying the affected monitor, optionally seeding the public title and description. Status-page subscribers may be notified. Asks for confirmation where the client can show a prompt; otherwise runs on the token's scope. Not read-only; idempotent.",
         title = "Publish incident",
         annotations(
             read_only_hint = false,
@@ -244,7 +244,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Hide a published incident from the public status pages again. Its operator timeline is untouched. Requires confirmation. Not read-only; idempotent.",
+        description = "Hide a published incident from the public status pages again. Its operator timeline is untouched. Asks for confirmation where the client can show a prompt; otherwise runs on the token's scope. Not read-only; idempotent.",
         title = "Unpublish incident",
         annotations(
             read_only_hint = false,
@@ -266,7 +266,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Create several monitors at once, with one confirmation covering the batch. Every check is run once first and all the results are shown together, so a misconfigured endpoint is visible before anything is saved. An item that fails validation or its trial run is reported in the results and the rest are still created. Prefer this over repeated create_monitor calls whenever the user names more than one thing to watch: it costs them one prompt instead of many. Same per-monitor fields and same limits as create_monitor. Not read-only.",
+        description = "Create several monitors at once, with one confirmation covering the batch where the client can show a prompt. Every check is run once first and all the results are shown together, so a misconfigured endpoint is visible before anything is saved. An item that fails validation or its trial run is reported in the results and the rest are still created. Prefer this over repeated create_monitor calls whenever the user names more than one thing to watch: it costs them one prompt instead of many. Same per-monitor fields and same limits as create_monitor. Not read-only.",
         title = "Create monitors",
         annotations(
             read_only_hint = false,
@@ -341,7 +341,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Add monitors to a status page as public components, in one confirmation. Give each a public_name the page's readers will understand, since the monitor's own name is operator-facing, and a public_group to file related components together. Monitors already on the page are reported as such rather than duplicated. detail_link_enabled publishes a per-monitor detail view that shows the monitor's real name and address, not public_name. Not read-only.",
+        description = "Add monitors to a status page as public components, in one confirmation where the client can show a prompt. Give each a public_name the page's readers will understand, since the monitor's own name is operator-facing, and a public_group to file related components together. Monitors already on the page are reported as such rather than duplicated. detail_link_enabled publishes a per-monitor detail view that shows the monitor's real name and address, not public_name. Not read-only.",
         title = "Add status page components",
         annotations(
             read_only_hint = false,

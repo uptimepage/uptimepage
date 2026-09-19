@@ -26,9 +26,6 @@ pub mod codes {
     pub const NOT_CONFIRMED: &str = "not_confirmed";
     /// The client failed the elicitation round trip, so no human ever decided.
     pub const CONFIRMATION_FAILED: &str = "confirmation_failed";
-    /// The connected client cannot prompt for confirmation at all, so no write
-    /// tool can run through it. Distinct from a human saying no.
-    pub const ELICITATION_UNSUPPORTED: &str = "elicitation_unsupported";
     pub const UNAUTHENTICATED: &str = "unauthenticated";
     /// No probe could run right now (no live agent in the region). The
     /// arguments were fine, so an identical retry can succeed.
@@ -51,7 +48,7 @@ pub struct McpToolError {
     /// Hint to the caller: would an identical retry plausibly succeed later?
     pub retryable: bool,
     /// Refines `code` for the audit trail. Never sent to the caller.
-    pub detail: Option<&'static str>,
+    pub detail: Option<String>,
 }
 
 impl McpToolError {
@@ -64,15 +61,15 @@ impl McpToolError {
         }
     }
 
-    pub fn with_detail(mut self, detail: &'static str) -> Self {
-        self.detail = Some(detail);
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
         self
     }
 
     /// The code always leads, so one `LIKE 'not_confirmed%'` still spans rows
     /// written before refusals carried a reason.
     pub fn audit_detail(&self) -> String {
-        match self.detail {
+        match &self.detail {
             Some(d) => format!("{}:{d}", self.code),
             None => self.code.to_string(),
         }
@@ -85,15 +82,17 @@ impl McpToolError {
             self.code,
             codes::INSUFFICIENT_SCOPE
                 | codes::RATE_LIMITED
-                | codes::ELICITATION_UNSUPPORTED
                 | codes::UNAUTHENTICATED
                 | codes::INTERNAL
                 | codes::PROBE_UNAVAILABLE
         )
     }
 
+    /// The message is the audit reason too; a validator may echo the refused
+    /// value, never a credential.
     pub fn invalid_argument(message: impl Into<String>) -> Self {
-        Self::new(codes::INVALID_ARGUMENT, message, false)
+        let message = message.into();
+        Self::new(codes::INVALID_ARGUMENT, message.clone(), false).with_detail(message)
     }
 
     pub fn not_found(message: impl Into<String>) -> Self {

@@ -6,7 +6,7 @@ It is another authorized front door to the same stores the web app and [`/api/v1
 
 - **Transport** — Streamable HTTP at `POST/GET /mcp`, served on its own host (`mcp.{DOMAIN}` in production).
 - **Auth** — an org-bound scoped API token (`sm_live_…`), minted either by hand (Settings → API tokens) or by the one-click OAuth 2.1 connector flow.
-- **Surface** — 16 read tools (14 of them under the default grant; `list_notification_channels` needs `channels:read` and `list_variables` needs `variables:read`) + 15 write tools (each scope-gated, confirmed per action, and audited). Write tools are listed only to clients that can show a confirmation prompt; see [Confirmations](#confirmations).
+- **Surface** — 16 read tools (14 of them under the default grant; `list_notification_channels` needs `channels:read` and `list_variables` needs `variables:read`) + 15 write tools (each scope-gated, confirmed per action where the client can ask, and audited); see [Confirmations](#confirmations).
 
 The server only mounts when enabled (see [Enabling](#enabling)); a deployment that leaves it off never exposes `/mcp`.
 
@@ -45,7 +45,7 @@ A status-page monitor is down → `get_org_health` gives the `incident_id` → `
 
 ### Write tools
 
-Not read-only. Each requires its scope **and** an interactive [confirmation](#confirmations) before it runs, and writes exactly one [audit](#audit) row for every outcome (success, declined, denied, error).
+Not read-only. Each requires its scope **and**, from a client that can show one, an interactive [confirmation](#confirmations) before it runs, and writes exactly one [audit](#audit) row for every outcome (success, declined, denied, error).
 
 | Tool | Scope | Effect |
 |---|---|---|
@@ -73,7 +73,7 @@ Incidents start internal, so the customer-facing sequence is `publish_incident` 
 
 **The check runs before anything is saved.** The trial result — the region it ran from, passed or not, HTTP status, duration, or the error text — is part of the confirmation the operator reads, so a check that asserts the wrong thing is visible while it can still be declined rather than after it starts paging. That is also why the tool needs `targets:execute` alongside `targets:write`: it dispatches a real probe at a caller-supplied address, and that probe is metered against the same `test_now` budget as `POST /targets/test`. If no agent is serving the region, creation is refused as `probe_unavailable` rather than persisted untried, since a monitor nothing can check is not worth having.
 
-Two consequences worth stating plainly. The probe necessarily happens **before** the human answers, so declining the prompt still means one request was made to that address — the confirmation decides whether the monitor is created, not whether the check was tried. And a client that never negotiated elicitation is refused *before* the probe, so it cannot use this tool to reach an address it chooses without ever being able to create anything.
+Two consequences worth stating plainly. The probe necessarily happens **before** the human answers, so declining the prompt still means one request was made to that address — the confirmation decides whether the monitor is created, not whether the check was tried. And a client that cannot show the prompt never sees the trial result before the monitor exists; it gets the same result back from the tool, after the fact.
 
 **The confirmation lists every setting**, not just the address: interval, probe regions, tags, group, how many failing checks it alerts after, whether recovery is announced, the reminder cadence, and the multi-region quorum, resolved against the regions the monitor is being given rather than left as a label a narrower assignment would clamp. A field the prompt omitted would be approved unread.
 
@@ -126,7 +126,7 @@ A request with no/invalid token gets `401` with a `WWW-Authenticate: Bearer …`
 
 **1. By hand (manual connector).** Mint an org-bound, read-only, expiring token in the UI (Settings → API tokens; a verified email is required) and paste it into the client. Grant the least scope you need — `targets:read` + `status_page:read` + `incidents:read` for the read tools. This is the simplest path for Claude Desktop / Inspector and needs only `UPTIMEPAGE_MCP_ENABLED`.
 
-Either way, the token only decides what the connection *may* do. Whether the write tools appear at all depends on the client: one that can't prompt for confirmation is offered the read tools only. See [Confirmations](#confirmations).
+Either way, the token decides what the connection *may* do; whether a person is asked before each write depends on the client. See [Confirmations](#confirmations).
 
 **2. One-click OAuth (claude.ai connector).** With `UPTIMEPAGE_MCP_OAUTH_ENABLED` on, the client discovers the authorization server, you log in with your existing session and approve a consent screen, and the server mints the same org-bound expiring token behind the scenes — no copy-paste. This is the only path that mints write scopes, and only the ones the client asked for: the consent screen lists exactly what is about to be granted and approval covers that whole set, so a client asking for more than it needs is declined as a whole rather than trimmed.
 
@@ -177,7 +177,7 @@ The connector advertises nine grantable scopes. A request with no `scope` (or on
 | `status_page:write` | `create_status_page`, `update_status_page`, `add_status_page_components`, `update_status_page_component` — **and** the caller must be an owner of the org, the same bar `/api/v1` holds the public brand surface to | opt-in |
 | `variables:read` | `list_variables` — variable keys only, never a value | opt-in |
 
-A granted write scope is **necessary but not sufficient** — every write tool still asks the user to confirm the specific action at call time. That prompt is shown by the client, so it guards against a model acting on its own, not against a client the user should never have approved; the consent screen is where a hostile client is stopped.
+A granted write scope is what authorises a write. Where the client can show a prompt, every write tool also asks the user to confirm the specific action at call time; that prompt guards against a model acting on its own, not against a client the user should never have approved; the consent screen is where a hostile client is stopped.
 
 `variables:write` is deliberately absent. Creating or rotating a variable means carrying its value, which is the one thing this surface will not do; variables are managed in the app or over [`/api/v1`](api.md#operator-endpoints-variables).
 
@@ -191,11 +191,11 @@ So creating a new org in the app does not make it visible to an existing connect
 
 Before any write tool acts, the server sends an MCP **elicitation** request describing the exact action: which monitor or incident it lands on, the effect, and for a public update the text customers will read. Nothing is ever confirmed unnamed, so an approval can't be steered onto a different incident than the one under discussion. The tool proceeds only on an explicit approval. A decline or a dismissal fails closed with `not_confirmed`. If the client never answers at all — it times out, sends nothing, or sends something unreadable — that fails closed too, under the separate code `confirmation_failed`, so `not_confirmed` always means a person decided. There is no "remember my choice", so each action is confirmed on its own.
 
-**Your client must support elicitation to use any write tool.** One that doesn't is offered the read tools only: the write tools are left out of its `tools/list`, since every one of them would refuse. If such a client calls a write tool anyway it gets `elicitation_unsupported`, which is a distinct code from `not_confirmed` so "your client can't ask" never reads as "you said no". A client that supports only url-mode elicitation counts as one that can't ask, since the confirmation is a form. Nothing about this weakens the guarantee: hiding is presentation, and the confirmation itself is what makes a write safe.
+**A client that cannot ask writes on the token's scope alone.** One that never negotiated elicitation, one that supports only url-mode elicitation (the confirmation is a form), and one that declares elicitation and then answers the server's prompt with JSON-RPC "method not found" (an aggregator or proxy that forwards tool calls but never implemented prompts) are all clients through which no person can be asked. Refusing them would only send the same write to the [REST API](api.md), which trusts the same scope with no prompt at all, so the tool proceeds and the [audit](#audit) row records that nobody answered: `unconfirmed:no_elicitation`, or `unconfirmed:client_error:-32601` with the client's error code. The write tools are listed to every client. What still fails closed is a prompt that *was* shown and went unanswered — a timeout, a dropped connection, an unreadable form, any other error code, since a dialog handler that throws on dismissal reports one — because a person may be looking at that dialog; those come back as `confirmation_failed` with the way out spelled out, so a model reading the error does not retry a prompt nobody can answer.
 
 ## Audit
 
-Every write-tool invocation writes one row to `mcp_audit`, on **every** path — success, user-declined, scope-denied, bad input, not-found, or server error — recording: `actor_type = mcp`, the token id, the acting user + org, the tool name, what it acted on, the outcome (`success` / `denied` / `error`), and a detail that leads with the refusal code and adds its reason where there is one (`not_confirmed:declined`, `confirmation_failed:timed_out`). "What it acted on" is the id for most tools, the created monitor's name, address, interval and bound channels for `create_monitor`, and the old → new pairs for `update_monitor`; a refused call records only what identifies the attempt. Customer-facing incident text is never recorded — not a public title, a description, an update `message`, nor an ack/resolve note. The same event is emitted to tracing. Reads are not audit-logged (they're side-effect-free and already rate-limited). Rows are kept for `retention.mcp_audit_days` (2 years by default), then deleted by the daily retention job.
+Every write-tool invocation writes one row to `mcp_audit`, on **every** path — success, user-declined, scope-denied, bad input, not-found, or server error — recording: `actor_type = mcp`, the token id, the acting user + org, the client software as `name/version` from its `initialize` handshake, the tool name, what it acted on, the outcome (`success` / `denied` / `error`), and a detail that leads with the refusal code and adds its reason where there is one (`not_confirmed:declined`, `confirmation_failed:timed_out`, and for `invalid_argument` the rejection text the caller was shown). When a write went ahead without a person answering a prompt, the row says so: `unconfirmed:no_elicitation` or `unconfirmed:client_error:-32601` on a success row, and the same appended after `;` on an error or denied row that got past the gate unasked and then failed, so "did I approve this?" has an answer either way. "What it acted on" is the id for most tools, the created monitor's name, address, interval and bound channels for `create_monitor`, and the old → new pairs for `update_monitor`; a refused call records what identifies the attempt plus, for `invalid_argument`, the rejection text, which may name the value that was refused (a host, a resolver, a region) but never a credential. Customer-facing incident text is never recorded — not a public title, a description, an update `message`, nor an ack/resolve note. The same event is emitted to tracing. Reads are not audit-logged (they're side-effect-free and already rate-limited). Rows are kept for `retention.mcp_audit_days` (2 years by default), then deleted by the daily retention job.
 
 ## Enabling
 
@@ -325,7 +325,7 @@ curl -s https://mcp.uptimepage.dev/mcp \
        "params":{"name":"get_incident","arguments":{"id":"INCIDENT_ID"}}}'
 ```
 
-Write tools (`acknowledge_incident`, `pause_monitor`, …) follow the same `tools/call` shape but the client must support [elicitation](#confirmations). curl declares no such capability, so it won't see them in `tools/list` and gets `elicitation_unsupported` if it calls one anyway. Drive them from a real MCP client.
+Write tools (`acknowledge_incident`, `pause_monitor`, …) follow the same `tools/call` shape. curl declares no [elicitation](#confirmations) capability, so a write called this way runs on the token's scope with no prompt and is audited as `unconfirmed:no_elicitation`; the same as calling the REST API with that token.
 
 A missing/invalid token returns `401` with `WWW-Authenticate: Bearer …`; a wrong `Host` returns `403`; a missing `MCP-Protocol-Version` on a non-initialize call returns `400`; notifications get `202`.
 
