@@ -8,6 +8,6 @@ The edit form never offered it, but `PATCH /api/v1/targets/{id}` accepted a `che
 
 The API now refuses it with `400 CHECK_KIND_IMMUTABLE`. Change any other field of the check freely; to watch something of another kind, create a new monitor. The same rule holds at the database row, so no other writer can slip past it.
 
-If you manage monitors with the Terraform provider, a `type` change in HCL fails at apply until the provider learns to replace the resource for it.
+If you manage monitors with the Terraform provider, version 0.12.0 plans a `type` change as a replacement: the old monitor is destroyed and a new one created. Older provider versions fail at apply.
 
 Docs: [REST API](/docs/api#target-payload).
