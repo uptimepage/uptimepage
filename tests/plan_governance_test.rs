@@ -22,6 +22,21 @@ use uptimepage::storage::admin::{AdminRepo, EnabledTargetStream};
 use uuid::Uuid;
 
 async fn org_on_plan(pool: &PgPool, plan: &str, interval_secs: i32) -> (OrgId, Uuid, UserId) {
+    let check = CheckSpec::Http(default_http_check(
+        "https://example.com".parse().expect("url"),
+        ExpectedStatus::Exact(200),
+    ));
+    org_on_plan_watching(pool, plan, interval_secs, check).await
+}
+
+/// The kind is fixed at insert: a monitor's check type cannot change later,
+/// so a test that needs another kind starts with it.
+async fn org_on_plan_watching(
+    pool: &PgPool,
+    plan: &str,
+    interval_secs: i32,
+    check: CheckSpec,
+) -> (OrgId, Uuid, UserId) {
     let user = make_user(pool, "govern").await;
     let (account,): (Uuid,) = sqlx::query_as(
         "INSERT INTO accounts (owner_user_id, plan_id) VALUES ($1, $2) \
@@ -48,13 +63,7 @@ async fn org_on_plan(pool: &PgPool, plan: &str, interval_secs: i32) -> (OrgId, U
     )
     .bind(org)
     // decode_targets_skipping silently drops a row whose spec will not parse.
-    .bind(
-        serde_json::to_value(CheckSpec::Http(default_http_check(
-            "https://example.com".parse().expect("url"),
-            ExpectedStatus::Exact(200),
-        )))
-        .expect("check spec"),
-    )
+    .bind(serde_json::to_value(check).expect("check spec"))
     .bind(interval_secs)
     .fetch_one(pool)
     .await
@@ -589,20 +598,12 @@ async fn a_heartbeat_keeps_its_own_interval_under_a_slower_plan() {
         return;
     };
     let cfg = AppConfig::load().expect("config");
-    let (org, target, user) = org_on_plan(&pool, "free", 60).await;
-    sqlx::query("UPDATE targets SET check_spec = $2 WHERE id = $1")
-        .bind(target)
-        .bind(
-            serde_json::to_value(CheckSpec::Heartbeat(HeartbeatCheck {
-                period: Duration::from_secs(300),
-                grace: Duration::from_secs(60),
-                max_runtime: None,
-            }))
-            .expect("check spec"),
-        )
-        .execute(&pool)
-        .await
-        .expect("make heartbeat");
+    let heartbeat = CheckSpec::Heartbeat(HeartbeatCheck {
+        period: Duration::from_secs(300),
+        grace: Duration::from_secs(60),
+        max_runtime: None,
+    });
+    let (org, target, user) = org_on_plan_watching(&pool, "free", 60, heartbeat).await;
 
     let listed = writer_walk(&pool, &cfg).await;
     assert_eq!(interval_of(&listed, target), Duration::from_secs(60));
