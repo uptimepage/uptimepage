@@ -22,9 +22,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::api::redaction::REDACTED;
-use crate::api::types::{DashboardMetrics, FlowStepBucket, FlowStepTrend};
 use crate::domain::agent_wire::{ConsoleLine, FlowEvidence, StepOutcome, StepTrace};
 use crate::domain::incident::Incident;
+use crate::domain::metrics::{DashboardMetrics, FlowStepBucket, FlowStepTrend};
 use crate::domain::notification_channel::NotificationChannel;
 use crate::domain::public::{IncidentSeverity, IncidentStatusPhase, PublicIncidentUpdate};
 use crate::domain::result::{CheckResult, CheckStatus};
@@ -1648,7 +1648,7 @@ fn a_region_filter_must_name_a_region_the_monitor_runs_in() {
 
 #[test]
 fn region_health_rates_a_regions_own_checks() {
-    let health = region_health(crate::api::types::RegionRollup {
+    let health = region_health(crate::domain::metrics::RegionRollup {
         region: "apac-sg".into(),
         samples: 200,
         up: 190,
@@ -1659,7 +1659,7 @@ fn region_health_rates_a_regions_own_checks() {
     });
     assert_eq!(health.uptime_pct, Some(95.0));
     assert_eq!(health.last_status, "down");
-    let health = region_health(crate::api::types::RegionRollup {
+    let health = region_health(crate::domain::metrics::RegionRollup {
         region: "us-east".into(),
         samples: 0,
         up: 0,

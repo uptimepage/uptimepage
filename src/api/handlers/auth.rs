@@ -17,12 +17,13 @@ use tower_cookies::Cookies;
 
 use crate::app::AppState;
 use crate::auth::{
-    OauthProvider, fingerprint, github, gitlab, google,
+    fingerprint, github, gitlab, google,
     login_audit::{self, LoginAttempt, LoginMethod},
     microsoft, oauth_login, oauth_state, session as session_store,
     url::safe_redirect_target,
 };
 use crate::config::OauthClientConfig;
+use crate::domain::{CredentialAction, CredentialOrigin, OauthProvider};
 use crate::domain::{OrgId, UserId};
 use crate::error::{AppError, Result};
 use crate::observability::metrics::names;
@@ -386,8 +387,8 @@ async fn finish_link(
                 crate::storage::oauth_identities::CredentialEvent {
                     provider: provider.as_db_str(),
                     provider_user_id: &identity.provider_user_id,
-                    action: crate::auth::CredentialAction::Linked,
-                    origin: crate::auth::CredentialOrigin::Session,
+                    action: CredentialAction::Linked,
+                    origin: CredentialOrigin::Session,
                     ip_hash: from.ip_hash,
                     user_agent_hash: from.user_agent_hash,
                 },
@@ -684,7 +685,7 @@ async fn finish_login(
         }
         // A page, not a JSON body, and an audit row so refusals are countable.
         Err(AppError::BadRequest { code, .. })
-            if code == crate::api::error::codes::EMAIL_DESTINATION_BLOCKED =>
+            if code == crate::error::codes::EMAIL_DESTINATION_BLOCKED =>
         {
             tracing::info!(
                 provider = provider.as_db_str(),
@@ -737,8 +738,8 @@ async fn finish_login(
             crate::storage::oauth_identities::CredentialEvent {
                 provider: provider.as_db_str(),
                 provider_user_id: &identity.provider_user_id,
-                action: crate::auth::CredentialAction::Linked,
-                origin: crate::auth::CredentialOrigin::Signup,
+                action: CredentialAction::Linked,
+                origin: CredentialOrigin::Signup,
                 ip_hash: ip_hash.as_deref(),
                 user_agent_hash: ua_hash.as_deref(),
             },
@@ -753,8 +754,8 @@ async fn finish_login(
             crate::storage::oauth_identities::CredentialEvent {
                 provider: provider.as_db_str(),
                 provider_user_id: &identity.provider_user_id,
-                action: crate::auth::CredentialAction::Linked,
-                origin: crate::auth::CredentialOrigin::EmailMatch,
+                action: CredentialAction::Linked,
+                origin: CredentialOrigin::EmailMatch,
                 ip_hash: ip_hash.as_deref(),
                 user_agent_hash: ua_hash.as_deref(),
             },

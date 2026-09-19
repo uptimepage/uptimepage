@@ -31,7 +31,7 @@ use uptimepage::{
         PageCache, PgIncidentStore, PublicSource,
     },
     quotas,
-    scheduler::{Scheduler, TargetRegistry},
+    scheduler::{self, Scheduler, TargetRegistry},
     storage::{
         self, ClickhouseFlowRunSink, ClickhouseHeartbeatPingSink, ClickhouseResultSink,
         ClickhouseResultsStore, IncidentNarrationStore, MaintenanceStore, NotificationChannelStore,
@@ -327,7 +327,7 @@ async fn main() -> Result<()> {
     // passive heartbeat set (agents can't evaluate that state). Both sources
     // reconcile the anchor cache on every refresh before dispatching.
     let scheduler_source: Arc<dyn storage::admin::EnabledTargetSource> = if cfg.scheduler.enabled {
-        Arc::new(storage::admin::RegionTargetSource::new(
+        Arc::new(scheduler::sources::RegionTargetSource::new(
             storage::admin::AdminRepo::new(pg_pool.clone(), cipher.clone(), "scheduler_refresh"),
             cfg.scheduler.region.clone(),
             pool.heartbeat_runtime(),
@@ -335,7 +335,7 @@ async fn main() -> Result<()> {
             cfg.flow.enabled,
         ))
     } else {
-        Arc::new(storage::admin::HeartbeatTargetSource::new(
+        Arc::new(scheduler::sources::HeartbeatTargetSource::new(
             storage::admin::AdminRepo::new(pg_pool.clone(), cipher.clone(), "heartbeat_refresh"),
             pool.heartbeat_runtime(),
         ))
@@ -617,7 +617,7 @@ async fn main() -> Result<()> {
 
     // Moving the app retires every passkey at once and nothing can migrate
     // them, so the least we owe is not letting it happen quietly.
-    if cfg.auth.passkey_login_enabled()
+    if uptimepage::auth::passkey::login_enabled(&cfg.auth)
         && let Ok(rp_id) = uptimepage::auth::passkey::relying_party_id(&cfg.auth.public_base_url)
         && let Ok(orphaned) =
             uptimepage::storage::passkeys::orphaned_by_rp_id(&pg_pool_for_stores, &rp_id).await

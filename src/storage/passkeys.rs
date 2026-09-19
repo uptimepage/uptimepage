@@ -9,12 +9,12 @@ use sqlx::PgPool;
 use uuid::Uuid;
 use webauthn_rs::prelude::*;
 
-use crate::auth::{CredentialAction, CredentialOrigin};
 use crate::domain::UserId;
+use crate::domain::{CredentialAction, CredentialOrigin};
 use crate::error::{AppError, Result};
 use crate::storage::oauth_identities::{CredentialEvent, RequestOrigin};
 
-/// Not an [`crate::auth::OauthProvider`]: that enum is pinned to the
+/// Not an [`crate::domain::OauthProvider`]: that enum is pinned to the
 /// `oauth_identities` CHECK, and no vendor is involved here.
 pub const PROVIDER_SLUG: &str = "passkey";
 

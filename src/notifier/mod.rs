@@ -171,7 +171,7 @@ pub fn build_notifier(
     let parse = |s: &str| -> Result<url::Url> {
         s.parse::<url::Url>().map_err(|e| {
             crate::error::AppError::bad_request(
-                crate::api::codes::INVALID_CONFIG,
+                crate::error::codes::INVALID_CONFIG,
                 format!("notification channel URL is invalid: {e}"),
             )
         })
@@ -198,7 +198,7 @@ pub fn build_notifier(
                 .filter(|c| !c.bot_token.trim().is_empty())
                 .ok_or_else(|| {
                     crate::error::AppError::bad_request(
-                        crate::api::codes::INVALID_CONFIG,
+                        crate::error::codes::INVALID_CONFIG,
                         "linked telegram channels need the central bot, which is not configured \
                          on this deployment",
                     )
@@ -214,7 +214,7 @@ pub fn build_notifier(
         ChannelConfig::WhatsAppApp(c) => {
             let wa = whatsapp.filter(|w| w.enabled()).ok_or_else(|| {
                 crate::error::AppError::bad_request(
-                    crate::api::codes::INVALID_CONFIG,
+                    crate::error::codes::INVALID_CONFIG,
                     "linked whatsapp channels need the operator whatsapp number, which is not \
                      configured on this deployment",
                 )
@@ -245,7 +245,7 @@ pub fn build_notifier(
         ChannelConfig::Email(c) => {
             let email = email.ok_or_else(|| {
                 crate::error::AppError::bad_request(
-                    crate::api::codes::INVALID_CONFIG,
+                    crate::error::codes::INVALID_CONFIG,
                     "email delivery is not configured on this deployment",
                 )
             })?;

@@ -17,8 +17,8 @@ use serde::Serialize;
 use serde_json::json;
 use sqlx::PgPool;
 
-use crate::api::error::codes;
 use crate::domain::{AccountId, BillingStatus, UserId};
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::quotas::{QuotaService, Reconciled, reconcile_after_change};
 use crate::storage::{billing_events, subscriptions};

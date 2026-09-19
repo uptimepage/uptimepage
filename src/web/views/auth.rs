@@ -116,7 +116,7 @@ pub async fn login(
         // so a self-host/in-mem deployment must not render the form.
         // Same shape as magic link: the ceremony writes rows, so an in-memory
         // deployment must not offer a button that cannot finish.
-        passkey_enabled: state.cfg.auth.passkey_login_enabled() && state.db.is_some(),
+        passkey_enabled: crate::auth::passkey::login_enabled(&state.cfg.auth) && state.db.is_some(),
         magic_link_enabled: state.cfg.auth.magic_link_enabled() && state.db.is_some(),
         open_signup: state.cfg.auth.open_signup_enabled() && state.db.is_some(),
         magic_link_expiry_minutes: state.cfg.auth.magic_link.expiry_minutes,
@@ -429,7 +429,7 @@ pub mod settings {
         let rp_id = crate::auth::passkey::relying_party_id(&state.cfg.auth.public_base_url).ok();
         let usable_passkeys = rp_id
             .as_deref()
-            .filter(|_| state.cfg.auth.passkey_login_enabled())
+            .filter(|_| crate::auth::passkey::login_enabled(&state.cfg.auth))
             .map_or(0, |rp| {
                 stored_passkeys
                     .iter()
@@ -439,7 +439,7 @@ pub mod settings {
         let identities: Vec<IdentityRow> = linked
             .iter()
             .filter_map(|row| {
-                let p = crate::auth::OauthProvider::from_db_str(&row.provider)?;
+                let p = crate::domain::OauthProvider::from_db_str(&row.provider)?;
                 Some(IdentityRow {
                     provider: p.as_db_str(),
                     label: p.label(),
@@ -482,7 +482,7 @@ pub mod settings {
             email: user.email,
             identities,
             passkeys,
-            passkeys_enabled: state.cfg.auth.passkey_login_enabled(),
+            passkeys_enabled: crate::auth::passkey::login_enabled(&state.cfg.auth),
             linkable,
             linked: flash.identity_linked.map(|p| p.label()),
             taken: flash.identity_taken,

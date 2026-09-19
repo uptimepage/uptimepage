@@ -4,6 +4,7 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 
 use super::{empty_secret, secret_str};
+use crate::domain::OauthProvider;
 
 /// Unattended first-run seeding, for app-store installs that have no terminal.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -106,8 +107,8 @@ impl AuthConfig {
     /// Providers this deployment will actually complete a sign-in for. One
     /// switched off or half-configured answers `/auth/{p}/login` with a 404,
     /// so its identities are rows in the table, not ways in.
-    pub fn enabled_login_providers(&self) -> Vec<crate::auth::OauthProvider> {
-        use crate::auth::OauthProvider as P;
+    pub fn enabled_login_providers(&self) -> Vec<OauthProvider> {
+        use OauthProvider as P;
         P::ALL
             .iter()
             .copied()
@@ -122,12 +123,6 @@ impl AuthConfig {
 
     pub fn gitlab_login_enabled(&self) -> bool {
         self.method_enabled("gitlab_oauth") && self.gitlab.client.is_configured()
-    }
-
-    /// No client credentials to check. The capability half is asked of the
-    /// builder, which rejects a base URL naming an IP rather than a domain.
-    pub fn passkey_login_enabled(&self) -> bool {
-        self.method_enabled("passkey") && crate::auth::passkey::build(&self.public_base_url).is_ok()
     }
 }
 
@@ -208,6 +203,21 @@ impl Default for MicrosoftOauthConfig {
     }
 }
 
+impl MicrosoftOauthConfig {
+    /// Tenant lands in a URL path: `common`, `organizations`, `consumers`, a
+    /// GUID, or a domain, and never `.`/`..`. Checked at boot — a fallback
+    /// would turn a mistyped single-tenant lock into `common` silently.
+    pub fn tenant_is_valid(&self) -> bool {
+        let tenant = self.tenant.as_str();
+        !tenant.is_empty()
+            && tenant != "."
+            && tenant != ".."
+            && tenant
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+    }
+}
+
 /// The instance is the issuer half of the identity key, so changing it after
 /// sign-ups orphans every identity minted under the old one.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -224,6 +234,21 @@ impl Default for GitlabOauthConfig {
             client: OauthClientConfig::default(),
             base_url: "https://gitlab.com".into(),
         }
+    }
+}
+
+impl GitlabOauthConfig {
+    /// https only — the client secret rides this origin in a POST body.
+    pub fn base_url_is_valid(&self) -> bool {
+        let Ok(u) = url::Url::parse(&self.base_url) else {
+            return false;
+        };
+        u.scheme() == "https"
+            && u.host_str().is_some_and(|h| !h.is_empty())
+            && u.username().is_empty()
+            && u.password().is_none()
+            && u.query().is_none()
+            && u.fragment().is_none()
     }
 }
 

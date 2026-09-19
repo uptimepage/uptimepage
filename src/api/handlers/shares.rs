@@ -13,9 +13,9 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::api::ApiError;
-use crate::api::error::codes;
 use crate::app::AppState;
 use crate::domain::{MonitorShare, MonitorShareId, NewMonitorShare};
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::storage::CreateShareOutcome;
 use crate::web::{Authorized, CurrentUser, TargetsWrite};

@@ -848,7 +848,7 @@ pub fn record_quota_event(
 fn lookup_error(e: &sqlx::Error) -> AppError {
     match e {
         sqlx::Error::RowNotFound => {
-            AppError::not_found(crate::api::error::codes::ORG_NOT_FOUND, "org not found")
+            AppError::not_found(crate::error::codes::ORG_NOT_FOUND, "org not found")
         }
         _ => AppError::Other(anyhow::anyhow!("limit_for_org: {e}")),
     }

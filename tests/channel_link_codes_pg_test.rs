@@ -10,11 +10,11 @@
 mod common;
 
 use chrono::{Duration, Utc};
-use uptimepage::api::error::codes;
 use uptimepage::domain::{
     ChannelConfig, NewNotificationChannel, OrgId, TelegramAppConfig, UserId, WriteSource,
 };
 use uptimepage::error::AppError;
+use uptimepage::error::codes;
 use uptimepage::storage::{
     ChannelLinkCodeStore, LinkCodeStatus, LinkPurpose, MintOutcome, NotificationChannelStore,
     PgChannelLinkCodeStore, PgNotificationChannelStore, create_org_with_owner,

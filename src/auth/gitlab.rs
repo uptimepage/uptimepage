@@ -41,19 +41,6 @@ struct IdClaims {
     name: Option<String>,
 }
 
-/// https only — the client secret rides this origin in a POST body.
-pub fn base_url_is_valid(base: &str) -> bool {
-    let Ok(u) = url::Url::parse(base) else {
-        return false;
-    };
-    u.scheme() == "https"
-        && u.host_str().is_some_and(|h| !h.is_empty())
-        && u.username().is_empty()
-        && u.password().is_none()
-        && u.query().is_none()
-        && u.fragment().is_none()
-}
-
 /// Both sides of the `iss` comparison go through this, so a `base_url` that
 /// differs from GitLab's issuer only in case, port or trailing slash matches.
 fn origin(base: &str) -> String {
@@ -182,29 +169,6 @@ mod tests {
     }
 
     #[test]
-    fn only_an_https_origin_passes_validation() {
-        for ok in [
-            "https://gitlab.com",
-            "https://gitlab.com/",
-            "https://git.corp.test:8443",
-            "https://git.corp.test/gitlab",
-        ] {
-            assert!(base_url_is_valid(ok), "{ok} should be accepted");
-        }
-        for bad in [
-            "",
-            "gitlab.com",
-            "http://gitlab.com",
-            "https://",
-            "https://user:pw@gitlab.com",
-            "https://gitlab.com?a=1",
-            "https://gitlab.com#f",
-        ] {
-            assert!(!base_url_is_valid(bad), "{bad:?} should be rejected");
-        }
-    }
-
-    #[test]
     fn the_identity_key_carries_the_issuing_instance() {
         let id = claims_from(
             "https://gitlab.com",
@@ -233,7 +197,7 @@ mod tests {
         assert!(claims_from("https://gitlab.com", r#"{"sub":"42"}"#).is_err());
     }
 
-    /// Each passes `base_url_is_valid`, so a byte comparison would let the
+    /// Each passes `GitlabOauthConfig::base_url_is_valid`, so a byte comparison would let the
     /// boot succeed and then fail every callback.
     #[test]
     fn a_base_url_that_only_looks_different_still_matches() {

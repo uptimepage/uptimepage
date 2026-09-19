@@ -14,11 +14,11 @@ use parking_lot::Mutex;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::api::error::codes;
 use crate::domain::{
     EscalationPolicy, EscalationPolicySummary, EscalationStep, EscalationTarget,
     EscalationTargetType, NewEscalationPolicy, OrgId,
 };
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::storage::accounts;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock};

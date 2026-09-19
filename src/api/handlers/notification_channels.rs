@@ -17,7 +17,6 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::api::ApiError;
-use crate::api::error::codes;
 use crate::api::redaction::Redacted;
 use crate::app::AppState;
 use crate::auth::sha256_hex;
@@ -28,6 +27,7 @@ use crate::domain::{
     NotificationChannel, NotificationChannelUpdate, NotificationReason, validate_channel_name,
 };
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::notifier::build_notifier;
 use crate::notifier::event::IncidentNotice;

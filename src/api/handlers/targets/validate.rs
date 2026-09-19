@@ -6,13 +6,13 @@ use std::net::IpAddr;
 use url::Host;
 use uuid::Uuid;
 
-use crate::api::error::codes;
 use crate::api::redaction::REDACTED;
 use crate::app::AppState;
 use crate::domain::{
     CheckSpec, NewTarget, OrgId, RegionIncidentPolicy, Target, TargetAlerts, TargetUpdate,
     min_interval_secs_for_kind,
 };
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::security::SsrfGuard;
 
@@ -25,11 +25,11 @@ pub(crate) async fn validate_variable_refs(
     org: OrgId,
     check: &CheckSpec,
 ) -> Result<()> {
-    use crate::worker::interpolate::{
+    use crate::domain::interpolate::{
         flow_uses_vars, repoint_risk, resolve_flow_spec, resolve_http_spec, uses_vars,
     };
 
-    let unresolved = |e: crate::worker::interpolate::ResolveError| {
+    let unresolved = |e: crate::domain::interpolate::ResolveError| {
         AppError::unprocessable(codes::UNRESOLVED_VARIABLE, e.to_string())
     };
     match check {

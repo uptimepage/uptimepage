@@ -381,3 +381,65 @@ fn the_shipped_config_puts_open_signup_where_auth_reads_it() {
         .expect("shipped config deserialises");
     assert!(cfg.auth.open_signup, "and it reaches the field");
 }
+
+fn ms(tenant: &str) -> MicrosoftOauthConfig {
+    MicrosoftOauthConfig {
+        tenant: tenant.into(),
+        ..MicrosoftOauthConfig::default()
+    }
+}
+
+fn gl(base_url: &str) -> GitlabOauthConfig {
+    GitlabOauthConfig {
+        base_url: base_url.into(),
+        ..GitlabOauthConfig::default()
+    }
+}
+
+#[test]
+fn only_addressable_tenants_pass_validation() {
+    for ok in [
+        "common",
+        "organizations",
+        "consumers",
+        "72f988bf-86f1-41af-91ab-2d7cd011db47",
+        "contoso.com",
+    ] {
+        assert!(ms(ok).tenant_is_valid(), "{ok} should be accepted");
+    }
+    // Each of these would otherwise widen a single-tenant lock to `common`.
+    for bad in [
+        "",
+        "..",
+        ".",
+        "../../evil",
+        "contoso.com/",
+        "{72f988bf}",
+        "a b",
+    ] {
+        assert!(!ms(bad).tenant_is_valid(), "{bad:?} should be rejected");
+    }
+}
+
+#[test]
+fn only_an_https_origin_passes_validation() {
+    for ok in [
+        "https://gitlab.com",
+        "https://gitlab.com/",
+        "https://git.corp.test:8443",
+        "https://git.corp.test/gitlab",
+    ] {
+        assert!(gl(ok).base_url_is_valid(), "{ok} should be accepted");
+    }
+    for bad in [
+        "",
+        "gitlab.com",
+        "http://gitlab.com",
+        "https://",
+        "https://user:pw@gitlab.com",
+        "https://gitlab.com?a=1",
+        "https://gitlab.com#f",
+    ] {
+        assert!(!gl(bad).base_url_is_valid(), "{bad:?} should be rejected");
+    }
+}

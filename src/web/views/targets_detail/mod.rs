@@ -9,10 +9,10 @@ use chrono::{DateTime, Duration, Utc};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::api::error::codes;
 use crate::app::AppState;
 use crate::domain::{CheckSpec, CheckStatus};
 use crate::error::AppError;
+use crate::error::codes;
 use crate::storage::{HeartbeatMonitor, TimeRange};
 use crate::web::error::WebResult;
 use crate::web::filters;

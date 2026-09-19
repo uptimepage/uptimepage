@@ -3,6 +3,7 @@
 
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +137,57 @@ fn round_up(d: Duration) -> Duration {
         .find(|(ceiling, _)| secs < *ceiling)
         .map_or(3600, |(_, step)| *step);
     Duration::from_secs(secs.div_ceil(step) * step)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Failure {
+    pub at: DateTime<Utc>,
+    pub exit_code: Option<u8>,
+}
+
+/// Latest-seen timestamps rather than state flags, so two nodes merge their
+/// views by taking the newer of each without a shared lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PingState {
+    /// Silence-rule anchor: the later of the last success and the re-arm point.
+    pub success_at: DateTime<Utc>,
+    pub start_at: Option<DateTime<Utc>>,
+    pub fail: Option<Failure>,
+}
+
+impl PingState {
+    pub fn from_success(success_at: DateTime<Utc>) -> Self {
+        Self {
+            success_at,
+            start_at: None,
+            fail: None,
+        }
+    }
+
+    /// A newer success clears it, and so does a re-arm: both move `success_at`.
+    pub fn failing(&self) -> Option<Failure> {
+        self.fail.filter(|f| f.at > self.success_at)
+    }
+
+    /// `>=` against the anchor, because the wiring ping can be the start: it
+    /// arms the monitor and opens the run in one statement, at one timestamp.
+    pub fn run_open_since(&self) -> Option<DateTime<Utc>> {
+        self.start_at
+            .filter(|s| *s >= self.success_at && self.fail.is_none_or(|f| *s > f.at))
+    }
+
+    /// The snapshot may predate a ping this node already accepted.
+    pub fn merge_newer(&mut self, other: Self) {
+        if other.success_at > self.success_at {
+            self.success_at = other.success_at;
+        }
+        if other.start_at > self.start_at {
+            self.start_at = other.start_at;
+        }
+        if other.fail.map(|f| f.at) > self.fail.map(|f| f.at) {
+            self.fail = other.fail;
+        }
+    }
 }
 
 #[cfg(test)]

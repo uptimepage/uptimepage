@@ -44,11 +44,11 @@ use uuid::Uuid;
 
 use crate::auth::url::url_encode;
 
-use crate::api::error::codes;
 use crate::app::AppState;
 use crate::auth::scope::ScopeSet;
 use crate::auth::session as session_store;
 use crate::domain::{OrgId, UserId};
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::storage::orgs::is_active_member;
 

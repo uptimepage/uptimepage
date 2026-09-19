@@ -16,7 +16,8 @@ use uptimepage::domain::{
     CheckSpec, ExpectedStatus, HeartbeatCheck, NewTarget, OrgId, PingSignal, TargetUpdate, UserId,
     WriteSource,
 };
-use uptimepage::storage::admin::{AdminRepo, EnabledTargetSource, HeartbeatTargetSource};
+use uptimepage::scheduler::sources::HeartbeatTargetSource;
+use uptimepage::storage::admin::{AdminRepo, EnabledTargetSource};
 use uptimepage::storage::{
     HeartbeatStore, PgHeartbeatStore, PostgresTargetStore, RestoreOutcome, TargetStore,
     create_org_with_owner, restore_org, soft_delete_org,

@@ -1,7 +1,7 @@
 use super::charts::{KpiInputs, build_kpi_trend, status_segments};
 use super::*;
-use crate::api::types::AvailabilityBucket;
 use crate::domain::agent_wire::StepOutcome;
+use crate::domain::metrics::AvailabilityBucket;
 use crate::domain::{
     CheckDiagnostic, CheckResult, CheckStatus, DiagnosticConfidence, DiagnosticEvidence,
     EdgeProvider,
@@ -10,7 +10,7 @@ use crate::storage::{ClampedRange, UptimeStats};
 
 #[test]
 fn region_breakdown_greys_dead_region_keeps_live() {
-    let rollup = |region: &str, last: &str| crate::api::types::RegionRollup {
+    let rollup = |region: &str, last: &str| crate::domain::metrics::RegionRollup {
         region: region.into(),
         samples: 10,
         up: 10,
@@ -41,7 +41,7 @@ fn region_breakdown_greys_dead_region_keeps_live() {
 
 #[test]
 fn region_row_href_applies_the_filter_and_the_selected_row_clears_it() {
-    let rollup = |region: &str| crate::api::types::RegionRollup {
+    let rollup = |region: &str| crate::domain::metrics::RegionRollup {
         region: region.into(),
         samples: 10,
         up: 10,

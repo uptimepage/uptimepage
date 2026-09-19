@@ -84,7 +84,7 @@ pub async fn ensure_send_window(pool: &PgPool, org: OrgId, inviter: UserId) -> R
         None,
     );
     Err(AppError::conflict(
-        crate::api::error::codes::INVITATION_SEND_LIMIT,
+        crate::error::codes::INVITATION_SEND_LIMIT,
         format!("invitation send limit reached ({MAX_SENDS_PER_WINDOW} in {SEND_WINDOW_HOURS}h)"),
     ))
 }
@@ -177,7 +177,7 @@ pub async fn create(
     if duplicate.is_some() {
         tx.rollback().await.ok();
         return Err(AppError::conflict(
-            crate::api::error::codes::ALREADY_INVITED,
+            crate::error::codes::ALREADY_INVITED,
             "there is already a pending invitation for this email",
         ));
     }
@@ -200,7 +200,7 @@ pub async fn create(
             None,
         );
         return Err(AppError::conflict(
-            crate::api::error::codes::INVITATIONS_LIMIT,
+            crate::error::codes::INVITATIONS_LIMIT,
             format!("pending invitation limit reached ({max_pending})"),
         ));
     }

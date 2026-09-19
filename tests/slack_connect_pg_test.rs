@@ -12,8 +12,8 @@ use axum::http::{Request, StatusCode};
 use common::{build_test_app_with_pg, make_user, pg_pool_from_env, unique_slug, with_session};
 use tower::ServiceExt;
 use uptimepage::auth::oauth_state;
-use uptimepage::auth::provider::SLACK_CONNECT_PROVIDER;
 use uptimepage::domain::OrgId;
+use uptimepage::domain::credential::SLACK_CONNECT_PROVIDER;
 
 fn slack_cfg(cfg: &mut uptimepage::config::AppConfig) {
     cfg.slack_oauth.client_id = "123.456".into();

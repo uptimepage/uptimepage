@@ -145,7 +145,7 @@ async fn an_auto_link_is_told_apart_from_a_deliberate_one() {
     };
     let owner = uptimepage::auth::oauth_login::upsert_identity_and_signup_org(
         &pool,
-        uptimepage::auth::OauthProvider::Github,
+        uptimepage::domain::OauthProvider::Github,
         &github,
         uptimepage::security::Admission::Clear,
         uptimepage::auth::oauth_login::SignupOrg::Create,
@@ -166,7 +166,7 @@ async fn an_auto_link_is_told_apart_from_a_deliberate_one() {
     };
     let linked = uptimepage::auth::oauth_login::upsert_identity_and_signup_org(
         &pool,
-        uptimepage::auth::OauthProvider::Google,
+        uptimepage::domain::OauthProvider::Google,
         &google,
         uptimepage::security::Admission::Clear,
         uptimepage::auth::oauth_login::SignupOrg::Create,
@@ -179,10 +179,10 @@ async fn an_auto_link_is_told_apart_from_a_deliberate_one() {
         &pool,
         owner.user_id,
         uptimepage::storage::oauth_identities::CredentialEvent {
-            provider: uptimepage::auth::OauthProvider::Google.as_db_str(),
+            provider: uptimepage::domain::OauthProvider::Google.as_db_str(),
             provider_user_id: "g-1",
-            action: uptimepage::auth::CredentialAction::Linked,
-            origin: uptimepage::auth::CredentialOrigin::EmailMatch,
+            action: uptimepage::domain::CredentialAction::Linked,
+            origin: uptimepage::domain::CredentialOrigin::EmailMatch,
             ip_hash: Some("iphash"),
             user_agent_hash: Some("uahash"),
         },
@@ -192,10 +192,10 @@ async fn an_auto_link_is_told_apart_from_a_deliberate_one() {
         &pool,
         owner.user_id,
         uptimepage::storage::oauth_identities::CredentialEvent {
-            provider: uptimepage::auth::OauthProvider::Gitlab.as_db_str(),
+            provider: uptimepage::domain::OauthProvider::Gitlab.as_db_str(),
             provider_user_id: "gl-1",
-            action: uptimepage::auth::CredentialAction::Linked,
-            origin: uptimepage::auth::CredentialOrigin::Session,
+            action: uptimepage::domain::CredentialAction::Linked,
+            origin: uptimepage::domain::CredentialOrigin::Session,
             ip_hash: None,
             user_agent_hash: None,
         },
@@ -627,7 +627,7 @@ async fn removing_a_method_records_it_and_leaves_the_others() {
 
     let owner = uptimepage::auth::oauth_login::upsert_identity_and_signup_org(
         &pool,
-        uptimepage::auth::OauthProvider::Github,
+        uptimepage::domain::OauthProvider::Github,
         &uptimepage::auth::oauth_login::RemoteIdentity {
             provider_user_id: "gh-keep".into(),
             provider_username: None,
@@ -641,7 +641,7 @@ async fn removing_a_method_records_it_and_leaves_the_others() {
     .expect("signup");
     uptimepage::auth::oauth_login::link_identity_to_user(
         &pool,
-        uptimepage::auth::OauthProvider::Gitlab,
+        uptimepage::domain::OauthProvider::Gitlab,
         &uptimepage::auth::oauth_login::RemoteIdentity {
             provider_user_id: "gl-drop".into(),
             provider_username: None,
@@ -701,7 +701,7 @@ async fn removing_a_method_that_was_never_there_is_a_404() {
 
     let owner = uptimepage::auth::oauth_login::upsert_identity_and_signup_org(
         &pool,
-        uptimepage::auth::OauthProvider::Github,
+        uptimepage::domain::OauthProvider::Github,
         &uptimepage::auth::oauth_login::RemoteIdentity {
             provider_user_id: "gh-only".into(),
             provider_username: None,

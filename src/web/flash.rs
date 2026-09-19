@@ -8,7 +8,7 @@ use tower_cookies::Cookies;
 use tower_cookies::cookie::SameSite;
 use tower_cookies::cookie::time::Duration;
 
-use crate::auth::OauthProvider;
+use crate::domain::OauthProvider;
 
 const COOKIE_NAME: &str = "_sm_flash";
 // Long enough to survive the post-login redirect chain, short enough that it

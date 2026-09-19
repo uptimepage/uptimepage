@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::api::types::AvailabilityBucket;
+use crate::domain::metrics::AvailabilityBucket;
 use crate::domain::{Incident, confirmed_downtime_secs, uptime_pct_from_downtime};
 use crate::storage::{ClampedRange, UptimeStats, rollup_bucket_secs};
 use crate::web::views::dashboard::{

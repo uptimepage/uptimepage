@@ -24,7 +24,6 @@ pub mod microsoft;
 pub mod oauth_login;
 pub mod oauth_state;
 pub mod passkey;
-pub mod provider;
 pub mod scope;
 pub mod session;
 pub mod slack;
@@ -32,7 +31,6 @@ pub mod token_hash;
 pub mod url;
 
 pub use fingerprint::{ensure_fingerprint_salt, hash_fingerprint};
-pub use provider::{CredentialAction, CredentialOrigin, OauthProvider};
 
 use sha2::{Digest, Sha256};
 

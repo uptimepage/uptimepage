@@ -7,10 +7,9 @@ use chrono::{Duration, Utc};
 use uuid::Uuid;
 
 use crate::api::ApiError;
-use crate::api::types::{
-    DashboardMetrics, DashboardSummary, Last24hSummary, StatusBreakdown, SystemSummary,
-};
+use crate::api::types::{DashboardSummary, Last24hSummary, StatusBreakdown, SystemSummary};
 use crate::app::AppState;
+use crate::domain::metrics::DashboardMetrics;
 use crate::domain::{CheckStatus, OrgId, Target};
 use crate::error::Result;
 use crate::storage::{TargetFilter, TimeRange};

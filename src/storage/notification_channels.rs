@@ -18,11 +18,11 @@ use sqlx::PgPool;
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
-use crate::api::error::codes;
 use crate::domain::{
     ChannelConfig, ChannelKind, NewNotificationChannel, NotificationChannel,
     NotificationChannelUpdate, OrgId, UserId, WriteSource,
 };
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::security::{Cipher, envelope_str, wrap_envelope};
 use crate::storage::accounts;

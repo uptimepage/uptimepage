@@ -17,9 +17,9 @@ use common::{
 };
 use serde_json::json;
 use tower::ServiceExt;
-use uptimepage::api::error::codes;
 use uptimepage::auth::account;
 use uptimepage::error::AppError;
+use uptimepage::error::codes;
 use uuid::Uuid;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");

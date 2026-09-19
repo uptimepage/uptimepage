@@ -23,9 +23,9 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::api::ApiError;
-use crate::api::error::codes;
 use crate::app::AppState;
 use crate::domain::{OrgId, Organization, Role, UserId, validate_slug};
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::storage::orgs as orgs_store;
 use crate::web::{BrowserUser, CurrentUser};

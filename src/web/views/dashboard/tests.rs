@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use chrono::Duration;
 
-use crate::api::types::{DashboardSparkBucket, FleetRibbonBucket, PriorPeriodSummary};
 use crate::domain::IncidentSeverity;
+use crate::domain::metrics::{DashboardSparkBucket, FleetRibbonBucket, PriorPeriodSummary};
 use crate::storage::IncidentBrief;
 
 use super::charts::*;

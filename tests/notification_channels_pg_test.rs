@@ -14,13 +14,13 @@ mod common;
 use std::time::Duration;
 
 use chrono::Utc;
-use uptimepage::api::error::codes;
 use uptimepage::domain::{
     AlertBinding, ChannelConfig, CheckSpec, EmailConfig, ExpectedStatus, NewIncidentNotification,
     NewNotificationChannel, NewTarget, NotificationChannelUpdate, NotificationReason,
     NotificationStatus, SlackConfig, TargetAlerts, WriteSource,
 };
 use uptimepage::error::AppError;
+use uptimepage::error::codes;
 use uptimepage::storage::{
     Actor, IncidentOpsStore, NotificationChannelStore, PgIncidentOpsStore,
     PgNotificationChannelStore, PostgresTargetStore, TargetStore, create_org_with_owner,

@@ -12,8 +12,8 @@ use axum::http::{Request, StatusCode};
 use common::{build_test_app_with_pg, make_user, pg_pool_from_env, unique_slug, with_session};
 use tower::ServiceExt;
 use uptimepage::auth::oauth_state;
-use uptimepage::auth::provider::DISCORD_CONNECT_PROVIDER;
 use uptimepage::domain::OrgId;
+use uptimepage::domain::credential::DISCORD_CONNECT_PROVIDER;
 
 fn discord_cfg(cfg: &mut uptimepage::config::AppConfig) {
     cfg.discord_oauth.client_id = "1234567890".into();
@@ -135,7 +135,7 @@ async fn callback_rejects_cross_provider_and_foreign_org_states() {
     oauth_state::insert(
         &pool,
         &s,
-        uptimepage::auth::provider::SLACK_CONNECT_PROVIDER,
+        uptimepage::domain::credential::SLACK_CONNECT_PROVIDER,
         oauth_state::StateBinding {
             org_id: Some(org.0),
             ..Default::default()

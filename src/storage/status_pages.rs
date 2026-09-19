@@ -28,12 +28,12 @@ pub(crate) const PAGE_CUSTOM_DOMAIN_LIVE: &str =
 /// choose differently. For a query that aliases the page `sp`.
 pub(crate) const PAGE_NOT_HELD: &str = "sp.plan_hold_at IS NULL";
 
-use crate::api::error::codes;
 use crate::domain::{
     MonitorShareId, NewStatusPage, NewStatusPageComponent, OrgId, PublicOrgBranding, PublicStyle,
     StatusPage, StatusPageComponent, StatusPageComponentUpdate, StatusPageId, StatusPageUpdate,
     UserId, WriteSource,
 };
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::storage::accounts;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock};

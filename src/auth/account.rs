@@ -18,8 +18,8 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
-use crate::api::error::codes;
 use crate::domain::{AccountId, OrgId, UserId};
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::storage::locks::{account_lock_key, advisory_xact_lock, user_delete_lock_key};
 use crate::storage::orgs::record_audit_tx;

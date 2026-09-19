@@ -23,9 +23,9 @@ use super::provider::{
     BillingProvider, ChangeTiming, CheckoutRequest, EventKind, PortalLinks, ProviderEvent,
     SubscriptionSnapshot, SubscriptionStatus, WebhookRejected,
 };
-use crate::api::error::codes;
 use crate::auth::mac::hmac_sha256_hex;
 use crate::domain::AccountId;
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::http_outbound::{OutboundHttpClient, REQUEST_TIMEOUT};
 use crate::observability::metrics::names;

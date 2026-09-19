@@ -10,8 +10,8 @@ use chrono::{Duration as ChronoDuration, Utc};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::api::types::DashboardMetrics;
 use crate::app::AppState;
+use crate::domain::metrics::DashboardMetrics;
 use crate::domain::{CheckStatus, OrgId, Target};
 use crate::storage::TimeRange;
 use crate::storage::orgs::list_members;

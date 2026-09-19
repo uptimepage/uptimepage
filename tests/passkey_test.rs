@@ -10,7 +10,7 @@ mod common;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
-use uptimepage::auth::OauthProvider;
+use uptimepage::domain::OauthProvider;
 use uptimepage::domain::UserId;
 use uptimepage::storage::oauth_identities::{RequestOrigin, WaysIn};
 use uptimepage::storage::passkeys;

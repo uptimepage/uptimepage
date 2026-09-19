@@ -97,7 +97,7 @@ pub async fn partial(
         MembershipStatus::Member => false,
         MembershipStatus::None => {
             return Err(AppError::not_found(
-                crate::api::error::codes::ORG_NOT_FOUND,
+                crate::error::codes::ORG_NOT_FOUND,
                 "organisation not found",
             )
             .into());

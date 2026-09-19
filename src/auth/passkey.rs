@@ -7,6 +7,7 @@
 use url::Url;
 use webauthn_rs::prelude::*;
 
+use crate::config::AuthConfig;
 use crate::error::{AppError, Result};
 
 /// Long enough to pick a device and touch it, short enough that a stolen row is
@@ -20,6 +21,12 @@ pub fn relying_party_id(public_base_url: &str) -> Result<String> {
         .host_str()
         .ok_or_else(|| bad_base("has no host"))?
         .to_string())
+}
+
+/// The list is the policy switch; the capability half is asked of the builder,
+/// which rejects a base URL naming an IP rather than a domain.
+pub fn login_enabled(cfg: &AuthConfig) -> bool {
+    cfg.method_enabled("passkey") && build(&cfg.public_base_url).is_ok()
 }
 
 /// Built once at startup and held in state. Subdomains stay excluded: on the

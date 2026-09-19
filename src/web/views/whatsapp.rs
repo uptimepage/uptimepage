@@ -17,10 +17,10 @@ use secrecy::ExposeSecret;
 use serde::Deserialize;
 use subtle::ConstantTimeEq;
 
-use crate::api::error::codes;
 use crate::app::AppState;
 use crate::auth::sha256_hex;
 use crate::domain::{ChannelConfig, ChannelKind, WhatsAppAppConfig};
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::storage::LinkPurpose;
 use crate::web::views::notification_channels::{QuotaBlockLog, create_channel_deduped};

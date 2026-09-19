@@ -10,15 +10,14 @@
 mod common;
 
 use chrono::{Duration as ChronoDuration, Utc};
-use uptimepage::auth::OauthProvider as P;
 use uptimepage::auth::{
-    OauthProvider, fingerprint,
+    fingerprint,
     login_audit::{self, LoginAttempt, LoginMethod},
     oauth_login::{self, RemoteIdentity},
     oauth_state, session as session_store,
 };
 use uptimepage::config::SessionConfig;
-use uptimepage::domain::UserId;
+use uptimepage::domain::{OauthProvider, OauthProvider as P, UserId};
 use uptimepage::error::AppError;
 use uptimepage::storage::oauth_identities::{self, WaysIn};
 use uuid::Uuid;
@@ -1388,8 +1387,8 @@ async fn signup_and_a_later_link_both_leave_a_trail() {
         oauth_identities::CredentialEvent {
             provider: OauthProvider::Github.as_db_str(),
             provider_user_id: "gh-first",
-            action: uptimepage::auth::CredentialAction::Linked,
-            origin: uptimepage::auth::CredentialOrigin::Signup,
+            action: uptimepage::domain::CredentialAction::Linked,
+            origin: uptimepage::domain::CredentialOrigin::Signup,
             ip_hash: None,
             user_agent_hash: None,
         },

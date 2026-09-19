@@ -10,10 +10,10 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::api::error::codes;
 use crate::app::AppState;
 use crate::email::templates::support_request::short_ref;
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::storage::orgs as orgs_store;
 use crate::web::auth::{CurrentOrg, Session};

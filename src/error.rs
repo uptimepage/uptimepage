@@ -3,7 +3,9 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use thiserror::Error;
 
-use crate::api::error::{ApiError, ApiErrorBody, codes};
+use crate::api::error::{ApiError, ApiErrorBody};
+
+pub mod codes;
 
 pub type Result<T, E = AppError> = std::result::Result<T, E>;
 

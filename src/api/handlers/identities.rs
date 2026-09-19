@@ -7,7 +7,8 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 
 use crate::app::AppState;
-use crate::auth::OauthProvider;
+use crate::auth::passkey;
+use crate::domain::OauthProvider;
 use crate::error::Result;
 use crate::storage::oauth_identities;
 use crate::web::{BrowserUser, CurrentUser};
@@ -103,10 +104,7 @@ pub async fn unlink(
 /// `None` where no passkey could sign anyone in, so the rows this deployment
 /// cannot answer for are counted as rows rather than ways back.
 fn passkey_rp_id(state: &AppState) -> Option<String> {
-    state
-        .cfg
-        .auth
-        .passkey_login_enabled()
-        .then(|| crate::auth::passkey::relying_party_id(&state.cfg.auth.public_base_url).ok())
+    passkey::login_enabled(&state.cfg.auth)
+        .then(|| passkey::relying_party_id(&state.cfg.auth.public_base_url).ok())
         .flatten()
 }

@@ -19,13 +19,13 @@ use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
 use uuid::Uuid;
 
-use crate::api::error::codes;
 use crate::app::AppState;
 use crate::domain::{
     ChannelConfig, MAX_CHANNEL_NAME_LEN, NewNotificationChannel, NotificationChannel, OrgId,
     Target, WriteSource,
 };
 use crate::error::AppError;
+use crate::error::codes;
 use crate::storage::NotificationChannelStore;
 use crate::storage::traits::TargetFilter;
 use crate::web::CurrentOrg;
@@ -1280,8 +1280,8 @@ mod tests {
 
     mod deduped_create {
         use super::*;
-        use crate::api::error::codes;
         use crate::domain::{ChannelKind, MAX_CHANNEL_NAME_LEN, OrgId, TelegramAppConfig};
+        use crate::error::codes;
         use crate::storage::InMemoryNotificationChannelStore;
         use uuid::Uuid;
 

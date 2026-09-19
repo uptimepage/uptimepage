@@ -14,13 +14,13 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::api::ApiError;
-use crate::api::error::codes;
 use crate::app::AppState;
 use crate::domain::preferences::validate_timezone;
 use crate::domain::{
     NewOnCallOverride, NewOnCallSchedule, OnCallOverride, OnCallScheduleDetail,
     OnCallScheduleSummary, RotationType, UserId,
 };
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::web::{Authorized, CurrentUser, OnCallRead, OnCallWrite, OwnerAuthorized};
 
@@ -343,7 +343,7 @@ pub async fn set_my_contacts(
 pub(crate) fn gate_on_call(state: &AppState, plan: &crate::domain::Plan) -> Result<()> {
     if state.cfg.marketing.enabled && !plan.on_call_enabled {
         return Err(AppError::forbidden_code(
-            crate::api::error::codes::ON_CALL_DISABLED,
+            crate::error::codes::ON_CALL_DISABLED,
             "on-call scheduling and escalation are not available on your plan",
         ));
     }

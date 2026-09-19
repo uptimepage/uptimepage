@@ -7,7 +7,6 @@ use utoipa::IntoParams;
 use uuid::Uuid;
 
 use crate::api::ApiError;
-use crate::api::error::codes;
 use crate::api::page::{PageEnvelope, PageOfTarget};
 use crate::api::redaction::Redacted;
 use crate::api::types::{
@@ -20,6 +19,7 @@ use crate::domain::{
     CadenceAdvice, CheckResult, CheckSpec, HeartbeatCheck, NewTarget, NewTargetWithRegions, OrgId,
     Target, TargetUpdate,
 };
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::observability::metrics::names;
 use crate::storage::{HeartbeatMonitor, TargetFilter};

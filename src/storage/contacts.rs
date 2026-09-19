@@ -11,8 +11,8 @@ use parking_lot::Mutex;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::api::error::codes;
 use crate::domain::{OrgId, UserId};
+use crate::error::codes;
 use crate::error::{AppError, Result};
 
 #[async_trait]

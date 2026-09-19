@@ -5,7 +5,6 @@ pub mod flow;
 pub mod heartbeat;
 pub mod host_throttle;
 pub mod http_check;
-pub mod interpolate;
 pub mod ping;
 pub mod pool;
 pub mod rdap;

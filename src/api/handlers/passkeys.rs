@@ -557,7 +557,7 @@ fn signed_in(session: &Session) -> Result<crate::web::auth::User> {
 }
 
 fn enabled(state: &AppState) -> Result<Webauthn> {
-    if !state.cfg.auth.passkey_login_enabled() {
+    if !passkey::login_enabled(&state.cfg.auth) {
         return Err(AppError::not_found(
             "PASSKEY_UNAVAILABLE",
             "passkeys are not enabled here",

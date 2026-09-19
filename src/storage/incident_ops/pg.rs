@@ -359,7 +359,7 @@ impl PgIncidentOpsStore {
                     ) =>
                 {
                     return Err(crate::error::AppError::conflict(
-                        crate::api::error::codes::INCIDENT_ALREADY_OPEN,
+                        crate::error::codes::INCIDENT_ALREADY_OPEN,
                         "another incident is already open for this monitor",
                     ));
                 }
@@ -649,7 +649,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             .map_err(|e| anyhow::anyhow!("declare incident: {e}"))?;
         let row = row.ok_or_else(|| {
             crate::error::AppError::conflict(
-                crate::api::error::codes::INCIDENT_ALREADY_OPEN,
+                crate::error::codes::INCIDENT_ALREADY_OPEN,
                 "this monitor already has an open incident",
             )
         })?;
@@ -835,7 +835,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             .map_err(|e| anyhow::anyhow!("validate assignee membership: {e}"))?;
             if member.is_none() {
                 return Err(crate::error::AppError::unprocessable(
-                    crate::api::error::codes::ASSIGNEE_NOT_MEMBER,
+                    crate::error::codes::ASSIGNEE_NOT_MEMBER,
                     "assignee is not a member of this organization",
                 ));
             }

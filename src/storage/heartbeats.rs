@@ -10,11 +10,11 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::domain::heartbeat::{Failure, PingState};
 use crate::domain::{CheckSpec, HeartbeatCheck, OrgId, PingSignal, UserId};
 use crate::error::{AppError, Result};
 use crate::security::Cipher;
 use crate::storage::capability_token;
-use crate::worker::heartbeat::{Failure, PingState};
 
 /// Long enough for a daily deploy cycle, short enough for a leaked URL.
 pub const PREV_TOKEN_OVERLAP: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);

@@ -656,7 +656,7 @@ pub async fn restore_account(
     let pool = state.require_db()?;
     let Some(outcome) = account::restore_account(pool, pending.user_id).await? else {
         return Err(AppError::conflict(
-            crate::api::error::codes::ACCOUNT_NOT_DELETED,
+            crate::error::codes::ACCOUNT_NOT_DELETED,
             "This account is not scheduled for deletion.",
         ));
     };

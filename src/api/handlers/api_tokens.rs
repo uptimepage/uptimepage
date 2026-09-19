@@ -16,11 +16,12 @@ use sqlx::PgPool;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::api::error::{ApiError, codes};
+use crate::api::error::ApiError;
 use crate::app::AppState;
 use crate::auth::api_tokens as tokens;
 use crate::auth::scope::{Scope, ScopeSet};
 use crate::domain::{OrgId, UserId};
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::storage::orgs::{find_id_by_slug, is_active_member};
 use crate::web::{BrowserUser, CurrentOrg, CurrentUser, VerifiedBrowserUser};

@@ -4,10 +4,10 @@ use chrono::{DateTime, TimeZone, Utc};
 use uuid::Uuid;
 
 use crate::api::redaction::{REDACTED, strip_url_credentials};
-use crate::api::types::DashboardMetrics;
 use crate::domain::IncidentVisibility;
 use crate::domain::TargetAlerts;
 use crate::domain::incident::Incident;
+use crate::domain::metrics::DashboardMetrics;
 use crate::domain::notification_channel::NotificationChannel;
 use crate::domain::result::{CheckResult, CheckStatus};
 use crate::domain::target::RegionIncidentPolicy;
@@ -188,7 +188,7 @@ pub(super) fn region_cap(max_regions: i32, catalog_len: usize) -> Option<u32> {
     (cap < catalog_len).then_some(cap as u32)
 }
 
-pub(super) fn region_health(r: crate::api::types::RegionRollup) -> RegionHealth {
+pub(super) fn region_health(r: crate::domain::metrics::RegionRollup) -> RegionHealth {
     RegionHealth {
         region: r.region,
         samples: r.samples,
@@ -459,7 +459,7 @@ pub(super) fn flow_run_item(v: crate::storage::traits::FlowRunView) -> FlowRunIt
     }
 }
 
-pub(super) fn step_trend_item(t: crate::api::types::FlowStepTrend) -> FlowStepTrendItem {
+pub(super) fn step_trend_item(t: crate::domain::metrics::FlowStepTrend) -> FlowStepTrendItem {
     // A bucket carries no mean when nothing passed it, so the ends are the
     // outermost slices that timed anything.
     let first = t.buckets.iter().find_map(|b| b.avg);

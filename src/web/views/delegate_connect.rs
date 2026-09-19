@@ -14,7 +14,6 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::api::error::codes;
 use crate::api::handlers::notification_channels::{
     check_channel_abuse, delegate_status_parts, reject_managed_kind, spawn_send_verification,
     validate_config, validate_name,
@@ -22,6 +21,7 @@ use crate::api::handlers::notification_channels::{
 use crate::app::AppState;
 use crate::auth::sha256_hex;
 use crate::domain::{ChannelConfig, ChannelKind, NotificationChannel, OrgId};
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::storage::LinkPurpose;
 use crate::storage::channel_link_codes::ConsumedLink;

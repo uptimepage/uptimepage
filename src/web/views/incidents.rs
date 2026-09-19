@@ -11,13 +11,13 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::api::error::codes;
 use crate::app::AppState;
 use crate::domain::{
     CheckResult, CheckStatus, IncidentEvent, IncidentOrigin, IncidentSeverity, IncidentState,
     IncidentStatusPhase, OpsIncident, OrgId, UserId,
 };
 use crate::error::AppError;
+use crate::error::codes;
 use crate::storage::orgs::list_members;
 use crate::storage::{ClampedRange, IncidentOpsFilter, IncidentSort, TargetFilter, TimeRange};
 use crate::web::error::WebResult;

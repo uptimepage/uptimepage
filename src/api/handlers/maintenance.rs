@@ -14,13 +14,13 @@ use utoipa::IntoParams;
 use uuid::Uuid;
 
 use crate::api::ApiError;
-use crate::api::error::codes;
 use crate::api::handlers::validation;
 use crate::api::page::{PageEnvelope, PageOfMaintenanceWindow};
 use crate::app::AppState;
 use crate::domain::{
     MaintenanceFilter, MaintenanceWindow, MaintenanceWindowUpdate, NewMaintenanceWindow, OrgId,
 };
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::storage::{MaintenanceListQuery, MaintenanceStore};
 use crate::web::{Authorized, MaintenanceDelete, MaintenanceRead, MaintenanceWrite, RequestSource};

@@ -73,7 +73,7 @@ impl WhatsAppNotifier {
         .parse::<Url>()
         .map_err(|e| {
             AppError::bad_request(
-                crate::api::codes::INVALID_CONFIG,
+                crate::error::codes::INVALID_CONFIG,
                 format!("whatsapp phone_number_id is not URL-safe: {e}"),
             )
         })?;

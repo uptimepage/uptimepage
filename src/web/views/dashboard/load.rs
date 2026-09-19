@@ -6,8 +6,8 @@ use std::sync::Arc;
 use chrono::{Duration, Utc};
 use uuid::Uuid;
 
-use crate::api::types::{DashboardMetrics, PriorPeriodSummary};
 use crate::app::AppState;
+use crate::domain::metrics::{DashboardMetrics, PriorPeriodSummary};
 use crate::domain::{CheckStatus, OrgId, uptime_pct_from_downtime};
 use crate::storage::{IncidentBriefFilter, TargetFilter, TimeRange};
 use crate::web::error::WebResult;

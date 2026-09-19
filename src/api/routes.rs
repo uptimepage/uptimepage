@@ -492,7 +492,7 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
 
     // Mounted only where they can complete, so a deployment without them
     // answers 404 rather than starting a ceremony that cannot finish.
-    if state.cfg.auth.passkey_login_enabled() {
+    if crate::auth::passkey::login_enabled(&state.cfg.auth) {
         auth_routes = auth_routes
             .route(
                 "/auth/passkey/register/start",

@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use uuid::Uuid;
 
-use crate::api::types::{
+use crate::domain::metrics::{
     AvailabilityBucket, DashboardMetrics, DashboardSparkBucket, FleetRibbonBucket, LatencyBucket,
     PriorPeriodSummary, RegionLatencySeries, RegionRollup, TagCount, TargetsSummary,
 };

@@ -17,13 +17,13 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::api::ApiError;
-use crate::api::error::codes;
 use crate::app::AppState;
 use crate::domain::{
     AssetSlot, NewMonitorShare, NewStatusPage, NewStatusPageComponent, OrgId, PublicOrgBranding,
     PublicStyle, StatusPage, StatusPageComponent, StatusPageComponentUpdate, StatusPageId,
     StatusPageUpdate, UserId, validate_slug,
 };
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::public_status::LogoMime;
 use crate::storage::{AddComponentOutcome, CreateShareOutcome};

@@ -15,9 +15,9 @@ use rmcp::service::RequestContext;
 use rmcp::{RoleServer, tool, tool_router};
 use uuid::Uuid;
 
-use crate::api::types::DashboardMetrics;
 use crate::auth::scope::Scope;
 use crate::domain::WriteSource;
+use crate::domain::metrics::DashboardMetrics;
 use crate::domain::target::Target;
 use crate::domain::{confirmed_downtime_secs, uptime_pct_from_downtime};
 use crate::storage::incidents::IncidentBriefFilter;

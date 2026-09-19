@@ -18,7 +18,7 @@ use hyper::body::Bytes;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::auth::OauthProvider;
+use crate::domain::OauthProvider;
 use crate::domain::{OrgId, UserId};
 use crate::error::{AppError, Result};
 use crate::http_outbound::OutboundHttpClient;

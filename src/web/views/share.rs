@@ -31,13 +31,13 @@ use axum::extract::{Path, Query, State};
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 
-use crate::api::error::codes;
 use crate::api::handlers::results::{RangeQuery, latency_bucket_seconds};
 use crate::api::redaction::redact_check_for_public;
 use crate::api::types::LatencySeries;
 use crate::app::AppState;
 use crate::domain::ResolvedShare;
 use crate::error::AppError;
+use crate::error::codes;
 use crate::storage::TimeRange;
 use crate::web::error::{WebError, WebResult};
 use crate::web::filters;

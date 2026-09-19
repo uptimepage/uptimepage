@@ -7,11 +7,11 @@ use clickhouse::{Client, Row};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::api::types::{
+use crate::domain::agent_wire::{ConsoleLine, FlowEvidence, StepOutcome, StepTrace};
+use crate::domain::metrics::{
     AvailabilityBucket, DashboardMetrics, DashboardSparkBucket, FleetRibbonBucket, FlowStepBucket,
     FlowStepTrend, LatencyBucket, PriorPeriodSummary, RegionLatencySeries, RegionRollup,
 };
-use crate::domain::agent_wire::{ConsoleLine, FlowEvidence, StepOutcome, StepTrace};
 use crate::domain::{
     CheckDiagnostic, CheckDiagnosticKind, CheckResult, CheckStatus, DiagnosticConfidence,
     DiagnosticEvidence, EdgeProvider, Incident, ObservedCadence, OrgId, coalesce_incidents,

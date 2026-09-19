@@ -2,7 +2,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::api::redaction::RedactInPlace;
-use crate::api::types::TagCount;
+use crate::domain::metrics::TagCount;
 use crate::domain::{CheckResult, Incident, MaintenanceWindow, PublicIncident, Target};
 
 /// Standard envelope returned by every paginated list endpoint.

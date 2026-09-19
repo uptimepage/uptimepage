@@ -375,7 +375,7 @@ impl AppConfig {
         if !m.client.is_configured() {
             return Ok(());
         }
-        if !crate::auth::microsoft::tenant_is_valid(&m.tenant) {
+        if !m.tenant_is_valid() {
             return Err(crate::error::AppError::Other(anyhow::anyhow!(
                 "auth.microsoft.tenant {:?} is not addressable — use \"common\", \"organizations\", \"consumers\", a tenant GUID, or a domain",
                 m.tenant
@@ -391,7 +391,7 @@ impl AppConfig {
         if !g.client.is_configured() {
             return Ok(());
         }
-        if !crate::auth::gitlab::base_url_is_valid(&g.base_url) {
+        if !g.base_url_is_valid() {
             return Err(crate::error::AppError::Other(anyhow::anyhow!(
                 "auth.gitlab.base_url {:?} is not an https origin — use \"https://gitlab.com\" or your instance's own https URL",
                 g.base_url

@@ -122,7 +122,7 @@ impl SmsNotifier {
                 .parse::<Url>()
                 .map_err(|e| {
                     AppError::bad_request(
-                        crate::api::codes::INVALID_CONFIG,
+                        crate::error::codes::INVALID_CONFIG,
                         format!("twilio account_sid is not URL-safe: {e}"),
                     )
                 })?;
@@ -168,7 +168,7 @@ impl SmsNotifier {
                     .parse::<Url>()
                     .map_err(|e| {
                         AppError::bad_request(
-                            crate::api::codes::INVALID_CONFIG,
+                            crate::error::codes::INVALID_CONFIG,
                             format!("plivo auth_id is not URL-safe: {e}"),
                         )
                     })?;
@@ -194,7 +194,7 @@ impl SmsNotifier {
                         .parse::<Url>()
                         .map_err(|e| {
                             AppError::bad_request(
-                                crate::api::codes::INVALID_CONFIG,
+                                crate::error::codes::INVALID_CONFIG,
                                 format!("sinch service plan / region is not URL-safe: {e}"),
                             )
                         })?;

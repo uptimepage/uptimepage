@@ -142,7 +142,7 @@ pub async fn create_org_with_owner(
     if owned >= limit {
         tx.rollback().await.ok();
         return Err(AppError::unprocessable(
-            crate::api::error::codes::OWNER_ORG_LIMIT,
+            crate::error::codes::OWNER_ORG_LIMIT,
             format!("this account already holds the limit of {limit} organisations"),
         ));
     }

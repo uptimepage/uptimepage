@@ -15,10 +15,10 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 
 use crate::api::ApiError;
-use crate::api::error::codes;
 use crate::app::AppState;
 use crate::billing::Billing;
 use crate::domain::{AccountId, BillingStatus, Interval, OrgId, Subscription, UserId};
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::storage::subscriptions;
 use crate::web::{BrowserUser, CurrentOrg, CurrentUser};

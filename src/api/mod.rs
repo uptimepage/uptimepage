@@ -15,7 +15,7 @@ pub mod types;
 
 pub use cursor::IncidentCursor;
 pub use docs::ApiDoc;
-pub use error::{ApiError, ApiErrorBody, codes};
+pub use error::{ApiError, ApiErrorBody};
 pub use idempotency::IdempotencyCache;
 pub use json_arc::JsonArc;
 pub use page::{
@@ -29,6 +29,5 @@ pub use routes::{
 };
 pub use types::{
     BulkAction, BulkActionFailure, BulkActionRequest, BulkActionResponse, DashboardSummary,
-    Last24hSummary, StatusBreakdown, SystemSummary, TagCount, TargetsSummary, TestRequest,
-    TestResponse,
+    Last24hSummary, StatusBreakdown, SystemSummary, TestRequest, TestResponse,
 };

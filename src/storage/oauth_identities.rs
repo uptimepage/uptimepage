@@ -5,8 +5,8 @@
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use crate::auth::{CredentialAction, CredentialOrigin, OauthProvider};
 use crate::domain::UserId;
+use crate::domain::{CredentialAction, CredentialOrigin, OauthProvider};
 use crate::error::{AppError, Result};
 
 /// `(provider, provider_user_id)`, as the lock query returns it.
@@ -51,7 +51,7 @@ impl WaysIn {
         Self {
             enabled_providers: cfg.auth.enabled_login_providers(),
             email_is_a_way_back: cfg.auth.magic_link_enabled() && cfg.email.delivers(),
-            passkeys_open_the_account: cfg.auth.passkey_login_enabled(),
+            passkeys_open_the_account: crate::auth::passkey::login_enabled(&cfg.auth),
         }
     }
 

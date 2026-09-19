@@ -4,11 +4,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
-use crate::api::types::{
+use crate::domain::agent_wire::FlowRunRecord;
+use crate::domain::metrics::{
     AvailabilityBucket, DashboardMetrics, DashboardSparkBucket, FleetRibbonBucket, LatencyBucket,
     PriorPeriodSummary, RegionLatencySeries, RegionRollup, TagCount, TargetsSummary,
 };
-use crate::domain::agent_wire::FlowRunRecord;
 use crate::domain::{
     CheckResult, CheckStatus, HeartbeatPingRecord, NewTarget, NewTargetWithRegions,
     ObservedCadence, OrgId, Target, TargetUpdate, UserId, WriteSource,
@@ -474,7 +474,7 @@ pub trait ResultsStore: Send + Sync {
         _range: ClampedRange,
         _bucket_seconds: u32,
         _region: Option<&str>,
-    ) -> Result<Vec<crate::api::types::FlowStepTrend>> {
+    ) -> Result<Vec<crate::domain::metrics::FlowStepTrend>> {
         Ok(Vec::new())
     }
     async fn list_results(

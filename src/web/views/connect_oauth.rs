@@ -10,9 +10,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::app::AppState;
-use crate::auth::provider::{DISCORD_CONNECT_PROVIDER, SLACK_CONNECT_PROVIDER};
 use crate::auth::{discord, oauth_state, slack};
 use crate::config::{AppConfig, ConnectOauthConfig};
+use crate::domain::credential::{DISCORD_CONNECT_PROVIDER, SLACK_CONNECT_PROVIDER};
 use crate::domain::{ChannelConfig, OrgId};
 use crate::error::{AppError, Result};
 use crate::storage::orgs::is_active_member;
@@ -245,7 +245,7 @@ pub async fn run_callback(
                 Ok(Redirect::to("/c/done").into_response())
             }
             Err(AppError::Unprocessable { code, .. })
-                if code == crate::api::error::codes::CHANNEL_QUOTA_EXCEEDED =>
+                if code == crate::error::codes::CHANNEL_QUOTA_EXCEEDED =>
             {
                 state.channel_link_code_store.restore(link.id).await?;
                 Ok(bounce(p, bounce_base, "quota"))
@@ -283,7 +283,7 @@ pub async fn run_callback(
             Ok(Redirect::to(&format!("/settings/notifications/{}/edit", ch.id)).into_response())
         }
         Err(AppError::Unprocessable { code, .. })
-            if code == crate::api::error::codes::CHANNEL_QUOTA_EXCEEDED =>
+            if code == crate::error::codes::CHANNEL_QUOTA_EXCEEDED =>
         {
             tracing::info!(provider = p.kind, org_id = %org.0, reason = "quota", "oauth connect rejected");
             Ok(bounce(p, bounce_base, "quota"))

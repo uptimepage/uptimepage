@@ -8,7 +8,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
-use crate::api::types::{DashboardSparkBucket, FleetRibbonBucket, PriorPeriodSummary};
+use crate::domain::metrics::{DashboardSparkBucket, FleetRibbonBucket, PriorPeriodSummary};
 
 use super::*;
 

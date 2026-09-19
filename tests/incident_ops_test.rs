@@ -1144,7 +1144,7 @@ async fn assign_rejects_non_member_assignee_pg() {
         .unwrap_err();
     assert!(
         matches!(&err, uptimepage::error::AppError::Unprocessable { code, .. }
-            if *code == uptimepage::api::error::codes::ASSIGNEE_NOT_MEMBER),
+            if *code == uptimepage::error::codes::ASSIGNEE_NOT_MEMBER),
         "cross-org assignee must be rejected, got {err:?}"
     );
 
@@ -1199,7 +1199,7 @@ async fn declare_conflicts_when_target_already_has_open_incident_pg() {
         .expect_err("second declare for the same target must conflict");
     match err {
         uptimepage::error::AppError::Conflict { code, .. } => {
-            assert_eq!(code, uptimepage::api::error::codes::INCIDENT_ALREADY_OPEN)
+            assert_eq!(code, uptimepage::error::codes::INCIDENT_ALREADY_OPEN)
         }
         other => panic!("expected Conflict, got {other:?}"),
     }
@@ -1260,7 +1260,7 @@ async fn reopen_conflicts_when_target_has_a_newer_open_incident_pg() {
         .expect_err("reopening the old incident must conflict with the newer open one");
     match err {
         uptimepage::error::AppError::Conflict { code, .. } => {
-            assert_eq!(code, uptimepage::api::error::codes::INCIDENT_ALREADY_OPEN)
+            assert_eq!(code, uptimepage::error::codes::INCIDENT_ALREADY_OPEN)
         }
         other => panic!("expected Conflict, got {other:?}"),
     }

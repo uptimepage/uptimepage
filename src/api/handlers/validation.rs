@@ -4,7 +4,7 @@
 //! Constants live here so the limits are one source of truth across
 //! maintenance + incident endpoints.
 
-use crate::api::error::codes;
+use crate::error::codes;
 use crate::error::{AppError, Result};
 
 pub const MAX_TITLE: usize = 200;

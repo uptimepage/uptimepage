@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::api::types::DashboardMetrics;
+use crate::domain::metrics::DashboardMetrics;
 use crate::domain::{CheckStatus, IncidentSeverity, uptime_pct_from_downtime};
 use crate::storage::IncidentBrief;
 use crate::web::filters;

@@ -219,7 +219,7 @@ pub mod fake {
             let mut subs = self.subscriptions.lock().expect("fake provider");
             let snapshot = subs.get_mut(subscription_ref).ok_or_else(|| {
                 crate::error::AppError::not_found(
-                    crate::api::error::codes::SUBSCRIPTION_NOT_FOUND,
+                    crate::error::codes::SUBSCRIPTION_NOT_FOUND,
                     "no such subscription",
                 )
             })?;
@@ -281,7 +281,7 @@ pub mod fake {
             }
             if self.fetch_fails.load(Ordering::Relaxed) {
                 return Err(crate::error::AppError::service_unavailable(
-                    crate::api::error::codes::BILLING_PROVIDER_UNREACHABLE,
+                    crate::error::codes::BILLING_PROVIDER_UNREACHABLE,
                     "fake provider: no response",
                 ));
             }
@@ -323,7 +323,7 @@ pub mod fake {
                 .is_some_and(|s| s.cancel_at.is_some());
             if self.cancel_refused.load(Ordering::Relaxed) || booked {
                 return Err(crate::error::AppError::conflict(
-                    crate::api::error::codes::BILLING_PROVIDER_REFUSED,
+                    crate::error::codes::BILLING_PROVIDER_REFUSED,
                     "fake provider: cancel refused",
                 ));
             }

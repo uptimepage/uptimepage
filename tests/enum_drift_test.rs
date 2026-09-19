@@ -11,12 +11,12 @@
 
 mod common;
 
-use uptimepage::auth::{CredentialAction, CredentialOrigin, OauthProvider};
 use uptimepage::domain::{
     ActorType, AppTheme, ChannelKind, IncidentEventKind, IncidentOrigin, IncidentSeverity,
     IncidentState, IncidentStatusPhase, IncidentUrgency, IncidentVisibility, NotificationReason,
     NotificationStatus, PublicStyle, SubscriberChannel,
 };
+use uptimepage::domain::{CredentialAction, CredentialOrigin, OauthProvider};
 
 /// Pull the parenthesised list from a constraint def like
 /// `CHECK ((severity = ANY (ARRAY['minor'::text, 'major'::text, 'critical'::text])))`
@@ -216,7 +216,7 @@ async fn oauth_states_provider_check_matches_rust_enum() {
             .iter()
             .map(|p| p.as_db_str().to_string())
             .chain(
-                uptimepage::auth::provider::CONNECT_PROVIDERS
+                uptimepage::domain::credential::CONNECT_PROVIDERS
                     .iter()
                     .map(|p| p.to_string()),
             )

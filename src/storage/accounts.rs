@@ -38,9 +38,8 @@ pub async fn account_for_org<'e, E: PgExecutor<'e>>(exec: E, org: OrgId) -> Resu
     .fetch_optional(exec)
     .await
     .context("account_for_org")?;
-    row.map(|(id,)| AccountId(id)).ok_or_else(|| {
-        AppError::not_found(crate::api::error::codes::ORG_NOT_FOUND, "org not found")
-    })
+    row.map(|(id,)| AccountId(id))
+        .ok_or_else(|| AppError::not_found(crate::error::codes::ORG_NOT_FOUND, "org not found"))
 }
 
 /// Whether `user` owns the account that `org` bills to.

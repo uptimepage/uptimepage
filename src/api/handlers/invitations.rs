@@ -22,13 +22,13 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::api::error::codes;
 use crate::app::AppState;
 use crate::auth::email_norm;
 use crate::auth::invitations as inv;
 use crate::auth::url::token_link;
 use crate::domain::{OrgId, Organization, Role, UserId};
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::storage::orgs as orgs_store;
 use crate::web::{BrowserUser, CurrentUser, VerifiedBrowserUser};

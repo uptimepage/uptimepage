@@ -32,9 +32,9 @@ use super::provider::{
     BillingProvider, ChangeTiming, EventKind, ProviderEvent, SubscriptionSnapshot,
 };
 use super::{Actor, PlanRequest, set_plan_tx};
-use crate::api::error::codes;
 use crate::domain::{AccountId, BillingStatus, Interval, Landing, Subscription};
 use crate::email::EmailTemplate;
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::observability::metrics::names;
 use crate::quotas::{QuotaService, holds, reconcile_after_change};

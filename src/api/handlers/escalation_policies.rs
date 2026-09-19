@@ -13,11 +13,11 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::api::ApiError;
-use crate::api::error::codes;
 use crate::app::AppState;
 use crate::domain::{
     EscalationPolicy, EscalationPolicySummary, EscalationTargetType, NewEscalationPolicy,
 };
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::web::{Authorized, OnCallRead, OnCallWrite, OwnerAuthorized};
 

@@ -10,11 +10,13 @@ use crate::api::page::PageEnvelope;
 use crate::api::public_error::{PublicApiError, PublicApiErrorBody};
 use crate::api::types::{
     BulkAction, BulkActionFailure, BulkActionRequest, BulkActionResponse, DashboardSummary,
-    FlowStepBucket, FlowStepSeries, FlowStepTrend, Last24hSummary, LatencyBucket, LatencySeries,
-    LatencySeriesByRegion, RegionLatencySeries, StatusBreakdown, SystemSummary, TagCount,
-    TargetsSummary, TestRequest, TestResponse,
+    FlowStepSeries, Last24hSummary, LatencySeries, LatencySeriesByRegion, StatusBreakdown,
+    SystemSummary, TestRequest, TestResponse,
 };
 use crate::domain::Role;
+use crate::domain::metrics::{
+    FlowStepBucket, FlowStepTrend, LatencyBucket, RegionLatencySeries, TagCount, TargetsSummary,
+};
 use crate::domain::{
     ActorType, AlertBinding, ChannelConfig, ChannelKind, CheckResult, CheckSpec, CheckStatus,
     ComponentHistoryResponse, DayState, DnsCheck, DnsRecordType, DomainExpiryCheck,
@@ -379,7 +381,7 @@ use crate::storage::UptimeStats;
             handlers::account::AuditEntryExport,
             handlers::account::McpAuditExport,
             handlers::account::DeletionConfirmation,
-            crate::auth::OauthProvider,
+            crate::domain::OauthProvider,
             handlers::api_tokens::NewApiTokenRequest,
             handlers::api_tokens::NewApiTokenResponse,
             handlers::api_tokens::ApiTokenView,

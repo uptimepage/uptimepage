@@ -9,9 +9,9 @@ use axum::http::request::Parts;
 use secrecy::ExposeSecret;
 use subtle::ConstantTimeEq;
 
-use crate::api::error::codes;
 use crate::app::AppState;
 use crate::auth::sha256_hex;
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::web::auth::bearer_from_headers;
 

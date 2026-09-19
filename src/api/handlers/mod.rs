@@ -32,9 +32,9 @@ pub mod variables;
 
 use uuid::Uuid;
 
-use crate::api::error::codes;
 use crate::app::AppState;
 use crate::domain::{AccountId, OrgId, UserId};
+use crate::error::codes;
 use crate::error::{AppError, Result};
 
 /// Owning the org is not owning the account it bills to: a non-owner gets

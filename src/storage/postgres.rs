@@ -10,8 +10,8 @@ use sqlx::types::Json;
 use sqlx::{Executor, PgPool};
 use uuid::Uuid;
 
-use crate::api::types::{TagCount, TargetsSummary};
 use crate::config::PostgresConfig;
+use crate::domain::metrics::{TagCount, TargetsSummary};
 use crate::domain::target::MAX_TAGS_PER_TARGET;
 use crate::domain::{
     CheckSpec, NewTarget, NewTargetWithRegions, OrgId, RegionIncidentPolicy, Target, TargetAlerts,
@@ -51,7 +51,7 @@ fn owner_left_the_org(e: &sqlx::Error) -> bool {
 
 fn owner_not_member() -> AppError {
     AppError::bad_request_field(
-        crate::api::error::codes::OWNER_NOT_MEMBER,
+        crate::error::codes::OWNER_NOT_MEMBER,
         "owner_user_id is not a member of this org",
         "owner_user_id",
     )

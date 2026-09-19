@@ -18,9 +18,9 @@ use arc_swap::ArcSwap;
 use regex::RegexSet;
 use serde::Deserialize;
 
-use crate::api::error::codes;
 use crate::config::AbuseConfig;
 use crate::domain::CheckSpec;
+use crate::error::codes;
 use crate::error::{AppError, Result};
 
 /// What an abuse match was. Drives the audit `quota_name`, the API error

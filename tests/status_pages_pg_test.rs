@@ -15,12 +15,12 @@ mod common;
 
 use std::time::Duration;
 
-use uptimepage::api::error::codes;
 use uptimepage::domain::{
     CheckSpec, ExpectedStatus, NewMonitorShare, NewStatusPage, NewStatusPageComponent, NewTarget,
     OrgId, StatusPageComponentUpdate, StatusPageId, StatusPageUpdate, UserId, WriteSource,
 };
 use uptimepage::error::AppError;
+use uptimepage::error::codes;
 use uptimepage::storage::{
     AddComponentOutcome, CreateShareOutcome, MonitorShareStore, PgMonitorShareStore,
     PgStatusPageStore, PostgresTargetStore, StatusPageStore, TargetStore, create_org_with_owner,

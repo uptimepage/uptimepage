@@ -13,8 +13,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::api::error::codes;
 use crate::error::AppError;
+use crate::error::codes;
 
 /// Cursor for an incident list ordered by `(started_at DESC, id DESC)`. The
 /// id is the tiebreaker so two incidents sharing a `started_at` always sort

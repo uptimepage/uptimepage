@@ -58,19 +58,6 @@ struct IdClaims {
     xms_edov: Option<bool>,
 }
 
-/// Tenant lands in a URL path: `common`, `organizations`, `consumers`, a GUID,
-/// or a domain, and never `.`/`..`. Checked at boot by
-/// `AppConfig::validate_microsoft_oauth` — a fallback here would turn a
-/// mistyped single-tenant lock into `common` silently.
-pub fn tenant_is_valid(tenant: &str) -> bool {
-    !tenant.is_empty()
-        && tenant != "."
-        && tenant != ".."
-        && tenant
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
-}
-
 fn domain_of(email: &str) -> Option<String> {
     let (_, domain) = email.rsplit_once('@')?;
     (!domain.is_empty()).then(|| domain.to_ascii_lowercase())
@@ -195,31 +182,6 @@ mod tests {
     fn tenant_guid_addresses_one_tenant() {
         let url = authorize_url(&cfg("72f988bf-86f1-41af-91ab-2d7cd011db47"), "s");
         assert!(url.contains("/72f988bf-86f1-41af-91ab-2d7cd011db47/oauth2/v2.0/authorize"));
-    }
-
-    #[test]
-    fn only_addressable_tenants_pass_validation() {
-        for ok in [
-            "common",
-            "organizations",
-            "consumers",
-            "72f988bf-86f1-41af-91ab-2d7cd011db47",
-            "contoso.com",
-        ] {
-            assert!(tenant_is_valid(ok), "{ok} should be accepted");
-        }
-        // Each of these would otherwise widen a single-tenant lock to `common`.
-        for bad in [
-            "",
-            "..",
-            ".",
-            "../../evil",
-            "contoso.com/",
-            "{72f988bf}",
-            "a b",
-        ] {
-            assert!(!tenant_is_valid(bad), "{bad:?} should be rejected");
-        }
     }
 
     #[test]

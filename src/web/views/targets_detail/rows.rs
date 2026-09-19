@@ -292,7 +292,7 @@ pub struct RegionBreakdownRow {
 
 impl RegionBreakdownRow {
     pub(super) fn from_rollup(
-        r: crate::api::types::RegionRollup,
+        r: crate::domain::metrics::RegionRollup,
         selected_region: Option<&str>,
         catalog: &[crate::storage::RegionOption],
         live_regions: Option<&std::collections::HashSet<String>>,

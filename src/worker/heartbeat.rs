@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::num::NonZeroU32;
 use uuid::Uuid;
 
+use crate::domain::heartbeat::PingState;
 use crate::domain::{CheckResult, CheckStatus, HeartbeatCheck, PingSignal};
 
 /// Per-token accepted-ping rate + burst; extra pings 429. Keyed pre-resolve so
@@ -22,57 +23,6 @@ const PING_PER_SEC: u32 = 1;
 const PING_BURST: u32 = 10;
 
 type PingLimiter = RateLimiter<u128, DashMapStateStore<u128>, DefaultClock>;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Failure {
-    pub at: DateTime<Utc>,
-    pub exit_code: Option<u8>,
-}
-
-/// Latest-seen timestamps rather than state flags, so two nodes merge their
-/// views by taking the newer of each without a shared lock.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PingState {
-    /// Silence-rule anchor: the later of the last success and the re-arm point.
-    pub success_at: DateTime<Utc>,
-    pub start_at: Option<DateTime<Utc>>,
-    pub fail: Option<Failure>,
-}
-
-impl PingState {
-    pub fn from_success(success_at: DateTime<Utc>) -> Self {
-        Self {
-            success_at,
-            start_at: None,
-            fail: None,
-        }
-    }
-
-    /// A newer success clears it, and so does a re-arm: both move `success_at`.
-    pub fn failing(&self) -> Option<Failure> {
-        self.fail.filter(|f| f.at > self.success_at)
-    }
-
-    /// `>=` against the anchor, because the wiring ping can be the start: it
-    /// arms the monitor and opens the run in one statement, at one timestamp.
-    pub fn run_open_since(&self) -> Option<DateTime<Utc>> {
-        self.start_at
-            .filter(|s| *s >= self.success_at && self.fail.is_none_or(|f| *s > f.at))
-    }
-
-    /// The snapshot may predate a ping this node already accepted.
-    fn merge_newer(&mut self, other: Self) {
-        if other.success_at > self.success_at {
-            self.success_at = other.success_at;
-        }
-        if other.start_at > self.start_at {
-            self.start_at = other.start_at;
-        }
-        if other.fail.map(|f| f.at) > self.fail.map(|f| f.at) {
-            self.fail = other.fail;
-        }
-    }
-}
 
 /// Shared main↔worker state: the cache the executor reads, plus the ingest
 /// rate limiter.
@@ -251,6 +201,7 @@ fn to_chrono(d: std::time::Duration) -> chrono::Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::heartbeat::Failure;
     use std::time::Duration;
 
     fn check(period_s: u64, grace_s: u64) -> HeartbeatCheck {
@@ -518,6 +469,7 @@ mod tests {
 #[cfg(test)]
 mod ping_tests {
     use super::*;
+    use crate::domain::heartbeat::Failure;
     use chrono::Utc;
 
     fn result(signal: PingSignal, exit_code: Option<u8>) -> Option<CheckResult> {

@@ -3,10 +3,10 @@ use super::validate::reject_passive_probe;
 use uuid::Uuid;
 
 use crate::ad_hoc_dispatch::DeliveredResult;
-use crate::api::error::codes;
 use crate::app::AppState;
 use crate::domain::agent_wire::{DispatchKind, DispatchedCheck};
 use crate::domain::{CheckResult, CheckSpec, OrgId, Target};
+use crate::error::codes;
 use crate::error::{AppError, Result};
 
 /// Run an immediate check on `target` via an agent in its region and return the
@@ -270,7 +270,7 @@ pub(crate) async fn resolve_spec_variables(
     org: OrgId,
     spec: CheckSpec,
 ) -> Result<(CheckSpec, Vec<String>)> {
-    use crate::worker::interpolate::{
+    use crate::domain::interpolate::{
         flow_uses_vars, resolve_flow_spec, resolve_http_spec, uses_vars,
     };
 
@@ -283,7 +283,7 @@ pub(crate) async fn resolve_spec_variables(
         return Ok((spec, Vec::new()));
     }
     let vars = state.variable_store.resolve_map(org).await?;
-    let unresolved = |e: crate::worker::interpolate::ResolveError| {
+    let unresolved = |e: crate::domain::interpolate::ResolveError| {
         AppError::unprocessable(codes::UNRESOLVED_VARIABLE, e.to_string())
     };
     let resolved = match &spec {

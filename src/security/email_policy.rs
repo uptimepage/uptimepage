@@ -12,9 +12,9 @@ use std::time::Duration;
 use arc_swap::ArcSwap;
 use hickory_resolver::proto::rr::{RData, RecordType};
 
-use crate::api::error::codes;
 use crate::config::{EmailPolicyConfig, SignupPolicy};
 use crate::error::AppError;
+use crate::error::codes;
 use crate::http_client::HickoryDnsResolver;
 use crate::observability::metrics::names;
 use crate::security::abuse::domain_and_parents;

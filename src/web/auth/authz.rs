@@ -12,10 +12,10 @@ use std::marker::PhantomData;
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
 
-use crate::api::error::codes;
 use crate::app::AppState;
 use crate::auth::scope::{Scope, ScopeSet};
 use crate::domain::{OrgId, WriteSource};
+use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::storage::{MembershipStatus, membership_status};
 

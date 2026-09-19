@@ -2,11 +2,14 @@ pub mod agent_wire;
 pub mod alert;
 pub mod check;
 pub mod check_error;
+pub mod credential;
 pub mod escalation_policy;
 pub mod heartbeat;
 pub mod incident;
+pub mod interpolate;
 pub mod maintenance;
 pub mod membership;
+pub mod metrics;
 pub mod monitor_share;
 pub mod notification_channel;
 pub mod on_call;
@@ -35,6 +38,7 @@ pub use check::{
     interval_hints_for_kind, min_interval_secs_for_kind, reduced_domain_hint, registered_domain,
 };
 pub use check_error::{ErrorClass, ErrorFamily, classify_check_error, humanize_check_error};
+pub use credential::{CredentialAction, CredentialOrigin, OauthProvider};
 pub use escalation_policy::{
     EscalationDecision, EscalationPolicy, EscalationPolicySummary, EscalationStep,
     EscalationTarget, EscalationTargetType, NewEscalationPolicy, NewEscalationStep,

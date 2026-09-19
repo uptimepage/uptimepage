@@ -18,9 +18,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use utoipa::PartialSchema;
 
-use super::error::codes;
 use super::strict;
 use crate::error::AppError;
+use crate::error::codes;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Json<T>(pub T);
