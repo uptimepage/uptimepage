@@ -10,10 +10,6 @@ use webauthn_rs::prelude::*;
 use crate::config::AuthConfig;
 use crate::error::{AppError, Result};
 
-/// Long enough to pick a device and touch it, short enough that a stolen row is
-/// worth nothing.
-pub const CEREMONY_TTL_SECONDS: i64 = 300;
-
 /// Derived rather than configured, so the id every credential is bound to cannot
 /// drift from the origin the browser reports.
 pub fn relying_party_id(public_base_url: &str) -> Result<String> {

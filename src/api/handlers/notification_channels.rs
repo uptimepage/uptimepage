@@ -19,8 +19,6 @@ use uuid::Uuid;
 use crate::api::ApiError;
 use crate::api::redaction::Redacted;
 use crate::app::AppState;
-use crate::auth::sha256_hex;
-use crate::auth::token_hash::generate_raw_token;
 use crate::auth::url::token_link;
 use crate::domain::{
     ChannelConfig, IncidentOrigin, IncidentSeverity, IncidentUrgency, NewNotificationChannel,
@@ -31,6 +29,8 @@ use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::notifier::build_notifier;
 use crate::notifier::event::IncidentNotice;
+use crate::security::sha256_hex;
+use crate::security::token_hash::generate_raw_token;
 use crate::storage::channel_verification;
 use crate::storage::{LinkCodeStatus, LinkPurpose, MintOutcome};
 use crate::web::{

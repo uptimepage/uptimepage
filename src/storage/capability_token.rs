@@ -2,9 +2,9 @@
 //! 256-bit URL-safe secret whose SHA-256 hex is the lookup key and whose sealed
 //! copy is the only reversible form stored. Holding the raw token is the proof.
 
-use crate::auth::sha256_hex;
-use crate::auth::token_hash::generate_raw_token;
 use crate::error::{AppError, Result};
+use crate::security::sha256_hex;
+use crate::security::token_hash::generate_raw_token;
 use crate::security::{Cipher, open_str, seal_str};
 
 /// A freshly minted token: the raw secret to hand out once, its hash for the

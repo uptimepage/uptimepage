@@ -11,10 +11,10 @@ use axum::http::{HeaderMap, StatusCode};
 use secrecy::ExposeSecret;
 
 use crate::app::AppState;
-use crate::auth::sha256_hex;
 use crate::domain::{ChannelConfig, ChannelKind, TelegramAppConfig};
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::security::sha256_hex;
 use crate::storage::LinkPurpose;
 use crate::telegram::{
     ChatRef, TelegramClient, Update, WebhookAction, classify_update, webhook_secret_matches,

@@ -17,9 +17,10 @@ use uptimepage::auth::{
     oauth_state, session as session_store,
 };
 use uptimepage::config::SessionConfig;
+use uptimepage::domain::WaysIn;
 use uptimepage::domain::{OauthProvider, OauthProvider as P, UserId};
 use uptimepage::error::AppError;
-use uptimepage::storage::oauth_identities::{self, WaysIn};
+use uptimepage::storage::oauth_identities;
 use uuid::Uuid;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");

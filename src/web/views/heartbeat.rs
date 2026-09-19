@@ -11,8 +11,8 @@ use axum::response::{IntoResponse, Response};
 use futures::StreamExt;
 
 use crate::app::AppState;
-use crate::auth::sha256_hex;
 use crate::domain::{CheckResult, HeartbeatPingRecord, Ping};
+use crate::security::sha256_hex;
 use crate::storage::heartbeats::PingAccepted;
 
 /// Excess is drained and dropped, never refused: a 413 on a success ping would

@@ -19,10 +19,10 @@ use crate::api::handlers::notification_channels::{
     validate_config, validate_name,
 };
 use crate::app::AppState;
-use crate::auth::sha256_hex;
 use crate::domain::{ChannelConfig, ChannelKind, NotificationChannel, OrgId};
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::security::sha256_hex;
 use crate::storage::LinkPurpose;
 use crate::storage::channel_link_codes::ConsumedLink;
 use crate::storage::orgs::record_audit_tx;

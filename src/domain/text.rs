@@ -1,3 +1,8 @@
+/// Wire-level placeholder substituted for populated credentials in API responses.
+/// Re-submitting it on `PATCH` is rejected so a `GET → PATCH` round-trip cannot
+/// silently overwrite the real value with the sentinel.
+pub const REDACTED: &str = "***";
+
 /// Renders as nothing, or ends a line where the surrounding text implies none,
 /// so it can hide or forge content inside text a human and a model read
 /// differently. `char::is_control` covers only the C0/C1 blocks, which leaves

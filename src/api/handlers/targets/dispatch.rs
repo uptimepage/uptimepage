@@ -295,14 +295,14 @@ pub(crate) async fn resolve_spec_variables(
         }
         _ => spec,
     };
-    Ok((resolved, crate::api::redaction::secret_values(&vars)))
+    Ok((resolved, crate::security::redaction::secret_values(&vars)))
 }
 
 /// Replace any resolved secret echoed back in an interactive probe's captured
 /// response (body snippet + header values) with `***`, so a value a secret
 /// variable supplied is never shown back through the test surface.
 pub(crate) fn scrub_secrets(delivered: &mut DeliveredResult, secrets: &[String]) {
-    use crate::api::redaction::{redact_secrets, scrub_flow_evidence};
+    use crate::security::redaction::{redact_secrets, scrub_flow_evidence};
     if secrets.is_empty() {
         return;
     }

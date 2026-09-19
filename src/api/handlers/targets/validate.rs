@@ -6,8 +6,8 @@ use std::net::IpAddr;
 use url::Host;
 use uuid::Uuid;
 
-use crate::api::redaction::REDACTED;
 use crate::app::AppState;
+use crate::domain::REDACTED;
 use crate::domain::{
     CheckSpec, NewTarget, OrgId, RegionIncidentPolicy, Target, TargetAlerts, TargetUpdate,
     min_interval_secs_for_kind,
@@ -670,7 +670,7 @@ pub(crate) fn canonicalize_check(check: &mut crate::domain::CheckSpec) -> Result
     use std::net::IpAddr;
     fn canon_host(host: &mut String, field: &'static str, code: &'static str) -> Result<()> {
         let raw = std::mem::take(host);
-        let unbracketed = crate::security::unbracket(&raw);
+        let unbracketed = crate::domain::check::unbracket(&raw);
         // IPs bypass IDN, but not canonicalisation: `2001:db8::1` and
         // `2001:db8:0:0::1` are one address written two ways, and storing them
         // verbatim gave each its own breaker and throttle bucket. Displaying
@@ -855,7 +855,7 @@ pub(crate) fn validate_check(check: &crate::domain::CheckSpec, guard: &SsrfGuard
                 ));
             }
             validate_timeout(tcp.timeout)?;
-            let host = crate::security::unbracket(&tcp.host);
+            let host = crate::domain::check::unbracket(&tcp.host);
             if let Ok(ip) = host.parse::<IpAddr>() {
                 check_ip(ip, guard)?;
             }
@@ -869,7 +869,7 @@ pub(crate) fn validate_check(check: &crate::domain::CheckSpec, guard: &SsrfGuard
                 ));
             }
             validate_timeout(p.timeout)?;
-            let host = crate::security::unbracket(&p.host);
+            let host = crate::domain::check::unbracket(&p.host);
             if let Ok(ip) = host.parse::<IpAddr>() {
                 check_ip(ip, guard)?;
             }
@@ -925,7 +925,7 @@ pub(crate) fn validate_check(check: &crate::domain::CheckSpec, guard: &SsrfGuard
                 cert.critical_days,
                 codes::INVALID_TLS_CERT_PARAMS,
             )?;
-            let host = crate::security::unbracket(&cert.host);
+            let host = crate::domain::check::unbracket(&cert.host);
             if let Ok(ip) = host.parse::<IpAddr>() {
                 check_ip(ip, guard)?;
             }

@@ -12,6 +12,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rand::TryRng;
 use rand::rngs::SysRng;
+use sha2::{Digest, Sha256};
 
 use crate::error::{AppError, Result};
 
@@ -58,6 +59,16 @@ pub fn verify(raw: &str, encoded: &str) -> bool {
     Argon2::default()
         .verify_password(raw.as_bytes(), &parsed)
         .is_ok()
+}
+
+/// SHA-256 hex of any string. Used wherever the schema stores a hashed
+/// lookup key for a high-entropy random token (session cookies, OAuth state)
+/// so a table or query-log leak yields hashes instead of replayable tokens.
+/// The inputs are already 256 bits of unguessable entropy — argon2 would
+/// burn CPU per lookup for no extra protection.
+pub fn sha256_hex(raw: &str) -> String {
+    let digest = Sha256::digest(raw.as_bytes());
+    hex::encode(digest)
 }
 
 #[cfg(test)]

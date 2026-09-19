@@ -26,9 +26,9 @@ use uuid::Uuid;
 
 use crate::auth::scope::ScopeSet;
 use crate::auth::session::LAST_USED_DEBOUNCE_SECS;
-use crate::auth::token_hash;
 use crate::domain::{OrgId, UserId};
 use crate::error::Result;
+use crate::security::token_hash;
 use crate::storage::locks::{advisory_xact_lock, user_lock_key};
 
 /// Public prefix that triggers Bearer authentication. Both halves are checked:

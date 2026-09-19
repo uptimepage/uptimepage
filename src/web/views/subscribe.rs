@@ -326,7 +326,7 @@ async fn subscribe_webhook(
     }
     // Per-subscriber signing secret: the receiver verifies our
     // X-Uptimepage-Signature with it. Shown once on success.
-    let secret = crate::auth::token_hash::generate_raw_token();
+    let secret = crate::security::token_hash::generate_raw_token();
     let ping = serde_json::json!({
         "type": "subscription_verification",
         "message": "Confirm your subscription to status updates.",
@@ -339,7 +339,7 @@ async fn subscribe_webhook(
     headers.insert("X-Uptimepage-Timestamp".to_string(), ts.to_string());
     headers.insert(
         "X-Uptimepage-Signature".to_string(),
-        crate::auth::mac::webhook_signature(&secret, ts, &body),
+        crate::security::mac::webhook_signature(&secret, ts, &body),
     );
     if post_bytes_with_headers(&state.outbound_http, &parsed, body, &headers)
         .await

@@ -4,8 +4,9 @@
 //! walks you through the rest.
 
 use super::ChannelKind;
+use crate::domain::REDACTED;
 
-pub const MASK: &str = "***";
+pub const MASK: &str = REDACTED;
 
 pub trait TransportConfig {
     const KIND: ChannelKind;

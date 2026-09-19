@@ -501,7 +501,7 @@ pub async fn remove(
         user_id,
         id,
         rp_id.as_deref(),
-        &oauth_identities::WaysIn::from_config(&state.cfg),
+        &crate::auth::ways_in(&state.cfg),
         oauth_identities::RequestOrigin {
             ip_hash: ip_hash.as_deref(),
             user_agent_hash: ua_hash.as_deref(),

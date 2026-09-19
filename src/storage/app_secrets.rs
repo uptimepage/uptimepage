@@ -3,8 +3,8 @@
 use anyhow::Context;
 use sqlx::PgPool;
 
-use crate::auth::token_hash::generate_raw_token;
 use crate::error::{AppError, Result};
+use crate::security::token_hash::generate_raw_token;
 use crate::security::{Cipher, is_envelope};
 
 /// Return the secret named `name`, generating and persisting a fresh one on

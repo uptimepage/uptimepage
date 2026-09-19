@@ -23,7 +23,7 @@ pub fn signature_matches(app_secret: &str, header: &str, body: &[u8]) -> bool {
     };
     // Compare lowercased: providers may send upper/mixed-case hex.
     let provided = hex_sig.to_ascii_lowercase();
-    let expected = crate::auth::mac::hmac_sha256_hex(app_secret.as_bytes(), &[body]);
+    let expected = crate::security::mac::hmac_sha256_hex(app_secret.as_bytes(), &[body]);
     provided.as_bytes().ct_eq(expected.as_bytes()).into()
 }
 

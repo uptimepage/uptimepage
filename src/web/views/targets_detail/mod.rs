@@ -485,7 +485,7 @@ fn config_json_with_derived(
     // The panel shows the config to any org member, so mask credential inputs
     // (HTTP auth, flow fill values) the same way the API and share views do.
     let mut check = check.clone();
-    crate::api::redaction::redact_check(&mut check);
+    crate::security::redaction::redact_check(&mut check);
     let mut value =
         serde_json::to_value(&check).map_err(|e| AppError::Other(anyhow::anyhow!(e)))?;
     if let (Some(rd), Some(object)) = (registered_domain, value.as_object_mut()) {

@@ -384,7 +384,7 @@ fn build_billing(
     if !cfg.billing.enabled() {
         return None;
     }
-    let environment = crate::billing::paddle::Environment::parse(&cfg.billing.paddle.environment)?;
+    let environment = crate::config::PaddleEnvironment::parse(&cfg.billing.paddle.environment)?;
     let provider = crate::billing::paddle::PaddleProvider::new(
         environment,
         cfg.billing.paddle.api_key.clone(),

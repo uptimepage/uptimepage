@@ -135,7 +135,7 @@ pub fn plan_digest(plans: &PlanMap) -> String {
         })
         .collect();
     parts.sort_unstable();
-    crate::auth::sha256_hex(&parts.join(","))
+    crate::security::sha256_hex(&parts.join(","))
 }
 
 /// Applies the plan floor to the incident writer's walk over enabled targets.

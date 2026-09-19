@@ -7,8 +7,8 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::auth::{agent_token, token_hash};
 use crate::error::Result;
+use crate::security::{agent_token, token_hash};
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct RegionRow {

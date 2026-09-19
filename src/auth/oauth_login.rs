@@ -368,8 +368,8 @@ pub async fn upsert_identity_and_signup_org(
     )
     .bind(email)
     .bind(identity.display_name.as_deref())
-    .bind(crate::auth::consent::TERMS_VERSION)
-    .bind(crate::auth::consent::PRIVACY_VERSION)
+    .bind(crate::domain::consent::TERMS_VERSION)
+    .bind(crate::domain::consent::PRIVACY_VERSION)
     .bind(email_risk.map(crate::security::EmailRisk::as_db_str))
     .fetch_one(&mut *tx)
     .await

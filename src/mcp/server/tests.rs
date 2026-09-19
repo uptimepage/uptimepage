@@ -21,7 +21,7 @@ use chrono::{Duration, Utc};
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::api::redaction::REDACTED;
+use crate::domain::REDACTED;
 use crate::domain::agent_wire::{ConsoleLine, FlowEvidence, StepOutcome, StepTrace};
 use crate::domain::incident::Incident;
 use crate::domain::metrics::{DashboardMetrics, FlowStepBucket, FlowStepTrend};

@@ -26,8 +26,8 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::auth::api_tokens;
 use crate::auth::scope::ScopeSet;
-use crate::auth::sha256_hex;
 use crate::domain::{OrgId, UserId};
+use crate::security::sha256_hex;
 
 use super::error::{OAuthError, OAuthErrorResponse};
 use super::pkce;

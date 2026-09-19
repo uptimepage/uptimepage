@@ -1,7 +1,7 @@
 //! Agent bearer tokens. Distinct from the `sm_live_` tenant tokens: operator-
 //! tier, tied to no user, stored hashed on the `agents` row. The `sm_agent_`
 //! prefix lets an operator (and secret scanners) tell the two apart at a glance.
-//! Verification reuses [`crate::auth::token_hash`] (argon2id).
+//! Verification reuses [`crate::security::token_hash`] (argon2id).
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;

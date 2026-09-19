@@ -424,7 +424,7 @@ pub mod settings {
         // The same question the API will ask. Looser offers a button that
         // 400s; stricter hides one from a user whose only provider is
         // compromised.
-        let ways_in = crate::storage::oauth_identities::WaysIn::from_config(&state.cfg);
+        let ways_in = crate::auth::ways_in(&state.cfg);
         // A dead credential must not hold a removal open.
         let rp_id = crate::auth::passkey::relying_party_id(&state.cfg.auth.public_base_url).ok();
         let usable_passkeys = rp_id

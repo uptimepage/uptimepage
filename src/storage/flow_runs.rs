@@ -7,9 +7,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::api::redaction::{redact_secrets, scrub_flow_evidence, secret_values};
 use crate::domain::OrgId;
 use crate::domain::agent_wire::FlowRunRecord;
+use crate::security::redaction::{redact_secrets, scrub_flow_evidence, secret_values};
 use crate::storage::traits::FlowRunSink;
 use crate::storage::variables::VariableStore;
 

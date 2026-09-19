@@ -18,8 +18,8 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::app::AppState;
-use crate::auth::sha256_hex;
 use crate::domain::OrgId;
+use crate::security::sha256_hex;
 use crate::storage::orgs::{is_active_member, list_orgs_for_user};
 use crate::web::auth::{Session, login_redirect};
 // Brought into scope so the askama-generated template code can resolve the

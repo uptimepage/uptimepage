@@ -4,7 +4,7 @@ use super::model::*;
 use super::prefill::{apply_kind_param, prefill_host, prefill_url};
 use super::*;
 
-use crate::api::redaction::REDACTED;
+use crate::domain::REDACTED;
 use crate::domain::{CheckSpec, ExpectedStatus, HttpMethod, Target};
 
 /// The chip that says a channel already covers this monitor is decided in the

@@ -283,7 +283,7 @@ impl SubscriberDispatcher {
             headers.insert("X-Uptimepage-Timestamp".to_string(), ts.to_string());
             headers.insert(
                 "X-Uptimepage-Signature".to_string(),
-                crate::auth::mac::webhook_signature(secret, ts, &body),
+                crate::security::mac::webhook_signature(secret, ts, &body),
             );
         }
         post_bytes_with_headers(&self.http, &parsed, body, &headers)

@@ -3,8 +3,8 @@ use super::text::{present_error, sanitize_data};
 use chrono::{DateTime, TimeZone, Utc};
 use uuid::Uuid;
 
-use crate::api::redaction::{REDACTED, strip_url_credentials};
 use crate::domain::IncidentVisibility;
+use crate::domain::REDACTED;
 use crate::domain::TargetAlerts;
 use crate::domain::incident::Incident;
 use crate::domain::metrics::DashboardMetrics;
@@ -12,6 +12,7 @@ use crate::domain::notification_channel::NotificationChannel;
 use crate::domain::result::{CheckResult, CheckStatus};
 use crate::domain::target::RegionIncidentPolicy;
 use crate::domain::{CheckSpec, ExpectedStatus, FlowStep};
+use crate::security::redaction::strip_url_credentials;
 use crate::storage::incidents::IncidentBrief;
 
 use crate::mcp::schema::{
@@ -212,7 +213,7 @@ pub(super) fn region_health(r: crate::domain::metrics::RegionRollup) -> RegionHe
 /// reaches a chat transcript is a value that has left the building. What the
 /// model actually needs is which headers are sent, and it still gets that.
 ///
-/// [`redact_check_for_public`]: crate::api::redaction
+/// [`redact_check_for_public`]: crate::security::redaction
 pub(super) fn check_config(check: &CheckSpec) -> CheckConfig {
     let ms = |d: &std::time::Duration| d.as_millis() as u64;
     match check {

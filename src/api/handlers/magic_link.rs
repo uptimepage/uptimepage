@@ -39,10 +39,11 @@ use crate::app::AppState;
 use crate::auth::email_norm;
 use crate::auth::login_audit::{self, LoginAttempt, LoginMethod};
 use crate::auth::url::token_link;
-use crate::auth::{fingerprint, magic_link, session as session_store, token_hash};
+use crate::auth::{fingerprint, magic_link, session as session_store};
 use crate::config::SessionConfig;
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
 use crate::error::Result;
+use crate::security::token_hash;
 use crate::storage::orgs as orgs_store;
 use crate::web::filters;
 

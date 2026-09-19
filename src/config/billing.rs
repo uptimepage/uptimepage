@@ -27,6 +27,22 @@ impl Default for BillingConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaddleEnvironment {
+    Sandbox,
+    Live,
+}
+
+impl PaddleEnvironment {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "sandbox" => Some(Self::Sandbox),
+            "live" => Some(Self::Live),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct PaddleConfig {

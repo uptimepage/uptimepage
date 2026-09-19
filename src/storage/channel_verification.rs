@@ -9,10 +9,10 @@ use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::auth::sha256_hex;
-use crate::auth::token_hash::generate_raw_token;
 use crate::domain::OrgId;
 use crate::error::Result;
+use crate::security::sha256_hex;
+use crate::security::token_hash::generate_raw_token;
 
 pub const VERIFICATION_TTL_HOURS: u32 = 24;
 /// Mints per channel per 24 h — bounds verification-mail spam to one inbox.

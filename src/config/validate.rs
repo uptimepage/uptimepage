@@ -274,7 +274,7 @@ impl AppConfig {
                 )));
             }
         }
-        if crate::billing::paddle::Environment::parse(&b.paddle.environment).is_none() {
+        if super::PaddleEnvironment::parse(&b.paddle.environment).is_none() {
             return Err(err(
                 "billing.paddle.environment must be \"sandbox\" or \"live\"",
             ));

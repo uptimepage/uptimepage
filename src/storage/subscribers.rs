@@ -8,10 +8,10 @@ use sqlx::PgPool;
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
-use crate::auth::sha256_hex;
-use crate::auth::token_hash::generate_raw_token;
 use crate::domain::{NewSubscriber, Subscriber, SubscriberChannel};
 use crate::error::Result;
+use crate::security::sha256_hex;
+use crate::security::token_hash::generate_raw_token;
 use crate::storage::admin::not_held_sql;
 use crate::storage::status_pages::{PAGE_CUSTOM_DOMAIN_LIVE, PAGE_NOT_HELD, PAGE_PLAN_JOIN};
 
@@ -392,7 +392,7 @@ pub async fn remove_by_email(pool: &PgPool, email: &str) -> Result<u64> {
 /// unsubscribe link alongside the id; reproducible at send time without
 /// storing anything.
 pub fn unsubscribe_token(secret: &str, subscriber_id: Uuid) -> String {
-    crate::auth::mac::hmac_sha256_hex(secret.as_bytes(), &[subscriber_id.as_bytes()])
+    crate::security::mac::hmac_sha256_hex(secret.as_bytes(), &[subscriber_id.as_bytes()])
 }
 
 /// Constant-time check of a presented unsubscribe token.

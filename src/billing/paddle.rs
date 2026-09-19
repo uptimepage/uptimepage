@@ -23,12 +23,13 @@ use super::provider::{
     BillingProvider, ChangeTiming, CheckoutRequest, EventKind, PortalLinks, ProviderEvent,
     SubscriptionSnapshot, SubscriptionStatus, WebhookRejected,
 };
-use crate::auth::mac::hmac_sha256_hex;
+use crate::config::PaddleEnvironment;
 use crate::domain::AccountId;
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::http_outbound::{OutboundHttpClient, REQUEST_TIMEOUT};
 use crate::observability::metrics::names;
+use crate::security::mac::hmac_sha256_hex;
 
 pub const NAME: &str = "paddle";
 pub const SIGNATURE_HEADER: &str = "paddle-signature";
@@ -82,26 +83,10 @@ pub fn verify(secret: &str, header: &str, body: &[u8], now: i64) -> bool {
         .any(|candidate| candidate.ct_eq(&expected).into())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Environment {
-    Sandbox,
-    Live,
-}
-
-impl Environment {
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "sandbox" => Some(Environment::Sandbox),
-            "live" => Some(Environment::Live),
-            _ => None,
-        }
-    }
-
-    fn api_base(self) -> &'static str {
-        match self {
-            Environment::Sandbox => "https://sandbox-api.paddle.com",
-            Environment::Live => "https://api.paddle.com",
-        }
+fn api_base(environment: PaddleEnvironment) -> &'static str {
+    match environment {
+        PaddleEnvironment::Sandbox => "https://sandbox-api.paddle.com",
+        PaddleEnvironment::Live => "https://api.paddle.com",
     }
 }
 
@@ -118,7 +103,7 @@ pub struct PaddleProvider {
 
 impl PaddleProvider {
     pub fn new(
-        environment: Environment,
+        environment: PaddleEnvironment,
         api_key: SecretString,
         webhook_secret: SecretString,
         checkout_secret: SecretString,
@@ -128,7 +113,7 @@ impl PaddleProvider {
             api_key,
             webhook_secret,
             checkout_secret,
-            api_base: environment.api_base().to_owned(),
+            api_base: api_base(environment).to_owned(),
             http,
             retry_pause: RETRY_PAUSE,
         }

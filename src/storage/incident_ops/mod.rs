@@ -47,7 +47,7 @@ pub fn incident_ack_token(
     expires_at: i64,
 ) -> String {
     let gen_exp = format!("{generation}:{expires_at}");
-    crate::auth::mac::hmac_sha256_hex(
+    crate::security::mac::hmac_sha256_hex(
         secret.as_bytes(),
         &[
             org.0.as_bytes(),

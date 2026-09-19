@@ -16,8 +16,8 @@ use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::auth::token_hash::{self, slice_prefix};
 use crate::error::Result;
+use crate::security::token_hash::{self, slice_prefix};
 use crate::storage::locks::{advisory_xact_lock, magic_link_send_lock_key};
 
 /// Which half of the mail signed the reader in. The two variants are the only
@@ -102,7 +102,7 @@ pub async fn create(pool: &PgPool, new: NewMagicLink<'_>) -> Result<CreatedMagic
     .bind(redirect_after)
     .bind(invitation_id)
     .bind(&code_hash)
-    .bind(nonce.map(crate::auth::sha256_hex))
+    .bind(nonce.map(crate::security::sha256_hex))
     .fetch_one(pool)
     .await
     .context("magic_link::create")?;
@@ -350,7 +350,7 @@ pub async fn consume_code(pool: &PgPool, nonce: &str, code: &str) -> Result<Code
            AND code_hash IS NOT NULL AND expires_at > now() \
          ORDER BY created_at DESC LIMIT 1",
     )
-    .bind(crate::auth::sha256_hex(nonce))
+    .bind(crate::security::sha256_hex(nonce))
     .fetch_optional(pool)
     .await
     .context("magic_link::consume_code: lookup")?

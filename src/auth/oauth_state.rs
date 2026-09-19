@@ -5,19 +5,17 @@
 
 use anyhow::Context;
 use chrono::{DateTime, Duration, Utc};
-use rand::TryRng;
-use rand::rngs::SysRng;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::error::{AppError, Result};
+use crate::security::token_hash::generate_raw_token;
 
-const STATE_BYTES: usize = 32;
 const STATE_EXPIRY_MINUTES: i64 = 10;
 
-/// SHA-256 hex of the raw state — see [`crate::auth::sha256_hex`].
+/// SHA-256 hex of the raw state — see [`crate::security::sha256_hex`].
 pub fn hash_state(raw: &str) -> String {
-    crate::auth::sha256_hex(raw)
+    crate::security::sha256_hex(raw)
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -48,11 +46,7 @@ pub struct StateBinding<'a> {
 
 /// 32 random bytes, base64url-no-pad. Caller stores via [`insert`].
 pub fn generate_state() -> String {
-    let mut bytes = [0u8; STATE_BYTES];
-    SysRng
-        .try_fill_bytes(&mut bytes)
-        .expect("SysRng must succeed for OAuth state");
-    base64url_no_pad(&bytes)
+    generate_raw_token()
 }
 
 pub async fn insert(
@@ -106,11 +100,6 @@ pub async fn purge_expired(pool: &PgPool) -> sqlx::Result<u64> {
         .execute(pool)
         .await?;
     Ok(res.rows_affected())
-}
-
-fn base64url_no_pad(bytes: &[u8]) -> String {
-    use base64::Engine;
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
 #[cfg(test)]

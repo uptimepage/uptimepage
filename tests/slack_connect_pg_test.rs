@@ -203,7 +203,7 @@ async fn delegate_state_callback_needs_no_session_and_cancel_keeps_the_link() {
     let (app, org) = common::build_test_app_with_pg(pool.clone(), slack_cfg).await;
 
     let links = PgChannelLinkCodeStore::new(pool.clone());
-    let code_hash = uptimepage::auth::sha256_hex(&unique_slug("slack-delegate"));
+    let code_hash = uptimepage::security::sha256_hex(&unique_slug("slack-delegate"));
     let minted = match links
         .mint(
             org,

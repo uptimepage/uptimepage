@@ -65,13 +65,13 @@ impl CheckSpec {
     /// so excludes dns/domain_expiry: their subject is a name, not a socket.
     pub fn primary_host(&self) -> Option<&str> {
         match self {
-            CheckSpec::Http(h) => h.url.host_str().map(crate::security::unbracket),
-            CheckSpec::Tcp(t) => Some(crate::security::unbracket(&t.host)),
-            CheckSpec::Ping(p) => Some(crate::security::unbracket(&p.host)),
-            CheckSpec::TlsCert(c) => Some(crate::security::unbracket(&c.host)),
+            CheckSpec::Http(h) => h.url.host_str().map(unbracket),
+            CheckSpec::Tcp(t) => Some(unbracket(&t.host)),
+            CheckSpec::Ping(p) => Some(unbracket(&p.host)),
+            CheckSpec::TlsCert(c) => Some(unbracket(&c.host)),
             CheckSpec::DomainExpiry(d) => Some(d.domain.as_str()),
             CheckSpec::Dns(d) => Some(d.domain.as_str()),
-            CheckSpec::Flow(f) => f.start_url.host_str().map(crate::security::unbracket),
+            CheckSpec::Flow(f) => f.start_url.host_str().map(unbracket),
             CheckSpec::Heartbeat(_) => None,
         }
     }
@@ -483,6 +483,15 @@ mod duration_ms_opt {
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Duration>, D::Error> {
         Ok(Option::<u64>::deserialize(d)?.map(Duration::from_millis))
     }
+}
+
+/// Strip the surrounding `[ ]` of a bracketed IPv6 literal host. The SSRF IP
+/// check and the abuse domain check MUST normalise a host identically — a
+/// single shared definition keeps them from drifting apart.
+pub fn unbracket(host: &str) -> &str {
+    host.strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(host)
 }
 
 #[cfg(test)]

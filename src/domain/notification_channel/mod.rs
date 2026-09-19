@@ -1197,14 +1197,6 @@ mod tests {
     }
 
     #[test]
-    fn mask_matches_canonical_redaction_sentinel() {
-        // A redacted config round-tripped through the API must be detectable
-        // as the sentinel (re-submitted "***" is rejected). That only holds
-        // if this mask stays byte-equal to the canonical one.
-        assert_eq!(MASK, crate::api::redaction::REDACTED);
-    }
-
-    #[test]
     fn name_validation_bounds() {
         assert!(validate_channel_name("  ").is_err());
         assert!(validate_channel_name(&"x".repeat(MAX_CHANNEL_NAME_LEN + 1)).is_err());

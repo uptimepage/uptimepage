@@ -106,8 +106,8 @@ pub async fn create_signup_user(
          RETURNING id",
     )
     .bind(email)
-    .bind(crate::auth::consent::TERMS_VERSION)
-    .bind(crate::auth::consent::PRIVACY_VERSION)
+    .bind(crate::domain::consent::TERMS_VERSION)
+    .bind(crate::domain::consent::PRIVACY_VERSION)
     .bind(risk.map(EmailRisk::as_db_str))
     .fetch_optional(&mut *tx)
     .await
@@ -151,8 +151,8 @@ pub async fn create_invited_user(
          RETURNING id",
     )
     .bind(email)
-    .bind(crate::auth::consent::TERMS_VERSION)
-    .bind(crate::auth::consent::PRIVACY_VERSION)
+    .bind(crate::domain::consent::TERMS_VERSION)
+    .bind(crate::domain::consent::PRIVACY_VERSION)
     .bind(risk.map(EmailRisk::as_db_str))
     .fetch_optional(pool)
     .await

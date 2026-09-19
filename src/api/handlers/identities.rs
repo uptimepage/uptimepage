@@ -66,7 +66,7 @@ pub async fn unlink(
         user_id,
         provider,
         q.provider_user_id.as_deref(),
-        &oauth_identities::WaysIn::from_config(&state.cfg),
+        &crate::auth::ways_in(&state.cfg),
         rp_id.as_deref(),
         oauth_identities::RequestOrigin {
             ip_hash: ip_hash.as_deref(),

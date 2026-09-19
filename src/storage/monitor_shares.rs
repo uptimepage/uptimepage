@@ -12,13 +12,13 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::auth::token_hash::generate_raw_token;
 use crate::domain::{
     CreatedShare, MonitorShare, MonitorShareId, NewMonitorShare, OrgId, ResolvedShare,
     SharePageUse, UserId,
 };
 use crate::error::{AppError, Result};
 use crate::security::Cipher;
+use crate::security::token_hash::generate_raw_token;
 use crate::storage::accounts;
 use crate::storage::capability_token;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock};

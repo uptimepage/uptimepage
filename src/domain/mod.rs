@@ -2,6 +2,7 @@ pub mod agent_wire;
 pub mod alert;
 pub mod check;
 pub mod check_error;
+pub mod consent;
 pub mod credential;
 pub mod escalation_policy;
 pub mod heartbeat;
@@ -26,6 +27,7 @@ pub mod subscriber;
 pub mod subscription;
 pub mod target;
 pub mod text;
+pub use text::REDACTED;
 pub mod user;
 pub mod variable;
 pub mod word_lists;
@@ -38,7 +40,7 @@ pub use check::{
     interval_hints_for_kind, min_interval_secs_for_kind, reduced_domain_hint, registered_domain,
 };
 pub use check_error::{ErrorClass, ErrorFamily, classify_check_error, humanize_check_error};
-pub use credential::{CredentialAction, CredentialOrigin, OauthProvider};
+pub use credential::{CredentialAction, CredentialOrigin, LinkedIdentity, OauthProvider, WaysIn};
 pub use escalation_policy::{
     EscalationDecision, EscalationPolicy, EscalationPolicySummary, EscalationStep,
     EscalationTarget, EscalationTargetType, NewEscalationPolicy, NewEscalationStep,

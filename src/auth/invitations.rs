@@ -21,9 +21,9 @@ use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::auth::token_hash::{self, slice_prefix};
 use crate::domain::{OrgId, Role, UserId};
 use crate::error::{AppError, Result};
+use crate::security::token_hash::{self, slice_prefix};
 use crate::storage::locks::{account_lock_key, advisory_xact_lock};
 
 /// Hash-friendly invitation record. `token_hash` is the encoded argon2id
@@ -55,7 +55,7 @@ pub struct CreatedInvitation {
 pub const MAX_SENDS_PER_WINDOW: i64 = 25;
 pub const SEND_WINDOW_HOURS: i64 = 24;
 
-pub use crate::auth::token_hash::generate_raw_token;
+pub use crate::security::token_hash::generate_raw_token;
 
 /// Refuses once the org has sent [`MAX_SENDS_PER_WINDOW`] inside the window.
 /// Both the create and the resend path mail, so both ask.

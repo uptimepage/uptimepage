@@ -94,9 +94,9 @@ pub fn generate_session_id() -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
-/// SHA-256 hex of the raw cookie value — see [`crate::auth::sha256_hex`].
+/// SHA-256 hex of the raw cookie value — see [`crate::security::sha256_hex`].
 pub fn hash_session_id(raw: &str) -> String {
-    crate::auth::sha256_hex(raw)
+    crate::security::sha256_hex(raw)
 }
 
 /// INSERT a fresh session row. `expires_at` is `now() + absolute_timeout_days`.

@@ -31,7 +31,7 @@ pub use auth::{
     ApiTokensConfig, AuthConfig, BootstrapConfig, GitlabOauthConfig, InvitationsConfig,
     MagicLinkConfig, MicrosoftOauthConfig, OauthClientConfig, SessionConfig,
 };
-pub use billing::{BillingConfig, PaddleConfig};
+pub use billing::{BillingConfig, PaddleConfig, PaddleEnvironment};
 pub use limits::{
     AbuseConfig, ApiConfig, CorsConfig, EmailPolicyConfig, PerIpRateLimits, QuotasConfig,
     RateLimitJanitorConfig, RateLimitsConfig, SignupPolicy,

@@ -22,6 +22,10 @@ pub const PROVIDER_SLUG: &str = "passkey";
 /// is to stop one account writing rows without end.
 pub const MAX_PER_USER: i64 = 10;
 
+/// Long enough to pick a device and touch it, short enough that a stolen row is
+/// worth nothing.
+pub const CEREMONY_TTL_SECONDS: i64 = 300;
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct StoredPasskey {
     pub id: Uuid,
@@ -228,7 +232,7 @@ pub async fn remove(
     user: UserId,
     id: Uuid,
     rp_id: Option<&str>,
-    ways_in: &crate::storage::oauth_identities::WaysIn,
+    ways_in: &crate::domain::WaysIn,
     from: RequestOrigin<'_>,
 ) -> Result<String> {
     let mut tx = pool
@@ -301,7 +305,7 @@ pub async fn remove(
 /// Hashed at rest for the same reason OAuth state is: the row is a credential
 /// while it lives.
 pub fn generate_handle() -> String {
-    crate::auth::oauth_state::generate_state()
+    crate::security::token_hash::generate_raw_token()
 }
 
 pub async fn put_state<S: serde::Serialize>(
@@ -316,10 +320,10 @@ pub async fn put_state<S: serde::Serialize>(
         "INSERT INTO webauthn_states (state_hash, user_id, state, expires_at) \
          VALUES ($1, $2, $3, $4)",
     )
-    .bind(crate::auth::sha256_hex(handle))
+    .bind(crate::security::sha256_hex(handle))
     .bind(user.map(|u| u.0))
     .bind(&encoded)
-    .bind(Utc::now() + Duration::seconds(crate::auth::passkey::CEREMONY_TTL_SECONDS))
+    .bind(Utc::now() + Duration::seconds(CEREMONY_TTL_SECONDS))
     .execute(pool)
     .await
     .map_err(|e| AppError::Other(anyhow::anyhow!("store ceremony state: {e}")))?;
@@ -336,7 +340,7 @@ pub async fn take_state<S: serde::de::DeserializeOwned>(
         "DELETE FROM webauthn_states WHERE state_hash = $1 AND expires_at > now() \
          RETURNING user_id, state",
     )
-    .bind(crate::auth::sha256_hex(handle))
+    .bind(crate::security::sha256_hex(handle))
     .fetch_optional(pool)
     .await
     .map_err(|e| AppError::Other(anyhow::anyhow!("take ceremony state: {e}")))?;

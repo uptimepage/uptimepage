@@ -214,7 +214,7 @@ fn secret_values_skips_short_and_plain() {
             is_secret: false,
         },
     );
-    let secrets = crate::api::redaction::secret_values(&vars);
+    let secrets = crate::security::redaction::secret_values(&vars);
     assert_eq!(secrets, vec!["sk-live-secret".to_string()]);
 }
 

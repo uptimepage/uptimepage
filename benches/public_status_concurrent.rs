@@ -141,8 +141,8 @@ async fn make_user(pool: &PgPool) -> UserId {
            VALUES ($1, $2, $3) RETURNING id"#,
     )
     .bind(&email)
-    .bind(uptimepage::auth::consent::TERMS_VERSION)
-    .bind(uptimepage::auth::consent::PRIVACY_VERSION)
+    .bind(uptimepage::domain::consent::TERMS_VERSION)
+    .bind(uptimepage::domain::consent::PRIVACY_VERSION)
     .fetch_one(pool)
     .await
     .expect("seed user");

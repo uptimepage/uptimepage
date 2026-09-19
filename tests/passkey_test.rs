@@ -12,7 +12,8 @@ use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 use uptimepage::domain::OauthProvider;
 use uptimepage::domain::UserId;
-use uptimepage::storage::oauth_identities::{RequestOrigin, WaysIn};
+use uptimepage::domain::WaysIn;
+use uptimepage::storage::oauth_identities::RequestOrigin;
 use uptimepage::storage::passkeys;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
@@ -405,7 +406,7 @@ async fn a_ceremony_answers_once_and_expiry_is_swept() {
     sqlx::query(
         "UPDATE webauthn_states SET expires_at = now() - interval '1 minute' WHERE state_hash = $1",
     )
-    .bind(uptimepage::auth::sha256_hex(&stale))
+    .bind(uptimepage::security::sha256_hex(&stale))
     .execute(&pool)
     .await
     .expect("age it");

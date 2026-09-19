@@ -219,7 +219,7 @@ pub async fn paging_channel_ids(
 /// One-click stop proof: HMAC of the channel id, scoped to that channel so a
 /// click can reach no other. Reproduced at send time, nothing persisted.
 pub fn channel_stop_token(secret: &str, channel_id: Uuid) -> String {
-    crate::auth::mac::hmac_sha256_hex(secret.as_bytes(), &[channel_id.as_bytes()])
+    crate::security::mac::hmac_sha256_hex(secret.as_bytes(), &[channel_id.as_bytes()])
 }
 
 pub fn verify_channel_stop(secret: &str, channel_id: Uuid, presented: &str) -> bool {
