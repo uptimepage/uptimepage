@@ -13,9 +13,10 @@
 //!    → POST /oauth/token      → audience-bound sm_live_ token
 //! ```
 //!
-//! The access token is the existing read-only, org-bound, expiring scoped token,
-//! now stamped with this MCP endpoint as its `audience`. Nothing here mints
-//! write scopes.
+//! The access token is the existing org-bound, expiring scoped token, stamped
+//! with this MCP endpoint as its `audience`. The consent screen decides the
+//! org and the access level; the client's `scope` request only picks the
+//! default.
 
 mod authorize;
 mod error;
@@ -50,11 +51,10 @@ const DEFAULT_SCOPES: &[Scope] = &[
     Scope::IncidentsRead,
 ];
 
-/// Every scope a connector MAY request. Write scopes are opt-in: granted only
-/// when the client explicitly asks for them, and surfaced distinctly on the
-/// consent screen. Through a client that cannot show a prompt the granted
-/// scope alone authorises a write, so the consent screen is where an
-/// over-broad grant has to be stopped.
+/// Every scope a connector MAY request. Write scopes are granted only when
+/// the user picks an access level that carries them on the consent screen;
+/// through a client that cannot show a prompt that grant alone authorises a
+/// write.
 const GRANTABLE_SCOPES: &[Scope] = &[
     Scope::TargetsRead,
     Scope::StatusPageRead,
@@ -69,6 +69,67 @@ const GRANTABLE_SCOPES: &[Scope] = &[
     // Keys only; the values are never read on this path.
     Scope::VariablesRead,
 ];
+
+/// What the consent screen offers, smallest first. Three levels a person can
+/// hold in their head, instead of nine checkboxes.
+pub(super) struct AccessLevel {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub summary: &'static str,
+    pub scopes: &'static [Scope],
+}
+
+pub(super) const ACCESS_LEVELS: &[AccessLevel] = &[
+    AccessLevel {
+        id: "read",
+        label: "Read only",
+        summary: "See monitors, incidents, status pages, channel names and variable keys. Changes nothing.",
+        scopes: &[
+            Scope::TargetsRead,
+            Scope::StatusPageRead,
+            Scope::IncidentsRead,
+            Scope::ChannelsRead,
+            Scope::VariablesRead,
+        ],
+    },
+    AccessLevel {
+        id: "monitors",
+        label: "Manage monitors",
+        summary: "Also create, pause, retune and check monitors, and bind them to your channels.",
+        scopes: &[
+            Scope::TargetsRead,
+            Scope::StatusPageRead,
+            Scope::IncidentsRead,
+            Scope::ChannelsRead,
+            Scope::VariablesRead,
+            Scope::TargetsWrite,
+            Scope::TargetsExecute,
+        ],
+    },
+    AccessLevel {
+        id: "full",
+        label: "Full access",
+        summary: "Also publish incident updates and edit status pages.",
+        scopes: GRANTABLE_SCOPES,
+    },
+];
+
+/// The smallest level that carries everything in `granted`.
+pub(super) fn level_covering(granted: &str) -> &'static AccessLevel {
+    let asked = ScopeSet::from_strs(granted.split_whitespace());
+    let wanted: Vec<Scope> = GRANTABLE_SCOPES
+        .iter()
+        .copied()
+        .filter(|s| asked.allows(*s))
+        .collect();
+    ACCESS_LEVELS
+        .iter()
+        .find(|level| {
+            let carried = ScopeSet::from_strs(level.scopes.iter().map(|s| s.as_str()));
+            wanted.iter().all(|s| carried.allows(*s))
+        })
+        .unwrap_or(&ACCESS_LEVELS[ACCESS_LEVELS.len() - 1])
+}
 
 /// Authorization-code lifetime. Short — it's redeemed immediately.
 const CODE_TTL_SECS: i64 = 60;
@@ -201,10 +262,10 @@ fn default_scope_string() -> String {
     scope_list_string(DEFAULT_SCOPES)
 }
 
-/// Resolve the granted scope from a requested `scope`: requested ∩ grantable,
-/// de-duplicated, preserving the grantable ordering. An empty/garbage request
-/// grants the read-only default set — write scopes are NEVER granted unless
-/// explicitly requested. Output is a canonical space-delimited string.
+/// Requested ∩ grantable, de-duplicated, in grantable order; an empty or
+/// garbage request grants the read-only default set. On the consent page the
+/// request is what the user picked, so a client asking for nothing can still
+/// be given writes there, and one asking for everything can be cut down.
 fn grant_scope(requested: Option<&str>) -> String {
     let Some(req) = requested else {
         return default_scope_string();
@@ -402,6 +463,42 @@ mod tests {
             grant_scope(Some("targets:write targets:execute incidents:write")),
             "targets:read incidents:read targets:write targets:execute incidents:write"
         );
+    }
+
+    #[test]
+    fn the_smallest_level_that_covers_the_request_is_preselected() {
+        assert_eq!(level_covering(&grant_scope(None)).id, "read");
+        assert_eq!(level_covering("targets:write").id, "monitors");
+        assert_eq!(
+            level_covering("targets:execute channels:read").id,
+            "monitors"
+        );
+        assert_eq!(level_covering("incidents:write").id, "full");
+        assert_eq!(level_covering("targets:read channels:read").id, "read");
+        assert_eq!(level_covering("variables:read").id, "read");
+        assert_eq!(level_covering(&grantable_scope_string()).id, "full");
+    }
+
+    /// A request with no write scope in it must never preselect a write level.
+    #[test]
+    fn read_only_covers_every_read_scope() {
+        let read = ScopeSet::from_strs(ACCESS_LEVELS[0].scopes.iter().map(|s| s.as_str()));
+        for s in GRANTABLE_SCOPES
+            .iter()
+            .filter(|s| s.as_str().ends_with(":read"))
+        {
+            assert!(read.allows(*s), "read level lacks {}", s.as_str());
+        }
+    }
+
+    #[test]
+    fn every_level_carries_the_one_below_it() {
+        for pair in ACCESS_LEVELS.windows(2) {
+            let wider = ScopeSet::from_strs(pair[1].scopes.iter().map(|s| s.as_str()));
+            for s in pair[0].scopes {
+                assert!(wider.allows(*s), "{} lacks {}", pair[1].id, s.as_str());
+            }
+        }
     }
 
     #[test]

@@ -52,10 +52,17 @@ pub async fn record(
         detail = detail.unwrap_or(""),
         "mcp write tool",
     );
+    // Aggregators report an SDK default such as `mcp/0.1.0`; the OAuth client
+    // that minted the token is the name a person recognises.
     let res = sqlx::query(
         "INSERT INTO mcp_audit \
            (token_id, user_id, org_id, client, tool, arguments, outcome, detail) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+         SELECT $1, $2, $3, \
+                COALESCE(c.client_name || ' (' || $4 || ')', $4, c.client_name), \
+                $5, $6, $7, $8 \
+         FROM (SELECT 1) AS one \
+         LEFT JOIN api_tokens t ON t.id = $1 \
+         LEFT JOIN oauth_clients c ON c.client_id = t.oauth_client_id",
     )
     .bind(auth.token_id)
     .bind(auth.user_id.0)

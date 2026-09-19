@@ -685,3 +685,140 @@ async fn token_for_another_resource_is_refused_at_mcp() {
     .await;
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+async fn decide(
+    app: &Router,
+    client_id: &str,
+    body: serde_json::Value,
+) -> axum::http::Response<Body> {
+    let mut body = body;
+    body["action"] = "approve".into();
+    body["client_id"] = client_id.into();
+    body["redirect_uri"] = REDIRECT.into();
+    body["code_challenge"] = CHALLENGE.into();
+    body["resource"] = RESOURCE.into();
+    body["expires_in_days"] = 30.into();
+    send(
+        app,
+        Request::builder()
+            .method("POST")
+            .uri("/oauth/authorize/decision")
+            .header("content-type", "application/json")
+            .header("x-requested-with", "uptimepage")
+            .body(Body::from(body.to_string()))
+            .unwrap(),
+    )
+    .await
+}
+
+/// The client asked for nothing, so the page preselects read only; the user
+/// picks a wider level and another org they belong to, and the token follows
+/// the user, not the request.
+#[tokio::test]
+async fn consent_grants_the_level_and_org_the_user_picks() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (app, org_a) = build_test_app_with_pg_store(pool.clone(), cfg_oauth).await;
+    let owner: uuid::Uuid = sqlx::query_scalar("SELECT user_id FROM memberships WHERE org_id = $1")
+        .bind(org_a.0)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let org_b = uptimepage::storage::create_org_with_owner(
+        &pool,
+        uptimepage::domain::UserId(owner),
+        &common::unique_slug("second"),
+        "Second Org",
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .id;
+    let client_id = register_client(&app).await;
+
+    let resp = send(
+        &app,
+        Request::builder()
+            .uri(authorize_uri(&client_id, REDIRECT, RESOURCE, CHALLENGE))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let html = String::from_utf8(
+        axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(
+        html.contains("asked for <strong>read only</strong>"),
+        "{html}"
+    );
+    assert!(html.contains("Second Org"), "{html}");
+    assert!(
+        html.contains(r#"value="read" data-scope="targets:read status_page:read incidents:read channels:read variables:read""#)
+    );
+    assert!(html.contains(r#"value="monitors" data-scope="targets:read status_page:read incidents:read channels:read variables:read targets:write targets:execute""#));
+
+    let resp = decide(
+        &app,
+        &client_id,
+        serde_json::json!({
+            "scope": "targets:read status_page:read incidents:read channels:read variables:read targets:write targets:execute",
+            "org_id": org_b.0,
+        }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let code = query_param(body_json(resp).await["redirect"].as_str().unwrap(), "code").unwrap();
+    let resp = post_token(&app, token_body(&code, REDIRECT, &client_id, VERIFIER)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let scope = body_json(resp).await["scope"].as_str().unwrap().to_string();
+    assert!(scope.contains("targets:write"), "{scope}");
+    assert!(!scope.contains("incidents:write"), "{scope}");
+
+    let bound: uuid::Uuid =
+        sqlx::query_scalar("SELECT org_id FROM api_tokens WHERE oauth_client_id = $1")
+            .bind(&client_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(bound, org_b.0);
+}
+
+#[tokio::test]
+async fn consent_refuses_an_org_the_user_is_not_in() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (app, _org_a) = build_test_app_with_pg_store(pool.clone(), cfg_oauth).await;
+    let stranger = common::make_user(&pool, "stranger").await;
+    let foreign = uptimepage::storage::create_org_with_owner(
+        &pool,
+        stranger,
+        &common::unique_slug("foreign"),
+        "Foreign Org",
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .id;
+    let client_id = register_client(&app).await;
+
+    let resp = decide(
+        &app,
+        &client_id,
+        serde_json::json!({ "scope": "targets:read", "org_id": foreign.0 }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let minted: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM oauth_authorization_codes WHERE client_id = $1")
+            .bind(&client_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(minted, 0);
+}

@@ -19,7 +19,8 @@ use serde_json::json;
 
 use crate::app::AppState;
 use crate::auth::sha256_hex;
-use crate::storage::orgs::{get_org, is_active_member};
+use crate::domain::OrgId;
+use crate::storage::orgs::{is_active_member, list_orgs_for_user};
 use crate::web::auth::{Session, login_redirect};
 // Brought into scope so the askama-generated template code can resolve the
 // custom filters (`source_url`, `source_commit`, `version`) used by base.html.
@@ -27,8 +28,8 @@ use crate::web::filters;
 
 use super::error::OAuthError;
 use super::{
-    CODE_TTL_SECS, DEFAULT_TOKEN_TTL_DAYS, MAX_TOKEN_TTL_DAYS, OAuthUrls, grant_scope,
-    is_acceptable_redirect_uri, redirect_destination, store,
+    ACCESS_LEVELS, CODE_TTL_SECS, DEFAULT_TOKEN_TTL_DAYS, MAX_TOKEN_TTL_DAYS, OAuthUrls,
+    grant_scope, is_acceptable_redirect_uri, level_covering, redirect_destination, store,
 };
 
 /// Upper bound on the opaque `state` we round-trip — generous for real clients,
@@ -179,47 +180,67 @@ pub async fn authorize_page(
         let next = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
         return login_redirect(next).into_response();
     };
-    let Some(org) = session.active_org_id else {
-        return error_page("select an organization before connecting");
-    };
-    match is_active_member(pool, user, org).await {
-        Ok(true) => {}
-        Ok(false) => return error_page("you are not a member of the active organization"),
+    let orgs = match list_orgs_for_user(pool, user).await {
+        Ok(orgs) => orgs,
         Err(e) => {
-            tracing::warn!(target: "oauth", error = %e, "membership check failed");
+            tracing::warn!(target: "oauth", error = %e, "list_orgs_for_user failed");
             return error_page("internal error");
         }
+    };
+    if orgs.is_empty() {
+        return error_page("create an organization before connecting");
     }
+    let active = session.active_org_id.unwrap_or(orgs[0].org.id);
+    let orgs: Vec<ConsentOrg> = orgs
+        .into_iter()
+        .map(|o| ConsentOrg {
+            id: o.org.id.0.to_string(),
+            name: o.org.name,
+            selected: o.org.id == active,
+        })
+        .collect();
     if let Err(e) = store::touch_client(pool, &p.client_id).await {
         tracing::warn!(target: "oauth", error = %e, "touch_client failed");
     }
-    let org_name = match get_org(pool, org).await {
-        Ok(Some(o)) => o.name,
-        _ => org.0.to_string(),
-    };
 
-    let scopes: Vec<ConsentScope> = granted
-        .split_whitespace()
-        .map(|s| ConsentScope {
-            label: scope_label(s),
-            write: is_write_scope(s),
+    let requested = level_covering(&granted);
+    let levels: Vec<ConsentLevel> = ACCESS_LEVELS
+        .iter()
+        .map(|level| ConsentLevel {
+            id: level.id,
+            label: level.label,
+            summary: level.summary,
+            scope: level
+                .scopes
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+            grants: level
+                .scopes
+                .iter()
+                .map(|s| ConsentScope {
+                    label: scope_label(s.as_str()),
+                    write: is_write_scope(s.as_str()),
+                })
+                .collect(),
+            selected: level.id == requested.id,
         })
         .collect();
-    let has_write = scopes.iter().any(|s| s.write);
 
     ConsentPage {
         active_tab: "",
         client_name: client
             .client_name
             .unwrap_or_else(|| "An application".to_string()),
-        org_name,
-        scopes,
-        has_write,
+        requested_label: requested.label,
+        requested_writes: requested.id != ACCESS_LEVELS[0].id,
+        orgs,
+        levels,
         destination: redirect_destination(&p.redirect_uri),
         client_id: p.client_id,
         redirect_uri: p.redirect_uri,
         code_challenge: p.code_challenge,
-        scope: granted,
         state: p.state.unwrap_or_default(),
         resource: urls.resource,
         default_ttl_days: DEFAULT_TOKEN_TTL_DAYS,
@@ -240,6 +261,8 @@ pub struct DecisionRequest {
     resource: String,
     #[serde(default)]
     expires_in_days: Option<u32>,
+    #[serde(default)]
+    org_id: Option<uuid::Uuid>,
 }
 
 pub async fn decision(
@@ -256,7 +279,7 @@ pub async fn decision(
     let Some(user) = session.user_id() else {
         return error_page("session expired; reload and try again");
     };
-    let Some(org) = session.active_org_id else {
+    let Some(org) = req.org_id.map(OrgId).or(session.active_org_id) else {
         return error_page("select an organization before connecting");
     };
 
@@ -295,10 +318,10 @@ pub async fn decision(
         .into_response();
     }
 
-    // Membership re-check at decision time.
+    // The org came from the form; membership is what makes it the user's to grant.
     match is_active_member(pool, user, org).await {
         Ok(true) => {}
-        Ok(false) => return error_page("you are not a member of the active organization"),
+        Ok(false) => return error_page("you are not a member of that organization"),
         Err(e) => {
             tracing::warn!(target: "oauth", error = %e, "membership check failed");
             return error_page("internal error");
@@ -377,20 +400,36 @@ struct ConsentScope {
     write: bool,
 }
 
+struct ConsentLevel {
+    id: &'static str,
+    label: &'static str,
+    summary: &'static str,
+    scope: String,
+    grants: Vec<ConsentScope>,
+    selected: bool,
+}
+
+struct ConsentOrg {
+    id: String,
+    name: String,
+    selected: bool,
+}
+
 #[derive(askama::Template, askama_web::WebTemplate)]
 #[template(path = "oauth/consent.html")]
 struct ConsentPage {
     /// base.html nav uses this; "" shows the standard nav with nothing active.
     active_tab: &'static str,
     client_name: String,
-    org_name: String,
-    scopes: Vec<ConsentScope>,
-    has_write: bool,
+    /// The level the client's own request maps to, preselected.
+    requested_label: &'static str,
+    requested_writes: bool,
+    orgs: Vec<ConsentOrg>,
+    levels: Vec<ConsentLevel>,
     destination: String,
     client_id: String,
     redirect_uri: String,
     code_challenge: String,
-    scope: String,
     state: String,
     resource: String,
     default_ttl_days: u32,

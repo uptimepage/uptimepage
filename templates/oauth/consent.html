@@ -9,44 +9,58 @@
         authorize connection
       </h2>
       <p class="text-sm text-muted">
-        {% if has_write %}
-        <strong>{{ client_name }}</strong> is requesting access to
-        <strong>{{ org_name }}</strong>.
-        {% else %}
-        <strong>{{ client_name }}</strong> wants read-only access to
-        <strong>{{ org_name }}</strong>.
-        {% endif %}
+        <strong>{{ client_name }}</strong> asked for <strong>{{ requested_label|lower }}</strong>.
+        You choose what it gets.
       </p>
       <p class="text-xs text-quiet">
         Approving or denying sends you back to <strong>{{ destination }}</strong>.
       </p>
     </header>
 
-    {% if has_write %}
-    <p class="alert-card alert-card--warn text-xs">
-      This connection can <strong>make changes</strong> to this organization
-      (see below). Only approve a connection you started yourself, from a
-      client you trust.
-    </p>
-    {% endif %}
-
-    <div class="space-y-2">
-      <p class="text-xs uppercase tracking-wide text-quiet">It will be able to</p>
-      <ul class="space-y-1 text-sm text-body">
-        {% for s in scopes %}
-        <li class="flex items-start gap-2">
-          {% if s.write %}
-          <span class="text-amber-600" aria-hidden="true">&#9888;</span><span>{{ s.label }}</span>
-          {% else %}
-          <span aria-hidden="true">&middot;</span><span>{{ s.label }}</span>
-          {% endif %}
-        </li>
+    <div class="space-y-1">
+      <label for="consent-org" class="text-xs uppercase tracking-wide text-quiet">Organization</label>
+      <select id="consent-org" class="w-full field font-mono" aria-label="Organization">
+        {% for o in orgs %}
+        <option value="{{ o.id }}"{% if o.selected %} selected{% endif %}>{{ o.name }}</option>
         {% endfor %}
-      </ul>
-      <p class="text-xs text-muted">
-        Access is limited to this one organization.
-      </p>
+      </select>
+      <p class="text-xs text-muted">Access is limited to this one organization.</p>
     </div>
+
+    <fieldset class="space-y-2">
+      <legend class="text-xs uppercase tracking-wide text-quiet">Access level</legend>
+      {% for l in levels %}
+      <label class="flex cursor-pointer items-start gap-3 rounded-sm border border-[color:var(--theme-line)] p-3 has-[:checked]:border-[color:var(--theme-accent)]">
+        <input type="radio" name="consent-level" value="{{ l.id }}" data-scope="{{ l.scope }}"
+               class="mt-1"{% if l.selected %} checked{% endif %}>
+        <span class="space-y-1">
+          <span class="block text-sm font-medium text-body">{{ l.label }}</span>
+          <span class="block text-xs text-muted">{{ l.summary }}</span>
+          <details class="text-xs text-muted">
+            <summary class="cursor-pointer text-quiet">Exactly what it can do</summary>
+            <ul class="mt-1 space-y-0.5">
+              {% for g in l.grants %}
+              <li class="flex items-start gap-2">
+                {% if g.write %}
+                <span class="text-amber-600" aria-hidden="true">&#9888;</span><span>{{ g.label }}</span>
+                {% else %}
+                <span aria-hidden="true">&middot;</span><span>{{ g.label }}</span>
+                {% endif %}
+              </li>
+              {% endfor %}
+            </ul>
+          </details>
+        </span>
+      </label>
+      {% endfor %}
+    </fieldset>
+
+    <p id="consent-write-warning" class="alert-card alert-card--warn text-xs"{% if !requested_writes %} hidden{% endif %}>
+      This connection can <strong>make changes</strong> to the organization. A client
+      that cannot show you a confirmation prompt will make them without asking
+      each time. Only approve a connection you started yourself, from a client
+      you trust.
+    </p>
 
     <div class="space-y-1">
       <label for="consent-expiry" class="text-xs uppercase tracking-wide text-quiet">Connection expires</label>
@@ -62,7 +76,6 @@
     <input type="hidden" id="c-client-id" value="{{ client_id }}">
     <input type="hidden" id="c-redirect-uri" value="{{ redirect_uri }}">
     <input type="hidden" id="c-code-challenge" value="{{ code_challenge }}">
-    <input type="hidden" id="c-scope" value="{{ scope }}">
     <input type="hidden" id="c-state" value="{{ state }}">
     <input type="hidden" id="c-resource" value="{{ resource }}">
     <input type="hidden" id="c-default-ttl" value="{{ default_ttl_days }}">
@@ -88,6 +101,16 @@
     var sel = byId('consent-expiry');
     sel.value = byId('c-default-ttl').value;
 
+    function level() {
+      return document.querySelector('input[name="consent-level"]:checked');
+    }
+    var radios = document.querySelectorAll('input[name="consent-level"]');
+    for (var i = 0; i < radios.length; i++) {
+      radios[i].addEventListener('change', function () {
+        byId('consent-write-warning').hidden = level().value === 'read';
+      });
+    }
+
     function submit(action) {
       var approve = byId('consent-approve');
       var deny = byId('consent-deny');
@@ -102,7 +125,8 @@
         client_id: byId('c-client-id').value,
         redirect_uri: byId('c-redirect-uri').value,
         code_challenge: byId('c-code-challenge').value,
-        scope: byId('c-scope').value,
+        scope: level().getAttribute('data-scope'),
+        org_id: byId('consent-org').value,
         state: byId('c-state').value,
         resource: byId('c-resource').value,
         expires_in_days: parseInt(sel.value, 10)

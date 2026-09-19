@@ -154,16 +154,17 @@ Redirect URIs may be HTTPS hosts (web connectors), loopback HTTP including `[::1
 
 It shows:
 
-- **Who and what** — the client name, the single org it's connecting to, and where the browser goes after Approve or Deny: the redirect host, or for a loopback or native-scheme callback a note that it stays on this computer. The client registers both its name and that URI, but the code is delivered to the URI, so the page cannot show one destination and send the code to another; a name that does not match the host is the tell. Access is always scoped to that one org.
-- **Granted abilities** — one line per scope, in plain language (e.g. "Read your monitors and their current status", "Pause and resume your monitors"). Write abilities are flagged with a ⚠ marker, and a warning banner appears at the top stating the connection can make changes and should only be approved if the user started it from a client they trust.
+- **Who and where** — the client name, what it asked for, and where the browser goes after Approve or Deny: the redirect host, or for a loopback or native-scheme callback a note that it stays on this computer. The client registers both its name and that URI, but the code is delivered to the URI, so the page cannot show one destination and send the code to another; a name that does not match the host is the tell.
+- **Organization** — a picker over the orgs the user belongs to, preselecting the one active in the app. The token binds to the org chosen here and to nothing else.
+- **Access level** — three choices: *Read only* (every read scope, including channel names and variable keys), *Manage monitors* (adds `targets:write`, `targets:execute`) and *Full access* (adds `incidents:write`, `status_page:write`). The smallest level that covers the client's `scope` request is preselected, so a connector that asked for nothing lands on read only and one that asked for everything lands on full; the user can move either way. Each level expands to the exact abilities it grants, write abilities marked ⚠, and a warning banner appears whenever the selected level can make changes, stating that a client which cannot show a confirmation prompt will make them without asking each time.
 - **Connection expires** — a picker (30 / 60 / 90 / 365 days, default 90) that sets the refresh-token (connection) lifetime. There is no "never".
-- **Approve / Deny** — Deny aborts the flow; Approve mints the org-bound scoped token and returns the user to the client.
+- **Approve / Deny** — Deny aborts the flow; Approve mints the token for the chosen org at the chosen level and returns the user to the client.
 
-A read-only request shows "wants read-only access" with no warning banner; a request that includes any write scope switches to the "is requesting access" wording plus the banner and ⚠ markers.
+The level the user picks is the grant. The client's request only decides which level is preselected; OAuth allows the resource owner to grant more or less than was asked, and the token response carries the granted `scope` so a conforming client sees what it got. That is what makes a write-capable claude.ai connection possible at all, since that connector never asks for write scopes itself.
 
 ## Scopes
 
-The connector advertises nine grantable scopes. A request with no `scope` (or only unknown scopes) grants the **read-only default**; everything else is opt-in.
+The connector advertises nine grantable scopes. A request with no `scope` (or only unknown scopes) preselects the **read-only default** on the consent screen; the write scopes are granted only through the *Manage monitors* or *Full access* level the user picks there.
 
 | Scope | Grants | In default set? |
 |---|---|---|
@@ -177,15 +178,15 @@ The connector advertises nine grantable scopes. A request with no `scope` (or on
 | `status_page:write` | `create_status_page`, `update_status_page`, `add_status_page_components`, `update_status_page_component` — **and** the caller must be an owner of the org, the same bar `/api/v1` holds the public brand surface to | opt-in |
 | `variables:read` | `list_variables` — variable keys only, never a value | opt-in |
 
-A granted write scope is what authorises a write. Where the client can show a prompt, every write tool also asks the user to confirm the specific action at call time; that prompt guards against a model acting on its own, not against a client the user should never have approved; the consent screen is where a hostile client is stopped.
+A granted write scope is what authorises a write. Where the client can show a prompt, every write tool also asks the user to confirm the specific action at call time; that prompt guards against a model acting on its own, not against a client the user should never have approved. The consent screen is where a hostile client, or an over-broad grant to an honest one, is stopped: an aggregator such as Composio requests all nine scopes because that is what the metadata advertises, and the access level picker is where that becomes "manage monitors" instead.
 
 `variables:write` is deliberately absent. Creating or rotating a variable means carrying its value, which is the one thing this surface will not do; variables are managed in the app or over [`/api/v1`](api.md#operator-endpoints-variables).
 
 ## Org binding
 
-A token is bound to **one** org, and there is no tool argument that switches it. The binding is set when the token is minted, from whichever org was active in the app at that moment — the OAuth consent screen displays it but does not offer a picker, and the scope list there is display-only too.
+A token is bound to **one** org, and there is no tool argument that switches it. The binding is set when the token is minted, from the org picked on the consent screen; the picker preselects whichever org is active in the app, so check it before approving.
 
-So creating a new org in the app does not make it visible to an existing connection, and reconnecting while the app still has the old org active mints another token on the **old** org. The order that works: switch to the org you want in the app, confirm the consent screen names it, then approve. `get_org_usage` reports the bound org, which is the fastest way to check before wondering why a monitor is missing.
+Creating a new org in the app does not make it visible to an existing connection; reconnect and pick the new org. `get_org_usage` reports the bound org, which is the fastest way to check before wondering why a monitor is missing.
 
 ## Confirmations
 
@@ -195,7 +196,7 @@ Before any write tool acts, the server sends an MCP **elicitation** request desc
 
 ## Audit
 
-Every write-tool invocation writes one row to `mcp_audit`, on **every** path — success, user-declined, scope-denied, bad input, not-found, or server error — recording: `actor_type = mcp`, the token id, the acting user + org, the client software as `name/version` from its `initialize` handshake, the tool name, what it acted on, the outcome (`success` / `denied` / `error`), and a detail that leads with the refusal code and adds its reason where there is one (`not_confirmed:declined`, `confirmation_failed:timed_out`, and for `invalid_argument` the rejection text the caller was shown). When a write went ahead without a person answering a prompt, the row says so: `unconfirmed:no_elicitation` or `unconfirmed:client_error:-32601` on a success row, and the same appended after `;` on an error or denied row that got past the gate unasked and then failed, so "did I approve this?" has an answer either way. "What it acted on" is the id for most tools, the created monitor's name, address, interval and bound channels for `create_monitor`, and the old → new pairs for `update_monitor`; a refused call records what identifies the attempt plus, for `invalid_argument`, the rejection text, which may name the value that was refused (a host, a resolver, a region) but never a credential. Customer-facing incident text is never recorded — not a public title, a description, an update `message`, nor an ack/resolve note. The same event is emitted to tracing. Reads are not audit-logged (they're side-effect-free and already rate-limited). Rows are kept for `retention.mcp_audit_days` (2 years by default), then deleted by the daily retention job.
+Every write-tool invocation writes one row to `mcp_audit`, on **every** path — success, user-declined, scope-denied, bad input, not-found, or server error — recording: `actor_type = mcp`, the token id, the acting user + org, the client software as `name/version` from its `initialize` handshake, prefixed by the OAuth client's registered name when the token came from OAuth (`Composio (mcp/0.1.0)`, since an aggregator reports only its SDK's default name), the tool name, what it acted on, the outcome (`success` / `denied` / `error`), and a detail that leads with the refusal code and adds its reason where there is one (`not_confirmed:declined`, `confirmation_failed:timed_out`, and for `invalid_argument` the rejection text the caller was shown). When a write went ahead without a person answering a prompt, the row says so: `unconfirmed:no_elicitation` or `unconfirmed:client_error:-32601` on a success row, and the same appended after `;` on an error or denied row that got past the gate unasked and then failed, so "did I approve this?" has an answer either way. "What it acted on" is the id for most tools, the created monitor's name, address, interval and bound channels for `create_monitor`, and the old → new pairs for `update_monitor`; a refused call records what identifies the attempt plus, for `invalid_argument`, the rejection text, which may name the value that was refused (a host, a resolver, a region) but never a credential. Customer-facing incident text is never recorded — not a public title, a description, an update `message`, nor an ack/resolve note. The same event is emitted to tracing. Reads are not audit-logged (they're side-effect-free and already rate-limited). Rows are kept for `retention.mcp_audit_days` (2 years by default), then deleted by the daily retention job.
 
 ## Enabling
 
@@ -225,6 +226,15 @@ The deploy pipeline upserts the two switches from repo **variables** (Settings �
 ### claude.ai connector (OAuth)
 
 Settings → Connectors → Add custom connector → URL `https://mcp.{DOMAIN}/mcp` → Connect. You'll be sent to the login + consent screen; approve, and the tools appear. This exercises the full OAuth path and is the recommended end-user flow.
+
+### Aggregators: Composio, Zapier MCP, Pipedream
+
+These sit between the model and this server: the platform registers itself as the OAuth client, holds the token, and forwards each `tools/call`. Add the server by URL in the platform's custom MCP screen, choose OAuth, and approve on the consent screen as with any client. Two things differ:
+
+- **No confirmation prompt.** The platform declares no elicitation, so every write runs on the scopes granted at consent and is audited as `unconfirmed`. Pick the access level with that in mind; *Manage monitors* is enough for an agent that creates and tunes monitors.
+- **The tool list is cached.** A connection made before this server gained a tool keeps the old list until the platform re-syncs it (Composio: the app's page → Sync). A missing write tool after connecting is usually this.
+
+Composio in particular needs an auth config and a connected account per project, and its own tool search will suggest its Better Stack toolkit when this server is not in the session's toolkit scope.
 
 ### Cursor, VS Code (OAuth)
 
@@ -357,7 +367,7 @@ Once connected, drive it in natural language — the client picks the tool:
 ## Security model
 
 - **Org isolation.** Org comes from the token, never an argument; the token must be org-bound and the holder a live member. The cross-tenant guarantees in [Multi-tenancy](multi-tenancy.md) apply unchanged.
-- **Least privilege.** Read-only by default; write scopes are opt-in and each write is separately confirmed and audited.
+- **Least privilege.** Read-only by default; write scopes come only from the access level the user picks at consent, and each write is confirmed where the client can ask and audited either way.
 - **Audience binding.** With OAuth on, tokens are pinned to this `/mcp` resource (RFC 8707), so a token leaked from elsewhere can't be replayed here.
 - **DNS-rebinding defense.** The transport enforces a Host allow-list (the configured resource host) and an optional Origin allow-list.
 - **Prompt-injection posture.** Customer-supplied text is returned as labelled data and the server instructions tell the client not to treat it as commands — but the ultimate guard is that the dangerous tools are scope-gated and human-confirmed.
