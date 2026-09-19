@@ -24,11 +24,11 @@ use axum::{Json, http::StatusCode};
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use crate::api::error::{ApiError, ApiErrorBody};
 use crate::app::AppState;
 use crate::auth::api_tokens;
 use crate::domain::UserId;
 use crate::error::codes;
+use crate::error::{ApiError, ApiErrorBody};
 use crate::error::{AppError, Result};
 
 use super::{AuthContext, CurrentUser, Session, bearer_from_headers};

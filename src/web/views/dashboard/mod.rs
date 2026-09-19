@@ -23,12 +23,12 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::OrgId;
+use crate::request::host::is_subdomain_public_request;
+use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser};
 use crate::web::error::WebResult;
-use crate::web::host::is_subdomain_public_request;
 use crate::web::views::public_status::{self, StatusParams};
 use crate::web::views::region_display::labeled_regions;
 use crate::web::views::{build_range_options, resolve_range_key};
-use crate::web::{AuthedBrowser, CurrentOrg, CurrentUser};
 
 mod charts;
 mod load;
@@ -137,7 +137,7 @@ pub async fn index(
 ) -> WebResult<DashboardPage> {
     // One-shot post-login banners ride a flash cookie (consumed here) rather
     // than spoofable query params.
-    let flash = crate::web::flash::take(&cookies, &state.cfg.auth.session.cookie_domain);
+    let flash = crate::request::flash::take(&cookies, &state.cfg.auth.session.cookie_domain);
     let range = resolve_range_key(params.range.as_deref(), &RANGE_KEYS, DEFAULT_RANGE);
     let status = resolve_range_key(params.status.as_deref(), &STATUS_FILTERS, FILTER_ANY);
     let selected_status = (status != FILTER_ANY).then_some(status);

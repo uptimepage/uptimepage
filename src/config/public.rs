@@ -59,6 +59,16 @@ pub struct TenancyConfig {
     pub deletion_grace_period_days: u32,
 }
 
+impl TenancyConfig {
+    /// Whether *any* public surface is mounted. The two are mutually exclusive
+    /// in practice (the startup assertions forbid path-based + SaaS, and
+    /// subdomain needs SaaS), so the shared handlers resolve the org via the
+    /// host-aware extractor and only one surface is ever live per deployment.
+    pub fn public_routes_active(&self) -> bool {
+        self.path_based_public_routes || self.subdomain_public_routes
+    }
+}
+
 impl Default for TenancyConfig {
     fn default() -> Self {
         Self {

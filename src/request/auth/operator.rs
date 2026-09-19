@@ -12,8 +12,8 @@ use subtle::ConstantTimeEq;
 use crate::app::AppState;
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::request::auth::bearer_from_headers;
 use crate::security::sha256_hex;
-use crate::web::auth::bearer_from_headers;
 
 /// Proof the request carried the operator admin token. A unit extractor — its
 /// presence in a handler signature is the authorization.

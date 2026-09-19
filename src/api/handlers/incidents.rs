@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::api::ApiError;
 use crate::api::handlers::validation::{self, validate_message};
 use crate::app::AppState;
 use crate::domain::{
@@ -22,10 +21,11 @@ use crate::domain::{
     NewManualIncident, NotificationReason, OpsIncident, PostmortemUpsert, PublicIncidentUpdate,
     UserId,
 };
+use crate::error::ApiError;
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::request::{Authorized, CurrentUser, IncidentsRead, IncidentsWrite};
 use crate::storage::{Actor, IncidentOpsFilter, LifecycleOutcome};
-use crate::web::{Authorized, CurrentUser, IncidentsRead, IncidentsWrite};
 
 #[utoipa::path(
     patch,

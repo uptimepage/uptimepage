@@ -13,8 +13,8 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::request::OperatorAuth;
 use crate::storage::operator::{DeleteRegion, OperatorRepo};
-use crate::web::OperatorAuth;
 
 const MAX_NAME: usize = 80;
 const MAX_REGION_ID: usize = 40;

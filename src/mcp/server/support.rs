@@ -6,9 +6,9 @@ use uuid::Uuid;
 
 use crate::domain::WriteSource;
 use crate::domain::target::Target;
+use crate::public_status::urls::{public_base, public_status_url};
 use crate::quotas::ratelimit::{RateLimitCategory, RateLimitKey};
 use crate::storage::{ClampedRange, TimeRange};
-use crate::web::views::public_status::{public_base, public_status_url};
 
 use crate::mcp::audit::{self, Outcome};
 use crate::mcp::auth::McpAuth;

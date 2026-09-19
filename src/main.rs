@@ -15,7 +15,6 @@ use tokio_util::sync::CancellationToken;
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uptimepage::{
-    api::handlers::health::is_health_path,
     app::AppState,
     config::AppConfig,
     error::{AppError, Result},
@@ -31,6 +30,7 @@ use uptimepage::{
         PageCache, PgIncidentStore, PublicSource,
     },
     quotas,
+    request::is_health_path,
     scheduler::{self, Scheduler, TargetRegistry},
     storage::{
         self, ClickhouseFlowRunSink, ClickhouseHeartbeatPingSink, ClickhouseResultSink,
@@ -705,7 +705,7 @@ async fn main() -> Result<()> {
                 batch_limit: 200,
                 base_domain: cfg.public_status.base_domain.clone(),
                 public_base_url: cfg.auth.public_base_url.clone(),
-                subdomain_routes: uptimepage::api::subdomain_public_routes_enabled(&cfg),
+                subdomain_routes: cfg.tenancy.subdomain_public_routes,
                 unsubscribe_secret: unsubscribe_secret.clone(),
                 from_address: cfg.email.from_address.clone(),
                 from_name: cfg.email.from_name.clone(),
@@ -909,7 +909,7 @@ async fn main() -> Result<()> {
     // routed to the marketing or app router by classified `Host`.
     // Otherwise the app router serves everything as before.
     let combined: Router = if state.cfg.marketing.enabled {
-        let scheme = uptimepage::web::host::HostScheme::from_base_domain(
+        let scheme = uptimepage::request::host::HostScheme::from_base_domain(
             &state.cfg.public_status.base_domain,
         )
         .map_err(|e| AppError::Other(anyhow::anyhow!("HostScheme: {e}")))?;

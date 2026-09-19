@@ -3,7 +3,7 @@
 use axum::http::HeaderMap;
 
 use crate::app::AppState;
-use crate::web::host::request_origin;
+use crate::request::host::request_origin;
 
 use super::branding::BrandingView;
 

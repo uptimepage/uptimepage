@@ -85,7 +85,7 @@ pub(super) fn spend_budget(
     let peer = peer.map_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), |c| {
         (c.0).0.ip()
     });
-    let client = crate::web::client_ip::extract(headers, peer, &cfg.trusted_proxies);
+    let client = crate::request::client_ip::extract(headers, peer, &cfg.trusted_proxies);
     let cost = NonZeroU32::new(cost).expect("a probe costs at least one");
     let allowed = limiter
         .check_key_n(&budget_key(client), cost)

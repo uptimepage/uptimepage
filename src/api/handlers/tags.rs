@@ -3,11 +3,11 @@ use axum::extract::{Query, State};
 use serde::Deserialize;
 use utoipa::IntoParams;
 
-use crate::api::ApiError;
 use crate::api::page::{PageEnvelope, PageOfTagCount};
 use crate::app::AppState;
+use crate::error::ApiError;
 use crate::error::Result;
-use crate::web::CurrentOrg;
+use crate::request::CurrentOrg;
 
 const TAGS_LIMIT_DEFAULT: usize = 100;
 const TAGS_LIMIT_MAX: usize = 1_000;

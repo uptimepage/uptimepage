@@ -5,15 +5,15 @@ use serde::Deserialize;
 use utoipa::IntoParams;
 use uuid::Uuid;
 
-use crate::api::ApiError;
 use crate::api::page::{PageEnvelope, PageOfCheckResult, PageOfIncident};
 use crate::api::types::{FlowStepSeries, LatencySeries, LatencySeriesByRegion};
 use crate::app::AppState;
 use crate::domain::{confirmed_downtime_secs, humanize_check_error, uptime_pct_from_downtime};
+use crate::error::ApiError;
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::request::{Authorized, TargetsRead};
 use crate::storage::{TimeRange, UptimeStats};
-use crate::web::{Authorized, TargetsRead};
 
 /// 404 used when a target id is absent from the caller's org. Returned only
 /// after the org-scoped `get` resolves to `None`, so a foreign tenant's UUID

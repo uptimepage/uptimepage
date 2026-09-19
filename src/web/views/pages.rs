@@ -12,12 +12,12 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::{OrgId, PublicStyle};
 use crate::error::AppError;
-use crate::web::auth::CurrentOrg;
-use crate::web::error::WebResult;
-use crate::web::filters;
-use crate::web::views::public_status::{
+use crate::public_status::urls::{
     public_base, public_host_suffix, public_logo_url, public_status_url,
 };
+use crate::request::auth::CurrentOrg;
+use crate::web::error::WebResult;
+use crate::web::filters;
 use crate::web::views::resolve_org;
 
 const TAB_PAGES: &str = "pages";
@@ -313,7 +313,7 @@ pub async fn page_editor(
     // Absolute origin for the badge: subdomain in SaaS mode, else the
     // configured public base URL so path-based/self-host deploys still get a
     // README-ready link.
-    let badge_origin = crate::web::host::page_origin(
+    let badge_origin = crate::request::host::page_origin(
         &state.cfg.public_status.base_domain,
         &state.cfg.auth.public_base_url,
         &page.slug,

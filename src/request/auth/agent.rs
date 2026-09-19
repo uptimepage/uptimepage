@@ -10,8 +10,8 @@ use axum::http::request::Parts;
 use crate::app::AppState;
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::request::auth::bearer_from_headers;
 use crate::storage::operator::{AgentAuth, OperatorRepo};
-use crate::web::auth::bearer_from_headers;
 
 /// An authenticated regional agent.
 pub struct AgentIdentity {

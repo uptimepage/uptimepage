@@ -21,12 +21,12 @@ use uuid::Uuid;
 
 use common::{UnavailablePublicSource, build_test_app_with_public_source};
 use uptimepage::api::CursorPage;
-use uptimepage::api::public_error::PublicAppError;
 use uptimepage::domain::{
     ComponentHistoryResponse, DayState, OverallState, OverallStatus, PageRef, PublicComponent,
     PublicComponentGroup, PublicComponentStatus, PublicIncident, PublicMaintenanceList,
     PublicStatusPage,
 };
+use uptimepage::error::public::PublicAppError;
 use uptimepage::public_status::{IncidentListQuery, PublicSource, source::FeedLinks};
 
 fn known_component_id() -> Uuid {

@@ -75,7 +75,7 @@ migrations/           postgres/NNN_name.{up,down}.sql + clickhouse/*.sql
 
 ## Request path
 
-One `RouteByHost` service (in `src/marketing/dispatch.rs`) inspects the Host header through the single host parser in `src/web/host.rs` and routes by class before any handler runs:
+One `RouteByHost` service (in `src/marketing/dispatch.rs`) inspects the Host header through the single host parser in `src/request/host.rs` and routes by class before any handler runs:
 
 - **Marketing** (apex and `www`): the marketing router, which touches no database.
 - **App** (the operator labels, `app` and `mcp`): the full application router. The MCP host is then narrowed to `/mcp` and `/.well-known/*` by the isolation middleware below.

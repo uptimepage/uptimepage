@@ -16,11 +16,11 @@ use uuid::Uuid;
 
 use crate::api::cursor::IncidentCursor;
 use crate::api::page::CursorPage;
-use crate::api::public_error::PublicAppError;
 use crate::domain::{
     ComponentHistoryResponse, IncidentSeverity, IncidentStatusPhase, OrgId, PageRef,
     PublicIncident, PublicIncidentUpdate, PublicMaintenanceList, PublicStatusPage,
 };
+use crate::error::public::PublicAppError;
 
 use super::aggregator::OrgAggregator;
 use super::auto_incident_title;

@@ -180,7 +180,15 @@ fn no_request_path_module_reaches_the_cross_tenant_sweep() {
 
     let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src"));
     let mut hits = Vec::new();
-    for area in ["web", "api", "mcp", "public_status", "marketing"] {
+    for area in [
+        "web",
+        "api",
+        "mcp",
+        "public_status",
+        "marketing",
+        "request",
+        "targets",
+    ] {
         let scanned = scan(&root.join(area), &mut hits);
         assert!(scanned > 0, "src/{area} scanned no files");
     }

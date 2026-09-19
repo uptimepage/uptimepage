@@ -10,8 +10,8 @@ use tower_cookies::Cookies;
 use crate::app::AppState;
 use crate::domain::UserId;
 use crate::error::Result;
+use crate::request::{theme, time_format};
 use crate::storage::users as users_store;
-use crate::web::{theme, time_format};
 
 pub async fn issue_cookies(state: &AppState, cookies: &Cookies, user: UserId) -> Result<()> {
     let Some(pool) = state.db.as_ref() else {

@@ -16,7 +16,7 @@ use crate::app::AppState;
 use crate::observability::metrics::names;
 use crate::quotas::ratelimit::{Denied, RateLimitCategory, RateLimitKey};
 use crate::quotas::service::record_quota_event;
-use crate::web::auth::{CurrentOrg, CurrentUser};
+use crate::request::auth::{CurrentOrg, CurrentUser};
 
 fn categorize(parts: &Parts) -> RateLimitCategory {
     let path = parts.uri.path();

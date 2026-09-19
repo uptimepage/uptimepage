@@ -15,8 +15,8 @@ use axum::http::header::HOST;
 use axum::http::{Request, Response};
 use tower::Service;
 
-use crate::api::handlers::health::is_health_path;
-use crate::web::host::{HostClass, HostScheme, classify_host};
+use crate::request::host::{HostClass, HostScheme, classify_host};
+use crate::request::is_health_path;
 
 /// Routes a request to one of two `axum::Router`s based on classified
 /// `Host`. `Marketing` and `Unknown` go to the marketing router (so

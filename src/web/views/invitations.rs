@@ -15,7 +15,7 @@ use crate::app::AppState;
 use crate::auth::invitations as inv;
 use crate::auth::url::url_encode;
 use crate::error::{AppError, Result};
-use crate::web::Session;
+use crate::request::Session;
 use crate::web::filters;
 
 #[derive(Debug, Deserialize)]

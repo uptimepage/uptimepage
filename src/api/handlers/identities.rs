@@ -10,8 +10,8 @@ use crate::app::AppState;
 use crate::auth::passkey;
 use crate::domain::OauthProvider;
 use crate::error::Result;
+use crate::request::{BrowserUser, CurrentUser};
 use crate::storage::oauth_identities;
-use crate::web::{BrowserUser, CurrentUser};
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UnlinkQuery {
@@ -37,15 +37,15 @@ pub struct UnlinkQuery {
     ),
     responses(
         (status = 204, description = "Removed"),
-        (status = 400, body = crate::api::error::ApiError, description = "Would leave no way to sign in"),
-        (status = 404, body = crate::api::error::ApiError, description = "No such sign-in method on this account"),
+        (status = 400, body = crate::error::ApiError, description = "Would leave no way to sign in"),
+        (status = 404, body = crate::error::ApiError, description = "No such sign-in method on this account"),
     ),
 )]
 pub async fn unlink(
     State(state): State<AppState>,
     BrowserUser(CurrentUser(user_id)): BrowserUser,
-    session: crate::web::auth::Session,
-    crate::web::client_ip::ClientIp(client_ip): crate::web::client_ip::ClientIp,
+    session: crate::request::auth::Session,
+    crate::request::client_ip::ClientIp(client_ip): crate::request::client_ip::ClientIp,
     headers: axum::http::HeaderMap,
     Path(provider): Path<OauthProvider>,
     Query(q): Query<UnlinkQuery>,

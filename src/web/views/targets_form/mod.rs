@@ -8,9 +8,9 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::{CadenceAdvice, OrgId, RegionIncidentPolicy, TargetAlerts};
 use crate::error::AppError;
+use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser};
 use crate::web::error::WebResult;
 use crate::web::filters;
-use crate::web::{AuthedBrowser, CurrentOrg, CurrentUser};
 
 mod fields;
 mod from_target;
@@ -117,14 +117,11 @@ pub async fn new_form(
     if available.len() > 1 && max_regions > 1 {
         let default_region = state.cfg.scheduler.effective_default_region().to_string();
         let preferred = state.target_store.default_selected_regions().await?;
-        let default_set = crate::api::handlers::targets::default_region_set(
-            preferred,
-            max_regions,
-            &default_region,
-        );
+        let default_set =
+            crate::targets::default_region_set(preferred, max_regions, &default_region);
         let chosen: std::collections::HashSet<String> = default_set.into_iter().collect();
         let cap = available.len().min(max_regions.max(1) as usize);
-        let flow_capable = crate::api::handlers::targets::flow_capable_set(&state).await?;
+        let flow_capable = crate::targets::flow_capable_set(&state).await?;
         form.region_groups = region_groups(available, |id| chosen.contains(id), &flow_capable);
         form.region_threshold_options =
             region_threshold_choices(RegionIncidentPolicy::default(), cap);
@@ -143,7 +140,7 @@ async fn cadence_hint(
     target_id: Uuid,
     fields: &HeartbeatFields,
 ) -> Option<CadenceHint> {
-    let observed = crate::api::handlers::targets::observed_cadence(state, org, target_id).await?;
+    let observed = crate::targets::observed_cadence(state, org, target_id).await?;
     let down_after = std::time::Duration::from_secs(fields.period_s + fields.grace_s);
     let (suggested, too_tight) = match observed.advice(down_after)? {
         CadenceAdvice::TooTight { suggested_period } => (suggested_period, true),
@@ -197,7 +194,7 @@ pub async fn edit_form(
             .into_iter()
             .collect();
         let cap = available.len().min(max_regions.max(1) as usize);
-        let flow_capable = crate::api::handlers::targets::flow_capable_set(&state).await?;
+        let flow_capable = crate::targets::flow_capable_set(&state).await?;
         form.region_groups = region_groups(available, |id| assigned.contains(id), &flow_capable);
         form.region_threshold_options = region_threshold_choices(region_policy, cap);
         form.show_regions = true;

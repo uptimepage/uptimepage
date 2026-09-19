@@ -176,7 +176,7 @@ fn a_pending_heartbeat_card_explains_the_wait() {
     let mut p = sample_page();
     p.kind = "HEARTBEAT";
     p.last_status = super::WAITING_FOR_PING;
-    p.heartbeat = Some(crate::api::handlers::targets::HeartbeatInfo {
+    p.heartbeat = Some(crate::targets::HeartbeatInfo {
         ping_url: Some("https://app.example.com/ping/tok123".into()),
         first_ping_at: None,
         pending: true,
@@ -226,8 +226,8 @@ fn a_pending_heartbeat_card_explains_the_wait() {
     assert!(!html.contains("waiting for first ping"));
 }
 
-fn heartbeat_info(pending: bool) -> crate::api::handlers::targets::HeartbeatInfo {
-    crate::api::handlers::targets::HeartbeatInfo {
+fn heartbeat_info(pending: bool) -> crate::targets::HeartbeatInfo {
+    crate::targets::HeartbeatInfo {
         ping_url: Some("https://app.example.com/ping/tok123".into()),
         first_ping_at: (!pending).then(chrono::Utc::now),
         pending,
@@ -253,7 +253,7 @@ fn heartbeat_info(pending: bool) -> crate::api::handlers::targets::HeartbeatInfo
 fn liveness_reads_the_window_the_projection_handed_it() {
     let now = chrono::Utc::now();
     let due = now - chrono::Duration::minutes(3);
-    let windowed = |due_at, down_at| crate::api::handlers::targets::HeartbeatInfo {
+    let windowed = |due_at, down_at| crate::targets::HeartbeatInfo {
         pending: false,
         due_at,
         down_at,
@@ -430,7 +430,7 @@ fn the_live_poll_clears_the_waiting_notice_out_of_band() {
 fn heartbeat_detail_renders_ping_card_without_probe_surfaces() {
     let mut p = sample_page();
     p.kind = "HEARTBEAT";
-    p.heartbeat = Some(crate::api::handlers::targets::HeartbeatInfo {
+    p.heartbeat = Some(crate::targets::HeartbeatInfo {
         ping_url: Some("https://app.example.com/ping/tok123".into()),
         first_ping_at: Some(chrono::Utc::now()),
         pending: false,
@@ -444,7 +444,7 @@ fn heartbeat_detail_renders_ping_card_without_probe_surfaces() {
         down_at: None,
         declared_period_secs: 600,
         observed_period_secs: Some(4980),
-        cadence_advice: Some(crate::api::handlers::targets::CadenceAdviceView {
+        cadence_advice: Some(crate::targets::CadenceAdviceView {
             kind: "too_tight".into(),
             suggested_period_secs: 5400,
         }),

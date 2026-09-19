@@ -3,13 +3,12 @@ use axum::response::Redirect;
 use axum::routing::{get, post};
 use tower_cookies::CookieManagerLayer;
 
-use crate::api::public_routes_active;
 use crate::app::AppState;
 use crate::web::{assets, error, views};
 
 /// Builds the UI router with state applied. The public-status pages
 /// (`/status`, `/status/incidents/{id}`) are mounted only when
-/// [`public_routes_active`] is true; the org they render is resolved
+/// [`TenancyConfig::public_routes_active`] is true; the org they render is resolved
 /// per-request by the host-aware `StatusPageOrg` extractor (subdomain →
 /// that tenant; self-host → the default org). `/` runs a host-aware
 /// dispatcher ([`views::dashboard::root`]) so on the SaaS subdomain
@@ -285,7 +284,7 @@ pub fn routes(state: AppState) -> Router {
             );
     }
 
-    if public_routes_active(cfg) {
+    if cfg.tenancy.public_routes_active() {
         r = r
             .route("/status", get(views::public_status::status_path))
             .route("/status/incidents", get(views::public_status::archive))
@@ -294,7 +293,7 @@ pub fn routes(state: AppState) -> Router {
                 get(views::public_status::incident),
             )
             .route(
-                views::public_status::LOGO_ROUTE,
+                crate::public_status::urls::LOGO_ROUTE,
                 get(views::public_status::logo),
             );
     }

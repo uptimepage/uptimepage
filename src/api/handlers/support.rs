@@ -15,8 +15,8 @@ use crate::email::templates::support_request::short_ref;
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::request::auth::{CurrentOrg, Session};
 use crate::storage::orgs as orgs_store;
-use crate::web::auth::{CurrentOrg, Session};
 
 /// Closed set: keeps the subject sortable and stops a second unbounded body.
 const TOPICS: [&str; 5] = ["question", "bug", "feature", "regions", "billing"];

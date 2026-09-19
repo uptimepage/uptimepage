@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::{OrgId, RotationType};
 use crate::error::AppError;
-use crate::web::CurrentOrg;
+use crate::request::CurrentOrg;
 use crate::web::error::WebResult;
 use crate::web::filters;
 use crate::web::views::resolve_org;
@@ -125,7 +125,7 @@ pub struct ScheduleFormPage {
 pub async fn index(
     State(state): State<AppState>,
     org: Result<CurrentOrg, AppError>,
-    user: crate::web::CurrentUser,
+    user: crate::request::CurrentUser,
 ) -> WebResult<Response> {
     let org = match resolve_org(org, "/settings/on-call") {
         Ok(o) => o,

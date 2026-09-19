@@ -19,13 +19,13 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use uptimepage::api::CursorPage;
-use uptimepage::api::public_error::PublicAppError;
 use uptimepage::domain::{
     ComponentHistoryResponse, DayState, IncidentSeverity, IncidentStatusPhase, OverallState,
     OverallStatus, PageRef, PublicComponent, PublicComponentGroup, PublicComponentStatus,
     PublicIncident, PublicIncidentUpdate, PublicMaintenance, PublicMaintenanceList,
     PublicStatusPage,
 };
+use uptimepage::error::public::PublicAppError;
 use uptimepage::public_status::{IncidentListQuery, PublicSource, source::FeedLinks};
 
 use common::build_test_app_with_public_source;

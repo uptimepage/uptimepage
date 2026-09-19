@@ -14,13 +14,13 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::api::ApiError;
 use crate::app::AppState;
 use crate::domain::{NewVariable, Variable, VariableId, validate_var_key};
+use crate::error::ApiError;
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::request::{Authorized, CurrentUser, VariablesRead, VariablesWrite};
 use crate::storage::CreateVariableOutcome;
-use crate::web::{Authorized, CurrentUser, VariablesRead, VariablesWrite};
 
 /// A variable plus its blast radius. The flattened [`Variable`] already redacts
 /// a secret's value (`null`); `used_by` is the count of referencing monitors.

@@ -161,7 +161,7 @@ pub const DOCS: &[DocPage] = &[
         blurb: "How checks are scheduled, executed, batched, and stored across Postgres and ClickHouse.",
         section: Section::Start,
         scope: Scope::Everyone,
-        lastmod: "2026-09-17",
+        lastmod: "2026-09-19",
         source: include_str!("../../docs/architecture.md"),
         dir: "",
     },

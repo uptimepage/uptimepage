@@ -557,7 +557,7 @@ impl McpServer {
             .await
             .map_err(|e| McpToolError::internal(format!("default regions: {e}")))?;
         // Must resolve exactly as an omitted `create_monitor.regions` does.
-        let applied_default = crate::api::handlers::targets::default_region_set(
+        let applied_default = crate::targets::default_region_set(
             preferred,
             plan.max_regions,
             self.state.cfg.scheduler.effective_default_region(),

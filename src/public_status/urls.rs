@@ -10,11 +10,10 @@ pub const LOGO_ROUTE: &str = "/status/branding/logo";
 /// is mounted. Single source for both the API view and the settings editor so
 /// their URLs can't diverge.
 pub fn public_base(cfg: &crate::config::AppConfig, slug: &str) -> Option<String> {
-    use crate::api::routes::{path_based_public_routes_enabled, subdomain_public_routes_enabled};
-    if subdomain_public_routes_enabled(cfg) {
+    if cfg.tenancy.subdomain_public_routes {
         return Some(format!("https://{slug}.{}", cfg.public_status.base_domain));
     }
-    if path_based_public_routes_enabled(cfg) {
+    if cfg.tenancy.path_based_public_routes {
         return Some(String::new());
     }
     None
@@ -23,10 +22,7 @@ pub fn public_base(cfg: &crate::config::AppConfig, slug: &str) -> Option<String>
 /// Public page URL from an origin: the apex in subdomain mode, `{origin}/status`
 /// in path mode.
 pub fn public_status_url(cfg: &crate::config::AppConfig, origin: &str) -> String {
-    status_url_for(
-        crate::api::routes::subdomain_public_routes_enabled(cfg),
-        origin,
-    )
+    status_url_for(cfg.tenancy.subdomain_public_routes, origin)
 }
 
 /// Same rule for callers that carry the tenancy flag instead of the whole
@@ -48,7 +44,7 @@ pub fn public_logo_url(base: Option<&str>, hash: &str) -> Option<String> {
 
 /// `.{base_domain}` slug-preview suffix in subdomain mode; `None` in path mode.
 pub fn public_host_suffix(cfg: &crate::config::AppConfig) -> Option<String> {
-    use crate::api::routes::subdomain_public_routes_enabled;
-    subdomain_public_routes_enabled(cfg)
+    cfg.tenancy
+        .subdomain_public_routes
         .then(|| format!(".{}", cfg.public_status.base_domain.trim_start_matches('.')))
 }

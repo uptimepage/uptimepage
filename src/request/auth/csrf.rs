@@ -21,10 +21,10 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use subtle::ConstantTimeEq;
 
-use crate::api::error::ApiErrorBody;
 use crate::app::AppState;
+use crate::error::ApiErrorBody;
 use crate::error::codes;
-use crate::web::auth::bearer_from_headers;
+use crate::request::auth::bearer_from_headers;
 
 pub const CSRF_HEADER: HeaderName = HeaderName::from_static("x-requested-with");
 pub const CSRF_HEADER_VALUE: &str = "uptimepage";

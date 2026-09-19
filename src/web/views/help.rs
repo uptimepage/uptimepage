@@ -6,8 +6,8 @@ use askama_web::WebTemplate;
 use axum::response::{IntoResponse, Response};
 
 use crate::error::AppError;
-use crate::web::CurrentOrg;
-use crate::web::Session;
+use crate::request::CurrentOrg;
+use crate::request::Session;
 use crate::web::filters;
 use crate::web::views::resolve_org;
 

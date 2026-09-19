@@ -12,14 +12,14 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::api::ApiError;
 use crate::app::AppState;
 use crate::domain::{
     EscalationPolicy, EscalationPolicySummary, EscalationTargetType, NewEscalationPolicy,
 };
+use crate::error::ApiError;
 use crate::error::codes;
 use crate::error::{AppError, Result};
-use crate::web::{Authorized, OnCallRead, OnCallWrite, OwnerAuthorized};
+use crate::request::{Authorized, OnCallRead, OnCallWrite, OwnerAuthorized};
 
 /// Pointing something at a policy is new paging coverage and needs the plan to
 /// sell it; clearing a binding is always allowed, so an org that has lost the

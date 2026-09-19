@@ -1,13 +1,11 @@
 use utoipa::OpenApi;
 
-use crate::api::error::{ApiError, ApiErrorBody};
 use crate::api::handlers;
 use crate::api::handlers::orgs::{
     CheckSlugResponse, CreateOrgRequest, MemberView as OrgMemberView, OrgView,
     SwitchActiveOrgRequest, UpdateMemberRoleRequest, UpdateOrgRequest,
 };
 use crate::api::page::PageEnvelope;
-use crate::api::public_error::{PublicApiError, PublicApiErrorBody};
 use crate::api::types::{
     BulkAction, BulkActionFailure, BulkActionRequest, BulkActionResponse, DashboardSummary,
     FlowStepSeries, Last24hSummary, LatencySeries, LatencySeriesByRegion, StatusBreakdown,
@@ -35,6 +33,8 @@ use crate::domain::{
     PublicPostmortem, PublicStatusPage, RotationType, Target, TargetAlerts, TargetUpdate, TcpCheck,
     TlsCertCheck, WriteSource,
 };
+use crate::error::public::{PublicApiError, PublicApiErrorBody};
+use crate::error::{ApiError, ApiErrorBody};
 use crate::storage::UptimeStats;
 
 #[derive(OpenApi)]
@@ -204,7 +204,7 @@ use crate::storage::UptimeStats;
             TcpCheck,
             PingCheck,
             HeartbeatCheck,
-            handlers::targets::HeartbeatInfo,
+            crate::targets::HeartbeatInfo,
             handlers::targets::RotateHeartbeatRequest,
             TlsCertCheck,
             DomainExpiryCheck,

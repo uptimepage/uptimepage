@@ -11,6 +11,7 @@ pub mod logo_storage;
 pub mod overall_status;
 pub mod source;
 pub mod subscriber_dispatch;
+pub mod urls;
 pub mod xml;
 
 pub use aggregator::{AggregatorConfig, OrgAggregator};

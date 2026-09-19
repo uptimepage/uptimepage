@@ -27,8 +27,8 @@ use crate::domain::{CredentialAction, CredentialOrigin, OauthProvider};
 use crate::domain::{OrgId, UserId};
 use crate::error::{AppError, Result};
 use crate::observability::metrics::names;
-use crate::web::CurrentUser;
-use crate::web::auth::Session;
+use crate::request::CurrentUser;
+use crate::request::auth::Session;
 
 #[derive(Debug, Deserialize)]
 pub struct LoginQuery {
@@ -204,7 +204,7 @@ pub struct CallbackQuery {
 pub async fn github_callback(
     state: State<AppState>,
     q: Query<CallbackQuery>,
-    ip: crate::web::client_ip::ClientIp,
+    ip: crate::request::client_ip::ClientIp,
     headers: HeaderMap,
     cookies: Cookies,
 ) -> Result<axum::response::Response> {
@@ -214,7 +214,7 @@ pub async fn github_callback(
 pub async fn google_callback(
     state: State<AppState>,
     q: Query<CallbackQuery>,
-    ip: crate::web::client_ip::ClientIp,
+    ip: crate::request::client_ip::ClientIp,
     headers: HeaderMap,
     cookies: Cookies,
 ) -> Result<axum::response::Response> {
@@ -224,7 +224,7 @@ pub async fn google_callback(
 pub async fn microsoft_callback(
     state: State<AppState>,
     q: Query<CallbackQuery>,
-    ip: crate::web::client_ip::ClientIp,
+    ip: crate::request::client_ip::ClientIp,
     headers: HeaderMap,
     cookies: Cookies,
 ) -> Result<axum::response::Response> {
@@ -234,7 +234,7 @@ pub async fn microsoft_callback(
 pub async fn gitlab_callback(
     state: State<AppState>,
     q: Query<CallbackQuery>,
-    ip: crate::web::client_ip::ClientIp,
+    ip: crate::request::client_ip::ClientIp,
     headers: HeaderMap,
     cookies: Cookies,
 ) -> Result<axum::response::Response> {
@@ -397,14 +397,14 @@ async fn finish_link(
             if let Some(email) = account_email(pool, link_user).await {
                 notify_credential_change(state, &email, provider, CredentialChange::Linked);
             }
-            crate::web::flash::Flash {
+            crate::request::flash::Flash {
                 identity_linked: Some(provider),
                 ..Default::default()
             }
         }
         // Not an empty flash: `set` skips those, leaving a stale banner from
         // another page to answer for this round trip.
-        Ok(oauth_login::LinkOutcome::AlreadyLinked) => crate::web::flash::Flash {
+        Ok(oauth_login::LinkOutcome::AlreadyLinked) => crate::request::flash::Flash {
             identity_already_linked: true,
             ..Default::default()
         },
@@ -416,14 +416,14 @@ async fn finish_link(
             );
             metrics::counter!(names::CREDENTIAL_LINK_REFUSED, "reason" => "identity_taken")
                 .increment(1);
-            crate::web::flash::Flash {
+            crate::request::flash::Flash {
                 identity_taken: true,
                 ..Default::default()
             }
         }
         Err(e) => return Err(e),
     };
-    crate::web::flash::set(
+    crate::request::flash::set(
         cookies,
         &flash,
         state.cfg.auth.session.cookie_secure,
@@ -474,7 +474,7 @@ async fn account_email(pool: &sqlx::PgPool, user: UserId) -> Option<String> {
 async fn finish_login(
     State(state): State<AppState>,
     Query(q): Query<CallbackQuery>,
-    crate::web::client_ip::ClientIp(client_ip): crate::web::client_ip::ClientIp,
+    crate::request::client_ip::ClientIp(client_ip): crate::request::client_ip::ClientIp,
     headers: HeaderMap,
     cookies: Cookies,
     provider: OauthProvider,
@@ -547,7 +547,7 @@ async fn finish_login(
                     "link callback refused: the state names an account the live session is not"
                 );
                 metrics::counter!(names::CREDENTIAL_LINK_REFUSED, "reason" => reason).increment(1);
-                return Ok(crate::web::auth::login_redirect(ACCOUNT_PATH).into_response());
+                return Ok(crate::request::auth::login_redirect(ACCOUNT_PATH).into_response());
             }
             Some(id)
         }
@@ -598,9 +598,9 @@ async fn finish_login(
             );
             // As above: a link dance belongs back on the settings page.
             if link_user.is_some() {
-                crate::web::flash::set(
+                crate::request::flash::set(
                     &cookies,
-                    &crate::web::flash::Flash {
+                    &crate::request::flash::Flash {
                         link_failed: true,
                         ..Default::default()
                     },
@@ -879,9 +879,9 @@ async fn finish_login(
         &state.cfg.auth.session,
         created.cookie_token,
     ));
-    crate::web::login_hint::set(&cookies, &state.cfg.auth.session, method.as_db_str());
+    crate::request::login_hint::set(&cookies, &state.cfg.auth.session, method.as_db_str());
     if let Err(err) =
-        crate::web::display_prefs::issue_cookies(&state, &cookies, resolved.user_id).await
+        crate::request::display_prefs::issue_cookies(&state, &cookies, resolved.user_id).await
     {
         tracing::warn!(error = %err, "display-preference cookie issue failed (non-fatal)");
     }
@@ -889,9 +889,9 @@ async fn finish_login(
     // One-shot banners ride a flash cookie (unspoofable, fires once); only the
     // slug-validated `joined` stays a query param.
     let invite_missed = joined.is_none() && consumed.invitation_id.is_some();
-    crate::web::flash::set(
+    crate::request::flash::set(
         &cookies,
-        &crate::web::flash::Flash {
+        &crate::request::flash::Flash {
             restored: false,
             invite_missed,
             ..Default::default()

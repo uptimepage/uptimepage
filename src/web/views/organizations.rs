@@ -10,8 +10,8 @@ use chrono::{DateTime, Duration, Utc};
 use crate::app::AppState;
 use crate::domain::Role;
 use crate::error::AppError;
+use crate::request::Session;
 use crate::storage::orgs as orgs_store;
-use crate::web::Session;
 use crate::web::error::WebResult;
 use crate::web::filters;
 
@@ -52,7 +52,7 @@ pub struct DeletedOrgRow {
 
 pub async fn page(session: Session) -> WebResult<Response> {
     if session.user.is_none() {
-        return Ok(crate::web::auth::login_redirect(PATH).into_response());
+        return Ok(crate::request::auth::login_redirect(PATH).into_response());
     }
     Ok(OrganizationsPage {
         active_tab: TAB_ORGS,

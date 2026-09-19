@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::app::AppState;
 use crate::observability::http_metrics;
-use crate::{api, web};
+use crate::{api, request, web};
 
 /// Build the full app router (API + web UI) with the cross-cutting
 /// guards applied. `main.rs` and the test harness both route through
@@ -56,8 +56,8 @@ fn apply_cross_cutting_layers(router: Router, state: AppState) -> Router {
     router
         .layer(from_fn_with_state(
             state.clone(),
-            web::auth::csrf::middleware,
+            request::auth::csrf::middleware,
         ))
-        .layer(from_fn_with_state(state, web::host::host_isolation))
+        .layer(from_fn_with_state(state, request::host::host_isolation))
         .layer(from_fn(http_metrics::middleware))
 }

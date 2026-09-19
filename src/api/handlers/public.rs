@@ -20,15 +20,15 @@ use uuid::Uuid;
 use crate::api::cursor::IncidentCursor;
 use crate::api::json_arc::JsonArc;
 use crate::api::page::{CursorPage, CursorPageOfPublicIncident};
-use crate::api::public_error::{PublicApiError, PublicAppError};
 use crate::app::AppState;
 use crate::domain::{
     ComponentHistoryResponse, PublicIncident, PublicMaintenanceList, PublicStatusPage,
 };
+use crate::error::public::{PublicApiError, PublicAppError};
 use crate::public_status::IncidentListQuery;
 use crate::public_status::badge::{component_badge, overall_badge, render_badge};
 use crate::public_status::source::FeedLinks;
-use crate::web::host::ResolvedStatusPage;
+use crate::request::host::ResolvedStatusPage;
 
 const NOINDEX: HeaderValue = HeaderValue::from_static("noindex");
 const X_ROBOTS_TAG: HeaderName = HeaderName::from_static("x-robots-tag");
@@ -234,16 +234,16 @@ pub async fn public_incidents_rss(
             .trim_end_matches('/')
             .to_owned()
     };
-    let subdomain_routes = crate::api::subdomain_public_routes_enabled(&state.cfg);
+    let subdomain_routes = state.cfg.tenancy.subdomain_public_routes;
     // Only a subdomain deploy resolves the page from the Host. Where every host
     // serves the same page, the Host names no better origin than the config.
     let origin = if subdomain_routes {
-        crate::web::host::request_origin(&headers, &state.cfg.public_status.base_domain)
+        crate::request::host::request_origin(&headers, &state.cfg.public_status.base_domain)
             .unwrap_or_else(configured)
     } else {
         configured()
     };
-    let page_url = crate::web::views::public_status::status_url_for(subdomain_routes, &origin);
+    let page_url = crate::public_status::urls::status_url_for(subdomain_routes, &origin);
     let links = FeedLinks {
         page: &page_url,
         origin: &origin,

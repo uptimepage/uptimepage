@@ -7,7 +7,7 @@ use utoipa::ToSchema;
 
 /// Top-level envelope for every 4xx/5xx response on the public surface.
 ///
-/// Deliberately narrower than [`crate::api::ApiError`]: no `field`,
+/// Deliberately narrower than [`crate::error::ApiError`]: no `field`,
 /// no `details`, no `trace_id`. Internal debugging info never leaks
 /// to anonymous callers.
 #[derive(Debug, Clone, Serialize, ToSchema)]

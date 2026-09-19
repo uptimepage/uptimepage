@@ -14,7 +14,7 @@ pub const COOKIE_NAME: &str = "sm_theme";
 /// `http_only=false` is intentional — the inline boot script reads
 /// `document.cookie` to apply the theme class before the stylesheet parses.
 /// Issued for a fresh browser at login by
-/// [`crate::web::display_prefs::issue_cookies`].
+/// [`crate::request::display_prefs::issue_cookies`].
 pub fn build_cookie(theme: AppTheme, secure: bool) -> Cookie<'static> {
     let mut c = Cookie::new(COOKIE_NAME, theme.as_str().to_owned());
     c.set_http_only(false);

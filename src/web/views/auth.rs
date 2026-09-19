@@ -12,7 +12,7 @@ use serde::Deserialize;
 
 use crate::app::AppState;
 use crate::auth::url::safe_redirect_target;
-use crate::web::auth::Session;
+use crate::request::auth::Session;
 use crate::web::filters;
 
 /// Sentinel matched against `nav` in base.html so the header doesn't render
@@ -99,7 +99,7 @@ pub async fn login(
     }
 
     use crate::auth::login_audit::LoginMethod;
-    let last = crate::web::login_hint::get(&cookies);
+    let last = crate::request::login_hint::get(&cookies);
     let last = last.as_deref();
 
     LoginPage {
@@ -191,7 +191,7 @@ pub struct RestorePage {
 /// complete, because the only way back in undoes it.
 pub async fn restore_page(
     State(state): State<AppState>,
-    pending: Option<crate::web::PendingDeletionUser>,
+    pending: Option<crate::request::PendingDeletionUser>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let Some(pending) = pending else {
@@ -222,7 +222,7 @@ pub async fn deleted_page(
 ) -> DeletedPage {
     DeletedPage {
         active_tab: TAB_RECOVER,
-        purge_at: crate::web::deletion_receipt::take(
+        purge_at: crate::request::deletion_receipt::take(
             &cookies,
             &state.cfg.auth.session.cookie_domain,
         ),
@@ -238,8 +238,8 @@ pub mod settings {
     use crate::app::AppState;
     use crate::auth::{account, api_tokens, session as session_store};
     use crate::error::AppError;
+    use crate::request::auth::{CurrentOrg, Session};
     use crate::storage::orgs::list_orgs_for_user;
-    use crate::web::auth::{CurrentOrg, Session};
     use crate::web::error::WebResult;
     use crate::web::filters;
     use crate::web::views::resolve_org;
@@ -304,7 +304,7 @@ pub mod settings {
 
     pub async fn sessions_page(session: Session) -> Response {
         if session.user.is_none() {
-            return crate::web::auth::login_redirect("/settings/sessions").into_response();
+            return crate::request::auth::login_redirect("/settings/sessions").into_response();
         }
         SessionsPage {
             active_tab: TAB_SETTINGS,
@@ -317,7 +317,7 @@ pub mod settings {
         session: Session,
     ) -> WebResult<Response> {
         let Some(user) = session.user.as_ref() else {
-            return Ok(crate::web::auth::login_redirect("/settings/api-tokens").into_response());
+            return Ok(crate::request::auth::login_redirect("/settings/api-tokens").into_response());
         };
         let pool = state.require_db()?;
         let mut orgs: Vec<OrgOption> = list_orgs_for_user(pool, user.id)
@@ -407,7 +407,7 @@ pub mod settings {
         cookies: tower_cookies::Cookies,
     ) -> WebResult<Response> {
         let Some(user) = session.user.clone() else {
-            return Ok(crate::web::auth::login_redirect("/settings/account").into_response());
+            return Ok(crate::request::auth::login_redirect("/settings/account").into_response());
         };
         let pool = state.require_db()?;
         // No data dependency between the three, so they go together.
@@ -503,15 +503,15 @@ pub mod settings {
     fn take_link_flash(
         cookies: &tower_cookies::Cookies,
         state: &AppState,
-    ) -> crate::web::flash::Flash {
+    ) -> crate::request::flash::Flash {
         let domain = &state.cfg.auth.session.cookie_domain;
-        let flash = crate::web::flash::take(cookies, domain);
-        let carried = crate::web::flash::Flash {
+        let flash = crate::request::flash::take(cookies, domain);
+        let carried = crate::request::flash::Flash {
             restored: flash.restored,
             invite_missed: flash.invite_missed,
             ..Default::default()
         };
-        crate::web::flash::set(
+        crate::request::flash::set(
             cookies,
             &carried,
             state.cfg.auth.session.cookie_secure,
@@ -788,7 +788,7 @@ pub mod settings {
     pub async fn usage_page(
         State(state): State<AppState>,
         org: Result<CurrentOrg, AppError>,
-        user: Result<crate::web::CurrentUser, AppError>,
+        user: Result<crate::request::CurrentUser, AppError>,
     ) -> WebResult<Response> {
         let org = match resolve_org(org, "/settings/usage") {
             Ok(o) => o,

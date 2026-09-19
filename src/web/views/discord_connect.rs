@@ -13,11 +13,11 @@ use crate::app::AppState;
 use crate::auth::discord;
 use crate::domain::{ChannelConfig, DiscordConfig};
 use crate::error::{AppError, Result};
-use crate::web::client_ip::ClientIp;
+use crate::request::client_ip::ClientIp;
+use crate::request::{Authorized, ChannelsWrite, CurrentUser};
 use crate::web::views::connect_oauth::{
     self, CallbackQuery, StartQuery, callback_uri, mint_start_response, run_callback,
 };
-use crate::web::{Authorized, ChannelsWrite, CurrentUser};
 
 pub async fn start(
     State(state): State<AppState>,

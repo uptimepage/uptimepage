@@ -32,8 +32,8 @@ use crate::app::AppState;
 use crate::auth::api_tokens;
 use crate::auth::scope::{Scope, ScopeSet};
 use crate::domain::{OrgId, UserId};
+use crate::request::auth::{AuthContext, bearer_from_headers};
 use crate::storage::orgs::is_active_member;
-use crate::web::auth::{AuthContext, bearer_from_headers};
 
 use super::error::McpToolError;
 

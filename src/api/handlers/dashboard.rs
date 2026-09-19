@@ -6,14 +6,14 @@ use axum::extract::State;
 use chrono::{Duration, Utc};
 use uuid::Uuid;
 
-use crate::api::ApiError;
 use crate::api::types::{DashboardSummary, Last24hSummary, StatusBreakdown, SystemSummary};
 use crate::app::AppState;
 use crate::domain::metrics::DashboardMetrics;
 use crate::domain::{CheckStatus, OrgId, Target};
+use crate::error::ApiError;
 use crate::error::Result;
+use crate::request::CurrentOrg;
 use crate::storage::{TargetFilter, TimeRange};
-use crate::web::CurrentOrg;
 
 const MAX_ORG_MONITORS: usize = 10_000;
 

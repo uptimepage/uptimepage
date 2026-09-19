@@ -1,5 +1,5 @@
 use super::ALLOWED_SCHEMES;
-use super::dispatch::flow_capable_set;
+use crate::targets::{default_region_set, flow_capable_set};
 use std::collections::HashSet;
 use std::net::IpAddr;
 
@@ -490,40 +490,6 @@ pub(crate) fn validate_region_policy(
             ))
         }
         _ => Ok(()),
-    }
-}
-
-/// The default region set for a new monitor: the regions flagged
-/// `default_selected`, capped at the plan's `max_regions` (default region kept
-/// first when the cap bites), so the default can never exceed the quota. An
-/// opted-out region stays pickable on the form, just unchecked.
-pub(crate) fn default_region_set(
-    preferred: Vec<String>,
-    max_regions: i32,
-    default_region: &str,
-) -> Vec<String> {
-    let cap = max_regions.max(1) as usize;
-    let set: Vec<String> = if preferred.len() <= cap {
-        preferred
-    } else {
-        // The control plane's own region leads when the cap bites, but only if
-        // it is a default at all: an opted-out region must not seed itself back
-        // in and displace one the operator actually chose.
-        let mut v: Vec<String> = match preferred.iter().any(|r| r == default_region) {
-            true => vec![default_region.to_string()],
-            false => Vec::new(),
-        };
-        for r in preferred {
-            if r != default_region && v.len() < cap {
-                v.push(r);
-            }
-        }
-        v
-    };
-    if set.is_empty() {
-        vec![default_region.to_string()]
-    } else {
-        set
     }
 }
 

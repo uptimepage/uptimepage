@@ -14,7 +14,7 @@
 //! service; either way the rebind is one path.
 //! The SSL checker adds two more, both leaves that travel the same way:
 //! `crate::security::{SsrfGuard, cert_probe}` and
-//! `crate::web::client_ip::extract`. Each is a pure function over its
+//! `crate::request::client_ip::extract`. Each is a pure function over its
 //! arguments — no pool, no state, no resolver — which is the property
 //! that keeps them copyable rather than couplings.
 //! The domain checker also uses the pure `security::rdap` parser and the

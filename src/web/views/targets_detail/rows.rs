@@ -96,11 +96,7 @@ pub struct HeartbeatLiveness {
 }
 
 impl HeartbeatLiveness {
-    pub fn derive(
-        hb: &crate::api::handlers::targets::HeartbeatInfo,
-        now: DateTime<Utc>,
-        enabled: bool,
-    ) -> Self {
+    pub fn derive(hb: &crate::targets::HeartbeatInfo, now: DateTime<Utc>, enabled: bool) -> Self {
         Self {
             pending: hb.pending && enabled,
             since: hb.created_at,

@@ -13,13 +13,13 @@ use crate::app::AppState;
 use crate::domain::{CheckSpec, CheckStatus};
 use crate::error::AppError;
 use crate::error::codes;
+use crate::request::{AuthedBrowser, CurrentOrg};
 use crate::storage::{HeartbeatMonitor, TimeRange};
 use crate::web::error::WebResult;
 use crate::web::filters;
 use crate::web::views::coverage;
 use crate::web::views::region_display::{LabeledRegion, labeled_regions};
 use crate::web::views::{RangeOption, build_range_options, describe_check, resolve_range_key};
-use crate::web::{AuthedBrowser, CurrentOrg};
 
 use load::{
     FLAP_WINDOW_HOURS, LAST_RESULT_WINDOW_DAYS, alerts_nobody, flaps_by_region, load_flaps,
@@ -170,7 +170,7 @@ pub struct DetailPage {
     pub region_breakdown: Vec<RegionBreakdownRow>,
     /// Ping-URL card for heartbeat monitors; `None` for every other kind.
     /// Shares the API handler's projection so the two surfaces can't diverge.
-    pub heartbeat: Option<crate::api::handlers::targets::HeartbeatInfo>,
+    pub heartbeat: Option<crate::targets::HeartbeatInfo>,
     pub liveness: Option<HeartbeatLiveness>,
     /// The notice renders in place here, not as an OOB swap.
     pub liveness_oob: bool,
@@ -290,16 +290,12 @@ pub async fn index(
     // The API endpoint keeps propagating: a caller asking for the token must
     // hear that the answer is unavailable, not receive one without it.
     let heartbeat = match target.check.as_heartbeat() {
-        Some(check) => crate::api::handlers::targets::heartbeat_info(
-            &state,
-            org,
-            target.id,
-            check,
-            target.enabled,
-        )
-        .await
-        .map_err(|err| tracing::warn!(error = %err, "heartbeat card unavailable"))
-        .ok(),
+        Some(check) => {
+            crate::targets::heartbeat_info(&state, org, target.id, check, target.enabled)
+                .await
+                .map_err(|err| tracing::warn!(error = %err, "heartbeat card unavailable"))
+                .ok()
+        }
         None => None,
     };
     // Only counted when the damper is on, so the banner never promises a hold

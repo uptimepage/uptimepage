@@ -20,9 +20,9 @@ use crate::domain::agent_wire::{
 };
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::request::AgentIdentity;
 use crate::storage::admin::AdminRepo;
 use crate::storage::operator::OperatorRepo;
-use crate::web::AgentIdentity;
 
 /// Max interactive checks handed to one agent per long-poll return.
 const DISPATCH_CLAIM_LIMIT: usize = 32;

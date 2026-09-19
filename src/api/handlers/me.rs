@@ -15,10 +15,10 @@ use crate::app::AppState;
 use crate::auth::session as session_store;
 use crate::domain::{AppTheme, TimeFormat, UserId};
 use crate::error::{AppError, Result};
+use crate::request::auth::Session;
+use crate::request::theme as theme_cookie;
+use crate::request::time_format as time_format_cookie;
 use crate::storage::users as users_store;
-use crate::web::auth::Session;
-use crate::web::theme as theme_cookie;
-use crate::web::time_format as time_format_cookie;
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MeView {

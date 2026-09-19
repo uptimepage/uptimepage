@@ -13,16 +13,16 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use crate::api::ApiError;
 use crate::app::AppState;
 use crate::domain::preferences::validate_timezone;
 use crate::domain::{
     NewOnCallOverride, NewOnCallSchedule, OnCallOverride, OnCallScheduleDetail,
     OnCallScheduleSummary, RotationType, UserId,
 };
+use crate::error::ApiError;
 use crate::error::codes;
 use crate::error::{AppError, Result};
-use crate::web::{Authorized, CurrentUser, OnCallRead, OnCallWrite, OwnerAuthorized};
+use crate::request::{Authorized, CurrentUser, OnCallRead, OnCallWrite, OwnerAuthorized};
 
 const MAX_NAME: usize = 100;
 const MAX_LAYERS: usize = 10;

@@ -1,8 +1,8 @@
 use super::branding::*;
 use super::og::*;
-use super::urls::*;
 use super::view::*;
 use super::*;
+use crate::public_status::urls::*;
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use uuid::Uuid;

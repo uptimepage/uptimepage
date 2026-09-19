@@ -16,12 +16,12 @@ use serde::Serialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::api::ApiError;
 use crate::app::AppState;
 use crate::domain::OrgId;
+use crate::error::ApiError;
 use crate::error::codes;
 use crate::error::{AppError, Result};
-use crate::web::auth::{CurrentOrg, CurrentUser};
+use crate::request::auth::{CurrentOrg, CurrentUser};
 
 /// A single quota's `current` against its `limit`.
 #[derive(Debug, Clone, Serialize, ToSchema)]

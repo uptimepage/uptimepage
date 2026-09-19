@@ -20,9 +20,9 @@ use crate::auth::session as session_store;
 use crate::auth::{fingerprint, passkey};
 use crate::domain::UserId;
 use crate::error::{AppError, Result};
+use crate::request::auth::Session;
+use crate::request::{BrowserUser, CurrentUser};
 use crate::storage::{oauth_identities, passkeys};
-use crate::web::auth::Session;
-use crate::web::{BrowserUser, CurrentUser};
 
 /// One ceremony's opaque handle plus the options `navigator.credentials` wants.
 #[derive(Debug, Serialize, ToSchema)]
@@ -109,14 +109,14 @@ pub async fn register_start(
     summary = "Store the passkey the authenticator just minted",
     responses(
         (status = 204, description = "Added"),
-        (status = 400, body = crate::api::error::ApiError, description = "Challenge expired, already answered, or the credential did not verify"),
+        (status = 400, body = crate::error::ApiError, description = "Challenge expired, already answered, or the credential did not verify"),
         (status = 401, description = "Not signed in"),
     ),
 )]
 pub async fn register_finish(
     State(state): State<AppState>,
     session: Session,
-    crate::web::client_ip::ClientIp(client_ip): crate::web::client_ip::ClientIp,
+    crate::request::client_ip::ClientIp(client_ip): crate::request::client_ip::ClientIp,
     headers: HeaderMap,
     Json(body): Json<FinishRegistration>,
 ) -> Result<StatusCode> {
@@ -237,13 +237,13 @@ pub async fn login_start(
     summary = "Complete a passkey sign-in and open a session",
     responses(
         (status = 200, body = LoginComplete),
-        (status = 400, body = crate::api::error::ApiError, description = "Challenge expired, already answered, or the assertion did not verify"),
+        (status = 400, body = crate::error::ApiError, description = "Challenge expired, already answered, or the assertion did not verify"),
     ),
 )]
 pub async fn login_finish(
     State(state): State<AppState>,
     cookies: Cookies,
-    crate::web::client_ip::ClientIp(client_ip): crate::web::client_ip::ClientIp,
+    crate::request::client_ip::ClientIp(client_ip): crate::request::client_ip::ClientIp,
     headers: HeaderMap,
     Json(body): Json<FinishLogin>,
 ) -> Result<Response> {
@@ -433,19 +433,19 @@ async fn complete_login(
         &state.cfg.auth.session,
         created.cookie_token,
     ));
-    crate::web::login_hint::set(
+    crate::request::login_hint::set(
         cookies,
         &state.cfg.auth.session,
         LoginMethod::Passkey.as_db_str(),
     );
-    if let Err(err) = crate::web::display_prefs::issue_cookies(state, cookies, user_id).await {
+    if let Err(err) = crate::request::display_prefs::issue_cookies(state, cookies, user_id).await {
         tracing::warn!(error = %err, "display-preference cookie issue failed (non-fatal)");
     }
 
     let invite_missed = joined.is_none() && invitation_id.is_some();
-    crate::web::flash::set(
+    crate::request::flash::set(
         cookies,
-        &crate::web::flash::Flash {
+        &crate::request::flash::Flash {
             invite_missed,
             ..Default::default()
         },
@@ -478,15 +478,15 @@ async fn complete_login(
     params(("id" = String, Path, description = "Passkey id")),
     responses(
         (status = 204, description = "Removed"),
-        (status = 400, body = crate::api::error::ApiError, description = "Would leave no way to sign in"),
-        (status = 404, body = crate::api::error::ApiError, description = "No such passkey on this account"),
+        (status = 400, body = crate::error::ApiError, description = "Would leave no way to sign in"),
+        (status = 404, body = crate::error::ApiError, description = "No such passkey on this account"),
     ),
 )]
 pub async fn remove(
     State(state): State<AppState>,
     BrowserUser(CurrentUser(user_id)): BrowserUser,
     session: Session,
-    crate::web::client_ip::ClientIp(client_ip): crate::web::client_ip::ClientIp,
+    crate::request::client_ip::ClientIp(client_ip): crate::request::client_ip::ClientIp,
     headers: HeaderMap,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<StatusCode> {
@@ -552,7 +552,7 @@ fn nickname(raw: Option<&str>) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.chars().take(NICKNAME_MAX_CHARS).collect())
 }
 
-fn signed_in(session: &Session) -> Result<crate::web::auth::User> {
+fn signed_in(session: &Session) -> Result<crate::request::auth::User> {
     session.user.clone().ok_or_else(|| AppError::Unauthorized)
 }
 

@@ -15,8 +15,8 @@ use crate::config::{AppConfig, ConnectOauthConfig};
 use crate::domain::credential::{DISCORD_CONNECT_PROVIDER, SLACK_CONNECT_PROVIDER};
 use crate::domain::{ChannelConfig, OrgId};
 use crate::error::{AppError, Result};
+use crate::request::CurrentUser;
 use crate::storage::orgs::is_active_member;
-use crate::web::CurrentUser;
 use crate::web::views::delegate_connect::{audit_delegated_create, finish_create};
 use crate::web::views::notification_channels::{QuotaBlockLog, create_channel_deduped};
 

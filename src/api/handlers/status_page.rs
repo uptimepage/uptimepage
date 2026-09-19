@@ -16,24 +16,22 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::api::ApiError;
 use crate::app::AppState;
 use crate::domain::{
     AssetSlot, NewMonitorShare, NewStatusPage, NewStatusPageComponent, OrgId, PublicOrgBranding,
     PublicStyle, StatusPage, StatusPageComponent, StatusPageComponentUpdate, StatusPageId,
     StatusPageUpdate, UserId, validate_slug,
 };
+use crate::error::ApiError;
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::public_status::LogoMime;
-use crate::storage::{AddComponentOutcome, CreateShareOutcome};
-use crate::web::views::public_status::{
-    LOGO_ROUTE, public_base, public_logo_url, public_status_url,
-};
-use crate::web::{
+use crate::public_status::urls::{LOGO_ROUTE, public_base, public_logo_url, public_status_url};
+use crate::request::{
     Authorized, CurrentUser, OwnerAuthorized, RequestSource, StatusPageDelete, StatusPageRead,
     StatusPageWrite,
 };
+use crate::storage::{AddComponentOutcome, CreateShareOutcome};
 
 // ── DTOs ────────────────────────────────────────────────────────────────────
 

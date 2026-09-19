@@ -30,8 +30,8 @@ use crate::domain::{OrgId, Organization, Role, UserId};
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::request::{BrowserUser, CurrentUser, VerifiedBrowserUser};
 use crate::storage::orgs as orgs_store;
-use crate::web::{BrowserUser, CurrentUser, VerifiedBrowserUser};
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

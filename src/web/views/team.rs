@@ -10,10 +10,11 @@ use chrono::{DateTime, Utc};
 use crate::app::AppState;
 use crate::auth::invitations;
 use crate::error::AppError;
+use crate::request::Session;
+use crate::request::auth::CurrentOrg;
 use crate::storage::orgs::{self as orgs_store, MembershipStatus};
-use crate::web::auth::CurrentOrg;
 use crate::web::error::WebResult;
-use crate::web::{Session, filters};
+use crate::web::filters;
 
 const TAB_TEAM: &str = "team";
 
@@ -63,7 +64,7 @@ pub async fn page(
         Err(resp) => return Ok(*resp),
     };
     let Some(user) = session.user.as_ref() else {
-        return Ok(crate::web::auth::login_redirect("/settings/team").into_response());
+        return Ok(crate::request::auth::login_redirect("/settings/team").into_response());
     };
     let pool = state.require_db()?;
     let is_owner = matches!(

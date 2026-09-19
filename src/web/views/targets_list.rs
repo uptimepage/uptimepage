@@ -13,6 +13,7 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::metrics::DashboardMetrics;
 use crate::domain::{CheckStatus, OrgId, Target};
+use crate::request::{AuthedBrowser, CurrentOrg};
 use crate::storage::TimeRange;
 use crate::storage::orgs::list_members;
 use crate::storage::traits::{TargetFilter, TargetSort};
@@ -20,7 +21,6 @@ use crate::web::avatar::{avatar_color, initials_from};
 use crate::web::error::WebResult;
 use crate::web::filters;
 use crate::web::views::{PageSizeLink, PagerLink, describe_check, humanize_duration};
-use crate::web::{AuthedBrowser, CurrentOrg};
 
 const DEFAULT_LIMIT: usize = 50;
 const MAX_LIMIT: usize = 200;

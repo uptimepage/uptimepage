@@ -22,13 +22,13 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use crate::api::ApiError;
 use crate::app::AppState;
 use crate::domain::{OrgId, Organization, Role, UserId, validate_slug};
+use crate::error::ApiError;
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::request::{BrowserUser, CurrentUser};
 use crate::storage::orgs as orgs_store;
-use crate::web::{BrowserUser, CurrentUser};
 
 // ── DTOs ────────────────────────────────────────────────────────────────────
 
@@ -496,7 +496,7 @@ pub async fn list_org_members(
 )]
 pub async fn remove_org_member(
     State(state): State<AppState>,
-    session: crate::web::Session,
+    session: crate::request::Session,
     Path((id, target_user_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode> {
     let pool = require_db(&state)?;
@@ -610,7 +610,7 @@ pub async fn update_org_member_role(
 )]
 pub async fn switch_active_org(
     State(state): State<AppState>,
-    session: crate::web::Session,
+    session: crate::request::Session,
     Json(req): Json<SwitchActiveOrgRequest>,
 ) -> Result<StatusCode> {
     let pool = require_db(&state)?;

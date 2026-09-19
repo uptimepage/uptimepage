@@ -19,11 +19,11 @@ use crate::auth::url::token_link;
 use crate::domain::{NewSubscriber, SubscriberChannel};
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
 use crate::http_outbound::post_bytes_with_headers;
+use crate::request::host::resolve_status_page;
 use crate::storage::status_pages::{PAGE_CUSTOM_DOMAIN_LIVE, PAGE_PLAN_JOIN};
 use crate::storage::subscribers::{self, CONFIRM_TTL_HOURS};
 use crate::web::error::WebResult;
 use crate::web::filters;
-use crate::web::host::resolve_status_page;
 
 #[derive(Template, WebTemplate)]
 #[template(path = "public/subscribe_notice.html")]
@@ -153,7 +153,7 @@ pub async fn subscribe(
     {
         let meta = page_meta(pool, page.page.0).await;
         let origin = match &meta {
-            Some(m) => crate::web::host::page_origin(
+            Some(m) => crate::request::host::page_origin(
                 &state.cfg.public_status.base_domain,
                 &state.cfg.auth.public_base_url,
                 &m.slug,

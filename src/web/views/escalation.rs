@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::{EscalationTargetType, OrgId};
 use crate::error::AppError;
-use crate::web::CurrentOrg;
+use crate::request::CurrentOrg;
 use crate::web::error::WebResult;
 use crate::web::filters;
 use crate::web::views::resolve_org;

@@ -1686,7 +1686,7 @@ fn region_option(id: &str) -> crate::storage::RegionOption {
 
 #[test]
 fn the_region_catalog_flags_the_default_set_the_plan_actually_pays_for() {
-    use crate::api::handlers::targets::default_region_set;
+    use crate::targets::default_region_set;
 
     let catalog = || {
         vec![

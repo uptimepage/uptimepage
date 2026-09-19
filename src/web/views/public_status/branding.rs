@@ -5,10 +5,10 @@ use axum::http::HeaderMap;
 use crate::app::AppState;
 use crate::config::PublicStatusConfig;
 use crate::domain::{OrgId, PublicOrgBranding, StatusPageId};
+use crate::request::host::is_subdomain_public_request;
 use crate::storage::orgs::{OrgBranding, load_page_branding};
-use crate::web::host::is_subdomain_public_request;
 
-use super::urls::LOGO_ROUTE;
+use crate::public_status::urls::LOGO_ROUTE;
 
 /// Operator-controlled branding, resolved for rendering. Optional DB fields
 /// have already had their defaults applied here, so the template just prints

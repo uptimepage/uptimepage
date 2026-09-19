@@ -12,13 +12,13 @@ use axum::http::StatusCode;
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::api::ApiError;
 use crate::app::AppState;
 use crate::domain::{MonitorShare, MonitorShareId, NewMonitorShare};
+use crate::error::ApiError;
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::request::{Authorized, CurrentUser, TargetsWrite};
 use crate::storage::CreateShareOutcome;
-use crate::web::{Authorized, CurrentUser, TargetsWrite};
 
 /// Maximum share-label length (mirrors the `monitor_shares_label_length` CHECK).
 const LABEL_MAX: usize = 80;

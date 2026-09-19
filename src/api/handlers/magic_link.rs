@@ -85,14 +85,15 @@ pub struct RequestResponse {
 pub async fn request(
     State(state): State<AppState>,
     cookies: Cookies,
-    crate::web::client_ip::ClientIp(client_ip): crate::web::client_ip::ClientIp,
+    crate::request::client_ip::ClientIp(client_ip): crate::request::client_ip::ClientIp,
     Json(body): Json<RequestBody>,
 ) -> Result<Json<RequestResponse>> {
     let pool = state.require_db()?;
     let salt = state.cfg.auth.fingerprint_salt.as_str();
     let ip_hash = fingerprint::hash_fingerprint(salt, &client_ip.to_string());
     // Behind a declared proxy an internal address means the chain lost the client.
-    let ip_hint = crate::web::client_ip::reportable(client_ip, &state.cfg.security.trusted_proxies);
+    let ip_hint =
+        crate::request::client_ip::reportable(client_ip, &state.cfg.security.trusted_proxies);
     if ip_hint.is_none() {
         tracing::warn!(
             %client_ip,
@@ -384,7 +385,7 @@ pub async fn verify_landing(
 /// same priority as the OAuth callback.
 pub async fn verify_confirm(
     State(state): State<AppState>,
-    crate::web::client_ip::ClientIp(client_ip): crate::web::client_ip::ClientIp,
+    crate::request::client_ip::ClientIp(client_ip): crate::request::client_ip::ClientIp,
     headers: HeaderMap,
     cookies: Cookies,
     Form(form): Form<ConfirmForm>,
@@ -453,7 +454,7 @@ pub struct CodeForm {
 /// asked for it.
 pub async fn submit_code(
     State(state): State<AppState>,
-    crate::web::client_ip::ClientIp(client_ip): crate::web::client_ip::ClientIp,
+    crate::request::client_ip::ClientIp(client_ip): crate::request::client_ip::ClientIp,
     headers: HeaderMap,
     cookies: Cookies,
     Form(form): Form<CodeForm>,
@@ -665,21 +666,21 @@ async fn open_session_for(
         &state.cfg.auth.session,
         created.cookie_token,
     ));
-    crate::web::login_hint::set(
+    crate::request::login_hint::set(
         cookies,
         &state.cfg.auth.session,
         LoginMethod::MagicLink.as_db_str(),
     );
-    if let Err(err) = crate::web::display_prefs::issue_cookies(state, cookies, user_id).await {
+    if let Err(err) = crate::request::display_prefs::issue_cookies(state, cookies, user_id).await {
         tracing::warn!(error = %err, "display-preference cookie issue failed (non-fatal)");
     }
     // One-shot banners ride a flash cookie (unspoofable, fires once); only the
     // slug-validated `joined` stays a query param. Same priority as the OAuth
     // callback.
     let invite_missed = joined.is_none() && row.invitation_id.is_some();
-    crate::web::flash::set(
+    crate::request::flash::set(
         cookies,
-        &crate::web::flash::Flash {
+        &crate::request::flash::Flash {
             restored: false,
             invite_missed,
             ..Default::default()

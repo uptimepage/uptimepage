@@ -20,15 +20,15 @@ use serde::Serialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::api::error::ApiError;
 use crate::app::AppState;
 use crate::auth::account;
 use crate::domain::{UserId, strip_served_stale};
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
+use crate::error::ApiError;
 use crate::error::{AppError, Result};
 use crate::observability::metrics::names;
+use crate::request::{BrowserUser, CurrentUser};
 use crate::storage::postgres_secrets::{RawTargetRow, RedactedTarget};
-use crate::web::{BrowserUser, CurrentUser};
 
 // ---------------------------------------------------------------------------
 // Data export
@@ -603,7 +603,7 @@ pub async fn delete_account(
 
     // The deletion dropped every session, so the confirmation page has no
     // other way to read the purge date.
-    crate::web::deletion_receipt::set(
+    crate::request::deletion_receipt::set(
         &cookies,
         outcome.grace_deadline,
         state.cfg.auth.session.cookie_secure,
@@ -651,7 +651,7 @@ pub async fn delete_account(
 pub async fn restore_account(
     State(state): State<AppState>,
     cookies: tower_cookies::Cookies,
-    pending: crate::web::PendingDeletionUser,
+    pending: crate::request::PendingDeletionUser,
 ) -> Result<StatusCode> {
     let pool = state.require_db()?;
     let Some(outcome) = account::restore_account(pool, pending.user_id).await? else {
@@ -685,9 +685,9 @@ pub async fn restore_account(
         "account restored from a pending deletion"
     );
 
-    crate::web::flash::set(
+    crate::request::flash::set(
         &cookies,
-        &crate::web::flash::Flash {
+        &crate::request::flash::Flash {
             restored: true,
             invite_missed: false,
             ..Default::default()

@@ -472,7 +472,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 # MCP connector host
 # ═══════════════════════════════════════════════════════════════════════
 # `mcp` is an operator label, so the app router serves it, narrowed to /mcp
-# and /.well-known/* (`host_isolation` in src/web/host.rs); the edge repeats
+# and /.well-known/* (`host_isolation` in src/request/host.rs); the edge repeats
 # that allow-list so the operator UI, API and OAuth endpoints, and the per-IP
 # zones they sit behind, never answer on a second host. Own per-host cert:
 # every request here carries a bearer token.
@@ -596,7 +596,7 @@ mcp.{$UPTIMEPAGE_DOMAIN} {
 # Marketing site (apex) — www 301-redirects here for one canonical host.
 # ═══════════════════════════════════════════════════════════════════════
 # The bare {domain} is served by the uptimepage container; the Rust
-# dispatcher (web/host.rs::classify_host + the RouteByHost service) hands
+# dispatcher (request/host.rs::classify_host + the RouteByHost service) hands
 # marketing requests off inside the binary. Apex and www each carry their
 # own per-host HTTP-01 cert, kept off the *.{domain} wildcard so a
 # wildcard-key leak still doesn't touch the marketing surface or the

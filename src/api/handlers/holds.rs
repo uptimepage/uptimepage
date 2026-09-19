@@ -25,13 +25,13 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::owned_account;
-use crate::api::ApiError;
 use crate::app::AppState;
+use crate::error::ApiError;
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::quotas::PlanSource;
-use crate::web::auth::CurrentUser;
-use crate::web::{OwnerAuthorized, TargetsWrite};
+use crate::request::auth::CurrentUser;
+use crate::request::{OwnerAuthorized, TargetsWrite};
 
 /// One row a plan is currently holding.
 #[derive(Debug, Clone, Serialize, ToSchema)]

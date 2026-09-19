@@ -16,7 +16,7 @@ use crate::domain::AccountId;
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::quotas::{Reconciled, overrides};
-use crate::web::OperatorAuth;
+use crate::request::OperatorAuth;
 
 const MAX_REASON: usize = 500;
 

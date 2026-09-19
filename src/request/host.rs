@@ -17,12 +17,11 @@ use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
-use crate::api::handlers::health::is_health_path;
-use crate::api::public_error::PublicAppError;
-use crate::api::subdomain_public_routes_enabled;
 use crate::app::AppState;
 use crate::config::AppConfig;
 use crate::domain::{OrgId, PageRef, StatusPageId};
+use crate::error::public::PublicAppError;
+use crate::request::is_health_path;
 
 /// Subdomain labels that route to the operator surface (dashboard + auth +
 /// API) instead of the per-org public page. These are NOT the
@@ -262,7 +261,7 @@ pub async fn resolve_status_page(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<PageRef, PublicAppError> {
-    if !subdomain_public_routes_enabled(&state.cfg) {
+    if !state.cfg.tenancy.subdomain_public_routes {
         return resolve_default_page(state).await;
     }
 
@@ -371,7 +370,7 @@ fn host_surface(state: &AppState, headers: &HeaderMap) -> HostSurface {
     // `RouteByHost` intercepts those hosts before this code runs.
     match parse_host_shape(host, &state.cfg.public_status.base_domain) {
         HostShape::Subdomain(slug)
-            if subdomain_public_routes_enabled(&state.cfg) && !is_operator_label(slug) =>
+            if state.cfg.tenancy.subdomain_public_routes && !is_operator_label(slug) =>
         {
             HostSurface::Tenant
         }
@@ -412,7 +411,7 @@ fn url_host(url: &str) -> Option<&str> {
 /// allowed to expose. Combined with [`PUBLIC_TENANT_PREFIXES`] this is
 /// the complete allow-list — every grep-able place a tenant-host route
 /// is whitelisted, so adding a new public-tenant route forces a visit
-/// here too. Mirrors the `HEALTH_PATHS` pattern in `api::handlers::health`.
+/// here too. Mirrors the [`HEALTH_PATHS`] pattern.
 const PUBLIC_TENANT_EXACT: &[&str] = &["/", "/status", "/subscribe", "/.well-known/security.txt"];
 
 /// Path prefixes the public tenant surface is allowed to expose. No

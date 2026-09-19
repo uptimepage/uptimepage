@@ -13,12 +13,12 @@ use serde::Deserialize;
 use crate::app::AppState;
 use crate::domain::{BillingStatus, Interval, Subscription};
 use crate::error::AppError;
+use crate::request::{CurrentOrg, CurrentUser, Session};
 use crate::storage::subscriptions::PlanCard;
 use crate::storage::{accounts, subscriptions};
 use crate::web::error::WebResult;
 use crate::web::filters;
 use crate::web::views::resolve_org;
-use crate::web::{CurrentOrg, CurrentUser, Session};
 
 const TAB_BILLING: &str = "billing";
 
@@ -488,7 +488,8 @@ pub async fn payment_method(
         session.user.as_ref(),
     ) else {
         return Ok(
-            crate::web::auth::login_redirect("/settings/billing/payment-method").into_response(),
+            crate::request::auth::login_redirect("/settings/billing/payment-method")
+                .into_response(),
         );
     };
     let Some(account) = accounts::account_for_user(pool, user.id).await? else {

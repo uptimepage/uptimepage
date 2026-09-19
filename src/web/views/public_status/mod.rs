@@ -13,27 +13,23 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::api::public_error::PublicAppError;
 use crate::app::AppState;
 use crate::domain::AssetSlot;
 use crate::domain::PublicIncident;
+use crate::error::public::PublicAppError;
+use crate::request::host::{is_subdomain_public_request, request_origin, resolve_status_page};
 use crate::web::error::{NotFoundPage, UnavailablePage};
 use crate::web::filters;
-use crate::web::host::{is_subdomain_public_request, request_origin, resolve_status_page};
 use crate::web::robots;
 
 mod branding;
 mod og;
 #[cfg(test)]
 mod tests;
-mod urls;
 mod view;
 
 pub use branding::{BrandingView, render_about, safe_brand_color, safe_brand_text_for};
 pub use og::OgMeta;
-pub use urls::{
-    LOGO_ROUTE, public_base, public_host_suffix, public_logo_url, public_status_url, status_url_for,
-};
 pub use view::{
     ComponentView, DayCell, GroupView, IncidentDetailView, IncidentHeader, IncidentSummary,
     IncidentUpdateView, MaintenanceView, StatusView,

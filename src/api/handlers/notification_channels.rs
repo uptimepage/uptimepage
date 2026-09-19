@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::api::ApiError;
 use crate::api::redaction::Redacted;
 use crate::app::AppState;
 use crate::auth::url::token_link;
@@ -25,18 +24,19 @@ use crate::domain::{
     NotificationChannel, NotificationChannelUpdate, NotificationReason, validate_channel_name,
 };
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
+use crate::error::ApiError;
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::notifier::build_notifier;
 use crate::notifier::event::IncidentNotice;
+use crate::request::{
+    Authorized, ChannelsDelete, ChannelsExecute, ChannelsRead, ChannelsWrite, CurrentUser,
+    RequestSource,
+};
 use crate::security::sha256_hex;
 use crate::security::token_hash::generate_raw_token;
 use crate::storage::channel_verification;
 use crate::storage::{LinkCodeStatus, LinkPurpose, MintOutcome};
-use crate::web::{
-    Authorized, ChannelsDelete, ChannelsExecute, ChannelsRead, ChannelsWrite, CurrentUser,
-    RequestSource,
-};
 
 /// Result of `POST /{id}/test`. A `false` never reaches the client — a failed
 /// delivery is a 422 (`CHANNEL_TEST_FAILED`) — but the explicit field keeps

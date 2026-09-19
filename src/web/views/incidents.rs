@@ -18,12 +18,12 @@ use crate::domain::{
 };
 use crate::error::AppError;
 use crate::error::codes;
+use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser};
 use crate::storage::orgs::list_members;
 use crate::storage::{ClampedRange, IncidentOpsFilter, IncidentSort, TargetFilter, TimeRange};
 use crate::web::error::WebResult;
 use crate::web::filters;
 use crate::web::views::{PageSizeLink, PagerLink};
-use crate::web::{AuthedBrowser, CurrentOrg, CurrentUser};
 
 const STATE_FILTERS: &[&str] = &["all", "triggered", "acknowledged", "resolved"];
 const SEVERITIES: &[&str] = &["minor", "major", "critical"];

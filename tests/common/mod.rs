@@ -643,8 +643,8 @@ fn assemble_pg_router_tweaked(
 /// `Session::from_request_parts` reads from the extensions when present, so
 /// tests can drive authenticated routes without the real auth backend.
 pub fn session_layer(
-    session: uptimepage::web::Session,
-) -> axum::Extension<uptimepage::web::Session> {
+    session: uptimepage::request::Session,
+) -> axum::Extension<uptimepage::request::Session> {
     axum::Extension(session)
 }
 
@@ -718,8 +718,8 @@ pub fn with_session(
     org: Option<OrgId>,
     session_id: Option<&str>,
 ) -> Router {
-    router.layer(session_layer(uptimepage::web::Session {
-        user: Some(uptimepage::web::User {
+    router.layer(session_layer(uptimepage::request::Session {
+        user: Some(uptimepage::request::User {
             id: user,
             email: session_email(user),
         }),
@@ -1061,11 +1061,9 @@ impl PublicSource for UnavailablePublicSource {
     async fn page(
         &self,
         _page: PageRef,
-    ) -> Result<
-        Arc<uptimepage::domain::PublicStatusPage>,
-        uptimepage::api::public_error::PublicAppError,
-    > {
-        Err(uptimepage::api::public_error::PublicAppError::Unavailable)
+    ) -> Result<Arc<uptimepage::domain::PublicStatusPage>, uptimepage::error::public::PublicAppError>
+    {
+        Err(uptimepage::error::public::PublicAppError::Unavailable)
     }
     async fn component_history(
         &self,
@@ -1074,9 +1072,9 @@ impl PublicSource for UnavailablePublicSource {
         _days: u32,
     ) -> Result<
         uptimepage::domain::ComponentHistoryResponse,
-        uptimepage::api::public_error::PublicAppError,
+        uptimepage::error::public::PublicAppError,
     > {
-        Err(uptimepage::api::public_error::PublicAppError::Unavailable)
+        Err(uptimepage::error::public::PublicAppError::Unavailable)
     }
     async fn list_incidents(
         &self,
@@ -1084,33 +1082,30 @@ impl PublicSource for UnavailablePublicSource {
         _q: uptimepage::public_status::IncidentListQuery,
     ) -> Result<
         uptimepage::api::page::CursorPage<uptimepage::domain::PublicIncident>,
-        uptimepage::api::public_error::PublicAppError,
+        uptimepage::error::public::PublicAppError,
     > {
-        Err(uptimepage::api::public_error::PublicAppError::Unavailable)
+        Err(uptimepage::error::public::PublicAppError::Unavailable)
     }
     async fn incident_by_id(
         &self,
         _page: PageRef,
         _id: Uuid,
-    ) -> Result<uptimepage::domain::PublicIncident, uptimepage::api::public_error::PublicAppError>
-    {
-        Err(uptimepage::api::public_error::PublicAppError::Unavailable)
+    ) -> Result<uptimepage::domain::PublicIncident, uptimepage::error::public::PublicAppError> {
+        Err(uptimepage::error::public::PublicAppError::Unavailable)
     }
     async fn maintenance(
         &self,
         _page: PageRef,
-    ) -> Result<
-        uptimepage::domain::PublicMaintenanceList,
-        uptimepage::api::public_error::PublicAppError,
-    > {
-        Err(uptimepage::api::public_error::PublicAppError::Unavailable)
+    ) -> Result<uptimepage::domain::PublicMaintenanceList, uptimepage::error::public::PublicAppError>
+    {
+        Err(uptimepage::error::public::PublicAppError::Unavailable)
     }
     async fn incidents_rss(
         &self,
         _page: PageRef,
         _links: FeedLinks<'_>,
-    ) -> Result<String, uptimepage::api::public_error::PublicAppError> {
-        Err(uptimepage::api::public_error::PublicAppError::Unavailable)
+    ) -> Result<String, uptimepage::error::public::PublicAppError> {
+        Err(uptimepage::error::public::PublicAppError::Unavailable)
     }
 }
 

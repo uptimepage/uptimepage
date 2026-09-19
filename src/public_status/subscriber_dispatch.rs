@@ -292,7 +292,7 @@ impl SubscriberDispatcher {
     }
 
     fn origin(&self, slug: &str, custom_domain: Option<&str>, verified: bool) -> String {
-        crate::web::host::page_origin(
+        crate::request::host::page_origin(
             &self.cfg.base_domain,
             &self.cfg.public_base_url,
             slug,
@@ -304,7 +304,7 @@ impl SubscriberDispatcher {
     /// The page's own address. Subscribers keep it, so it has to be the URL
     /// the page answers on rather than one that redirects there.
     fn page_url(&self, slug: &str, custom_domain: Option<&str>, verified: bool) -> String {
-        crate::web::views::public_status::status_url_for(
+        crate::public_status::urls::status_url_for(
             self.cfg.subdomain_routes,
             &self.origin(slug, custom_domain, verified),
         )

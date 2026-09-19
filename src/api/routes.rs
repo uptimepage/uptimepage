@@ -42,7 +42,7 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
         .layer(from_fn_with_state(state.clone(), rate_limit_middleware))
         .layer(from_fn_with_state(
             state.clone(),
-            crate::web::auth::api_token::middleware,
+            crate::request::auth::api_token::middleware,
         ))
         .layer(from_fn_with_state(
             state.idempotency.clone(),
@@ -68,7 +68,7 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
         .layer(from_fn_with_state(state.clone(), rate_limit_middleware))
         .layer(from_fn_with_state(
             state.clone(),
-            crate::web::auth::api_token::middleware,
+            crate::request::auth::api_token::middleware,
         ))
         .layer(DefaultBodyLimit::max(logo_body_limit));
 
@@ -447,7 +447,7 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
         .layer(from_fn_with_state(state.clone(), rate_limit_middleware))
         .layer(from_fn_with_state(
             state.clone(),
-            crate::web::auth::api_token::middleware,
+            crate::request::auth::api_token::middleware,
         ))
         .layer(DefaultBodyLimit::max(SINGLE_BODY_LIMIT))
         .merge(bulk)
@@ -585,7 +585,7 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
         .nest("/api/agent", agent)
         .nest("/operator", operator);
 
-    if public_routes_active(&state.cfg) {
+    if state.cfg.tenancy.public_routes_active() {
         root = root.nest("/api/public/v1", build_public_router());
     }
 
@@ -600,30 +600,6 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
         .layer(from_fn(api_middleware::navigation_login_redirect))
         .layer(tower_cookies::CookieManagerLayer::new())
         .with_state(state)
-}
-
-/// Path-based public surface (`/status/<slug>` HTML + `/api/public/v1/*` JSON
-/// on the operator host, org resolved from the slug). Set to `false` in
-/// SaaS-strict deployments that route every public surface through the
-/// per-org subdomain.
-pub fn path_based_public_routes_enabled(cfg: &crate::config::AppConfig) -> bool {
-    cfg.tenancy.path_based_public_routes
-}
-
-/// Per-org subdomain surface (`*.{public_status.base_domain}`, org resolved
-/// from the `Host` header — apex-wildcard shape). A startup assertion
-/// refuses to boot if this is set without a well-formed base domain.
-pub fn subdomain_public_routes_enabled(cfg: &crate::config::AppConfig) -> bool {
-    cfg.tenancy.subdomain_public_routes
-}
-
-/// Whether *any* public surface is mounted. The two surfaces are mutually
-/// exclusive in practice (the startup assertions forbid path-based + SaaS,
-/// and subdomain needs SaaS), so the shared handlers resolve the org via the
-/// host-aware [`crate::web::host::StatusPageOrg`] extractor and only one
-/// surface is ever live per deployment.
-pub fn public_routes_active(cfg: &crate::config::AppConfig) -> bool {
-    path_based_public_routes_enabled(cfg) || subdomain_public_routes_enabled(cfg)
 }
 
 /// Builds the public, unauthenticated `/api/public/v1/*` router. Lives in its

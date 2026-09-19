@@ -42,7 +42,7 @@ use serde::Serialize;
 
 use crate::domain::{CheckSpec, OrgId};
 use crate::error::AppError;
-use crate::web::CurrentOrg;
+use crate::request::CurrentOrg;
 use crate::web::error::WebError;
 
 /// Shared range tab descriptor — the per-page handler builds a `Vec`
@@ -102,7 +102,7 @@ pub(crate) fn resolve_org(
     match org {
         Ok(CurrentOrg(o)) => Ok(o),
         Err(AppError::Unauthorized) => Err(Box::new(
-            crate::web::auth::login_redirect(redirect_to).into_response(),
+            crate::request::auth::login_redirect(redirect_to).into_response(),
         )),
         Err(e) => Err(Box::new(WebError::from(e).into_response())),
     }

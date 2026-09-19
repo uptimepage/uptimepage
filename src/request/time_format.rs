@@ -12,7 +12,7 @@ pub const COOKIE_NAME: &str = "sm_time_format";
 
 /// `http_only=false` is intentional — `localtime.js` reads `document.cookie`
 /// to choose the hour cycle when it localizes `<time>` elements. Issued for a
-/// fresh browser at login by [`crate::web::display_prefs::issue_cookies`].
+/// fresh browser at login by [`crate::request::display_prefs::issue_cookies`].
 pub fn build_cookie(fmt: TimeFormat, secure: bool) -> Cookie<'static> {
     let mut c = Cookie::new(COOKIE_NAME, fmt.as_str().to_owned());
     c.set_http_only(false);

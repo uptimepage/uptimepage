@@ -8,6 +8,7 @@ use crate::domain::agent_wire::{DispatchKind, DispatchedCheck};
 use crate::domain::{CheckResult, CheckSpec, OrgId, Target};
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::targets::flow_capable_set;
 
 /// Run an immediate check on `target` via an agent in its region and return the
 /// result. Shared by the REST check-now handler and the MCP tool so both go
@@ -212,23 +213,6 @@ pub(crate) async fn resolve_check_now_region(
 /// Pick a flow-capable region for an interactive flow check. `prefer` = the
 /// caller's candidates (a target's regions or an explicit test region), empty for
 /// any. Prefers a live region so the dispatch doesn't 503; errors if none qualify.
-/// Regions that can actually run a flow: agents self-reporting the capability,
-/// plus the control-plane region when it runs the engine in-process.
-pub(crate) async fn flow_capable_set(
-    state: &AppState,
-) -> Result<std::collections::HashSet<String>> {
-    let mut capable: std::collections::HashSet<String> = state
-        .target_store
-        .flow_capable_regions()
-        .await?
-        .into_iter()
-        .collect();
-    if state.cfg.flow.enabled {
-        capable.insert(state.cfg.scheduler.effective_default_region().to_string());
-    }
-    Ok(capable)
-}
-
 pub(crate) async fn pick_flow_region(state: &AppState, prefer: &[String]) -> Result<String> {
     let capable: Vec<String> = flow_capable_set(state).await?.into_iter().collect();
     if capable.is_empty() {

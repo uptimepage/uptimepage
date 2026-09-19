@@ -429,7 +429,7 @@ max_shrink_pct = 20
 
 [marketing]
 # When true, mounts the apex/`www` marketing site + blog. The dispatch
-# seam (web/host.rs + marketing/dispatch.rs) routes those hosts to the
+# seam (request/host.rs + marketing/dispatch.rs) routes those hosts to the
 # marketing router; every other host stays on the app router. Leave
 # false for self-host: the apex is rarely served on a single-box deploy
 # and the boot-time invariants will refuse a half-set config.
