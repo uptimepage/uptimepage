@@ -680,7 +680,9 @@ jobs:
           # plain config). Each key is upserted only when set; an absent one
           # leaves the prior .env value (compose defaults = all-in-one). To
           # revert, clear the key in .env. Same per-key write-once contract as
-          # the blocks above.
+          # the blocks above. The agent-side keys (HOME_AGENT_TOKEN,
+          # AGENT_FLOW_ENABLED) reach the running agent on its next
+          # deploy-agent run; this workflow never recreates it.
           for k in HOME_AGENT_TOKEN UPTIMEPAGE_SCHEDULER_ENABLED \
                    UPTIMEPAGE_SCHEDULER_REGION UPTIMEPAGE_SCHEDULER_DEFAULT_REGION \
                    AGENT_FLOW_ENABLED UPTIMEPAGE_EMAIL_POLICY_ENABLED \
@@ -1330,16 +1332,9 @@ jobs:
             docker compose --profile metrics up -d --no-build --force-recreate alloy
           fi
 
-          # Co-located regional agent: profile-gated, scoped to `agent` so the
-          # app / db / caddy are never recreated as a side effect. Brought up only
-          # when HOME_AGENT_TOKEN is provisioned in the server .env (config + token
-          # live there, set once at cutover — not threaded through this workflow).
-          # Same ${UPTIMEPAGE_IMAGE} as blue/green (bumped above), so it updates
-          # atomically; --force-recreate so a new image or rotated token takes
-          # effect. No-op on boxes without a co-located agent.
-          if grep -qE '^HOME_AGENT_TOKEN=.+' .env; then
-            docker compose --profile agent up -d --no-build --force-recreate agent
-          fi
+          # The co-located regional agent is NOT touched here: it pins its own
+          # AGENT_IMAGE and moves only via the deploy-agent workflow, so a
+          # dashboard-only deploy never restarts the region's probes.
 
           docker compose ps
 

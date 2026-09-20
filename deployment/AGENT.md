@@ -118,10 +118,10 @@ provision the agent there, and the control plane is left as a pure brain with no
 change to it.
 
 The agent is the `agent` service in the main `docker-compose.yml`, behind the
-`agent` compose profile (off unless explicitly enabled). It runs the same image
-as the dashboard (bumped atomically on every deploy) and reaches the control
-plane over its public origin, identical to a remote agent — no shared network,
-no localhost shortcut.
+`agent` compose profile (off unless explicitly enabled). It runs the image
+pinned by `AGENT_IMAGE` (falling back to the dashboard's `UPTIMEPAGE_IMAGE`
+when unset) and reaches the control plane over its public origin, identical to
+a remote agent — no shared network, no localhost shortcut.
 
 Bring-up (order matters — start the agent BEFORE turning the in-process probe
 off, or the region goes dark in the gap):
@@ -144,7 +144,14 @@ docker compose logs -f agent          # "starting regional agent"
 #    UPTIMEPAGE_SCHEDULER_DEFAULT_REGION=eu-helsinki
 ```
 
-While `HOME_AGENT_TOKEN` is present in `.env`, every deploy recreates this agent
-with the new image; scoped to the `agent` service only, so the dashboard, DB, and
-proxy are never touched as a side effect. Remove the token to retire it — the
-natural step when the region graduates to its own box.
+A dashboard deploy never touches this agent: a restart drops the state it keeps
+in memory (last-good registry answers, the RDAP singleflight cache) and re-fires
+every check it owns within seconds, so the agent moves only when probe code
+changes, on an explicit run of the `deploy-agent` workflow. Leave its image tag
+empty to sync the agent to whatever the dashboard runs; pass one to pin anything
+else. It rewrites `AGENT_IMAGE` in `.env`, pulls, recreates the `agent` service
+only, and fails loud unless the control plane records a fresh authenticated
+pull from that agent afterwards (`agents.last_seen_at` on the row matching the
+token's display prefix).
+Remove `HOME_AGENT_TOKEN` to retire the agent — the natural step when the region
+graduates to its own box.

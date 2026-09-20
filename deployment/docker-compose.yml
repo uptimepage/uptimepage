@@ -240,15 +240,17 @@ services:
     <<: *uptimepage_app
 
   # Co-located regional probe for the control plane's own region (the dashboard
-  # itself probes nothing when UPTIMEPAGE_SCHEDULER_ENABLED=false). Same image as
-  # blue/green so a deploy updates it atomically — no version drift. Profile-gated
-  # (`--profile agent`) so local/dev/self-host never start it; it runs only when
-  # HOME_AGENT_TOKEN is provisioned in .env. Reaches the control plane over the
-  # public origin, identical to a remote agent — no special internal networking.
-  # Region defaults to SCHEDULER_REGION so the home region has one source of truth.
+  # itself probes nothing when UPTIMEPAGE_SCHEDULER_ENABLED=false). Pinned by
+  # AGENT_IMAGE, moved only by the deploy-agent workflow, so a dashboard deploy
+  # never restarts the region's probes; unset, it follows the dashboard image
+  # (single-image self-host). Profile-gated (`--profile agent`) so
+  # local/dev/self-host never start it; it runs only when HOME_AGENT_TOKEN is
+  # provisioned in .env. Reaches the control plane over the public origin,
+  # identical to a remote agent — no special internal networking. Region
+  # defaults to SCHEDULER_REGION so the home region has one source of truth.
   agent:
     profiles: ["agent"]
-    image: ${UPTIMEPAGE_IMAGE:-uptimepage:latest}
+    image: ${AGENT_IMAGE:-${UPTIMEPAGE_IMAGE:-uptimepage:latest}}
     restart: unless-stopped
     logging: *logging
     stop_grace_period: 30s

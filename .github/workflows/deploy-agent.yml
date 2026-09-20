@@ -1,0 +1,174 @@
+name: deploy-agent
+
+# Move the co-located regional agent on the production box onto a chosen
+# image. Deliberately NOT part of `deploy`: the dashboard ships several times a
+# day, but every agent restart drops the state it keeps in memory (last-good
+# registry answers, the RDAP singleflight cache) and re-fires every check it
+# owns inside a few seconds. The agent moves only when probe code changes, on
+# an explicit click — the same policy the remote regions already follow.
+#
+# Manual only. An empty image_tag means "the image the dashboard runs now"
+# (read from the serving dashboard container), so syncing the agent after a
+# probe-code deploy is one click with nothing to paste.
+#
+# Required repo secrets: DEPLOY_SSH_KEY, DEPLOY_HOST, DEPLOY_USER,
+# DEPLOY_KNOWN_HOSTS — the same set `deploy` uses.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag for the agent (sha-<full40>, v1.2.3). Empty = the image the dashboard currently runs."
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-production # share deploy's lane so the two never touch the box at once
+  cancel-in-progress: false
+
+jobs:
+  deploy-agent:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read # authenticated GHCR pull (higher rate limit than anonymous)
+    environment: production
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      # Single source of truth, mirrored from release-image.yml.
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}
+    steps:
+      - name: validate image tag
+        run: |
+          set -euo pipefail
+          case "${IMAGE_TAG:-}" in
+            "")
+              echo "image tag: follow the dashboard (image of the serving color on the box)"
+              ;;
+            sha-*)
+              # release-image publishes only the full-sha tag.
+              printf '%s' "${IMAGE_TAG#sha-}" | grep -qiE '^[0-9a-f]{40}$' \
+                || { echo "::error::image_tag '$IMAGE_TAG' must be sha-<full 40-hex commit sha>"; exit 1; }
+              echo "image tag ok: $IMAGE_TAG"
+              ;;
+            *)
+              echo "image tag ok: $IMAGE_TAG"
+              ;;
+          esac
+
+      - name: load ssh key + pinned host key
+        run: |
+          install -m 700 -d ~/.ssh
+          install -m 600 /dev/stdin ~/.ssh/id_deploy <<< "${{ secrets.DEPLOY_SSH_KEY }}"
+          install -m 600 /dev/stdin ~/.ssh/known_hosts <<< "${{ secrets.DEPLOY_KNOWN_HOSTS }}"
+
+      - name: recreate agent over ssh
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          NEW_IMAGE=""
+          if [ -n "${IMAGE_TAG:-}" ]; then
+            # Lowercase only the repo (GHCR requires it); tags pass through verbatim.
+            NEW_IMAGE="$(echo "${REGISTRY}/${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]'):${IMAGE_TAG}"
+          fi
+          ssh -T -i ~/.ssh/id_deploy -o IdentitiesOnly=yes \
+              "${DEPLOY_USER}@${DEPLOY_HOST}" \
+              "NEW_IMAGE='${NEW_IMAGE}' GHCR_USER='${GHCR_USER}' GHCR_TOKEN='${GHCR_TOKEN}' bash -s" <<'REMOTE'
+          # Slurp the body and run it with stdin pinned to /dev/null so no
+          # docker child can drain the rest of this script (see deploy.yml).
+          __body=$(mktemp) || exit 1; trap 'rm -f "$__body"' EXIT; cat >"$__body" || exit 1; bash "$__body" </dev/null; exit $?
+
+          set -euo pipefail
+          umask 077
+          cd /opt/uptimepage/deployment
+
+          grep -qE '^HOME_AGENT_TOKEN=.+' .env \
+            || { echo "::error::no co-located agent on this box (HOME_AGENT_TOKEN unset in .env)"; exit 1; }
+
+          if [ -z "$NEW_IMAGE" ]; then
+            # From the serving container, not from .env: deploy bumps
+            # UPTIMEPAGE_IMAGE before its health gate and leaves it pointing at
+            # a failed release while the previous color keeps serving.
+            active=$(docker compose ps --services --status running \
+                       | grep -E '^uptimepage_(blue|green)$' | head -n 1)
+            [ -n "$active" ] || { echo "::error::no dashboard color running; pass image_tag explicitly"; exit 1; }
+            NEW_IMAGE=$(docker inspect -f '{{.Config.Image}}' "$(docker compose ps -q "$active")")
+            [ -n "$NEW_IMAGE" ] || { echo "::error::could not read the image of ${active}"; exit 1; }
+            echo "following ${active}"
+          fi
+          current=$(sed -n 's/^AGENT_IMAGE=//p' .env)
+          echo "agent image: ${current:-<unset, was following UPTIMEPAGE_IMAGE>} -> ${NEW_IMAGE}"
+
+          # --- pin AGENT_IMAGE in .env ------------------------------------
+          # cp backup FIRST; awk in-place rewrite that reprints every line and
+          # substitutes only this key, appending it on a box that never had one.
+          cp .env ".env.bak.$(date +%s)"
+          before=$(awk 'END { print NR }' .env)
+          awk -v img="$NEW_IMAGE" '
+            /^AGENT_IMAGE=/ { print "AGENT_IMAGE=" img; seen=1; next }
+            { print }
+            END { if (!seen) print "AGENT_IMAGE=" img }
+          ' .env > .env.next
+          mv .env.next .env
+          after=$(awk 'END { print NR }' .env)
+          [ "$after" = "$before" ] || [ "$after" = $((before + 1)) ] \
+            || { echo "::error::.env line count changed $before -> $after"; exit 1; }
+          grep -qxF "AGENT_IMAGE=$NEW_IMAGE" .env \
+            || { echo "::error::AGENT_IMAGE not set to $NEW_IMAGE"; exit 1; }
+          ls -1t .env.bak.* 2>/dev/null | tail -n +11 | xargs -r rm -f
+
+          # --- pull, then recreate ----------------------------------------
+          # Pull first so a dead ssh session leaves the old agent probing.
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          docker compose --profile agent pull agent
+          # A changed image or env recreates on its own; --force-recreate covers
+          # a same-image rerun after a token rotation.
+          docker compose --profile agent up -d --no-build --force-recreate agent
+
+          # --- boot gate --------------------------------------------------
+          # "Running" proves nothing: a rejected token leaves the process up
+          # with nothing scheduled. The control plane bumps agents.last_seen_at
+          # on every authenticated pull (30 s debounce), so require a bump
+          # dated after the old container was gone, on THIS agent's row: the
+          # display prefix of its token (first 17 chars), never the token, so
+          # a second agent in the region cannot vouch for it. Fail loud: a
+          # dark agent means the whole region stops probing.
+          since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          token=$(sed -n 's/^HOME_AGENT_TOKEN=//p' .env)
+          prefix=${token:0:17}
+          unset token
+          ctr=$(docker compose --profile agent ps -q agent)
+          [ -n "$ctr" ] || { echo "::error::agent container missing after up"; exit 1; }
+          # psql interpolates :'var' only from stdin/-f, never from -c.
+          q="SELECT count(*) FROM agents WHERE enabled AND token_prefix = :'prefix' AND last_seen_at >= :'since'::timestamptz;"
+          seen=0
+          for _ in $(seq 1 45); do
+            n=$(printf '%s\n' "$q" | docker compose exec -T -e PREFIX="$prefix" -e SINCE="$since" postgres \
+                  sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -U monitor -d monitor -tAq -v ON_ERROR_STOP=1 -v prefix="$PREFIX" -v since="$SINCE" -f -') || n=0
+            if [ "${n:-0}" -ge 1 ]; then
+              seen=1
+              break
+            fi
+            sleep 2
+          done
+          state=$(docker inspect -f '{{.State.Status}}' "$ctr" 2>/dev/null || echo unknown)
+          if [ "$seen" != 1 ] || [ "$state" != running ]; then
+            echo "::error::agent ${prefix}… did not report in to the control plane within ~90s (state=$state)"
+            docker logs --tail=80 "$ctr" || true
+            exit 1
+          fi
+          echo "agent ${prefix}… reported in"
+          # Same invariant deploy asserts: internal services publish no host ports.
+          bound=$(docker port "$ctr" 2>/dev/null || true)
+          if [ -n "$bound" ]; then
+            echo "::error::agent has host port bindings — must use 'expose:' only:"
+            echo "$bound"
+            exit 1
+          fi
+          docker compose --profile agent ps agent
+          REMOTE
