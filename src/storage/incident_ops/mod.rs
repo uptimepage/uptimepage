@@ -259,6 +259,11 @@ pub fn opening_update_message(title: Option<&str>, description: Option<&str>) ->
         .to_string()
 }
 
+/// Public opening line for a monitor-opened incident that lands on a status
+/// page; written by the writer's `insert_open` so subscribers hear the outage
+/// start, not only its end.
+pub const AUTO_OPENED_MESSAGE: &str = "Automatically detected — monitoring checks are failing.";
+
 /// Public closing line for an auto-resolved incident; shared with the writer's
 /// `close` path.
 pub const AUTO_RESOLVED_MESSAGE: &str =

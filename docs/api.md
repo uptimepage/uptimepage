@@ -128,7 +128,7 @@ sensitive target fields (`url`, `headers`, `basic_auth`, `bearer_token`).
 | `GET` | `/` | server-rendered HTML status page on a page's own host (`?fragment=1` returns the dynamic region only) |
 | `GET` | `/status` | the same page on a single-tenant deploy, where `/` is the operator dashboard; on a page's own host it redirects to `/` |
 | `GET` | `/status/incidents/{id}` | per-incident detail page |
-| `GET` | `/api/public/v1/status` | the same data as `/status` in JSON |
+| `GET` | `/api/public/v1/status` | the same data as `/status` in JSON; each component carries `uptime_pct` (time-based, `null` until probed) and each incident an `impact` of `degraded` \| `partial_outage` \| `major_outage` beside its declared `severity` |
 | `GET` | `/api/public/v1/components/{id}/history` | per-component history (`days` query, 1..365, default 90) |
 | `GET` | `/api/public/v1/incidents` | recent public incidents (paginated) |
 | `GET` | `/api/public/v1/incidents/{id}` | one public incident with its update timeline |

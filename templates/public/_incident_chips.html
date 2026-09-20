@@ -1,10 +1,10 @@
-{# Severity + phase chip pair for an IncidentHeader. One definition shared
+{# Impact + phase chip pair for an IncidentHeader. One definition shared
    by the active-incidents list, the past-incidents list and the incident
    detail page so the flat public chip shape never drifts between them.
-   The colour pairs are view-supplied (severity_classes/phase_classes).
+   The colour pairs are view-supplied (impact_classes/phase_classes).
    The optional "Ongoing" chip stays at the call site: active incidents
    are ongoing by definition and deliberately omit it. #}
 {% macro sevphase(header) %}
-<span class="{{ header.severity_class }}">{{ header.severity_label }}</span>
+<span class="{{ header.impact_class }}">{{ header.impact_label }}</span>
 <span class="{{ header.phase_class }}">{{ header.phase_label }}</span>
 {% endmacro %}

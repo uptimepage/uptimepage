@@ -12,7 +12,6 @@ use crate::domain::{NewSubscriber, Subscriber, SubscriberChannel};
 use crate::error::Result;
 use crate::security::sha256_hex;
 use crate::security::token_hash::generate_raw_token;
-use crate::storage::admin::not_held_sql;
 use crate::storage::status_pages::{PAGE_CUSTOM_DOMAIN_LIVE, PAGE_NOT_HELD, PAGE_PLAN_JOIN};
 
 pub const CONFIRM_TTL_HOURS: i64 = 24;
@@ -241,12 +240,31 @@ pub struct PendingUpdate {
     pub phase: String,
     pub message: String,
     pub incident_id: Uuid,
-    pub incident_title: String,
+    public_title: Option<String>,
+    component_name: String,
+    status_at_start: String,
     pub page_name: String,
     pub slug: String,
     pub custom_domain: Option<String>,
     pub custom_domain_verified: bool,
     pub signing_secret: Option<String>,
+}
+
+impl PendingUpdate {
+    /// The page's own title for the incident, so a mail about an unnarrated
+    /// monitor-opened incident is not headed "Status update".
+    pub fn incident_title(&self) -> String {
+        self.public_title
+            .as_deref()
+            .filter(|t| !t.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                crate::public_status::auto_incident_title(
+                    &self.component_name,
+                    &self.status_at_start,
+                )
+            })
+    }
 }
 
 /// Verified subscribers (email or webhook) with an unclaimed update on an
@@ -259,8 +277,8 @@ pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingUpdate
     let sql = format!(
         "SELECT s.id AS subscriber_id, u.id AS update_id, s.org_id, s.channel, s.target,
                 u.phase, u.message,
-                i.id AS incident_id,
-                COALESCE(NULLIF(i.public_title, ''), 'Status update') AS incident_title,
+                i.id AS incident_id, i.public_title, i.status_at_start,
+                COALESCE(NULLIF(c.public_name, ''), t.name) AS component_name,
                 COALESCE(NULLIF(sp.public_display_name, ''), sp.name) AS page_name,
                 sp.slug::text AS slug,
                 sp.custom_domain::text AS custom_domain,
@@ -271,6 +289,7 @@ pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingUpdate
          {PAGE_PLAN_JOIN}
          JOIN status_page_components c
               ON c.status_page_id = s.status_page_id AND c.org_id = s.org_id
+         JOIN targets t ON t.id = c.target_id AND t.org_id = c.org_id
          JOIN incidents i
               ON i.target_id = c.target_id AND i.org_id = c.org_id
          JOIN incident_updates u ON u.incident_id = i.id AND u.org_id = i.org_id
@@ -283,7 +302,7 @@ pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingUpdate
            -- The page drops a held monitor from its component list, so mailing
            -- about one would send readers to a page that shows neither the
            -- component nor the incident.
-           AND {COMPONENT_NOT_HELD}
+           AND t.plan_hold_at IS NULL
            AND u.posted_at >= s.verified_at
            AND u.posted_at >= now() - make_interval(hours => $2)
            AND NOT EXISTS (
@@ -294,8 +313,7 @@ pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingUpdate
                    OR (n.status = 'queued' AND n.created_at > now() - make_interval(mins => $3))
                    OR (n.status = 'failed' AND n.attempts >= $4)))
          ORDER BY u.posted_at
-         LIMIT $1",
-        COMPONENT_NOT_HELD = not_held_sql("c.target_id"),
+         LIMIT $1"
     );
     let rows = sqlx::query_as::<_, PendingUpdate>(&sql)
         .bind(limit)
@@ -406,4 +424,37 @@ pub fn verify_unsubscribe(secret: &str, subscriber_id: Uuid, presented: &str) ->
 pub fn unsubscribe_url(secret: &str, origin: &str, subscriber_id: Uuid) -> String {
     let mac = unsubscribe_token(secret, subscriber_id);
     format!("{origin}/subscribe/unsubscribe?s={subscriber_id}&t={mac}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pending(public_title: Option<&str>) -> PendingUpdate {
+        PendingUpdate {
+            subscriber_id: Uuid::nil(),
+            update_id: Uuid::nil(),
+            org_id: Uuid::nil(),
+            channel: "email".into(),
+            target: "a@example.com".into(),
+            phase: "investigating".into(),
+            message: String::new(),
+            incident_id: Uuid::nil(),
+            public_title: public_title.map(str::to_owned),
+            component_name: "Painel Cloud".into(),
+            status_at_start: "down".into(),
+            page_name: "acme".into(),
+            slug: "acme".into(),
+            custom_domain: None,
+            custom_domain_verified: false,
+            signing_secret: None,
+        }
+    }
+
+    #[test]
+    fn an_unnarrated_incident_is_titled_the_way_the_page_titles_it() {
+        assert_eq!(pending(None).incident_title(), "Painel Cloud down");
+        assert_eq!(pending(Some("")).incident_title(), "Painel Cloud down");
+        assert_eq!(pending(Some("API errors")).incident_title(), "API errors");
+    }
 }

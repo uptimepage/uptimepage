@@ -53,6 +53,11 @@ pub struct PublicComponent {
     pub current_status: PublicComponentStatus,
     /// Daily history, oldest first.
     pub history: Vec<DayState>,
+    /// Confirmed-incident downtime over the time the component was probed
+    /// within the history span, as a percentage; `null` until it is probed.
+    #[serde(default)]
+    #[schema(nullable = true)]
+    pub uptime_pct: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(nullable = true)]
     pub detail_url: Option<String>,
@@ -63,6 +68,19 @@ pub struct PublicComponentGroup {
     #[schema(nullable = true, example = "API")]
     pub name: Option<String>,
     pub components: Vec<PublicComponent>,
+}
+
+/// What an incident did to its component, in the page's own words: measured
+/// from the probes for a monitor-opened incident, taken from the declared
+/// severity for a manual one. The day strip, the incident cards and the API
+/// all speak this one vocabulary. `Ord` ranks by impact so "worst wins" is
+/// `Iterator::max`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IncidentImpact {
+    Degraded,
+    PartialOutage,
+    MajorOutage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
@@ -164,7 +182,10 @@ pub struct PublicIncident {
     pub started_at: DateTime<Utc>,
     #[schema(nullable = true)]
     pub ended_at: Option<DateTime<Utc>>,
+    /// The operator's declared severity. On a monitor-opened incident this is
+    /// the default unless narrated; `impact` is what the page shows.
     pub severity: IncidentSeverity,
+    pub impact: IncidentImpact,
     /// Most recent phase from operator updates; `investigating` if none.
     pub status_phase: IncidentStatusPhase,
     pub updates: Vec<PublicIncidentUpdate>,

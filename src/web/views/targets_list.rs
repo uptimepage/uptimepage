@@ -1,5 +1,6 @@
-//! Operator Monitors page. Three round-trips per request: PG `list`,
-//! one batched CH `dashboard_rollup`, PG `list_members` for owners.
+//! Operator Monitors page. Four round-trips per request: PG `list`, one
+//! batched CH `dashboard_rollup`, PG confirmed downtime, PG `list_members`
+//! for owners.
 
 use std::collections::HashMap;
 
@@ -12,7 +13,7 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::metrics::DashboardMetrics;
-use crate::domain::{CheckStatus, OrgId, Target};
+use crate::domain::{CheckStatus, OrgId, Target, uptime_pct_from_downtime};
 use crate::request::{AuthedBrowser, CurrentOrg};
 use crate::storage::TimeRange;
 use crate::storage::orgs::list_members;
@@ -27,7 +28,16 @@ const DEFAULT_LIMIT: usize = 50;
 const MAX_LIMIT: usize = 200;
 const UPTIME_WINDOW_DAYS: i64 = 30;
 const UNGROUPED_LABEL: &str = "Ungrouped";
-const TYPE_CHIPS: &[&str] = &["HTTP", "TCP", "DNS", "TLS", "DOMAIN"];
+const TYPE_CHIPS: &[&str] = &[
+    "HTTP",
+    "TCP",
+    "PING",
+    "HEARTBEAT",
+    "DNS",
+    "TLS",
+    "DOMAIN",
+    "FLOW",
+];
 const PAGE_SIZES: &[usize] = &[25, 50, 100, 200];
 
 #[derive(Debug, Default, Deserialize)]
@@ -140,7 +150,10 @@ pub struct GroupOption {
 pub struct ListPage {
     pub active_tab: &'static str,
     pub groups: Vec<GroupBlock>,
+    /// Monitors matching the filters org-wide, not just this page of them.
     pub total: usize,
+    /// Rows on this page.
+    pub shown: usize,
     pub paused_total: usize,
     pub type_chips: Vec<TypeChip>,
     pub owner_options: Vec<OwnerOption>,
@@ -149,7 +162,6 @@ pub struct ListPage {
     /// Shared filter query (everything but `limit`/`offset`), URL-encoded, for
     /// the footer pagination links' real hrefs + htmx swap targets.
     pub query_suffix: String,
-    pub has_more: bool,
     pub limit: usize,
     pub offset: usize,
     pub pager_prev: Option<PagerLink>,
@@ -169,6 +181,7 @@ pub struct ListPage {
 pub struct ListBodyPartial {
     pub groups: Vec<GroupBlock>,
     pub total: usize,
+    pub shown: usize,
     pub paused_total: usize,
     pub type_chips: Vec<TypeChip>,
     /// Carried by the partial so toolbar selects refresh on every
@@ -180,7 +193,6 @@ pub struct ListBodyPartial {
     /// Shared filter query (everything but `limit`/`offset`), URL-encoded, for
     /// the footer pagination links' real hrefs + htmx swap targets.
     pub query_suffix: String,
-    pub has_more: bool,
     pub limit: usize,
     pub offset: usize,
     pub pager_prev: Option<PagerLink>,
@@ -192,6 +204,7 @@ pub struct ListBodyPartial {
     pub owner: Option<Uuid>,
     pub kind: String,
     pub sort: &'static str,
+    pub onboarding: bool,
 }
 
 pub async fn index(
@@ -214,13 +227,13 @@ pub async fn list_partial(
     Ok(ListBodyPartial {
         groups: page.groups,
         total: page.total,
+        shown: page.shown,
         paused_total: page.paused_total,
         type_chips: page.type_chips,
         owner_options: page.owner_options,
         group_options: page.group_options,
         page_sizes: page.page_sizes,
         query_suffix: page.query_suffix,
-        has_more: page.has_more,
         limit: page.limit,
         offset: page.offset,
         pager_prev: page.pager_prev,
@@ -232,6 +245,7 @@ pub async fn list_partial(
         owner: page.owner,
         kind: page.kind,
         sort: page.sort,
+        onboarding: page.onboarding,
     })
 }
 
@@ -282,6 +296,15 @@ async fn build_page(state: &AppState, org: OrgId, params: &ListParams) -> WebRes
         }
     }
     let all_count: usize = kind_counts.values().map(|n| *n as usize).sum();
+    let total = if kind.is_empty() {
+        all_count
+    } else {
+        TYPE_CHIPS
+            .iter()
+            .find(|label| kind.eq_ignore_ascii_case(label))
+            .and_then(|label| chip_counts.get(label).copied())
+            .unwrap_or(0)
+    };
 
     let filter = TargetFilter {
         limit: Some(limit + 1),
@@ -304,18 +327,20 @@ async fn build_page(state: &AppState, org: OrgId, params: &ListParams) -> WebRes
         targets.truncate(limit);
     }
 
-    let (metrics_by_target, folded_status): (
+    let now = Utc::now();
+    let range = TimeRange {
+        from: now - ChronoDuration::days(UPTIME_WINDOW_DAYS),
+        to: now,
+    };
+    let window_secs = (range.to - range.from).num_seconds();
+    let (metrics_by_target, folded_status, downtime_by_target): (
         HashMap<Uuid, DashboardMetrics>,
         HashMap<Uuid, CheckStatus>,
+        HashMap<Uuid, i64>,
     ) = if targets.is_empty() {
-        (HashMap::new(), HashMap::new())
+        (HashMap::new(), HashMap::new(), HashMap::new())
     } else {
-        let now = Utc::now();
-        let range = TimeRange {
-            from: now - ChronoDuration::days(UPTIME_WINDOW_DAYS),
-            to: now,
-        };
-        let (rollup, folded) = tokio::join!(
+        let (rollup, folded, downtime) = tokio::join!(
             state.results_store.dashboard_rollup(org, range, None),
             crate::targets::folded_status(
                 state.results_store.as_ref(),
@@ -323,10 +348,14 @@ async fn build_page(state: &AppState, org: OrgId, params: &ListParams) -> WebRes
                 range,
                 crate::targets::folded_status_policies(&targets)
             ),
+            state
+                .incident_narration_store
+                .confirmed_downtime_by_target(org, range),
         );
         (
             rollup?.into_iter().map(|m| (m.target_id, m)).collect(),
             folded,
+            downtime?,
         )
     };
 
@@ -347,7 +376,6 @@ async fn build_page(state: &AppState, org: OrgId, params: &ListParams) -> WebRes
         })
         .collect();
 
-    let now = Utc::now();
     // One aggregate for the whole page: derived, so it is true the moment a
     // monitor settles and there is no stored flag to clear.
     let flap_cfg = &state.cfg.escalation;
@@ -370,10 +398,16 @@ async fn build_page(state: &AppState, org: OrgId, params: &ListParams) -> WebRes
     let mut paused_total = 0usize;
     for t in targets {
         let metrics = metrics_by_target.get(&t.id);
+        let uptime_30d_label = uptime_label(
+            metrics,
+            downtime_by_target.get(&t.id).copied().unwrap_or(0),
+            window_secs,
+        );
         let row = build_row(
             &t,
             metrics,
             folded_status.get(&t.id).copied(),
+            uptime_30d_label,
             &owner_lookup,
             now,
             &flapping,
@@ -383,7 +417,7 @@ async fn build_page(state: &AppState, org: OrgId, params: &ListParams) -> WebRes
         }
         rows.push(row);
     }
-    let total = rows.len();
+    let shown = rows.len();
     let groups = bucket_by_group(rows);
 
     let chip_query =
@@ -467,13 +501,13 @@ async fn build_page(state: &AppState, org: OrgId, params: &ListParams) -> WebRes
         active_tab: "targets",
         groups,
         total,
+        shown,
         paused_total,
         type_chips,
         owner_options,
         group_options,
         page_sizes,
         query_suffix,
-        has_more,
         limit,
         offset,
         pager_prev,
@@ -525,10 +559,27 @@ fn db_kind_to_chip(kind: &str) -> Option<&'static str> {
     }
 }
 
+/// Confirmed-incident downtime over the window, the figure the dashboard and
+/// the detail page show; `—` until the monitor has reported at all.
+fn uptime_label(
+    metrics: Option<&DashboardMetrics>,
+    confirmed_downtime_secs: i64,
+    window_secs: i64,
+) -> String {
+    match metrics {
+        Some(m) if m.samples > 0 => {
+            let pct = uptime_pct_from_downtime(confirmed_downtime_secs, window_secs);
+            format!("{pct:.2}%")
+        }
+        _ => "—".into(),
+    }
+}
+
 fn build_row(
     t: &Target,
     metrics: Option<&DashboardMetrics>,
     folded: Option<CheckStatus>,
+    uptime_30d_label: String,
     owner_lookup: &HashMap<Uuid, MemberLite>,
     now: chrono::DateTime<Utc>,
     flapping: &std::collections::HashSet<Uuid>,
@@ -556,14 +607,6 @@ fn build_row(
     let last_check_label = last_check_at
         .map(|then| relative_ago(now - then))
         .unwrap_or_else(|| "—".into());
-
-    let uptime_30d_label = match metrics {
-        Some(m) if m.samples > 0 => {
-            let pct = (m.up as f64 / m.samples as f64) * 100.0;
-            format!("{pct:.2}%")
-        }
-        _ => "—".into(),
-    };
 
     let owner = t.owner_user_id.and_then(|id| {
         owner_lookup.get(&id).map(|m| OwnerView {
@@ -740,6 +783,10 @@ mod tests {
         for kind in crate::domain::CheckSpec::ALL_KINDS {
             let chip = db_kind_to_chip(kind).unwrap_or_else(|| panic!("no chip for {kind}"));
             assert_eq!(chip_to_db_kind(chip).as_deref(), Some(kind));
+            assert!(
+                TYPE_CHIPS.contains(&chip),
+                "{kind} monitors exist but the {chip} chip is not offered"
+            );
         }
     }
 
@@ -824,13 +871,13 @@ mod tests {
             active_tab: "targets",
             groups: vec![],
             total: 0,
+            shown: 0,
             paused_total: 0,
             type_chips: vec![],
             owner_options: vec![],
             group_options: vec![],
             page_sizes: vec![],
             query_suffix: String::new(),
-            has_more: false,
             limit: 50,
             offset: 0,
             pager_prev: None,
@@ -863,6 +910,7 @@ mod tests {
             active_tab: "targets",
             groups: vec![g],
             total: 1,
+            shown: 1,
             paused_total: 0,
             type_chips: vec![TypeChip {
                 label: "All",
@@ -874,7 +922,6 @@ mod tests {
             group_options: vec![],
             page_sizes: vec![],
             query_suffix: String::new(),
-            has_more: false,
             limit: 50,
             offset: 0,
             pager_prev: None,
@@ -896,6 +943,58 @@ mod tests {
         // Per-row uptime is also rendered.
         assert!(html.contains("99.94%"));
     }
+
+    #[test]
+    fn the_filter_form_swaps_the_heading_count_and_pushes_the_page_url() {
+        let g = GroupBlock {
+            name: "API".into(),
+            has_name: true,
+            total: 1,
+            worst_status: "up",
+            avg_uptime_label: "99.99%".into(),
+            rows: vec![row("api", Some("API"), "up", true)],
+        };
+        let page = ListPage {
+            active_tab: "targets",
+            groups: vec![g],
+            total: 7,
+            shown: 1,
+            paused_total: 0,
+            type_chips: vec![],
+            owner_options: vec![],
+            group_options: vec![],
+            page_sizes: vec![],
+            query_suffix: String::new(),
+            limit: 1,
+            offset: 0,
+            pager_prev: None,
+            pager_next: None,
+            q: String::new(),
+            tag: String::new(),
+            enabled: None,
+            group: String::new(),
+            owner: None,
+            kind: String::new(),
+            sort: "recent",
+            onboarding: false,
+        };
+        let html = page.render().unwrap();
+        let rows_at = html.find(r#"id="target-rows""#).expect("swap region");
+        let count_at = html
+            .find(r#"<span class="monitors-subhead__mono">7</span>"#)
+            .expect("heading count is the filtered total, not the page size");
+        assert!(
+            count_at > rows_at,
+            "the count sits inside the swap region so a filter refreshes it"
+        );
+        assert!(html.contains("showing <span class=\"monitors-foot__mono\">1–1</span>"));
+        assert!(html.contains("of <span class=\"monitors-foot__mono\">7</span>"));
+        // The toolbar fetches the page itself and selects the region out of
+        // it, so the URL it pushes is one a reload can open.
+        assert!(html.contains(r#"hx-get="/targets""#));
+        assert!(html.contains(r##"hx-select="#target-rows""##));
+        assert!(!html.contains(r#"hx-get="/web/targets/list""#));
+    }
     #[test]
     fn a_flapping_row_carries_the_chip() {
         let mut r = row("api", Some("API & Web"), "up", true);
@@ -912,13 +1011,13 @@ mod tests {
             active_tab: "targets",
             groups: vec![g],
             total: 1,
+            shown: 1,
             paused_total: 0,
             type_chips: vec![],
             owner_options: vec![],
             group_options: vec![],
             page_sizes: vec![],
             query_suffix: String::new(),
-            has_more: false,
             limit: 50,
             offset: 0,
             pager_prev: None,
@@ -958,13 +1057,13 @@ mod tests {
             active_tab: "targets",
             groups: vec![g],
             total: 1,
+            shown: 1,
             paused_total: 0,
             type_chips: vec![],
             owner_options: vec![],
             group_options: vec![],
             page_sizes: vec![],
             query_suffix: String::new(),
-            has_more: false,
             limit: 50,
             offset: 0,
             pager_prev: None,

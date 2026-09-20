@@ -19,10 +19,10 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use uptimepage::domain::{
-    ComponentHistoryResponse, DayState, IncidentSeverity, IncidentStatusPhase, OverallState,
-    OverallStatus, PageRef, PublicComponent, PublicComponentGroup, PublicComponentStatus,
-    PublicIncident, PublicIncidentUpdate, PublicMaintenance, PublicMaintenanceList,
-    PublicStatusPage,
+    ComponentHistoryResponse, DayState, IncidentImpact, IncidentSeverity, IncidentStatusPhase,
+    OverallState, OverallStatus, PageRef, PublicComponent, PublicComponentGroup,
+    PublicComponentStatus, PublicIncident, PublicIncidentUpdate, PublicMaintenance,
+    PublicMaintenanceList, PublicStatusPage,
 };
 use uptimepage::error::public::PublicAppError;
 use uptimepage::pagination::CursorPage;
@@ -70,6 +70,7 @@ impl PublicSource for FakePublicSource {
             description: Some("Primary REST endpoint".into()),
             current_status: PublicComponentStatus::Operational,
             history: vec![DayState::Operational; 90],
+            uptime_pct: Some(99.9),
             detail_url: None,
         };
         let incident = PublicIncident {
@@ -80,6 +81,7 @@ impl PublicSource for FakePublicSource {
             started_at: Utc::now(),
             ended_at: None,
             severity: IncidentSeverity::Major,
+            impact: IncidentImpact::MajorOutage,
             status_phase: IncidentStatusPhase::Investigating,
             updates: vec![PublicIncidentUpdate {
                 posted_at: Utc::now(),
@@ -145,6 +147,7 @@ impl PublicSource for FakePublicSource {
             started_at: Utc::now(),
             ended_at: None,
             severity: IncidentSeverity::Major,
+            impact: IncidentImpact::MajorOutage,
             status_phase: IncidentStatusPhase::Investigating,
             updates: Vec::new(),
             postmortem: None,
@@ -168,6 +171,7 @@ impl PublicSource for FakePublicSource {
             started_at: Utc::now(),
             ended_at: None,
             severity: IncidentSeverity::Major,
+            impact: IncidentImpact::MajorOutage,
             status_phase: IncidentStatusPhase::Investigating,
             updates: Vec::new(),
             postmortem: None,

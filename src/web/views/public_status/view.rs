@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::domain::elapsed_at;
 use crate::domain::{
-    DayState, IncidentSeverity, IncidentStatusPhase, OverallState, PublicComponent,
+    DayState, IncidentImpact, IncidentStatusPhase, OverallState, PublicComponent,
     PublicComponentGroup, PublicComponentStatus, PublicIncident, PublicIncidentUpdate,
     PublicMaintenance, PublicStatusPage,
 };
@@ -53,7 +53,8 @@ pub struct ComponentView {
     pub status_class: &'static str,
     pub status_icon: &'static str,
     pub history: Vec<DayCell>,
-    pub uptime_pct: String,
+    /// `"99.97%"`, or `"—"` until the component has been probed.
+    pub uptime_label: String,
     pub history_summary: String,
     pub detail_url: Option<String>,
 }
@@ -93,8 +94,8 @@ pub struct IncidentHeader {
     pub id: String,
     pub component_name: String,
     pub title: String,
-    pub severity_label: &'static str,
-    pub severity_class: &'static str,
+    pub impact_label: &'static str,
+    pub impact_class: &'static str,
     pub phase_label: &'static str,
     pub phase_class: &'static str,
     pub started_at: DateTime<Utc>,
@@ -224,7 +225,10 @@ pub(super) fn build_component(
         component_classes(c.current_status)
     };
     let history = build_history(c, &c.history);
-    let (uptime_pct, summary) = history_stats(&c.history);
+    let uptime_label = c
+        .uptime_pct
+        .map(|pct| format!("{pct:.2}%"))
+        .unwrap_or_else(|| "—".to_string());
     ComponentView {
         id: c.id.to_string(),
         name: c.name.clone(),
@@ -233,8 +237,8 @@ pub(super) fn build_component(
         status_class,
         status_icon,
         history,
-        uptime_pct,
-        history_summary: summary,
+        uptime_label,
+        history_summary: history_summary(&c.history),
         detail_url: c.detail_url.clone(),
     }
 }
@@ -353,7 +357,10 @@ pub(super) fn day_overlap(
     (total, links)
 }
 
-pub(super) fn history_stats(states: &[DayState]) -> (String, String) {
+/// Day tally under the strip: how many days had checks, and how many of those
+/// were painted. The uptime figure beside it is time-based and comes from the
+/// aggregator, not from these counts.
+pub(super) fn history_summary(states: &[DayState]) -> String {
     let mut with_data = 0usize;
     let mut bad = 0usize;
     let mut degraded = 0usize;
@@ -372,10 +379,8 @@ pub(super) fn history_stats(states: &[DayState]) -> (String, String) {
         }
     }
     if with_data == 0 {
-        return ("—".to_string(), format!("{HISTORY_LEN} days, no data"));
-    }
-    let pct = 100.0 - (bad as f64 / with_data as f64) * 100.0;
-    let summary = if bad == 0 && degraded == 0 {
+        format!("{HISTORY_LEN} days, no data")
+    } else if bad == 0 && degraded == 0 {
         format!("{with_data} days, no incidents")
     } else if bad == 0 {
         format!("{with_data} days, {degraded} degraded")
@@ -384,21 +389,20 @@ pub(super) fn history_stats(states: &[DayState]) -> (String, String) {
             "{with_data} days, {bad} outage{}, {degraded} degraded",
             if bad == 1 { "" } else { "s" },
         )
-    };
-    (format!("{pct:.2}"), summary)
+    }
 }
 
 pub(super) fn build_incident_header(i: &PublicIncident, now: DateTime<Utc>) -> IncidentHeader {
     let ongoing = i.ended_at.is_none();
     let duration_secs = elapsed_at(i.started_at, i.ended_at, now).num_seconds();
-    let (severity_label, severity_class) = severity_classes(i.severity);
+    let (impact_label, impact_class) = impact_classes(i.impact);
     let (phase_label, phase_class) = phase_classes(i.status_phase);
     IncidentHeader {
         id: i.id.to_string(),
         component_name: i.component_name.clone(),
         title: i.title.clone(),
-        severity_label,
-        severity_class,
+        impact_label,
+        impact_class,
         phase_label,
         phase_class,
         started_at: i.started_at,
@@ -520,11 +524,13 @@ pub(super) fn day_classes(s: DayState) -> (&'static str, &'static str, &'static 
     }
 }
 
-pub(super) fn severity_classes(s: IncidentSeverity) -> (&'static str, &'static str) {
-    match s {
-        IncidentSeverity::Minor => ("Minor", "public-chip public-sev--minor"),
-        IncidentSeverity::Major => ("Major", "public-chip public-sev--major"),
-        IncidentSeverity::Critical => ("Critical", "public-chip public-sev--critical"),
+/// Same words as the day strip's [`day_classes`], so one outage reads the
+/// same in the strip popover, the incident card and the detail page.
+pub(super) fn impact_classes(i: IncidentImpact) -> (&'static str, &'static str) {
+    match i {
+        IncidentImpact::Degraded => ("Degraded", "public-chip public-sev--minor"),
+        IncidentImpact::PartialOutage => ("Partial outage", "public-chip public-sev--major"),
+        IncidentImpact::MajorOutage => ("Major outage", "public-chip public-sev--critical"),
     }
 }
 

@@ -184,7 +184,7 @@ impl SubscriberDispatcher {
             );
             let payload = serde_json::json!({
                 "type": "incident_update",
-                "incident": { "id": p.incident_id, "title": p.incident_title },
+                "incident": { "id": p.incident_id, "title": p.incident_title() },
                 "update": { "id": p.update_id, "phase": p.phase, "message": p.message },
                 "page": { "name": p.page_name, "url": page_url },
                 "incident_url": format!("{origin}/status/incidents/{}", p.incident_id),
@@ -199,7 +199,7 @@ impl SubscriberDispatcher {
             to: EmailAddress::new(p.target.clone(), p.target.clone()),
             template: EmailTemplate::SubscriberIncident {
                 page_name: p.page_name.clone(),
-                incident_title: p.incident_title.clone(),
+                incident_title: p.incident_title(),
                 phase: p.phase.clone(),
                 message: p.message.clone(),
                 incident_url: format!("{origin}/status/incidents/{}", p.incident_id),

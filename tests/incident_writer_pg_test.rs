@@ -94,6 +94,77 @@ async fn insert_open_is_single_winner_under_conflict_pg() {
     );
 }
 
+/// Subscribers are mailed per update, and the writer's `close` only ever
+/// writes the closing one, so a public incident that opens without an
+/// opening update reaches its readers once, at the end, as "Resolved".
+#[tokio::test]
+#[ignore]
+async fn a_public_open_posts_its_opening_update_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, on_page) = seed(&pool, "iwpub").await;
+    let store = PgIncidentStore::new(pool.clone());
+    let off_page: Uuid = sqlx::query_scalar(
+        "INSERT INTO targets (org_id, name, check_spec, interval_secs) \
+         VALUES ($1, 'quiet', '{}'::jsonb, 30) RETURNING id",
+    )
+    .bind(org.0)
+    .fetch_one(&pool)
+    .await
+    .expect("insert target");
+    sqlx::query(
+        "WITH p AS (INSERT INTO status_pages (org_id, slug, name, enabled) \
+                    VALUES ($1, $2, 'svc', true) RETURNING id) \
+         INSERT INTO status_page_components (org_id, status_page_id, target_id) \
+         SELECT $1, p.id, $3 FROM p",
+    )
+    .bind(org.0)
+    .bind(unique_slug("iwpub"))
+    .bind(on_page)
+    .execute(&pool)
+    .await
+    .expect("page + component");
+
+    let updates = |id: Uuid| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (String, String, String)>(
+                "SELECT phase, message, author FROM incident_updates WHERE incident_id = $1",
+            )
+            .bind(id)
+            .fetch_all(&pool)
+            .await
+            .expect("updates")
+        }
+    };
+
+    let public = store
+        .insert_open(org, new_open(on_page))
+        .await
+        .expect("open public")
+        .expect("opened id");
+    assert_eq!(
+        updates(public).await,
+        vec![(
+            "investigating".to_string(),
+            uptimepage::storage::incident_ops::AUTO_OPENED_MESSAGE.to_string(),
+            "system".to_string()
+        )],
+        "a public open is what subscribers hear first"
+    );
+
+    let internal = store
+        .insert_open(org, new_open(off_page))
+        .await
+        .expect("open internal")
+        .expect("opened id");
+    assert!(
+        updates(internal).await.is_empty(),
+        "an internal incident narrates nothing until it is published"
+    );
+}
+
 #[tokio::test]
 #[ignore]
 async fn close_reports_only_the_call_that_flipped_the_row_pg() {

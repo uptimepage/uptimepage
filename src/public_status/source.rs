@@ -25,6 +25,7 @@ use crate::pagination::page::CursorPage;
 use super::aggregator::OrgAggregator;
 use super::auto_incident_title;
 use super::cache::{HistoryIncidentMarker, PageCache, PageCacheError, PageData};
+use super::overall_status::stored_incident_impact;
 use super::xml::xml_escape;
 
 #[derive(Debug, Clone, Copy)]
@@ -206,6 +207,7 @@ impl PublicSource for OrgPublicSource {
         let rows: Vec<IncidentRow> = sqlx::query_as::<_, IncidentRow>(
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
+                      i.origin, i.regions_up,
                       i.public_title, i.public_description
                FROM incidents i
                WHERE i.org_id = $5
@@ -263,6 +265,7 @@ impl PublicSource for OrgPublicSource {
         let row: Option<IncidentRow> = sqlx::query_as::<_, IncidentRow>(
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
+                      i.origin, i.regions_up,
                       i.public_title, i.public_description
                FROM incidents i
                WHERE i.id = $1
@@ -358,6 +361,7 @@ impl OrgPublicSource {
                     .public_title
                     .clone()
                     .unwrap_or_else(|| auto_incident_title(&component_name, &r.status_at_start));
+                let severity = IncidentSeverity::from_db_str(&r.severity);
                 PublicIncident {
                     id: r.id,
                     component_id: r.target_id,
@@ -365,7 +369,13 @@ impl OrgPublicSource {
                     title,
                     started_at: r.started_at,
                     ended_at: r.ended_at,
-                    severity: IncidentSeverity::from_db_str(&r.severity),
+                    severity,
+                    impact: stored_incident_impact(
+                        &r.origin,
+                        severity,
+                        &r.status_at_start,
+                        r.regions_up.as_deref(),
+                    ),
                     status_phase,
                     updates: my_updates,
                     postmortem: None,
@@ -435,6 +445,8 @@ struct IncidentRow {
     ended_at: Option<DateTime<Utc>>,
     severity: String,
     status_at_start: String,
+    origin: String,
+    regions_up: Option<Vec<String>>,
     public_title: Option<String>,
     #[allow(dead_code)]
     public_description: Option<String>,
@@ -625,6 +637,7 @@ mod tests {
             started_at: started,
             ended_at: None,
             severity: crate::domain::IncidentSeverity::Major,
+            impact: crate::domain::IncidentImpact::MajorOutage,
             status_phase: IncidentStatusPhase::Investigating,
             updates,
             postmortem: None,

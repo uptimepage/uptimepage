@@ -96,6 +96,24 @@ fn sample_page() -> DashboardPage {
 }
 
 #[test]
+fn incident_count_hint_names_the_selected_range() {
+    let zero = PriorPeriodSummary::default();
+    let cards = build_kpi_cards(
+        &sample_kpis(),
+        "30d",
+        "17.0k successful".into(),
+        &zero,
+        &zero,
+        &FleetSparks::default(),
+    );
+    assert!(
+        cards[0].hint_html.starts_with("Incidents · 30d:"),
+        "the count spans the selected range, so its label must too: {}",
+        cards[0].hint_html
+    );
+}
+
+#[test]
 fn page_renders_chrome_and_kpis() {
     let html = sample_page().render().unwrap();
     assert!(html.starts_with("<!doctype html>"));

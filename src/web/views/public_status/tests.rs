@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::config::PublicStatusConfig;
 use crate::domain::OverallStatus;
 use crate::domain::{
-    DayState, IncidentSeverity, IncidentStatusPhase, OverallState, PublicComponent,
+    DayState, IncidentImpact, IncidentSeverity, IncidentStatusPhase, OverallState, PublicComponent,
     PublicComponentGroup, PublicComponentStatus, PublicIncident, PublicIncidentUpdate,
     PublicMaintenance, PublicOrgBranding, PublicStatusPage,
 };
@@ -44,6 +44,7 @@ fn sample_page() -> PublicStatusPage {
                 description: Some("Customer-facing edge".into()),
                 current_status: PublicComponentStatus::Operational,
                 history: vec![DayState::Operational; HISTORY_LEN],
+                uptime_pct: Some(99.9),
                 detail_url: None,
             }],
         }],
@@ -245,6 +246,7 @@ fn active_incident_banner_renders_when_present() {
         started_at: Utc::now() - ChronoDuration::minutes(14),
         ended_at: None,
         severity: IncidentSeverity::Major,
+        impact: IncidentImpact::MajorOutage,
         status_phase: IncidentStatusPhase::Identified,
         updates: vec![PublicIncidentUpdate {
             posted_at: Utc::now() - ChronoDuration::minutes(2),
@@ -309,12 +311,22 @@ fn day_classes_cover_all_states() {
 }
 
 #[test]
-fn history_stats_computes_uptime() {
+fn history_summary_tallies_painted_days() {
     let mut h = vec![DayState::Operational; 90];
     h[10] = DayState::MajorOutage;
-    let (pct, summary) = history_stats(&h);
-    assert!(pct.starts_with("98"));
-    assert!(summary.contains("1 outage"));
+    assert_eq!(history_summary(&h), "90 days, 1 outage, 0 degraded");
+    assert_eq!(history_summary(&[DayState::NoData; 90]), "90 days, no data");
+}
+
+#[test]
+fn component_uptime_is_the_aggregator_figure_not_a_day_ratio() {
+    let mut c = sample_page().groups[0].components[0].clone();
+    c.history[10] = DayState::MajorOutage;
+    c.uptime_pct = Some(99.972);
+    let view = build_component(&c, &Default::default());
+    assert_eq!(view.uptime_label, "99.97%");
+    c.uptime_pct = None;
+    assert_eq!(build_component(&c, &Default::default()).uptime_label, "—");
 }
 
 #[test]
@@ -327,6 +339,7 @@ fn incident_detail_renders() {
         started_at: Utc::now() - ChronoDuration::minutes(30),
         ended_at: Some(Utc::now()),
         severity: IncidentSeverity::Major,
+        impact: IncidentImpact::MajorOutage,
         status_phase: IncidentStatusPhase::Resolved,
         updates: vec![
             PublicIncidentUpdate {
@@ -651,6 +664,7 @@ fn fake_incident(started_at: DateTime<Utc>, id_low: u8, title: &str) -> PublicIn
         started_at,
         ended_at: Some(started_at + ChronoDuration::minutes(15)),
         severity: IncidentSeverity::Minor,
+        impact: IncidentImpact::Degraded,
         status_phase: IncidentStatusPhase::Resolved,
         updates: Vec::new(),
         postmortem: None,

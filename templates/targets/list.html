@@ -2,29 +2,7 @@
 {% block title %}Monitors · Uptimepage{% endblock %}
 {% block content %}
 <section class="space-y-4">
-  <header class="flex flex-wrap items-end justify-between gap-3">
-    <div>
-      <div class="flex items-center gap-3">
-        <h1 class="page-title"><span class="page-title__prefix" aria-hidden="true">$</span>monitors</h1>
-        <span class="monitors-subhead__mono">{{ total }}{% if has_more %}+{% endif %}</span>
-      </div>
-      {% if !onboarding && (groups.len() > 1 || paused_total > 0) %}
-      <p class="monitors-subhead">
-        {% if groups.len() > 1 %}{{ groups.len() }} groups{% endif %}
-        {% if groups.len() > 1 && paused_total > 0 %}·{% endif %}
-        {% if paused_total > 0 %}<span class="monitors-subhead__mono">{{ paused_total }}</span> paused on this page{% endif %}
-      </p>
-      {% endif %}
-    </div>
-    <a href="/targets/new"
-       class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">+ monitor</a>
-  </header>
-
-  {% if onboarding %}
-  {% include "_empty_monitors_hero.html" %}
-  {% else %}
   {% include "targets/partials/list_body.html" %}
-  {% endif %}
 </section>
 
 <script defer src="{{ "js/ui/monitors_list.js"|asset }}"></script>

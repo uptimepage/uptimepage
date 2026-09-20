@@ -20,9 +20,10 @@ use uuid::Uuid;
 
 use common::build_test_app_with_web_and_public_source;
 use uptimepage::domain::{
-    ComponentHistoryResponse, DayState, IncidentSeverity, IncidentStatusPhase, OverallState,
-    OverallStatus, PageRef, PublicComponent, PublicComponentGroup, PublicComponentStatus,
-    PublicIncident, PublicIncidentUpdate, PublicMaintenanceList, PublicStatusPage,
+    ComponentHistoryResponse, DayState, IncidentImpact, IncidentSeverity, IncidentStatusPhase,
+    OverallState, OverallStatus, PageRef, PublicComponent, PublicComponentGroup,
+    PublicComponentStatus, PublicIncident, PublicIncidentUpdate, PublicMaintenanceList,
+    PublicStatusPage,
 };
 use uptimepage::error::public::PublicAppError;
 use uptimepage::pagination::CursorPage;
@@ -52,6 +53,7 @@ impl PublicSource for PublishedSource {
             description: Some("primary edge".into()),
             current_status: PublicComponentStatus::MajorOutage,
             history: vec![DayState::Operational; 90],
+            uptime_pct: Some(99.9),
             detail_url: None,
         };
         let incident = PublicIncident {
@@ -62,6 +64,7 @@ impl PublicSource for PublishedSource {
             started_at: Utc::now() - chrono::Duration::minutes(8),
             ended_at: None,
             severity: IncidentSeverity::Major,
+            impact: IncidentImpact::MajorOutage,
             status_phase: IncidentStatusPhase::Investigating,
             updates: vec![PublicIncidentUpdate {
                 posted_at: Utc::now() - chrono::Duration::minutes(2),
@@ -186,6 +189,7 @@ impl PublicSource for EmptyDataSource {
             description: None,
             current_status: PublicComponentStatus::Operational,
             history: vec![DayState::NoData; 90],
+            uptime_pct: Some(99.9),
             detail_url: None,
         };
         Ok(Arc::new(PublicStatusPage {
@@ -258,6 +262,7 @@ impl PublicSource for MaintenanceDominatesSource {
             description: None,
             current_status: PublicComponentStatus::Maintenance,
             history,
+            uptime_pct: Some(99.9),
             detail_url: None,
         };
         let now = Utc::now();

@@ -153,28 +153,38 @@ impl IncidentStore for PgIncidentStore {
         // only while its monitor is a component of an enabled status page that
         // the plan still covers. A held page shows nobody anything, so an
         // incident opened behind one starts internal and is not fanned out.
+        // A public one also gets its opening update here: subscriber fan-out
+        // sends per update, and `close` only ever writes the closing one.
         let mut tx = self
             .pool
             .begin()
             .await
             .context("incident insert_open: begin")?;
         let row: Option<(Uuid,)> = sqlx::query_as(
-            r#"INSERT INTO incidents (org_id, target_id, started_at, status_at_start, check_count, error_sample, region, regions_down, regions_up, origin, visibility)
-               SELECT $6, $1, $2, $3, $4, $5, $7, $8, $9, 'monitor',
-                      CASE WHEN EXISTS (
-                          SELECT 1 FROM status_page_components spc
-                          JOIN status_pages sp ON sp.id = spc.status_page_id
-                          WHERE spc.target_id = $1 AND spc.org_id = $6 AND sp.enabled = true
-                            AND sp.plan_hold_at IS NULL
-                      ) THEN 'public' ELSE 'internal' END
-               WHERE NOT EXISTS (
-                   SELECT 1 FROM incidents c
-                   WHERE c.org_id = $6 AND c.target_id = $1 AND c.origin = 'monitor'
-                     AND c.ended_at >= $2
+            r#"WITH opened AS (
+                   INSERT INTO incidents (org_id, target_id, started_at, status_at_start, check_count, error_sample, region, regions_down, regions_up, origin, visibility)
+                   SELECT $6, $1, $2, $3, $4, $5, $7, $8, $9, 'monitor',
+                          CASE WHEN EXISTS (
+                              SELECT 1 FROM status_page_components spc
+                              JOIN status_pages sp ON sp.id = spc.status_page_id
+                              WHERE spc.target_id = $1 AND spc.org_id = $6 AND sp.enabled = true
+                                AND sp.plan_hold_at IS NULL
+                          ) THEN 'public' ELSE 'internal' END
+                   WHERE NOT EXISTS (
+                       SELECT 1 FROM incidents c
+                       WHERE c.org_id = $6 AND c.target_id = $1 AND c.origin = 'monitor'
+                         AND c.ended_at >= $2
+                   )
+                   ON CONFLICT (org_id, target_id) WHERE ended_at IS NULL AND origin = 'monitor'
+                   DO NOTHING
+                   RETURNING id, org_id, visibility
+               ),
+               ins AS (
+                   INSERT INTO incident_updates (org_id, incident_id, phase, message, author)
+                   SELECT org_id, id, 'investigating', $10, 'system'
+                   FROM opened WHERE visibility = 'public'
                )
-               ON CONFLICT (org_id, target_id) WHERE ended_at IS NULL AND origin = 'monitor'
-               DO NOTHING
-               RETURNING id"#,
+               SELECT id FROM opened"#,
         )
         .bind(new.target_id)
         .bind(new.started_at)
@@ -185,6 +195,7 @@ impl IncidentStore for PgIncidentStore {
         .bind(new.region)
         .bind(&new.regions_down)
         .bind(&new.regions_up)
+        .bind(crate::storage::incident_ops::AUTO_OPENED_MESSAGE)
         .fetch_optional(&mut *tx)
         .await
         .context("incident insert_open")?;

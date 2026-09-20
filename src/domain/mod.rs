@@ -83,10 +83,10 @@ pub use org::{
 pub use page_asset::{AssetSlot, SlotPolicy};
 pub use preferences::{DisplayPrefs, TimeFormat};
 pub use public::{
-    ComponentHistoryResponse, DayState, IncidentSeverity, IncidentStatusPhase, OverallState,
-    OverallStatus, PublicActionItem, PublicComponent, PublicComponentGroup, PublicComponentStatus,
-    PublicIncident, PublicIncidentUpdate, PublicMaintenance, PublicMaintenanceList,
-    PublicPostmortem, PublicStatusPage,
+    ComponentHistoryResponse, DayState, IncidentImpact, IncidentSeverity, IncidentStatusPhase,
+    OverallState, OverallStatus, PublicActionItem, PublicComponent, PublicComponentGroup,
+    PublicComponentStatus, PublicIncident, PublicIncidentUpdate, PublicMaintenance,
+    PublicMaintenanceList, PublicPostmortem, PublicStatusPage,
 };
 pub use quota::{Plan, PlanLimits, QuotaEvent};
 pub use reserved_slugs::is_reserved;

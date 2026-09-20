@@ -28,8 +28,8 @@ use chrono::Utc;
 use futures::FutureExt;
 use sqlx::PgPool;
 use uptimepage::domain::{
-    CheckResult, CheckSpec, CheckStatus, DayState, ExpectedStatus, NewMonitorShare, NewStatusPage,
-    NewStatusPageComponent, NewTarget, OrgId, OverallState, PublicComponentStatus,
+    CheckResult, CheckSpec, CheckStatus, DayState, ExpectedStatus, IncidentImpact, NewMonitorShare,
+    NewStatusPage, NewStatusPageComponent, NewTarget, OrgId, OverallState, PublicComponentStatus,
     StatusPageComponentUpdate, StatusPageId, WriteSource,
 };
 use uptimepage::public_status::{AggregatorConfig, OrgAggregator};
@@ -705,8 +705,11 @@ async fn build_component_state_follows_confirmed_incidents() {
             uptimepage::storage::OrgTtlDays::new(),
         );
         let now = Utc::now();
+        let two_days_ago = now - chrono::Duration::days(2);
         sink.write_batch(&[
+            ok_result(partial_id, org_id.0, two_days_ago),
             ok_result(partial_id, org_id.0, now),
+            ok_result(major_id, org_id.0, two_days_ago),
             ok_result(major_id, org_id.0, now),
         ])
         .await
@@ -788,6 +791,23 @@ async fn build_component_state_follows_confirmed_incidents() {
             "open incident paints today's cell"
         );
         assert_eq!(page.overall.state, OverallState::MajorOutage);
+
+        // The incident card says the same thing the strip does.
+        let impact = |id: Uuid| {
+            page.active_incidents
+                .iter()
+                .find(|i| i.component_id == id)
+                .expect("active incident listed")
+                .impact
+        };
+        assert_eq!(impact(partial_id), IncidentImpact::PartialOutage);
+        assert_eq!(impact(major_id), IncidentImpact::MajorOutage);
+
+        // Five minutes down over two probed days, not one bad day in three.
+        for c in [partial, major] {
+            let pct = c.uptime_pct.expect("probed component has an uptime");
+            assert!((99.5..99.99).contains(&pct), "{} uptime {pct}", c.name);
+        }
     };
 
     let result = AssertUnwindSafe(body).catch_unwind().await;

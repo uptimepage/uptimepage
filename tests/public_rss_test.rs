@@ -23,8 +23,8 @@ use uuid::Uuid;
 
 use common::build_test_app_with_public_source;
 use uptimepage::domain::{
-    ComponentHistoryResponse, IncidentSeverity, IncidentStatusPhase, PageRef, PublicIncident,
-    PublicIncidentUpdate, PublicMaintenanceList, PublicStatusPage,
+    ComponentHistoryResponse, IncidentImpact, IncidentSeverity, IncidentStatusPhase, PageRef,
+    PublicIncident, PublicIncidentUpdate, PublicMaintenanceList, PublicStatusPage,
 };
 use uptimepage::error::public::PublicAppError;
 use uptimepage::pagination::CursorPage;
@@ -71,6 +71,7 @@ impl PublicSource for TwoIncidentSource {
                 started_at: now - chrono::Duration::minutes(30),
                 ended_at: None,
                 severity: IncidentSeverity::Major,
+                impact: IncidentImpact::MajorOutage,
                 status_phase: IncidentStatusPhase::Investigating,
                 updates: vec![PublicIncidentUpdate {
                     posted_at: now - chrono::Duration::minutes(5),
@@ -87,6 +88,7 @@ impl PublicSource for TwoIncidentSource {
                 started_at: now - chrono::Duration::hours(6),
                 ended_at: Some(now - chrono::Duration::hours(5)),
                 severity: IncidentSeverity::Minor,
+                impact: IncidentImpact::Degraded,
                 status_phase: IncidentStatusPhase::Resolved,
                 updates: vec![],
                 postmortem: None,

@@ -285,7 +285,7 @@ async fn fanout_lists_verified_recent_public_updates_only() {
     let p = mine[0];
     assert_eq!(p.update_id, fresh);
     assert_ne!(p.update_id, stale);
-    assert_eq!(p.incident_title, "Elevated errors");
+    assert_eq!(p.incident_title(), "Elevated errors");
     assert_eq!(p.page_name, "Acme");
     assert_eq!(p.phase, "investigating");
 

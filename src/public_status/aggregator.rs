@@ -23,9 +23,10 @@ use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 use crate::domain::{
-    CheckStatus, ComponentHistoryResponse, DayState, IncidentSeverity, IncidentStatusPhase, OrgId,
+    ComponentHistoryResponse, DayState, IncidentSeverity, IncidentStatusPhase, OrgId,
     PublicComponent, PublicComponentGroup, PublicComponentStatus, PublicIncident,
     PublicIncidentUpdate, PublicMaintenance, PublicStatusPage, StatusPageId,
+    uptime_pct_from_downtime,
 };
 use crate::error::Result;
 use crate::security::Cipher;
@@ -35,7 +36,8 @@ use crate::storage::status_pages::COMPONENT_ORDER;
 use super::auto_incident_title;
 use super::cache::HistoryIncidentMarker;
 use super::overall_status::{
-    IncidentImpact, component_status, day_state, incident_impact, overall_state, overall_status,
+    IncidentImpact, component_status, day_state, overall_state, overall_status,
+    stored_incident_impact,
 };
 
 /// Aggregator-local configuration. Holds only the knobs the aggregator reads
@@ -170,6 +172,8 @@ impl OrgAggregator {
 
         let history_by_target =
             paint_strips(&component_ids, &day_presence, &paint_windows, now, days);
+        let mut uptime_by_target =
+            component_uptime(&component_ids, &day_presence, &paint_windows, now, days);
 
         let mut groups: Vec<PublicComponentGroup> = Vec::new();
         for c in &components {
@@ -188,6 +192,7 @@ impl OrgAggregator {
                 description: c.description.clone(),
                 current_status: current,
                 history,
+                uptime_pct: uptime_by_target.remove(&c.id).flatten(),
                 detail_url: c.detail_url.clone(),
             };
             match groups.last_mut() {
@@ -396,6 +401,7 @@ impl OrgAggregator {
         let rows: Vec<IncidentRow> = sqlx::query_as::<_, IncidentRow>(
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
+                      i.origin, i.regions_up,
                       i.public_title, i.public_description
                FROM incidents i
                WHERE i.org_id = $1
@@ -427,6 +433,7 @@ impl OrgAggregator {
         let mut rows: Vec<IncidentRow> = sqlx::query_as::<_, IncidentRow>(
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
+                      i.origin, i.regions_up,
                       i.public_title, i.public_description
                FROM incidents i
                WHERE i.org_id = $3
@@ -566,6 +573,7 @@ impl OrgAggregator {
                     .public_title
                     .clone()
                     .unwrap_or_else(|| auto_incident_title(&component_name, &r.status_at_start));
+                let severity = IncidentSeverity::from_db_str(&r.severity);
                 PublicIncident {
                     id: r.id,
                     component_id: r.target_id,
@@ -573,7 +581,13 @@ impl OrgAggregator {
                     title,
                     started_at: r.started_at,
                     ended_at: r.ended_at,
-                    severity: IncidentSeverity::from_db_str(&r.severity),
+                    severity,
+                    impact: stored_incident_impact(
+                        &r.origin,
+                        severity,
+                        &r.status_at_start,
+                        r.regions_up.as_deref(),
+                    ),
                     status_phase,
                     updates: my_updates,
                     postmortem: None,
@@ -600,7 +614,8 @@ impl OrgAggregator {
                 r#"SELECT
                     target_id,
                     toInt64(toUnixTimestamp(toStartOfDay(hour))) AS day,
-                    countMerge(total_checks) AS day_total
+                    countMerge(total_checks) AS day_total,
+                    toInt64(toUnixTimestamp(min(hour))) AS first_hour
                 FROM {CH_HISTORY_MV}
                 WHERE org_id = ?
                   AND has(arrayMap(x -> toUUID(x), ?), target_id)
@@ -678,6 +693,61 @@ fn paint_strips(
         .collect()
 }
 
+/// Confirmed incident downtime over wall-clock time, from the first hour the
+/// component was probed within the span to `now`. `None` when nothing was
+/// probed. A day-count ratio would bill a four-minute outage as a tenth of a
+/// ten-day history. Windows are merged first: a declared outage over the same
+/// hours as a monitor-opened one is one stretch of downtime, not two.
+fn component_uptime(
+    component_ids: &[Uuid],
+    presence: &[HistoryDayRow],
+    windows: &[PaintWindowRow],
+    now: DateTime<Utc>,
+    span_days: u32,
+) -> HashMap<Uuid, Option<f64>> {
+    let span_from = now - ChronoDuration::days(span_days as i64);
+    let mut first_seen: HashMap<Uuid, DateTime<Utc>> = HashMap::new();
+    for r in presence.iter().filter(|r| r.day_total > 0) {
+        let at = ts_to_datetime(r.first_hour);
+        first_seen
+            .entry(r.target_id)
+            .and_modify(|cur| *cur = (*cur).min(at))
+            .or_insert(at);
+    }
+    component_ids
+        .iter()
+        .map(|id| {
+            let pct = first_seen.get(id).map(|seen| {
+                let from = (*seen).max(span_from);
+                let mut spans: Vec<(DateTime<Utc>, DateTime<Utc>)> = windows
+                    .iter()
+                    .filter(|w| w.target_id == *id)
+                    .map(|w| (w.started_at.max(from), w.ended_at.unwrap_or(now).min(now)))
+                    .filter(|(start, end)| end > start)
+                    .collect();
+                spans.sort_unstable();
+                let mut downtime_secs = 0i64;
+                let mut open: Option<(DateTime<Utc>, DateTime<Utc>)> = None;
+                for (start, end) in spans {
+                    match open {
+                        Some((s, e)) if start <= e => open = Some((s, e.max(end))),
+                        Some((s, e)) => {
+                            downtime_secs += (e - s).num_seconds();
+                            open = Some((start, end));
+                        }
+                        None => open = Some((start, end)),
+                    }
+                }
+                if let Some((s, e)) = open {
+                    downtime_secs += (e - s).num_seconds();
+                }
+                uptime_pct_from_downtime(downtime_secs, (now - from).num_seconds())
+            });
+            (*id, pct)
+        })
+        .collect()
+}
+
 // ── PG row types ────────────────────────────────────────────────────────────
 
 #[derive(FromRow)]
@@ -708,6 +778,8 @@ struct IncidentRow {
     ended_at: Option<DateTime<Utc>>,
     severity: String,
     status_at_start: String,
+    origin: String,
+    regions_up: Option<Vec<String>>,
     public_title: Option<String>,
     #[allow(dead_code)]
     public_description: Option<String>,
@@ -735,21 +807,12 @@ struct PaintWindowRow {
 }
 
 impl PaintWindowRow {
-    /// Manual incidents carry the operator's chosen severity — the check
-    /// fields are placeholders on them. Auto incidents derive from what the
-    /// probes saw at open: `regions_up` non-empty means some region still
-    /// answered (partial loss); empty means every vantage point failed.
     fn impact(&self) -> IncidentImpact {
-        if self.origin == "manual" {
-            return match IncidentSeverity::from_db_str(&self.severity) {
-                IncidentSeverity::Minor => IncidentImpact::Degraded,
-                IncidentSeverity::Major => IncidentImpact::PartialOutage,
-                IncidentSeverity::Critical => IncidentImpact::MajorOutage,
-            };
-        }
-        incident_impact(
-            self.status_at_start == CheckStatus::Degraded.as_str(),
-            self.regions_up.as_ref().is_some_and(|r| !r.is_empty()),
+        stored_incident_impact(
+            &self.origin,
+            IncidentSeverity::from_db_str(&self.severity),
+            &self.status_at_start,
+            self.regions_up.as_deref(),
         )
     }
 }
@@ -770,6 +833,8 @@ struct HistoryDayRow {
     target_id: Uuid,
     day: i64, // DateTime in seconds; ClickHouse `toStartOfDay` returns DateTime
     day_total: u64,
+    /// First hour bucket with checks that day, in seconds.
+    first_hour: i64,
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -899,6 +964,7 @@ mod tests {
             target_id,
             day: day_start_utc(at.date_naive()).timestamp(),
             day_total: 1,
+            first_hour: at.timestamp() / 3600 * 3600,
         }
     }
 
@@ -959,6 +1025,74 @@ mod tests {
         // Yesterday (the incident's real day) painted, today untouched.
         assert_eq!(strip[88], DayState::MajorOutage);
         assert_eq!(strip[89], DayState::Operational);
+    }
+
+    #[test]
+    fn uptime_is_downtime_over_probed_time_not_a_day_count() {
+        let t = Uuid::now_v7();
+        let now = Utc.with_ymd_and_hms(2026, 5, 13, 12, 0, 0).unwrap();
+        // Ten days of checks, one four-minute outage.
+        let presence: Vec<HistoryDayRow> = (0..10)
+            .map(|d| presence_row(t, now - ChronoDuration::days(d)))
+            .collect();
+        let outage_start = now - ChronoDuration::days(3);
+        let w = window(
+            t,
+            "monitor",
+            "major",
+            "down",
+            None,
+            outage_start,
+            Some(outage_start + ChronoDuration::minutes(4)),
+        );
+        let pct = component_uptime(&[t], &presence, &[w], now, 90)[&t].expect("probed");
+        assert!((99.96..99.98).contains(&pct), "{pct}");
+
+        let silent = Uuid::now_v7();
+        assert_eq!(
+            component_uptime(&[silent], &[], &[], now, 90)[&silent],
+            None
+        );
+    }
+
+    #[test]
+    fn uptime_merges_a_declared_outage_over_a_measured_one() {
+        let t = Uuid::now_v7();
+        let now = Utc.with_ymd_and_hms(2026, 5, 13, 12, 0, 0).unwrap();
+        let presence = [presence_row(t, now - ChronoDuration::days(1))];
+        let start = now - ChronoDuration::hours(12);
+        let measured = window(t, "monitor", "major", "down", None, start, Some(now));
+        let declared = window(
+            t,
+            "manual",
+            "critical",
+            "down",
+            None,
+            start - ChronoDuration::hours(1),
+            Some(now - ChronoDuration::hours(6)),
+        );
+        let pct =
+            component_uptime(&[t], &presence, &[measured, declared], now, 90)[&t].expect("probed");
+        // Thirteen hours down out of twenty-four, counted once.
+        assert!((45.0..46.0).contains(&pct), "{pct}");
+    }
+
+    #[test]
+    fn uptime_counts_an_open_incident_up_to_now_and_clips_to_the_span() {
+        let t = Uuid::now_v7();
+        let now = Utc.with_ymd_and_hms(2026, 5, 13, 12, 0, 0).unwrap();
+        let presence = [presence_row(t, now - ChronoDuration::days(200))];
+        let w = window(
+            t,
+            "monitor",
+            "major",
+            "down",
+            None,
+            now - ChronoDuration::days(200),
+            None,
+        );
+        let pct = component_uptime(&[t], &presence, &[w], now, 90)[&t].expect("probed");
+        assert_eq!(pct, 0.0, "down for the whole span");
     }
 
     #[test]

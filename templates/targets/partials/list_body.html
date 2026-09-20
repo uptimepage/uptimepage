@@ -1,24 +1,48 @@
 {%- import "_pager.html" as pager -%}
-{# htmx swap region: toolbar + bulk bar + groups + footer refresh together. #}
-<section id="target-rows" class="flex flex-col gap-3">
-  {% include "targets/partials/_toolbar.html" %}
-  {% include "targets/partials/_bulk_bar.html" %}
+{# htmx swap region: heading, toolbar, bulk bar, groups and footer refresh together. #}
+<div id="target-rows" class="space-y-4">
+  <header class="flex flex-wrap items-end justify-between gap-3">
+    <div>
+      <div class="flex items-center gap-3">
+        <h1 class="page-title"><span class="page-title__prefix" aria-hidden="true">$</span>monitors</h1>
+        <span class="monitors-subhead__mono">{{ total }}</span>
+      </div>
+      {% if !onboarding && (groups.len() > 1 || paused_total > 0) %}
+      <p class="monitors-subhead">
+        {% if groups.len() > 1 %}{{ groups.len() }} groups{% endif %}
+        {% if groups.len() > 1 && paused_total > 0 %}·{% endif %}
+        {% if paused_total > 0 %}<span class="monitors-subhead__mono">{{ paused_total }}</span> paused on this page{% endif %}
+      </p>
+      {% endif %}
+    </div>
+    <a href="/targets/new"
+       class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">+ monitor</a>
+  </header>
 
-  {% if groups.is_empty() %}
-  <div class="monitors-group">
-    <p class="monitors-empty">No monitors match these filters.</p>
-  </div>
+  {% if onboarding %}
+  {% include "_empty_monitors_hero.html" %}
   {% else %}
-  {% for gb in groups %}
-  {% include "targets/partials/_group_card.html" %}
-  {% endfor %}
-  {% endif %}
+  <div class="flex flex-col gap-3">
+    {% include "targets/partials/_toolbar.html" %}
+    {% include "targets/partials/_bulk_bar.html" %}
 
-  <div class="monitors-foot">
-    <span>
-      showing <span class="monitors-foot__mono">{% if total == 0 %}0{% else %}{{ offset + 1 }}–{{ offset + total }}{% endif %}{% if has_more %}+{% endif %}</span>
-      of <span class="monitors-foot__mono">{{ total }}{% if has_more %}+{% endif %}</span>
-    </span>
-    {% call pager::foot_nav(page_sizes, pager_prev, pager_next, "#target-rows") %}{% endcall %}
+    {% if groups.is_empty() %}
+    <div class="monitors-group">
+      <p class="monitors-empty">No monitors match these filters.</p>
+    </div>
+    {% else %}
+    {% for gb in groups %}
+    {% include "targets/partials/_group_card.html" %}
+    {% endfor %}
+    {% endif %}
+
+    <div class="monitors-foot">
+      <span>
+        showing <span class="monitors-foot__mono">{% if shown == 0 %}0{% else %}{{ offset + 1 }}–{{ offset + shown }}{% endif %}</span>
+        of <span class="monitors-foot__mono">{{ total }}</span>
+      </span>
+      {% call pager::foot_nav(page_sizes, pager_prev, pager_next, "#target-rows") %}{% endcall %}
+    </div>
   </div>
-</section>
+  {% endif %}
+</div>

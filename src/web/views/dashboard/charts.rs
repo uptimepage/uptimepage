@@ -111,7 +111,7 @@ pub(super) fn build_kpi_cards(
     sparks: &FleetSparks,
 ) -> Vec<KpiCardSpec> {
     let incidents_html = format!(
-        r#"Incidents (24h): <span class="{cls}">{n}</span>"#,
+        r#"Incidents · {range}: <span class="{cls}">{n}</span>"#,
         cls = if kpis.incidents > 0 {
             "metric-alert"
         } else {

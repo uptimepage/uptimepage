@@ -16,16 +16,10 @@
 //! Each is a referentially-transparent function so the truth tables can be
 //! exhaustively unit-tested below.
 
-use crate::domain::{DayState, OverallState, OverallStatus, PublicComponentStatus};
-
-/// What one confirmed incident contributes to its component's public state.
-/// `Ord` ranks by severity so "worst wins" is `Iterator::max`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum IncidentImpact {
-    Degraded,
-    PartialOutage,
-    MajorOutage,
-}
+pub use crate::domain::IncidentImpact;
+use crate::domain::{
+    CheckStatus, DayState, IncidentSeverity, OverallState, OverallStatus, PublicComponentStatus,
+};
 
 /// Impact of one confirmed incident. `degraded` is whether the incident
 /// opened on a `degraded` check status (slow / rate-limited, not hard-failed);
@@ -39,6 +33,29 @@ pub fn incident_impact(degraded: bool, any_region_up: bool) -> IncidentImpact {
     } else {
         IncidentImpact::MajorOutage
     }
+}
+
+/// [`incident_impact`] read off a stored incident row. Manual incidents carry
+/// the operator's chosen severity; the check fields are placeholders on them.
+/// Monitor-opened incidents derive from what the probes saw, so the same
+/// outage reads the same on the day strip, the incident card and the API.
+pub fn stored_incident_impact(
+    origin: &str,
+    severity: IncidentSeverity,
+    status_at_start: &str,
+    regions_up: Option<&[String]>,
+) -> IncidentImpact {
+    if origin == "manual" {
+        return match severity {
+            IncidentSeverity::Minor => IncidentImpact::Degraded,
+            IncidentSeverity::Major => IncidentImpact::PartialOutage,
+            IncidentSeverity::Critical => IncidentImpact::MajorOutage,
+        };
+    }
+    incident_impact(
+        status_at_start == CheckStatus::Degraded.as_str(),
+        regions_up.is_some_and(|r| !r.is_empty()),
+    )
 }
 
 /// Component status from the worst impact among its open incidents.
