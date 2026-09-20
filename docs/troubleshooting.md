@@ -35,12 +35,11 @@ One tenant has more concurrent monitors at the same `(host, port)` than `checker
 
 ## `domain_expiry` results show `served_stale: …`
 
-The fresh RDAP probe failed (throttle, timeout, registry 5xx, network blip) but the executor served the most recent successful answer from `domain_expiry_state` instead of flipping the monitor red. The status reflects the cached `expiry_at`. For Up the `error` field stays empty (the customer-facing surface shows nothing unusual); for Degraded/Down it carries `served_stale: last_verified_age_secs=…; refresh_failed=<kind>` plus the cached details so operators can distinguish a stale serve from a fresh probe.
+The fresh RDAP probe failed (timeout, registry 5xx, network blip) but the executor served the most recent successful answer from `domain_expiry_state` instead of flipping the monitor red. The status reflects the cached `expiry_at`. For Up the `error` field stays empty (the customer-facing surface shows nothing unusual); for Degraded/Down it carries `served_stale: last_verified_age_secs=…; refresh_failed=<kind>` plus the cached details so operators can distinguish a stale serve from a fresh probe.
 
 Inspect the failure kind via `uptimepage_domain_expiry_stale_served_total{kind}`:
 
-- `kind="throttled"` — per-TLD registry bulkhead rejected this probe (gates RDAP and WHOIS alike). Raise `checker.rdap_max_inflight` if rampant, but the cap is also the IANA-friendliness lever.
-- `kind="timeout"` — the registry took longer than `check.timeout` (per-target). Either bump the per-check timeout or wait — most registries recover in minutes.
+- `kind="timeout"` — the lookup took longer than `check.timeout` (per-target). Covers a slow registry and a long wait in the per-TLD queue (`checker.rdap_max_inflight`, gates RDAP and WHOIS alike): many same-TLD checks landing at once, as after an agent restart, drain serially. Either bump the per-check timeout or wait — most registries recover in minutes.
 - `kind="lookup_error"` — registry returned a non-2xx (often 404 or 5xx). If a specific TLD is stuck on 5xx, the registry is having an incident; rows keep streaming as `served_stale` until 7 days have passed.
 - `kind="fresh_error"` — no usable last-good (first probe, or the cached row is older than 7d). A real `CheckStatus::Error` is emitted and is alert-eligible.
 

@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use axum::Router;
@@ -30,6 +31,8 @@ struct ServerState {
     expiration: Arc<Mutex<chrono::DateTime<Utc>>>,
     registrar: Option<String>,
     fail_lookup: bool,
+    lookup_delay: Duration,
+    lookups: Arc<AtomicUsize>,
 }
 
 async fn handle_bootstrap(State(state): State<ServerState>) -> axum::Json<Value> {
@@ -44,9 +47,11 @@ async fn handle_domain(
     State(state): State<ServerState>,
     Path(_domain): Path<String>,
 ) -> (StatusCode, axum::Json<Value>) {
+    state.lookups.fetch_add(1, Ordering::SeqCst);
     if state.fail_lookup {
         return (StatusCode::NOT_FOUND, axum::Json(json!({})));
     }
+    tokio::time::sleep(state.lookup_delay).await;
     let exp = *state.expiration.lock();
     let entities = match &state.registrar {
         Some(name) => json!([{
@@ -74,6 +79,15 @@ async fn spawn_rdap_fixture(
     registrar: Option<&str>,
     fail_lookup: bool,
 ) -> (SocketAddr, ServerState) {
+    spawn_slow_rdap_fixture(expiration, registrar, fail_lookup, Duration::ZERO).await
+}
+
+async fn spawn_slow_rdap_fixture(
+    expiration: chrono::DateTime<Utc>,
+    registrar: Option<&str>,
+    fail_lookup: bool,
+    lookup_delay: Duration,
+) -> (SocketAddr, ServerState) {
     // Bind before constructing state so the bootstrap response can advertise
     // the same address we'll serve from. Can't delegate to `common::spawn_router`
     // here — it binds internally, but the fixture's bootstrap payload needs the
@@ -85,6 +99,8 @@ async fn spawn_rdap_fixture(
         expiration: Arc::new(Mutex::new(expiration)),
         registrar: registrar.map(str::to_owned),
         fail_lookup,
+        lookup_delay,
+        lookups: Arc::new(AtomicUsize::new(0)),
     };
     let app = Router::new()
         .route("/bootstrap.json", get(handle_bootstrap))
@@ -309,5 +325,66 @@ async fn domain_expiry_serves_last_good_on_rdap_failure() {
         r.error.is_none(),
         "Up cached verdict carries no error annotation, got: {:?}",
         r.error
+    );
+}
+
+/// A same-TLD burst queues on the one registry slot instead of failing.
+/// Checks that run out of time while queued never reach the registry.
+#[tokio::test]
+async fn domain_expiry_same_tld_burst_queues_on_the_registry_slot() {
+    let (addr, server) = spawn_slow_rdap_fixture(
+        Utc::now() + chrono::Duration::days(120),
+        None,
+        false,
+        Duration::from_millis(300),
+    )
+    .await;
+    let state: Arc<dyn DomainExpiryStateStore> = Arc::new(InMemoryDomainExpiryStateStore::new());
+    let runtime = Arc::new(DomainExpiryRuntime::new(
+        Arc::new(RegistrationClient::new(Arc::new(client_for(addr)))),
+        Arc::new(RdapSingleflight::with_default_ttl()),
+        state,
+        Arc::new(HostThrottle::new(2, 1)),
+        DEFAULT_MAX_STALENESS,
+    ));
+
+    // Two checks with room to wait their turn, two whose deadline passes
+    // while the first lookup still holds the slot.
+    let checks = [
+        ("a.example", Duration::from_secs(5)),
+        ("b.example", Duration::from_secs(5)),
+        ("c.example", Duration::from_millis(200)),
+        ("d.example", Duration::from_millis(200)),
+    ];
+    let runs = checks.map(|(domain, timeout)| {
+        let runtime = runtime.clone();
+        let mut check = make_check(domain, 30, 7);
+        check.timeout = timeout;
+        tokio::spawn(async move {
+            execute_domain_expiry_check(
+                Uuid::now_v7(),
+                Uuid::now_v7(),
+                &check,
+                &runtime,
+                &common::test_client(),
+            )
+            .await
+        })
+    });
+    let mut results = Vec::new();
+    for run in runs {
+        results.push(run.await.unwrap());
+    }
+
+    assert_eq!(results[0].status, CheckStatus::Up, "{:?}", results[0].error);
+    assert_eq!(results[1].status, CheckStatus::Up, "{:?}", results[1].error);
+    for r in &results[2..] {
+        assert_eq!(r.status, CheckStatus::Error);
+        assert_eq!(r.error.as_deref(), Some("rdap timeout"));
+    }
+    assert_eq!(
+        server.lookups.load(Ordering::SeqCst),
+        2,
+        "checks that expired in the queue must not reach the registry"
     );
 }

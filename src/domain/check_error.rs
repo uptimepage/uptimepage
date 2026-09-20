@@ -305,7 +305,7 @@ pub fn classify_check_error(raw: &str) -> ErrorClass {
         }
         "certificate hostname mismatch" => return ErrorClass::CertHostnameMismatch,
         "certificate invalid" => return ErrorClass::CertInvalid,
-        "rdap throttled" => return ErrorClass::RdapLookup,
+        "rdap timeout" | "rdap throttled" => return ErrorClass::RdapLookup,
         "no response" => return ErrorClass::NoResponse,
         "tls" => return ErrorClass::Tls,
         // The TLS-phase reasons share `Tls`: the class is what dashboards
@@ -521,6 +521,7 @@ mod tests {
             ErrorClass::CertHostnameMismatch,
         ),
         ("certificate invalid", ErrorClass::CertInvalid),
+        ("rdap timeout", ErrorClass::RdapLookup),
         ("rdap throttled", ErrorClass::RdapLookup),
         (
             "no echo reply from 2a01:116f:4013:3c00::1 within 3000ms",

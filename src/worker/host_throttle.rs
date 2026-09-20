@@ -5,15 +5,21 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::domain::{CheckSpec, OrgId};
 
-/// Per-(org, host, port) in-flight cap. Tenant-scoped — one customer's burst
-/// can't starve another customer's monitor of the same host. Fail-fast
-/// bulkhead pattern: contention returns `Throttled` immediately with no
-/// wait, so a pool worker permit is never held while queued.
+/// Two bulkheads with different contention rules.
+///
+/// Per-(org, host, port) in-flight cap: tenant-scoped — one customer's burst
+/// can't starve another customer's monitor of the same host. Fail-fast:
+/// contention returns `Throttled` immediately with no wait, so a pool worker
+/// permit is never held while queued. Right for checks that run again in
+/// under a minute.
 pub struct HostThrottle {
     caps: DashMap<HostKey, Arc<Semaphore>>,
     /// RDAP slots keyed by TLD. Process-wide (not per-tenant) — never burst
     /// the registry. Per-TLD instead of single global so a slow `.com` query
-    /// doesn't drag `.org` checks down with it.
+    /// doesn't drag `.org` checks down with it. Queues instead of failing
+    /// fast: a daily check dropped at boot paints a region red for a day.
+    /// The trade is a pool permit held for at most the check timeout per
+    /// queued lookup, cheap against a 1024-permit pool at daily cadence.
     rdap: DashMap<Arc<str>, Arc<Semaphore>>,
     per_host_max: usize,
     rdap_max: usize,
@@ -71,9 +77,15 @@ impl HostThrottle {
     }
 
     /// Per-TLD RDAP cap. Caller passes the pre-computed TLD (cached on
-    /// `ScheduledTarget.rdap_tld`).
-    pub fn acquire_rdap(&self, tld: &Arc<str>) -> Result<HostPermit, Throttled> {
-        try_acquire(self.rdap_semaphore_for(tld))
+    /// `ScheduledTarget.rdap_tld`). Waits FIFO for a free slot; cancel-safe,
+    /// so a caller dropped by its check timeout leaves the queue cleanly.
+    pub async fn acquire_rdap(&self, tld: &Arc<str>) -> HostPermit {
+        let permit = self
+            .rdap_semaphore_for(tld)
+            .acquire_owned()
+            .await
+            .expect("rdap semaphore is never closed");
+        HostPermit { _inner: permit }
     }
 
     fn semaphore_for(&self, key: &HostKey) -> Arc<Semaphore> {
@@ -176,8 +188,12 @@ pub fn host_port_raw(spec: &CheckSpec) -> Option<(&str, Option<u16>)> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::time::Duration;
+
+    use tokio::time::timeout;
     use uuid::Uuid;
+
+    use super::*;
 
     fn org() -> OrgId {
         OrgId(Uuid::new_v4())
@@ -227,17 +243,32 @@ mod tests {
         assert!(b_permit.is_ok(), "tenant B must not be starved by tenant A");
     }
 
-    #[test]
-    fn rdap_cap_one_per_tld_independent() {
-        let throttle = HostThrottle::new(2, 1);
-        let _hold = throttle.acquire_rdap(&tld("com")).expect("first");
+    #[tokio::test]
+    async fn rdap_cap_one_per_tld_queues_and_stays_independent() {
+        let throttle = Arc::new(HostThrottle::new(2, 1));
+        let hold = throttle.acquire_rdap(&tld("com")).await;
+        let waiter = tokio::spawn({
+            let throttle = throttle.clone();
+            async move { throttle.acquire_rdap(&tld("com")).await }
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(
-            throttle.acquire_rdap(&tld("com")).is_err(),
-            ".com cap=1 must reject second concurrent"
+            !waiter.is_finished(),
+            ".com cap=1 must queue the second concurrent acquire"
         );
         assert!(
-            throttle.acquire_rdap(&tld("org")).is_ok(),
-            ".org must not be blocked by a stuck .com"
+            timeout(
+                Duration::from_millis(50),
+                throttle.acquire_rdap(&tld("org"))
+            )
+            .await
+            .is_ok(),
+            ".org must not be blocked by a busy .com"
+        );
+        drop(hold);
+        assert!(
+            timeout(Duration::from_secs(1), waiter).await.is_ok(),
+            "the queued .com waiter must resume once the slot frees"
         );
     }
 

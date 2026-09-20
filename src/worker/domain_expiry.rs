@@ -5,10 +5,10 @@
 //!  2. On success: write the answer to `domain_expiry_state` (last-good
 //!     cache) and emit a CheckResult whose status is derived from
 //!     `classify_days`.
-//!  3. On failure (throttle, timeout, network, registry error): load
-//!     last-good. If younger than `max_staleness`, emit a CheckResult with
-//!     the *cached* status and an `error="served_stale: …"` annotation so
-//!     operator tools can see we served stale data.
+//!  3. On failure (timeout, network, registry error): load last-good. If
+//!     younger than `max_staleness`, emit a CheckResult with the *cached*
+//!     status and an `error="served_stale: …"` annotation so operator tools
+//!     can see we served stale data.
 //!  4. If the row is missing or older than `max_staleness`, emit a real
 //!     `CheckStatus::Error` with the underlying failure message.
 //!
@@ -18,13 +18,13 @@
 
 use std::sync::Arc;
 use std::sync::LazyLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::anyhow;
 use chrono::Utc;
 use metrics::{Counter, counter};
 use serde::Serialize;
-use tokio::time::timeout;
+use tokio::time::{Instant, timeout_at};
 use uuid::Uuid;
 
 static HOST_THROTTLE_WAITS_RDAP: LazyLock<Counter> =
@@ -40,7 +40,7 @@ use crate::domain::{CheckResult, CheckStatus, DomainExpiryCheck, OrgId, SERVED_S
 use crate::http_client::HttpClients;
 use crate::metric_names;
 use crate::storage::DomainExpiryStateStore;
-use crate::worker::host_throttle::{HostThrottle, Throttled};
+use crate::worker::host_throttle::HostThrottle;
 use crate::worker::rdap_singleflight::{FetchOutcome, RdapSingleflight};
 use crate::worker::registration::{
     RegistrationAnswer, RegistrationClient, RegistrationError, tld_verdict,
@@ -139,17 +139,22 @@ pub async fn execute_domain_expiry_check(
 /// `Result` so the fallback path can record the right metric kind.
 #[derive(Debug)]
 enum ProbeFailure {
-    Throttled,
     Timeout,
     Lookup(anyhow::Error),
     /// Retrying cannot change it, so the message names the cause.
     Permanent(RegistrationError),
 }
 
+/// A queued lookup whose per-TLD slot came free only after the check
+/// deadline. Starting the outbound request then would be exactly the
+/// registry burst the cap exists to prevent, so the fetcher bails first.
+#[derive(Debug, thiserror::Error)]
+#[error("rdap timeout")]
+struct QueueExpired;
+
 impl ProbeFailure {
     fn kind(&self) -> &'static str {
         match self {
-            Self::Throttled => "throttled",
             Self::Timeout => "timeout",
             Self::Lookup(_) => "lookup_error",
             Self::Permanent(_) => "unsupported_tld",
@@ -157,7 +162,6 @@ impl ProbeFailure {
     }
     fn message(&self) -> String {
         match self {
-            Self::Throttled => "rdap throttled".into(),
             Self::Timeout => "rdap timeout".into(),
             Self::Lookup(e) => e.to_string(),
             Self::Permanent(e) => e.to_string(),
@@ -178,11 +182,14 @@ async fn fresh_probe(
     let canonical = crate::worker::host_throttle::canonical_host(&check.domain);
     let domain: Arc<str> = Arc::from(canonical.as_str());
     let tld = HostThrottle::rdap_tld(&canonical).map(Arc::<str>::from);
+    let deadline = Instant::now() + check.timeout;
 
     // Throttle gate sits INSIDE the fetcher closure so a cache hit never
     // consumes a per-TLD permit and never bumps the wait counter — the
     // bulkhead exists to protect registries from outbound traffic, and a
-    // hit makes no outbound traffic.
+    // hit makes no outbound traffic. One deadline covers the queue wait and
+    // the lookup, and a waiter that reaches the slot with nothing left never
+    // opens a connection it would abort a moment later.
     let client = runtime.registry_client.clone();
     let lookup_domain = domain.clone();
     let host_throttle = runtime.host_throttle.clone();
@@ -190,12 +197,11 @@ async fn fresh_probe(
         let _permit = match tld.as_ref() {
             Some(t) => {
                 HOST_THROTTLE_WAITS_RDAP.increment(1);
-                match host_throttle.acquire_rdap(t) {
-                    Ok(p) => Some(p),
-                    Err(Throttled) => {
-                        return Err(crate::error::AppError::Other(anyhow!("rdap throttled")));
-                    }
+                let permit = host_throttle.acquire_rdap(t).await;
+                if Instant::now() >= deadline {
+                    return Err(crate::error::AppError::Other(QueueExpired.into()));
                 }
+                Some(permit)
             }
             None => None,
         };
@@ -204,7 +210,7 @@ async fn fresh_probe(
             .await
     });
 
-    let outcome = timeout(check.timeout, lookup).await;
+    let outcome = timeout_at(deadline, lookup).await;
 
     match outcome {
         Ok(Ok((answer, fetch_outcome))) => {
@@ -212,12 +218,10 @@ async fn fresh_probe(
             Ok(answer)
         }
         Ok(Err(crate::error::AppError::Other(e))) => {
-            // The throttle path encodes itself as "rdap throttled"; everything
-            // else is a lookup error from the registry transport.
             if let Some(verdict) = tld_verdict(&e) {
                 Err(ProbeFailure::Permanent(verdict.clone()))
-            } else if e.to_string() == "rdap throttled" {
-                Err(ProbeFailure::Throttled)
+            } else if e.downcast_ref::<QueueExpired>().is_some() {
+                Err(ProbeFailure::Timeout)
             } else {
                 Err(ProbeFailure::Lookup(e))
             }
