@@ -184,7 +184,7 @@ async fn main() -> Result<()> {
     );
 
     let api_bind = cfg.server.api_bind.clone();
-    let cipher = cfg.security.cipher()?;
+    let cipher = uptimepage::security::Cipher::from_config(&cfg.security)?;
     if cipher.is_none() {
         tracing::warn!(
             "credentials_kek_base64 unset — basic_auth/bearer_token will be stored in plaintext"

@@ -17,14 +17,14 @@ use serde::Deserialize;
 use utoipa::IntoParams;
 use uuid::Uuid;
 
-use crate::api::cursor::IncidentCursor;
 use crate::api::json_arc::JsonArc;
-use crate::api::page::{CursorPage, CursorPageOfPublicIncident};
 use crate::app::AppState;
 use crate::domain::{
     ComponentHistoryResponse, PublicIncident, PublicMaintenanceList, PublicStatusPage,
 };
 use crate::error::public::{PublicApiError, PublicAppError};
+use crate::pagination::cursor::IncidentCursor;
+use crate::pagination::page::{CursorPage, CursorPageOfPublicIncident};
 use crate::public_status::IncidentListQuery;
 use crate::public_status::badge::{component_badge, overall_badge, render_badge};
 use crate::public_status::source::FeedLinks;

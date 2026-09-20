@@ -116,18 +116,6 @@ fn an_interval_coarser_than_the_evaluation_cadence_is_refused() {
 }
 
 #[test]
-fn the_form_default_pairs_with_the_default_interval() {
-    let hb = crate::web::views::targets_form::HeartbeatFields::default();
-    let interval = crate::domain::interval_hints_for_kind("heartbeat").default;
-    validate_heartbeat_cadence(
-        &heartbeat_spec(hb.period_s, hb.grace_s),
-        std::time::Duration::from_secs(interval),
-        60,
-    )
-    .unwrap();
-}
-
-#[test]
 fn scrub_secrets_redacts_echoed_values_in_body_and_headers() {
     use crate::ad_hoc_dispatch::DeliveredResult;
     use crate::domain::CheckResult;

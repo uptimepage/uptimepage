@@ -18,7 +18,6 @@ use chrono::Utc;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use uptimepage::api::CursorPage;
 use uptimepage::domain::{
     ComponentHistoryResponse, DayState, IncidentSeverity, IncidentStatusPhase, OverallState,
     OverallStatus, PageRef, PublicComponent, PublicComponentGroup, PublicComponentStatus,
@@ -26,6 +25,7 @@ use uptimepage::domain::{
     PublicStatusPage,
 };
 use uptimepage::error::public::PublicAppError;
+use uptimepage::pagination::CursorPage;
 use uptimepage::public_status::{IncidentListQuery, PublicSource, source::FeedLinks};
 
 use common::build_test_app_with_public_source;

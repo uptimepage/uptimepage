@@ -91,18 +91,20 @@ async fn the_mx_gate_reads_the_answers_it_claims_to() {
     let r = resolver();
 
     // Ordinary MX records.
-    assert_eq!(policy.assess("a@uptimepage.dev", &r).await, None);
+    assert_eq!(policy.assess("a@uptimepage.dev", r.inner()).await, None);
     // Preference 0 with a real exchange is a normal MX, not RFC 7505.
-    assert_eq!(policy.assess("a@github.com", &r).await, None);
+    assert_eq!(policy.assess("a@github.com", r.inner()).await, None);
     // RFC 7505 null MX: `0 .` is an explicit refusal to accept mail, and it
     // must not fall through to the implicit-A rule.
     assert_eq!(
-        policy.assess("a@example.com", &r).await,
+        policy.assess("a@example.com", r.inner()).await,
         Some(EmailRisk::NoMx)
     );
     // NXDOMAIN under a reserved TLD: nothing to deliver to, ever.
     assert_eq!(
-        policy.assess("a@nonexistent-domain-xyz-9f3.test", &r).await,
+        policy
+            .assess("a@nonexistent-domain-xyz-9f3.test", r.inner())
+            .await,
         Some(EmailRisk::NoMx)
     );
 }

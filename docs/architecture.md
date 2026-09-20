@@ -154,7 +154,7 @@ Every tenant-facing storage method takes `org: OrgId` as its first parameter, ev
 
 ## Where region partitioning lives
 
-Region assignment is not in the scheduler. It lives in the `EnabledTargetSource` implementation in `src/storage/admin.rs` (`RegionTargetSource`, `HeartbeatTargetSource`, `AgentPullSource`), and the assignment table is `target_regions`. Results carry their region as a low-cardinality column through both ClickHouse rollups, so reads can slice by region and quorum policies can require agreement across regions. See [Multi-region probes](multi-region.md).
+Region assignment is not in the scheduler. It lives in the `EnabledTargetSource` implementations (`RegionTargetSource` and `HeartbeatTargetSource` in `src/scheduler/sources.rs`, `AgentPullSource` in `src/agent/mod.rs`), and the assignment table is `target_regions`. Results carry their region as a low-cardinality column through both ClickHouse rollups, so reads can slice by region and quorum policies can require agreement across regions. See [Multi-region probes](multi-region.md).
 
 ## Related pages
 

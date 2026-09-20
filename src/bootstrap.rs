@@ -138,7 +138,10 @@ async fn seed_owner_email_channel(
         return;
     }
     let seeded = async {
-        let store = PgNotificationChannelStore::new(pool.clone(), cfg.security.cipher()?);
+        let store = PgNotificationChannelStore::new(
+            pool.clone(),
+            crate::security::Cipher::from_config(&cfg.security)?,
+        );
         let limit = i64::from(
             QuotaService::new(cfg, Some(pool.clone()))
                 .limit_for_org(org)

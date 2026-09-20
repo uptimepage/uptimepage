@@ -110,11 +110,11 @@ async fn public_source_trait_threads_org_param_to_distinct_responses() {
     // but internally falls back to a baked default.
     use async_trait::async_trait;
     use std::collections::HashMap;
-    use uptimepage::api::CursorPage;
     use uptimepage::domain::{
         ComponentHistoryResponse, PageRef, PublicIncident, PublicMaintenanceList, StatusPageId,
     };
     use uptimepage::error::public::PublicAppError;
+    use uptimepage::pagination::CursorPage;
     use uptimepage::public_status::{IncidentListQuery, PublicSource, source::FeedLinks};
 
     // Public reads are keyed by status page, not org — isolation is per-page.

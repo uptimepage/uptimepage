@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use utoipa::IntoParams;
 use uuid::Uuid;
 
-use crate::api::page::{PageEnvelope, PageOfTarget};
 use crate::api::redaction::Redacted;
 use crate::api::types::{
     BulkAction, BulkActionFailure, BulkActionRequest, BulkActionResponse, TestRequest, TestResponse,
@@ -21,6 +20,7 @@ use crate::error::ApiError;
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::metric_names;
+use crate::pagination::page::{PageEnvelope, PageOfTarget};
 use crate::request::{
     Authorized, CurrentOrg, CurrentUser, RequestSource, TargetsDelete, TargetsExecute, TargetsRead,
     TargetsWrite, TokenScopes,
@@ -38,7 +38,7 @@ use super::invalidate_pages_for;
 mod dispatch;
 #[cfg(test)]
 mod tests;
-mod validate;
+pub(crate) mod validate;
 
 use dispatch::{dispatch_first_check, pick_flow_region};
 use validate::{

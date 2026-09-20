@@ -19,13 +19,13 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use common::build_test_app_with_web_and_public_source;
-use uptimepage::api::CursorPage;
 use uptimepage::domain::{
     ComponentHistoryResponse, DayState, IncidentSeverity, IncidentStatusPhase, OverallState,
     OverallStatus, PageRef, PublicComponent, PublicComponentGroup, PublicComponentStatus,
     PublicIncident, PublicIncidentUpdate, PublicMaintenanceList, PublicStatusPage,
 };
 use uptimepage::error::public::PublicAppError;
+use uptimepage::pagination::CursorPage;
 use uptimepage::public_status::{IncidentListQuery, PublicSource, source::FeedLinks};
 
 const OPERATOR_TITLE: &str = "API down in EU-WEST — investigating router";

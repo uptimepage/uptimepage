@@ -304,7 +304,7 @@ pub async fn archive(
     headers: HeaderMap,
     Query(params): Query<ArchiveParams>,
 ) -> Response {
-    use crate::api::cursor::IncidentCursor;
+    use crate::pagination::cursor::IncidentCursor;
     use crate::public_status::IncidentListQuery;
 
     let page_ref = match resolve_status_page(&state, &headers).await {

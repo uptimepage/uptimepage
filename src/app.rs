@@ -322,7 +322,7 @@ impl AppState {
             .signup_policy()
             .unwrap_or(crate::config::SignupPolicy::Flag);
         self.email_policy
-            .admit(email, self.http_clients.resolver(), policy)
+            .admit(email, self.http_clients.resolver().inner(), policy)
             .await
     }
 
@@ -345,7 +345,7 @@ impl AppState {
     ) -> Option<crate::security::EmailRisk> {
         let risk = self
             .email_policy
-            .assess(email, self.http_clients.resolver())
+            .assess(email, self.http_clients.resolver().inner())
             .await;
         if let Some(risk) = risk {
             crate::security::email_policy::record(surface, "refused", risk);

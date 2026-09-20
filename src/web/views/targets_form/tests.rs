@@ -833,3 +833,22 @@ fn copy_form_seeds_create_from_existing() {
     assert_eq!(form.tcp.port, 5432);
     assert_eq!(form.tags, vec!["prod".to_string()]);
 }
+
+/// The form's heartbeat default has to pass the cadence rule the API applies
+/// on submit, or the empty form refuses itself.
+#[test]
+fn the_heartbeat_default_pairs_with_the_default_interval() {
+    let hb = HeartbeatFields::default();
+    let spec = CheckSpec::Heartbeat(crate::domain::HeartbeatCheck {
+        period: std::time::Duration::from_secs(hb.period_s),
+        grace: std::time::Duration::from_secs(hb.grace_s),
+        max_runtime: None,
+    });
+    let interval = crate::domain::interval_hints_for_kind("heartbeat").default;
+    crate::api::handlers::targets::validate::validate_heartbeat_cadence(
+        &spec,
+        std::time::Duration::from_secs(interval),
+        60,
+    )
+    .unwrap();
+}

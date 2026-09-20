@@ -5,7 +5,6 @@ use crate::api::handlers::orgs::{
     CheckSlugResponse, CreateOrgRequest, MemberView as OrgMemberView, OrgView,
     SwitchActiveOrgRequest, UpdateMemberRoleRequest, UpdateOrgRequest,
 };
-use crate::api::page::PageEnvelope;
 use crate::api::types::{
     BulkAction, BulkActionFailure, BulkActionRequest, BulkActionResponse, DashboardSummary,
     FlowStepSeries, Last24hSummary, LatencySeries, LatencySeriesByRegion, StatusBreakdown,
@@ -35,6 +34,7 @@ use crate::domain::{
 };
 use crate::error::public::{PublicApiError, PublicApiErrorBody};
 use crate::error::{ApiError, ApiErrorBody};
+use crate::pagination::page::PageEnvelope;
 use crate::storage::UptimeStats;
 
 #[derive(OpenApi)]

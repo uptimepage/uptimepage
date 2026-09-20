@@ -410,7 +410,7 @@ module under `static/js/charts/` is already a pure
 `(element, endpoint) → disposer` function, and there are zero `/web/*`
 write endpoints to refactor. To swap frameworks: generate a typed client
 from `/api/openapi.json`, port the templates page by page keeping
-`/api/v1/*` unchanged, drop `src/web/views/` (keeping `src/web/assets.rs`
+`/api/v1/*` unchanged, drop `src/web/views/` (keeping `src/templates/assets.rs`
 pointed at the new bundle), and delete `templates/` plus
 `static/js/{htmx,json-enc,ui}`. The backend stays untouched.
 

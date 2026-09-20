@@ -14,13 +14,13 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-use crate::api::cursor::IncidentCursor;
-use crate::api::page::CursorPage;
 use crate::domain::{
     ComponentHistoryResponse, IncidentSeverity, IncidentStatusPhase, OrgId, PageRef,
     PublicIncident, PublicIncidentUpdate, PublicMaintenanceList, PublicStatusPage,
 };
 use crate::error::public::PublicAppError;
+use crate::pagination::cursor::IncidentCursor;
+use crate::pagination::page::CursorPage;
 
 use super::aggregator::OrgAggregator;
 use super::auto_incident_title;

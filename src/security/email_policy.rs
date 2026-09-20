@@ -10,12 +10,12 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
+use hickory_resolver::TokioResolver;
 use hickory_resolver::proto::rr::{RData, RecordType};
 
 use crate::config::{EmailPolicyConfig, SignupPolicy};
 use crate::error::AppError;
 use crate::error::codes;
-use crate::http_client::HickoryDnsResolver;
 use crate::metric_names;
 use crate::security::abuse::domain_and_parents;
 
@@ -256,7 +256,7 @@ impl EmailPolicy {
 
     /// Corpus first (free), then MX. Fails open: only an authoritative "takes
     /// no mail" is a verdict, because a DNS blip must not close signups.
-    pub async fn assess(&self, email: &str, resolver: &HickoryDnsResolver) -> Option<EmailRisk> {
+    pub async fn assess(&self, email: &str, resolver: &TokioResolver) -> Option<EmailRisk> {
         let domain = self.candidate_domain(email)?;
         if self.listed(&domain).is_some() {
             return Some(EmailRisk::Disposable);
@@ -275,7 +275,7 @@ impl EmailPolicy {
     pub async fn admit(
         &self,
         email: &str,
-        resolver: &HickoryDnsResolver,
+        resolver: &TokioResolver,
         policy: SignupPolicy,
     ) -> Admission {
         if policy == SignupPolicy::Allow {
@@ -303,12 +303,8 @@ pub fn domain_of(email: &str) -> Option<String> {
 
 /// `Some(false)` is authoritative "takes no mail"; `None` is "resolver could
 /// not say" and must not be read as a refusal.
-async fn accepts_mail(resolver: &HickoryDnsResolver, domain: &str) -> Option<bool> {
-    let mx = tokio::time::timeout(
-        MX_LOOKUP_TIMEOUT,
-        resolver.inner().lookup(domain, RecordType::MX),
-    )
-    .await;
+async fn accepts_mail(resolver: &TokioResolver, domain: &str) -> Option<bool> {
+    let mx = tokio::time::timeout(MX_LOOKUP_TIMEOUT, resolver.lookup(domain, RecordType::MX)).await;
     match mx {
         Ok(Ok(lookup)) => {
             let mut null_mx = false;
@@ -335,7 +331,7 @@ async fn accepts_mail(resolver: &HickoryDnsResolver, domain: &str) -> Option<boo
     // `lookup_ip`, not the check wrapper: its error kinds separate "no such
     // name" from "the resolver fell over". The wrapper flattens both into
     // `anyhow`, and confusing them here would fail closed.
-    match tokio::time::timeout(MX_LOOKUP_TIMEOUT, resolver.inner().lookup_ip(domain)).await {
+    match tokio::time::timeout(MX_LOOKUP_TIMEOUT, resolver.lookup_ip(domain)).await {
         Ok(Ok(lookup)) => Some(lookup.iter().next().is_some()),
         Ok(Err(e)) if e.is_no_records_found() => Some(false),
         Ok(Err(_)) | Err(_) => None,

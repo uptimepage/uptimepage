@@ -22,6 +22,7 @@ pub mod net;
 pub mod notifier;
 pub mod oauth;
 pub mod observability;
+pub mod pagination;
 pub mod pipeline;
 pub mod public_status;
 pub mod quotas;

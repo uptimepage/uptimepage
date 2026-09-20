@@ -1,8 +1,12 @@
+use std::sync::Arc;
+
 use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use thiserror::Error;
+
+use crate::config::SecurityConfig;
 
 const VERSION: &str = "v1";
 
@@ -37,6 +41,20 @@ impl std::fmt::Debug for Cipher {
 }
 
 impl Cipher {
+    /// `None` means no KEK, so secrets are stored in plaintext. Every store
+    /// must be handed the same one or a row sealed by one process fails to
+    /// open in another.
+    pub fn from_config(cfg: &SecurityConfig) -> crate::error::Result<Option<Arc<Self>>> {
+        match cfg.kek() {
+            Some(kek) => Ok(Some(Arc::new(Self::from_base64(kek).map_err(|e| {
+                crate::error::AppError::Other(anyhow::anyhow!(
+                    "invalid credentials_kek_base64: {e}"
+                ))
+            })?))),
+            None => Ok(None),
+        }
+    }
+
     pub fn from_base64(s: &str) -> Result<Self, CryptoError> {
         let bytes = decode_base64_flexible(s).map_err(CryptoError::InvalidKekBase64)?;
         if bytes.len() != 32 {

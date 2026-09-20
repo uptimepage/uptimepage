@@ -1081,7 +1081,7 @@ impl PublicSource for UnavailablePublicSource {
         _page: PageRef,
         _q: uptimepage::public_status::IncidentListQuery,
     ) -> Result<
-        uptimepage::api::page::CursorPage<uptimepage::domain::PublicIncident>,
+        uptimepage::pagination::CursorPage<uptimepage::domain::PublicIncident>,
         uptimepage::error::public::PublicAppError,
     > {
         Err(uptimepage::error::public::PublicAppError::Unavailable)

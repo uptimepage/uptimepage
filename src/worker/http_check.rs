@@ -68,7 +68,7 @@ pub(crate) const PROBE_REDACT_HEADERS: &[&str] = &[
 /// Captured HTTP-level detail for the test-check endpoint.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct HttpProbe {
-    pub response_headers_preview: Vec<crate::api::types::HeaderPreview>,
+    pub response_headers_preview: Vec<crate::domain::agent_wire::HeaderPreview>,
     pub response_body_snippet: Option<String>,
 }
 
@@ -775,8 +775,8 @@ fn unmatched_diagnosable_kind(
 
 /// First N unique-by-name headers, sensitive values redacted. Multi-value
 /// names collapse to one entry so the cap is not burnt on a repeat.
-fn snapshot_headers(headers: &hyper::HeaderMap) -> Vec<crate::api::types::HeaderPreview> {
-    use crate::api::types::HeaderPreview;
+fn snapshot_headers(headers: &hyper::HeaderMap) -> Vec<crate::domain::agent_wire::HeaderPreview> {
+    use crate::domain::agent_wire::HeaderPreview;
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut out: Vec<HeaderPreview> = Vec::with_capacity(PROBE_HEADERS_MAX);
     for (k, v) in headers.iter() {
