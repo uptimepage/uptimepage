@@ -5,6 +5,7 @@ pub mod error_classes;
 pub mod http_metrics;
 pub mod inventory;
 pub mod metrics;
+pub mod readiness;
 pub mod region_health;
 pub mod sampler;
 pub mod silence;

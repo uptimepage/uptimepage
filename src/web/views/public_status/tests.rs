@@ -87,11 +87,11 @@ fn full_page_renders_chrome_and_components() {
     // An unpublished page 404s the fragment; reload rather than ask forever.
     assert!(html.contains("data-reload-on-404"));
     assert!(html.contains("data-tz"));
-    assert!(html.contains(&crate::web::assets::url("js/htmx.min.js")));
+    assert!(html.contains(&crate::templates::assets::url("js/htmx.min.js")));
     // Without it nothing honours [data-poll-pause] and the region polls on.
-    assert!(html.contains(&crate::web::assets::url("js/ui/polling.js")));
-    assert!(html.contains(&crate::web::assets::url("js/ui/localtime.js")));
-    assert!(html.contains(&crate::web::assets::url("js/public/day_popover.js")));
+    assert!(html.contains(&crate::templates::assets::url("js/ui/polling.js")));
+    assert!(html.contains(&crate::templates::assets::url("js/ui/localtime.js")));
+    assert!(html.contains(&crate::templates::assets::url("js/public/day_popover.js")));
     assert!(html.contains("/api/public/v1/incidents.rss"));
 }
 

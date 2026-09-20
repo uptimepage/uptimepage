@@ -8,7 +8,7 @@ use tokio::time::interval;
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::CheckResult;
-use crate::observability::metrics::names;
+use crate::metric_names;
 use crate::storage::ResultSink;
 
 const MAX_FLUSH_RETRIES: u32 = 3;
@@ -87,7 +87,7 @@ fn drain(
 fn push_capped(buffer: &mut VecDeque<CheckResult>, result: CheckResult, max_buffer: usize) {
     if buffer.len() >= max_buffer {
         buffer.pop_front();
-        counter!(names::STORAGE_DROPPED, "reason" => "buffer_overflow").increment(1);
+        counter!(metric_names::STORAGE_DROPPED, "reason" => "buffer_overflow").increment(1);
     }
     buffer.push_back(result);
 }
@@ -98,19 +98,21 @@ async fn flush(
     retry_attempts: &mut u32,
 ) {
     let count = buffer.len();
-    histogram!(names::STORAGE_BATCH_SIZE).record(count as f64);
+    histogram!(metric_names::STORAGE_BATCH_SIZE).record(count as f64);
     let start = Instant::now();
     // VecDeque may be non-contiguous; make_contiguous slides into one slice
     // (no realloc when capacity is enough) so the sink keeps its &[T] API.
     let slice = buffer.make_contiguous();
     match sink.write_batch(slice).await {
         Ok(()) => {
-            counter!(names::STORAGE_WRITES, "store" => "sink", "result" => "success").increment(1);
+            counter!(metric_names::STORAGE_WRITES, "store" => "sink", "result" => "success")
+                .increment(1);
             buffer.clear();
             *retry_attempts = 0;
         }
         Err(err) => {
-            counter!(names::STORAGE_WRITES, "store" => "sink", "result" => "failure").increment(1);
+            counter!(metric_names::STORAGE_WRITES, "store" => "sink", "result" => "failure")
+                .increment(1);
             *retry_attempts = retry_attempts.saturating_add(1);
             if *retry_attempts >= MAX_FLUSH_RETRIES {
                 tracing::error!(
@@ -119,7 +121,7 @@ async fn flush(
                     retries = *retry_attempts,
                     "batcher flush failed; dropping batch after exhausted retries"
                 );
-                counter!(names::STORAGE_DROPPED, "reason" => "retries_exhausted")
+                counter!(metric_names::STORAGE_DROPPED, "reason" => "retries_exhausted")
                     .increment(count as u64);
                 buffer.clear();
                 *retry_attempts = 0;
@@ -133,5 +135,5 @@ async fn flush(
             }
         }
     }
-    histogram!(names::STORAGE_WRITE_DURATION_MS).record(start.elapsed().as_millis() as f64);
+    histogram!(metric_names::STORAGE_WRITE_DURATION_MS).record(start.elapsed().as_millis() as f64);
 }

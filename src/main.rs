@@ -132,8 +132,8 @@ async fn main() -> Result<()> {
         return result;
     }
 
-    uptimepage::app::assert_per_org_status_config(&cfg);
-    uptimepage::app::assert_mcp_oauth_config(&cfg);
+    cfg.assert_per_org_status();
+    cfg.assert_mcp_oauth();
     // A bad quota/rate/interval number is a clean startup config error,
     // never a `.expect()` crash-loop in router/layer construction (I6).
     cfg.validate_quotas_and_limits()?;
@@ -764,7 +764,7 @@ async fn main() -> Result<()> {
                 from_name: cfg.email.from_name.clone(),
             },
             public_base_url: cfg.auth.public_base_url.clone(),
-            docs_url: Some(uptimepage::web::filters::docs_link("/monitor-types")),
+            docs_url: Some(uptimepage::templates::filters::docs_link("/monitor-types")),
         });
         tokio::spawn(run_purge_loop(
             pg_pool_for_stores.clone(),

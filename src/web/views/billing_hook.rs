@@ -12,7 +12,7 @@ use crate::app::AppState;
 use crate::billing::lifecycle::Outcome;
 use crate::billing::provider::WebhookRejected;
 use crate::error::AppError;
-use crate::observability::metrics::names;
+use crate::metric_names;
 
 pub async fn webhook(
     State(state): State<AppState>,
@@ -30,14 +30,14 @@ pub async fn webhook(
         Ok(event) => event,
         Err(WebhookRejected::Signature) => {
             tracing::warn!(provider, "billing webhook rejected: bad signature");
-            metrics::counter!(names::BILLING_WEBHOOK_REJECTED, "reason" => "signature")
+            metrics::counter!(metric_names::BILLING_WEBHOOK_REJECTED, "reason" => "signature")
                 .increment(1);
             return StatusCode::FORBIDDEN;
         }
         Err(WebhookRejected::Malformed(detail)) => {
             // A retry replays the same bytes, so acknowledge instead of looping.
             tracing::warn!(provider, detail, "billing webhook: unparseable event body");
-            metrics::counter!(names::BILLING_WEBHOOK_REJECTED, "reason" => "malformed")
+            metrics::counter!(metric_names::BILLING_WEBHOOK_REJECTED, "reason" => "malformed")
                 .increment(1);
             return StatusCode::OK;
         }
@@ -61,19 +61,21 @@ pub async fn webhook(
                 outcome = label,
                 "billing webhook"
             );
-            metrics::counter!(names::BILLING_WEBHOOKS, "outcome" => label).increment(1);
+            metrics::counter!(metric_names::BILLING_WEBHOOKS, "outcome" => label).increment(1);
             StatusCode::OK
         }
         // A stall heals itself on the provider's redelivery; only a failure
         // to apply is worth waking anyone for.
         Err(err @ AppError::ServiceUnavailable { .. }) => {
             tracing::warn!(provider, event_id, event_type, error = %err, "billing webhook: not committed in time");
-            metrics::counter!(names::BILLING_WEBHOOK_REJECTED, "reason" => "stalled").increment(1);
+            metrics::counter!(metric_names::BILLING_WEBHOOK_REJECTED, "reason" => "stalled")
+                .increment(1);
             StatusCode::SERVICE_UNAVAILABLE
         }
         Err(err) => {
             tracing::error!(provider, event_id, event_type, error = %err, "billing webhook: apply failed");
-            metrics::counter!(names::BILLING_WEBHOOK_REJECTED, "reason" => "failed").increment(1);
+            metrics::counter!(metric_names::BILLING_WEBHOOK_REJECTED, "reason" => "failed")
+                .increment(1);
             StatusCode::INTERNAL_SERVER_ERROR
         }
     }

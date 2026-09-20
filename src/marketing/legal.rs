@@ -24,7 +24,7 @@ use axum::routing::get;
 use super::config::{BRAND, MarketingCfg};
 use super::pages::{CachedRender, cached_render, serve_cached};
 use super::seo::OpenGraph;
-use crate::web::filters;
+use crate::templates::filters;
 
 const LEGAL_CACHE_CONTROL: HeaderValue =
     HeaderValue::from_static("public, max-age=86400, stale-while-revalidate=86400");

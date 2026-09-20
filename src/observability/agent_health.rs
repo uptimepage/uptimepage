@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::error::Result;
-use crate::observability::metrics::names;
+use crate::metric_names;
 use crate::storage::operator::{AgentRow, OperatorRepo};
 
 const TICK: Duration = Duration::from_secs(30);
@@ -51,9 +51,9 @@ async fn sweep(
         // Per-agent series can freeze if an agent is removed (the metrics facade
         // can't retract); that's fine for dashboards, and alerts page on the
         // freeze-proof aggregate below instead.
-        metrics::gauge!(names::AGENT_LAST_SEEN_AGE, "region" => a.region.clone(), "agent" => a.name.clone())
+        metrics::gauge!(metric_names::AGENT_LAST_SEEN_AGE, "region" => a.region.clone(), "agent" => a.name.clone())
             .set(age as f64);
-        metrics::gauge!(names::AGENT_UP, "region" => a.region.clone(), "agent" => a.name.clone())
+        metrics::gauge!(metric_names::AGENT_UP, "region" => a.region.clone(), "agent" => a.name.clone())
             .set(if is_stale { 0.0 } else { 1.0 });
         // Warn only when an *enabled* agent crosses into stale — a disabled one
         // is intentionally dark, not an incident.
@@ -70,14 +70,15 @@ async fn sweep(
     // Recomputed every sweep, so a recovered, disabled, or removed agent drops
     // out and the gauge can't latch. The count of enabled agents currently
     // dark, which the dead-man alert pages on.
-    metrics::gauge!(names::AGENTS_ENABLED_DOWN).set(stale.len() as f64);
+    metrics::gauge!(metric_names::AGENTS_ENABLED_DOWN).set(stale.len() as f64);
     // Per-region quorum: fresh enabled agents out of the region's roster. Like
     // the per-agent gauges this can freeze if a region's last agent is removed;
     // dashboards read up-of-total and alert on up == 0 (region dark).
     for (region, total, up) in region_quorum(&agents, now, stale_after) {
-        metrics::gauge!(names::REGION_AGENTS_TOTAL, "region" => region.to_string())
+        metrics::gauge!(metric_names::REGION_AGENTS_TOTAL, "region" => region.to_string())
             .set(total as f64);
-        metrics::gauge!(names::REGION_AGENTS_UP, "region" => region.to_string()).set(up as f64);
+        metrics::gauge!(metric_names::REGION_AGENTS_UP, "region" => region.to_string())
+            .set(up as f64);
     }
     Ok(())
 }

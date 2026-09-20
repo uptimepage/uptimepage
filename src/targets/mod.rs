@@ -3,8 +3,10 @@
 
 pub mod heartbeat;
 pub mod regions;
+pub mod status;
 
 pub use heartbeat::{
     CadenceAdviceView, HeartbeatInfo, heartbeat_info, heartbeat_info_from, observed_cadence,
 };
 pub use regions::{default_region_set, flow_capable_set};
+pub use status::{folded_status, folded_status_policies};

@@ -22,10 +22,10 @@ use axum::middleware::Next;
 use axum::response::Response;
 use metrics::{Gauge, counter, gauge, histogram};
 
-use crate::observability::metrics::names;
+use crate::metric_names;
 use crate::request::is_health_path;
 
-static INFLIGHT: LazyLock<Gauge> = LazyLock::new(|| gauge!(names::HTTP_RESPONSES_INFLIGHT));
+static INFLIGHT: LazyLock<Gauge> = LazyLock::new(|| gauge!(metric_names::HTTP_RESPONSES_INFLIGHT));
 
 /// RAII so the gauge tracks `?`-propagation and early-return paths.
 /// Release builds set `panic = "abort"`, so a panicking handler restarts
@@ -68,13 +68,13 @@ pub async fn middleware(req: Request, next: Next) -> Response {
     let status = status_class(response.status());
 
     histogram!(
-        names::HTTP_REQUEST_DURATION_MS,
+        metric_names::HTTP_REQUEST_DURATION_MS,
         "method" => method,
         "route" => route.clone(),
     )
     .record(elapsed_ms);
     counter!(
-        names::HTTP_REQUESTS_TOTAL,
+        metric_names::HTTP_REQUESTS_TOTAL,
         "method" => method,
         "route" => route,
         "status" => status,

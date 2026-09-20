@@ -27,9 +27,9 @@ use crate::domain::quota::RegionCaps;
 use crate::domain::{IncidentOrigin, IncidentSeverity, IncidentUrgency, NotificationReason, OrgId};
 use crate::error::Result;
 use crate::http_outbound::OutboundHttpClient;
+use crate::metric_names;
 use crate::notifier::event::IncidentNotice;
 use crate::notifier::{CentralBotDelivery, EmailDelivery, build_notifier};
-use crate::observability::metrics::names;
 use crate::quotas::QuotaService;
 use crate::storage::{NotificationChannelStore, SilenceStore, TargetStore};
 
@@ -211,7 +211,7 @@ pub async fn sweep(
         store.enter(org, target_id, now).await?;
     }
 
-    metrics::gauge!(names::MONITORS_UNMONITORED).set(unmonitored.len() as f64);
+    metrics::gauge!(metric_names::MONITORS_UNMONITORED).set(unmonitored.len() as f64);
 
     // A whole-region death is one infra event, not thousands of customer pages.
     let mass = if unmonitored.is_empty() {

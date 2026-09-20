@@ -125,13 +125,13 @@ pub(super) async fn build_snapshot(
     // Same split as `confirmed`: a single-region view wants that region's raw
     // verdict, so there is nothing to fold.
     let folded_status: HashMap<Uuid, CheckStatus> = if confirmed {
-        state
-            .folded_status(
-                org,
-                time_range,
-                crate::app::folded_status_policies(&targets),
-            )
-            .await
+        crate::targets::folded_status(
+            state,
+            org,
+            time_range,
+            crate::targets::folded_status_policies(&targets),
+        )
+        .await
     } else {
         HashMap::new()
     };

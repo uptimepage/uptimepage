@@ -11,7 +11,7 @@ use crate::domain::{
     PublicMaintenance, PublicStatusPage,
 };
 use crate::public_status::HistoryIncidentMarker;
-use crate::web::views::humanize_duration;
+use crate::templates::format::humanize_duration;
 
 pub(super) const RSS_URL: &str = "/api/public/v1/incidents.rss";
 pub(super) const HISTORY_LEN: usize = 90;

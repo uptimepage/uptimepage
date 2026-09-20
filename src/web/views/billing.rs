@@ -16,8 +16,8 @@ use crate::error::AppError;
 use crate::request::{CurrentOrg, CurrentUser, Session};
 use crate::storage::subscriptions::PlanCard;
 use crate::storage::{accounts, subscriptions};
+use crate::templates::filters;
 use crate::web::error::WebResult;
-use crate::web::filters;
 use crate::web::views::resolve_org;
 
 const TAB_BILLING: &str = "billing";

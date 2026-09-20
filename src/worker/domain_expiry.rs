@@ -28,17 +28,17 @@ use tokio::time::timeout;
 use uuid::Uuid;
 
 static HOST_THROTTLE_WAITS_RDAP: LazyLock<Counter> =
-    LazyLock::new(|| counter!(names::HOST_THROTTLE_WAITS, "kind" => "rdap"));
+    LazyLock::new(|| counter!(metric_names::HOST_THROTTLE_WAITS, "kind" => "rdap"));
 static RDAP_SINGLEFLIGHT_HITS: LazyLock<Counter> =
-    LazyLock::new(|| counter!(names::RDAP_SINGLEFLIGHT, "outcome" => "hit"));
+    LazyLock::new(|| counter!(metric_names::RDAP_SINGLEFLIGHT, "outcome" => "hit"));
 static RDAP_SINGLEFLIGHT_MISSES: LazyLock<Counter> =
-    LazyLock::new(|| counter!(names::RDAP_SINGLEFLIGHT, "outcome" => "miss"));
+    LazyLock::new(|| counter!(metric_names::RDAP_SINGLEFLIGHT, "outcome" => "miss"));
 static STATE_WRITE_FAILED: LazyLock<Counter> =
-    LazyLock::new(|| counter!(names::DOMAIN_EXPIRY_STATE_WRITE_FAILED));
+    LazyLock::new(|| counter!(metric_names::DOMAIN_EXPIRY_STATE_WRITE_FAILED));
 
 use crate::domain::{CheckResult, CheckStatus, DomainExpiryCheck, OrgId, SERVED_STALE_PREFIX};
 use crate::http_client::HttpClients;
-use crate::observability::metrics::names;
+use crate::metric_names;
 use crate::storage::DomainExpiryStateStore;
 use crate::worker::host_throttle::{HostThrottle, Throttled};
 use crate::worker::rdap_singleflight::{FetchOutcome, RdapSingleflight};
@@ -263,7 +263,7 @@ async fn fall_back(
                 kind = err_kind,
                 "domain_expiry: serving stale last-good"
             );
-            counter!(names::DOMAIN_EXPIRY_STALE_SERVED, "kind" => err_kind).increment(1);
+            counter!(metric_names::DOMAIN_EXPIRY_STALE_SERVED, "kind" => err_kind).increment(1);
             let verdict = classify(check, state.expiry_at, state.registrar.as_deref());
             return emit_stale(
                 target_id,
@@ -277,7 +277,7 @@ async fn fall_back(
         }
     }
 
-    counter!(names::DOMAIN_EXPIRY_STALE_SERVED, "kind" => "fresh_error").increment(1);
+    counter!(metric_names::DOMAIN_EXPIRY_STALE_SERVED, "kind" => "fresh_error").increment(1);
     tracing::debug!(
         %target_id,
         kind = err_kind,

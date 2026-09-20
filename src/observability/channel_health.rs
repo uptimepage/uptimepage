@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::domain::ChannelKind;
 use crate::error::Result;
-use crate::observability::metrics::names;
+use crate::metric_names;
 
 const TICK: Duration = Duration::from_secs(60);
 
@@ -63,7 +63,7 @@ async fn sweep(pg: &PgPool, failure_limit: u32) -> Result<()> {
             .iter()
             .find(|(k, _)| k == transport)
             .map_or(0, |(_, n)| *n);
-        metrics::gauge!(names::CHANNELS_FAILING, "transport" => transport).set(n as f64);
+        metrics::gauge!(metric_names::CHANNELS_FAILING, "transport" => transport).set(n as f64);
     }
     Ok(())
 }

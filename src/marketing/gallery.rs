@@ -78,5 +78,8 @@ pub const SHOTS: &[Shot] = &[
 /// Fingerprinted to match what the page renders: a bare path would index as a
 /// second, separate image.
 pub fn absolute_url(canonical_origin: &str, shot: &Shot) -> String {
-    format!("{canonical_origin}{}", crate::web::assets::url(shot.file))
+    format!(
+        "{canonical_origin}{}",
+        crate::templates::assets::url(shot.file)
+    )
 }

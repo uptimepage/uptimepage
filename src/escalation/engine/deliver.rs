@@ -14,7 +14,7 @@ use crate::notifier::{EmailAlert, build_notifier, notify_following_moves};
 
 use super::rules::{log_error_snippet, push_target, redact_secrets, retry_after_hint};
 use super::{PageTarget, Worker};
-use crate::observability::metrics::names;
+use crate::metric_names;
 
 #[derive(Clone, Copy, PartialEq)]
 enum SendOutcome {
@@ -43,7 +43,7 @@ impl SendOutcome {
 /// would drag the latency histogram down exactly when a transport is broken.
 fn note_send(transport: &str, started: Option<Instant>, outcome: SendOutcome) {
     metrics::counter!(
-        names::NOTIFICATIONS_TOTAL,
+        metric_names::NOTIFICATIONS_TOTAL,
         "transport" => transport.to_string(),
         "outcome" => outcome.label(),
     )
@@ -52,11 +52,11 @@ fn note_send(transport: &str, started: Option<Instant>, outcome: SendOutcome) {
         return;
     }
     if let Some(started) = started {
-        metrics::histogram!(names::NOTIFICATION_DELIVERY_MS, "transport" => transport.to_string())
+        metrics::histogram!(metric_names::NOTIFICATION_DELIVERY_MS, "transport" => transport.to_string())
             .record(started.elapsed().as_millis() as f64);
     }
     if outcome == SendOutcome::Failed {
-        metrics::counter!(names::NOTIFICATIONS_FAILURES, "transport" => transport.to_string())
+        metrics::counter!(metric_names::NOTIFICATIONS_FAILURES, "transport" => transport.to_string())
             .increment(1);
     }
 }

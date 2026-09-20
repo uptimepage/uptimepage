@@ -553,7 +553,7 @@ async fn unknown_web_path_returns_404_html() {
 /// Cache-control is only `immutable` when the URL is version-pinned (`?v=`,
 /// the only form the `asset` filter emits). A bare URL — hand-typed or an
 /// old bookmark — gets a short revalidating cache so a content change can't
-/// be hidden for a year. This is the e2e mirror of the `web::assets` unit
+/// be hidden for a year. This is the e2e mirror of the `templates::assets` unit
 /// tests; the two must not disagree.
 #[tokio::test]
 async fn static_assets_cache_control_is_honest() {

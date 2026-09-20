@@ -22,8 +22,8 @@ use crate::http_outbound::post_bytes_with_headers;
 use crate::request::host::resolve_status_page;
 use crate::storage::status_pages::{PAGE_CUSTOM_DOMAIN_LIVE, PAGE_PLAN_JOIN};
 use crate::storage::subscribers::{self, CONFIRM_TTL_HOURS};
+use crate::templates::filters;
 use crate::web::error::WebResult;
-use crate::web::filters;
 
 #[derive(Template, WebTemplate)]
 #[template(path = "public/subscribe_notice.html")]

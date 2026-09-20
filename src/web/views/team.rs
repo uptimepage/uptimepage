@@ -13,8 +13,8 @@ use crate::error::AppError;
 use crate::request::Session;
 use crate::request::auth::CurrentOrg;
 use crate::storage::orgs::{self as orgs_store, MembershipStatus};
+use crate::templates::filters;
 use crate::web::error::WebResult;
-use crate::web::filters;
 
 const TAB_TEAM: &str = "team";
 

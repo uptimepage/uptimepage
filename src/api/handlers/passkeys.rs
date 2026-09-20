@@ -313,8 +313,7 @@ pub async fn login_finish(
                 presented = result.counter(),
                 "passkey signature counter did not advance; the authenticator may be cloned"
             );
-            metrics::counter!(crate::observability::metrics::names::PASSKEY_COUNTER_STALLED)
-                .increment(1);
+            metrics::counter!(crate::metric_names::PASSKEY_COUNTER_STALLED).increment(1);
         }
         // Unconditional: a synced passkey never advances a counter, so gating
         // on `update_credential` would freeze `last_used_at` at creation.
@@ -598,7 +597,7 @@ async fn refused(
 ) -> AppError {
     tracing::warn!(reason, "passkey sign-in refused");
     metrics::counter!(
-        crate::observability::metrics::names::PASSKEY_LOGIN_REFUSED,
+        crate::metric_names::PASSKEY_LOGIN_REFUSED,
         "reason" => reason,
     )
     .increment(1);

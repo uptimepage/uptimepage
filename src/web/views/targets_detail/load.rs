@@ -6,8 +6,8 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::{Incident, OrgId, Target, confirmed_downtime_secs, uptime_pct_from_downtime};
 use crate::storage::{ClampedRange, TimeRange};
+use crate::templates::format::fmt_ts;
 use crate::web::error::{WebError, WebResult};
-use crate::web::views::fmt_ts;
 
 use super::charts::{
     KpiInputs, SPARK_SEGMENTS, StatusSeg, bucket_counts, build_kpi_trend, status_segments,

@@ -31,7 +31,7 @@ use super::pages::{CachedRender, cached_render, not_found_page, serve_cached};
 use super::seo::{
     JsonLd, OpenGraph, json_ld_breadcrumb, json_ld_breadcrumb_trail, json_ld_tech_article,
 };
-use crate::web::filters;
+use crate::templates::filters;
 
 /// A deploy can change the sidebar on every page at once, so an
 /// already-visited page serves its old nav until this lapses.
@@ -436,7 +436,7 @@ pub const DOCS: &[DocPage] = &[
         blurb: "The Prometheus series the service exposes and how to ship traces off the box.",
         section: Section::SelfHosting,
         scope: Scope::SelfHosting,
-        lastmod: "2026-09-15",
+        lastmod: "2026-09-20",
         source: include_str!("../../docs/metrics.md"),
         dir: "",
     },

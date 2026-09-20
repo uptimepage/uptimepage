@@ -9,9 +9,9 @@ use super::load::PingTally;
 use crate::domain::agent_wire::StepOutcome;
 use crate::domain::{CheckResult, Incident};
 use crate::storage::UptimeStats;
-use crate::web::filters;
+use crate::templates::filters;
+use crate::templates::format::{fmt_human, fmt_ts};
 use crate::web::views::dashboard::KpiDelta;
-use crate::web::views::{fmt_human, fmt_ts};
 
 use super::charts::StatusSeg;
 use super::fmt_error_display;

@@ -23,7 +23,7 @@ use crate::marketing::seo::{
     JsonLd, OpenGraph, json_ld_breadcrumb, json_ld_faqpage, json_ld_item_list_links,
     json_ld_web_application, json_ld_webpage,
 };
-use crate::web::filters;
+use crate::templates::filters;
 
 use super::config::{BRAND, MarketingCfg};
 use super::pages::{CachedRender, cached_render, serve_cached};

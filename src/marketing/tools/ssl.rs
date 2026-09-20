@@ -28,7 +28,7 @@ use crate::marketing::seo::{
     json_ld_webpage,
 };
 use crate::security::cert_probe::{self, CertProbeError};
-use crate::web::filters;
+use crate::templates::filters;
 
 use super::super::config::{BRAND, MarketingCfg};
 use super::super::pages::{CachedRender, cached_render, serve_cached};

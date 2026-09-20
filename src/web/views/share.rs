@@ -39,8 +39,8 @@ use crate::error::AppError;
 use crate::error::codes;
 use crate::security::redaction::redact_check_for_public;
 use crate::storage::TimeRange;
+use crate::templates::filters;
 use crate::web::error::{WebError, WebResult};
-use crate::web::filters;
 use crate::web::robots;
 use crate::web::views::targets_detail::{
     DEFAULT_RANGE, DetailParams, INCIDENT_DEFAULT_RANGE, INCIDENT_RANGE_KEYS, IncidentRow,
@@ -576,7 +576,7 @@ mod tests {
         // A revoked token 404s the live endpoint; reload onto the real 404.
         assert!(html.contains("data-reload-on-404"));
         // Without the module nothing honours either marker.
-        assert!(html.contains(&crate::web::assets::url("js/ui/polling.js")));
+        assert!(html.contains(&crate::templates::assets::url("js/ui/polling.js")));
         // The hx-on it replaced was dead twice over: Function() under the CSP,
         // and dropping hx-trigger cancels neither timer nor from:body listeners.
         assert!(!html.contains("hx-on::response-error"));

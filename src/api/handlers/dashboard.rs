@@ -14,6 +14,7 @@ use crate::error::ApiError;
 use crate::error::Result;
 use crate::request::CurrentOrg;
 use crate::storage::{TargetFilter, TimeRange};
+use crate::targets::{folded_status, folded_status_policies};
 
 const MAX_ORG_MONITORS: usize = 10_000;
 
@@ -105,9 +106,7 @@ async fn status_breakdown(
 ) -> StatusBreakdown {
     let metrics: HashMap<Uuid, DashboardMetrics> =
         rollup.into_iter().map(|m| (m.target_id, m)).collect();
-    let folded = state
-        .folded_status(org, range, crate::app::folded_status_policies(monitors))
-        .await;
+    let folded = folded_status(state, org, range, folded_status_policies(monitors)).await;
     let mut out = StatusBreakdown::default();
     for t in monitors {
         let status = metrics.get(&t.id).filter(|m| m.samples > 0).and_then(|m| {

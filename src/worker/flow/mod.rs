@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::domain::agent_wire::{FlowEvidence, StepOutcome, StepTrace};
 use crate::domain::{CheckResult, CheckStatus, FlowCheck};
-use crate::observability::metrics::names;
+use crate::metric_names;
 use engine::CdpEngine;
 use executor::RunResult;
 
@@ -46,7 +46,7 @@ pub async fn execute_flow_check_probe(
     engine: Option<&CdpEngine>,
 ) -> (CheckResult, FlowProbe) {
     let Some(engine) = engine else {
-        counter!(names::FLOW_RUNS, "outcome" => "unconfigured").increment(1);
+        counter!(metric_names::FLOW_RUNS, "outcome" => "unconfigured").increment(1);
         return (
             CheckResult::error(target_id, org_id, "flow engine not configured on this node"),
             FlowProbe::default(),
@@ -122,10 +122,10 @@ fn record_run(
     steps: &[StepTrace],
     error: Option<&str>,
 ) {
-    counter!(names::FLOW_RUNS, "outcome" => outcome).increment(1);
+    counter!(metric_names::FLOW_RUNS, "outcome" => outcome).increment(1);
     for step in steps {
         if step.outcome != StepOutcome::Skipped {
-            histogram!(names::FLOW_STEP_DURATION_MS, "op" => step.op.clone())
+            histogram!(metric_names::FLOW_STEP_DURATION_MS, "op" => step.op.clone())
                 .record(f64::from(step.duration_ms));
         }
     }

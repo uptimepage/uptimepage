@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,17 +12,16 @@ use crate::auth::api_tokens::{
 };
 use crate::auth::session::{LastUsedDebounce, build_debounce_cache};
 use crate::config::AppConfig;
-use crate::domain::{CheckStatus, OrgId, RegionIncidentPolicy};
+use crate::domain::OrgId;
 use crate::email::EmailSender;
 use crate::http_client::HttpClients;
 use crate::http_outbound::OutboundHttpClient;
 use crate::public_status::PublicSource;
 use crate::quotas::{QuotaService, RateLimitService};
 use crate::security::AbuseGuard;
-use crate::storage::traits::RegionLatestStatus;
 use crate::storage::{
     IncidentNarrationStore, MaintenanceStore, NotificationChannelStore, ResultSink, ResultsStore,
-    TargetStore, TimeRange,
+    TargetStore,
 };
 use crate::worker::WorkerPool;
 
@@ -160,62 +158,6 @@ fn build_agent_seen_debounce() -> AgentSeenDebounce {
         .time_to_live(Duration::from_secs(30))
         .max_capacity(10_000)
         .build()
-}
-
-/// Per-dependency readiness snapshot. Both critical stores must answer for
-/// the app to be "ready". Drives `/readyz` and the external heartbeat.
-#[derive(Debug, Clone, Copy)]
-pub struct Readiness {
-    pub postgres: bool,
-    pub clickhouse: bool,
-}
-
-impl Readiness {
-    pub fn all_ok(&self) -> bool {
-        self.postgres && self.clickhouse
-    }
-}
-
-/// A dependency that doesn't answer within this is "down" — a TCP-alive but
-/// hung store must not wedge `/readyz` (and the heartbeat tick) forever. Kept
-/// under the deploy cutover gate's 5s `wget -T 5` so a hung store yields a
-/// clean per-dependency 503 instead of racing the prober's own timeout.
-const READINESS_PING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
-
-/// Ping every critical dependency concurrently — connection-level only,
-/// never tenant data. Single source of truth for "ready": `/readyz` returns
-/// a per-dependency 503 from it, and the dead-man's-switch heartbeat skips
-/// its external ping when this is not `all_ok` (so the snitch fires on a
-/// dependency outage, not just a full process death).
-pub async fn probe_readiness(
-    target_store: &Arc<dyn TargetStore>,
-    results_store: &Arc<dyn ResultsStore>,
-) -> Readiness {
-    let (postgres, clickhouse) = tokio::join!(
-        ping_dependency("postgres", target_store.ping()),
-        ping_dependency("clickhouse", results_store.ping()),
-    );
-    Readiness {
-        postgres,
-        clickhouse,
-    }
-}
-
-async fn ping_dependency<E: std::fmt::Debug>(
-    name: &str,
-    ping: impl std::future::Future<Output = std::result::Result<(), E>>,
-) -> bool {
-    match tokio::time::timeout(READINESS_PING_TIMEOUT, ping).await {
-        Ok(Ok(())) => true,
-        Ok(Err(e)) => {
-            tracing::warn!(dependency = name, error = ?e, "readiness ping failed");
-            false
-        }
-        Err(_) => {
-            tracing::warn!(dependency = name, "readiness ping timed out");
-            false
-        }
-    }
 }
 
 /// Runtime handles required by API handlers — the storage layer plus enough
@@ -359,180 +301,7 @@ pub struct AppState {
     pub billing: Option<Arc<crate::billing::Billing>>,
 }
 
-fn billing_mailer(
-    cfg: &AppConfig,
-    email_sender: &Arc<dyn EmailSender>,
-) -> crate::billing::mail::Mailer {
-    crate::billing::mail::Mailer {
-        delivery: crate::notifier::EmailDelivery {
-            sender: email_sender.clone(),
-            from_address: cfg.email.from_address.clone(),
-            from_name: cfg.email.from_name.clone(),
-        },
-        public_base_url: cfg.auth.public_base_url.clone(),
-    }
-}
-
-/// The configured provider, if any. Config validation has already refused a
-/// half-configured one.
-fn build_billing(
-    cfg: &AppConfig,
-    outbound_http: &OutboundHttpClient,
-    email_sender: &Arc<dyn EmailSender>,
-    checkout_secret: String,
-) -> Option<Arc<crate::billing::Billing>> {
-    if !cfg.billing.enabled() {
-        return None;
-    }
-    let environment = crate::config::PaddleEnvironment::parse(&cfg.billing.paddle.environment)?;
-    let provider = crate::billing::paddle::PaddleProvider::new(
-        environment,
-        cfg.billing.paddle.api_key.clone(),
-        cfg.billing.paddle.webhook_secret.clone(),
-        checkout_secret.into(),
-        outbound_http.clone(),
-    );
-    Some(Arc::new(crate::billing::Billing::new(
-        Arc::new(provider),
-        billing_mailer(cfg, email_sender),
-    )))
-}
-
-/// Run unconditionally at boot after config parse. Encodes the per-org
-/// public-surface and cookie-scope invariants in code so a misconfig is
-/// loud and immediate, not a silent runtime data leak. The two functions it
-/// calls are kept separate so cookie-scope can be exercised in isolation by
-/// tests.
-pub fn assert_per_org_status_config(cfg: &AppConfig) {
-    if cfg.tenancy.subdomain_public_routes {
-        let bd = cfg.public_status.base_domain.as_str();
-        if bd.is_empty() || !bd.contains('.') {
-            panic!(
-                "public_status.base_domain = {bd:?} is empty or missing a dot; \
-                 subdomain routing cannot work safely"
-            );
-        }
-    }
-    assert_cookie_scope_safe(cfg);
-}
-
-/// Refuses to boot when the MCP OAuth server is enabled but its identity URIs
-/// are missing or not HTTPS. Without this the AS would mint tokens whose
-/// audience is the empty/wrong resource and the resource server would then
-/// reject them — a silently-broken connector. Both URIs are also the OAuth
-/// `issuer` / `resource` identifiers, which MUST be absolute HTTPS in
-/// production. Loopback HTTP is allowed for local development.
-pub fn assert_mcp_oauth_config(cfg: &AppConfig) {
-    if !cfg.mcp.oauth_enabled {
-        return;
-    }
-    let check = |label: &str, raw: &str| {
-        let url = url::Url::parse(raw).unwrap_or_else(|_| {
-            panic!(
-                "{label} must be a valid absolute URL when mcp.oauth_enabled = true (got {raw:?})"
-            )
-        });
-        if url.scheme() != "https" && !crate::oauth::is_loopback_http(&url) {
-            panic!(
-                "{label} must be https (or http on loopback for dev) when \
-                 mcp.oauth_enabled = true (got {raw:?})"
-            );
-        }
-    };
-    if cfg.mcp.resource_uri.trim().is_empty() {
-        panic!("mcp.oauth_enabled = true requires mcp.resource_uri to be set");
-    }
-    if cfg.auth.public_base_url.trim().is_empty() {
-        panic!(
-            "mcp.oauth_enabled = true requires auth.public_base_url (the OAuth issuer) to be set"
-        );
-    }
-    check("mcp.resource_uri", &cfg.mcp.resource_uri);
-    check("auth.public_base_url", &cfg.auth.public_base_url);
-}
-
-/// Refuses to boot when `auth.session.cookie_domain` overlaps the per-org
-/// status subdomain. Without this, a single config edit on the operator
-/// host can leak `_sm_session` to every tenant's status page.
-pub fn assert_cookie_scope_safe(cfg: &AppConfig) {
-    let cookie_domain = cfg.auth.session.cookie_domain.as_str();
-    if cookie_domain.is_empty() {
-        return;
-    }
-    if !cfg.tenancy.subdomain_public_routes {
-        return;
-    }
-    let base = cfg.public_status.base_domain.as_str();
-    let cd = cookie_domain.trim_start_matches('.');
-    if base == cd || base.ends_with(&format!(".{cd}")) {
-        panic!(
-            "auth.session.cookie_domain={cookie_domain:?} overlaps the \
-             status-page wildcard *.{base}. Operator session cookies would \
-             leak to every tenant's status page. Either unset cookie_domain, \
-             or move the status surface to a different parent zone."
-        );
-    }
-}
-
-/// How far back the region fold reads. Long enough for every check interval to
-/// have reported, short enough that a region dropped from a monitor stops
-/// voting quickly.
-const FOLD_LOOKBACK_HOURS: i64 = 24;
-
-/// Fold inputs for [`AppState::folded_status`]. Heartbeats are inbound-only, so
-/// a quorum over probe regions describes nothing.
-pub fn folded_status_policies(
-    targets: &[crate::domain::Target],
-) -> impl Iterator<Item = (uuid::Uuid, RegionIncidentPolicy)> + '_ {
-    targets
-        .iter()
-        .filter(|t| !t.check.is_passive())
-        .map(|t| (t.id, t.region_policy))
-}
-
 impl AppState {
-    /// Quorum-folded current status per monitor. Best-effort: a missing entry
-    /// leaves the caller on the raw `last_status` rather than failing the read.
-    pub async fn folded_status(
-        &self,
-        org: OrgId,
-        range: TimeRange,
-        policies: impl IntoIterator<Item = (uuid::Uuid, RegionIncidentPolicy)>,
-    ) -> HashMap<uuid::Uuid, CheckStatus> {
-        // Current status needs the tail of the caller's window, not all of it: a
-        // region dropped from a monitor mid-window must stop voting rather than
-        // freeze its last verdict into a 90-day argMax.
-        let recent = TimeRange {
-            from: range
-                .from
-                .max(range.to - chrono::Duration::hours(FOLD_LOOKBACK_HOURS)),
-            to: range.to,
-        };
-        // Only regions that reported inside the window are in the denominator,
-        // which is the rule the incident writer votes by. A region that stops
-        // delivering drops out on its own; agent liveness is not consulted,
-        // since the control plane's own region has no `agents` row to be live in.
-        let rows = match self
-            .results_store
-            .latest_status_by_region(org, recent)
-            .await
-        {
-            Ok(rows) => rows,
-            Err(err) => {
-                tracing::warn!(error = %err, "region statuses unavailable, showing last result");
-                return HashMap::new();
-            }
-        };
-        let grouped = RegionLatestStatus::group(rows);
-        policies
-            .into_iter()
-            .filter_map(|(id, policy)| {
-                let statuses = grouped.get(&id)?;
-                Some((id, policy.fold_regions(statuses.iter().copied())?))
-            })
-            .collect()
-    }
-
     /// Borrow the Postgres pool, or return an internal error. Centralises
     /// the "tenancy enabled but db is None" cloak so every handler doesn't
     /// rewrite the same anyhow string.
@@ -761,8 +530,12 @@ impl AppState {
     /// in stays.
     pub fn with_billing_checkout_secret(mut self, secret: String) -> Self {
         if self.billing.is_none() {
-            self.billing =
-                build_billing(&self.cfg, &self.outbound_http, &self.email_sender, secret);
+            self.billing = crate::billing::Billing::from_config(
+                &self.cfg,
+                &self.outbound_http,
+                &self.email_sender,
+                secret,
+            );
         }
         self
     }
@@ -775,7 +548,7 @@ impl AppState {
     ) -> Self {
         self.billing = Some(Arc::new(crate::billing::Billing::new(
             provider,
-            billing_mailer(&self.cfg, &self.email_sender),
+            crate::billing::mail::Mailer::from_config(&self.cfg, &self.email_sender),
         )));
         self
     }
@@ -859,229 +632,11 @@ impl AppState {
             })
         {
             metrics::counter!(
-                crate::observability::metrics::names::ALERTS_DROPPED,
+                crate::metric_names::ALERTS_DROPPED,
                 "reason" => reason.as_db_str()
             )
             .increment(1);
             tracing::warn!(%org, %incident_id, error = %err, "incident paging signal dropped");
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use super::{
-        Readiness, assert_cookie_scope_safe, assert_mcp_oauth_config, assert_per_org_status_config,
-        probe_readiness,
-    };
-    use crate::config::AppConfig;
-    use crate::storage::{InMemorySink, InMemoryTargetStore, ResultsStore, TargetStore};
-
-    #[test]
-    fn the_configured_provider_is_built_around_the_checkout_secret() {
-        let http = crate::http_outbound::build_outbound_client(
-            crate::security::SsrfGuard::operator_configured_target(),
-        );
-        let sender: Arc<dyn crate::email::EmailSender> =
-            Arc::new(crate::email::InMemoryEmailSender::new());
-        let mut cfg = AppConfig::load().expect("config");
-        assert!(
-            super::build_billing(&cfg, &http, &sender, "s".into()).is_none(),
-            "no provider configured"
-        );
-        cfg.billing.provider = "paddle".into();
-        cfg.billing.paddle.environment = "sandbox".into();
-        cfg.billing.paddle.api_key = "pdl_sdbx_apikey".into();
-        cfg.billing.paddle.webhook_secret = "pdl_ntfset_secret".into();
-        cfg.billing.paddle.client_token = "test_token".into();
-        let billing = super::build_billing(&cfg, &http, &sender, "s".into());
-        assert_eq!(billing.map(|b| b.provider.name()), Some("paddle"));
-    }
-
-    #[tokio::test]
-    async fn probe_readiness_reports_reachable_stores_as_up() {
-        let ts: Arc<dyn TargetStore> = Arc::new(InMemoryTargetStore::new());
-        let rs: Arc<dyn ResultsStore> = Arc::new(InMemorySink::new());
-        let r = probe_readiness(&ts, &rs).await;
-        assert!(r.all_ok());
-        assert!(r.postgres && r.clickhouse);
-    }
-
-    #[test]
-    fn all_ok_requires_every_dependency() {
-        assert!(
-            Readiness {
-                postgres: true,
-                clickhouse: true
-            }
-            .all_ok()
-        );
-        assert!(
-            !Readiness {
-                postgres: true,
-                clickhouse: false
-            }
-            .all_ok()
-        );
-        assert!(
-            !Readiness {
-                postgres: false,
-                clickhouse: true
-            }
-            .all_ok()
-        );
-    }
-
-    /// Run `f` with the default panic hook muted (so the expected-panic
-    /// cases don't spam the log with backtraces) and assert it unwound with
-    /// a message containing `expect`. Matching the message stops a test
-    /// passing because it tripped a *different* boot assertion than intended.
-    fn assert_panics(expect: &str, f: impl FnOnce() + std::panic::UnwindSafe) {
-        let prev = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let outcome = std::panic::catch_unwind(f);
-        std::panic::set_hook(prev);
-        let payload = outcome.expect_err("expected a boot-refusing panic");
-        let msg = payload
-            .downcast_ref::<&str>()
-            .map(|s| s.to_string())
-            .or_else(|| payload.downcast_ref::<String>().cloned())
-            .unwrap_or_default();
-        assert!(
-            msg.contains(expect),
-            "panicked, but on the wrong assertion: got {msg:?}, expected it to contain {expect:?}"
-        );
-    }
-
-    /// A valid SaaS-subdomain baseline: subdomain routes on, path-based off,
-    /// a two-label base domain, host-only cookies. Every field the assertions
-    /// read is set explicitly so env/toml overrides can't make the tests
-    /// non-deterministic. Each test then flips exactly the field under test
-    /// off this safe starting point.
-    fn saas_subdomain_cfg() -> AppConfig {
-        let mut cfg = AppConfig::load().expect("config");
-        cfg.tenancy.subdomain_public_routes = true;
-        cfg.tenancy.path_based_public_routes = false;
-        cfg.public_status.base_domain = "example.com".into();
-        cfg.auth.session.cookie_domain = String::new();
-        cfg
-    }
-
-    #[test]
-    fn valid_saas_subdomain_config_passes() {
-        assert_per_org_status_config(&saas_subdomain_cfg());
-    }
-
-    #[test]
-    fn empty_base_domain_with_subdomain_routes_panics() {
-        let mut cfg = saas_subdomain_cfg();
-        cfg.public_status.base_domain = String::new();
-        assert_panics("empty or missing a dot", move || {
-            assert_per_org_status_config(&cfg)
-        });
-    }
-
-    #[test]
-    fn single_label_base_domain_panics() {
-        let mut cfg = saas_subdomain_cfg();
-        cfg.public_status.base_domain = "local".into();
-        assert_panics("empty or missing a dot", move || {
-            assert_per_org_status_config(&cfg)
-        });
-    }
-
-    #[test]
-    fn cookie_domain_overlapping_status_wildcard_panics() {
-        // `.example.com` is also sent to `*.example.com`, so the operator
-        // session would ride along to every tenant's page.
-        let mut cfg = saas_subdomain_cfg();
-        cfg.public_status.base_domain = "example.com".into();
-        cfg.auth.session.cookie_domain = ".example.com".into();
-        assert_panics("overlaps the", move || assert_cookie_scope_safe(&cfg));
-    }
-
-    #[test]
-    fn cookie_domain_equal_to_base_panics() {
-        let mut cfg = saas_subdomain_cfg();
-        cfg.public_status.base_domain = "example.com".into();
-        cfg.auth.session.cookie_domain = "example.com".into();
-        assert_panics("overlaps the", move || assert_cookie_scope_safe(&cfg));
-    }
-
-    #[test]
-    fn host_only_cookie_is_always_safe() {
-        // Empty cookie_domain ⇒ browser scopes to the exact host; no overlap
-        // is possible even with an otherwise dangerous base domain.
-        let mut cfg = saas_subdomain_cfg();
-        cfg.public_status.base_domain = "example.com".into();
-        cfg.auth.session.cookie_domain = String::new();
-        assert_cookie_scope_safe(&cfg);
-    }
-
-    #[test]
-    fn disjoint_cookie_domain_is_safe() {
-        let mut cfg = saas_subdomain_cfg();
-        cfg.public_status.base_domain = "example.com".into();
-        cfg.auth.session.cookie_domain = ".other-zone.net".into();
-        assert_cookie_scope_safe(&cfg);
-    }
-
-    #[test]
-    fn cookie_scope_unchecked_when_subdomain_routes_off() {
-        // No public subdomains exist, so an overlapping cookie_domain has no
-        // cross-tenant surface to leak onto.
-        let mut cfg = saas_subdomain_cfg();
-        cfg.tenancy.subdomain_public_routes = false;
-        cfg.public_status.base_domain = "example.com".into();
-        cfg.auth.session.cookie_domain = ".example.com".into();
-        assert_cookie_scope_safe(&cfg);
-    }
-
-    fn oauth_on_cfg() -> AppConfig {
-        let mut cfg = AppConfig::load().expect("config");
-        cfg.mcp.oauth_enabled = true;
-        cfg.mcp.resource_uri = "https://mcp.example.com/mcp".into();
-        cfg.auth.public_base_url = "https://app.example.com".into();
-        cfg
-    }
-
-    #[test]
-    fn oauth_config_valid_https_passes() {
-        assert_mcp_oauth_config(&oauth_on_cfg());
-    }
-
-    #[test]
-    fn oauth_disabled_skips_all_checks() {
-        let mut cfg = oauth_on_cfg();
-        cfg.mcp.oauth_enabled = false;
-        cfg.mcp.resource_uri = String::new();
-        cfg.auth.public_base_url = String::new();
-        assert_mcp_oauth_config(&cfg);
-    }
-
-    #[test]
-    fn oauth_on_with_empty_resource_panics() {
-        let mut cfg = oauth_on_cfg();
-        cfg.mcp.resource_uri = String::new();
-        assert_panics("requires mcp.resource_uri", move || {
-            assert_mcp_oauth_config(&cfg)
-        });
-    }
-
-    #[test]
-    fn oauth_on_with_non_https_resource_panics() {
-        let mut cfg = oauth_on_cfg();
-        cfg.mcp.resource_uri = "http://mcp.example.com/mcp".into();
-        assert_panics("must be https", move || assert_mcp_oauth_config(&cfg));
-    }
-
-    #[test]
-    fn oauth_on_with_loopback_http_issuer_passes() {
-        let mut cfg = oauth_on_cfg();
-        cfg.mcp.resource_uri = "http://localhost:9000/mcp".into();
-        cfg.auth.public_base_url = "http://localhost:8080".into();
-        assert_mcp_oauth_config(&cfg);
     }
 }

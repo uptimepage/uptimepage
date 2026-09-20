@@ -476,7 +476,7 @@ impl Worker {
     /// keys off, so a hold is never a drop, and it also keeps the reconcile
     /// scan from re-running the episode every tick.
     async fn hold(&self, org: OrgId, incident_id: Uuid, reason: NotificationReason) -> Result<()> {
-        metrics::counter!(crate::observability::metrics::names::ALERTS_DAMPED).increment(1);
+        metrics::counter!(crate::metric_names::ALERTS_DAMPED).increment(1);
         self.ops
             .record_notification(crate::domain::NewIncidentNotification {
                 org,
@@ -649,8 +649,7 @@ impl Worker {
                 ),
             )
             .await?;
-        metrics::counter!(crate::observability::metrics::names::ALERTS_HELD_MAINTENANCE)
-            .increment(1);
+        metrics::counter!(crate::metric_names::ALERTS_HELD_MAINTENANCE).increment(1);
         Ok(())
     }
 

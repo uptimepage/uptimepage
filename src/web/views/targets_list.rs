@@ -17,10 +17,11 @@ use crate::request::{AuthedBrowser, CurrentOrg};
 use crate::storage::TimeRange;
 use crate::storage::orgs::list_members;
 use crate::storage::traits::{TargetFilter, TargetSort};
+use crate::templates::filters;
+use crate::templates::format::humanize_duration;
 use crate::web::avatar::{avatar_color, initials_from};
 use crate::web::error::WebResult;
-use crate::web::filters;
-use crate::web::views::{PageSizeLink, PagerLink, describe_check, humanize_duration};
+use crate::web::views::{PageSizeLink, PagerLink, describe_check};
 
 const DEFAULT_LIMIT: usize = 50;
 const MAX_LIMIT: usize = 200;
@@ -316,7 +317,12 @@ async fn build_page(state: &AppState, org: OrgId, params: &ListParams) -> WebRes
         };
         let (rollup, folded) = tokio::join!(
             state.results_store.dashboard_rollup(org, range, None),
-            state.folded_status(org, range, crate::app::folded_status_policies(&targets)),
+            crate::targets::folded_status(
+                state,
+                org,
+                range,
+                crate::targets::folded_status_policies(&targets)
+            ),
         );
         (
             rollup?.into_iter().map(|m| (m.target_id, m)).collect(),

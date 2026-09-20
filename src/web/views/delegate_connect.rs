@@ -27,7 +27,7 @@ use crate::security::sha256_hex;
 use crate::storage::LinkPurpose;
 use crate::storage::channel_link_codes::ConsumedLink;
 use crate::storage::orgs::record_audit_tx;
-use crate::web::filters;
+use crate::templates::filters;
 use crate::web::views::channel_kind_label;
 use crate::web::views::connect_oauth::{self, ConnectProvider, StartQuery, mint_start_response};
 use crate::web::views::notification_channels::{QuotaBlockLog, create_channel_deduped};

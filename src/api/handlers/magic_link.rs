@@ -45,7 +45,7 @@ use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
 use crate::error::Result;
 use crate::security::token_hash;
 use crate::storage::orgs as orgs_store;
-use crate::web::filters;
+use crate::templates::filters;
 
 /// Name of the double-submit nonce cookie that ties the confirm-page GET to the
 /// sign-in POST. Set on the GET, echoed in a hidden form field, checked on the

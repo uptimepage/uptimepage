@@ -9,8 +9,8 @@ use crate::app::AppState;
 use crate::domain::{CadenceAdvice, OrgId, RegionIncidentPolicy, TargetAlerts};
 use crate::error::AppError;
 use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser};
+use crate::templates::filters;
 use crate::web::error::WebResult;
-use crate::web::filters;
 
 mod fields;
 mod from_target;

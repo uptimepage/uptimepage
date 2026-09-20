@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
 use crate::error::AppError;
-use crate::web::filters;
+use crate::templates::filters;
 
 #[derive(Template, WebTemplate)]
 #[template(path = "error/404.html")]

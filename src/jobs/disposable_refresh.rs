@@ -19,7 +19,7 @@ use url::Url;
 
 use crate::config::EmailPolicyConfig;
 use crate::http_outbound::{OutboundHttpClient, get_text};
-use crate::observability::metrics::names;
+use crate::metric_names;
 use crate::security::EmailPolicy;
 use crate::storage::disposable_domains;
 use crate::storage::locks::try_job;
@@ -46,11 +46,12 @@ pub async fn load_persisted(pool: &PgPool, policy: &EmailPolicy) {
 /// applied on install, so the stored count is the raw union and overstates what
 /// the gate acts on.
 async fn publish_corpus_gauges(pool: &PgPool, policy: &EmailPolicy) {
-    metrics::gauge!(names::DISPOSABLE_CORPUS_DOMAINS).set(policy.loaded() as f64);
+    metrics::gauge!(metric_names::DISPOSABLE_CORPUS_DOMAINS).set(policy.loaded() as f64);
     let Ok(Some(snap)) = disposable_domains::last_snapshot(pool).await else {
         return;
     };
-    metrics::gauge!(names::DISPOSABLE_CORPUS_UPDATED).set(snap.fetched_at.timestamp() as f64);
+    metrics::gauge!(metric_names::DISPOSABLE_CORPUS_UPDATED)
+        .set(snap.fetched_at.timestamp() as f64);
 }
 
 /// `None` when the feature is off, so no task and no outbound traffic exist.

@@ -18,8 +18,8 @@ use crate::domain::AssetSlot;
 use crate::domain::PublicIncident;
 use crate::error::public::PublicAppError;
 use crate::request::host::{is_subdomain_public_request, request_origin, resolve_status_page};
+use crate::templates::filters;
 use crate::web::error::{NotFoundPage, UnavailablePage};
-use crate::web::filters;
 use crate::web::robots;
 
 mod branding;

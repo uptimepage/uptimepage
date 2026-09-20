@@ -188,6 +188,8 @@ fn no_request_path_module_reaches_the_cross_tenant_sweep() {
         "marketing",
         "request",
         "targets",
+        "channels",
+        "templates",
     ] {
         let scanned = scan(&root.join(area), &mut hits);
         assert!(scanned > 0, "src/{area} scanned no files");

@@ -28,7 +28,7 @@ use crate::domain::AccountId;
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::http_outbound::{OutboundHttpClient, REQUEST_TIMEOUT};
-use crate::observability::metrics::names;
+use crate::metric_names;
 use crate::security::mac::hmac_sha256_hex;
 
 pub const NAME: &str = "paddle";
@@ -518,7 +518,8 @@ impl BillingProvider for PaddleProvider {
                     Ok(_) => return Err(err),
                     Err(_) => {
                         if let Some(at) = paid_until {
-                            metrics::counter!(names::BILLING_PROVIDER_DATE_FAILED).increment(1);
+                            metrics::counter!(metric_names::BILLING_PROVIDER_DATE_FAILED)
+                                .increment(1);
                             tracing::error!(
                                 subscription_ref,
                                 %at,
@@ -556,7 +557,7 @@ impl BillingProvider for PaddleProvider {
         {
             return Ok(seen);
         }
-        metrics::counter!(names::BILLING_PROVIDER_DATE_FAILED).increment(1);
+        metrics::counter!(metric_names::BILLING_PROVIDER_DATE_FAILED).increment(1);
         tracing::error!(
             subscription_ref,
             %at,

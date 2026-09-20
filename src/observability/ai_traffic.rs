@@ -21,7 +21,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 use metrics::counter;
 
-use crate::observability::metrics::names;
+use crate::metric_names;
 
 /// Why the agent came. Determined by which agent it is, not by the request.
 const CRAWLER: &str = "crawler";
@@ -132,7 +132,7 @@ pub async fn middleware(req: Request, next: Next) -> Response {
         && let Some(((bot, kind), section)) = counted
     {
         counter!(
-            names::AI_CRAWLER_REQUESTS,
+            metric_names::AI_CRAWLER_REQUESTS,
             "bot" => bot,
             "kind" => kind,
             "section" => section,

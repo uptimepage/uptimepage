@@ -2,7 +2,7 @@
 //!
 //! askama codegens `filters::<name>(...)` at every derive site, so every
 //! template-deriving module imports this module as `filters` via
-//! `use crate::web::filters;`. Group filters by concern below: a new
+//! `use crate::templates::filters;`. Group filters by concern below: a new
 //! reusable filter lands in the most-specific sub-module (or a new one)
 //! and is re-exported here so the derive sites don't have to know.
 
@@ -14,7 +14,7 @@ mod static_refs {
     /// `{{ "css/app.css"|asset }}` → the cache-busting URL for that asset.
     #[askama::filter_fn]
     pub fn asset(value: &str, _: &dyn askama::Values) -> askama::Result<String> {
-        Ok(crate::web::assets::url(value))
+        Ok(crate::templates::assets::url(value))
     }
 
     /// AGPL-3.0 §13 source offer. `build.rs` bakes the repository URL and
@@ -147,15 +147,15 @@ mod display {
     pub fn humanize_dur(
         value: &i64,
         _: &dyn askama::Values,
-    ) -> askama::Result<crate::web::views::HumanDur> {
-        Ok(crate::web::views::HumanDur(*value))
+    ) -> askama::Result<crate::templates::format::HumanDur> {
+        Ok(crate::templates::format::HumanDur(*value))
     }
 
     /// `{{ secs|exact_dur }}` → exact single-unit (`45s`, `5m`, `24h`).
     /// Unlike `humanize_dur` it never rounds, so config values round-trip.
     #[askama::filter_fn]
     pub fn exact_dur(value: &u64, _: &dyn askama::Values) -> askama::Result<String> {
-        Ok(crate::web::views::exact_duration(*value))
+        Ok(crate::templates::format::exact_duration(*value))
     }
 
     /// `{{ bytes|human_bytes }}` → `"512 KB"` / `"2 MB"`. Floors to the

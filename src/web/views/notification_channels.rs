@@ -29,8 +29,8 @@ use crate::error::codes;
 use crate::request::CurrentOrg;
 use crate::storage::NotificationChannelStore;
 use crate::storage::traits::TargetFilter;
+use crate::templates::filters;
 use crate::web::error::WebResult;
-use crate::web::filters;
 use crate::web::views::{describe_check, json_pretty, resolve_org};
 
 const TAB_NOTIFICATIONS: &str = "notifications";
@@ -324,11 +324,14 @@ pub async fn list_partial(
             disabled_reason: c.disabled_reason.clone().unwrap_or_default(),
             failing_for: c
                 .is_failing(failure_limit)
-                .then(|| c.failing_since.map(|s| super::humanize_duration(now - s)))
+                .then(|| {
+                    c.failing_since
+                        .map(|s| crate::templates::format::humanize_duration(now - s))
+                })
                 .flatten(),
             last_delivered: c
                 .last_delivered_at
-                .map(|t| super::humanize_duration(now - t)),
+                .map(|t| crate::templates::format::humanize_duration(now - t)),
             created: c.created_at,
             managed_by: c.write_source.managed_label(),
             name: c.name,
@@ -767,7 +770,7 @@ mod tests {
         // Fingerprinted URL proves the vendored lib is actually embedded —
         // a missing file silently falls back to the bare path and 404s.
         assert!(
-            crate::web::assets::url("js/qrcode.min.js").contains("?v="),
+            crate::templates::assets::url("js/qrcode.min.js").contains("?v="),
             "qrcode.min.js must be embedded"
         );
         // Create has no "replace config" toggle — config is always sent.

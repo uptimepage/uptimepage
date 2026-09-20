@@ -326,7 +326,7 @@ impl Worker {
     fn note_dead_letter(&self, transport: &str, next_attempt_at: Option<chrono::DateTime<Utc>>) {
         if next_attempt_at.is_none() {
             counter!(
-                crate::observability::metrics::names::NOTIFICATIONS_DEAD_LETTERED,
+                crate::metric_names::NOTIFICATIONS_DEAD_LETTERED,
                 "transport" => transport.to_string()
             )
             .increment(1);

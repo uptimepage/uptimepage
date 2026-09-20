@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use crate::error::AppError;
 use crate::request::CurrentOrg;
 use crate::request::Session;
-use crate::web::filters;
+use crate::templates::filters;
 use crate::web::views::resolve_org;
 
 const TAB_HELP: &str = "help";

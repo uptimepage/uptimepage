@@ -13,7 +13,7 @@ use serde::Deserialize;
 use crate::app::AppState;
 use crate::auth::url::safe_redirect_target;
 use crate::request::auth::Session;
-use crate::web::filters;
+use crate::templates::filters;
 
 /// Sentinel matched against `nav` in base.html so the header doesn't render
 /// "Dashboard" / "Targets" links on the bare login page.
@@ -240,8 +240,8 @@ pub mod settings {
     use crate::error::AppError;
     use crate::request::auth::{CurrentOrg, Session};
     use crate::storage::orgs::list_orgs_for_user;
+    use crate::templates::filters;
     use crate::web::error::WebResult;
-    use crate::web::filters;
     use crate::web::views::resolve_org;
 
     use super::{TAB_ACCOUNT, TAB_SETTINGS, TAB_USAGE};

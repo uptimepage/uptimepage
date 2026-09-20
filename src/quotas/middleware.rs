@@ -13,7 +13,7 @@ use axum::response::{IntoResponse, Response};
 use metrics::counter;
 
 use crate::app::AppState;
-use crate::observability::metrics::names;
+use crate::metric_names;
 use crate::quotas::ratelimit::{Denied, RateLimitCategory, RateLimitKey};
 use crate::quotas::service::record_quota_event;
 use crate::request::auth::{CurrentOrg, CurrentUser};
@@ -130,7 +130,7 @@ pub async fn rate_limit_middleware(
 /// string carried in the error body so a dashboard can join the two —
 /// label set is bounded (2 tiers × 6 categories = 12 series).
 fn denied_response(d: Denied) -> Response {
-    counter!(names::RATELIMIT_DROPS, "scope" => d.scope.clone()).increment(1);
+    counter!(metric_names::RATELIMIT_DROPS, "scope" => d.scope.clone()).increment(1);
     crate::error::AppError::RateLimited {
         scope: d.scope,
         retry_after_secs: d.retry_after_secs,

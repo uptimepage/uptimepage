@@ -30,7 +30,7 @@ use crate::error::{AppError, Result};
 use crate::http_client::HttpClients;
 use crate::http_client::client::build_clients;
 use crate::http_outbound::{self, OutboundHttpClient};
-use crate::observability::metrics::names;
+use crate::metric_names;
 use crate::pipeline::{BatcherConfig, ResultBatcher};
 use crate::scheduler::{Scheduler, TargetRegistry};
 use crate::security::SsrfGuard;
@@ -211,7 +211,8 @@ impl PendingFlowRuns {
         for run in runs.into_iter().rev() {
             if q.len() >= MAX_PENDING_FLOW_RUNS {
                 q.pop_back();
-                counter!(names::STORAGE_DROPPED, "reason" => "flow_run_buffer_full").increment(1);
+                counter!(metric_names::STORAGE_DROPPED, "reason" => "flow_run_buffer_full")
+                    .increment(1);
             }
             q.push_front(run);
         }
@@ -225,7 +226,8 @@ impl FlowRunSink for PendingFlowRuns {
         for run in runs {
             if q.len() >= MAX_PENDING_FLOW_RUNS {
                 q.pop_front();
-                counter!(names::STORAGE_DROPPED, "reason" => "flow_run_buffer_full").increment(1);
+                counter!(metric_names::STORAGE_DROPPED, "reason" => "flow_run_buffer_full")
+                    .increment(1);
             }
             q.push_back(run.clone());
         }

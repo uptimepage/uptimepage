@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::config::SchedulerConfig;
 use crate::error::Result;
-use crate::observability::metrics::names;
+use crate::metric_names;
 use crate::scheduler::registry::{RegistryDiff, ScheduledTarget, TargetRegistry};
 use crate::worker::{CheckTask, WorkerPool};
 
@@ -38,9 +38,9 @@ const INITIAL_PROBE_SPREAD: Duration = Duration::from_secs(5);
 const REFRESH_CHANNEL_BOUND: usize = 8;
 
 static REFRESH_FAILED: LazyLock<Counter> =
-    LazyLock::new(|| counter!(names::SCHEDULER_REFRESH_FAILED));
+    LazyLock::new(|| counter!(metric_names::SCHEDULER_REFRESH_FAILED));
 static CONSECUTIVE_REFRESH_FAILURES: LazyLock<Gauge> =
-    LazyLock::new(|| gauge!(names::SCHEDULER_CONSECUTIVE_REFRESH_FAILURES));
+    LazyLock::new(|| gauge!(metric_names::SCHEDULER_CONSECUTIVE_REFRESH_FAILURES));
 
 pub struct Scheduler {
     registry: Arc<TargetRegistry>,
@@ -147,7 +147,7 @@ impl Scheduler {
     async fn refresh_registry(&self) -> Result<RegistryDiff> {
         let started = std::time::Instant::now();
         let result = self.registry.refresh().await;
-        histogram!(names::SCHEDULER_REFRESH_DURATION_MS)
+        histogram!(metric_names::SCHEDULER_REFRESH_DURATION_MS)
             .record(started.elapsed().as_millis() as f64);
         result
     }

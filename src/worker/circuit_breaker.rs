@@ -5,12 +5,12 @@ use metrics::counter;
 
 use crate::config::CircuitBreakerConfig;
 use crate::domain::CheckStatus;
-use crate::observability::metrics::names;
+use crate::metric_names;
 
 pub const CIRCUIT_OPEN_REASON: &str = "circuit_open";
 
 fn record_transition(from: BreakerState, to: BreakerState) {
-    counter!(names::BREAKER_STATE_CHANGES, "from" => from.as_label(), "to" => to.as_label())
+    counter!(metric_names::BREAKER_STATE_CHANGES, "from" => from.as_label(), "to" => to.as_label())
         .increment(1);
 }
 

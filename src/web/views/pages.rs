@@ -16,8 +16,8 @@ use crate::public_status::urls::{
     public_base, public_host_suffix, public_logo_url, public_status_url,
 };
 use crate::request::auth::CurrentOrg;
+use crate::templates::filters;
 use crate::web::error::WebResult;
-use crate::web::filters;
 use crate::web::views::resolve_org;
 
 const TAB_PAGES: &str = "pages";

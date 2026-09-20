@@ -174,7 +174,7 @@ impl CredentialEvent<'_> {
             "sign-in method changed"
         );
         metrics::counter!(
-            crate::observability::metrics::names::CREDENTIAL_CHANGES,
+            crate::metric_names::CREDENTIAL_CHANGES,
             "action" => self.action.as_db_str(),
             "origin" => self.origin.as_db_str(),
             "provider" => self.provider.to_string(),

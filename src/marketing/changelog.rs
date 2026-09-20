@@ -26,7 +26,7 @@ use super::blog::{render, split_front_matter};
 use super::config::{BRAND, MarketingCfg};
 use super::pages::{CachedRender, cached_render, not_found_page, serve_cached};
 use super::seo::{JsonLd, OpenGraph, json_ld_article, json_ld_breadcrumb, xml_escape};
-use crate::web::filters;
+use crate::templates::filters;
 
 pub const INDEX_PATH: &str = "/changelog";
 pub const FEED_PATH: &str = "/changelog.xml";

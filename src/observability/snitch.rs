@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use crate::app::{self, AppState};
+use crate::app::AppState;
 use crate::http_outbound::{self, OutboundHttpClient};
 use crate::storage::{ResultsStore, TargetStore};
 
@@ -55,7 +55,7 @@ async fn run(
             _ = ticker.tick() => {
                 // Skip the ping when a dependency is down so the external watcher
                 // alerts on partial outages, not just a dead process.
-                let ready = app::probe_readiness(&target_store, &results_store).await;
+                let ready = super::readiness::probe_readiness(&target_store, &results_store).await;
                 if !ready.all_ok() {
                     tracing::warn!(
                         postgres = ready.postgres,

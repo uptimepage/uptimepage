@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::config::CircuitBreakerConfig;
 use crate::domain::{CheckResult, CheckSpec, OrgId, Target};
 use crate::http_client::HttpClients;
-use crate::observability::metrics::names;
+use crate::metric_names;
 use crate::worker::circuit_breaker::{BreakerState, CIRCUIT_OPEN_REASON, CircuitBreaker};
 use crate::worker::host_throttle::{HostPermit, HostThrottle, Throttled};
 
@@ -21,9 +21,9 @@ use crate::worker::host_throttle::{HostPermit, HostThrottle, Throttled};
 // domain_expiry executor since RDAP no longer pre-throttles at the pool
 // level.
 static HOST_THROTTLE_WAITS_HOST: LazyLock<Counter> =
-    LazyLock::new(|| counter!(names::HOST_THROTTLE_WAITS, "kind" => "host"));
+    LazyLock::new(|| counter!(metric_names::HOST_THROTTLE_WAITS, "kind" => "host"));
 static HOST_THROTTLE_DROPS_C: LazyLock<Counter> =
-    LazyLock::new(|| counter!(names::HOST_THROTTLE_DROPS));
+    LazyLock::new(|| counter!(metric_names::HOST_THROTTLE_DROPS));
 
 pub struct CheckTask {
     pub target: Arc<Target>,
@@ -118,7 +118,7 @@ impl ResultFanout {
     fn dispatch(&self, result: CheckResult) {
         if let Err(err) = self.storage.try_send(result) {
             tracing::warn!(?err, "result channel full or closed");
-            counter!(names::STORAGE_DROPPED, "reason" => "queue_full").increment(1);
+            counter!(metric_names::STORAGE_DROPPED, "reason" => "queue_full").increment(1);
             self.note_storage_dropped();
         }
     }
@@ -297,7 +297,7 @@ impl WorkerPool {
         // duplicate ClickHouse rows at near-identical timestamps, double
         // host-throttle consumption, ambiguous alert ordering.
         if !self.in_flight.insert(task.target.id) {
-            counter!(names::STORAGE_DROPPED, "reason" => "target_in_flight").increment(1);
+            counter!(metric_names::STORAGE_DROPPED, "reason" => "target_in_flight").increment(1);
             self.fanout.note_storage_dropped();
             return;
         }
@@ -310,7 +310,7 @@ impl WorkerPool {
             Ok(p) => p,
             Err(_) => {
                 tracing::debug!(target_id = %task.target.id, "worker pool saturated, dropping task");
-                counter!(names::STORAGE_DROPPED, "reason" => "pool_saturated").increment(1);
+                counter!(metric_names::STORAGE_DROPPED, "reason" => "pool_saturated").increment(1);
                 self.fanout.note_storage_dropped();
                 return;
             }
@@ -332,7 +332,7 @@ impl WorkerPool {
             let breaker = get_or_init_breaker(&breakers, &task.breaker_key, breaker_cfg);
 
             if !breaker.allow() {
-                counter!(names::CHECK_ERRORS, "kind" => "circuit_open").increment(1);
+                counter!(metric_names::CHECK_ERRORS, "kind" => "circuit_open").increment(1);
                 let result = CheckResult::error(task.target.id, org_id.0, CIRCUIT_OPEN_REASON);
                 fanout.dispatch(result);
                 return;
@@ -415,6 +415,6 @@ fn get_or_init_breaker(
 }
 
 fn record_metrics(result: &CheckResult) {
-    counter!(names::CHECKS_TOTAL, "status" => result.status.as_str()).increment(1);
-    histogram!(names::CHECK_DURATION_MS).record(result.duration_ms as f64);
+    counter!(metric_names::CHECKS_TOTAL, "status" => result.status.as_str()).increment(1);
+    histogram!(metric_names::CHECK_DURATION_MS).record(result.duration_ms as f64);
 }

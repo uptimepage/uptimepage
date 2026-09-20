@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::domain::{ChannelKind, CheckSpec};
 use crate::error::Result;
-use crate::observability::metrics::names;
+use crate::metric_names;
 
 const TICK: Duration = Duration::from_secs(60);
 
@@ -44,7 +44,7 @@ async fn sweep(pg: &PgPool) -> Result<()> {
             .iter()
             .find(|(k, _)| k == kind)
             .map_or(0, |(_, n)| *n);
-        metrics::gauge!(names::TARGETS_ENABLED, "kind" => kind).set(n as f64);
+        metrics::gauge!(metric_names::TARGETS_ENABLED, "kind" => kind).set(n as f64);
     }
 
     let active_users: i64 =
@@ -52,7 +52,7 @@ async fn sweep(pg: &PgPool) -> Result<()> {
             .fetch_one(pg)
             .await
             .context("count active users")?;
-    metrics::gauge!(names::USERS_ACTIVE).set(active_users as f64);
+    metrics::gauge!(metric_names::USERS_ACTIVE).set(active_users as f64);
 
     let channels: Vec<(String, i64, i64)> = sqlx::query_as(
         "SELECT c.kind, count(*), count(DISTINCT c.org_id) FROM notification_channels c \
@@ -67,9 +67,9 @@ async fn sweep(pg: &PgPool) -> Result<()> {
     for kind in ChannelKind::ALL {
         let db_str = kind.as_db_str();
         let row = channels.iter().find(|(k, _, _)| k == db_str);
-        metrics::gauge!(names::NOTIFICATION_CHANNELS, "kind" => db_str)
+        metrics::gauge!(metric_names::NOTIFICATION_CHANNELS, "kind" => db_str)
             .set(row.map_or(0, |(_, n, _)| *n) as f64);
-        metrics::gauge!(names::NOTIFICATION_CHANNEL_ORGS, "kind" => db_str)
+        metrics::gauge!(metric_names::NOTIFICATION_CHANNEL_ORGS, "kind" => db_str)
             .set(row.map_or(0, |(_, _, orgs)| *orgs) as f64);
     }
 
@@ -83,7 +83,7 @@ async fn sweep(pg: &PgPool) -> Result<()> {
     .fetch_one(pg)
     .await
     .context("count orgs with a notification channel")?;
-    metrics::gauge!(names::ORGS_WITH_CHANNELS).set(orgs_with_channels as f64);
+    metrics::gauge!(metric_names::ORGS_WITH_CHANNELS).set(orgs_with_channels as f64);
 
     Ok(())
 }

@@ -29,7 +29,7 @@ use crate::security::{
     SsrfGuard,
     rdap::{DomainResponse, override_url},
 };
-use crate::web::filters;
+use crate::templates::filters;
 
 use super::super::config::{BRAND, MarketingCfg};
 use super::super::pages::{CachedRender, cached_render, serve_cached};

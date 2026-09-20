@@ -23,7 +23,7 @@ use crate::http_client::HttpClients;
 use crate::http_client::connector::{
     ConnGuard, PhaseTimings, TimedConnection, handshake, timed_connect,
 };
-use crate::observability::metrics::names;
+use crate::metric_names;
 
 /// Redirect-hop ceiling, and the fallback when following is on but `max_redirects` is 0.
 const MAX_REDIRECT_HOPS: u8 = HttpCheck::MAX_REDIRECTS;
@@ -212,7 +212,7 @@ async fn do_http_check(
 
         if check.follow_redirects && is_redirect(status_code) {
             if hop == max_hops {
-                counter!(names::CHECK_REDIRECTS, "outcome" => "limit_exceeded").increment(1);
+                counter!(metric_names::CHECK_REDIRECTS, "outcome" => "limit_exceeded").increment(1);
                 tracing::warn!(
                     target_id = %target_id,
                     hops = max_hops,
@@ -229,7 +229,8 @@ async fn do_http_check(
             {
                 Some(u) => u,
                 None => {
-                    counter!(names::CHECK_REDIRECTS, "outcome" => "invalid_location").increment(1);
+                    counter!(metric_names::CHECK_REDIRECTS, "outcome" => "invalid_location")
+                        .increment(1);
                     tracing::warn!(
                         target_id = %target_id,
                         hop,
@@ -239,7 +240,7 @@ async fn do_http_check(
                 }
             };
             if !matches!(next.scheme(), "http" | "https") {
-                counter!(names::CHECK_REDIRECTS, "outcome" => "blocked_scheme").increment(1);
+                counter!(metric_names::CHECK_REDIRECTS, "outcome" => "blocked_scheme").increment(1);
                 tracing::warn!(
                     target_id = %target_id,
                     hop,
@@ -256,7 +257,7 @@ async fn do_http_check(
                 send_body = None;
             }
 
-            counter!(names::CHECK_REDIRECTS, "outcome" => "followed").increment(1);
+            counter!(metric_names::CHECK_REDIRECTS, "outcome" => "followed").increment(1);
             tracing::debug!(
                 target_id = %target_id,
                 hop,
@@ -459,7 +460,7 @@ async fn finalize(
         )
     {
         counter!(
-            names::HTTP_ACCESS_DIAGNOSTICS,
+            metric_names::HTTP_ACCESS_DIAGNOSTICS,
             "outcome" => "unmatched",
             "kind" => kind,
             "provider" => "unknown",
@@ -741,7 +742,7 @@ fn detect_diagnostic(
 
 fn record_matched_diagnostic(diagnostic: &CheckDiagnostic) {
     counter!(
-        names::HTTP_ACCESS_DIAGNOSTICS,
+        metric_names::HTTP_ACCESS_DIAGNOSTICS,
         "outcome" => "matched",
         "kind" => diagnostic.kind.as_str(),
         "provider" => diagnostic.provider.map(EdgeProvider::as_str).unwrap_or("unknown"),

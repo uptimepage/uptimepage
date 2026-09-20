@@ -17,8 +17,8 @@ use crate::app::AppState;
 use crate::domain::OrgId;
 use crate::storage::incident_ops::verify_incident_ack;
 use crate::storage::{Actor, LifecycleOutcome};
+use crate::templates::filters;
 use crate::web::error::WebResult;
-use crate::web::filters;
 
 const ACK_NOTE: &str = "Acknowledged from a notification link";
 

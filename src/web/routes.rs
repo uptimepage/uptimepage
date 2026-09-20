@@ -4,7 +4,8 @@ use axum::routing::{get, post};
 use tower_cookies::CookieManagerLayer;
 
 use crate::app::AppState;
-use crate::web::{assets, error, views};
+use crate::templates::assets;
+use crate::web::{error, views};
 
 /// Builds the UI router with state applied. The public-status pages
 /// (`/status`, `/status/incidents/{id}`) are mounted only when
@@ -16,9 +17,9 @@ use crate::web::{assets, error, views};
 /// parity); the operator dashboard keeps `/` on its own host.
 pub fn routes(state: AppState) -> Router {
     let cfg = &state.cfg;
-    crate::web::filters::set_escalation_ui(cfg.escalation.enabled);
-    crate::web::filters::set_support_ui(cfg.email.support_enabled());
-    crate::web::filters::set_billing_ui(state.billing.is_some());
+    crate::templates::filters::set_escalation_ui(cfg.escalation.enabled);
+    crate::templates::filters::set_support_ui(cfg.email.support_enabled());
+    crate::templates::filters::set_billing_ui(state.billing.is_some());
     let mut r = Router::new()
         .route("/", get(views::dashboard::root))
         .route("/targets", get(views::targets_list::index))

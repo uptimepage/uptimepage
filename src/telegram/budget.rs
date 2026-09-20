@@ -66,12 +66,11 @@ impl TelegramSendBudget {
     /// the budget under-sends, never over-sends.
     pub async fn acquire(&self, chat_id: i64) -> Result<(), RateDeferred> {
         let slot = self.reserve(chat_id).inspect_err(|_| {
-            metrics::counter!(crate::observability::metrics::names::TELEGRAM_SEND_DEFERRED)
-                .increment(1);
+            metrics::counter!(crate::metric_names::TELEGRAM_SEND_DEFERRED).increment(1);
         })?;
         let now = Instant::now();
         if slot > now {
-            metrics::histogram!(crate::observability::metrics::names::TELEGRAM_SEND_WAIT_MS)
+            metrics::histogram!(crate::metric_names::TELEGRAM_SEND_WAIT_MS)
                 .record((slot - now).as_millis() as f64);
             tokio::time::sleep(slot - now).await;
         }

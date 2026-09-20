@@ -20,7 +20,6 @@ mod common;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
-use uptimepage::app::assert_cookie_scope_safe;
 use uptimepage::auth::session;
 use uptimepage::config::SessionConfig;
 
@@ -44,7 +43,7 @@ fn apex_cookie_domain_refused_at_boot() {
     let mut cfg = uptimepage::config::AppConfig::load().expect("config");
     saas_subdomain(&mut cfg);
     cfg.auth.session.cookie_domain = format!(".{BASE_DOMAIN}");
-    let panicked = std::panic::catch_unwind(|| assert_cookie_scope_safe(&cfg));
+    let panicked = std::panic::catch_unwind(|| cfg.assert_cookie_scope_safe());
     assert!(
         panicked.is_err(),
         "apex cookie_domain must panic so the operator session can't ride into tenant pages"

@@ -175,18 +175,6 @@ impl OAuthUrls {
     }
 }
 
-/// Loopback per RFC 8252 §7.3, on the typed host so `[::1]` counts.
-pub(crate) fn is_loopback_http(u: &url::Url) -> bool {
-    use url::Host;
-    u.scheme() == "http"
-        && match u.host() {
-            Some(Host::Domain(d)) => d == "localhost",
-            Some(Host::Ipv4(v4)) => v4.is_loopback(),
-            Some(Host::Ipv6(v6)) => v6.is_loopback(),
-            None => false,
-        }
-}
-
 /// Native clients admitted by scheme name. RFC 8252 §7.1 wants a reverse-DNS
 /// scheme, which is admitted by shape below; this list is for the editors
 /// that use a bare name instead, each added once seen on the wire.
@@ -210,7 +198,7 @@ fn is_acceptable_redirect_uri(uri: &str) -> bool {
     }
     match u.scheme() {
         "https" => u.host_str().is_some(),
-        "http" => is_loopback_http(&u),
+        "http" => crate::net::is_loopback_http(&u),
         scheme => scheme.contains('.') || NATIVE_SCHEMES.contains(&scheme),
     }
 }
@@ -224,7 +212,7 @@ pub(crate) fn redirect_destination(uri: &str) -> String {
     let Ok(u) = url::Url::parse(uri) else {
         return "an unknown destination".to_string();
     };
-    if is_loopback_http(&u) {
+    if crate::net::is_loopback_http(&u) {
         return "an app on this computer".to_string();
     }
     match u.scheme() {

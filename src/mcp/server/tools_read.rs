@@ -124,10 +124,13 @@ impl McpServer {
         let org_row = org_row.map_err(to_err)?;
 
         let metrics = index_by_target(rollup);
-        let folded = self
-            .state
-            .folded_status(org, range, crate::app::folded_status_policies(&targets))
-            .await;
+        let folded = crate::targets::folded_status(
+            &self.state,
+            org,
+            range,
+            crate::targets::folded_status_policies(&targets),
+        )
+        .await;
         let org_slug = org_row.map(|o| o.slug).unwrap_or_else(|| org.0.to_string());
 
         let mut totals = HealthTotals {
@@ -243,10 +246,13 @@ impl McpServer {
         .map_err(|e| McpToolError::internal(format!("list monitors query: {e}")))?;
 
         let metrics = index_by_target(rollup);
-        let folded = self
-            .state
-            .folded_status(org, range, crate::app::folded_status_policies(&targets))
-            .await;
+        let folded = crate::targets::folded_status(
+            &self.state,
+            org,
+            range,
+            crate::targets::folded_status_policies(&targets),
+        )
+        .await;
 
         // Build, filter (type + state) in memory, then sort for stable paging.
         let mut items: Vec<MonitorListItem> = targets
@@ -340,16 +346,15 @@ impl McpServer {
         }
 
         // Folded like `list_monitors`, so the drill-down cannot contradict it.
-        let folded = self
-            .state
-            .folded_status(
-                org,
-                r24.inner(),
-                crate::app::folded_status_policies(std::slice::from_ref(&target)),
-            )
-            .await
-            .get(&id)
-            .copied();
+        let folded = crate::targets::folded_status(
+            &self.state,
+            org,
+            r24.inner(),
+            crate::targets::folded_status_policies(std::slice::from_ref(&target)),
+        )
+        .await
+        .get(&id)
+        .copied();
 
         let last = latest.first();
         let (_, address) = describe_check(&target.check);
@@ -781,10 +786,13 @@ impl McpServer {
         )
         .map_err(|e| McpToolError::internal(format!("status page components: {e}")))?;
         let metrics = index_by_target(rollup);
-        let folded = self
-            .state
-            .folded_status(org, range, crate::app::folded_status_policies(&targets))
-            .await;
+        let folded = crate::targets::folded_status(
+            &self.state,
+            org,
+            range,
+            crate::targets::folded_status_policies(&targets),
+        )
+        .await;
 
         let components = components
             .into_iter()

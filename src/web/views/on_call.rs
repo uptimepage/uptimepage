@@ -17,8 +17,8 @@ use crate::app::AppState;
 use crate::domain::{OrgId, RotationType};
 use crate::error::AppError;
 use crate::request::CurrentOrg;
+use crate::templates::filters;
 use crate::web::error::WebResult;
-use crate::web::filters;
 use crate::web::views::resolve_org;
 
 const TAB_ON_CALL: &str = "on-call";

@@ -22,7 +22,7 @@ use crate::marketing::seo::{
     json_ld_software_application, json_ld_software_source_code, json_ld_tech_article,
     json_ld_webpage, json_ld_website,
 };
-use crate::web::filters;
+use crate::templates::filters;
 
 use super::config::{BRAND, MarketingCfg};
 use super::gallery;
@@ -57,7 +57,7 @@ fn shot_views() -> Vec<ShotView> {
         .enumerate()
         .map(|(i, s)| ShotView {
             id: s.id,
-            src: crate::web::assets::url(s.file),
+            src: crate::templates::assets::url(s.file),
             alt: s.alt,
             caption: s.caption,
             width: s.width,

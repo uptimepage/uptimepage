@@ -11,9 +11,10 @@ use uuid::Uuid;
 use crate::domain::metrics::DashboardMetrics;
 use crate::domain::{CheckStatus, IncidentSeverity, uptime_pct_from_downtime};
 use crate::storage::IncidentBrief;
-use crate::web::filters;
+use crate::templates::filters;
+use crate::templates::format::HumanDur;
+use crate::web::views::RangeOption;
 use crate::web::views::region_display::LabeledRegion;
-use crate::web::views::{HumanDur, RangeOption};
 
 use super::*;
 

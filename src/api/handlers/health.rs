@@ -64,7 +64,9 @@ pub async fn healthz() -> Json<HealthResponse> {
     ),
 )]
 pub async fn readyz(State(state): State<AppState>) -> (StatusCode, Json<ReadinessResponse>) {
-    let ready = crate::app::probe_readiness(&state.target_store, &state.results_store).await;
+    let ready =
+        crate::observability::readiness::probe_readiness(&state.target_store, &state.results_store)
+            .await;
     let body = ReadinessResponse {
         status: if ready.all_ok() { "ready" } else { "not_ready" },
         postgres: ready.postgres.into(),

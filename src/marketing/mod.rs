@@ -8,7 +8,7 @@
 //! No-DB on the marketing path is what makes that extraction trivial.
 //!
 //! Permitted shared deps: axum, askama, tower-http, the config crate,
-//! and `crate::web::assets` (the fingerprinted-asset map + askama
+//! and `crate::templates::assets` (the fingerprinted-asset map + askama
 //! filter + `mount_static` helper). On extraction the assets module
 //! moves with the marketing site or is duplicated into the extracted
 //! service; either way the rebind is one path.
@@ -96,7 +96,7 @@ pub fn router(cfg: MarketingCfg) -> Router {
     // asset href emitted by a template falls through to the marketing
     // 404. Funnelled through `mount_static` so the path + handler stay
     // in lockstep with the operator-app declaration.
-    crate::web::assets::mount_static(r)
+    crate::templates::assets::mount_static(r)
         .fallback(pages::not_found)
         .layer(CompressionLayer::new())
         .with_state(state)

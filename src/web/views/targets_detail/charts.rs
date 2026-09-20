@@ -3,10 +3,10 @@ use chrono::{DateTime, Utc};
 use crate::domain::metrics::AvailabilityBucket;
 use crate::domain::{Incident, confirmed_downtime_secs, uptime_pct_from_downtime};
 use crate::storage::{ClampedRange, UptimeStats, rollup_bucket_secs};
+use crate::templates::format::fmt_ts;
 use crate::web::views::dashboard::{
     Polarity, count_delta, render_spark_path_domain, ribbon_class, uptime_pp_delta,
 };
-use crate::web::views::fmt_ts;
 
 use super::load::confirmed_uptime_pct;
 use super::rows::KpiTrend;

@@ -16,7 +16,7 @@ use crate::config::{EmailPolicyConfig, SignupPolicy};
 use crate::error::AppError;
 use crate::error::codes;
 use crate::http_client::HickoryDnsResolver;
-use crate::observability::metrics::names;
+use crate::metric_names;
 use crate::security::abuse::domain_and_parents;
 
 /// Cached by the shared resolver, so this is paid once per domain per TTL.
@@ -160,7 +160,7 @@ pub enum Admission {
 /// denominator is already in the HTTP request metrics.
 pub(crate) fn record(surface: &'static str, outcome: &'static str, risk: EmailRisk) {
     metrics::counter!(
-        names::EMAIL_ADMISSION,
+        metric_names::EMAIL_ADMISSION,
         "surface" => surface,
         "outcome" => outcome,
         "risk" => risk.as_db_str(),

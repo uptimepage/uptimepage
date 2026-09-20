@@ -16,6 +16,7 @@ use crate::error::Result;
 
 mod auth;
 mod billing;
+mod boot;
 mod limits;
 mod notify;
 mod observability;

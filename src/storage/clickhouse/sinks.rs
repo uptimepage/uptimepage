@@ -8,7 +8,7 @@ use crate::domain::agent_wire::{FlowRunRecord, StepOutcome};
 use crate::domain::quota::RetentionDays;
 use crate::domain::{CheckResult, HeartbeatPingRecord};
 use crate::error::Result;
-use crate::observability::metrics::names;
+use crate::metric_names;
 use crate::storage::org_ttl::OrgTtlDays;
 use crate::storage::traits::{FlowRunSink, HeartbeatPingSink, ResultSink};
 
@@ -231,7 +231,7 @@ impl ClickhouseFlowRunSink {
                 count = rows.len(),
                 "flow run insert failed after retries"
             );
-            counter!(names::STORAGE_DROPPED, "reason" => "flow_run_write_failed")
+            counter!(metric_names::STORAGE_DROPPED, "reason" => "flow_run_write_failed")
                 .increment(rows.len() as u64);
         }
     }
@@ -334,7 +334,7 @@ impl HeartbeatPingSink for ClickhouseHeartbeatPingSink {
             // The ping already moved the state the verdict reads, so this costs
             // history only.
             tracing::error!(?err, "heartbeat ping insert failed after retries");
-            counter!(names::STORAGE_DROPPED, "reason" => "heartbeat_ping_write_failed")
+            counter!(metric_names::STORAGE_DROPPED, "reason" => "heartbeat_ping_write_failed")
                 .increment(1);
         }
     }

@@ -15,7 +15,7 @@ use tokio::time::{MissedTickBehavior, interval};
 use tokio_util::sync::CancellationToken;
 
 use crate::error::Result;
-use crate::observability::metrics::names;
+use crate::metric_names;
 
 const TICK: Duration = Duration::from_secs(30);
 const WINDOW_SECS: u32 = 300;
@@ -56,11 +56,12 @@ async fn sweep(ch: &ChClient) -> Result<()> {
         }
     };
     for s in stats {
-        metrics::gauge!(names::REGION_CHECKS_WINDOW, "region" => s.region.clone())
+        metrics::gauge!(metric_names::REGION_CHECKS_WINDOW, "region" => s.region.clone())
             .set(s.total as f64);
-        metrics::gauge!(names::REGION_CHECKS_UP_WINDOW, "region" => s.region.clone())
+        metrics::gauge!(metric_names::REGION_CHECKS_UP_WINDOW, "region" => s.region.clone())
             .set(s.up as f64);
-        metrics::gauge!(names::REGION_CHECK_LATENCY_P95_MS, "region" => s.region).set(s.p95_ms);
+        metrics::gauge!(metric_names::REGION_CHECK_LATENCY_P95_MS, "region" => s.region)
+            .set(s.p95_ms);
     }
     Ok(())
 }

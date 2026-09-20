@@ -26,7 +26,7 @@ use crate::domain::{UserId, strip_served_stale};
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
 use crate::error::ApiError;
 use crate::error::{AppError, Result};
-use crate::observability::metrics::names;
+use crate::metric_names;
 use crate::request::{BrowserUser, CurrentUser};
 use crate::storage::postgres_secrets::{RawTargetRow, RedactedTarget};
 
@@ -594,7 +594,7 @@ pub async fn delete_account(
     let outcome = account::request_deletion(pool, user_id, grace_days).await?;
 
     // Nothing else in the stack observes a customer leaving.
-    metrics::counter!(names::ACCOUNT_DELETIONS_REQUESTED).increment(1);
+    metrics::counter!(metric_names::ACCOUNT_DELETIONS_REQUESTED).increment(1);
     tracing::warn!(
         user_id = %user_id.0,
         scheduled_purge_at = %outcome.grace_deadline,

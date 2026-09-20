@@ -20,7 +20,7 @@ use crate::config::{CheckerConfig, DnsConfig, HttpClientConfig, SecurityConfig};
 use crate::error::{AppError, Result};
 use crate::http_client::connector::ConnectParams;
 use crate::http_client::dns::HickoryDnsResolver;
-use crate::observability::metrics::names;
+use crate::metric_names;
 use crate::security::SsrfGuard;
 use crate::security::cert_probe::NoVerify;
 
@@ -89,9 +89,9 @@ pub fn build_clients(
     Ok(HttpClients {
         tls_verifying,
         tls_insecure,
-        ttfb_ms: histogram!(names::CHECK_TTFB_MS),
-        connect_ms: histogram!(names::CHECK_CONNECT_MS),
-        tls_ms: histogram!(names::CHECK_TLS_MS),
+        ttfb_ms: histogram!(metric_names::CHECK_TTFB_MS),
+        connect_ms: histogram!(metric_names::CHECK_CONNECT_MS),
+        tls_ms: histogram!(metric_names::CHECK_TLS_MS),
         user_agent: Arc::from(http_cfg.user_agent.as_str()),
         resolver,
         ssrf_guard,

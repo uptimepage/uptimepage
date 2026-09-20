@@ -26,7 +26,7 @@ use crate::config::OauthClientConfig;
 use crate::domain::{CredentialAction, CredentialOrigin, OauthProvider};
 use crate::domain::{OrgId, UserId};
 use crate::error::{AppError, Result};
-use crate::observability::metrics::names;
+use crate::metric_names;
 use crate::request::CurrentUser;
 use crate::request::auth::Session;
 
@@ -414,7 +414,7 @@ async fn finish_link(
                 user_id = %link_user.0,
                 "link refused: that provider account already opens a different account"
             );
-            metrics::counter!(names::CREDENTIAL_LINK_REFUSED, "reason" => "identity_taken")
+            metrics::counter!(metric_names::CREDENTIAL_LINK_REFUSED, "reason" => "identity_taken")
                 .increment(1);
             crate::request::flash::Flash {
                 identity_taken: true,
@@ -546,7 +546,8 @@ async fn finish_login(
                     reason,
                     "link callback refused: the state names an account the live session is not"
                 );
-                metrics::counter!(names::CREDENTIAL_LINK_REFUSED, "reason" => reason).increment(1);
+                metrics::counter!(metric_names::CREDENTIAL_LINK_REFUSED, "reason" => reason)
+                    .increment(1);
                 return Ok(crate::request::auth::login_redirect(ACCOUNT_PATH).into_response());
             }
             Some(id)

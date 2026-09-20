@@ -11,7 +11,7 @@ use tokio::time::{MissedTickBehavior, interval};
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::CheckResult;
-use crate::observability::metrics::names;
+use crate::metric_names;
 use crate::scheduler::TargetRegistry;
 use crate::worker::WorkerPool;
 
@@ -59,22 +59,22 @@ async fn run(
     let mut ticker = interval(sample_interval);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-    let g_in_flight = gauge!(names::WORKERS_IN_FLIGHT);
-    let g_breakers_open = gauge!(names::BREAKERS_OPEN);
-    let g_targets = gauge!(names::TARGETS_TOTAL);
-    let g_queue_depth = gauge!(names::RESULT_QUEUE_DEPTH);
-    let g_singleflight_slots = gauge!(names::RDAP_SINGLEFLIGHT_SLOTS);
-    let g_resident = gauge!(names::PROCESS_RESIDENT_BYTES);
+    let g_in_flight = gauge!(metric_names::WORKERS_IN_FLIGHT);
+    let g_breakers_open = gauge!(metric_names::BREAKERS_OPEN);
+    let g_targets = gauge!(metric_names::TARGETS_TOTAL);
+    let g_queue_depth = gauge!(metric_names::RESULT_QUEUE_DEPTH);
+    let g_singleflight_slots = gauge!(metric_names::RDAP_SINGLEFLIGHT_SLOTS);
+    let g_resident = gauge!(metric_names::PROCESS_RESIDENT_BYTES);
 
     // Register the DB gauges only when a database is wired, so the probe-only
     // agent's exposition stays free of pool/parts series it can't populate.
     let db = db.map(|src| DbGauges {
         pg_pool: src.pg_pool,
         ch: src.ch,
-        size: gauge!(names::PG_POOL_SIZE),
-        idle: gauge!(names::PG_POOL_IDLE),
-        in_use: gauge!(names::PG_POOL_IN_USE),
-        parts: gauge!(names::CLICKHOUSE_MAX_PART_COUNT),
+        size: gauge!(metric_names::PG_POOL_SIZE),
+        idle: gauge!(metric_names::PG_POOL_IDLE),
+        in_use: gauge!(metric_names::PG_POOL_IN_USE),
+        parts: gauge!(metric_names::CLICKHOUSE_MAX_PART_COUNT),
     });
 
     let singleflight = pool.domain_expiry_runtime().singleflight.clone();

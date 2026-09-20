@@ -13,8 +13,8 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::storage::notification_channels::verify_channel_stop;
+use crate::templates::filters;
 use crate::web::error::WebResult;
-use crate::web::filters;
 
 const STOP_REASON: &str = "recipient stopped delivery";
 

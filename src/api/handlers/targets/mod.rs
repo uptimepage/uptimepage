@@ -20,7 +20,7 @@ use crate::domain::{
 use crate::error::ApiError;
 use crate::error::codes;
 use crate::error::{AppError, Result};
-use crate::observability::metrics::names;
+use crate::metric_names;
 use crate::request::{
     Authorized, CurrentOrg, CurrentUser, RequestSource, TargetsDelete, TargetsExecute, TargetsRead,
     TargetsWrite, TokenScopes,
@@ -648,7 +648,7 @@ async fn note_if_emptied(state: &AppState, org: OrgId, deleted: usize) {
     }
     match state.target_store.summary(org).await {
         Ok(summary) if summary.total == 0 => {
-            metrics::counter!(names::ORGS_EMPTIED).increment(1);
+            metrics::counter!(metric_names::ORGS_EMPTIED).increment(1);
             tracing::warn!(org_id = %org.0, "org has no monitors left after a delete");
         }
         Ok(_) => {}

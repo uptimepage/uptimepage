@@ -18,7 +18,7 @@ use askama_web::WebTemplate;
 use axum::http::header;
 use axum::response::IntoResponse;
 
-use crate::web::filters;
+use crate::templates::filters;
 
 /// Renders **trusted** markdown to HTML. This path is deliberately
 /// **unsanitised** — tables and the occasional raw `<a>` in the Privacy

@@ -32,11 +32,14 @@ use super::provider::{
     BillingProvider, ChangeTiming, EventKind, ProviderEvent, SubscriptionSnapshot,
 };
 use super::{Actor, PlanRequest, set_plan_tx};
+use crate::config::{AppConfig, PaddleEnvironment};
 use crate::domain::{AccountId, BillingStatus, Interval, Landing, Subscription};
+use crate::email::EmailSender;
 use crate::email::EmailTemplate;
 use crate::error::codes;
 use crate::error::{AppError, Result};
-use crate::observability::metrics::names;
+use crate::http_outbound::OutboundHttpClient;
+use crate::metric_names;
 use crate::quotas::{QuotaService, holds, reconcile_after_change};
 use crate::storage::billing_events as ledger;
 use crate::storage::subscriptions::{self as store};
@@ -81,6 +84,31 @@ impl Billing {
             settle_slots: Arc::new(Semaphore::new(SETTLE_SLOTS)),
             turns: Arc::default(),
         }
+    }
+
+    /// The configured provider, if any. Config validation has already refused a
+    /// half-configured one.
+    pub fn from_config(
+        cfg: &AppConfig,
+        outbound_http: &OutboundHttpClient,
+        email_sender: &Arc<dyn EmailSender>,
+        checkout_secret: String,
+    ) -> Option<Arc<Self>> {
+        if !cfg.billing.enabled() {
+            return None;
+        }
+        let environment = PaddleEnvironment::parse(&cfg.billing.paddle.environment)?;
+        let provider = super::paddle::PaddleProvider::new(
+            environment,
+            cfg.billing.paddle.api_key.clone(),
+            cfg.billing.paddle.webhook_secret.clone(),
+            checkout_secret.into(),
+            outbound_http.clone(),
+        );
+        Some(Arc::new(Self::new(
+            Arc::new(provider),
+            Mailer::from_config(cfg, email_sender),
+        )))
     }
 
     /// Entries nobody holds or waits on (a holder or waiter keeps its own
@@ -1114,7 +1142,7 @@ async fn end_at_provider(
         Ok(snapshot) => format!("answered but left it {:?}", snapshot.status),
         Err(err) => err.to_string(),
     };
-    metrics::counter!(names::BILLING_PROVIDER_CANCEL_FAILED).increment(1);
+    metrics::counter!(metric_names::BILLING_PROVIDER_CANCEL_FAILED).increment(1);
     tracing::error!(
         account = %account,
         subscription_ref,
@@ -1173,7 +1201,7 @@ async fn publish_status_gauge(pool: &PgPool) -> Result<()> {
             .iter()
             .find(|(s, _)| s == status.as_db_str())
             .map_or(0, |(_, n)| *n);
-        metrics::gauge!(names::SUBSCRIPTIONS, "status" => status.as_db_str()).set(n as f64);
+        metrics::gauge!(metric_names::SUBSCRIPTIONS, "status" => status.as_db_str()).set(n as f64);
     }
     Ok(())
 }
@@ -1314,6 +1342,27 @@ async fn pooled_counts(conn: &mut sqlx::PgConnection, account: AccountId) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_configured_provider_is_built_around_the_checkout_secret() {
+        let http = crate::http_outbound::build_outbound_client(
+            crate::security::SsrfGuard::operator_configured_target(),
+        );
+        let sender: Arc<dyn crate::email::EmailSender> =
+            Arc::new(crate::email::InMemoryEmailSender::new());
+        let mut cfg = AppConfig::load().expect("config");
+        assert!(
+            Billing::from_config(&cfg, &http, &sender, "s".into()).is_none(),
+            "no provider configured"
+        );
+        cfg.billing.provider = "paddle".into();
+        cfg.billing.paddle.environment = "sandbox".into();
+        cfg.billing.paddle.api_key = "pdl_sdbx_apikey".into();
+        cfg.billing.paddle.webhook_secret = "pdl_ntfset_secret".into();
+        cfg.billing.paddle.client_token = "test_token".into();
+        let billing = Billing::from_config(&cfg, &http, &sender, "s".into());
+        assert_eq!(billing.map(|b| b.provider.name()), Some("paddle"));
+    }
 
     fn grace_from(start: DateTime<Utc>) -> DateTime<Utc> {
         start + Duration::days(GRACE_DAYS)

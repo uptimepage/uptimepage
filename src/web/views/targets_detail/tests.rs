@@ -1089,7 +1089,7 @@ fn detail_page_loads_the_polling_module() {
     // A deleted monitor 404s the live endpoint; reload onto the real 404.
     assert!(html.contains("data-reload-on-404"));
     // Without the module nothing honours either marker.
-    assert!(html.contains(&crate::web::assets::url("js/ui/polling.js")));
+    assert!(html.contains(&crate::templates::assets::url("js/ui/polling.js")));
     // The hx-on it replaced was dead twice over: Function() under the CSP,
     // and dropping hx-trigger cancels neither timer nor from:body listeners.
     assert!(!html.contains("hx-on::response-error"));

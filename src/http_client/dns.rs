@@ -11,7 +11,7 @@ use metrics::{Histogram, histogram};
 
 use crate::config::DnsConfig;
 use crate::error::Result;
-use crate::observability::metrics::names;
+use crate::metric_names;
 
 pub struct HickoryDnsResolver {
     inner: Arc<TokioResolver>,
@@ -50,7 +50,7 @@ impl HickoryDnsResolver {
 
         Ok(Self {
             inner: Arc::new(resolver),
-            dns_ms: histogram!(names::CHECK_DNS_MS),
+            dns_ms: histogram!(metric_names::CHECK_DNS_MS),
         })
     }
 

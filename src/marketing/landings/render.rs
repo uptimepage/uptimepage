@@ -16,7 +16,7 @@ use crate::marketing::seo::{
     AUTHOR_PAGE, JsonLd, OpenGraph, json_ld_breadcrumb, json_ld_breadcrumb_trail, json_ld_faqpage,
     json_ld_person, json_ld_webpage,
 };
-use crate::web::filters;
+use crate::templates::filters;
 
 use super::catalog::LANDINGS;
 use super::faqs::page_faqs;

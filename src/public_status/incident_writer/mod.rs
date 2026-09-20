@@ -197,7 +197,7 @@ impl IncidentWriter {
                 reason,
             }) {
                 metrics::counter!(
-                    crate::observability::metrics::names::ALERTS_DROPPED,
+                    crate::metric_names::ALERTS_DROPPED,
                     "reason" => reason.as_db_str()
                 )
                 .increment(1);

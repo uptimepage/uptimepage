@@ -21,8 +21,8 @@ use crate::error::codes;
 use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser};
 use crate::storage::orgs::list_members;
 use crate::storage::{ClampedRange, IncidentOpsFilter, IncidentSort, TargetFilter, TimeRange};
+use crate::templates::filters;
 use crate::web::error::WebResult;
-use crate::web::filters;
 use crate::web::views::{PageSizeLink, PagerLink};
 
 const STATE_FILTERS: &[&str] = &["all", "triggered", "acknowledged", "resolved"];

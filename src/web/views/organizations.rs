@@ -12,8 +12,8 @@ use crate::domain::Role;
 use crate::error::AppError;
 use crate::request::Session;
 use crate::storage::orgs as orgs_store;
+use crate::templates::filters;
 use crate::web::error::WebResult;
-use crate::web::filters;
 
 const TAB_ORGS: &str = "organizations";
 const PATH: &str = "/settings/organizations";

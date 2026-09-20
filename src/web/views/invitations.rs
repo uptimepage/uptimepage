@@ -16,7 +16,7 @@ use crate::auth::invitations as inv;
 use crate::auth::url::url_encode;
 use crate::error::{AppError, Result};
 use crate::request::Session;
-use crate::web::filters;
+use crate::templates::filters;
 
 #[derive(Debug, Deserialize)]
 pub struct TokenQuery {

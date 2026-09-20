@@ -5,7 +5,7 @@ Prometheus exposition on `metrics_bind` (default `127.0.0.1:9090/metrics`).
 ## Series
 
 Names below are the on-wire names exactly as registered in
-`src/observability/metrics.rs` (`observability::metrics::names`) and
+`src/metric_names.rs` (described in `src/observability/metrics.rs`) and
 sampled in `src/observability/sampler.rs`. Dashboard queries must use
 these names verbatim.
 

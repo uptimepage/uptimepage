@@ -14,8 +14,8 @@ use serde::Deserialize;
 use crate::app::AppState;
 use crate::domain::{ChannelConfig, OrgId};
 use crate::storage::channel_verification;
+use crate::templates::filters;
 use crate::web::error::WebResult;
-use crate::web::filters;
 
 #[derive(Debug, Deserialize)]
 pub struct VerifyQuery {

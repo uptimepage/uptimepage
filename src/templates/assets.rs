@@ -9,7 +9,7 @@
 //! can't keep.
 //!
 //! Templates must reference assets only through the `asset` askama filter
-//! (`{{ "css/app.css"|asset }}`, registered in `crate::web::filters`).
+//! (`{{ "css/app.css"|asset }}`, registered in `crate::templates::filters`).
 //! A raw `/static/...` literal in a template is a bug the
 //! `no_raw_static_refs_in_templates` test fails on, so cache-busting
 //! can never silently regress.

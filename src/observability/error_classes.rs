@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use crate::domain::{ErrorClass, ErrorFamily, classify_check_error};
 use crate::error::Result;
-use crate::observability::metrics::names;
+use crate::metric_names;
 
 const TICK: Duration = Duration::from_secs(60);
 /// A snapshot, not a verdict: how long a class must stay stuck before it pages
@@ -63,8 +63,8 @@ pub async fn run(ch: ChClient, shutdown: CancellationToken) {
     let mut last_ok: Option<Instant> = None;
     // Establish both health series at boot. A rule on a series that does not
     // exist yet reads no_data, which is indistinguishable from healthy.
-    metrics::gauge!(names::CHECK_ERROR_CLASS_TRUNCATED).set(0.0);
-    metrics::gauge!(names::CHECK_ERROR_CLASS_SWEEP_AGE).set(0.0);
+    metrics::gauge!(metric_names::CHECK_ERROR_CLASS_TRUNCATED).set(0.0);
+    metrics::gauge!(metric_names::CHECK_ERROR_CLASS_SWEEP_AGE).set(0.0);
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => return,
@@ -79,7 +79,7 @@ pub async fn run(ch: ChClient, shutdown: CancellationToken) {
                 // its last value on failure, so without an age the alert cannot
                 // tell a quiet fleet from a sweep that stopped running.
                 let age = last_ok.unwrap_or(started).elapsed().as_secs_f64();
-                metrics::gauge!(names::CHECK_ERROR_CLASS_SWEEP_AGE).set(age);
+                metrics::gauge!(metric_names::CHECK_ERROR_CLASS_SWEEP_AGE).set(age);
             }
         }
     }
@@ -102,7 +102,7 @@ async fn sweep(ch: &ChClient) -> Result<()> {
             "error class sweep hit the row cap; classes below the cut are undercounted"
         );
     }
-    metrics::gauge!(names::CHECK_ERROR_CLASS_TRUNCATED).set(u64::from(truncated) as f64);
+    metrics::gauge!(metric_names::CHECK_ERROR_CLASS_TRUNCATED).set(u64::from(truncated) as f64);
     publish(&fold(rows));
     Ok(())
 }
@@ -139,9 +139,9 @@ fn publish(stats: &HashMap<ErrorClass, ClassStat>) {
     for s in series(stats) {
         let class = s.class.as_str();
         let family = s.class.family().as_str();
-        metrics::gauge!(names::CHECK_ERROR_CLASS_CHECKS, "class" => class, "family" => family)
+        metrics::gauge!(metric_names::CHECK_ERROR_CLASS_CHECKS, "class" => class, "family" => family)
             .set(s.checks);
-        metrics::gauge!(names::CHECK_ERROR_CLASS_TOP_MONITOR_SHARE, "class" => class, "family" => family)
+        metrics::gauge!(metric_names::CHECK_ERROR_CLASS_TOP_MONITOR_SHARE, "class" => class, "family" => family)
             .set(s.top_monitor_share);
         // The gauges are anonymous by design, so this line is the only bridge
         // from a stuck class to the monitor behind it.

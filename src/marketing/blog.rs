@@ -27,7 +27,7 @@ use super::seo::{
     JsonLd, OpenGraph, json_ld_blog, json_ld_blog_posting, json_ld_breadcrumb, json_ld_faqpage,
     json_ld_item_list,
 };
-use crate::web::filters;
+use crate::templates::filters;
 
 const RELATED_LIMIT: usize = 3;
 const POST_CACHE_CONTROL: HeaderValue =
@@ -1154,7 +1154,7 @@ mod tests {
     fn embed_scripts_are_built_assets() {
         for (mount, script) in EMBEDS {
             assert_ne!(
-                crate::web::assets::url(script),
+                crate::templates::assets::url(script),
                 format!("/static/{script}"),
                 "{mount} loads {script}, which is not a built bundle"
             );

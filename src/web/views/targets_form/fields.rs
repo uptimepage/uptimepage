@@ -1,7 +1,7 @@
 //! Per-check-kind field groups: what the form renders for an http, tcp, ping,
 //! heartbeat, dns, tls_cert, domain_expiry or flow monitor.
 
-use crate::web::views::exact_duration;
+use crate::templates::format::exact_duration;
 
 /// Starting budget for the kinds that open a connection and wait on a third
 /// party's response: http, tls_cert, domain_expiry. Matches what the MCP
