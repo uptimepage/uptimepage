@@ -3,10 +3,9 @@
 
 use std::collections::HashMap;
 
-use crate::app::AppState;
 use crate::domain::{CheckStatus, OrgId, RegionIncidentPolicy, Target};
-use crate::storage::TimeRange;
 use crate::storage::traits::RegionLatestStatus;
+use crate::storage::{ResultsStore, TimeRange};
 
 /// How far back the region fold reads. Long enough for every check interval to
 /// have reported, short enough that a region dropped from a monitor stops
@@ -27,7 +26,7 @@ pub fn folded_status_policies(
 /// Quorum-folded current status per monitor. Best-effort: a missing entry
 /// leaves the caller on the raw `last_status` rather than failing the read.
 pub async fn folded_status(
-    state: &AppState,
+    results: &dyn ResultsStore,
     org: OrgId,
     range: TimeRange,
     policies: impl IntoIterator<Item = (uuid::Uuid, RegionIncidentPolicy)>,
@@ -45,11 +44,7 @@ pub async fn folded_status(
     // which is the rule the incident writer votes by. A region that stops
     // delivering drops out on its own; agent liveness is not consulted,
     // since the control plane's own region has no `agents` row to be live in.
-    let rows = match state
-        .results_store
-        .latest_status_by_region(org, recent)
-        .await
-    {
+    let rows = match results.latest_status_by_region(org, recent).await {
         Ok(rows) => rows,
         Err(err) => {
             tracing::warn!(error = %err, "region statuses unavailable, showing last result");

@@ -121,7 +121,8 @@ pub async fn new_form(
             crate::targets::default_region_set(preferred, max_regions, &default_region);
         let chosen: std::collections::HashSet<String> = default_set.into_iter().collect();
         let cap = available.len().min(max_regions.max(1) as usize);
-        let flow_capable = crate::targets::flow_capable_set(&state).await?;
+        let flow_capable =
+            crate::targets::flow_capable_set(state.target_store.as_ref(), &state.cfg).await?;
         form.region_groups = region_groups(available, |id| chosen.contains(id), &flow_capable);
         form.region_threshold_options =
             region_threshold_choices(RegionIncidentPolicy::default(), cap);
@@ -140,7 +141,8 @@ async fn cadence_hint(
     target_id: Uuid,
     fields: &HeartbeatFields,
 ) -> Option<CadenceHint> {
-    let observed = crate::targets::observed_cadence(state, org, target_id).await?;
+    let observed =
+        crate::targets::observed_cadence(state.results_store.as_ref(), org, target_id).await?;
     let down_after = std::time::Duration::from_secs(fields.period_s + fields.grace_s);
     let (suggested, too_tight) = match observed.advice(down_after)? {
         CadenceAdvice::TooTight { suggested_period } => (suggested_period, true),
@@ -194,7 +196,8 @@ pub async fn edit_form(
             .into_iter()
             .collect();
         let cap = available.len().min(max_regions.max(1) as usize);
-        let flow_capable = crate::targets::flow_capable_set(&state).await?;
+        let flow_capable =
+            crate::targets::flow_capable_set(state.target_store.as_ref(), &state.cfg).await?;
         form.region_groups = region_groups(available, |id| assigned.contains(id), &flow_capable);
         form.region_threshold_options = region_threshold_choices(region_policy, cap);
         form.show_regions = true;

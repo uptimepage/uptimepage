@@ -22,8 +22,8 @@ use axum::middleware::Next;
 use axum::response::Response;
 use metrics::{Gauge, counter, gauge, histogram};
 
+use super::is_health_path;
 use crate::metric_names;
-use crate::request::is_health_path;
 
 static INFLIGHT: LazyLock<Gauge> = LazyLock::new(|| gauge!(metric_names::HTTP_RESPONSES_INFLIGHT));
 

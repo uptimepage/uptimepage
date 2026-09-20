@@ -3,8 +3,9 @@
 
 use std::collections::HashSet;
 
-use crate::app::AppState;
+use crate::config::AppConfig;
 use crate::error::Result;
+use crate::storage::TargetStore;
 
 /// The default region set for a new monitor: the regions flagged
 /// `default_selected`, capped at the plan's `max_regions` (default region kept
@@ -42,15 +43,13 @@ pub fn default_region_set(
 
 /// Regions that can actually run a flow: agents self-reporting the capability,
 /// plus the control-plane region when it runs the engine in-process.
-pub async fn flow_capable_set(state: &AppState) -> Result<HashSet<String>> {
-    let mut capable: HashSet<String> = state
-        .target_store
-        .flow_capable_regions()
-        .await?
-        .into_iter()
-        .collect();
-    if state.cfg.flow.enabled {
-        capable.insert(state.cfg.scheduler.effective_default_region().to_string());
+pub async fn flow_capable_set(
+    targets: &dyn TargetStore,
+    cfg: &AppConfig,
+) -> Result<HashSet<String>> {
+    let mut capable: HashSet<String> = targets.flow_capable_regions().await?.into_iter().collect();
+    if cfg.flow.enabled {
+        capable.insert(cfg.scheduler.effective_default_region().to_string());
     }
     Ok(capable)
 }

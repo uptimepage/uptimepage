@@ -12,11 +12,11 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use metrics::counter;
 
+use super::auth::{CurrentOrg, CurrentUser};
 use crate::app::AppState;
 use crate::metric_names;
 use crate::quotas::ratelimit::{Denied, RateLimitCategory, RateLimitKey};
 use crate::quotas::service::record_quota_event;
-use crate::request::auth::{CurrentOrg, CurrentUser};
 
 fn categorize(parts: &Parts) -> RateLimitCategory {
     let path = parts.uri.path();

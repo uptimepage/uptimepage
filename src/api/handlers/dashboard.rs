@@ -106,7 +106,13 @@ async fn status_breakdown(
 ) -> StatusBreakdown {
     let metrics: HashMap<Uuid, DashboardMetrics> =
         rollup.into_iter().map(|m| (m.target_id, m)).collect();
-    let folded = folded_status(state, org, range, folded_status_policies(monitors)).await;
+    let folded = folded_status(
+        state.results_store.as_ref(),
+        org,
+        range,
+        folded_status_policies(monitors),
+    )
+    .await;
     let mut out = StatusBreakdown::default();
     for t in monitors {
         let status = metrics.get(&t.id).filter(|m| m.samples > 0).and_then(|m| {

@@ -81,7 +81,7 @@ committed to the repo.
 Edit `terraform/dashboards/uptimepage-overview.json`. Every PromQL
 expression must reference a metric registered in
 `src/observability/metrics.rs` (`observability::metrics::names`) or
-sampled in `src/observability/sampler.rs`. After any edit run the gate
+sampled in `src/scheduler/sampler.rs`. After any edit run the gate
 (it reads the JSON from the Terraform module):
 
 ```bash

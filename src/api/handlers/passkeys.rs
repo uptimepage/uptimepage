@@ -417,7 +417,8 @@ async fn complete_login(
         "sign-in complete"
     );
     crate::analytics::track_login(
-        state,
+        &state.outbound_http,
+        &state.cfg.auth.public_base_url,
         crate::analytics::Login {
             method: LoginMethod::Passkey,
             new_user: false,

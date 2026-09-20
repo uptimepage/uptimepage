@@ -214,7 +214,10 @@ pub(crate) async fn resolve_check_now_region(
 /// caller's candidates (a target's regions or an explicit test region), empty for
 /// any. Prefers a live region so the dispatch doesn't 503; errors if none qualify.
 pub(crate) async fn pick_flow_region(state: &AppState, prefer: &[String]) -> Result<String> {
-    let capable: Vec<String> = flow_capable_set(state).await?.into_iter().collect();
+    let capable: Vec<String> = flow_capable_set(state.target_store.as_ref(), &state.cfg)
+        .await?
+        .into_iter()
+        .collect();
     if capable.is_empty() {
         return Err(AppError::service_unavailable(
             codes::PROBE_UNAVAILABLE,

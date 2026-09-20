@@ -10,12 +10,18 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use crate::app::AppState;
+use crate::config::HeartbeatConfig;
 use crate::http_outbound::{self, OutboundHttpClient};
+use crate::observability::readiness::probe_readiness;
 use crate::storage::{ResultsStore, TargetStore};
 
-pub fn spawn(state: &AppState, cancel: CancellationToken) -> Option<JoinHandle<()>> {
-    let cfg = &state.cfg.observability.heartbeat;
+pub fn spawn(
+    cfg: &HeartbeatConfig,
+    client: OutboundHttpClient,
+    target_store: Arc<dyn TargetStore>,
+    results_store: Arc<dyn ResultsStore>,
+    cancel: CancellationToken,
+) -> Option<JoinHandle<()>> {
     if !cfg.enabled {
         return None;
     }
@@ -28,11 +34,11 @@ pub fn spawn(state: &AppState, cancel: CancellationToken) -> Option<JoinHandle<(
     };
     let interval = Duration::from_secs(cfg.interval_seconds.max(1));
     Some(tokio::spawn(run(
-        state.outbound_http.clone(),
+        client,
         url,
         interval,
-        state.target_store.clone(),
-        state.results_store.clone(),
+        target_store,
+        results_store,
         cancel,
     )))
 }
@@ -55,7 +61,7 @@ async fn run(
             _ = ticker.tick() => {
                 // Skip the ping when a dependency is down so the external watcher
                 // alerts on partial outages, not just a dead process.
-                let ready = super::readiness::probe_readiness(&target_store, &results_store).await;
+                let ready = probe_readiness(&target_store, &results_store).await;
                 if !ready.all_ok() {
                     tracing::warn!(
                         postgres = ready.postgres,

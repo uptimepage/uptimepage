@@ -35,7 +35,6 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{RetentionConfig, SessionConfig};
 use crate::error::Result;
 use crate::jobs::purge_deleted::{self, PurgeStats, QueueDepth};
-use crate::public_status::PageCache;
 use crate::storage::locks::try_job;
 use crate::storage::partitions;
 
@@ -76,7 +75,6 @@ pub async fn run(
     retention: RetentionConfig,
     session: SessionConfig,
     grace_days: u32,
-    cache: PageCache,
     shutdown: CancellationToken,
 ) {
     tokio::select! {
@@ -93,7 +91,7 @@ pub async fn run(
             }
             _ = ticker.tick() => {
                 try_job(&pool, "retention", || async {
-                    match purge_old_data(&pool, &ch, &retention, &session, grace_days, &cache).await {
+                    match purge_old_data(&pool, &ch, &retention, &session, grace_days).await {
                         Ok(report) => {
                             emit_metrics(&report);
                             tracing::info!(?report, "retention tick complete");
@@ -138,9 +136,8 @@ pub async fn purge_old_data(
     retention: &RetentionConfig,
     session: &SessionConfig,
     grace_days: u32,
-    cache: &PageCache,
 ) -> Result<RetentionReport> {
-    let purge = purge_deleted::purge_tick(pool, ch, grace_days, cache).await?;
+    let purge = purge_deleted::purge_tick(pool, ch, grace_days).await?;
     let purge_queue = purge_deleted::purge_queue_depth(pool).await?;
 
     partitions::ensure_partitions(pool).await?;

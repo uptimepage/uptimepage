@@ -20,6 +20,7 @@ use uptimepage::{
     error::{AppError, Result},
     http_client::client::build_clients,
     jobs::{
+        self,
         periodic::{run_purge_loop, run_purge_loop_from_boot},
         retention,
     },
@@ -29,7 +30,7 @@ use uptimepage::{
         AggregatorConfig, IncidentWriter, IncidentWriterConfig, OrgAggregator, OrgPublicSource,
         PageCache, PgIncidentStore, PublicSource,
     },
-    quotas,
+    quotas, request,
     request::is_health_path,
     scheduler::{self, Scheduler, TargetRegistry},
     storage::{
@@ -376,10 +377,10 @@ async fn main() -> Result<()> {
     // Floor at 100ms to keep a misconfigured 0 / sub-tick value from spinning.
     let sample_interval =
         Duration::from_millis(cfg.observability.gauge_sample_interval_ms.max(100));
-    let sampler_handle: JoinHandle<()> = uptimepage::observability::sampler::spawn(
+    let sampler_handle: JoinHandle<()> = uptimepage::scheduler::sampler::spawn(
         pool.clone(),
         registry.clone(),
-        Some(uptimepage::observability::sampler::DbSources {
+        Some(uptimepage::scheduler::sampler::DbSources {
             pg_pool: pg_pool.clone(),
             ch: ch_client_for_sampler,
         }),
@@ -400,7 +401,6 @@ async fn main() -> Result<()> {
         cipher.clone(),
     ));
     let public_cache = PageCache::new(&cfg.public_status);
-    let purge_cache = public_cache.clone();
     let public_source: Arc<dyn PublicSource> = Arc::new(OrgPublicSource::new(
         aggregator,
         public_cache,
@@ -560,8 +560,8 @@ async fn main() -> Result<()> {
         let store: Arc<dyn uptimepage::storage::SilenceStore> = Arc::new(
             uptimepage::storage::PgSilenceStore::new(pg_pool_for_stores.clone()),
         );
-        let delivery: Arc<dyn uptimepage::observability::silence::SilenceDelivery> =
-            Arc::new(uptimepage::observability::silence::SilenceNotifier {
+        let delivery: Arc<dyn uptimepage::jobs::silence::SilenceDelivery> =
+            Arc::new(uptimepage::jobs::silence::SilenceNotifier {
                 channels: notification_channel_store.clone(),
                 targets: target_store.clone(),
                 orgs: org_directory.clone(),
@@ -585,8 +585,7 @@ async fn main() -> Result<()> {
         let token = root.clone();
         let quotas = Arc::clone(&quotas);
         tokio::spawn(async move {
-            uptimepage::observability::silence::run(store, delivery, quotas, stale_after, token)
-                .await
+            uptimepage::jobs::silence::run(store, delivery, quotas, stale_after, token).await
         })
     };
 
@@ -600,7 +599,6 @@ async fn main() -> Result<()> {
             cfg.retention,
             cfg.auth.session.clone(),
             grace_days,
-            purge_cache,
             token,
         ))
     };
@@ -861,7 +859,13 @@ async fn main() -> Result<()> {
         )
     });
 
-    let snitch_handle: Option<JoinHandle<()>> = observability::snitch::spawn(&state, root.clone());
+    let snitch_handle: Option<JoinHandle<()>> = jobs::snitch::spawn(
+        &state.cfg.observability.heartbeat,
+        state.outbound_http.clone(),
+        state.target_store.clone(),
+        state.results_store.clone(),
+        root.clone(),
+    );
 
     // All-in-one mode: when this process probes its own region in-process
     // (scheduler enabled), also serve interactive test/check-now locally so a
@@ -943,7 +947,7 @@ async fn main() -> Result<()> {
         // JavaScript, so the browser tracker cannot see them.
         let marketing_router = marketing::router(marketing_cfg)
             .layer(middleware::from_fn(observability::ai_traffic::middleware))
-            .layer(middleware::from_fn(observability::http_metrics::middleware));
+            .layer(middleware::from_fn(request::http_metrics::middleware));
         let dispatch = marketing::RouteByHost {
             scheme,
             marketing: marketing_router,

@@ -8,15 +8,10 @@
 mod common;
 
 use common::make_user;
-use uptimepage::config::{PublicStatusConfig, RetentionConfig, SessionConfig, TenancyConfig};
+use uptimepage::config::{RetentionConfig, SessionConfig, TenancyConfig};
 use uptimepage::jobs::retention::purge_old_data;
-use uptimepage::public_status::PageCache;
 use uptimepage::storage::create_org_with_owner;
 use uuid::Uuid;
-
-fn cache() -> PageCache {
-    PageCache::new(&PublicStatusConfig::default())
-}
 
 async fn scalar_i64(pool: &sqlx::PgPool, sql: &str, marker: &str) -> i64 {
     let (n,): (i64,) = sqlx::query_as(sql)
@@ -143,7 +138,7 @@ async fn purges_past_window_and_keeps_fresh_rows() {
     let session = SessionConfig::default(); // idle 30d
     let grace = TenancyConfig::default().deletion_grace_period_days;
 
-    let report = purge_old_data(&pool, &ch, &retention, &session, grace, &cache())
+    let report = purge_old_data(&pool, &ch, &retention, &session, grace)
         .await
         .expect("retention run");
 

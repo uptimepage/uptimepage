@@ -521,7 +521,7 @@ pub async fn run(cfg: AppConfig) -> Result<()> {
     // No DbSources: the agent holds no Postgres/ClickHouse pool to sample.
     let sample_interval =
         Duration::from_millis(cfg.observability.gauge_sample_interval_ms.max(100));
-    let sampler_handle = crate::observability::sampler::spawn(
+    let sampler_handle = crate::scheduler::sampler::spawn(
         pool,
         registry,
         None,

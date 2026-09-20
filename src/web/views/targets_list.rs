@@ -318,7 +318,7 @@ async fn build_page(state: &AppState, org: OrgId, params: &ListParams) -> WebRes
         let (rollup, folded) = tokio::join!(
             state.results_store.dashboard_rollup(org, range, None),
             crate::targets::folded_status(
-                state,
+                state.results_store.as_ref(),
                 org,
                 range,
                 crate::targets::folded_status_policies(&targets)

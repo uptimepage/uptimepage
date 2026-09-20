@@ -125,7 +125,7 @@ impl McpServer {
 
         let metrics = index_by_target(rollup);
         let folded = crate::targets::folded_status(
-            &self.state,
+            self.state.results_store.as_ref(),
             org,
             range,
             crate::targets::folded_status_policies(&targets),
@@ -247,7 +247,7 @@ impl McpServer {
 
         let metrics = index_by_target(rollup);
         let folded = crate::targets::folded_status(
-            &self.state,
+            self.state.results_store.as_ref(),
             org,
             range,
             crate::targets::folded_status_policies(&targets),
@@ -347,7 +347,7 @@ impl McpServer {
 
         // Folded like `list_monitors`, so the drill-down cannot contradict it.
         let folded = crate::targets::folded_status(
-            &self.state,
+            self.state.results_store.as_ref(),
             org,
             r24.inner(),
             crate::targets::folded_status_policies(std::slice::from_ref(&target)),
@@ -787,7 +787,7 @@ impl McpServer {
         .map_err(|e| McpToolError::internal(format!("status page components: {e}")))?;
         let metrics = index_by_target(rollup);
         let folded = crate::targets::folded_status(
-            &self.state,
+            self.state.results_store.as_ref(),
             org,
             range,
             crate::targets::folded_status_policies(&targets),

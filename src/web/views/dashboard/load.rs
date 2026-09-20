@@ -126,7 +126,7 @@ pub(super) async fn build_snapshot(
     // verdict, so there is nothing to fold.
     let folded_status: HashMap<Uuid, CheckStatus> = if confirmed {
         crate::targets::folded_status(
-            state,
+            state.results_store.as_ref(),
             org,
             time_range,
             crate::targets::folded_status_policies(&targets),

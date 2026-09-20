@@ -14,9 +14,9 @@ use axum::http::HeaderMap;
 use axum::http::header::{ORIGIN, USER_AGENT};
 use serde::Serialize;
 
-use crate::app::AppState;
 use crate::auth::login_audit::LoginMethod;
 use crate::auth::magic_link::RedeemedVia;
+use crate::http_outbound::OutboundHttpClient;
 
 /// Shared with the marketing site so a visit spanning both hosts is one session.
 const WEBSITE_ID: &str = "2ef8ae40-ba4a-40a4-90bf-6d6b2b1eae2e";
@@ -49,8 +49,14 @@ pub struct Login<'a> {
 /// the caller just minted. `new_user` picks the event *name* rather than riding
 /// along as a property, because Umami funnel steps match on name — one mixed
 /// event would count returning logins as signups.
-pub fn track_login(state: &AppState, login: Login<'_>, ip: IpAddr, headers: &HeaderMap) {
-    if website_id(&state.cfg.auth.public_base_url).is_none() {
+pub fn track_login(
+    client: &OutboundHttpClient,
+    public_base_url: &str,
+    login: Login<'_>,
+    ip: IpAddr,
+    headers: &HeaderMap,
+) {
+    if website_id(public_base_url).is_none() {
         return;
     }
     let Some(method) = method_prop(login.method) else {
@@ -78,7 +84,7 @@ pub fn track_login(state: &AppState, login: Login<'_>, ip: IpAddr, headers: &Hea
         },
     };
 
-    let client = state.outbound_http.clone();
+    let client = client.clone();
     tokio::spawn(async move {
         let Ok(url) = ENDPOINT.parse() else {
             return;

@@ -6,8 +6,8 @@ use std::time::Duration;
 use sqlx::postgres::PgPoolOptions;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use uptimepage::observability::sampler;
 use uptimepage::scheduler::TargetRegistry;
+use uptimepage::scheduler::sampler;
 use uptimepage::storage::InMemoryTargetStore;
 use uptimepage::worker::{ResultFanout, WorkerPool};
 

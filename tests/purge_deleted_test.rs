@@ -7,21 +7,12 @@
 mod common;
 
 use common::{make_user, unique_slug};
-use uptimepage::config::PublicStatusConfig;
 use uptimepage::domain::OrgId;
 use uptimepage::jobs::purge_deleted::{
     drain_clickhouse_purge_queue, purge_queue_depth, purge_tick,
 };
-use uptimepage::public_status::PageCache;
 use uptimepage::storage::{create_org_with_owner, soft_delete_org};
 use uuid::Uuid;
-
-/// A fresh empty cache per call. These tests assert on Postgres/ClickHouse
-/// state and tick counts, not cache contents — `invalidate` on an empty
-/// cache is a no-op, so a throwaway instance keeps the call sites terse.
-fn test_cache() -> PageCache {
-    PageCache::new(&PublicStatusConfig::default())
-}
 
 /// Backdate `deleted_at` so the row is past the grace window without sleeping.
 async fn backdate_delete(pool: &sqlx::PgPool, org: OrgId, days_ago: i32) {
@@ -65,7 +56,7 @@ async fn grace_window_blocks_purge() {
     // tests running in parallel may have backdated their own orgs and bumped
     // `stats.cascaded`, so the per-tick total is racy — assert on the
     // specific org instead.
-    let _ = purge_tick(&pool, &ch, 30, &test_cache()).await.unwrap();
+    let _ = purge_tick(&pool, &ch, 30).await.unwrap();
     let (exists,): (bool,) =
         sqlx::query_as("SELECT EXISTS (SELECT 1 FROM organizations WHERE id = $1)")
             .bind(org.id.0)
@@ -112,7 +103,7 @@ async fn past_grace_cascades_and_enqueues_ch() {
 
     // Parallel tests can grab this org via `LIMIT 10`, so assert on THIS
     // org's outcome instead of tick-wide `cascaded`.
-    let _ = purge_tick(&pool, &ch, 30, &test_cache()).await.unwrap();
+    let _ = purge_tick(&pool, &ch, 30).await.unwrap();
 
     // PG row gone via cascade.
     let (exists,): (bool,) =
@@ -171,7 +162,7 @@ async fn restore_cancels_purge() {
     // Even if we somehow had a past-grace timestamp, deleted_at IS NULL filter
     // wins: the purge query never sees this row. Parallel tests may bump the
     // tick-wide `cascaded` total, so assert on THIS org specifically.
-    let _ = purge_tick(&pool, &ch, 30, &test_cache()).await.unwrap();
+    let _ = purge_tick(&pool, &ch, 30).await.unwrap();
     let (exists,): (bool,) =
         sqlx::query_as("SELECT EXISTS (SELECT 1 FROM organizations WHERE id = $1)")
             .bind(org.id.0)
@@ -235,9 +226,7 @@ async fn cascade_predicate_blocks_post_select_recovery_race() {
         .unwrap();
 
     let pool_clone = pool.clone();
-    let cache = test_cache();
-    let purge_handle =
-        tokio::spawn(async move { purge_tick(&pool_clone, &ch, 30, &cache).await.unwrap() });
+    let purge_handle = tokio::spawn(async move { purge_tick(&pool_clone, &ch, 30).await.unwrap() });
 
     // Wait for a DELETE FROM organizations that is blocked specifically by
     // recovery_tx's backend — `pg_blocking_pids(pid)` returns the array of
@@ -316,7 +305,7 @@ async fn drain_is_idempotent_on_repeat() {
     soft_delete_org(&pool, org.id, user).await.unwrap();
     backdate_delete(&pool, org.id, 40).await;
 
-    let _ = purge_tick(&pool, &ch, 30, &test_cache()).await.unwrap();
+    let _ = purge_tick(&pool, &ch, 30).await.unwrap();
     // Force the queue row back to pending to simulate a worker that died
     // before marking complete, then re-drain.
     sqlx::query("UPDATE clickhouse_purge_queue SET completed_at = NULL WHERE org_id = $1")
@@ -572,7 +561,7 @@ async fn purge_resilient_to_kill_between_pg_cascade_and_ch_drain() {
     // to emulate a SIGKILL between the PG commit and the CH ALTER. The PG side
     // already committed and stays cascaded. Tick-wide `cascaded` is racy with
     // parallel tests; assert on this org's row state below.
-    let _ = purge_tick(&pool, &ch, 30, &test_cache()).await.unwrap();
+    let _ = purge_tick(&pool, &ch, 30).await.unwrap();
     let (org_exists,): (bool,) =
         sqlx::query_as("SELECT EXISTS (SELECT 1 FROM organizations WHERE id = $1)")
             .bind(org.id.0)
@@ -591,7 +580,7 @@ async fn purge_resilient_to_kill_between_pg_cascade_and_ch_drain() {
     // complete. The tick-wide `cascaded`/`drained` totals can move because of
     // parallel tests, so assert on the specific queue row below instead of
     // pinning a literal count.
-    let _ = purge_tick(&pool, &ch, 30, &test_cache()).await.unwrap();
+    let _ = purge_tick(&pool, &ch, 30).await.unwrap();
 
     let (completed,): (Option<chrono::DateTime<chrono::Utc>>,) =
         sqlx::query_as("SELECT completed_at FROM clickhouse_purge_queue WHERE org_id = $1")

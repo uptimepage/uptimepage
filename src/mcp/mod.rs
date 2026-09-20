@@ -53,7 +53,7 @@ pub fn mount(router: Router, state: AppState) -> Router {
         // and the limiter sees the resolved org/user, never the TCP peer.
         .layer(from_fn_with_state(
             state.clone(),
-            crate::quotas::rate_limit_middleware,
+            crate::request::rate_limit::rate_limit_middleware,
         ))
         .layer(from_fn_with_state(state.clone(), auth::middleware));
     // Public discovery: outside the auth + rate-limit layers, and only once

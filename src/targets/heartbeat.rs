@@ -4,10 +4,9 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::app::AppState;
 use crate::domain::{CadenceAdvice, HeartbeatCheck, ObservedCadence, OrgId};
 use crate::error::Result;
-use crate::storage::HeartbeatMonitor;
+use crate::storage::{HeartbeatMonitor, HeartbeatStore, ResultsStore};
 
 /// A heartbeat's ping URL and what its signals last reported.
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
@@ -58,12 +57,11 @@ const CADENCE_WINDOW_DAYS: u16 = 14;
 /// Commentary on state Postgres already holds, so a ClickHouse outage costs
 /// the commentary rather than the caller.
 pub async fn observed_cadence(
-    state: &AppState,
+    results: &dyn ResultsStore,
     org: OrgId,
     target_id: Uuid,
 ) -> Option<ObservedCadence> {
-    state
-        .results_store
+    results
         .heartbeat_cadence(org, target_id, CADENCE_WINDOW_DAYS)
         .await
         .unwrap_or_else(|err| {
@@ -88,30 +86,32 @@ impl From<CadenceAdvice> for CadenceAdviceView {
 /// Shared by the API handler and the detail page. Never mints, so `ping_url`
 /// is `None` while the row is still provisioning.
 pub async fn heartbeat_info(
-    state: &AppState,
+    heartbeats: &dyn HeartbeatStore,
+    results: &dyn ResultsStore,
+    public_base_url: &str,
     org: OrgId,
     target_id: Uuid,
     check: &HeartbeatCheck,
     enabled: bool,
 ) -> Result<HeartbeatInfo> {
-    let hb = state.heartbeat_store.get(org, target_id).await?;
-    Ok(heartbeat_info_from(state, org, target_id, check, enabled, hb).await)
+    let hb = heartbeats.get(org, target_id).await?;
+    Ok(heartbeat_info_from(results, public_base_url, org, target_id, check, enabled, hb).await)
 }
 
 /// Infallible on purpose: a writer that has committed must not lose its
 /// response to a read, since the retry supersedes the token it just minted.
 pub async fn heartbeat_info_from(
-    state: &AppState,
+    results: &dyn ResultsStore,
+    public_base_url: &str,
     org: OrgId,
     target_id: Uuid,
     check: &HeartbeatCheck,
     enabled: bool,
     hb: Option<HeartbeatMonitor>,
 ) -> HeartbeatInfo {
-    let observed = observed_cadence(state, org, target_id).await;
+    let observed = observed_cadence(results, org, target_id).await;
     let last_failure_output = match hb.as_ref().and_then(|h| h.last_fail_at) {
-        Some(at) => state
-            .results_store
+        Some(at) => results
             .heartbeat_failure_output(org, target_id, at)
             .await
             .unwrap_or_else(|err| {
@@ -128,12 +128,10 @@ pub async fn heartbeat_info_from(
         _ => (None, None),
     };
     HeartbeatInfo {
-        ping_url: hb.as_ref().and_then(|h| h.token.as_deref()).map(|t| {
-            format!(
-                "{}/ping/{t}",
-                state.cfg.auth.public_base_url.trim_end_matches('/')
-            )
-        }),
+        ping_url: hb
+            .as_ref()
+            .and_then(|h| h.token.as_deref())
+            .map(|t| format!("{}/ping/{t}", public_base_url.trim_end_matches('/'))),
         last_ping_at: hb.as_ref().and_then(|h| h.last_ping_at),
         first_ping_at: hb.as_ref().and_then(|h| h.first_ping_at),
         // A missing row is still provisioning, which is pending all the same.

@@ -1,7 +1,9 @@
 //! What every HTTP surface reads off a request before its own work starts:
 //! the caller (session, API token, agent, operator), the client IP, the host
-//! a status page is served on, and the cookies that carry state between
-//! pages (flash, login hint, display preferences, deletion receipt).
+//! a status page is served on, the cookies that carry state between pages
+//! (flash, login hint, display preferences, deletion receipt), and the two
+//! layers applied around every route: per-route metrics and the per-subject
+//! rate limit.
 
 pub mod auth;
 pub mod client_ip;
@@ -9,7 +11,9 @@ pub mod deletion_receipt;
 pub mod display_prefs;
 pub mod flash;
 pub mod host;
+pub mod http_metrics;
 pub mod login_hint;
+pub mod rate_limit;
 pub mod theme;
 pub mod time_format;
 

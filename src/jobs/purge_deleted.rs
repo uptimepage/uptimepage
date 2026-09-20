@@ -51,7 +51,6 @@ use uuid::Uuid;
 
 use crate::domain::{OrgId, UserId};
 use crate::error::Result;
-use crate::public_status::PageCache;
 use crate::storage::clickhouse::count_org_rows;
 use crate::storage::locks::{advisory_xact_lock, user_delete_lock_key};
 use crate::storage::orgs;
@@ -94,13 +93,8 @@ const CH_TENANT_TABLES: [&str; 5] = [
 /// the lock is the single defence. Add a new caller only behind the same
 /// lock — or no lock at all if the caller is the tests, which carry their
 /// own database.
-pub async fn purge_tick(
-    pool: &PgPool,
-    ch: &ChClient,
-    grace_days: u32,
-    cache: &PageCache,
-) -> Result<PurgeStats> {
-    let cascaded = cascade_past_grace(pool, grace_days, cache).await?;
+pub async fn purge_tick(pool: &PgPool, ch: &ChClient, grace_days: u32) -> Result<PurgeStats> {
+    let cascaded = cascade_past_grace(pool, grace_days).await?;
     let drained = drain_clickhouse_purge_queue(pool, ch).await?;
     // Users last: an org the user solo-owns may be cascaded above in the
     // same tick, so the user purge runs against already-settled org state.
@@ -129,7 +123,7 @@ pub struct PurgeStats {
 /// PG-side step: pick orgs past the grace window, enqueue + cascade in one
 /// transaction per org. Returns the count actually cascaded so the caller can
 /// emit a metric.
-async fn cascade_past_grace(pool: &PgPool, grace_days: u32, _cache: &PageCache) -> Result<u32> {
+async fn cascade_past_grace(pool: &PgPool, grace_days: u32) -> Result<u32> {
     let orgs: Vec<(Uuid,)> = sqlx::query_as(
         r#"SELECT id FROM organizations
            WHERE deleted_at IS NOT NULL

@@ -489,7 +489,16 @@ pub async fn get_heartbeat(
         ));
     };
     Ok(Json(
-        heartbeat_info(&state, org, id, check, target.enabled).await?,
+        heartbeat_info(
+            state.heartbeat_store.as_ref(),
+            state.results_store.as_ref(),
+            &state.cfg.auth.public_base_url,
+            org,
+            id,
+            check,
+            target.enabled,
+        )
+        .await?,
     ))
 }
 
@@ -546,7 +555,16 @@ pub async fn rotate_heartbeat(
             .await?
             .ok_or_else(|| AppError::not_found(codes::TARGET_NOT_FOUND, "target not found"))?;
         return Ok(Json(
-            heartbeat_info_from(&state, org, id, check, target.enabled, Some(healed)).await,
+            heartbeat_info_from(
+                state.results_store.as_ref(),
+                &state.cfg.auth.public_base_url,
+                org,
+                id,
+                check,
+                target.enabled,
+                Some(healed),
+            )
+            .await,
         ));
     }
     let rotated = state
@@ -555,7 +573,16 @@ pub async fn rotate_heartbeat(
         .await?
         .ok_or_else(|| AppError::not_found(codes::TARGET_NOT_FOUND, "target not found"))?;
     Ok(Json(
-        heartbeat_info_from(&state, org, id, check, target.enabled, Some(rotated)).await,
+        heartbeat_info_from(
+            state.results_store.as_ref(),
+            &state.cfg.auth.public_base_url,
+            org,
+            id,
+            check,
+            target.enabled,
+            Some(rotated),
+        )
+        .await,
     ))
 }
 

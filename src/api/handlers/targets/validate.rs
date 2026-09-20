@@ -118,7 +118,11 @@ pub(crate) async fn ensure_flow_regions_covered(
     if !matches!(check, CheckSpec::Flow(_)) {
         return Ok(());
     }
-    flow_covered(&flow_capable_set(state).await?, check, regions)
+    flow_covered(
+        &flow_capable_set(state.target_store.as_ref(), &state.cfg).await?,
+        check,
+        regions,
+    )
 }
 
 fn flow_covered(capable: &HashSet<String>, check: &CheckSpec, regions: &[String]) -> Result<()> {
@@ -146,7 +150,7 @@ impl RegionSnapshot {
         Ok(Self {
             available: state.target_store.available_regions().await?,
             preferred: state.target_store.default_selected_regions().await?,
-            flow_capable: flow_capable_set(state).await?,
+            flow_capable: flow_capable_set(state.target_store.as_ref(), &state.cfg).await?,
             default_region: state.cfg.scheduler.effective_default_region().to_string(),
         })
     }

@@ -290,12 +290,18 @@ pub async fn index(
     // The API endpoint keeps propagating: a caller asking for the token must
     // hear that the answer is unavailable, not receive one without it.
     let heartbeat = match target.check.as_heartbeat() {
-        Some(check) => {
-            crate::targets::heartbeat_info(&state, org, target.id, check, target.enabled)
-                .await
-                .map_err(|err| tracing::warn!(error = %err, "heartbeat card unavailable"))
-                .ok()
-        }
+        Some(check) => crate::targets::heartbeat_info(
+            state.heartbeat_store.as_ref(),
+            state.results_store.as_ref(),
+            &state.cfg.auth.public_base_url,
+            org,
+            target.id,
+            check,
+            target.enabled,
+        )
+        .await
+        .map_err(|err| tracing::warn!(error = %err, "heartbeat card unavailable"))
+        .ok(),
         None => None,
     };
     // Only counted when the damper is on, so the banner never promises a hold

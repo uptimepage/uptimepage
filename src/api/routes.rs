@@ -13,7 +13,7 @@ use crate::api::handlers;
 use crate::api::{idempotency, middleware as api_middleware};
 use crate::app::AppState;
 use crate::config::CorsConfig;
-use crate::quotas::rate_limit_middleware;
+use crate::request::rate_limit::rate_limit_middleware;
 
 const SINGLE_BODY_LIMIT: usize = 64 * 1024;
 const BULK_BODY_LIMIT: usize = 8 * 1024 * 1024;

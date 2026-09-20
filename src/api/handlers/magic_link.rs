@@ -651,7 +651,8 @@ async fn open_session_for(
     }
 
     crate::analytics::track_login(
-        state,
+        &state.outbound_http,
+        &state.cfg.auth.public_base_url,
         crate::analytics::Login {
             method: LoginMethod::MagicLink,
             new_user: bootstrapped != Bootstrap::Existing,

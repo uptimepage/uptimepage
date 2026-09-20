@@ -17,7 +17,7 @@ use axum::middleware::{from_fn, from_fn_with_state};
 use tokio_util::sync::CancellationToken;
 
 use crate::app::AppState;
-use crate::observability::http_metrics;
+use crate::request::http_metrics;
 use crate::{api, request, web};
 
 /// Build the full app router (API + web UI) with the cross-cutting

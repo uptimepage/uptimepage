@@ -865,7 +865,8 @@ async fn finish_login(
     );
 
     crate::analytics::track_login(
-        &state,
+        &state.outbound_http,
+        &state.cfg.auth.public_base_url,
         crate::analytics::Login {
             method,
             new_user: resolved.is_new_user,
