@@ -23,6 +23,13 @@ use uptimepage::error::AppError;
 use uptimepage::storage::oauth_identities;
 use uuid::Uuid;
 
+/// What the sign-in tail resolves for this user once phase C has committed.
+async fn signup_org(pool: &sqlx::PgPool, user: UserId) -> Option<uptimepage::domain::OrgId> {
+    uptimepage::storage::users::resolve_signup_org(pool, user)
+        .await
+        .expect("resolve signup org")
+}
+
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
 
 /// Every provider works, but the address is not a way back — the shape a
@@ -145,7 +152,7 @@ async fn upsert_creates_user_and_signup_org_for_new_identity() {
     .await
     .expect("upsert");
     assert!(resolved.is_new_user);
-    assert!(resolved.signup_org_id.is_some());
+    assert!(signup_org(&pool, resolved.user_id).await.is_some());
 
     // CITEXT — invitation row with lower-case match should find this user.
     let (user_email,): (String,) = sqlx::query_as("SELECT email::text FROM users WHERE id = $1")
@@ -156,7 +163,7 @@ async fn upsert_creates_user_and_signup_org_for_new_identity() {
     assert_eq!(user_email.to_lowercase(), "alice@example.test");
 
     // Idempotent re-callback with same identity must NOT create a second
-    // user. Returns is_new_user=false; signup_org_id resolves to the org
+    // user. Returns is_new_user=false; the signup org resolves to the one
     // the first call created.
     let again = oauth_login::upsert_identity_and_signup_org(
         &pool,
@@ -168,8 +175,8 @@ async fn upsert_creates_user_and_signup_org_for_new_identity() {
     .await
     .expect("re-upsert");
     assert!(!again.is_new_user);
-    assert_eq!(again.signup_org_id, resolved.signup_org_id);
     assert_eq!(again.user_id.0, resolved.user_id.0);
+    assert!(signup_org(&pool, again.user_id).await.is_some());
 
     pool.close().await;
     drop_pg(&name).await;
@@ -208,8 +215,8 @@ async fn upsert_links_existing_user_on_email_match() {
     .await
     .expect("upsert");
     assert!(!resolved.is_new_user);
-    // Bob existed with no memberships → signup_org_id is None.
-    assert!(resolved.signup_org_id.is_none());
+    // Bob existed with no memberships, and phase C opens none for him.
+    assert!(signup_org(&pool, resolved.user_id).await.is_none());
     assert_eq!(resolved.user_id.0, existing_id);
 
     // Identity link must have been inserted.
@@ -349,7 +356,6 @@ async fn upsert_links_a_second_provider_and_reports_it_for_the_notice() {
     assert!(!second.is_new_user);
     assert!(second.newly_linked, "the account must be told");
     assert_eq!(second.user_id.0, first.user_id.0);
-    assert_eq!(second.signup_org_id, first.signup_org_id);
 
     let (identities,): (i64,) =
         sqlx::query_as("SELECT count(*) FROM oauth_identities WHERE user_id = $1")
@@ -1153,8 +1159,7 @@ async fn login_audit_records_success_and_failure() {
             failure_reason: None,
         },
     )
-    .await
-    .unwrap();
+    .await;
     login_audit::record(
         &pool,
         LoginMethod::GithubOauth,
@@ -1166,8 +1171,7 @@ async fn login_audit_records_success_and_failure() {
             failure_reason: Some("invalid_state"),
         },
     )
-    .await
-    .unwrap();
+    .await;
 
     let (succ_count, fail_count): (i64, i64) = sqlx::query_as(
         "SELECT \
@@ -1508,7 +1512,7 @@ async fn deferred_signup_leaves_an_invitee_with_only_the_joined_org() {
     .await
     .expect("upsert");
     assert!(resolved.is_new_user);
-    assert!(resolved.signup_org_id.is_none());
+    assert!(signup_org(&pool, resolved.user_id).await.is_none());
     assert_eq!(memberships_of(&pool, resolved.user_id).await, 0);
     assert_eq!(accounts_owned_by(&pool, resolved.user_id).await, 0);
 
@@ -1541,7 +1545,7 @@ async fn deferred_signup_leaves_an_invitee_with_only_the_joined_org() {
     .await
     .expect("re-upsert");
     assert!(!again.is_new_user);
-    assert_eq!(again.signup_org_id, Some(team.id));
+    assert_eq!(signup_org(&pool, again.user_id).await, Some(team.id));
 
     pool.close().await;
     drop_pg(&name).await;
@@ -1571,7 +1575,7 @@ async fn deferred_signup_gets_a_personal_org_when_the_invitation_does_not_land()
     )
     .await
     .expect("upsert");
-    assert!(resolved.signup_org_id.is_none());
+    assert!(signup_org(&pool, resolved.user_id).await.is_none());
 
     let (org, created) = uptimepage::storage::users::ensure_signup_org(&pool, resolved.user_id)
         .await
@@ -1648,7 +1652,9 @@ async fn a_user_removed_from_their_signup_org_gets_a_new_personal_org() {
     )
     .await
     .expect("upsert");
-    let first = resolved.signup_org_id.expect("signup org");
+    let first = signup_org(&pool, resolved.user_id)
+        .await
+        .expect("signup org");
 
     sqlx::query("DELETE FROM memberships WHERE user_id = $1")
         .bind(resolved.user_id.0)

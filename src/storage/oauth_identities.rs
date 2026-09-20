@@ -117,12 +117,13 @@ pub async fn unlink(
         .await?;
     }
 
-    let (email,): (String,) =
-        sqlx::query_as("SELECT email::text FROM users WHERE id = $1 AND deleted_at IS NULL")
-            .bind(user.0)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(db("account email"))?;
+    let email = crate::storage::users::live_email(&mut *tx, user)
+        .await?
+        .ok_or_else(|| {
+            AppError::Other(anyhow::anyhow!(
+                "unlink identity (account email): no live user"
+            ))
+        })?;
 
     tx.commit().await.map_err(db("commit"))?;
 

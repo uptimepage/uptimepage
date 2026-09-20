@@ -11,8 +11,9 @@ mod common;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use tower::ServiceExt;
+use uptimepage::app::AppState;
 use uptimepage::auth::{invitations, magic_link};
-use uptimepage::domain::{OrgId, Role, UserId, generate_signup_slug};
+use uptimepage::domain::{ChannelKind, OrgId, Role, UserId, generate_signup_slug};
 use uptimepage::storage::orgs::create_signup_org_with_owner_in_tx;
 use uuid::Uuid;
 
@@ -77,6 +78,41 @@ async fn invitation_pending(pool: &sqlx::PgPool, id: Uuid) -> bool {
         "SELECT accepted_at IS NULL AND declined_at IS NULL FROM invitations WHERE id = $1",
     )
     .bind(id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// Seeded alert channels: kind, address, verified or not.
+async fn seeded_channels(state: &AppState, org: OrgId) -> Vec<(ChannelKind, String, bool)> {
+    state
+        .notification_channel_store
+        .list(org)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|ch| (ch.kind, ch.name, ch.verified_at.is_some()))
+        .collect()
+}
+
+/// The role the address holds and the org its signup stamped, if any.
+async fn role_and_signup_org(pool: &sqlx::PgPool, email: &str) -> (String, Option<Uuid>) {
+    sqlx::query_as(
+        "SELECT m.role, u.signup_org_id FROM users u \
+         JOIN memberships m ON m.user_id = u.id \
+         WHERE u.email = $1::citext",
+    )
+    .bind(email)
+    .fetch_one(pool)
+    .await
+    .expect("the account exists")
+}
+
+async fn active_org_of_latest_session(pool: &sqlx::PgPool, user: UserId) -> Option<Uuid> {
+    sqlx::query_scalar(
+        "SELECT active_org_id FROM sessions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(user.0)
     .fetch_one(pool)
     .await
     .unwrap()
@@ -283,7 +319,7 @@ async fn magic_verify_existing_user_auto_accepts_and_lands_in_org() {
     let org = seed_org(&pool, owner).await;
     let slug = org_slug(&pool, org).await;
     let invitee = seed_user(&pool, "member5@example.test").await;
-    let _their_org = seed_org(&pool, invitee).await;
+    let their_org = seed_org(&pool, invitee).await;
     let created = invite(&pool, org, owner, "member5@example.test").await;
 
     let minted = magic_link::create(
@@ -298,7 +334,10 @@ async fn magic_verify_existing_user_auto_accepts_and_lands_in_org() {
     .await
     .unwrap();
 
-    let (app, _default) = common::build_test_app_with_pg(pool.clone(), |_| {}).await;
+    let (app, _default, state) = common::build_test_app_with_pg_state(pool.clone(), |cfg| {
+        cfg.email.provider = "memory".into();
+    })
+    .await;
     let (get_status, status, location) = magic_verify(&app, &minted.token).await;
     assert_eq!(
         get_status,
@@ -309,6 +348,14 @@ async fn magic_verify_existing_user_auto_accepts_and_lands_in_org() {
     assert_eq!(
         location.as_deref(),
         Some(format!("/?joined={slug}").as_str())
+    );
+    assert!(
+        seeded_channels(&state, org).await.is_empty(),
+        "a joined org is the inviter's to route; the invitee's address is not seeded into it"
+    );
+    assert!(
+        seeded_channels(&state, their_org).await.is_empty(),
+        "an org held from before is not opened by this sign-in"
     );
     assert_eq!(membership_count(&pool, org, invitee).await, 1);
     // Session row carries the joined org as active.
@@ -349,7 +396,10 @@ async fn magic_verify_bootstraps_invited_unknown_email() {
     .await
     .unwrap();
 
-    let (app, _default) = common::build_test_app_with_pg(pool.clone(), |_| {}).await;
+    let (app, _default, state) = common::build_test_app_with_pg_state(pool.clone(), |cfg| {
+        cfg.email.provider = "memory".into();
+    })
+    .await;
     let (get_status, status, location) = magic_verify(&app, &minted.token).await;
     assert_eq!(
         get_status,
@@ -360,6 +410,10 @@ async fn magic_verify_bootstraps_invited_unknown_email() {
     assert_eq!(
         location.as_deref(),
         Some(format!("/?joined={slug}").as_str())
+    );
+    assert!(
+        seeded_channels(&state, org).await.is_empty(),
+        "a signup that joined an org opened none, so nothing is seeded"
     );
 
     let (user_id, verified, signup_org): (Uuid, bool, Option<Uuid>) = sqlx::query_as(
@@ -401,7 +455,10 @@ async fn magic_verify_unknown_email_without_invitation_opens_an_account() {
     )
     .await
     .unwrap();
-    let (app, _default) = common::build_test_app_with_pg(pool.clone(), |_| {}).await;
+    let (app, _default, state) = common::build_test_app_with_pg_state(pool.clone(), |cfg| {
+        cfg.email.provider = "memory".into();
+    })
+    .await;
     let (get_status, status, location) = magic_verify(&app, &minted.token).await;
     assert_eq!(
         get_status,
@@ -411,16 +468,14 @@ async fn magic_verify_unknown_email_without_invitation_opens_an_account() {
     assert_eq!(status, StatusCode::SEE_OTHER, "redeemed, got {status}");
     assert_eq!(location.as_deref(), Some("/"), "and lands in the app");
 
-    let (role, has_signup_org): (String, bool) = sqlx::query_as(
-        "SELECT m.role, u.signup_org_id IS NOT NULL FROM users u \
-         JOIN memberships m ON m.user_id = u.id \
-         WHERE u.email = 'ghost7@example.test'::citext",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("the account exists");
+    let (role, signup_org) = role_and_signup_org(&pool, "ghost7@example.test").await;
     assert_eq!(role, "owner", "in an org of their own, not somebody else's");
-    assert!(has_signup_org, "and the session has somewhere to open");
+    let signup_org = OrgId(signup_org.expect("the session has somewhere to open"));
+    assert_eq!(
+        seeded_channels(&state, signup_org).await,
+        vec![(ChannelKind::Email, "ghost7@example.test".to_string(), true)],
+        "the claimed link proved the inbox, so the new org alerts it from the first monitor"
+    );
 
     common::drop_test_db(&name).await;
 }
@@ -490,7 +545,10 @@ async fn magic_verify_plain_login_resolves_active_org() {
     )
     .await
     .unwrap();
-    let (app, _default) = common::build_test_app_with_pg(pool.clone(), |_| {}).await;
+    let (app, _default, state) = common::build_test_app_with_pg_state(pool.clone(), |cfg| {
+        cfg.email.provider = "memory".into();
+    })
+    .await;
     let (get_status, status, _) = magic_verify(&app, &minted.token).await;
     assert_eq!(
         get_status,
@@ -500,14 +558,98 @@ async fn magic_verify_plain_login_resolves_active_org() {
     assert!(status.is_redirection());
     // Regression pin: magic sessions used to be minted with NULL active_org,
     // which CurrentOrg rejects.
-    let active: Option<Uuid> = sqlx::query_scalar(
-        "SELECT active_org_id FROM sessions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1",
+    assert_eq!(active_org_of_latest_session(&pool, user).await, Some(org.0));
+    assert!(
+        seeded_channels(&state, org).await.is_empty(),
+        "a returning sign-in opens nothing, so it seeds nothing"
+    );
+
+    common::drop_test_db(&name).await;
+}
+
+/// An account whose last membership went away signs in and gets a personal
+/// org, with its alert channel, the same as a signup would.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn magic_verify_orgless_user_opens_a_personal_org_with_its_alert_channel() {
+    let Some((db, name)) = fresh_pg().await else {
+        return;
+    };
+    let pool = open_pool(&db).await;
+    MIGRATOR.run(&pool).await.unwrap();
+    let user = seed_user(&pool, "orphan11@example.test").await;
+
+    let minted = magic_link::create(
+        &pool,
+        magic_link::NewMagicLink {
+            email: "orphan11@example.test",
+            expiry_minutes: 15,
+            ..Default::default()
+        },
     )
-    .bind(user.0)
-    .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(active, Some(org.0));
+    let (app, _default, state) = common::build_test_app_with_pg_state(pool.clone(), |cfg| {
+        cfg.email.provider = "memory".into();
+    })
+    .await;
+    let (_, status, _) = magic_verify(&app, &minted.token).await;
+    assert!(status.is_redirection());
+
+    let (role, _) = role_and_signup_org(&pool, "orphan11@example.test").await;
+    assert_eq!(role, "owner", "an org of their own");
+    let org = OrgId(
+        active_org_of_latest_session(&pool, user)
+            .await
+            .expect("opens in it"),
+    );
+    assert_eq!(
+        seeded_channels(&state, org).await,
+        vec![(
+            ChannelKind::Email,
+            "orphan11@example.test".to_string(),
+            true
+        )]
+    );
+
+    common::drop_test_db(&name).await;
+}
+
+/// The org a sign-in opens in, pinned at the store: an account inside its
+/// deletion grace window is never handed a new org.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn session_org_never_opens_one_for_a_pending_deletion() {
+    use uptimepage::storage::users::{SessionOrg, session_org};
+
+    let Some((db, name)) = fresh_pg().await else {
+        return;
+    };
+    let pool = open_pool(&db).await;
+    MIGRATOR.run(&pool).await.unwrap();
+    let orphan = seed_user(&pool, "gone12@example.test").await;
+    let holder = seed_user(&pool, "held12@example.test").await;
+    let held = seed_org(&pool, holder).await;
+
+    assert_eq!(
+        session_org(&pool, orphan, true).await.unwrap(),
+        SessionOrg::Absent
+    );
+    let orgs: i64 = sqlx::query_scalar("SELECT count(*) FROM memberships WHERE user_id = $1")
+        .bind(orphan.0)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(orgs, 0, "and nothing was opened on the way");
+    assert_eq!(
+        session_org(&pool, holder, true).await.unwrap(),
+        SessionOrg::Held(held)
+    );
+
+    match session_org(&pool, orphan, false).await.unwrap() {
+        SessionOrg::Opened(_) => {}
+        other => panic!("a live account holding nothing opens one: {other:?}"),
+    }
 
     common::drop_test_db(&name).await;
 }
@@ -848,14 +990,7 @@ async fn an_invitation_outranks_the_signup_policy() {
         "and lands in the org that invited them"
     );
 
-    let (role, signup_org): (String, Option<uuid::Uuid>) = sqlx::query_as(
-        "SELECT m.role, u.signup_org_id FROM users u \
-         JOIN memberships m ON m.user_id = u.id \
-         WHERE u.email = 'guest@example.test'::citext",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("the account exists");
+    let (role, signup_org) = role_and_signup_org(&pool, "guest@example.test").await;
     assert_eq!(role, "member", "joined, not founded");
     assert!(signup_org.is_none(), "and founded nothing of their own");
 

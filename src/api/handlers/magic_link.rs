@@ -561,18 +561,9 @@ async fn open_session_for(
     // the row is not restoring it — same as the OAuth callbacks.
     let (user_id, pending_deletion, bootstrapped) =
         match orgs_store::find_user_by_email_including_deleted(pool, &row.email).await? {
-            Some((user_id, deleted_at)) => {
-                if let Some(deleted_at) = deleted_at {
-                    tracing::info!(
-                        user_id = %user_id.0,
-                        deleted_at = %deleted_at,
-                        "magic-link sign-in on an account scheduled for deletion; routing to the restore choice"
-                    );
-                }
-                (user_id, deleted_at.is_some(), Bootstrap::Existing)
-            }
+            Some((user_id, deleted_at)) => (user_id, deleted_at, Bootstrap::Existing),
             None => match bootstrap_unknown_email(state, &row).await? {
-                Some((user_id, created)) => (user_id, false, created),
+                Some((user_id, created)) => (user_id, None, created),
                 None => {
                     login_audit::record_failure_anon(
                         pool,
@@ -608,7 +599,6 @@ async fn open_session_for(
         .await;
         return Ok(invalid_page(state, StatusCode::GONE));
     }
-    let active_org = sign_in::session_org(pool, &invited, user_id, pending_deletion).await?;
     let redirect = sign_in::complete(
         state,
         cookies,
@@ -619,7 +609,6 @@ async fn open_session_for(
             method: LoginMethod::MagicLink,
             new_user: bootstrapped != Bootstrap::Existing,
             pending_deletion,
-            active_org,
             invited,
             redirect_after: row.redirect_after.as_deref(),
             via: Some(via),

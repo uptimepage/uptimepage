@@ -324,11 +324,8 @@ pub async fn login_finish(
         }
     }
 
-    let pending_deletion = crate::storage::orgs::user_deleted_at(pool, user_id)
-        .await?
-        .is_some();
+    let pending_deletion = crate::storage::orgs::user_deleted_at(pool, user_id).await?;
     let invited = sign_in::redeem(&state, user_id, carried.invitation_id).await;
-    let active_org = sign_in::session_org(pool, &invited, user_id, pending_deletion).await?;
     let redirect = sign_in::complete(
         &state,
         &cookies,
@@ -339,7 +336,6 @@ pub async fn login_finish(
             method: LoginMethod::Passkey,
             new_user: false,
             pending_deletion,
-            active_org,
             invited,
             redirect_after: carried.redirect_after.as_deref(),
             via: None,

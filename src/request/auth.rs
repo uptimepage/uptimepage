@@ -253,14 +253,11 @@ fn session_cookie(parts: &Parts, app_state: &AppState) -> Option<(Cookies, Strin
 }
 
 async fn load_user(pool: &sqlx::PgPool, user_id: UserId) -> Option<User> {
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT email::text FROM users WHERE id = $1 AND deleted_at IS NULL")
-            .bind(user_id.0)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten();
-    row.map(|(email,)| User { id: user_id, email })
+    let email = crate::storage::users::live_email(pool, user_id)
+        .await
+        .ok()
+        .flatten()?;
+    Some(User { id: user_id, email })
 }
 
 /// Caller identity extracted from either a session cookie or an API token.

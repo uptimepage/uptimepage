@@ -19,10 +19,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::domain::OauthProvider;
-use crate::domain::{OrgId, UserId};
+use crate::domain::UserId;
 use crate::error::{AppError, Result};
 use crate::http_outbound::OutboundHttpClient;
-use crate::storage::users as users_store;
 
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 
@@ -140,18 +139,12 @@ pub struct RemoteIdentity {
     pub display_name: Option<String>,
 }
 
-/// Phase C result: the resolved user + the org id their session should land
-/// on. `signup_org_id` is the user's oldest active membership — for a
-/// brand-new user that's the just-created signup org; for an existing user
-/// it's whatever they already had. The callback stuffs this into
-/// `session.active_org_id` so every subsequent request resolves a real org
-/// without any global "default" fallback.
+/// Phase C result: the resolved user and what this sign-in did to the
+/// account. The org the session lands on is resolved by the caller once any
+/// carried invitation has been redeemed.
 #[derive(Debug, Clone)]
 pub struct ResolvedIdentity {
     pub user_id: UserId,
-    /// `None` for a fresh user whose org was deferred, and for an existing
-    /// account that holds no live membership.
-    pub signup_org_id: Option<OrgId>,
     pub is_new_user: bool,
     /// `deleted_at` when this sign-in landed on a soft-deleted account. The
     /// sign-in does not undo it; the caller routes to the restore choice.
@@ -236,10 +229,8 @@ pub async fn upsert_identity_and_signup_org(
         .await
         .context("phase C: bump last_login_at")?;
         tx.commit().await.context("phase C: commit (existing)")?;
-        let signup_org_id = users_store::resolve_signup_org(pool, UserId(user_id)).await?;
         return Ok(ResolvedIdentity {
             user_id: UserId(user_id),
-            signup_org_id,
             is_new_user: false,
             pending_deletion: deleted_at,
             newly_linked: false,
@@ -343,10 +334,8 @@ pub async fn upsert_identity_and_signup_org(
         .context("phase C: backfill verified_at")?;
 
         tx.commit().await.context("phase C: commit (linked)")?;
-        let signup_org_id = users_store::resolve_signup_org(pool, UserId(user_id)).await?;
         return Ok(ResolvedIdentity {
             user_id: UserId(user_id),
-            signup_org_id,
             is_new_user: false,
             pending_deletion: deleted_at,
             newly_linked,
@@ -387,25 +376,20 @@ pub async fn upsert_identity_and_signup_org(
     .await
     .context("phase C: insert identity")?;
 
-    let signup_org_id = match signup_org {
-        SignupOrg::Create => {
-            let org_id =
-                crate::storage::orgs::create_signup_org_in_tx(&mut tx, UserId(new_user_id)).await?;
-            sqlx::query("UPDATE users SET signup_org_id = $1 WHERE id = $2")
-                .bind(org_id.0)
-                .bind(new_user_id)
-                .execute(&mut *tx)
-                .await
-                .context("phase C: set signup_org_id")?;
-            Some(org_id)
-        }
-        SignupOrg::Defer => None,
-    };
+    if signup_org == SignupOrg::Create {
+        let org_id =
+            crate::storage::orgs::create_signup_org_in_tx(&mut tx, UserId(new_user_id)).await?;
+        sqlx::query("UPDATE users SET signup_org_id = $1 WHERE id = $2")
+            .bind(org_id.0)
+            .bind(new_user_id)
+            .execute(&mut *tx)
+            .await
+            .context("phase C: set signup_org_id")?;
+    }
 
     tx.commit().await.context("phase C: commit (new user)")?;
     Ok(ResolvedIdentity {
         user_id: UserId(new_user_id),
-        signup_org_id,
         is_new_user: true,
         pending_deletion: None,
         newly_linked: false,

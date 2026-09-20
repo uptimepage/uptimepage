@@ -7,12 +7,14 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::auth::url::token_link;
-use crate::domain::{ChannelConfig, NotificationChannel, OrgId, validate_channel_name};
+use crate::config::TransactionalEmailConfig;
+use crate::domain::{ChannelConfig, NotificationChannel, OrgId, UserId, validate_channel_name};
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
 use crate::error::codes;
 use crate::error::{AppError, Result};
-use crate::storage::LinkCodeStatus;
+use crate::quotas::QuotaService;
 use crate::storage::channel_verification;
+use crate::storage::{LinkCodeStatus, NotificationChannelStore};
 
 /// Sender + From identity for alert email; built per call from app state.
 pub fn email_delivery(state: &AppState) -> crate::notifier::EmailDelivery {
@@ -265,4 +267,37 @@ pub async fn check_channel_abuse(
         None,
     );
     Err(hit.into_app_error())
+}
+
+/// The owner's address as the org's first alert channel, pre-verified: the
+/// sign-in or bootstrap that reached here already proved control of the
+/// inbox. Never fails the caller: an org with no channel is recoverable, a
+/// sign-in or bootstrap that aborts is not.
+pub async fn seed_owner_email(
+    store: &dyn NotificationChannelStore,
+    quotas: &QuotaService,
+    email_cfg: &TransactionalEmailConfig,
+    org: OrgId,
+    user: UserId,
+    email: &str,
+) {
+    // A channel seeded against the log-only sender reads as configured while
+    // dropping every alert.
+    if !email_cfg.delivers() {
+        return;
+    }
+    let seeded = async {
+        let limit = i64::from(quotas.limit_for_org(org).await?.max_notification_channels);
+        store.seed_owner_email(org, email, user, limit).await
+    }
+    .await;
+    match seeded {
+        Ok(Some(ch)) => {
+            tracing::info!(org_id = %org.0, channel_id = %ch.id, "seeded the owner's email alert channel")
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, org_id = %org.0, "seeding the owner's email alert channel failed")
+        }
+    }
 }

@@ -284,6 +284,13 @@ pub(crate) struct AcceptedInvitation {
     pub org_slug: String,
 }
 
+impl AcceptedInvitation {
+    /// The dashboard, carrying the slug for its joined banner.
+    pub(crate) fn landing_url(&self) -> String {
+        format!("/?joined={}", crate::auth::url::url_encode(&self.org_slug))
+    }
+}
+
 /// Org liveness + member-cap pre-flight, shared by every accept path and by
 /// the magic-link bootstrap (which must fail BEFORE creating a user row —
 /// `user` is None there). Returns the org + plan for the accept tail.
@@ -321,14 +328,8 @@ pub(crate) async fn accept_for_user(
     let pool = state.require_db()?;
     let (org_row, plan) = validate_acceptable(state, &row, Some(user_id)).await?;
 
-    // Caller's email must match the invitation. CITEXT compared in SQL.
-    let caller_email: Option<(String,)> =
-        sqlx::query_as("SELECT email::text FROM users WHERE id = $1 AND deleted_at IS NULL")
-            .bind(user_id.0)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| AppError::Other(anyhow::anyhow!("accept lookup user: {e}")))?;
-    let Some((caller_email,)) = caller_email else {
+    // Caller's email must match the invitation.
+    let Some(caller_email) = crate::storage::users::live_email(pool, user_id).await? else {
         return Err(AppError::Unauthorized);
     };
     if !caller_email.eq_ignore_ascii_case(&row.email) {

@@ -15,7 +15,7 @@ use crate::config::AppConfig;
 use crate::domain::{OrgId, UserId, generate_signup_slug};
 use crate::error::{AppError, Result};
 use crate::quotas::QuotaService;
-use crate::storage::notification_channels::{NotificationChannelStore, PgNotificationChannelStore};
+use crate::storage::notification_channels::PgNotificationChannelStore;
 use crate::storage::{PostgresTargetStore, orgs, users};
 
 const USAGE: &str = "usage: uptimepage bootstrap-owner --email <addr> [--org-name <name>]";
@@ -96,7 +96,16 @@ async fn ensure_owner_org(
             created.context("bootstrap: could not allocate a unique org slug")?
         }
     };
-    seed_owner_email_channel(pool, cfg, org, user, email).await;
+    // A cipher that fails to load is not fatal here: the owner row is already
+    // committed, and a channel is fixable later.
+    match crate::security::Cipher::from_config(&cfg.security) {
+        Ok(cipher) => {
+            let store = PgNotificationChannelStore::new(pool.clone(), cipher);
+            let quotas = QuotaService::new(cfg, Some(pool.clone()));
+            crate::channels::seed_owner_email(&store, &quotas, &cfg.email, org, user, email).await;
+        }
+        Err(e) => tracing::warn!(error = %e, "seeding the owner's email alert channel skipped"),
+    }
     Ok((user, org))
 }
 
@@ -121,45 +130,6 @@ async fn checked_default_plan<'a>(pool: &PgPool, cfg: &'a AppConfig) -> Result<O
         )));
     }
     Ok(Some(plan))
-}
-
-/// Idempotent, and never fatal: an instance with no channel is fixable, a
-/// bootstrap that aborts is not.
-async fn seed_owner_email_channel(
-    pool: &PgPool,
-    cfg: &AppConfig,
-    org: OrgId,
-    user: UserId,
-    email: &str,
-) {
-    // A self-host install with no mail provider is exactly where a seeded
-    // channel would lie about being a working destination.
-    if !cfg.email.delivers() {
-        return;
-    }
-    let seeded = async {
-        let store = PgNotificationChannelStore::new(
-            pool.clone(),
-            crate::security::Cipher::from_config(&cfg.security)?,
-        );
-        let limit = i64::from(
-            QuotaService::new(cfg, Some(pool.clone()))
-                .limit_for_org(org)
-                .await?
-                .max_notification_channels,
-        );
-        store.seed_owner_email(org, email, user, limit).await
-    }
-    .await;
-    match seeded {
-        Ok(Some(ch)) => {
-            tracing::info!(org_id = %org.0, channel_id = %ch.id, "seeded the owner's email alert channel")
-        }
-        Ok(None) => {}
-        Err(e) => {
-            tracing::warn!(error = %e, org_id = %org.0, "seeding the owner's email alert channel failed")
-        }
-    }
 }
 
 /// Seeds the owner named by `bootstrap.email` when the instance has no users.

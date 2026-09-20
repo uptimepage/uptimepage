@@ -20,6 +20,21 @@ pub async fn any_exist(pool: &PgPool) -> Result<bool> {
     Ok(exists)
 }
 
+/// The address of a live account. Tombstoned accounts read as absent: signed
+/// out everywhere else, and their address is not ours to write to.
+pub async fn live_email<'e, E: sqlx::PgExecutor<'e>>(
+    exec: E,
+    user: UserId,
+) -> Result<Option<String>> {
+    let email =
+        sqlx::query_scalar("SELECT email::text FROM users WHERE id = $1 AND deleted_at IS NULL")
+            .bind(user.0)
+            .fetch_optional(exec)
+            .await
+            .context("live_email")?;
+    Ok(email)
+}
+
 /// Both display preferences in one row read — used by the login cookie-issue
 /// pass and the account page. The per-preference setters below stay separate;
 /// each PATCH endpoint only writes its own column.
@@ -242,16 +257,33 @@ pub async fn ensure_signup_org(pool: &PgPool, user: UserId) -> Result<(OrgId, bo
     Ok((org_id, true))
 }
 
-/// The org a sign-in opens in when no invitation was joined. An account on
-/// its way out gets whatever it still holds and never a new org; anyone else
-/// gets their own, created on demand.
+/// Where a sign-in that joined no invitation opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionOrg {
+    /// A personal org this call opened, for a user who held none.
+    Opened(OrgId),
+    /// An org the user already held, whether from an earlier sign-in or the
+    /// signup that ran moments before this call.
+    Held(OrgId),
+    /// Deletion pending and nothing held; the restore choice needs no org.
+    Absent,
+}
+
+/// An account on its way out gets whatever it still holds and never a new
+/// org; anyone else gets their own, created on demand.
 pub async fn session_org(
     pool: &PgPool,
     user: UserId,
     pending_deletion: bool,
-) -> Result<Option<OrgId>> {
+) -> Result<SessionOrg> {
     if pending_deletion {
-        return resolve_signup_org(pool, user).await;
+        return Ok(match resolve_signup_org(pool, user).await? {
+            Some(org) => SessionOrg::Held(org),
+            None => SessionOrg::Absent,
+        });
     }
-    Ok(Some(ensure_signup_org(pool, user).await?.0))
+    Ok(match ensure_signup_org(pool, user).await? {
+        (org, true) => SessionOrg::Opened(org),
+        (org, false) => SessionOrg::Held(org),
+    })
 }

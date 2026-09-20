@@ -87,10 +87,7 @@ pub async fn accept_landing(
             {
                 tracing::warn!(error = %err, "active-org rotation after accept failed");
             }
-            Ok(
-                Redirect::to(&format!("/?joined={}", url_encode(&accepted.org_slug)))
-                    .into_response(),
-            )
+            Ok(Redirect::to(&accepted.landing_url()).into_response())
         }
         Err(AppError::Forbidden | AppError::ForbiddenCoded { .. }) => Ok(status_page(
             StatusCode::FORBIDDEN,
