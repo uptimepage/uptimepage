@@ -26,14 +26,13 @@ use crate::domain::{
     ComponentHistoryResponse, DayState, IncidentSeverity, IncidentStatusPhase, OrgId,
     PublicComponent, PublicComponentGroup, PublicComponentStatus, PublicIncident,
     PublicIncidentUpdate, PublicMaintenance, PublicStatusPage, StatusPageId,
-    uptime_pct_from_downtime,
+    public::auto_incident_title, uptime_pct_from_downtime,
 };
 use crate::error::Result;
 use crate::security::Cipher;
 use crate::storage::capability_token;
 use crate::storage::status_pages::COMPONENT_ORDER;
 
-use super::auto_incident_title;
 use super::cache::HistoryIncidentMarker;
 use super::overall_status::{
     IncidentImpact, component_status, day_state, overall_state, overall_status,

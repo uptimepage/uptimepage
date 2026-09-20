@@ -17,12 +17,6 @@ pub mod xml;
 pub use aggregator::{AggregatorConfig, OrgAggregator};
 pub use cache::{HistoryIncidentMarker, PageCache, PageCacheError};
 
-/// Auto-generated incident title used when the operator did not set
-/// `public_title`. Single source so all three load sites stay aligned —
-/// previously `source.rs::hydrate` was missing the underscore→space step.
-pub fn auto_incident_title(component_name: &str, status_at_start: &str) -> String {
-    format!("{} {}", component_name, status_at_start.replace('_', " "))
-}
 pub use incident_writer::{
     InMemoryIncidentStore, IncidentStore, IncidentWriter, IncidentWriterConfig, NewOpenIncident,
     OpenIncident, PgIncidentStore,

@@ -172,6 +172,12 @@ pub struct PublicIncidentUpdate {
     pub message: String,
 }
 
+/// Title of an incident whose operator never set `public_title`: the
+/// component plus the status it opened in, as in `"API major outage"`.
+pub fn auto_incident_title(component_name: &str, status_at_start: &str) -> String {
+    format!("{} {}", component_name, status_at_start.replace('_', " "))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PublicIncident {
     pub id: Uuid,

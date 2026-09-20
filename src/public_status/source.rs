@@ -17,13 +17,13 @@ use uuid::Uuid;
 use crate::domain::{
     ComponentHistoryResponse, IncidentSeverity, IncidentStatusPhase, OrgId, PageRef,
     PublicIncident, PublicIncidentUpdate, PublicMaintenanceList, PublicStatusPage,
+    public::auto_incident_title,
 };
 use crate::error::public::PublicAppError;
 use crate::pagination::cursor::IncidentCursor;
 use crate::pagination::page::CursorPage;
 
 use super::aggregator::OrgAggregator;
-use super::auto_incident_title;
 use super::cache::{HistoryIncidentMarker, PageCache, PageCacheError, PageData};
 use super::overall_status::stored_incident_impact;
 use super::xml::xml_escape;

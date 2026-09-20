@@ -8,7 +8,7 @@ use sqlx::PgPool;
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
-use crate::domain::{NewSubscriber, Subscriber, SubscriberChannel};
+use crate::domain::{NewSubscriber, Subscriber, SubscriberChannel, public::auto_incident_title};
 use crate::error::Result;
 use crate::security::sha256_hex;
 use crate::security::token_hash::generate_raw_token;
@@ -258,12 +258,7 @@ impl PendingUpdate {
             .as_deref()
             .filter(|t| !t.is_empty())
             .map(str::to_owned)
-            .unwrap_or_else(|| {
-                crate::public_status::auto_incident_title(
-                    &self.component_name,
-                    &self.status_at_start,
-                )
-            })
+            .unwrap_or_else(|| auto_incident_title(&self.component_name, &self.status_at_start))
     }
 }
 
