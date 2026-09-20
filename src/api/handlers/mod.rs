@@ -22,6 +22,7 @@ pub mod passkeys;
 pub mod public;
 pub mod results;
 pub mod shares;
+mod sign_in;
 pub mod status_page;
 pub mod support;
 pub mod tags;

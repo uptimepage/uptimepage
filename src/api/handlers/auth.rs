@@ -30,6 +30,8 @@ use crate::metric_names;
 use crate::request::CurrentUser;
 use crate::request::auth::Session;
 
+use super::sign_in;
+
 #[derive(Debug, Deserialize)]
 pub struct LoginQuery {
     pub redirect_after: Option<String>,
@@ -770,17 +772,12 @@ async fn finish_login(
         }
     }
 
-    // The dance carried an invitation — redeem it now, server-side; the
-    // session then opens directly in the joined org. A user left with no org
-    // at all gets a personal one here: an invitee whose invitation died before
-    // the accept still holds a proven identity, so the sign-in stands.
-    let joined = match consumed.invitation_id {
-        Some(id) => {
-            crate::api::handlers::invitations::try_auto_accept(&state, resolved.user_id, id).await
-        }
-        None => None,
-    };
-    let (active_org, created_org) = match landing(joined.as_ref().map(|j| j.org_id), &resolved) {
+    // Redeemed before the org is chosen so the session opens directly in the
+    // joined org. A user left with no org at all gets a personal one here: an
+    // invitee whose invitation died before the accept still holds a proven
+    // identity, so the sign-in stands.
+    let invited = sign_in::redeem(&state, resolved.user_id, consumed.invitation_id).await;
+    let (active_org, created_org) = match landing(invited.org(), &resolved) {
         Landing::Org { org, fresh } => (Some(org), fresh.then_some(org)),
         Landing::NoOrg => (None, None),
         Landing::OpenPersonalOrg => {
@@ -814,108 +811,25 @@ async fn finish_login(
         seed_owner_email_channel(&state, org, resolved.user_id, &email).await;
     }
 
-    // Session fixation: drop any pre-login session bound to this browser
-    // before minting the new one. Without this an attacker who pre-seeded a
-    // cookie inherits the just-authenticated session.
-    let cookie_name = state.cfg.auth.session.cookie_name.as_str();
-    if let Some(prev) = cookies.get(cookie_name).map(|c| c.value().to_string())
-        && !prev.is_empty()
-        && let Err(err) = session_store::destroy(pool, &prev).await
-    {
-        tracing::warn!(error = %err, "session fixation: pre-login destroy failed");
-    }
-
-    let created = session_store::create(
-        pool,
-        &state.cfg.auth.session,
-        resolved.user_id,
-        active_org,
-        ip_hash.as_deref(),
-        ua_hash.as_deref(),
-    )
-    .await?;
-
-    // Audit post-commit: a failure here logs but the session is already valid.
-    if let Err(err) = login_audit::record(
-        pool,
-        method,
-        LoginAttempt {
-            user_id: Some(resolved.user_id),
-            success: true,
-            ip_hash: ip_hash.as_deref(),
-            user_agent_hash: ua_hash.as_deref(),
-            failure_reason: None,
-        },
-    )
-    .await
-    {
-        tracing::warn!(error = %err, "login_audit write failed (non-fatal)");
-    }
-
-    // The one line that says a sign-in happened. `login_attempts` holds the
-    // durable record, but following a support report through the log stream
-    // otherwise means querying the database to find out anything happened at
-    // all. Ids only — the address belongs in neither logs nor metrics.
-    tracing::info!(
-        user_id = %resolved.user_id.0,
-        provider = provider.as_db_str(),
-        new_user = resolved.is_new_user,
-        org_id = ?active_org.map(|o| o.0),
-        "sign-in complete"
-    );
-
-    crate::analytics::track_login(
-        &state.outbound_http,
-        &state.cfg.auth.public_base_url,
-        crate::analytics::Login {
-            method,
-            new_user: resolved.is_new_user,
-            redirect_after: consumed.redirect_after.as_deref(),
-            via: None,
-        },
+    let redirect = sign_in::complete(
+        &state,
+        &cookies,
         client_ip,
         &headers,
-    );
-
-    cookies.add(session_store::build_cookie(
-        &state.cfg.auth.session,
-        created.cookie_token,
-    ));
-    crate::request::login_hint::set(&cookies, &state.cfg.auth.session, method.as_db_str());
-    if let Err(err) =
-        crate::request::display_prefs::issue_cookies(&state, &cookies, resolved.user_id).await
-    {
-        tracing::warn!(error = %err, "display-preference cookie issue failed (non-fatal)");
-    }
-
-    // One-shot banners ride a flash cookie (unspoofable, fires once); only the
-    // slug-validated `joined` stays a query param.
-    let invite_missed = joined.is_none() && consumed.invitation_id.is_some();
-    crate::request::flash::set(
-        &cookies,
-        &crate::request::flash::Flash {
-            restored: false,
-            invite_missed,
-            ..Default::default()
+        sign_in::Proved {
+            user_id: resolved.user_id,
+            method,
+            new_user: resolved.is_new_user,
+            pending_deletion: resolved.pending_deletion.is_some(),
+            active_org,
+            invited,
+            redirect_after: consumed.redirect_after.as_deref(),
+            via: None,
+            ip_hash: ip_hash.as_deref(),
+            ua_hash: ua_hash.as_deref(),
         },
-        state.cfg.auth.session.cookie_secure,
-        &state.cfg.auth.session.cookie_domain,
-    );
-    // Outranks every other target: the session only proves who is asking.
-    let redirect = if resolved.pending_deletion.is_some() {
-        RESTORE_PATH.to_string()
-    } else if let Some(j) = joined {
-        format!("/?joined={}", crate::auth::url::url_encode(&j.org_slug))
-    } else if invite_missed {
-        "/".to_string()
-    } else {
-        consumed
-            .redirect_after
-            .as_deref()
-            .and_then(safe_redirect_target)
-            .map(str::to_string)
-            .unwrap_or_else(|| "/".to_string())
-    };
+    )
+    .await?;
     Ok(Redirect::to(&redirect).into_response())
 }
 

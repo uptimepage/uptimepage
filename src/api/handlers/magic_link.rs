@@ -37,15 +37,17 @@ use tower_cookies::{Cookie, Cookies};
 
 use crate::app::AppState;
 use crate::auth::email_norm;
-use crate::auth::login_audit::{self, LoginAttempt, LoginMethod};
+use crate::auth::login_audit::{self, LoginMethod};
 use crate::auth::url::token_link;
-use crate::auth::{fingerprint, magic_link, session as session_store};
+use crate::auth::{fingerprint, magic_link};
 use crate::config::SessionConfig;
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
 use crate::error::Result;
 use crate::security::token_hash;
 use crate::storage::orgs as orgs_store;
 use crate::templates::filters;
+
+use super::sign_in;
 
 /// Name of the double-submit nonce cookie that ties the confirm-page GET to the
 /// sign-in POST. Set on the GET, echoed in a hidden form field, checked on the
@@ -585,13 +587,8 @@ async fn open_session_for(
             },
         };
 
-    // Redeem a carried invitation before the session is minted so the
-    // session opens in the joined org. Soft-fails — login never breaks.
-    let joined = match row.invitation_id {
-        Some(id) => crate::api::handlers::invitations::try_auto_accept(state, user_id, id).await,
-        None => None,
-    };
-    if bootstrapped == Bootstrap::Invited && joined.is_none() {
+    let invited = sign_in::redeem(state, user_id, row.invitation_id).await;
+    if bootstrapped == Bootstrap::Invited && matches!(invited, sign_in::Invited::Missed) {
         // The freshly minted user exists ONLY to redeem this invitation; a
         // raced revoke between pre-flight and accept must not leave an
         // org-less orphan account. No FK children yet — plain DELETE.
@@ -611,97 +608,26 @@ async fn open_session_for(
         .await;
         return Ok(invalid_page(state, StatusCode::GONE));
     }
-    let active_org = match joined.as_ref().map(|j| j.org_id) {
-        Some(org) => Some(org),
-        None => crate::storage::users::session_org(pool, user_id, pending_deletion).await?,
-    };
-
-    let cookie_name = state.cfg.auth.session.cookie_name.as_str();
-    if let Some(prev) = cookies.get(cookie_name).map(|c| c.value().to_string())
-        && !prev.is_empty()
-        && let Err(err) = session_store::destroy(pool, &prev).await
-    {
-        tracing::warn!(error = %err, "magic_link: pre-login session destroy failed");
-    }
-
-    let created = session_store::create(
-        pool,
-        &state.cfg.auth.session,
-        user_id,
-        active_org,
-        ip_hash.as_deref(),
-        ua_hash.as_deref(),
-    )
-    .await?;
-
-    if let Err(err) = login_audit::record(
-        pool,
-        LoginMethod::MagicLink,
-        LoginAttempt {
-            user_id: Some(user_id),
-            success: true,
-            ip_hash: ip_hash.as_deref(),
-            user_agent_hash: ua_hash.as_deref(),
-            failure_reason: None,
-        },
-    )
-    .await
-    {
-        tracing::warn!(error = %err, "magic_link audit write failed (non-fatal)");
-    }
-
-    crate::analytics::track_login(
-        &state.outbound_http,
-        &state.cfg.auth.public_base_url,
-        crate::analytics::Login {
-            method: LoginMethod::MagicLink,
-            new_user: bootstrapped != Bootstrap::Existing,
-            redirect_after: row.redirect_after.as_deref(),
-            via: Some(via),
-        },
+    let active_org = sign_in::session_org(pool, &invited, user_id, pending_deletion).await?;
+    let redirect = sign_in::complete(
+        state,
+        cookies,
         client_ip,
         headers,
-    );
-
-    cookies.add(session_store::build_cookie(
-        &state.cfg.auth.session,
-        created.cookie_token,
-    ));
-    crate::request::login_hint::set(
-        cookies,
-        &state.cfg.auth.session,
-        LoginMethod::MagicLink.as_db_str(),
-    );
-    if let Err(err) = crate::request::display_prefs::issue_cookies(state, cookies, user_id).await {
-        tracing::warn!(error = %err, "display-preference cookie issue failed (non-fatal)");
-    }
-    // One-shot banners ride a flash cookie (unspoofable, fires once); only the
-    // slug-validated `joined` stays a query param. Same priority as the OAuth
-    // callback.
-    let invite_missed = joined.is_none() && row.invitation_id.is_some();
-    crate::request::flash::set(
-        cookies,
-        &crate::request::flash::Flash {
-            restored: false,
-            invite_missed,
-            ..Default::default()
+        sign_in::Proved {
+            user_id,
+            method: LoginMethod::MagicLink,
+            new_user: bootstrapped != Bootstrap::Existing,
+            pending_deletion,
+            active_org,
+            invited,
+            redirect_after: row.redirect_after.as_deref(),
+            via: Some(via),
+            ip_hash: ip_hash.as_deref(),
+            ua_hash: ua_hash.as_deref(),
         },
-        state.cfg.auth.session.cookie_secure,
-        &state.cfg.auth.session.cookie_domain,
-    );
-    let redirect = if pending_deletion {
-        crate::api::handlers::auth::RESTORE_PATH.to_string()
-    } else if let Some(j) = joined {
-        format!("/?joined={}", crate::auth::url::url_encode(&j.org_slug))
-    } else if invite_missed {
-        "/".to_string()
-    } else {
-        row.redirect_after
-            .as_deref()
-            .and_then(crate::auth::url::safe_redirect_target)
-            .map(str::to_string)
-            .unwrap_or_else(|| "/".to_string())
-    };
+    )
+    .await?;
     Ok(Redirect::to(&redirect).into_response())
 }
 

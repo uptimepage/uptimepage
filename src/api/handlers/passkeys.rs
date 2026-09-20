@@ -15,14 +15,15 @@ use utoipa::ToSchema;
 use webauthn_rs::prelude::*;
 
 use crate::app::AppState;
-use crate::auth::login_audit::{self, LoginAttempt, LoginMethod};
-use crate::auth::session as session_store;
+use crate::auth::login_audit::{self, LoginMethod};
 use crate::auth::{fingerprint, passkey};
 use crate::domain::UserId;
 use crate::error::{AppError, Result};
 use crate::request::auth::Session;
 use crate::request::{BrowserUser, CurrentUser};
 use crate::storage::{oauth_identities, passkeys};
+
+use super::sign_in;
 
 /// One ceremony's opaque handle plus the options `navigator.credentials` wants.
 #[derive(Debug, Serialize, ToSchema)]
@@ -323,146 +324,30 @@ pub async fn login_finish(
         }
     }
 
-    complete_login(
-        &state,
-        &cookies,
-        user_id,
-        client_ip,
-        &headers,
-        Proved {
-            ip_hash: ip_hash.as_deref(),
-            ua_hash: ua_hash.as_deref(),
-            redirect_after: carried.redirect_after.as_deref(),
-            invitation_id: carried.invitation_id,
-        },
-    )
-    .await
-}
-
-/// Everything a finished ceremony carries except the account it proved.
-struct Proved<'a> {
-    ip_hash: Option<&'a str>,
-    ua_hash: Option<&'a str>,
-    redirect_after: Option<&'a str>,
-    invitation_id: Option<uuid::Uuid>,
-}
-
-/// What a sign-in owes once the credential is proved, fixation defence first.
-async fn complete_login(
-    state: &AppState,
-    cookies: &Cookies,
-    user_id: UserId,
-    client_ip: std::net::IpAddr,
-    headers: &HeaderMap,
-    proved: Proved<'_>,
-) -> Result<Response> {
-    let Proved {
-        ip_hash,
-        ua_hash,
-        redirect_after,
-        invitation_id,
-    } = proved;
-    let pool = state.require_db()?;
     let pending_deletion = crate::storage::orgs::user_deleted_at(pool, user_id)
         .await?
         .is_some();
-    // Redeemed server-side, so the session opens directly in the joined org.
-    let joined = match invitation_id {
-        Some(id) => crate::api::handlers::invitations::try_auto_accept(state, user_id, id).await,
-        None => None,
-    };
-    let active_org = match joined.as_ref().map(|j| j.org_id) {
-        Some(org) => Some(org),
-        None => crate::storage::users::session_org(pool, user_id, pending_deletion).await?,
-    };
-
-    let cookie_name = state.cfg.auth.session.cookie_name.as_str();
-    if let Some(prev) = cookies.get(cookie_name).map(|c| c.value().to_string())
-        && !prev.is_empty()
-        && let Err(err) = session_store::destroy(pool, &prev).await
-    {
-        tracing::warn!(error = %err, "passkey: pre-login session destroy failed");
-    }
-
-    let created = session_store::create(
-        pool,
-        &state.cfg.auth.session,
-        user_id,
-        active_org,
-        ip_hash,
-        ua_hash,
-    )
-    .await?;
-
-    if let Err(err) = login_audit::record(
-        pool,
-        LoginMethod::Passkey,
-        LoginAttempt {
-            user_id: Some(user_id),
-            success: true,
-            ip_hash,
-            user_agent_hash: ua_hash,
-            failure_reason: None,
-        },
-    )
-    .await
-    {
-        tracing::warn!(error = %err, "passkey audit write failed (non-fatal)");
-    }
-
-    tracing::info!(
-        user_id = %user_id.0,
-        provider = passkeys::PROVIDER_SLUG,
-        org_id = ?active_org.map(|o| o.0),
-        "sign-in complete"
-    );
-    crate::analytics::track_login(
-        &state.outbound_http,
-        &state.cfg.auth.public_base_url,
-        crate::analytics::Login {
+    let invited = sign_in::redeem(&state, user_id, carried.invitation_id).await;
+    let active_org = sign_in::session_org(pool, &invited, user_id, pending_deletion).await?;
+    let redirect = sign_in::complete(
+        &state,
+        &cookies,
+        client_ip,
+        &headers,
+        sign_in::Proved {
+            user_id,
             method: LoginMethod::Passkey,
             new_user: false,
-            redirect_after,
+            pending_deletion,
+            active_org,
+            invited,
+            redirect_after: carried.redirect_after.as_deref(),
             via: None,
+            ip_hash: ip_hash.as_deref(),
+            ua_hash: ua_hash.as_deref(),
         },
-        client_ip,
-        headers,
-    );
-
-    cookies.add(session_store::build_cookie(
-        &state.cfg.auth.session,
-        created.cookie_token,
-    ));
-    crate::request::login_hint::set(
-        cookies,
-        &state.cfg.auth.session,
-        LoginMethod::Passkey.as_db_str(),
-    );
-    if let Err(err) = crate::request::display_prefs::issue_cookies(state, cookies, user_id).await {
-        tracing::warn!(error = %err, "display-preference cookie issue failed (non-fatal)");
-    }
-
-    let invite_missed = joined.is_none() && invitation_id.is_some();
-    crate::request::flash::set(
-        cookies,
-        &crate::request::flash::Flash {
-            invite_missed,
-            ..Default::default()
-        },
-        state.cfg.auth.session.cookie_secure,
-        &state.cfg.auth.session.cookie_domain,
-    );
-    // Same order the OAuth callback settles on: the session only proves who is
-    // asking, so a pending deletion outranks every destination.
-    let redirect = if pending_deletion {
-        crate::api::handlers::auth::RESTORE_PATH.to_string()
-    } else if let Some(j) = joined {
-        format!("/?joined={}", crate::auth::url::url_encode(&j.org_slug))
-    } else if invite_missed {
-        "/".to_string()
-    } else {
-        redirect_after.unwrap_or("/").to_string()
-    };
+    )
+    .await?;
     Ok(Json(LoginComplete { redirect }).into_response())
 }
 
