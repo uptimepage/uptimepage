@@ -102,6 +102,12 @@ $EDITOR .env
 
 Fill in every value. The file has inline instructions for each variable.
 
+Some keys here are flat, single-underscore names (`UPTIMEPAGE_OPERATOR_ADMIN_TOKEN`,
+`UPTIMEPAGE_TELEGRAM_BOT_TOKEN`) that `docker-compose.yml` maps onto the app's
+nested `UPTIMEPAGE_SECTION__KEY` names used by the docs and the Helm chart. When
+you reuse a value from `.env` in a shell, take the name from this file, not from
+the docs.
+
 ### 3. Generate database passwords and KEK
 
 ```bash
