@@ -39,7 +39,7 @@ mcp:
 # secrets.existingSecret above.
 email:
   provider: resend
-  fromAddress: no-reply@status.example.com
+  fromAddress: status@example.com
 auth:
   github:
     clientId: ci-client-id

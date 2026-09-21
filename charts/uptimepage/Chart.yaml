@@ -2,7 +2,7 @@ apiVersion: v2
 name: uptimepage
 description: Self-hosted uptime monitoring, incidents, and status pages
 type: application
-version: 0.5.1
+version: 0.5.2
 appVersion: "1.3.0"
 # `-0` so vendor builds (v1.31.1-gke.x) satisfy the constraint.
 kubeVersion: ">=1.29.0-0"
@@ -41,4 +41,4 @@ annotations:
       url: https://uptimepage.dev/static/marketing/public-status-page.webp
   artifacthub.io/changes: |
     - kind: changed
-      description: Tracks application 1.3.0; the chart templates are unchanged
+      description: The values file asks for a read inbox as the sender address; templates are unchanged

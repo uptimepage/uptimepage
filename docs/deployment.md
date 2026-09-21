@@ -39,10 +39,7 @@ See [Authentication](authentication.md) for the in-binary flow.
 
 ### Email provider (Resend)
 
-Transactional email (invitations, magic-link sign-in) goes through the
-`EmailSender` trait. Production uses [Resend](https://resend.com); dev
-and test default to the `log` provider, which writes the action URL to
-the tracing log so you can copy-paste it into a browser.
+Every mail the product sends (sign-in links, invitations, outage alerts, status-page subscriber updates, billing notices) goes through the `EmailSender` trait. Production uses [Resend](https://resend.com); dev and test default to the `log` provider, which writes the action URL to the tracing log so you can copy-paste it into a browser.
 
 Setup:
 
@@ -55,14 +52,15 @@ Setup:
    [email]
    provider = "resend"
    from_name = "Acme Status"
-   from_address = "no-reply@status.acme.test"
+   from_address = "status@acme.test"
 
    [email.resend]
    api_key = "re_…"
    ```
 
-   Or via env: `UPTIMEPAGE_EMAIL__PROVIDER=resend`,
-   `UPTIMEPAGE_EMAIL__RESEND__API_KEY=re_…`.
+   Or via env: `UPTIMEPAGE_EMAIL__PROVIDER=resend`, `UPTIMEPAGE_EMAIL__FROM_ADDRESS=status@acme.test`, `UPTIMEPAGE_EMAIL__RESEND__API_KEY=re_…`.
+
+   Send from an address somebody reads. Every reply comes back to it, including auto-responders to outage alerts and subscriber updates. A `no-reply@` sender leaves a confused recipient with no way to answer except the spam button, and mailbox providers count replies in the sender's favour.
 4. `auth.public_base_url` must be set to the externally-reachable origin
    (e.g. `https://status.acme.test`); the value is embedded in the links
    the recipient receives.

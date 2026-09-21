@@ -136,6 +136,7 @@ email:
   # `log` writes action URLs to the pod log rather than sending anything.
   provider: log
   fromName: Uptimepage
+  # A read inbox; a no-reply sender turns replies into spam reports.
   fromAddress: ""
   resend:
     apiKey: ""

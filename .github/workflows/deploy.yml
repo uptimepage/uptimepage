@@ -72,15 +72,18 @@ name: deploy
 #     WHATSAPP_APP_TEMPLATE_NAME   approved alert template name
 #   Repo var WHATSAPP_APP_ENABLED ("true") flips the spend gate — creds
 #   alone keep the surface off.
-#   Transactional mail (Resend; key+from all-or-nothing, secret optional):
+#   Transactional mail (Resend; the key and the EMAIL_FROM_ADDRESS repo
+#   variable below are all-or-nothing, the secret is optional):
 #     RESEND_API_KEY            re_… API key — presence flips the provider
 #                               from "log" to "resend" (sensitive)
-#     EMAIL_FROM_ADDRESS        verified sender, e.g. no-reply@<domain>
 #     RESEND_WEBHOOK_SECRET     whsec_… Svix signing secret of the Resend
 #                               webhook endpoint; presence mounts the
 #                               /hooks/resend bounce receiver (sensitive)
 # Non-secret repo variables: RUST_LOG (log/trace verbosity),
 # TELEGRAM_BOT_USERNAME (the bot's public @handle, no leading @),
+# EMAIL_FROM_ADDRESS (verified sender on a read inbox, e.g. hello@<domain>;
+# a no-reply address turns every reply into a bounce or a spam report;
+# written together with RESEND_API_KEY, so it needs that secret to land),
 # EMAIL_SUPPORT_ADDRESS (inbox behind the in-app /help form; unset = no
 # form) — redeploy applies them with no rebuild.
 

@@ -120,9 +120,10 @@ services:
       UPTIMEPAGE_TELEGRAM__BOT_TOKEN: ${UPTIMEPAGE_TELEGRAM_BOT_TOKEN:-}
       UPTIMEPAGE_TELEGRAM__BOT_USERNAME: ${UPTIMEPAGE_TELEGRAM_BOT_USERNAME:-}
       UPTIMEPAGE_TELEGRAM__WEBHOOK_SECRET: ${UPTIMEPAGE_TELEGRAM_WEBHOOK_SECRET:-}
-      # Transactional mail (Resend). Empty api key = the "log" provider;
-      # empty webhook secret = the /hooks/resend bounce receiver is absent;
-      # empty support address = no /help form.
+      # Product mail. Provider "log" (the default) sends nothing; "resend"
+      # needs the api key and the from address. Empty webhook secret = the
+      # /hooks/resend bounce receiver is absent; empty support address = no
+      # /help form.
       UPTIMEPAGE_EMAIL__PROVIDER: ${UPTIMEPAGE_EMAIL_PROVIDER:-log}
       UPTIMEPAGE_EMAIL__FROM_NAME: ${UPTIMEPAGE_EMAIL_FROM_NAME:-Uptimepage}
       UPTIMEPAGE_EMAIL__FROM_ADDRESS: ${UPTIMEPAGE_EMAIL_FROM_ADDRESS:-}
