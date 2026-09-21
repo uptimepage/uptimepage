@@ -5,7 +5,8 @@ use secrecy::ExposeSecret;
 
 use crate::error::Result;
 
-use super::AppConfig;
+use super::{AppConfig, EmailProvider};
+use crate::domain::mailbox;
 
 impl AppConfig {
     /// Reject `< 1` quota / rate / interval values at load with a
@@ -351,7 +352,32 @@ impl AppConfig {
             crate::error::AppError::Other(anyhow::anyhow!(msg.to_string()))
         }
         let e = &self.email;
-        if e.provider != "resend" {
+        if e.provider == EmailProvider::Memory {
+            return Err(err(
+                "email.provider = \"memory\" keeps every mail in process for tests; use \"log\" or \"resend\"",
+            ));
+        }
+        // The sender feeds the operator-domain block under every provider,
+        // so its shape is checked whenever it is set at all.
+        if !e.from_address.is_empty() {
+            let Some((local, _)) = mailbox::parse_bare(&e.from_address) else {
+                return Err(err(
+                    "email.from_address must be one bare user@domain address: no display name, brackets, quotes or whitespace",
+                ));
+            };
+            if mailbox::is_no_reply(local) {
+                tracing::warn!(
+                    from_address = %e.from_address,
+                    "email.from_address is a no-reply sender; send from an inbox somebody reads"
+                );
+            }
+        }
+        if e.support_enabled() && mailbox::parse_bare(&e.support_address).is_none() {
+            return Err(err(
+                "email.support_address must be one bare user@domain address: no display name, brackets, quotes or whitespace",
+            ));
+        }
+        if e.provider != EmailProvider::Resend {
             return Ok(());
         }
         if e.resend.api_key.expose_secret().trim().is_empty() {
@@ -359,7 +385,7 @@ impl AppConfig {
                 "email.resend.api_key is required when email.provider = \"resend\"",
             ));
         }
-        if e.from_address.trim().is_empty() {
+        if e.from_address.is_empty() {
             return Err(err(
                 "email.from_address is required when email.provider = \"resend\"",
             ));

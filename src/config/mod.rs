@@ -38,7 +38,7 @@ pub use limits::{
     RateLimitJanitorConfig, RateLimitsConfig, SignupPolicy,
 };
 pub use notify::{
-    ConnectOauthConfig, ResendConfig, TelegramBotConfig, TransactionalEmailConfig,
+    ConnectOauthConfig, EmailProvider, ResendConfig, TelegramBotConfig, TransactionalEmailConfig,
     WhatsAppAppBotConfig,
 };
 pub use observability::{GrafanaConfig, HeartbeatConfig, LogFormat, ObservabilityConfig};

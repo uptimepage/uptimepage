@@ -445,24 +445,57 @@ fn only_an_https_origin_passes_validation() {
 }
 
 #[test]
-fn resend_boot_needs_the_api_key_and_a_from_address() {
+fn resend_boot_needs_the_api_key_and_a_well_formed_from_address() {
     let mut cfg = AppConfig::load().expect("load");
-    cfg.email.provider = "log".into();
+    cfg.email.provider = EmailProvider::Log;
     cfg.email.from_address = String::new();
+    cfg.email.support_address = String::new();
     cfg.email.resend.api_key = secrecy::SecretString::from(String::new());
     assert!(
         cfg.validate_email().is_ok(),
         "the log provider needs nothing"
     );
 
-    cfg.email.provider = "resend".into();
+    cfg.email.provider = EmailProvider::Memory;
+    let err = cfg
+        .validate_email()
+        .expect_err("test-only provider")
+        .to_string();
+    assert!(err.contains("for tests"), "{err}");
+
+    cfg.email.provider = EmailProvider::Resend;
     let err = cfg.validate_email().expect_err("no key").to_string();
     assert!(err.contains("email.resend.api_key"), "{err}");
 
     cfg.email.resend.api_key = secrecy::SecretString::from("re_test_key".to_string());
     let err = cfg.validate_email().expect_err("no sender").to_string();
-    assert!(err.contains("email.from_address"), "{err}");
+    assert!(err.contains("email.from_address is required"), "{err}");
 
     cfg.email.from_address = "hello@example.test".into();
+    assert!(cfg.validate_email().is_ok());
+}
+
+#[test]
+fn a_configured_mailbox_must_be_bare_under_every_provider() {
+    let mut cfg = AppConfig::load().expect("load");
+    cfg.email.provider = EmailProvider::Log;
+    for bad in [
+        "hello",
+        "Acme <hello@example.test>",
+        " hello@example.test",
+        "hello@example.test\n",
+        "hello@acme@example.test",
+        "alerts@localhost",
+    ] {
+        cfg.email.from_address = bad.into();
+        let err = cfg.validate_email().expect_err(bad).to_string();
+        assert!(err.contains("email.from_address must be"), "{bad:?}: {err}");
+    }
+    cfg.email.from_address = "hello@example.test".into();
+
+    cfg.email.support_address = "Ops <ops@example.test>".into();
+    let err = cfg.validate_email().expect_err("support").to_string();
+    assert!(err.contains("email.support_address must be"), "{err}");
+    cfg.email.support_address = "ops@example.test".into();
     assert!(cfg.validate_email().is_ok());
 }

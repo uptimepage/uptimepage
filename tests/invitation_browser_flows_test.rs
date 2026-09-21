@@ -13,6 +13,7 @@ use axum::http::{Request, StatusCode, header};
 use tower::ServiceExt;
 use uptimepage::app::AppState;
 use uptimepage::auth::{invitations, magic_link};
+use uptimepage::config::EmailProvider;
 use uptimepage::domain::{ChannelKind, OrgId, Role, UserId, generate_signup_slug};
 use uptimepage::storage::orgs::create_signup_org_with_owner_in_tx;
 use uuid::Uuid;
@@ -335,7 +336,7 @@ async fn magic_verify_existing_user_auto_accepts_and_lands_in_org() {
     .unwrap();
 
     let (app, _default, state) = common::build_test_app_with_pg_state(pool.clone(), |cfg| {
-        cfg.email.provider = "memory".into();
+        cfg.email.provider = EmailProvider::Memory;
     })
     .await;
     let (get_status, status, location) = magic_verify(&app, &minted.token).await;
@@ -397,7 +398,7 @@ async fn magic_verify_bootstraps_invited_unknown_email() {
     .unwrap();
 
     let (app, _default, state) = common::build_test_app_with_pg_state(pool.clone(), |cfg| {
-        cfg.email.provider = "memory".into();
+        cfg.email.provider = EmailProvider::Memory;
     })
     .await;
     let (get_status, status, location) = magic_verify(&app, &minted.token).await;
@@ -456,7 +457,7 @@ async fn magic_verify_unknown_email_without_invitation_opens_an_account() {
     .await
     .unwrap();
     let (app, _default, state) = common::build_test_app_with_pg_state(pool.clone(), |cfg| {
-        cfg.email.provider = "memory".into();
+        cfg.email.provider = EmailProvider::Memory;
     })
     .await;
     let (get_status, status, location) = magic_verify(&app, &minted.token).await;
@@ -546,7 +547,7 @@ async fn magic_verify_plain_login_resolves_active_org() {
     .await
     .unwrap();
     let (app, _default, state) = common::build_test_app_with_pg_state(pool.clone(), |cfg| {
-        cfg.email.provider = "memory".into();
+        cfg.email.provider = EmailProvider::Memory;
     })
     .await;
     let (get_status, status, _) = magic_verify(&app, &minted.token).await;
@@ -590,7 +591,7 @@ async fn magic_verify_orgless_user_opens_a_personal_org_with_its_alert_channel()
     .await
     .unwrap();
     let (app, _default, state) = common::build_test_app_with_pg_state(pool.clone(), |cfg| {
-        cfg.email.provider = "memory".into();
+        cfg.email.provider = EmailProvider::Memory;
     })
     .await;
     let (_, status, _) = magic_verify(&app, &minted.token).await;

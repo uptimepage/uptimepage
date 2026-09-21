@@ -997,6 +997,25 @@ jobs:
             fi
           fi
 
+          # The app refuses any configured mailbox that is not one bare
+          # user@domain at boot (src/domain/mailbox.rs). This gate is stricter
+          # than the app's character set and enforces the same lengths, never
+          # looser, so a pasted display name or trailing space fails here, not
+          # after the swap.
+          bare_address_ok() {
+            local addr="$1" lp dom
+            case "$addr" in *@*) ;; *) return 1 ;; esac
+            lp="${addr%%@*}"
+            dom="${addr#*@}"
+            case "$lp" in ""|*[!A-Za-z0-9._%+-]*) return 1 ;; esac
+            case "$dom" in
+              ""|*@*|*[!A-Za-z0-9.-]*|.*|*.|*..*) return 1 ;;
+              *.*) ;;
+              *) return 1 ;;
+            esac
+            [ "${#lp}" -le 64 ] && [ "${#addr}" -le 254 ]
+          }
+
           # --- transactional mail via Resend (optional) ----------------------
           # Same write contract as the blocks above. All-or-nothing on the
           # sending pair: an API key without a verified From address would
@@ -1006,6 +1025,10 @@ jobs:
           if [ -n "${RESEND_API_KEY:-}" ]; then
             if [ -z "${EMAIL_FROM_ADDRESS:-}" ]; then
               echo "::error::RESEND_API_KEY is set but EMAIL_FROM_ADDRESS is empty"
+              exit 1
+            fi
+            if ! bare_address_ok "$EMAIL_FROM_ADDRESS"; then
+              echo "::error::EMAIL_FROM_ADDRESS must be one bare user@domain address"
               exit 1
             fi
             cp .env ".env.bak.$(date +%s).resend"
@@ -1049,6 +1072,10 @@ jobs:
           # Skipped when unset, so the compose `${…:-}` fallback keeps the
           # form absent; to switch it off later, clear the key in .env.
           if [ -n "${EMAIL_SUPPORT_ADDRESS:-}" ]; then
+            if ! bare_address_ok "$EMAIL_SUPPORT_ADDRESS"; then
+              echo "::error::EMAIL_SUPPORT_ADDRESS must be one bare user@domain address"
+              exit 1
+            fi
             cp .env ".env.bak.$(date +%s).support"
             before=$(awk 'END { print NR }' .env)
             awk '

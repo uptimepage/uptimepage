@@ -308,15 +308,8 @@ pub(crate) fn domain_and_parents(host: &str) -> Vec<String> {
 }
 
 /// Role/infrastructure mailboxes that loop mail or never consent to receive it.
-pub(crate) const RESERVED_EMAIL_LOCALPARTS: &[&str] = &[
-    "postmaster",
-    "mailer-daemon",
-    "abuse",
-    "bounce",
-    "bounces",
-    "no-reply",
-    "noreply",
-];
+pub(crate) const RESERVED_EMAIL_LOCALPARTS: &[&str] =
+    &["postmaster", "mailer-daemon", "abuse", "bounce", "bounces"];
 
 /// The platform's own domains (mail `From` domain + app host); a destination
 /// here could loop mail through us or impersonate the platform.
@@ -344,6 +337,11 @@ pub(crate) fn blocked_email_destination(to: &str, operator_domains: &[String]) -
     if RESERVED_EMAIL_LOCALPARTS.contains(&base_local) {
         return Some(format!(
             "'{base_local}@' is a reserved role address and can't be used"
+        ));
+    }
+    if crate::domain::mailbox::is_no_reply(base_local) {
+        return Some(format!(
+            "'{base_local}@' is a no-reply mailbox and can't be used"
         ));
     }
     let ops: Vec<String> = operator_domains
@@ -645,6 +643,18 @@ not_a_domain\n";
         assert!(blocked_email_destination("alerts@uptimepage.dev.", &op).is_some());
         // Plus-tagging does not smuggle a role mailbox past the check.
         assert!(blocked_email_destination("postmaster+x@example.com", &op).is_some());
+        for no_reply in [
+            "no-reply@customer.com",
+            "noreply+x@customer.com",
+            "do-not-reply@customer.com",
+            "donotreply@customer.com",
+            "no_reply@customer.com",
+        ] {
+            assert!(
+                blocked_email_destination(no_reply, &op).is_some(),
+                "{no_reply}"
+            );
+        }
     }
 
     #[test]

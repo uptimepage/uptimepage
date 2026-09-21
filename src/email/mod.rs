@@ -11,9 +11,7 @@ pub mod trait_def;
 
 use std::sync::Arc;
 
-use secrecy::ExposeSecret;
-
-use crate::config::TransactionalEmailConfig;
+use crate::config::{EmailProvider, TransactionalEmailConfig};
 use crate::http_outbound::OutboundHttpClient;
 
 pub use log_only::LogOnlyEmailSender;
@@ -27,32 +25,20 @@ pub use trait_def::{
 
 /// Builds an `EmailSender` from config. `http` is the shared outbound client
 /// (the same one used by Slack/webhook notifiers) — only the `resend`
-/// provider actually uses it; `log` and `memory` ignore it.
+/// provider actually uses it; `log` and `memory` ignore it. Whether the
+/// config is complete is the validator's question, asked at boot.
 pub fn build_email_sender(
     config: &TransactionalEmailConfig,
     http: &OutboundHttpClient,
-) -> Result<Arc<dyn EmailSender>, EmailError> {
-    match config.provider.as_str() {
-        "resend" => {
-            if config.resend.api_key.expose_secret().trim().is_empty() {
-                return Err(EmailError::Config(
-                    "email.resend.api_key is required when provider = \"resend\"".into(),
-                ));
-            }
-            let sender = ResendEmailSender::new(
-                config.resend.api_key.clone(),
-                config.from_name.clone(),
-                http.clone(),
-            );
-            Ok(Arc::new(sender) as Arc<dyn EmailSender>)
-        }
-        "log" => {
-            Ok(Arc::new(LogOnlyEmailSender::new(config.from_name.clone())) as Arc<dyn EmailSender>)
-        }
-        "memory" => Ok(Arc::new(InMemoryEmailSender::new()) as Arc<dyn EmailSender>),
-        other => Err(EmailError::Config(format!(
-            "unknown email provider: {other}"
-        ))),
+) -> Arc<dyn EmailSender> {
+    match config.provider {
+        EmailProvider::Resend => Arc::new(ResendEmailSender::new(
+            config.resend.api_key.clone(),
+            config.from_name.clone(),
+            http.clone(),
+        )),
+        EmailProvider::Log => Arc::new(LogOnlyEmailSender::new(config.from_name.clone())),
+        EmailProvider::Memory => Arc::new(InMemoryEmailSender::new()),
     }
 }
 
@@ -177,43 +163,29 @@ mod tests {
     #[test]
     fn factory_log_provider() {
         let cfg = TransactionalEmailConfig {
-            provider: "log".into(),
+            provider: EmailProvider::Log,
             ..Default::default()
         };
         let http = build_outbound_client(crate::security::SsrfGuard::strict());
-        let sender = build_email_sender(&cfg, &http).expect("build log sender");
+        let sender = build_email_sender(&cfg, &http);
         let _ = format!("{:p}", Arc::as_ptr(&sender));
     }
 
     #[test]
     fn factory_memory_provider() {
         let cfg = TransactionalEmailConfig {
-            provider: "memory".into(),
+            provider: EmailProvider::Memory,
             ..Default::default()
         };
         let http = build_outbound_client(crate::security::SsrfGuard::strict());
-        let sender = build_email_sender(&cfg, &http).expect("build memory sender");
+        let sender = build_email_sender(&cfg, &http);
         let _ = sender;
     }
 
     #[test]
-    fn factory_resend_requires_api_key() {
+    fn factory_resend_constructs() {
         let cfg = TransactionalEmailConfig {
-            provider: "resend".into(),
-            ..Default::default()
-        };
-        let http = build_outbound_client(crate::security::SsrfGuard::strict());
-        match build_email_sender(&cfg, &http) {
-            Err(EmailError::Config(_)) => {}
-            Err(e) => panic!("wrong error variant: {e}"),
-            Ok(_) => panic!("missing api key must error"),
-        }
-    }
-
-    #[test]
-    fn factory_resend_with_api_key_constructs() {
-        let cfg = TransactionalEmailConfig {
-            provider: "resend".into(),
+            provider: EmailProvider::Resend,
             resend: crate::config::ResendConfig {
                 api_key: secrecy::SecretString::from("re_test_key".to_string()),
                 ..Default::default()
@@ -221,21 +193,7 @@ mod tests {
             ..Default::default()
         };
         let http = build_outbound_client(crate::security::SsrfGuard::strict());
-        let sender = build_email_sender(&cfg, &http).expect("build resend sender");
+        let sender = build_email_sender(&cfg, &http);
         let _ = sender;
-    }
-
-    #[test]
-    fn factory_unknown_provider_errors() {
-        let cfg = TransactionalEmailConfig {
-            provider: "carrier_pigeon".into(),
-            ..Default::default()
-        };
-        let http = build_outbound_client(crate::security::SsrfGuard::strict());
-        match build_email_sender(&cfg, &http) {
-            Err(EmailError::Config(msg)) => assert!(msg.contains("carrier_pigeon")),
-            Err(e) => panic!("wrong error variant: {e}"),
-            Ok(_) => panic!("unknown provider must error"),
-        }
     }
 }

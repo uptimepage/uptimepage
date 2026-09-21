@@ -16,8 +16,6 @@ pub enum EmailError {
     ProviderRejected(String),
     #[error("transport error: {0}")]
     Transport(String),
-    #[error("invalid configuration: {0}")]
-    Config(String),
 }
 
 #[async_trait]

@@ -127,12 +127,21 @@ impl WhatsAppAppBotConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EmailProvider {
+    /// HTTP API; the only one that leaves the machine.
+    Resend,
+    /// Renders to tracing and drops the mail; the dev default.
+    Log,
+    /// Buffers every send in process so a test can read it back; refused at boot.
+    Memory,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct TransactionalEmailConfig {
-    /// Backend: "resend" (HTTP API), "log" (tracing only, dev default), or
-    /// "memory" (in-process buffer for tests).
-    pub provider: String,
+    pub provider: EmailProvider,
     pub from_name: String,
     pub from_address: String,
     /// Empty leaves the help form, its route and its nav entry absent, so a
@@ -142,9 +151,10 @@ pub struct TransactionalEmailConfig {
 }
 
 impl TransactionalEmailConfig {
-    /// Whether mail leaves the process. `log` renders to tracing and drops it.
+    /// Whether a send goes anywhere a caller can observe. `memory` counts:
+    /// the test harness reads it back.
     pub fn delivers(&self) -> bool {
-        self.provider != "log"
+        self.provider != EmailProvider::Log
     }
 
     pub fn support_enabled(&self) -> bool {
@@ -155,7 +165,7 @@ impl TransactionalEmailConfig {
 impl Default for TransactionalEmailConfig {
     fn default() -> Self {
         Self {
-            provider: "log".into(),
+            provider: EmailProvider::Log,
             from_name: "Uptimepage".into(),
             from_address: String::new(),
             support_address: String::new(),

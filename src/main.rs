@@ -496,8 +496,7 @@ async fn main() -> Result<()> {
     let outbound_http = uptimepage::http_outbound::build_outbound_client(
         uptimepage::security::SsrfGuard::from_security_config(&cfg.security),
     );
-    let email_sender = uptimepage::email::build_email_sender(&cfg.email, &outbound_http)
-        .map_err(|e| AppError::Other(anyhow::anyhow!("build_email_sender: {e}")))?;
+    let email_sender = uptimepage::email::build_email_sender(&cfg.email, &outbound_http);
     let alert_channel_stop_secret = uptimepage::storage::app_secrets::ensure_secret(
         &pg_pool_for_stores,
         cipher.as_deref(),

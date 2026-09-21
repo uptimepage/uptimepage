@@ -65,8 +65,7 @@ Setup:
    (e.g. `https://status.acme.test`); the value is embedded in the links
    the recipient receives.
 
-The factory rejects boot when `provider = "resend"` is set without a
-non-empty API key — fail-fast over send-time surprise.
+Boot refuses `provider = "resend"` without both the API key and the from address, and warns when the from address is a `no-reply@` one: fail-fast over send-time surprise.
 
 ### Public status surface
 

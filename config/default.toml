@@ -183,8 +183,9 @@ public_per_ip_rate_limit_per_min = 60
 # Every mail the product sends: sign-in links, invitations, outage alerts,
 # status-page subscriber updates, billing notices.
 [email]
-# "resend" | "log" | "memory". Dev default is "log" so `cargo run` works with
-# no external accounts — action URLs are printed to tracing.
+# "resend" | "log". Dev default is "log" so `cargo run` works with no external
+# accounts — action URLs are printed to tracing. ("memory" is the test
+# harness buffer and refused at boot.)
 provider = "log"
 from_name = "Uptimepage"
 # Required when provider = "resend". Use an address somebody reads: replies

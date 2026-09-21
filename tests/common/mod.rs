@@ -14,8 +14,8 @@ use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use uptimepage::app::AppState;
 use uptimepage::config::{
-    AppConfig, CheckerConfig, CircuitBreakerConfig, DnsConfig, HttpClientConfig, SchedulerConfig,
-    SecurityConfig, TransactionalEmailConfig,
+    AppConfig, CheckerConfig, CircuitBreakerConfig, DnsConfig, EmailProvider, HttpClientConfig,
+    SchedulerConfig, SecurityConfig, TransactionalEmailConfig,
 };
 use uptimepage::domain::{
     CheckSpec, ExpectedStatus, HttpCheck, HttpMethod, OrgId, PageRef, Target, WriteSource,
@@ -69,10 +69,10 @@ pub fn build_test_outbound_and_email() -> (OutboundHttpClient, Arc<dyn EmailSend
     // SSRF guard is relaxed — production callers pass the strict config.
     let http = build_outbound_client(uptimepage::security::SsrfGuard::relaxed_for_tests());
     let cfg = TransactionalEmailConfig {
-        provider: "memory".into(),
+        provider: EmailProvider::Memory,
         ..Default::default()
     };
-    let sender = build_email_sender(&cfg, &http).expect("memory email sender");
+    let sender = build_email_sender(&cfg, &http);
     (http, sender)
 }
 

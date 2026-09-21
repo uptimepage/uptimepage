@@ -8,6 +8,7 @@ pub mod escalation_policy;
 pub mod heartbeat;
 pub mod incident;
 pub mod interpolate;
+pub mod mailbox;
 pub mod maintenance;
 pub mod membership;
 pub mod metrics;

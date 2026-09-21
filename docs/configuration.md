@@ -60,7 +60,7 @@ Override `UPTIMEPAGE_CONFIG_PATH` to point at an alternate base config file.
 | `auth.magic_link` | `expiry_minutes`, `rate_limit_seconds` | Lifetime of both credentials in the mail, the link and the six-character code beside it. The code is bound to the browser that asked for it and gets one attempt; a miss leaves the link redeemable. Sending a new mail retires every earlier link and code for that address. Routes only mount when `enabled_methods` includes `"magic_link"` |
 | `bootstrap` | `email`, `org_name` | Seeds the first owner at boot when the instance has no users, for installs with no terminal to run `bootstrap-owner` in. Empty `email` (default) disables it. See [First-run owner](#first-run-owner) below |
 | `mcp` | `enabled`, `oauth_enabled`, `resource_uri`, `allowed_origins`, `access_token_ttl_secs` | LLM connector (MCP) server at `/mcp`. Off by default; OAuth requires real HTTPS `resource_uri` + `auth.public_base_url`. See [MCP server](mcp.md) |
-| `email` | `provider`, `from_name`, `from_address`, `support_address` | Every mail the product sends. `provider` ∈ `"resend" \| "log" \| "memory"`. `from_address` is required by `resend` and should be an inbox somebody reads, not `no-reply@`. A set `support_address` mounts the in-app help form at `/help` and relays it there, with the sender as `Reply-To`; empty (default) leaves the page, its endpoint and its nav entry absent |
+| `email` | `provider`, `from_name`, `from_address`, `support_address` | Every mail the product sends. `provider` ∈ `"resend" \| "log"` (`"memory"` is the test harness buffer and refused at boot). `from_address` is required by `resend` and should be an inbox somebody reads; a `no-reply@` sender is warned at boot. A set `support_address` mounts the in-app help form at `/help` and relays it there, with the sender as `Reply-To`; empty (default) leaves the page, its endpoint and its nav entry absent |
 | `email.resend` | `api_key`, `webhook_secret` | `api_key` required when `email.provider = "resend"`. A set `webhook_secret` (the endpoint's Svix `whsec_…` signing secret) mounts `POST /hooks/resend`: a permanently bounced or spam-complaining address gets every email channel pointed at it disabled, with the reason shown on the channel form |
 | `whatsapp_app` | `enabled`, `access_token`, `phone_number_id`, `public_number`, `app_secret`, `verify_token`, `template_name`, `language_code` | Operator WhatsApp number behind one-tap `whatsapp_app` channels (`wa.me` deep link + `/hooks/whatsapp` Meta webhook). `enabled = true` AND complete creds mount the surface — the flag is a deliberate spend gate, since alert sends are operator-paid Meta template messages. Inbound `stop` disables the sender's channels |
 
@@ -144,7 +144,7 @@ expiry_minutes = 15                  # covers the link and the code printed besi
 rate_limit_seconds = 60                # per-email send throttle; 0 disables
 
 [email]
-provider = "log"                     # "resend" in prod, "log" in dev, "memory" in tests
+provider = "log"                     # "resend" in prod, "log" in dev; "memory" is test-only and refused at boot
 from_name = "Uptimepage"
 from_address = ""                    # required for resend; a read inbox, not no-reply
 support_address = ""                 # set it and /help appears; empty = no help form

@@ -8,7 +8,9 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::templates::single_line;
-use super::trait_def::{EmailError, EmailResult, EmailSender, MessageId, TransactionalEmail};
+use super::trait_def::{
+    EmailAddress, EmailError, EmailResult, EmailSender, MessageId, TransactionalEmail,
+};
 use crate::http_outbound::{OutboundHttpClient, REQUEST_TIMEOUT};
 
 const RESEND_API_URL: &str = "https://api.resend.com/emails";
@@ -43,11 +45,7 @@ struct ResendResponse {
 impl EmailSender for ResendEmailSender {
     async fn send(&self, email: TransactionalEmail) -> EmailResult<MessageId> {
         let rendered = email.template.render(&self.site_name);
-        let from_value = if email.from.name.is_empty() {
-            email.from.address.clone()
-        } else {
-            format!("{} <{}>", email.from.name, email.from.address)
-        };
+        let from_value = from_header(&email.from);
 
         let mut body = json!({
             "from": from_value,
@@ -122,5 +120,51 @@ impl EmailSender for ResendEmailSender {
         let parsed: ResendResponse = serde_json::from_slice(&body)
             .map_err(|e| EmailError::Transport(format!("parse body: {e}")))?;
         Ok(MessageId(parsed.id))
+    }
+}
+
+/// RFC 5322 name-addr. The display name goes bare unless it holds a special
+/// (`,` `<` `"` and the rest), in which case it becomes a quoted-string so the
+/// mailbox cannot be split; `single_line` owns the control-character rule.
+fn from_header(from: &EmailAddress) -> String {
+    let name = single_line(&from.name);
+    if name.is_empty() {
+        return from.address.clone();
+    }
+    if !name.chars().any(|c| "()<>[]:;@\\,.\"".contains(c)) {
+        return format!("{name} <{}>", from.address);
+    }
+    let mut quoted = String::with_capacity(name.len() + 2);
+    quoted.push('"');
+    for c in name.chars() {
+        if c == '"' || c == '\\' {
+            quoted.push('\\');
+        }
+        quoted.push(c);
+    }
+    quoted.push('"');
+    format!("{quoted} <{}>", from.address)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_header_quotes_the_display_name_only_when_it_must() {
+        let plain = EmailAddress::new("hello@example.test", "Uptimepage");
+        assert_eq!(from_header(&plain), "Uptimepage <hello@example.test>");
+
+        let comma = EmailAddress::new("hello@example.test", "Acme, Inc.");
+        assert_eq!(from_header(&comma), "\"Acme, Inc.\" <hello@example.test>");
+
+        let tricky = EmailAddress::new("hello@example.test", "Acme \"Status\" <x>\r\nBcc: y");
+        assert_eq!(
+            from_header(&tricky),
+            "\"Acme \\\"Status\\\" <x> Bcc: y\" <hello@example.test>"
+        );
+
+        let bare = EmailAddress::new("hello@example.test", "");
+        assert_eq!(from_header(&bare), "hello@example.test");
     }
 }
