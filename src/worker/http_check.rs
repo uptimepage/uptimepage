@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::time::Instant;
 
 use base64::Engine as _;
@@ -23,6 +24,7 @@ use crate::http_client::HttpClients;
 use crate::http_client::connector::{
     ConnGuard, PhaseTimings, TimedConnection, handshake, timed_connect,
 };
+use crate::http_outbound::error_chain;
 use crate::metric_names;
 
 /// Redirect-hop ceiling, and the fallback when following is on but `max_redirects` is 0.
@@ -192,7 +194,7 @@ async fn do_http_check(
         let (mut sender, conn_guard) =
             match tokio::time::timeout(remaining, handshake(stream, alpn_h2)).await {
                 Err(_) => return stamp("no response"),
-                Ok(Err(err)) => return stamp(classify_hyper_error(&err)),
+                Ok(Err(err)) => return stamp(&request_failure(target_id, hop, err)),
                 Ok(Ok(s)) => s,
             };
 
@@ -204,7 +206,7 @@ async fn do_http_check(
         let response = match tokio::time::timeout(remaining, sender.send_request(req)).await {
             Err(_) => return stamp("no response"),
             Ok(Ok(r)) => r,
-            Ok(Err(err)) => return stamp(classify_hyper_error(&err)),
+            Ok(Err(err)) => return stamp(&request_failure(target_id, hop, err)),
         };
         let ttfb_ms = send_start.elapsed().as_millis().min(u16::MAX as u128) as u16;
 
@@ -1043,11 +1045,65 @@ fn match_status(code: u16, expected: &ExpectedStatus) -> bool {
     }
 }
 
-fn classify_hyper_error(err: &hyper::Error) -> &'static str {
+/// The row keeps the code; the full chain goes to the agent log.
+fn request_failure(target_id: Uuid, hop: u8, err: hyper::Error) -> Cow<'static, str> {
+    let reason = classify_hyper_error(&err);
+    tracing::debug!(
+        target_id = %target_id,
+        hop,
+        reason = %reason,
+        error = %error_chain(err),
+        "http request failed"
+    );
+    reason
+}
+
+/// Post-handshake only: stable codes for the common shapes, `transport: <root cause>` otherwise.
+fn classify_hyper_error(err: &hyper::Error) -> Cow<'static, str> {
     if has_timeout_in_chain(err) {
-        return "timeout";
+        return "timeout".into();
     }
-    "transport"
+    if err.is_incomplete_message() {
+        return "closed before response".into();
+    }
+    if err.is_parse() {
+        return "invalid response".into();
+    }
+    let mut root: &(dyn std::error::Error + 'static) = err;
+    for cause in std::iter::successors(Some(root), |e| e.source()) {
+        if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+            match io.kind() {
+                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted => {
+                    return "reset before response".into();
+                }
+                std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::BrokenPipe => {
+                    return "closed before response".into();
+                }
+                _ => {}
+            }
+        }
+        if let Some(reason) = cause
+            .downcast_ref::<h2::Error>()
+            .and_then(h2::Error::reason)
+        {
+            return h2_reason_code(reason);
+        }
+        root = cause;
+    }
+    format!("transport: {root}").into()
+}
+
+fn h2_reason_code(reason: h2::Reason) -> Cow<'static, str> {
+    match reason {
+        // A graceful GOAWAY before our stream was answered.
+        h2::Reason::NO_ERROR => "closed before response".into(),
+        h2::Reason::PROTOCOL_ERROR => "h2 protocol error".into(),
+        h2::Reason::INTERNAL_ERROR => "h2 internal error".into(),
+        h2::Reason::REFUSED_STREAM => "h2 stream refused".into(),
+        h2::Reason::CANCEL => "h2 stream cancelled".into(),
+        h2::Reason::ENHANCE_YOUR_CALM => "h2 enhance your calm".into(),
+        other => format!("h2 {other:?}").into(),
+    }
 }
 
 // Narrow on purpose: a bare "timeout" would match `connect_timeout=…` in a

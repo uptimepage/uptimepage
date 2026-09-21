@@ -1,7 +1,16 @@
 mod common;
 
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+
 use axum::Router;
 use axum::routing::get;
+use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_rustls::TlsAcceptor;
+use tokio_rustls::server::TlsStream;
 use uptimepage::domain::{CheckStatus, ExpectedStatus};
 use uptimepage::worker::execute_http_check;
 use url::Url;
@@ -78,4 +87,77 @@ async fn verify_tls_true_names_a_truncated_chain() {
         err, "certificate chain incomplete",
         "expected truncated-chain reason, got {err}"
     );
+}
+
+/// Completes the TLS handshake, waits for the request bytes, then hands the
+/// stream to `then`: what an edge does when it drops a request it dislikes.
+async fn spawn_tls_server_that<F, Fut>(then: F) -> SocketAddr
+where
+    F: FnOnce(TlsStream<TcpStream>) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send,
+{
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).expect("gen cert");
+    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()));
+    let config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert.cert.der().clone()], key)
+        .expect("server config");
+    let acceptor = TlsAcceptor::from(Arc::new(config));
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+    tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.expect("accept");
+        let mut tls = acceptor.accept(tcp).await.expect("tls accept");
+        let mut buf = [0u8; 1024];
+        let n = tls.read(&mut buf).await.expect("request head");
+        assert!(n > 0, "client closed before sending the request");
+        then(tls).await;
+    });
+    addr
+}
+
+async fn probe_error(addr: SocketAddr) -> uptimepage::domain::CheckResult {
+    let clients = test_client();
+    let url = Url::parse(&format!("https://localhost:{}/", addr.port())).unwrap();
+    let mut check = default_http_check(url, ExpectedStatus::Exact(200));
+    check.verify_tls = false;
+    let result = execute_http_check(Uuid::now_v7(), Uuid::nil(), &check, &clients).await;
+    assert_eq!(result.status, CheckStatus::Error);
+    assert!(
+        result.tls_ms.is_some(),
+        "handshake completed, so it is timed"
+    );
+    assert!(result.ttfb_ms.is_none(), "no first byte ever arrived");
+    result
+}
+
+#[tokio::test]
+async fn reset_after_the_request_names_the_reset() {
+    let addr = spawn_tls_server_that(|tls| async move {
+        // Zero linger turns the close into an RST instead of a FIN.
+        let (tcp, _) = tls.into_inner();
+        socket2::SockRef::from(&tcp)
+            .set_linger(Some(Duration::ZERO))
+            .expect("linger");
+        drop(tcp);
+    })
+    .await;
+
+    let result = probe_error(addr).await;
+
+    assert_eq!(result.error.as_deref(), Some("reset before response"));
+}
+
+#[tokio::test]
+async fn close_before_headers_names_the_close() {
+    let addr = spawn_tls_server_that(|mut tls| async move {
+        tls.shutdown().await.expect("close_notify");
+    })
+    .await;
+
+    let result = probe_error(addr).await;
+
+    assert_eq!(result.error.as_deref(), Some("closed before response"));
 }

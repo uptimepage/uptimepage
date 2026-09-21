@@ -40,12 +40,34 @@ pub fn humanize_check_error(raw: &str) -> String {
         "certificate self-signed" => "self-signed certificate".into(),
         "connect" => "connection failed".into(),
         "transport" => "transport error".into(),
+        "reset before response" => "server reset the connection before responding".into(),
+        "closed before response" => "server closed the connection before responding".into(),
+        "invalid response" => "server sent an invalid HTTP response".into(),
+        "h2 protocol error" => "HTTP/2 protocol error".into(),
+        "h2 internal error" => "server reported an HTTP/2 internal error".into(),
+        "h2 stream refused" => "server refused the HTTP/2 stream".into(),
+        "h2 stream cancelled" => "server cancelled the HTTP/2 stream".into(),
+        "h2 enhance your calm" => {
+            "server throttled the connection (HTTP/2 ENHANCE_YOUR_CALM)".into()
+        }
         "dns: domain not found" => "domain not found (DNS)".into(),
         "dns: no address records" => "no DNS address records".into(),
         "dns: lookup timed out" => "DNS lookup timed out".into(),
         "dns: lookup failed" => "DNS lookup failed".into(),
-        other => other.into(),
+        other => humanize_prefixed(other),
     }
+}
+
+/// The request-phase fallbacks carry the peer's own text after a stable
+/// prefix; only the prefix is reworded.
+fn humanize_prefixed(raw: &str) -> String {
+    if let Some(rest) = raw.strip_prefix("transport: ") {
+        return format!("transport error: {rest}");
+    }
+    if let Some(rest) = raw.strip_prefix("h2 ") {
+        return format!("HTTP/2 error: {rest}");
+    }
+    raw.into()
 }
 
 /// Who failed. Only `Internal` is alertable — the other three persist
@@ -316,7 +338,17 @@ pub fn classify_check_error(raw: &str) -> ErrorClass {
         | "malformed tls response"
         | "tls handshake reset"
         | "tls handshake closed early" => return ErrorClass::Tls,
-        "transport" => return ErrorClass::Transport,
+        // Mirrors `classify_hyper_error` in worker::http_check: the request
+        // phase, after connect and TLS both succeeded.
+        "transport"
+        | "reset before response"
+        | "closed before response"
+        | "invalid response"
+        | "h2 protocol error"
+        | "h2 internal error"
+        | "h2 stream refused"
+        | "h2 stream cancelled"
+        | "h2 enhance your calm" => return ErrorClass::Transport,
         "body timeout" => return ErrorClass::BodyTimeout,
         "body match failed" => return ErrorClass::BodyMatchFailed,
         "dns: domain not found" | "dns: no address records" => {
@@ -344,6 +376,11 @@ pub fn classify_check_error(raw: &str) -> ErrorClass {
     }
     if raw.starts_with("dns: ") {
         return ErrorClass::DnsFailed;
+    }
+    // `h2 <REASON>` for the rarer GOAWAY/RST_STREAM codes and `transport: <root
+    // cause>` for anything hyper raised without a mapped shape.
+    if raw.starts_with("h2 ") || raw.starts_with("transport: ") {
+        return ErrorClass::Transport;
     }
     if raw.starts_with("parsing leaf certificate: ") {
         return ErrorClass::CertChain;
@@ -421,6 +458,30 @@ mod tests {
         assert_eq!(
             humanize_check_error("connect timeout"),
             "couldn't connect (timed out)"
+        );
+    }
+
+    #[test]
+    fn expands_request_phase_codes() {
+        assert_eq!(
+            humanize_check_error("reset before response"),
+            "server reset the connection before responding"
+        );
+        assert_eq!(
+            humanize_check_error("closed before response"),
+            "server closed the connection before responding"
+        );
+        assert_eq!(
+            humanize_check_error("h2 stream refused"),
+            "server refused the HTTP/2 stream"
+        );
+        assert_eq!(
+            humanize_check_error("h2 HTTP_1_1_REQUIRED"),
+            "HTTP/2 error: HTTP_1_1_REQUIRED"
+        );
+        assert_eq!(
+            humanize_check_error("transport: operation was canceled"),
+            "transport error: operation was canceled"
         );
     }
 
@@ -535,6 +596,16 @@ mod tests {
         ("tls handshake reset", ErrorClass::Tls),
         ("tls handshake closed early", ErrorClass::Tls),
         ("transport", ErrorClass::Transport),
+        ("reset before response", ErrorClass::Transport),
+        ("closed before response", ErrorClass::Transport),
+        ("invalid response", ErrorClass::Transport),
+        ("h2 protocol error", ErrorClass::Transport),
+        ("h2 internal error", ErrorClass::Transport),
+        ("h2 stream refused", ErrorClass::Transport),
+        ("h2 stream cancelled", ErrorClass::Transport),
+        ("h2 enhance your calm", ErrorClass::Transport),
+        ("h2 HTTP_1_1_REQUIRED", ErrorClass::Transport),
+        ("transport: operation was canceled", ErrorClass::Transport),
         ("body timeout", ErrorClass::BodyTimeout),
         ("body match failed", ErrorClass::BodyMatchFailed),
         ("body over the 1 MiB read cap", ErrorClass::BodyOverCap),

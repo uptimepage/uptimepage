@@ -20,6 +20,8 @@ chromiumoxide = "0.9"
 
 # HTTP client (custom hyper-util stack for connect/tls timing + pool gauges)
 hyper = { version = "1.9", features = ["client", "http1", "http2"] }
+# Direct so the probe can downcast hyper's source to the GOAWAY/RST_STREAM reason.
+h2 = "0.4"
 hyper-util = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"
 http-body = "1"

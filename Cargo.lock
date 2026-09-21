@@ -6115,6 +6115,7 @@ dependencies = [
  "flate2",
  "futures",
  "governor",
+ "h2",
  "hex",
  "hickory-resolver",
  "hmac 0.13.0",
