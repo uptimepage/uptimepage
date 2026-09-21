@@ -102,10 +102,11 @@ pub struct TestResponse {
     pub matched_expectations: bool,
     /// Validation warnings that did not block execution.
     pub warnings: Vec<String>,
-    /// Response headers preview, HTTP only. Sensitive headers redacted.
+    /// Response headers preview, HTTP only. Sensitive headers redacted;
+    /// a value over 512 bytes is cut and ends in `…`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub response_headers_preview: Vec<HeaderPreview>,
-    /// First 1 KiB of decoded body, HTTP only. UTF-8 lossy.
+    /// First 1 KiB of decoded body, HTTP only. UTF-8 lossy; ends in `…` when cut.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_body_snippet: Option<String>,
     /// Page state when a step failed, flow only. Absent on a pass, and on an

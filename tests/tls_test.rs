@@ -5,19 +5,22 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
+use axum::http::Version;
 use axum::routing::get;
 use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::server::TlsStream;
-use uptimepage::domain::{CheckStatus, ExpectedStatus};
+use uptimepage::domain::{CheckResult, CheckStatus, ExpectedStatus};
+use uptimepage::http_client::H2_MAX_HEADER_LIST_SIZE;
 use uptimepage::worker::execute_http_check;
 use url::Url;
 use uuid::Uuid;
 
 use crate::common::{
-    default_http_check, spawn_self_signed_tls_router, spawn_truncated_chain_tls_router, test_client,
+    PRELOAD_HINT, default_http_check, link_header, router_with, spawn_self_signed_tls_router,
+    spawn_truncated_chain_tls_router, test_client,
 };
 
 fn router() -> Router {
@@ -27,21 +30,10 @@ fn router() -> Router {
 #[tokio::test]
 async fn verify_tls_false_accepts_self_signed() {
     let addr = spawn_self_signed_tls_router(router()).await;
-    let clients = test_client();
-    let url = Url::parse(&format!("https://localhost:{}/", addr.port())).unwrap();
-    let mut check = default_http_check(url, ExpectedStatus::Exact(200));
-    check.verify_tls = false;
 
-    let result = execute_http_check(Uuid::now_v7(), uuid::Uuid::nil(), &check, &clients).await;
+    let result = probe(addr, false).await;
 
-    assert_eq!(
-        result.status,
-        CheckStatus::Up,
-        "expected Up, got {:?} (error: {:?})",
-        result.status,
-        result.error
-    );
-    assert_eq!(result.response_code, Some(200));
+    assert_up(&result);
     // Per-phase timings populated for the breakdown chart: an HTTPS check
     // records a TLS-handshake phase (the bug in #31 left these always None).
     assert!(result.connect_ms.is_some(), "connect phase must be timed");
@@ -52,12 +44,8 @@ async fn verify_tls_false_accepts_self_signed() {
 #[tokio::test]
 async fn verify_tls_true_rejects_self_signed() {
     let addr = spawn_self_signed_tls_router(router()).await;
-    let clients = test_client();
-    let url = Url::parse(&format!("https://localhost:{}/", addr.port())).unwrap();
-    let mut check = default_http_check(url, ExpectedStatus::Exact(200));
-    check.verify_tls = true;
 
-    let result = execute_http_check(Uuid::now_v7(), uuid::Uuid::nil(), &check, &clients).await;
+    let result = probe(addr, true).await;
 
     assert_eq!(result.status, CheckStatus::Error);
     let err = result.error.expect("error message");
@@ -118,12 +106,16 @@ where
     addr
 }
 
-async fn probe_error(addr: SocketAddr) -> uptimepage::domain::CheckResult {
+async fn probe(addr: SocketAddr, verify_tls: bool) -> CheckResult {
     let clients = test_client();
     let url = Url::parse(&format!("https://localhost:{}/", addr.port())).unwrap();
     let mut check = default_http_check(url, ExpectedStatus::Exact(200));
-    check.verify_tls = false;
-    let result = execute_http_check(Uuid::now_v7(), Uuid::nil(), &check, &clients).await;
+    check.verify_tls = verify_tls;
+    execute_http_check(Uuid::now_v7(), Uuid::nil(), &check, &clients).await
+}
+
+async fn probe_error(addr: SocketAddr) -> CheckResult {
+    let result = probe(addr, false).await;
     assert_eq!(result.status, CheckStatus::Error);
     assert!(
         result.tls_ms.is_some(),
@@ -160,4 +152,38 @@ async fn close_before_headers_names_the_close() {
     let result = probe_error(addr).await;
 
     assert_eq!(result.error.as_deref(), Some("closed before response"));
+}
+
+fn assert_up(result: &CheckResult) {
+    assert_eq!(
+        result.status,
+        CheckStatus::Up,
+        "expected Up, got {:?} (error: {:?})",
+        result.status,
+        result.error
+    );
+    assert_eq!(result.response_code, Some(200));
+}
+
+#[tokio::test]
+async fn h2_response_with_large_headers_is_up() {
+    let headers = link_header(40 << 10);
+    let addr = spawn_self_signed_tls_router(router_with(headers, Version::HTTP_2)).await;
+
+    assert_up(&probe(addr, false).await);
+}
+
+#[tokio::test]
+async fn h2_response_over_the_header_limit_names_the_probe() {
+    // Just past the cap: further out h2 caps CONTINUATION frames instead.
+    let headers = link_header(H2_MAX_HEADER_LIST_SIZE as usize + PRELOAD_HINT.len());
+    let addr = spawn_self_signed_tls_router(router_with(headers, Version::HTTP_2)).await;
+
+    let result = probe(addr, false).await;
+
+    assert_eq!(result.status, CheckStatus::Error);
+    assert_eq!(
+        result.error.as_deref(),
+        Some("h2 rejected locally: PROTOCOL_ERROR")
+    );
 }

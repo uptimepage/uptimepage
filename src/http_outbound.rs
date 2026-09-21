@@ -13,6 +13,7 @@ use serde::de::DeserializeOwned;
 use url::Url;
 
 use crate::error::{AppError, Result};
+use crate::http_client::{H1_MAX_HEADERS, H2_MAX_HEADER_LIST_SIZE};
 use crate::security::{SsrfGuard, SsrfHttpConnector};
 
 /// Shared HTTPS client used by outbound non-check traffic (notification
@@ -43,15 +44,25 @@ pub fn error_chain(e: impl std::error::Error + Send + Sync + 'static) -> String 
 }
 
 pub fn build_outbound_client(guard: SsrfGuard) -> OutboundHttpClient {
-    Client::builder(TokioExecutor::new()).build(https_connector(guard))
+    client_builder().build(https_connector(guard))
 }
 
 /// One connection per request: hyper cannot replay a POST whose body it has
 /// already written to a pooled connection the far side dropped.
 pub fn build_single_use_outbound_client(guard: SsrfGuard) -> OutboundHttpClient {
-    Client::builder(TokioExecutor::new())
+    client_builder()
         .pool_max_idle_per_host(0)
         .build(https_connector(guard))
+}
+
+/// Same header limits as the probe: the free header and security checkers
+/// fetch through here to show what the monitor sees.
+fn client_builder() -> hyper_util::client::legacy::Builder {
+    let mut builder = Client::builder(TokioExecutor::new());
+    builder
+        .http1_max_headers(H1_MAX_HEADERS)
+        .http2_max_header_list_size(H2_MAX_HEADER_LIST_SIZE);
+    builder
 }
 
 fn https_connector(guard: SsrfGuard) -> HttpsConnector<SsrfHttpConnector> {

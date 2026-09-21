@@ -139,7 +139,7 @@ pub(crate) async fn run_ad_hoc(
     );
     match tokio::time::timeout(crate::ad_hoc_dispatch::RESULT_WAIT, rx).await {
         Ok(Ok(mut delivered)) => {
-            scrub_secrets(&mut delivered, &secrets);
+            sanitize_delivered(&mut delivered, &secrets);
             store_check_now_flow_run(state, org, target_id, region, kind, &delivered).await;
             Ok(delivered)
         }
@@ -285,11 +285,31 @@ pub(crate) async fn resolve_spec_variables(
     Ok((resolved, crate::security::redaction::secret_values(&vars)))
 }
 
+/// Preview cap per header name and value; a preload `link` runs to hundreds
+/// of KiB.
+const PROBE_HEADER_PREVIEW_BYTES: usize = 512;
+
+/// Scrub, then cut: a cut that ran first could land inside a secret and leave
+/// its prefix behind.
+pub(crate) fn sanitize_delivered(delivered: &mut DeliveredResult, secrets: &[String]) {
+    scrub_secrets(delivered, secrets);
+    for h in &mut delivered.response_headers_preview {
+        for field in [&mut h.name, &mut h.value] {
+            if field.len() > PROBE_HEADER_PREVIEW_BYTES {
+                *field = crate::text::truncate_bytes(field, PROBE_HEADER_PREVIEW_BYTES);
+            }
+        }
+    }
+}
+
 /// Replace any resolved secret echoed back in an interactive probe's captured
 /// response (body snippet + header values) with `***`, so a value a secret
 /// variable supplied is never shown back through the test surface.
-pub(crate) fn scrub_secrets(delivered: &mut DeliveredResult, secrets: &[String]) {
+fn scrub_secrets(delivered: &mut DeliveredResult, secrets: &[String]) {
     use crate::security::redaction::{redact_secrets, scrub_flow_evidence};
+    if let Some(ev) = delivered.flow_evidence.as_mut() {
+        scrub_flow_evidence(ev, secrets);
+    }
     if secrets.is_empty() {
         return;
     }
@@ -303,8 +323,5 @@ pub(crate) fn scrub_secrets(delivered: &mut DeliveredResult, secrets: &[String])
     // (e.g. a page that reflects a submitted value); scrub it like the rest.
     if let Some(err) = delivered.result.error.as_mut() {
         redact_secrets(err, secrets);
-    }
-    if let Some(ev) = delivered.flow_evidence.as_mut() {
-        scrub_flow_evidence(ev, secrets);
     }
 }

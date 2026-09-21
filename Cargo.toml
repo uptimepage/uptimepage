@@ -19,7 +19,8 @@ futures = "0.3"
 chromiumoxide = "0.9"
 
 # HTTP client (custom hyper-util stack for connect/tls timing + pool gauges)
-hyper = { version = "1.9", features = ["client", "http1", "http2"] }
+# `server` gates `Error::is_parse_too_large`, which the probe reads.
+hyper = { version = "1.9", features = ["client", "http1", "http2", "server"] }
 # Direct so the probe can downcast hyper's source to the GOAWAY/RST_STREAM reason.
 h2 = "0.4"
 hyper-util = { version = "0.1", features = ["full"] }

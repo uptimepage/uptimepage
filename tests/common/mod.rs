@@ -7,7 +7,9 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::Request;
+use axum::http::header::LINK;
+use axum::http::{HeaderMap, HeaderValue, Request, StatusCode, Version};
+use axum::routing::get;
 use chrono::Utc;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -846,6 +848,42 @@ pub fn metric_value(rendered: &str, name: &str) -> Option<f64> {
         .lines()
         .find_map(|l| l.strip_prefix(&prefix))
         .and_then(|rest| rest.trim().parse().ok())
+}
+
+pub const PRELOAD_HINT: &str = "<https://cdn.example/a.js>; rel=preload; as=script";
+
+pub fn link_header(bytes: usize) -> HeaderMap {
+    let link = vec![PRELOAD_HINT; bytes / PRELOAD_HINT.len() + 1].join(", ");
+    let mut headers = HeaderMap::new();
+    headers.insert(LINK, HeaderValue::from_str(&link).unwrap());
+    headers
+}
+
+pub fn link_lines(lines: usize) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    for _ in 0..lines {
+        headers.append(LINK, HeaderValue::from_static(PRELOAD_HINT));
+    }
+    headers
+}
+
+/// `only` gates the 200 so a test fails, not passes, when the protocol under
+/// test is no longer the one negotiated.
+pub fn router_with(headers: HeaderMap, only: Version) -> Router {
+    Router::new().route(
+        "/",
+        get(move |version: Version| {
+            let headers = headers.clone();
+            async move {
+                let status = if version == only {
+                    StatusCode::OK
+                } else {
+                    StatusCode::HTTP_VERSION_NOT_SUPPORTED
+                };
+                (status, headers, "ok")
+            }
+        }),
+    )
 }
 
 pub async fn spawn_router(router: Router) -> SocketAddr {

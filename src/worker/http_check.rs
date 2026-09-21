@@ -800,14 +800,20 @@ fn snapshot_headers(headers: &hyper::HeaderMap) -> Vec<crate::domain::agent_wire
     out
 }
 
-/// First [`PROBE_BODY_SNIPPET_BYTES`] of the decoded body, lossy UTF-8. The
+/// First [`PROBE_BODY_SNIPPET_BYTES`] of the decoded body, lossy UTF-8, `…`
+/// when cut so the hub's scrub can see a secret may straddle the end. The
 /// cut snaps back to a codepoint boundary so a multi-byte char is not chopped.
 fn snapshot_body(decoded: &[u8]) -> String {
-    let mut end = decoded.len().min(PROBE_BODY_SNIPPET_BYTES);
-    while end > 0 && (decoded[end - 1] & 0b1100_0000) == 0b1000_0000 {
+    if decoded.len() <= PROBE_BODY_SNIPPET_BYTES {
+        return String::from_utf8_lossy(decoded).into_owned();
+    }
+    let mut end = PROBE_BODY_SNIPPET_BYTES;
+    while end > 0 && (decoded[end] & 0b1100_0000) == 0b1000_0000 {
         end -= 1;
     }
-    String::from_utf8_lossy(&decoded[..end]).into_owned()
+    let mut out = String::from_utf8_lossy(&decoded[..end]).into_owned();
+    out.push('…');
+    out
 }
 
 fn build_request(
@@ -1066,6 +1072,9 @@ fn classify_hyper_error(err: &hyper::Error) -> Cow<'static, str> {
     if err.is_incomplete_message() {
         return "closed before response".into();
     }
+    if err.is_parse_too_large() {
+        return "response headers too large".into();
+    }
     if err.is_parse() {
         return "invalid response".into();
     }
@@ -1082,11 +1091,16 @@ fn classify_hyper_error(err: &hyper::Error) -> Cow<'static, str> {
                 _ => {}
             }
         }
-        if let Some(reason) = cause
-            .downcast_ref::<h2::Error>()
-            .and_then(h2::Error::reason)
+        if let Some(h2) = cause.downcast_ref::<h2::Error>()
+            && let Some(reason) = h2.reason()
         {
-            return h2_reason_code(reason);
+            // h2 signs what it detects itself: a header block over our limit,
+            // or malformed frames.
+            return if h2.is_library() {
+                format!("h2 rejected locally: {reason:?}").into()
+            } else {
+                h2_reason_code(reason)
+            };
         }
         root = cause;
     }
@@ -1144,6 +1158,20 @@ mod tests {
             basic_auth: None,
             bearer_token: None,
         }
+    }
+
+    #[test]
+    fn body_snippet_marks_its_cut() {
+        assert_eq!(snapshot_body(b"ok"), "ok");
+        let long = "é".repeat(PROBE_BODY_SNIPPET_BYTES);
+        let cut = snapshot_body(long.as_bytes());
+        assert!(cut.ends_with('…'));
+        assert!(
+            cut.len() <= PROBE_BODY_SNIPPET_BYTES + '…'.len_utf8(),
+            "{}",
+            cut.len()
+        );
+        assert!(!cut.contains('\u{fffd}'));
     }
 
     #[test]

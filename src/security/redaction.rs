@@ -4,12 +4,15 @@
 use crate::domain::agent_wire::FlowEvidence;
 use crate::domain::{CheckSpec, FlowStep, NotificationChannel, REDACTED, Target, VarMap};
 
+/// Scrubbing a one or two character string would mangle unrelated text for
+/// no real protection.
+const MIN_SECRET_CHARS: usize = 4;
+
 /// Secret plaintexts in an org's variable map, for scrubbing whatever a probe
-/// captured. Short values are skipped: scrubbing a one or two character string
-/// would mangle unrelated text for no real protection.
+/// captured.
 pub fn secret_values(vars: &VarMap) -> Vec<String> {
     vars.values()
-        .filter(|v| v.is_secret && v.value.len() >= 4)
+        .filter(|v| v.is_secret && v.value.chars().count() >= MIN_SECRET_CHARS)
         .map(|v| v.value.clone())
         .collect()
 }
@@ -20,6 +23,30 @@ pub fn redact_secrets(s: &mut String, secrets: &[String]) {
             *s = s.replace(secret.as_str(), REDACTED);
         }
     }
+    if let Some(body) = s.strip_suffix('…')
+        && let Some(keep) = cut_secret_start(body, secrets)
+    {
+        s.truncate(keep);
+        s.push_str(REDACTED);
+        s.push('…');
+    }
+}
+
+/// Probes end what they cut with `…`, and a secret straddling that cut
+/// survives as the text's tail. Where the longest such prefix starts; the
+/// [`secret_values`] minimum keeps a chance overlap from mangling text.
+fn cut_secret_start(body: &str, secrets: &[String]) -> Option<usize> {
+    secrets
+        .iter()
+        .filter_map(|secret| {
+            (1..secret.len())
+                .rev()
+                .filter(|&end| secret.is_char_boundary(end))
+                .find(|&end| body.ends_with(&secret[..end]))
+                .filter(|&end| secret[..end].chars().count() >= MIN_SECRET_CHARS)
+        })
+        .max()
+        .map(|len| body.len() - len)
 }
 
 /// Words that make a key a credential when they stand alone as one of its
@@ -286,6 +313,56 @@ pub(crate) fn strip_url_credentials(url: &mut url::Url) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn redacted(text: &str, secrets: &[&str]) -> String {
+        let mut s = text.to_owned();
+        let secrets: Vec<String> = secrets.iter().map(|s| s.to_string()).collect();
+        redact_secrets(&mut s, &secrets);
+        s
+    }
+
+    #[test]
+    fn a_secret_cut_by_the_probe_leaves_no_prefix() {
+        let secret = "sk-live-abcdefgh";
+        assert_eq!(redacted("token=sk-live-abcd…", &[secret]), "token=***…");
+        assert_eq!(
+            redacted("sk-live-abcdefgh and sk-live-abcd…", &[secret]),
+            "*** and ***…"
+        );
+    }
+
+    #[test]
+    fn an_uncut_text_ending_in_a_prefix_is_ordinary_content() {
+        assert_eq!(
+            redacted("see https", &["https://hooks.example/x"]),
+            "see https"
+        );
+        assert_eq!(redacted("plain text", &["sk-live-abcdefgh"]), "plain text");
+    }
+
+    #[test]
+    fn a_short_overlap_is_not_a_cut_secret() {
+        assert_eq!(
+            redacted("status ok s…", &["sk-live-abcdefgh"]),
+            "status ok s…"
+        );
+        assert_eq!(
+            redacted("Головна гру па…", &["пароль123"]),
+            "Головна гру па…"
+        );
+        assert_eq!(redacted("вхід паро…", &["пароль123"]), "вхід ***…");
+    }
+
+    #[test]
+    fn the_longest_cut_secret_wins() {
+        let out = redacted(
+            "x=gh-abcdefgh-11…",
+            &["abcdefgh-1111", "gh-abcdefgh-1111-2222"],
+        );
+        assert_eq!(out, "x=***…");
+    }
+
     #[test]
     fn scrub_url_drops_an_oauth_code_and_keeps_the_location() {
         let got = scrub_url("https://myapps.example.com/oauth/?code=c1786972104789&tenant=acme");

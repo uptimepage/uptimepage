@@ -5,18 +5,22 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::http::{StatusCode, header};
+use axum::http::{StatusCode, Version, header};
 use axum::routing::get;
 use uptimepage::domain::{
     CheckDiagnosticKind, CheckStatus, DiagnosticConfidence, DiagnosticEvidence,
     DiagnosticRemediation, EdgeProvider, ExpectedStatus, HttpMethod,
 };
+use uptimepage::http_client::H1_MAX_HEADERS;
 use uptimepage::storage::{InMemorySink, ResultSink};
 use uptimepage::worker::execute_http_check;
 use url::Url;
 use uuid::Uuid;
 
-use crate::common::{default_http_check, spawn_router, test_client, test_client_with_failing_dns};
+use crate::common::{
+    default_http_check, link_lines, router_with, spawn_router, test_client,
+    test_client_with_failing_dns,
+};
 
 #[tokio::test]
 async fn http_check_returns_up_on_200() {
@@ -161,6 +165,38 @@ async fn a_body_assertion_over_the_read_cap_fails_and_says_why() {
         result.error.as_deref(),
         Some("body over the 1 MiB read cap")
     );
+}
+
+#[tokio::test]
+async fn h1_response_with_many_header_lines_is_up() {
+    let addr = spawn_router(router_with(link_lines(150), Version::HTTP_11)).await;
+    let check = default_http_check(
+        Url::parse(&format!("http://{addr}/")).unwrap(),
+        ExpectedStatus::Exact(200),
+    );
+
+    let result = execute_http_check(Uuid::now_v7(), Uuid::nil(), &check, &test_client()).await;
+
+    assert_eq!(result.status, CheckStatus::Up, "{:?}", result.error);
+    assert_eq!(result.response_code, Some(200));
+}
+
+#[tokio::test]
+async fn h1_response_over_the_header_limit_names_the_probe() {
+    let addr = spawn_router(router_with(
+        link_lines(H1_MAX_HEADERS + 1),
+        Version::HTTP_11,
+    ))
+    .await;
+    let check = default_http_check(
+        Url::parse(&format!("http://{addr}/")).unwrap(),
+        ExpectedStatus::Exact(200),
+    );
+
+    let result = execute_http_check(Uuid::now_v7(), Uuid::nil(), &check, &test_client()).await;
+
+    assert_eq!(result.status, CheckStatus::Error);
+    assert_eq!(result.error.as_deref(), Some("response headers too large"));
 }
 
 #[tokio::test]

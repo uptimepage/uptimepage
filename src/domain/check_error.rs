@@ -43,6 +43,7 @@ pub fn humanize_check_error(raw: &str) -> String {
         "reset before response" => "server reset the connection before responding".into(),
         "closed before response" => "server closed the connection before responding".into(),
         "invalid response" => "server sent an invalid HTTP response".into(),
+        "response headers too large" => "response headers exceed the probe's limit".into(),
         "h2 protocol error" => "HTTP/2 protocol error".into(),
         "h2 internal error" => "server reported an HTTP/2 internal error".into(),
         "h2 stream refused" => "server refused the HTTP/2 stream".into(),
@@ -63,6 +64,11 @@ pub fn humanize_check_error(raw: &str) -> String {
 fn humanize_prefixed(raw: &str) -> String {
     if let Some(rest) = raw.strip_prefix("transport: ") {
         return format!("transport error: {rest}");
+    }
+    if let Some(rest) = raw.strip_prefix("h2 rejected locally: ") {
+        return format!(
+            "HTTP/2 exchange rejected by the probe ({rest}): malformed frames, or over its limits"
+        );
     }
     if let Some(rest) = raw.strip_prefix("h2 ") {
         return format!("HTTP/2 error: {rest}");
@@ -344,6 +350,7 @@ pub fn classify_check_error(raw: &str) -> ErrorClass {
         | "reset before response"
         | "closed before response"
         | "invalid response"
+        | "response headers too large"
         | "h2 protocol error"
         | "h2 internal error"
         | "h2 stream refused"
@@ -480,6 +487,14 @@ mod tests {
             "HTTP/2 error: HTTP_1_1_REQUIRED"
         );
         assert_eq!(
+            humanize_check_error("h2 rejected locally: PROTOCOL_ERROR"),
+            "HTTP/2 exchange rejected by the probe (PROTOCOL_ERROR): malformed frames, or over its limits"
+        );
+        assert_eq!(
+            humanize_check_error("response headers too large"),
+            "response headers exceed the probe's limit"
+        );
+        assert_eq!(
             humanize_check_error("transport: operation was canceled"),
             "transport error: operation was canceled"
         );
@@ -605,6 +620,8 @@ mod tests {
         ("h2 stream cancelled", ErrorClass::Transport),
         ("h2 enhance your calm", ErrorClass::Transport),
         ("h2 HTTP_1_1_REQUIRED", ErrorClass::Transport),
+        ("h2 rejected locally: PROTOCOL_ERROR", ErrorClass::Transport),
+        ("response headers too large", ErrorClass::Transport),
         ("transport: operation was canceled", ErrorClass::Transport),
         ("body timeout", ErrorClass::BodyTimeout),
         ("body match failed", ErrorClass::BodyMatchFailed),

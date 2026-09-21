@@ -17,6 +17,7 @@ use tokio_rustls::client::TlsStream;
 
 use crate::http_client::client::ChainFault;
 use crate::http_client::dns::HickoryDnsResolver;
+use crate::http_client::{H1_MAX_HEADERS, H2_MAX_HEADER_LIST_SIZE};
 use crate::security::SsrfGuard;
 
 pub(crate) type ReqBody = Full<Bytes>;
@@ -302,14 +303,19 @@ pub(crate) async fn handshake(
 ) -> hyper::Result<(Sender, ConnGuard)> {
     let io = TokioIo::new(stream);
     if alpn_h2 {
-        let (sender, conn) =
-            hyper::client::conn::http2::handshake(TokioExecutor::new(), io).await?;
+        let (sender, conn) = hyper::client::conn::http2::Builder::new(TokioExecutor::new())
+            .max_header_list_size(H2_MAX_HEADER_LIST_SIZE)
+            .handshake(io)
+            .await?;
         let guard = ConnGuard(tokio::spawn(async move {
             let _ = conn.await;
         }));
         Ok((Sender::H2(sender), guard))
     } else {
-        let (sender, conn) = hyper::client::conn::http1::handshake(io).await?;
+        let (sender, conn) = hyper::client::conn::http1::Builder::new()
+            .max_headers(H1_MAX_HEADERS)
+            .handshake(io)
+            .await?;
         let guard = ConnGuard(tokio::spawn(async move {
             let _ = conn.await;
         }));
