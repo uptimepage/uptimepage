@@ -17,7 +17,7 @@ use uptimepage::domain::{
 };
 use uptimepage::storage::{
     Actor, InMemoryIncidentOpsStore, IncidentOpsStore, LifecycleOutcome, PgIncidentOpsStore,
-    create_org_with_owner,
+    QUEUED_TAKEOVER_SECS, create_org_with_owner,
 };
 use uuid::Uuid;
 
@@ -579,6 +579,61 @@ async fn notification_log_record_retry_and_scope_pg() {
             .all(|p| p.id != notif_id),
         "a sent row must not be retried"
     );
+
+    // A queued row is a first attempt still running: the scan leaves it alone
+    // until the takeover window passes.
+    let queued_id = store
+        .record_notification(NewIncidentNotification {
+            org,
+            incident_id: id,
+            escalation_level: Some(0),
+            target_user_id: None,
+            channel_id: None,
+            transport: "email".into(),
+            reason: NotificationReason::Opened,
+            status: NotificationStatus::Queued,
+            attempt: 1,
+            error: None,
+            sent_at: None,
+        })
+        .await
+        .expect("record queued");
+    let now = chrono::Utc::now();
+    assert!(
+        store
+            .pending_notifications(now, 50, 5)
+            .await
+            .unwrap()
+            .iter()
+            .all(|p| p.id != queued_id)
+    );
+    assert!(
+        store
+            .pending_notifications(
+                now + chrono::Duration::seconds(QUEUED_TAKEOVER_SECS + 1),
+                50,
+                5
+            )
+            .await
+            .unwrap()
+            .iter()
+            .any(|p| p.id == queued_id)
+    );
+    store
+        .mark_notification(
+            org,
+            queued_id,
+            NotificationOutcome {
+                status: NotificationStatus::Sent,
+                attempt: 1,
+                error: None,
+                sent_at: Some(chrono::Utc::now()),
+                next_attempt_at: None,
+                provider_receipt: None,
+            },
+        )
+        .await
+        .unwrap();
 
     // append_event lands on the timeline; cross-org reads see nothing.
     store
@@ -1356,6 +1411,46 @@ async fn changing_downtime_accounting_lands_on_the_timeline_pg() {
         kinds.contains(&IncidentEventKind::DowntimeChanged),
         "{kinds:?}"
     );
+}
+
+#[tokio::test]
+async fn retry_scan_skips_a_first_attempt_still_in_flight_in_memory() {
+    let store = InMemoryIncidentOpsStore::new();
+    let org = OrgId(Uuid::from_u128(1));
+    let queued_id = store
+        .record_notification(NewIncidentNotification {
+            org,
+            incident_id: Uuid::from_u128(2),
+            escalation_level: Some(0),
+            target_user_id: None,
+            channel_id: Some(Uuid::from_u128(3)),
+            transport: "email".into(),
+            reason: NotificationReason::Opened,
+            status: NotificationStatus::Queued,
+            attempt: 1,
+            error: None,
+            sent_at: None,
+        })
+        .await
+        .unwrap();
+    let now = chrono::Utc::now();
+    assert!(
+        store
+            .pending_notifications(now, 50, 5)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let pending = store
+        .pending_notifications(
+            now + chrono::Duration::seconds(QUEUED_TAKEOVER_SECS + 1),
+            50,
+            5,
+        )
+        .await
+        .unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, queued_id);
 }
 
 // Emergency-receipt lifecycle on the in-memory store (no DB): a sent page with

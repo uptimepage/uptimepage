@@ -67,12 +67,13 @@ use uuid::Uuid;
 pub fn build_test_outbound_and_email() -> (OutboundHttpClient, Arc<dyn EmailSender>) {
     // Tests need to hit localhost listeners (mock email server, etc.), so the
     // SSRF guard is relaxed — production callers pass the strict config.
-    let http = build_outbound_client(uptimepage::security::SsrfGuard::relaxed_for_tests());
+    let guard = uptimepage::security::SsrfGuard::relaxed_for_tests();
+    let http = build_outbound_client(guard);
     let cfg = TransactionalEmailConfig {
         provider: EmailProvider::Memory,
         ..Default::default()
     };
-    let sender = build_email_sender(&cfg, &http);
+    let sender = build_email_sender(&cfg, guard);
     (http, sender)
 }
 

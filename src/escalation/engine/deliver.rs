@@ -146,6 +146,7 @@ impl Worker {
             Err(err) => (redact_secrets(&err.to_string()), None),
         };
         let snippet = log_error_snippet(&error);
+        let took_ms = sent_at.map(|s| s.elapsed().as_millis());
         // A throttle hint means deferred, not broken, so the warn stream stays
         // meaningful during a paging burst. Only host-pinned transports get the
         // downgrade: a generic webhook body echoing "retry_after" is
@@ -173,6 +174,7 @@ impl Worker {
                 notification_id = %notification_id,
                 transport = channel.kind.as_db_str(),
                 attempt,
+                took_ms,
                 error = %snippet,
                 "incident notification deferred by transport"
             );
@@ -184,6 +186,7 @@ impl Worker {
                 notification_id = %notification_id,
                 transport = channel.kind.as_db_str(),
                 attempt,
+                took_ms,
                 error = %snippet,
                 "incident notification delivery failed"
             );

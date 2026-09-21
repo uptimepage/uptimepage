@@ -21,7 +21,7 @@ use crate::storage::locks::{advisory_xact_lock, incident_lock_key};
 use super::{
     AUTO_RESOLVED_MESSAGE, Actor, DueIncident, EmergencyAck, INCIDENT_DETAIL_ROW_CAP,
     IncidentOpsFilter, IncidentOpsStore, IncidentStateCounts, LifecycleOutcome,
-    PendingNotification, opening_update_message,
+    PendingNotification, QUEUED_TAKEOVER_SECS, opening_update_message,
 };
 
 pub struct PgIncidentOpsStore {
@@ -1124,16 +1124,19 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             reason: String,
             attempt: i32,
         }
+        let queued_before = now - chrono::Duration::seconds(QUEUED_TAKEOVER_SECS);
         let rows: Vec<Row> = sqlx::query_as(
             r#"SELECT id, org_id, incident_id, channel_id, transport, reason, attempt
                FROM incident_notifications
-               WHERE status IN ('queued','failed') AND attempt < $1
+               WHERE (status = 'failed' OR (status = 'queued' AND created_at < $4))
+                 AND attempt < $1
                  AND (next_attempt_at IS NULL OR next_attempt_at <= $3)
                ORDER BY next_attempt_at ASC NULLS FIRST LIMIT $2"#,
         )
         .bind(max_attempts)
         .bind(cap)
         .bind(now)
+        .bind(queued_before)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| anyhow::anyhow!("pending_notifications: {e}"))?;

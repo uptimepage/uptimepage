@@ -36,6 +36,10 @@ pub use pg::PgIncidentOpsStore;
 /// may sit on someone else's server.
 pub const ACK_LINK_TTL_SECS: i64 = 7 * 24 * 60 * 60;
 
+/// A `queued` row is a first attempt still in flight; the retry sweep takes it
+/// over only once it is older than any single delivery can run.
+pub const QUEUED_TAKEOVER_SECS: i64 = 120;
+
 /// Proof for the public acknowledge link, bound to one outage on one incident.
 /// Reproduced at verify time, nothing persisted.
 pub fn incident_ack_token(
@@ -374,7 +378,8 @@ pub trait IncidentOpsStore: Send + Sync {
     async fn record_notification(&self, n: NewIncidentNotification) -> Result<Uuid>;
     /// Cross-org failed pages still under the attempt cap whose backoff has
     /// elapsed (`next_attempt_at` null or `<= now`), soonest-due first — the
-    /// engine's retry sweep.
+    /// engine's retry sweep. A `queued` row counts only after
+    /// [`QUEUED_TAKEOVER_SECS`].
     async fn pending_notifications(
         &self,
         now: DateTime<Utc>,

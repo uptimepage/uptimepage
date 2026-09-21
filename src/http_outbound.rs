@@ -37,21 +37,37 @@ const MAX_RESPONSE_BYTES: usize = 1 << 20;
 /// would let an endpoint slow at each hold a task for twice this long.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// `hyper_util`'s error prints only its kind; the cause sits in `source()`.
+pub fn error_chain(e: impl std::error::Error + Send + Sync + 'static) -> String {
+    format!("{:#}", anyhow::Error::new(e))
+}
+
 pub fn build_outbound_client(guard: SsrfGuard) -> OutboundHttpClient {
+    Client::builder(TokioExecutor::new()).build(https_connector(guard))
+}
+
+/// One connection per request: hyper cannot replay a POST whose body it has
+/// already written to a pooled connection the far side dropped.
+pub fn build_single_use_outbound_client(guard: SsrfGuard) -> OutboundHttpClient {
+    Client::builder(TokioExecutor::new())
+        .pool_max_idle_per_host(0)
+        .build(https_connector(guard))
+}
+
+fn https_connector(guard: SsrfGuard) -> HttpsConnector<SsrfHttpConnector> {
     crate::http_client::client::install_default_crypto_provider();
     // Native trust store first; fall back to the bundled webpki roots when
     // it can't be read (an empty/broken store, or a macOS keychain I/O
     // hiccup under load) rather than panicking the process. Same rule as
     // `http_client::client::server_roots`, which needs an owned store.
-    let https = match hyper_rustls::HttpsConnectorBuilder::new().with_native_roots() {
+    match hyper_rustls::HttpsConnectorBuilder::new().with_native_roots() {
         Ok(b) => b,
         Err(_) => hyper_rustls::HttpsConnectorBuilder::new().with_webpki_roots(),
     }
     .https_or_http()
     .enable_http1()
     .enable_http2()
-    .wrap_connector(SsrfHttpConnector::new(guard));
-    Client::builder(TokioExecutor::new()).build(https)
+    .wrap_connector(SsrfHttpConnector::new(guard))
 }
 
 pub async fn post_json<T: Serialize>(
@@ -183,12 +199,13 @@ fn exchange_deadline() -> tokio::time::Instant {
 async fn with_request_timeout<F, T, E>(url: &Url, at: tokio::time::Instant, fut: F) -> Result<T>
 where
     F: std::future::Future<Output = std::result::Result<T, E>>,
-    E: std::fmt::Display,
+    E: std::error::Error + Send + Sync + 'static,
 {
     match tokio::time::timeout_at(at, fut).await {
         Ok(Ok(v)) => Ok(v),
         Ok(Err(e)) => Err(AppError::Other(anyhow::anyhow!(
-            "sending request to {url}: {e}"
+            "sending request to {url}: {}",
+            error_chain(e)
         ))),
         Err(_) => Err(AppError::Other(anyhow::anyhow!(
             "request to {url} exceeded {REQUEST_TIMEOUT:?}"

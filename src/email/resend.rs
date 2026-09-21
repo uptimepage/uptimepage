@@ -11,7 +11,7 @@ use super::templates::single_line;
 use super::trait_def::{
     EmailAddress, EmailError, EmailResult, EmailSender, MessageId, TransactionalEmail,
 };
-use crate::http_outbound::{OutboundHttpClient, REQUEST_TIMEOUT};
+use crate::http_outbound::{OutboundHttpClient, REQUEST_TIMEOUT, error_chain};
 
 const RESEND_API_URL: &str = "https://api.resend.com/emails";
 const MAX_RESEND_RESPONSE_BYTES: usize = 64 * 1024;
@@ -91,7 +91,7 @@ impl EmailSender for ResendEmailSender {
         let resp = tokio::time::timeout_at(at, self.http.request(req))
             .await
             .map_err(|_| EmailError::Transport(format!("no response within {REQUEST_TIMEOUT:?}")))?
-            .map_err(|e| EmailError::Transport(e.to_string()))?;
+            .map_err(|e| EmailError::Transport(error_chain(e)))?;
         let status = resp.status();
         let collected = tokio::time::timeout_at(
             at,

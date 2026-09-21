@@ -12,7 +12,8 @@ pub mod trait_def;
 use std::sync::Arc;
 
 use crate::config::{EmailProvider, TransactionalEmailConfig};
-use crate::http_outbound::OutboundHttpClient;
+use crate::http_outbound::build_single_use_outbound_client;
+use crate::security::SsrfGuard;
 
 pub use log_only::LogOnlyEmailSender;
 pub(crate) use log_only::mask_email;
@@ -23,19 +24,17 @@ pub use trait_def::{
     TransactionalEmail,
 };
 
-/// Builds an `EmailSender` from config. `http` is the shared outbound client
-/// (the same one used by Slack/webhook notifiers) — only the `resend`
-/// provider actually uses it; `log` and `memory` ignore it. Whether the
-/// config is complete is the validator's question, asked at boot.
+/// Builds an `EmailSender` from config. Whether the config is complete is
+/// the validator's question, asked at boot.
 pub fn build_email_sender(
     config: &TransactionalEmailConfig,
-    http: &OutboundHttpClient,
+    guard: SsrfGuard,
 ) -> Arc<dyn EmailSender> {
     match config.provider {
         EmailProvider::Resend => Arc::new(ResendEmailSender::new(
             config.resend.api_key.clone(),
             config.from_name.clone(),
-            http.clone(),
+            build_single_use_outbound_client(guard),
         )),
         EmailProvider::Log => Arc::new(LogOnlyEmailSender::new(config.from_name.clone())),
         EmailProvider::Memory => Arc::new(InMemoryEmailSender::new()),
@@ -158,16 +157,13 @@ mod tests {
         }
     }
 
-    use crate::http_outbound::build_outbound_client;
-
     #[test]
     fn factory_log_provider() {
         let cfg = TransactionalEmailConfig {
             provider: EmailProvider::Log,
             ..Default::default()
         };
-        let http = build_outbound_client(crate::security::SsrfGuard::strict());
-        let sender = build_email_sender(&cfg, &http);
+        let sender = build_email_sender(&cfg, SsrfGuard::strict());
         let _ = format!("{:p}", Arc::as_ptr(&sender));
     }
 
@@ -177,8 +173,7 @@ mod tests {
             provider: EmailProvider::Memory,
             ..Default::default()
         };
-        let http = build_outbound_client(crate::security::SsrfGuard::strict());
-        let sender = build_email_sender(&cfg, &http);
+        let sender = build_email_sender(&cfg, SsrfGuard::strict());
         let _ = sender;
     }
 
@@ -192,8 +187,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let http = build_outbound_client(crate::security::SsrfGuard::strict());
-        let sender = build_email_sender(&cfg, &http);
+        let sender = build_email_sender(&cfg, SsrfGuard::strict());
         let _ = sender;
     }
 }

@@ -12,7 +12,7 @@ use crate::domain::{
 };
 use crate::error::Result;
 use crate::notifier::event::IncidentNotice;
-use crate::storage::{Actor, DueIncident, PendingNotification};
+use crate::storage::{Actor, DueIncident, PendingNotification, QUEUED_TAKEOVER_SECS};
 
 use super::rules::{Paged, channel_targets, reason_is_stale, resolvable_channels};
 use super::{PageTarget, SWEEP_CONCURRENCY, Worker};
@@ -20,6 +20,11 @@ use super::{PageTarget, SWEEP_CONCURRENCY, Worker};
 /// Cap on the transport response quoted into the mail: a broken endpoint
 /// answers with a page of HTML.
 const MAX_MAIL_ERROR_CHARS: usize = 400;
+
+/// Below the retry scan's takeover of a `queued` row, so a first attempt is
+/// marked before the scan can send it again.
+const FIRST_ATTEMPT_BUDGET: std::time::Duration = std::time::Duration::from_secs(90);
+const _: () = assert!(FIRST_ATTEMPT_BUDGET.as_secs() < QUEUED_TAKEOVER_SECS as u64);
 
 /// Everything the owner mail needs, owned, so it can outlive the page that
 /// triggered it. Claims inside the task: a lost race costs nothing, while
@@ -382,7 +387,29 @@ impl Worker {
                     None,
                 )
             } else {
-                self.deliver(org, &channel, notice, id, 1).await
+                match tokio::time::timeout(
+                    FIRST_ATTEMPT_BUDGET,
+                    self.deliver(org, &channel, notice, id, 1),
+                )
+                .await
+                {
+                    Ok(outcome) => outcome,
+                    Err(_) => {
+                        tracing::warn!(
+                            org_id = %org.0,
+                            incident_id = %notice.incident_id,
+                            channel_id = %channel.id,
+                            notification_id = %id,
+                            transport = channel.kind.as_db_str(),
+                            "incident notification first attempt exceeded its budget"
+                        );
+                        (
+                            NotificationStatus::Failed,
+                            Some(format!("no outcome within {FIRST_ATTEMPT_BUDGET:?}")),
+                            None,
+                        )
+                    }
+                }
             };
             paged.recorded += 1;
             if status == NotificationStatus::Sent {

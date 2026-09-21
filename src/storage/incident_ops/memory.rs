@@ -17,7 +17,7 @@ use crate::error::Result;
 
 use super::{
     Actor, DueIncident, EmergencyAck, INCIDENT_DETAIL_ROW_CAP, IncidentOpsFilter, IncidentOpsStore,
-    IncidentSort, IncidentStateCounts, LifecycleOutcome, PendingNotification,
+    IncidentSort, IncidentStateCounts, LifecycleOutcome, PendingNotification, QUEUED_TAKEOVER_SECS,
 };
 
 #[derive(Default)]
@@ -609,17 +609,19 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         limit: usize,
         max_attempts: i32,
     ) -> Result<Vec<PendingNotification>> {
+        let queued_before = now - chrono::Duration::seconds(QUEUED_TAKEOVER_SECS);
         Ok(self
             .inner
             .lock()
             .notifications
             .iter()
             .filter(|(_, n)| {
-                matches!(
-                    n.status,
-                    NotificationStatus::Failed | NotificationStatus::Queued
-                ) && n.attempt < max_attempts
-                    && n.next_attempt_at.is_none_or(|t| t <= now)
+                let due = match n.status {
+                    NotificationStatus::Failed => true,
+                    NotificationStatus::Queued => n.created_at < queued_before,
+                    _ => false,
+                };
+                due && n.attempt < max_attempts && n.next_attempt_at.is_none_or(|t| t <= now)
             })
             .take(limit)
             .map(|(org, n)| PendingNotification {

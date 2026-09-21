@@ -493,10 +493,9 @@ async fn main() -> Result<()> {
     // One process-wide central-bot send budget, shared by the engine and the
     // web side (test-now, webhook replies) via AppState.
     let telegram_send_budget = std::sync::Arc::new(uptimepage::telegram::TelegramSendBudget::new());
-    let outbound_http = uptimepage::http_outbound::build_outbound_client(
-        uptimepage::security::SsrfGuard::from_security_config(&cfg.security),
-    );
-    let email_sender = uptimepage::email::build_email_sender(&cfg.email, &outbound_http);
+    let ssrf_guard = uptimepage::security::SsrfGuard::from_security_config(&cfg.security);
+    let outbound_http = uptimepage::http_outbound::build_outbound_client(ssrf_guard);
+    let email_sender = uptimepage::email::build_email_sender(&cfg.email, ssrf_guard);
     let alert_channel_stop_secret = uptimepage::storage::app_secrets::ensure_secret(
         &pg_pool_for_stores,
         cipher.as_deref(),
