@@ -104,7 +104,9 @@ services:
       # fixed dev value is never used outside the local stack. Drives
       # `just dev-regions` (scripts/dev-regions.sh).
       UPTIMEPAGE_OPERATOR__ADMIN_TOKEN: "dev-operator-token"
-      # Mounts /help. Provider stays "log", so a submission renders to tracing.
+      # Provider stays "log", so mail renders to tracing. The from address
+      # gives the operator-domain block a domain; the support address mounts /help.
+      UPTIMEPAGE_EMAIL__FROM_ADDRESS: "hello@example.invalid"
       UPTIMEPAGE_EMAIL__SUPPORT_ADDRESS: "hello@example.invalid"
       UPTIMEPAGE_OBSERVABILITY__LOG_FORMAT: json
       UPTIMEPAGE_OBSERVABILITY__LOG_LEVEL: "uptimepage=debug,sqlx=warn,hyper=warn,tower_http=info,info"

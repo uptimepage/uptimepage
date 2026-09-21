@@ -58,7 +58,7 @@ Setup:
    api_key = "re_…"
    ```
 
-   Or via env: `UPTIMEPAGE_EMAIL__PROVIDER=resend`, `UPTIMEPAGE_EMAIL__FROM_ADDRESS=status@acme.test`, `UPTIMEPAGE_EMAIL__RESEND__API_KEY=re_…`.
+   Or via env: `UPTIMEPAGE_EMAIL__PROVIDER=resend`, `UPTIMEPAGE_EMAIL__FROM_ADDRESS=status@acme.test`, `UPTIMEPAGE_EMAIL__RESEND__API_KEY=re_…`. The address is required; the process refuses to boot without one.
 
    Send from an address somebody reads. Every reply comes back to it, including auto-responders to outage alerts and subscriber updates. A `no-reply@` sender leaves a confused recipient with no way to answer except the spam button, and mailbox providers count replies in the sender's favour.
 4. `auth.public_base_url` must be set to the externally-reachable origin

@@ -97,6 +97,7 @@ watch-js:
 # native and in-container logs match.
 run:
     UPTIMEPAGE_STORAGE__ALLOW_DEFAULT_CREDENTIALS=true \
+    UPTIMEPAGE_EMAIL__FROM_ADDRESS="${UPTIMEPAGE_EMAIL__FROM_ADDRESS:-hello@example.invalid}" \
     RUST_LOG="${RUST_LOG:-uptimepage=debug,sqlx=warn,hyper=warn,tower_http=info,info}" \
         cargo run --bin uptimepage
 
@@ -105,6 +106,7 @@ run:
 # otherwise nothing probes. (The dev-app container already runs this mode.)
 run-dashboard:
     UPTIMEPAGE_STORAGE__ALLOW_DEFAULT_CREDENTIALS=true \
+    UPTIMEPAGE_EMAIL__FROM_ADDRESS="${UPTIMEPAGE_EMAIL__FROM_ADDRESS:-hello@example.invalid}" \
     UPTIMEPAGE_SCHEDULER__ENABLED=false \
     UPTIMEPAGE_SCHEDULER__REGION=eu-helsinki \
     UPTIMEPAGE_SCHEDULER__DEFAULT_REGION=eu-helsinki \
@@ -127,6 +129,7 @@ flow-dev:
       exit 1
     fi
     UPTIMEPAGE_STORAGE__ALLOW_DEFAULT_CREDENTIALS=true \
+    UPTIMEPAGE_EMAIL__FROM_ADDRESS="${UPTIMEPAGE_EMAIL__FROM_ADDRESS:-hello@example.invalid}" \
     UPTIMEPAGE_TENANCY__PATH_BASED_PUBLIC_ROUTES=false \
     UPTIMEPAGE_TENANCY__SUBDOMAIN_PUBLIC_ROUTES=true \
     UPTIMEPAGE_PUBLIC_STATUS__BASE_DOMAIN=lvh.me \
@@ -182,6 +185,7 @@ dev-login:
 run-oauth:
     UPTIMEPAGE_DEV_EMAIL_LINKS=1 \
     UPTIMEPAGE_STORAGE__ALLOW_DEFAULT_CREDENTIALS=true \
+    UPTIMEPAGE_EMAIL__FROM_ADDRESS="${UPTIMEPAGE_EMAIL__FROM_ADDRESS:-hello@example.invalid}" \
     UPTIMEPAGE_AUTH__FINGERPRINT_SALT="dev-only-fingerprint-salt-not-for-prod" \
     UPTIMEPAGE_AUTH__SESSION__COOKIE_SECURE=false \
     UPTIMEPAGE_TENANCY__PATH_BASED_PUBLIC_ROUTES=false \
@@ -216,6 +220,7 @@ run-oauth:
 run-passkeys:
     UPTIMEPAGE_DEV_EMAIL_LINKS=1 \
     UPTIMEPAGE_STORAGE__ALLOW_DEFAULT_CREDENTIALS=true \
+    UPTIMEPAGE_EMAIL__FROM_ADDRESS="${UPTIMEPAGE_EMAIL__FROM_ADDRESS:-hello@example.invalid}" \
     UPTIMEPAGE_AUTH__FINGERPRINT_SALT="dev-only-fingerprint-salt-not-for-prod" \
     UPTIMEPAGE_AUTH__SESSION__COOKIE_SECURE=false \
     UPTIMEPAGE_SERVER__API_BIND="[::]:8080" \

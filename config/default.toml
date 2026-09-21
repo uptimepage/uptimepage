@@ -121,28 +121,6 @@ interval_seconds = 60
 # Per-IP API rate limiting is enforced by Caddy (see deployment/Caddyfile);
 # the in-process limiter is per-org / per-user — see [rate_limits] + plans.
 
-# Outbound notification channels. Per-target opt-in via the target's `alerts`
-# field references the channel by key; entries here only define transport
-# credentials. Channels marked `enabled = false` cause target opt-ins to no-op.
-[notifications.slack]
-enabled = false
-webhook_url = ""
-
-[notifications.webhook]
-enabled = false
-url = ""
-
-[notifications.email]
-enabled = false
-smtp_host = ""
-smtp_port = 587
-smtp_user = ""
-smtp_password = ""
-from = ""
-# When true, opens a plain TCP connection and upgrades to TLS via STARTTLS.
-# When false, opens an implicit-TLS connection on smtp_port (typically 465).
-starttls = true
-
 [api.cors]
 # Browser CORS for /api/v1/*. Disabled by default. When enabled, every entry in
 # `allowed_origins` must be a full origin (scheme://host[:port]); wildcards are
@@ -202,14 +180,17 @@ default_show_powered_by = true
 # Second line of defence behind the Caddy-side limit.
 public_per_ip_rate_limit_per_min = 60
 
-# Transactional product email (org invitations, magic-link sign-in). Distinct
-# from [notifications.email], which is the outage-alert SMTP channel.
+# Every mail the product sends: sign-in links, invitations, outage alerts,
+# status-page subscriber updates, billing notices.
 [email]
 # "resend" | "log" | "memory". Dev default is "log" so `cargo run` works with
 # no external accounts — action URLs are printed to tracing.
 provider = "log"
 from_name = "Uptimepage"
-from_address = "no-reply@example.invalid"
+# Required when provider = "resend". Use an address somebody reads: replies
+# and auto-responders to every mail above come back to it, and a no-reply
+# sender leaves the recipient the spam button as their only answer.
+from_address = ""
 
 # Where the in-app help form delivers. Empty hides it; set only if you staff
 # an inbox.

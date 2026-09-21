@@ -1,9 +1,6 @@
-//! Transactional product email: org invitations + magic-link sign-in.
-//!
-//! Distinct from `crate::notifier`'s outage SMTP channel:
-//! - `notifier` = operator-defined alert delivery for monitored targets.
-//! - `email` (this module) = product mail to end users. Provider is
-//!   pluggable per the top-level `[email]` config table.
+//! Product email: sign-in links, invitations, account notices, and the
+//! sender behind `crate::notifier`'s alert mail and status-page subscriber
+//! updates. Provider is pluggable per the top-level `[email]` config table.
 
 pub mod log_only;
 pub mod memory;

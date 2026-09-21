@@ -157,7 +157,7 @@ impl Default for TransactionalEmailConfig {
         Self {
             provider: "log".into(),
             from_name: "Uptimepage".into(),
-            from_address: "no-reply@example.invalid".into(),
+            from_address: String::new(),
             support_address: String::new(),
             resend: ResendConfig::default(),
         }

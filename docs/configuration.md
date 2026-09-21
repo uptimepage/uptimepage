@@ -146,7 +146,7 @@ rate_limit_seconds = 60                # per-email send throttle; 0 disables
 [email]
 provider = "log"                     # "resend" in prod, "log" in dev, "memory" in tests
 from_name = "Uptimepage"
-from_address = "hello@example.test"    # a read inbox, not no-reply
+from_address = ""                    # required for resend; a read inbox, not no-reply
 support_address = ""                 # set it and /help appears; empty = no help form
 
 [email.resend]

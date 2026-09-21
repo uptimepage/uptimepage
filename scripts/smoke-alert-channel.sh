@@ -13,7 +13,7 @@ set -uo pipefail
 BASE="${BASE:-http://app.lvh.me:8080}"
 COOKIE="${COOKIE:-_sm_session=devsession-localtest-0000000000}"
 PG="${PG:-uptimepage-postgres-1}"
-FROM_DOMAIN="${FROM_DOMAIN:-example.invalid}"   # operator mail domain (config from_address)
+FROM_DOMAIN="${FROM_DOMAIN:-example.invalid}"   # operator mail domain (compose.dev.yml from_address)
 XRW='X-Requested-With: uptimepage'
 DEAD_UUID='00000000-0000-0000-0000-0000000000ff'
 

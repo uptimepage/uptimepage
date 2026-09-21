@@ -443,3 +443,26 @@ fn only_an_https_origin_passes_validation() {
         assert!(!gl(bad).base_url_is_valid(), "{bad:?} should be rejected");
     }
 }
+
+#[test]
+fn resend_boot_needs_the_api_key_and_a_from_address() {
+    let mut cfg = AppConfig::load().expect("load");
+    cfg.email.provider = "log".into();
+    cfg.email.from_address = String::new();
+    cfg.email.resend.api_key = secrecy::SecretString::from(String::new());
+    assert!(
+        cfg.validate_email().is_ok(),
+        "the log provider needs nothing"
+    );
+
+    cfg.email.provider = "resend".into();
+    let err = cfg.validate_email().expect_err("no key").to_string();
+    assert!(err.contains("email.resend.api_key"), "{err}");
+
+    cfg.email.resend.api_key = secrecy::SecretString::from("re_test_key".to_string());
+    let err = cfg.validate_email().expect_err("no sender").to_string();
+    assert!(err.contains("email.from_address"), "{err}");
+
+    cfg.email.from_address = "hello@example.test".into();
+    assert!(cfg.validate_email().is_ok());
+}
