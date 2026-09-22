@@ -142,7 +142,7 @@
       "id": "mcp",
       "col": "handler",
       "t": "mcp::server",
-      "s": "15 read + 10 write tools"
+      "s": "16 read + 15 write tools"
     },
     {
       "id": "oauth",
@@ -214,7 +214,7 @@
       "id": "notif",
       "col": "core",
       "t": "notifier transports",
-      "s": "14 kinds · 12 transport modules"
+      "s": "16 kinds · 14 transport modules"
     },
     {
       "id": "pcache",
@@ -340,7 +340,7 @@
       "id": "chat",
       "col": "ext",
       "t": "Slack / PagerDuty / …",
-      "s": "14 channel kinds"
+      "s": "16 channel kinds"
     },
     {
       "id": "resend",

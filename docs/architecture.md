@@ -26,52 +26,79 @@ The same binary runs in one of three modes; the mode is chosen at startup, befor
 ```
 src/
 ├── main.rs           startup: config load, validation, mode branch, subsystem spawn
-├── lib.rs            crate root (31 modules)
+├── lib.rs            crate root (40 modules)
 ├── app.rs            AppState, the composition root (every store + engine as a field)
 ├── router.rs         router assembly + middleware layer order
-├── config.rs         typed AppConfig + UPTIMEPAGE_ env override loader
 ├── bootstrap.rs      bootstrap-owner CLI mode + first-run owner seeding
 │
+│   leaves: know nothing about the app, importable from anywhere
 ├── domain/           core types: Target, CheckSpec, CheckResult, Incident, on_call,
-│                     notification_channel, quota; no I/O
+│                     notification_channel, quota, interpolation; no I/O
+├── config/           typed AppConfig split per section + UPTIMEPAGE_ env override
+│                     loader; boot.rs holds the refuse-to-start checks
+├── error/            AppError -> ApiError envelope, the error code registry,
+│                     the narrower public-API envelope
+├── security/         AES-GCM envelope crypto, token and MAC hashing, SSRF guard,
+│                     abuse deny-lists, redaction, RDAP and certificate probes
+├── net/              happy-eyeballs dial (RFC 8305)
+├── metric_names.rs   every metric name this process emits
+├── templates/        askama filters, fingerprinted assets, timestamp formats
+├── pagination/       page envelopes + opaque cursors shared by every list surface
+├── text.rs           one-line and length-capped text shaping for outbound channels
+│
+│   services and stores
 ├── storage/          Postgres + ClickHouse + in-memory stores behind traits;
 │                     admin.rs / operator.rs are the audited tenancy escape hatches;
 │                     locks.rs holds the advisory-lock helpers
-├── security/         AES-GCM envelope crypto for sealed secrets
+├── quotas/           effective-plan resolution + governor rate limiter
+├── targets/          monitor read models, region defaults, folded status
+├── auth/             sessions, OAuth providers, passkeys, magic links, API tokens,
+│                     invitations, login audit
+├── billing/          plan moves and the paid lifecycle (provider-driven)
 │
-├── scheduler/        target registry (full re-list + diff) + single-driver timing heap
+│   probe pipeline
+├── scheduler/        target registry (full re-list + diff), single-driver timing
+│                     heap, gauge sampler
 ├── worker/           worker pool + per-host circuit breaker + host throttle +
 │                     one executor per check kind (http/tcp/ping/heartbeat/dns/
 │                     tls_cert/domain_expiry/flow)
-├── http_client/      poolless probe client: phase-timing connector, DNS cache, SSRF guard
-├── net/              happy-eyeballs dial (RFC 8305)
+├── http_client/      poolless probe client: phase-timing connector, DNS cache
 ├── pipeline/         result batcher (size + timeout flush, bounded, counted drops)
 ├── ad_hoc_dispatch.rs  check-now / test long-poll to the region's agent
+├── agent/            stateless agent-mode entry point
 │
+│   detection and delivery
 ├── public_status/    incident writer (poller), status-page aggregator, subscriber dispatch
 ├── escalation/       paging engine + on-call resolution (feature-flagged, off by default)
 ├── notifier/         one transport per channel kind + IncidentNotice event
 ├── email/ telegram/ whatsapp/    transport-specific helpers
 ├── http_outbound.rs  shared outbound client for webhooks and provider APIs
+├── jobs/             periodic jobs: retention, two-store erasure, token/session
+│                     cleanups, no-data silence sweep, dead-man snitch
+├── observability/    tracing + Prometheus + OTLP, readiness, fleet health gauges
 │
-├── api/              REST /api/v1 handlers, routes, OpenAPI doc, stable error envelope
+│   HTTP surfaces
+├── request/          what every surface reads off a request first: caller extractors,
+│                     client IP, host parsing, state cookies, metrics and rate-limit layers
+├── api/              REST /api/v1 handlers, routes, OpenAPI doc, strict bodies
 ├── web/              server-rendered operator UI (renders only; mutations call the API)
 ├── mcp/              in-process MCP server (typed, authorized, audited tools)
 ├── oauth/            OAuth 2.1 authorization server backing the MCP connector
-├── auth/             session + API-token + agent-token extractors and scopes
+├── channels/         notification-channel create/repair shared by the API and the UI
+├── analytics.rs      sign-in funnel events for Umami
 ├── marketing/        apex/www/blog/docs/landing pages; no storage or tenancy imports
-│
-├── quotas/           effective-plan resolution + governor rate limiter
-├── jobs/             periodic jobs: retention, two-store erasure, token/session cleanups
-├── observability/    tracing + Prometheus + OTLP, gauge sampler, dead-man snitch
-├── agent/            stateless agent-mode entry point
-├── bin/              the loadtest binary
-└── error.rs          AppError -> ApiError envelope
+└── bin/              the loadtest binary
 
 templates/            askama HTML compiled into the binary
 static/               rust-embed bundle: Tailwind 4 output (build.rs) + esbuild JS
 migrations/           postgres/NNN_name.{up,down}.sql + clickhouse/*.sql
 ```
+
+### Dependency rule
+
+Imports point downward through the groups above and never back up. A leaf imports other leaves only. A service or store imports leaves and other services, and never `api`, `web`, `mcp` or `oauth`. A handler module imports anything below it, and the only thing above it is `app`, whose `AppState` every handler receives. That last edge is the deliberate exception: `app` names handler types in its cache fields, and handlers take `&AppState`, so `app` and each surface point at each other. Splitting `AppState` into per-surface sub-states would touch most handler files for no behavioural gain, so those cycles stay and are the known ones.
+
+The rule is what keeps `marketing` extractable and the agent mode small. `tests/marketing_coupling_test.rs` scans the marketing tree and fails on any `crate::` path outside `templates`, `security`, `request` and `http_outbound`; the agent entry point reaches the probe pipeline, the store traits it needs and the leaves, and nothing from the HTTP surfaces. How the crate got to this shape, and the tool that found the cycles it replaced, is in [Uncle Bob's uml-viewer on Rust: 35 dependency cycles down to 3](https://uptimepage.dev/blog/uml-viewer-rust-dependency-cycles).
 
 ## Request path
 
@@ -119,7 +146,7 @@ On-demand checks (`POST /targets/{id}/check-now` and `POST /targets/test`) are d
 Results do not page directly. A separate follower turns them into confirmed incidents:
 
 - **Incident writer** (`src/public_status/incident_writer/`) is a poller, not an event listener. On a default 30-second tick it keyset-paginates enabled targets across tenants, reads each target's recent results per a lookback tier, and applies the target's region quorum policy (Any, Majority, All, or Count) to decide up or down. Insert-open and close are race-safe, so exactly one writer pages. This confirmation step is why public status derives from confirmed incidents and never from raw samples.
-- **Escalation engine** (`src/escalation/engine.rs`) is feature-flagged and off by default. When on it is the single source of down and up notifications: it opens a paging episode, walks the escalation ladder, renotifies, retries with backoff into a dead-letter, and resolves only to the channels paged this episode. On-call is never stored; who is on call is a pure function resolved at page time. The `escalation.enabled` switch gates only the ladder machinery: on, a policy walks levels and renotifies; off, a monitor's directly bound channels are still paged, just without the ladder.
+- **Escalation engine** (`src/escalation/engine/`) is feature-flagged and off by default. When on it is the single source of down and up notifications: it opens a paging episode, walks the escalation ladder, renotifies, retries with backoff into a dead-letter, and resolves only to the channels paged this episode. On-call is never stored; who is on call is a pure function resolved at page time. The `escalation.enabled` switch gates only the ladder machinery: on, a policy walks levels and renotifies; off, a monitor's directly bound channels are still paged, just without the ladder.
 - **No-data detection** (`src/jobs/silence.rs`) handles monitors whose covering regions all went dark, notifying bound channels once per episode. Above a fraction of the fleet it is treated as one infra outage and per-customer notices are suppressed.
 
 Internal incident state (Triggered, Acknowledged, Resolved) and the public communication phase are orthogonal tracks and never share a field. See [Incident management](incidents.md) and [Notifications](notifications.md).
