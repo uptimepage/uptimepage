@@ -267,6 +267,9 @@ pub struct AppState {
     /// Starts empty, and an empty set means "no opinion", never "block
     /// everything". `main` fills it from Postgres before serving.
     pub email_policy: Arc<crate::security::EmailPolicy>,
+    /// Empty denies every custom domain. `main` fills it before the listener
+    /// binds; a deployment without the subdomain surface leaves it empty.
+    pub custom_domains: Arc<crate::request::custom_domains::CustomDomains>,
     /// Escalation-engine signal channel. `Some` only when paging is enabled;
     /// lifecycle handlers (declare/resolve/reopen) nudge the engine through it.
     pub incident_signal_tx: Option<tokio::sync::mpsc::Sender<crate::escalation::IncidentSignal>>,
@@ -465,6 +468,9 @@ impl AppState {
         let rate_limits = Arc::new(RateLimitService::new());
         let abuse = Arc::new(AbuseGuard::from_config(&cfg.abuse));
         let email_policy = Arc::new(crate::security::EmailPolicy::from_config(&cfg.email_policy));
+        let custom_domains = Arc::new(crate::request::custom_domains::CustomDomains::new(
+            &cfg.public_status.base_domain,
+        ));
         Self {
             cfg: Arc::new(cfg),
             db,
@@ -512,6 +518,7 @@ impl AppState {
             rate_limits,
             abuse,
             email_policy,
+            custom_domains,
             incident_signal_tx: None,
             cipher,
             agent_ingest_dedup: build_agent_ingest_dedup(),

@@ -238,7 +238,7 @@ pub async fn public_incidents_rss(
     // Only a subdomain deploy resolves the page from the Host. Where every host
     // serves the same page, the Host names no better origin than the config.
     let origin = if subdomain_routes {
-        crate::request::host::request_origin(&headers, &state.cfg.public_status.base_domain)
+        crate::request::host::published_page_origin(&state, &headers, page.page)
             .unwrap_or_else(configured)
     } else {
         configured()

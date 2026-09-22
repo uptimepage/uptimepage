@@ -499,3 +499,19 @@ fn a_configured_mailbox_must_be_bare_under_every_provider() {
     cfg.email.support_address = "ops@example.test".into();
     assert!(cfg.validate_email().is_ok());
 }
+#[test]
+fn an_ask_bind_without_the_subdomain_surface_is_refused_at_boot() {
+    // The listener would otherwise come up and refuse every certificate for
+    // good, failing each customer's handshake silently.
+    let mut cfg = AppConfig::load().expect("config");
+    cfg.server.custom_domain_ask_bind = "127.0.0.1:9443".into();
+    cfg.tenancy.subdomain_public_routes = false;
+    assert!(cfg.validate_custom_domain_ask().is_err());
+
+    cfg.tenancy.subdomain_public_routes = true;
+    assert!(cfg.validate_custom_domain_ask().is_ok());
+
+    cfg.tenancy.subdomain_public_routes = false;
+    cfg.server.custom_domain_ask_bind = String::new();
+    assert!(cfg.validate_custom_domain_ask().is_ok());
+}

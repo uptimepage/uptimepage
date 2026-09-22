@@ -173,14 +173,14 @@ impl SubscriberDispatcher {
         let origin = self.origin(
             &p.slug,
             p.custom_domain.as_deref(),
-            p.custom_domain_verified,
+            p.custom_domain_published,
         );
         let unsubscribe_url = self.unsubscribe_url(&origin, p.subscriber_id);
         if p.channel == "webhook" {
             let page_url = self.page_url(
                 &p.slug,
                 p.custom_domain.as_deref(),
-                p.custom_domain_verified,
+                p.custom_domain_published,
             );
             let payload = serde_json::json!({
                 "type": "incident_update",
@@ -213,13 +213,13 @@ impl SubscriberDispatcher {
         let origin = self.origin(
             &m.slug,
             m.custom_domain.as_deref(),
-            m.custom_domain_verified,
+            m.custom_domain_published,
         );
         let unsubscribe_url = self.unsubscribe_url(&origin, m.subscriber_id);
         let page_url = self.page_url(
             &m.slug,
             m.custom_domain.as_deref(),
-            m.custom_domain_verified,
+            m.custom_domain_published,
         );
         if m.channel == "webhook" {
             let payload = serde_json::json!({
@@ -291,22 +291,22 @@ impl SubscriberDispatcher {
             .map_err(|e| anyhow::anyhow!("webhook post: {e}"))
     }
 
-    fn origin(&self, slug: &str, custom_domain: Option<&str>, verified: bool) -> String {
+    fn origin(&self, slug: &str, custom_domain: Option<&str>, published: bool) -> String {
         crate::public_status::urls::page_origin(
             &self.cfg.base_domain,
             &self.cfg.public_base_url,
             slug,
             custom_domain,
-            verified,
+            published,
         )
     }
 
     /// The page's own address. Subscribers keep it, so it has to be the URL
     /// the page answers on rather than one that redirects there.
-    fn page_url(&self, slug: &str, custom_domain: Option<&str>, verified: bool) -> String {
+    fn page_url(&self, slug: &str, custom_domain: Option<&str>, published: bool) -> String {
         crate::public_status::urls::status_url_for(
             self.cfg.subdomain_routes,
-            &self.origin(slug, custom_domain, verified),
+            &self.origin(slug, custom_domain, published),
         )
     }
 

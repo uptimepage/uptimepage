@@ -147,6 +147,7 @@ async fn main() -> Result<()> {
     // Marketing host/URL/cookie invariants. Skipped wholesale when
     // marketing.enabled = false (the default).
     cfg.validate_marketing()?;
+    cfg.validate_custom_domain_ask()?;
     // Central Telegram bot: a set bot_token without a username / strong
     // webhook secret / https base is a clean startup error, not a half-up bot.
     cfg.validate_telegram()?;
@@ -847,6 +848,24 @@ async fn main() -> Result<()> {
     if let Some(pool) = state.db.as_ref() {
         uptimepage::jobs::disposable_refresh::load_persisted(pool, &state.email_policy).await;
     }
+
+    // Same, and load-bearing rather than merely fresh: an instance that binds
+    // without the snapshot serves no custom domain, and Caddy health checks the
+    // bound port, so binding is what holds a color out of rotation until it can
+    // enforce the policy. A deployment without the subdomain surface sells no
+    // custom domains, so it never loads or refreshes one.
+    let custom_domains_handle: Option<JoinHandle<()>> = match state.db.as_ref() {
+        Some(pool) if state.cfg.tenancy.subdomain_public_routes => {
+            uptimepage::jobs::custom_domains::load_before_serving(pool, &state.custom_domains)
+                .await?;
+            Some(uptimepage::jobs::custom_domains::spawn(
+                pool.clone(),
+                state.custom_domains.clone(),
+                root.clone(),
+            ))
+        }
+        _ => None,
+    };
     let disposable_refresh_handle: Option<JoinHandle<()>> = state.db.as_ref().and_then(|pool| {
         uptimepage::jobs::disposable_refresh::spawn(
             pool.clone(),
@@ -948,6 +967,7 @@ async fn main() -> Result<()> {
             .layer(middleware::from_fn(request::http_metrics::middleware));
         let dispatch = marketing::RouteByHost {
             scheme,
+            custom_domains: state.custom_domains.clone(),
             marketing: marketing_router,
             app: app_router,
         };
@@ -980,6 +1000,17 @@ async fn main() -> Result<()> {
             })
             .on_response(DefaultOnResponse::new().level(tracing::Level::DEBUG)),
     );
+
+    // Before the api listener: a bind failure here must stop the boot rather
+    // than leave a color serving custom domains whose certificates it cannot
+    // authorise.
+    let ask_handle = uptimepage::public_status::custom_domain_ask::spawn(
+        &state.cfg.server.custom_domain_ask_bind,
+        state.custom_domains.clone(),
+        root.clone(),
+    )
+    .await
+    .map_err(AppError::Io)?;
 
     let listener = TcpListener::bind(&api_bind).await.map_err(AppError::Io)?;
     tracing::info!(
@@ -1043,6 +1074,12 @@ async fn main() -> Result<()> {
             let _ = h.await;
         }
         if let Some(h) = disposable_refresh_handle {
+            let _ = h.await;
+        }
+        if let Some(h) = custom_domains_handle {
+            let _ = h.await;
+        }
+        if let Some(h) = ask_handle {
             let _ = h.await;
         }
         if let Some(h) = snitch_handle {

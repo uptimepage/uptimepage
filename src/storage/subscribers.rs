@@ -12,7 +12,7 @@ use crate::domain::{NewSubscriber, Subscriber, SubscriberChannel, public::auto_i
 use crate::error::Result;
 use crate::security::sha256_hex;
 use crate::security::token_hash::generate_raw_token;
-use crate::storage::status_pages::{PAGE_CUSTOM_DOMAIN_LIVE, PAGE_NOT_HELD, PAGE_PLAN_JOIN};
+use crate::storage::status_pages::{PAGE_CUSTOM_DOMAIN_PUBLISHED, PAGE_NOT_HELD, PAGE_PLAN_JOIN};
 
 pub const CONFIRM_TTL_HOURS: i64 = 24;
 /// Confirm mints per subscriber per 24 h — bounds re-subscribe mail spam.
@@ -246,7 +246,7 @@ pub struct PendingUpdate {
     pub page_name: String,
     pub slug: String,
     pub custom_domain: Option<String>,
-    pub custom_domain_verified: bool,
+    pub custom_domain_published: bool,
     pub signing_secret: Option<String>,
 }
 
@@ -277,7 +277,7 @@ pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingUpdate
                 COALESCE(NULLIF(sp.public_display_name, ''), sp.name) AS page_name,
                 sp.slug::text AS slug,
                 sp.custom_domain::text AS custom_domain,
-                {PAGE_CUSTOM_DOMAIN_LIVE} AS custom_domain_verified,
+                {PAGE_CUSTOM_DOMAIN_PUBLISHED} AS custom_domain_published,
                 s.config ->> 'signing_secret' AS signing_secret
          FROM status_page_subscribers s
          JOIN status_pages sp ON sp.id = s.status_page_id
@@ -441,7 +441,7 @@ mod tests {
             page_name: "acme".into(),
             slug: "acme".into(),
             custom_domain: None,
-            custom_domain_verified: false,
+            custom_domain_published: false,
             signing_secret: None,
         }
     }

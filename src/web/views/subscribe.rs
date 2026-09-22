@@ -20,7 +20,7 @@ use crate::domain::{NewSubscriber, SubscriberChannel};
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
 use crate::http_outbound::post_bytes_with_headers;
 use crate::request::host::resolve_status_page;
-use crate::storage::status_pages::{PAGE_CUSTOM_DOMAIN_LIVE, PAGE_PLAN_JOIN};
+use crate::storage::status_pages::{PAGE_CUSTOM_DOMAIN_PUBLISHED, PAGE_PLAN_JOIN};
 use crate::storage::subscribers::{self, CONFIRM_TTL_HOURS};
 use crate::templates::filters;
 use crate::web::error::WebResult;
@@ -158,7 +158,7 @@ pub async fn subscribe(
                 &state.cfg.auth.public_base_url,
                 &m.slug,
                 m.custom_domain.as_deref(),
-                m.custom_domain_verified,
+                m.custom_domain_published,
             ),
             None => state
                 .cfg
@@ -381,13 +381,13 @@ struct PageMeta {
     name: String,
     slug: String,
     custom_domain: Option<String>,
-    custom_domain_verified: bool,
+    custom_domain_published: bool,
 }
 
 async fn page_meta(pool: &sqlx::PgPool, page_id: Uuid) -> Option<PageMeta> {
     let sql = format!(
         "SELECT COALESCE(NULLIF(sp.public_display_name, ''), sp.name), sp.slug::text,
-                sp.custom_domain::text, {PAGE_CUSTOM_DOMAIN_LIVE}
+                sp.custom_domain::text, {PAGE_CUSTOM_DOMAIN_PUBLISHED}
          FROM status_pages sp {PAGE_PLAN_JOIN} WHERE sp.id = $1"
     );
     // A read error here must not be mistaken for "no such page": the caller's
@@ -408,6 +408,6 @@ async fn page_meta(pool: &sqlx::PgPool, page_id: Uuid) -> Option<PageMeta> {
         name: row.0,
         slug: row.1,
         custom_domain: row.2,
-        custom_domain_verified: row.3,
+        custom_domain_published: row.3,
     })
 }

@@ -6,6 +6,7 @@
 pub mod aggregator;
 pub mod badge;
 pub mod cache;
+pub mod custom_domain_ask;
 pub mod incident_writer;
 pub mod logo_storage;
 pub mod overall_status;

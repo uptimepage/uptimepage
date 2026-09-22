@@ -7,28 +7,34 @@
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use axum::Router;
 use axum::body::Body;
 use axum::http::header::HOST;
-use axum::http::{Request, Response};
+use axum::http::{Request, Response, StatusCode};
+use axum::response::IntoResponse;
 use tower::Service;
 
+use crate::request::custom_domains::CustomDomains;
 use crate::request::host::{HostClass, HostScheme, classify_host};
 use crate::request::is_health_path;
 
 /// Routes a request to one of two `axum::Router`s based on classified
-/// `Host`. `Marketing` and `Unknown` go to the marketing router (so
-/// garbage hosts get a marketing 404 — they must NOT fall through to a
-/// tenant); `App` and `TenantPublic` go to the app router which already
-/// does per-host org resolution. `/healthz` and `/readyz` short-circuit
-/// to the app router regardless of `Host` so opaque-Host probes (Caddy
-/// active health check, Docker healthcheck) can't mark the upstream
-/// down by hitting the marketing 404.
+/// `Host`. `Marketing` goes to the marketing router; `App` and
+/// `TenantPublic` — which includes a verified custom domain — go to the app
+/// router, which already does per-host org resolution. `/healthz` and
+/// `/readyz` short-circuit to the app router regardless of `Host` so
+/// opaque-Host probes (Caddy active health check, Docker healthcheck) can't
+/// mark the upstream down by hitting the marketing 404.
+///
+/// `Unknown` gets a bare 404 rather than the marketing site, which would
+/// otherwise put our pages and their canonical tags on somebody's domain.
 #[derive(Clone)]
 pub struct RouteByHost {
     pub scheme: HostScheme,
+    pub custom_domains: Arc<CustomDomains>,
     pub marketing: Router,
     pub app: Router,
 }
@@ -44,9 +50,9 @@ impl Service<Request<Body>> for RouteByHost {
     }
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
-        // Probes use opaque Hosts (IP / container name → Unknown →
-        // marketing 404 → upstream marked down). Path is the stable
-        // signal; route health endpoints to the app regardless of Host.
+        // Probes use opaque Hosts (IP / container name → Unknown → 404 →
+        // upstream marked down). Path is the stable signal; route health
+        // endpoints to the app regardless of Host.
         if is_health_path(req.uri().path()) {
             let mut svc = self.app.clone();
             return Box::pin(async move { svc.call(req).await });
@@ -56,10 +62,13 @@ impl Service<Request<Body>> for RouteByHost {
             .get(HOST)
             .and_then(|h| h.to_str().ok())
             .unwrap_or("");
-        let class = classify_host(host, &self.scheme);
-        let mut svc = match class {
-            HostClass::Marketing | HostClass::Unknown => self.marketing.clone(),
+        let mut svc = match classify_host(host, &self.scheme, &self.custom_domains) {
+            HostClass::Marketing => self.marketing.clone(),
             HostClass::App | HostClass::TenantPublic => self.app.clone(),
+            HostClass::Unknown => {
+                metrics::counter!(crate::metric_names::UNRECOGNISED_HOST_REQUESTS).increment(1);
+                return Box::pin(async { Ok(StatusCode::NOT_FOUND.into_response()) });
+            }
         };
         Box::pin(async move { svc.call(req).await })
     }

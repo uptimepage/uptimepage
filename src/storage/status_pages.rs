@@ -17,10 +17,20 @@ pub(crate) const PAGE_PLAN_JOIN: &str = "JOIN organizations sp_org ON sp_org.id 
      JOIN accounts sp_acct ON sp_acct.id = sp_org.account_id \
      JOIN plans sp_plan ON sp_plan.id = sp_acct.plan_id";
 
-/// A custom domain is served only while verified and while the plan sells one,
-/// so a downgrade sends readers back to the page's own subdomain.
-pub(crate) const PAGE_CUSTOM_DOMAIN_LIVE: &str =
+/// Verified plus a plan that sells one. Permits routing and certificate
+/// issuance; it does not move a published URL.
+pub(crate) const PAGE_CUSTOM_DOMAIN_SERVED: &str =
     "(sp.custom_domain_verified_at IS NOT NULL AND sp_plan.custom_domain_enabled)";
+
+/// Activated, for the addresses a page publishes: subscriber mail, the feed
+/// self link, `og:url`, the canonical tag. A host that has completed no TLS
+/// handshake would hand every one of those a connection failure, and mail
+/// cannot be recalled.
+///
+/// Restates the page's own liveness because callers differ:
+/// `subscribers::list_pending` filters the plan hold but not `enabled` or a
+/// soft-deleted org.
+pub(crate) const PAGE_CUSTOM_DOMAIN_PUBLISHED: &str = "(sp.custom_domain_activated_at IS NOT NULL      AND sp_plan.custom_domain_enabled      AND sp.enabled      AND sp.plan_hold_at IS NULL      AND sp_org.deleted_at IS NULL)";
 
 /// Whether the plan still covers this page. Over cap, the excess pages carry a
 /// `plan_hold_at`: they 404 publicly and their subscribers hear nothing, while
@@ -29,12 +39,13 @@ pub(crate) const PAGE_CUSTOM_DOMAIN_LIVE: &str =
 pub(crate) const PAGE_NOT_HELD: &str = "sp.plan_hold_at IS NULL";
 
 use crate::domain::{
-    MonitorShareId, NewStatusPage, NewStatusPageComponent, OrgId, PublicOrgBranding, PublicStyle,
-    StatusPage, StatusPageComponent, StatusPageComponentUpdate, StatusPageId, StatusPageUpdate,
-    UserId, WriteSource,
+    MonitorShareId, NewStatusPage, NewStatusPageComponent, OrgId, PageRef, PublicOrgBranding,
+    PublicStyle, StatusPage, StatusPageComponent, StatusPageComponentUpdate, StatusPageId,
+    StatusPageUpdate, UserId, WriteSource,
 };
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::request::custom_domains::CustomDomainRow;
 use crate::storage::accounts;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock};
 
@@ -1044,6 +1055,46 @@ impl StatusPageStore for InMemoryStatusPageStore {
         pages.dedup();
         Ok(pages)
     }
+}
+
+/// PUBLIC-STATUS PATH ONLY. Feeds the in-memory snapshot the host decisions
+/// read ([`crate::request::custom_domains`]).
+///
+/// The third door onto the public surface, and its membership filter must
+/// stay identical to [`find_public_status_page_by_slug`]'s: page enabled, not
+/// held, owning org not soft-deleted. Drift lets a held or deleted org keep
+/// serving on its branded host.
+///
+/// [`find_public_status_page_by_slug`]: crate::storage::orgs::find_public_status_page_by_slug
+pub async fn load_verified_custom_domains(pool: &PgPool) -> Result<Vec<CustomDomainRow>> {
+    let rows: Vec<(String, Uuid, Uuid, String, bool)> = sqlx::query_as(&format!(
+        r#"/* SAFE: public-page lookup is intentionally not org_id-scoped */
+           SELECT sp.custom_domain::text, sp.id, sp.org_id, sp.slug::text,
+                  sp.custom_domain_activated_at IS NOT NULL
+           FROM status_pages sp
+           {PAGE_PLAN_JOIN}
+           WHERE sp.custom_domain IS NOT NULL
+             AND sp.enabled = true
+             AND {PAGE_NOT_HELD}
+             AND sp_org.deleted_at IS NULL
+             AND {PAGE_CUSTOM_DOMAIN_SERVED}
+           ORDER BY sp.custom_domain, sp.id"#
+    ))
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(rows
+        .into_iter()
+        .map(|(domain, page, org, slug, activated)| CustomDomainRow {
+            domain,
+            page: PageRef {
+                page: StatusPageId(page),
+                org: OrgId(org),
+            },
+            slug,
+            activated,
+        })
+        .collect())
 }
 
 #[cfg(test)]

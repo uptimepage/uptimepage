@@ -21,6 +21,7 @@ use crate::app::AppState;
 use crate::config::AppConfig;
 use crate::domain::{OrgId, PageRef, StatusPageId};
 use crate::error::public::PublicAppError;
+use crate::request::custom_domains::CustomDomains;
 use crate::request::is_health_path;
 
 /// Subdomain labels that route to the operator surface (dashboard + auth +
@@ -87,9 +88,8 @@ impl HostScheme {
 }
 
 /// What kind of host arrived. The marketing dispatch seam routes
-/// `Marketing` (and `Unknown`, so garbage cannot fall through to a
-/// tenant) to the marketing router; `App` and `TenantPublic` go to the
-/// existing app router which already does per-host org resolution.
+/// `Marketing` to the marketing router and `App` / `TenantPublic` to the
+/// app router. `Unknown` is served by neither and 404s at the seam.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostClass {
     Marketing,
@@ -184,14 +184,43 @@ pub fn request_origin(headers: &HeaderMap, base_domain: &str) -> Option<String> 
     }
 }
 
+/// Origin a resolved page publishes links on: activated custom domain, else
+/// the request origin, else the page's own subdomain.
+///
+/// [`request_origin`] returns `None` off the base domain, so a custom-domain
+/// visitor would otherwise get the operator origin, which does not serve this
+/// page. Activated rather than verified, for the reason on
+/// `PAGE_CUSTOM_DOMAIN_PUBLISHED`.
+pub fn published_page_origin(
+    state: &AppState,
+    headers: &HeaderMap,
+    page: StatusPageId,
+) -> Option<String> {
+    if let Some(domain) = state.custom_domains.published(page) {
+        return Some(format!("https://{domain}"));
+    }
+    request_origin(headers, &state.cfg.public_status.base_domain).or_else(|| {
+        state
+            .custom_domains
+            .subdomain(page)
+            .map(|host| format!("https://{host}"))
+    })
+}
+
 /// Classify a request's `Host` header against the production wire
 /// format. Builds on [`parse_host_shape`] so shape rules stay in one
 /// place; this layer only maps `(Apex | Subdomain | Other)` plus the
-/// label sets to the router taxonomy.
-pub fn classify_host(host: &str, scheme: &HostScheme) -> HostClass {
+/// label sets and the custom-domain snapshot to the router taxonomy.
+///
+/// The snapshot is consulted only for `Other`, so no stored row can shadow the
+/// operator host or a tenant slug.
+pub fn classify_host(host: &str, scheme: &HostScheme, domains: &CustomDomains) -> HostClass {
     match parse_host_shape(host, &scheme.base_domain) {
         HostShape::Apex => HostClass::Marketing,
-        HostShape::Other => HostClass::Unknown,
+        HostShape::Other => match domains.lookup(host) {
+            Some(_) => HostClass::TenantPublic,
+            None => HostClass::Unknown,
+        },
         HostShape::Subdomain(slug) => {
             if MARKETING_LABELS
                 .iter()
@@ -251,7 +280,8 @@ pub struct ResolvedStatusPage(pub PageRef);
 /// instead of the JSON envelope an extractor rejection would produce.
 ///
 /// Subdomain surface: parse the `Host` header, resolve the slug through
-/// [`find_public_status_page_by_slug`] (filters `enabled = true`). A
+/// [`find_public_status_page_by_slug`] (filters `enabled = true`), or, for a
+/// host off this deployment's base domain, the custom-domain snapshot. A
 /// missing/garbled host or a disabled/unknown page is a 404 — the public
 /// surface never confirms which pages exist. Path-based / self-host: the lone
 /// live org's default (first enabled) page.
@@ -269,8 +299,15 @@ pub async fn resolve_status_page(
         .get(HOST)
         .and_then(|h| h.to_str().ok())
         .ok_or(PublicAppError::NotFound)?;
-    let parsed = extract_status_slug(host, &state.cfg.public_status.base_domain)
-        .ok_or(PublicAppError::NotFound)?;
+
+    // A `{slug}.{base}` host never consults the snapshot, so a row naming a
+    // tenant subdomain cannot shadow that tenant.
+    let Some(parsed) = extract_status_slug(host, &state.cfg.public_status.base_domain) else {
+        return state
+            .custom_domains
+            .lookup(host)
+            .ok_or(PublicAppError::NotFound);
+    };
 
     let pool = state.db.as_ref().ok_or_else(|| {
         PublicAppError::Internal(anyhow::anyhow!(
@@ -344,24 +381,32 @@ pub fn is_subdomain_public_request(state: &AppState, headers: &HeaderMap) -> boo
 /// The slice of the app router a request's `Host` may reach.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HostSurface {
-    /// Dashboard, auth, API: `app.{base}`, and every host once the SaaS
-    /// subdomain surface is off.
+    /// Dashboard, auth, API: `app.{base}`, the apex, and every host once the
+    /// SaaS subdomain surface is off.
     Operator,
     /// The public-status allow-list only.
     Tenant,
     /// The MCP transport and its discovery documents only.
     Mcp,
+    /// Nothing at all.
+    Unknown,
 }
 
 /// Tenant hosts exist only with the SaaS subdomain surface on; the MCP host
 /// is narrowed whenever it is distinct from the app host ([`is_mcp_host`]).
+///
+/// On SaaS an unrecognised host reaches nothing. On a path-based self-host
+/// deploy every host is legitimately the operator, so the default stands.
 fn host_surface(state: &AppState, headers: &HeaderMap) -> HostSurface {
     let Some(host) = headers.get(HOST).and_then(|h| h.to_str().ok()) else {
+        // Caddy talks HTTP/1.1 upstream, which cannot omit `Host`, and the app
+        // port is not exposed past the docker network.
         return HostSurface::Operator;
     };
     if is_mcp_host(&state.cfg, host) {
         return HostSurface::Mcp;
     }
+    let subdomain_routes = state.cfg.tenancy.subdomain_public_routes;
     // Slug-shaped non-operator hosts (including `www` and any marketing
     // label) belong on the public dispatcher — even when the upstream
     // marketing router isn't wired up. Routing them to the operator `/`
@@ -369,11 +414,13 @@ fn host_surface(state: &AppState, headers: &HeaderMap) -> HostSurface {
     // labels (`admin.{base}`, `www.{base}`). When marketing IS enabled,
     // `RouteByHost` intercepts those hosts before this code runs.
     match parse_host_shape(host, &state.cfg.public_status.base_domain) {
-        HostShape::Subdomain(slug)
-            if state.cfg.tenancy.subdomain_public_routes && !is_operator_label(slug) =>
-        {
+        HostShape::Subdomain(slug) if subdomain_routes && !is_operator_label(slug) => {
             HostSurface::Tenant
         }
+        HostShape::Other if subdomain_routes => match state.custom_domains.lookup(host) {
+            Some(_) => HostSurface::Tenant,
+            None => HostSurface::Unknown,
+        },
         _ => HostSurface::Operator,
     }
 }
@@ -455,14 +502,22 @@ fn is_mcp_host_path(path: &str) -> bool {
 /// a self-host that turns the connector on gets it too.
 pub async fn host_isolation(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let path = req.uri().path();
-    let allowed = is_health_path(path)
-        || match host_surface(&state, req.headers()) {
+    if !is_health_path(path) {
+        let surface = host_surface(&state, req.headers());
+        let allowed = match surface {
             HostSurface::Operator => true,
             HostSurface::Tenant => is_public_tenant_path(path),
             HostSurface::Mcp => is_mcp_host_path(path),
+            HostSurface::Unknown => false,
         };
-    if !allowed {
-        return StatusCode::NOT_FOUND.into_response();
+        if !allowed {
+            // The dispatch seam counts its own denials, but exists only when
+            // marketing is enabled.
+            if surface == HostSurface::Unknown {
+                metrics::counter!(crate::metric_names::UNRECOGNISED_HOST_REQUESTS).increment(1);
+            }
+            return StatusCode::NOT_FOUND.into_response();
+        }
     }
     next.run(req).await
 }
@@ -742,7 +797,7 @@ mod tests {
         for slug in ["app-google", "admin", "support", "login"] {
             let host = format!("{slug}.example.com");
             assert_eq!(
-                classify_host(&host, &s),
+                classify_host(&host, &s, &no_domains()),
                 HostClass::TenantPublic,
                 "{slug} must classify as tenant-public, not App"
             );
@@ -753,10 +808,28 @@ mod tests {
         HostScheme::from_base_domain("example.com").unwrap()
     }
 
+    fn no_domains() -> CustomDomains {
+        CustomDomains::new("example.com")
+    }
+
+    fn serving(domain: &str) -> CustomDomains {
+        let d = CustomDomains::new("example.com");
+        d.install(vec![crate::request::custom_domains::CustomDomainRow {
+            domain: domain.into(),
+            page: PageRef {
+                page: StatusPageId(uuid::Uuid::from_u128(1)),
+                org: OrgId(uuid::Uuid::from_u128(2)),
+            },
+            slug: "page".into(),
+            activated: false,
+        }]);
+        d
+    }
+
     #[test]
     fn classify_apex_is_marketing() {
         assert_eq!(
-            classify_host("example.com", &scheme()),
+            classify_host("example.com", &scheme(), &no_domains()),
             HostClass::Marketing
         );
     }
@@ -764,20 +837,23 @@ mod tests {
     #[test]
     fn classify_www_is_marketing() {
         assert_eq!(
-            classify_host("www.example.com", &scheme()),
+            classify_host("www.example.com", &scheme(), &no_domains()),
             HostClass::Marketing
         );
     }
 
     #[test]
     fn classify_app_is_app() {
-        assert_eq!(classify_host("app.example.com", &scheme()), HostClass::App);
+        assert_eq!(
+            classify_host("app.example.com", &scheme(), &no_domains()),
+            HostClass::App
+        );
     }
 
     #[test]
     fn classify_tenant_slug_is_tenant_public() {
         assert_eq!(
-            classify_host("acme.example.com", &scheme()),
+            classify_host("acme.example.com", &scheme(), &no_domains()),
             HostClass::TenantPublic
         );
     }
@@ -785,11 +861,11 @@ mod tests {
     #[test]
     fn classify_strips_port() {
         assert_eq!(
-            classify_host("example.com:8080", &scheme()),
+            classify_host("example.com:8080", &scheme(), &no_domains()),
             HostClass::Marketing
         );
         assert_eq!(
-            classify_host("acme.example.com:443", &scheme()),
+            classify_host("acme.example.com:443", &scheme(), &no_domains()),
             HostClass::TenantPublic
         );
     }
@@ -800,16 +876,19 @@ mod tests {
         // Must classify identically — otherwise the dispatcher would
         // 404 a real tenant.
         assert_eq!(
-            classify_host("acme.example.com.", &scheme()),
+            classify_host("acme.example.com.", &scheme(), &no_domains()),
             HostClass::TenantPublic
         );
-        assert_eq!(classify_host("app.example.com.", &scheme()), HostClass::App);
+        assert_eq!(
+            classify_host("app.example.com.", &scheme(), &no_domains()),
+            HostClass::App
+        );
     }
 
     #[test]
     fn classify_is_case_insensitive() {
         assert_eq!(
-            classify_host("ACME.Example.COM", &scheme()),
+            classify_host("ACME.Example.COM", &scheme(), &no_domains()),
             HostClass::TenantPublic
         );
     }
@@ -819,7 +898,7 @@ mod tests {
         // `a.b.example.com` must NOT alias a tenant slug; the dispatcher
         // hands `Unknown` to marketing 404, never to a tenant.
         assert_eq!(
-            classify_host("a.b.example.com", &scheme()),
+            classify_host("a.b.example.com", &scheme(), &no_domains()),
             HostClass::Unknown
         );
     }
@@ -827,15 +906,69 @@ mod tests {
     #[test]
     fn classify_unrelated_host_is_unknown() {
         assert_eq!(
-            classify_host("acme.other.com", &scheme()),
+            classify_host("acme.other.com", &scheme(), &no_domains()),
             HostClass::Unknown
         );
-        assert_eq!(classify_host("garbage", &scheme()), HostClass::Unknown);
+        assert_eq!(
+            classify_host("garbage", &scheme(), &no_domains()),
+            HostClass::Unknown
+        );
+    }
+
+    #[test]
+    fn classify_serves_a_verified_custom_domain_as_a_tenant() {
+        let d = serving("status.acme.test");
+        for host in [
+            "status.acme.test",
+            "STATUS.Acme.test",
+            "status.acme.test:443",
+            "status.acme.test.",
+        ] {
+            assert_eq!(
+                classify_host(host, &scheme(), &d),
+                HostClass::TenantPublic,
+                "{host}"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_denies_a_custom_domain_the_snapshot_does_not_serve() {
+        let d = serving("status.acme.test");
+        for host in ["status.other.test", "acme.test", "evil.test", ""] {
+            assert_eq!(
+                classify_host(host, &scheme(), &d),
+                HostClass::Unknown,
+                "{host}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_custom_domain_row_cannot_shadow_our_own_hosts() {
+        let d = serving("app.example.com");
+        assert_eq!(
+            classify_host("app.example.com", &scheme(), &d),
+            HostClass::App
+        );
+        let d = serving("example.com");
+        assert_eq!(
+            classify_host("example.com", &scheme(), &d),
+            HostClass::Marketing
+        );
+        let d = serving("acme.example.com");
+        assert_eq!(
+            classify_host("acme.example.com", &scheme(), &d),
+            HostClass::TenantPublic
+        );
     }
 
     #[test]
     fn classify_empty_host_is_unknown() {
-        assert_eq!(classify_host("", &scheme()), HostClass::Unknown);
+        assert_eq!(
+            classify_host("", &scheme(), &no_domains()),
+            HostClass::Unknown
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::error::Result;
 use crate::storage::admin::not_held_sql;
-use crate::storage::status_pages::{PAGE_CUSTOM_DOMAIN_LIVE, PAGE_NOT_HELD, PAGE_PLAN_JOIN};
+use crate::storage::status_pages::{PAGE_CUSTOM_DOMAIN_PUBLISHED, PAGE_NOT_HELD, PAGE_PLAN_JOIN};
 use crate::storage::subscribers::{
     CLAIM_ORPHAN_MINUTES, FANOUT_LOOKBACK_HOURS, FANOUT_MAX_ATTEMPTS,
 };
@@ -30,7 +30,7 @@ pub struct PendingMaintenance {
     pub page_name: String,
     pub slug: String,
     pub custom_domain: Option<String>,
-    pub custom_domain_verified: bool,
+    pub custom_domain_published: bool,
     pub signing_secret: Option<String>,
 }
 
@@ -42,7 +42,7 @@ pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingMainte
     let sql = format!(
         "SELECT DISTINCT subscriber_id, maintenance_id, org_id, channel, target, phase, title,
                 description, starts_at, ends_at, page_name, slug, custom_domain,
-                custom_domain_verified, signing_secret
+                custom_domain_published, signing_secret
          FROM (
              SELECT s.id AS subscriber_id, mw.id AS maintenance_id, s.org_id, s.channel, s.target,
                     s.verified_at,
@@ -50,7 +50,7 @@ pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingMainte
                     COALESCE(NULLIF(sp.public_display_name, ''), sp.name) AS page_name,
                     sp.slug::text AS slug,
                     sp.custom_domain::text AS custom_domain,
-                    {PAGE_CUSTOM_DOMAIN_LIVE} AS custom_domain_verified,
+                    {PAGE_CUSTOM_DOMAIN_PUBLISHED} AS custom_domain_published,
                     s.config ->> 'signing_secret' AS signing_secret,
                     CASE WHEN mw.ends_at <= now() THEN 'completed' ELSE 'scheduled' END AS phase,
                     CASE WHEN mw.ends_at <= now() THEN mw.ends_at ELSE mw.created_at END AS event_at

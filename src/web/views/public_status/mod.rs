@@ -16,8 +16,11 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::AssetSlot;
 use crate::domain::PublicIncident;
+use crate::domain::StatusPageId;
 use crate::error::public::PublicAppError;
-use crate::request::host::{is_subdomain_public_request, request_origin, resolve_status_page};
+use crate::request::host::{
+    is_subdomain_public_request, published_page_origin, resolve_status_page,
+};
 use crate::templates::filters;
 use crate::web::error::{NotFoundPage, UnavailablePage};
 use crate::web::robots;
@@ -136,7 +139,7 @@ pub async fn index(
         // hence the canonical.
         resp.headers_mut()
             .insert(robots::X_ROBOTS_TAG, robots::NOINDEX_FOLLOW);
-        if let Some(canonical) = canonical_link(&state, &headers) {
+        if let Some(canonical) = canonical_link(&state, &headers, page_ref.page) {
             resp.headers_mut().insert(header::LINK, canonical);
         }
         resp
@@ -152,6 +155,7 @@ pub async fn index(
         let og = build_og_meta(
             &state,
             &headers,
+            page_ref.page,
             branding.home,
             format!("{} Status", branding.display_name),
             format!(
@@ -278,6 +282,7 @@ pub async fn incident(
     let og = build_og_meta(
         &state,
         &headers,
+        page_ref.page,
         &format!("/status/incidents/{id}"),
         format!("{} · {} Status", inc.title, branding.display_name),
         incident_description(&inc.title, &inc.component_name, &branding.display_name),
@@ -353,6 +358,7 @@ pub async fn archive(
     let og = build_og_meta(
         &state,
         &headers,
+        page_ref.page,
         &path,
         format!("Incident history · {} Status", branding.display_name),
         format!(
@@ -426,16 +432,19 @@ fn render_public_error(err: PublicAppError) -> Response {
 
 /// Absolute `rel=canonical` for the page a fragment duplicates. `None` when no
 /// origin is known, leaving the fragment its `noindex` alone.
-fn canonical_link(state: &AppState, headers: &HeaderMap) -> Option<header::HeaderValue> {
-    let origin =
-        request_origin(headers, &state.cfg.public_status.base_domain).unwrap_or_else(|| {
-            state
-                .cfg
-                .auth
-                .public_base_url
-                .trim_end_matches('/')
-                .to_owned()
-        });
+fn canonical_link(
+    state: &AppState,
+    headers: &HeaderMap,
+    page: StatusPageId,
+) -> Option<header::HeaderValue> {
+    let origin = published_page_origin(state, headers, page).unwrap_or_else(|| {
+        state
+            .cfg
+            .auth
+            .public_base_url
+            .trim_end_matches('/')
+            .to_owned()
+    });
     if origin.is_empty() {
         return None;
     }

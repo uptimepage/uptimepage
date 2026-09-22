@@ -102,6 +102,22 @@ pub const DISPOSABLE_CORPUS_DOMAINS: &str = "uptimepage_disposable_corpus_domain
 /// hours-apart refreshes that set it.
 pub const DISPOSABLE_CORPUS_UPDATED: &str =
     "uptimepage_disposable_corpus_updated_timestamp_seconds";
+/// Custom domains the snapshot currently serves. Zero on a deployment that
+/// sells none; a drop to zero on one that does means a rebuild read an empty
+/// set, not that a refresh failed — a failed refresh keeps the last good one.
+pub const CUSTOM_DOMAINS_SERVED: &str = "uptimepage_custom_domains_served";
+/// Unix seconds of the last rebuild that replaced the custom-domain snapshot.
+/// The snapshot has no maximum age on purpose, so `time() - value` is the only
+/// thing that says a deployment is routing on stale ownership.
+pub const CUSTOM_DOMAINS_UPDATED: &str = "uptimepage_custom_domains_updated_timestamp_seconds";
+/// Requests answered at the dispatch seam because their `Host` named neither
+/// this deployment nor a served custom domain. The evidence that default-deny
+/// is live on an instance, and the shape of whatever is pointing DNS at us.
+pub const UNRECOGNISED_HOST_REQUESTS: &str = "uptimepage_unrecognised_host_requests_total";
+/// On-demand TLS authorization answers, labelled `outcome` (allowed | refused).
+/// One per handshake for a certificate Caddy does not already hold, so a rise
+/// in `refused` is somebody pointing a name at us that nobody verified.
+pub const CUSTOM_DOMAIN_ASK: &str = "uptimepage_custom_domain_ask_total";
 /// Labelled `surface` + `outcome` (flagged | refused) + `risk`. Counts only
 /// addresses the gate acted on; a clean address increments nothing.
 pub const EMAIL_ADMISSION: &str = "uptimepage_email_admission_total";

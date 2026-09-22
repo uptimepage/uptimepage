@@ -11,6 +11,7 @@ Override `UPTIMEPAGE_CONFIG_PATH` to point at an alternate base config file.
 | Section | Key | Purpose |
 |---------|-----|---------|
 | `server` | `api_bind`, `metrics_bind` | bind addresses for REST API and Prometheus exporter |
+| `server` | `custom_domain_ask_bind` | where Caddy's on-demand TLS `ask` endpoint listens, for status pages served on a customer's own domain. Its own address rather than a path, so it is never reachable through the operator host. Empty (the default) starts no listener; keep it on an internal address |
 | `runtime` | `worker_threads`, `max_blocking_threads` | Tokio runtime sizing (`0` = `num_cpus`) |
 | `checker` | `max_concurrent_checks` | global concurrency cap enforced by worker pool semaphore |
 | `checker` | `default_timeout_ms`, `connect_timeout_ms` | client-side timeouts applied to outbound checks |

@@ -7,6 +7,7 @@
 
 pub mod auth;
 pub mod client_ip;
+pub mod custom_domains;
 pub mod deletion_receipt;
 pub mod display_prefs;
 pub mod flash;

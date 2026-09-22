@@ -118,6 +118,21 @@ impl AppConfig {
     /// panics in router construction. Skipped wholesale when
     /// `marketing.enabled = false` so self-host deployments need not set
     /// any of these.
+    /// The snapshot only loads on the subdomain surface, so without it the ask
+    /// endpoint would refuse every certificate and fail each handshake silently.
+    pub fn validate_custom_domain_ask(&self) -> Result<()> {
+        if self.server.custom_domain_ask_bind.trim().is_empty()
+            || self.tenancy.subdomain_public_routes
+        {
+            return Ok(());
+        }
+        Err(crate::error::AppError::Other(anyhow::anyhow!(
+            "server.custom_domain_ask_bind is set but tenancy.subdomain_public_routes is false: \
+             the ask endpoint would refuse every certificate, because custom domains are only \
+             resolved on the subdomain surface"
+        )))
+    }
+
     pub fn validate_marketing(&self) -> Result<()> {
         fn err(msg: String) -> crate::error::AppError {
             crate::error::AppError::Other(anyhow::anyhow!(msg))

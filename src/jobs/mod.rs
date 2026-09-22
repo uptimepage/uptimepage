@@ -3,6 +3,7 @@
 //! in tests), the shared `periodic` purge-loop runner, the per-monitor
 //! silence sweep and the outbound dead-man ping.
 
+pub mod custom_domains;
 pub mod disposable_refresh;
 pub mod heartbeat_nudge;
 pub mod periodic;

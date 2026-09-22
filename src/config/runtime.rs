@@ -9,6 +9,10 @@ use super::{empty_secret, secret_str};
 pub struct ServerConfig {
     pub api_bind: String,
     pub metrics_bind: String,
+    /// Where Caddy's on-demand TLS `ask` reaches this process. Empty starts no
+    /// listener. Internal network only.
+    #[serde(default)]
+    pub custom_domain_ask_bind: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

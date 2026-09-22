@@ -355,6 +355,22 @@ fn register_descriptions() {
         "Unix time of the last refresh that actually replaced the disposable-email corpus. A timestamp rather than an age so `time() - value` stays correct between refreshes, which are hours apart. Only successful refreshes move it, so a stalled upstream or a list the sanity guards keep rejecting shows up here as an age that keeps climbing. Absent until the first refresh lands"
     );
     describe_counter!(
+        "uptimepage_unrecognised_host_requests_total",
+        "Requests refused at the dispatch seam because their `Host` named neither this deployment nor a custom domain it serves. Zero is the steady state on a deployment nobody points DNS at; it is also the series that shows default-deny is actually live on an instance"
+    );
+    describe_counter!(
+        "uptimepage_custom_domain_ask_total",
+        "On-demand TLS authorization answers, labelled by `outcome` (allowed | refused). Caddy asks once per handshake for a certificate it does not hold, so `refused` counts names pointed at us that no page has verified"
+    );
+    describe_gauge!(
+        "uptimepage_custom_domains_served",
+        "Custom domains the in-memory snapshot currently routes. A deployment that sells none sits at zero"
+    );
+    describe_gauge!(
+        "uptimepage_custom_domains_updated_timestamp_seconds",
+        "Unix time of the last rebuild that replaced the custom-domain snapshot. A timestamp rather than an age so `time() - value` stays correct between the 30-second rebuilds. A failed rebuild leaves the last good snapshot live and does not move this, so routing on stale ownership shows up here as an age that keeps climbing. Absent until the first load lands"
+    );
+    describe_counter!(
         "uptimepage_billing_webhooks_total",
         "Payment-provider webhooks accepted, labelled by `outcome` (applied | duplicate | stale | unmatched | foreign). `applied` is the normal case; `duplicate` and `stale` are the provider's own redelivery and reordering and are routine. `unmatched` names an account we do not know and `foreign` a subscription that is not the account's live one, and neither should be routine"
     );

@@ -334,7 +334,7 @@ async fn fanout_lists_verified_recent_public_updates_only() {
 
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
-async fn a_verified_custom_domain_is_served_only_while_the_plan_sells_one() {
+async fn an_activated_custom_domain_is_published_only_while_the_plan_sells_one() {
     let Some(pool) = pg_pool_from_env().await else {
         return;
     };
@@ -363,7 +363,7 @@ async fn a_verified_custom_domain_is_served_only_while_the_plan_sells_one() {
     };
     let on_free = mine(subscribers::list_pending(&pool, 100).await.unwrap());
     assert!(
-        !on_free.custom_domain_verified,
+        !on_free.custom_domain_published,
         "a plan without custom domains links the page's own subdomain"
     );
 
@@ -375,8 +375,20 @@ async fn a_verified_custom_domain_is_served_only_while_the_plan_sells_one() {
     .execute(&pool)
     .await
     .unwrap();
-    let on_team = mine(subscribers::list_pending(&pool, 100).await.unwrap());
-    assert!(on_team.custom_domain_verified);
+    let verified_only = mine(subscribers::list_pending(&pool, 100).await.unwrap());
+    assert!(
+        !verified_only.custom_domain_published,
+        "verification permits a certificate, it does not move a mailed link: \
+         the host has completed no handshake yet and mail cannot be recalled"
+    );
+
+    sqlx::query("UPDATE status_pages SET custom_domain_activated_at = now() WHERE id = $1")
+        .bind(page)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let activated = mine(subscribers::list_pending(&pool, 100).await.unwrap());
+    assert!(activated.custom_domain_published);
 
     cleanup(&pool, org).await;
 }

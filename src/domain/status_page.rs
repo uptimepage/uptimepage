@@ -29,7 +29,7 @@ impl std::fmt::Display for StatusPageId {
 /// A resolved public page: its id plus the owning org, threaded together so
 /// tenant-scoped queries never lose the org. Produced by routing resolution
 /// and consumed by the public data layer.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PageRef {
     pub page: StatusPageId,
     pub org: OrgId,
