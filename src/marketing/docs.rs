@@ -458,7 +458,7 @@ pub const DOCS: &[DocPage] = &[
         blurb: "Local setup for working on the service itself: toolchain, workflows, and the test gates.",
         section: Section::SelfHosting,
         scope: Scope::SelfHosting,
-        lastmod: "2026-09-20",
+        lastmod: "2026-09-22",
         source: include_str!("../../docs/development.md"),
         dir: "",
     },

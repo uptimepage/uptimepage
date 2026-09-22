@@ -1,7 +1,7 @@
 +++
 title = "Your monitors can talk to an AI, with your permission"
 date = "2026-06-03"
-updated = "2026-08-18"
+updated = "2026-09-22"
 slug = "mcp-server"
 excerpt = "Uptimepage now speaks MCP, so an LLM can answer \"what's broken and since when?\" in plain language, plus what we did to stop it from wrecking things."
 tags = ["mcp", "ai", "monitoring", "security", "api"]
@@ -16,15 +16,15 @@ Most of what's interesting here is about restraint, not cleverness.
 
 > **TL;DR**
 >
-> Uptimepage speaks MCP, so an assistant like Claude reads your real monitors and tells you what is down and for how long, instead of guessing. It can also set monitoring up: point it at a project and it creates the monitors, running each check once and showing you the result before anything is saved. There are twenty-five tools: fifteen read-only, ten that act. Every action needs a scoped token and your explicit approval in the moment, and each one writes an audit row. Nothing changes without you.
+> Uptimepage speaks MCP, so an assistant like Claude reads your real monitors and tells you what is down and for how long, instead of guessing. It can also set monitoring up: point it at a project and it creates the monitors, running each check once and showing you the result before anything is saved. There are thirty-one tools: sixteen read-only, fifteen that act. Every action needs a scoped token, your approval in the moment wherever your client can ask, and each one writes an audit row that says whether anyone was asked.
 
-## Twenty-five tools. Fifteen can only look.
+## Thirty-one tools. Sixteen can only look.
 
-The server exposes twenty-five tools. Fifteen are read-only: org health, monitor lists, the full config of what each check asserts, history broken down by probe region, incident timelines and metrics, status pages, your notification channels by name, usage against your plan. Ten can actually *do* something: create a monitor, run a check on demand, pause or resume a monitor, retune how loudly one is watched, acknowledge or resolve an incident, put one on your status page or take it back down, post an update to one.
+The server exposes thirty-one tools. Sixteen are read-only: org health, monitor lists, the full config of what each check asserts, history broken down by probe region, browser flow runs and step trends, incident timelines and metrics, status pages, regions, tags, your notification channels and variables by name, usage against your plan. Fifteen can actually *do* something: create a monitor or a batch of them, run a check on demand, pause or resume a monitor, retune how loudly one is watched, acknowledge or resolve an incident, put one on your status page or take it back down, post an update to one, create or edit a status page and the components on it.
 
-That split is deliberate and enforced, not a naming convention. A read tool is structurally incapable of changing anything. An action tool can't fire without three independent gates. The token must carry the right scope, **you** must approve the specific action in the moment, and every outcome (success, denial, error) writes exactly one audit row.
+That split is deliberate and enforced, not a naming convention. A read tool is structurally incapable of changing anything. An action tool can't fire without three independent gates. The token must carry the right scope, **you** must approve the specific action in the moment when your client can put a prompt in front of you, and every outcome (success, denial, error) writes exactly one audit row.
 
-So when the model says "I'll pause the staging monitor," what actually happens is a confirmation prompt lands in front of *you*, naming the exact monitor and effect. Approve it or it doesn't happen. There is no "remember my choice." Each action is its own decision.
+So when the model says "I'll pause the staging monitor," what actually happens in Claude, Cursor or VS Code is a confirmation prompt lands in front of *you*, naming the exact monitor and effect. Approve it or it doesn't happen. There is no "remember my choice." Each action is its own decision. A client that cannot show a prompt at all, such as a proxy that forwards tool calls but never relays questions, runs the write on the scopes you granted at consent, exactly as the REST API would with the same token, and the audit row is marked unconfirmed so you can see it happened that way. If a client cannot ask, grant it read scopes only.
 
 We let the AI pause a monitor. We did not let it pause a monitor without asking you. Those are different sentences, and the gap between them is most of the product.
 

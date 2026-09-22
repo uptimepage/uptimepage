@@ -692,7 +692,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "Can the AI change my monitoring without asking me?",
-                "No. A write needs three separate things: the connector's token must carry the write scope, which is never granted unless the client asks for it and you approve it on the consent screen; you must approve that exact action in the moment; and the outcome writes an audit row. There is no remember-my-choice, so each action is its own decision.",
+                "Not in a client that can ask. A write needs three separate things: the connector's token must carry the write scope, which is never granted unless the client asks for it and you approve it on the consent screen; you approve that exact action in the moment, in every client that can show a prompt; and the outcome writes an audit row. There is no remember-my-choice, so each action is its own decision. A client that cannot show a prompt runs writes on the scopes you granted, as the REST API would, and the audit row says so; give such a client read scopes only.",
             ),
             (
                 "Can it set up monitoring from scratch?",

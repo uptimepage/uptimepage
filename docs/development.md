@@ -172,9 +172,10 @@ What it seeds (under the `seed-fixtures` tag, idempotent):
   `cityHash64(tid)` (each component has a distinct uptime% and outage
   pattern), an explicit 87-89d "ancient outage" cluster on the first three
   targets, and a 6-day NoData gap on fix-email.
-- **9 notification channels** — one per `ChannelConfig` variant (slack,
-  webhook, whatsapp, discord, msteams, google_chat enabled; email enabled
-  but unverified; telegram and telegram_app disabled), with alert bindings
+- **13 notification channels** — one per kind except gotify, sms and
+  mattermost (slack, webhook, whatsapp, discord, msteams, google_chat and the
+  rest enabled; email enabled but unverified; telegram and telegram_app
+  disabled), with alert bindings
   on fix-api / fix-db / fix-auth mixing `notify_recovery` on/off and
   single/multi-channel bindings.
 - **4 maintenance windows** — 1 active (bound to fix-db), 2 upcoming, 1 past.
