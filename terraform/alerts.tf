@@ -1089,6 +1089,72 @@ resource "grafana_rule_group" "pipeline" {
   }
 }
 
+# Custom status-page domains. Their own group, like billing: the pipeline
+# group's runbook entry point lists data-path rules only, and an operator
+# paged by name needs to land in the section that covers it (§6.8).
+resource "grafana_rule_group" "custom_domains" {
+  name             = "uptimepage-custom-domains"
+  folder_uid       = grafana_folder.obs.uid
+  interval_seconds = 60
+
+  # The snapshot deciding which customer domains a color serves has no maximum
+  # age on purpose: a fail-closed one would take a branded status page dark
+  # during the incident it exists for. So this gauge is the only thing that
+  # says a color is routing on ownership it can no longer confirm, and a
+  # removal or a plan hold keeps serving until a rebuild lands.
+  #
+  # `min`, not `max`: the question is whether EVERY serving color is fresh. A
+  # stopped color exports nothing and drops out of the query, so the only
+  # thing min catches that max hides is a running color whose refresh loop is
+  # wedged next to a healthy one — which is exactly the case, since Caddy
+  # round-robins both during a deploy's overlap.
+  #
+  # Gated on serving at least one domain. Below that a stale snapshot harms
+  # nobody, and the cause it would report (Postgres unreachable) already pages
+  # critical through UptimepageRegistryRefreshStuck.
+  #
+  # No `for`: the expression is monotonic once it crosses, so debouncing adds
+  # latency and nothing else — and with no_data_state OK, a single scrape gap
+  # inside a pending window would restart the clock indefinitely.
+  rule {
+    name           = "UptimepageCustomDomainSnapshotStale"
+    condition      = "C"
+    for            = "0s"
+    no_data_state  = "OK"
+    exec_err_state = "Error"
+    labels = {
+      severity = "warning"
+      service  = "uptimepage"
+    }
+    annotations = {
+      summary     = "uptimepage: the custom-domain snapshot has stopped refreshing"
+      description = "a color serving custom domains has not rebuilt its verified-domain snapshot for over 5 minutes, so a domain that was removed, disabled or put on hold keeps being served there and keeps being authorized for certificates. Usually Postgres unreachable from that color. Runbook: runbooks/grafana-cloud.md."
+    }
+    data {
+      ref_id         = "A"
+      datasource_uid = data.grafana_data_source.prometheus.uid
+      relative_time_range {
+        from = 900
+        to   = 0
+      }
+      model = jsonencode({
+        refId   = "A"
+        instant = true
+        expr    = "(time() - min(uptimepage_custom_domains_updated_timestamp_seconds) > 300) and on() (max(uptimepage_custom_domains_served) > 0)"
+      })
+    }
+    data {
+      ref_id         = "C"
+      datasource_uid = "__expr__"
+      relative_time_range {
+        from = 0
+        to   = 0
+      }
+      model = local.threshold_c
+    }
+  }
+}
+
 # Availability / dead-man alerts. Every rule above assumes data is flowing
 # and goes quiet when it stops; these fire on the absence itself, so a dark
 # pipeline can't masquerade as "all healthy".
