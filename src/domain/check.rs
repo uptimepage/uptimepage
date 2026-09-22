@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 use utoipa::ToSchema;
 
+/// Longest budget any check may declare: a whole browser flow.
+pub const MAX_CHECK_TIMEOUT: Duration = Duration::from_secs(120);
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[allow(clippy::large_enum_variant)]
@@ -50,6 +53,20 @@ impl CheckSpec {
     /// network: no circuit breaker, no host throttle, never runs on agents.
     pub fn is_passive(&self) -> bool {
         matches!(self, CheckSpec::Heartbeat(_))
+    }
+
+    /// The probe's own time budget. Zero for heartbeat, which never probes.
+    pub fn timeout(&self) -> Duration {
+        match self {
+            CheckSpec::Http(c) => c.timeout,
+            CheckSpec::Tcp(c) => c.timeout,
+            CheckSpec::Ping(c) => c.timeout,
+            CheckSpec::TlsCert(c) => c.timeout,
+            CheckSpec::DomainExpiry(c) => c.timeout,
+            CheckSpec::Dns(c) => c.timeout,
+            CheckSpec::Flow(c) => c.timeout,
+            CheckSpec::Heartbeat(_) => Duration::ZERO,
+        }
     }
 
     pub fn as_heartbeat(&self) -> Option<&HeartbeatCheck> {

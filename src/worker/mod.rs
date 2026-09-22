@@ -192,7 +192,8 @@ pub(crate) async fn execute_recorded(
     let CheckSpec::Flow(f) = spec else {
         return (execute(target_id, org_id, spec, deps).await, None);
     };
-    let (result, probe) = flow::execute_flow_check_probe(target_id, org_id, f, deps.flow).await;
+    let (result, probe) =
+        flow::execute_flow_check_probe(target_id, org_id, f, deps.flow, None).await;
     let record = crate::domain::agent_wire::FlowRunRecord {
         org_id,
         target_id,
@@ -240,8 +241,14 @@ pub(crate) async fn execute_with_probe(
             (r, p.into())
         }
         CheckSpec::Flow(flow) => {
-            let (r, probe) =
-                flow::execute_flow_check_probe(target_id, org_id, flow, deps.flow).await;
+            let (r, probe) = flow::execute_flow_check_probe(
+                target_id,
+                org_id,
+                flow,
+                deps.flow,
+                Some(flow::engine::INTERACTIVE_QUEUE_LIMIT),
+            )
+            .await;
             (
                 r,
                 ProbeDetail {

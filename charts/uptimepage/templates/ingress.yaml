@@ -11,8 +11,8 @@ metadata:
   labels:
     {{- include "uptimepage.labels" . | nindent 4 }}
   annotations:
-    # The dispatch long-poll holds 25s + 30s; a shorter read timeout kills
-    # "check now" silently. Names are ingress-nginx's.
+    # A test / check-now waits up to 145s for its result; a shorter read
+    # timeout kills it silently. Names are ingress-nginx's.
     nginx.ingress.kubernetes.io/proxy-read-timeout: {{ .Values.ingress.proxyTimeoutSeconds | quote }}
     nginx.ingress.kubernetes.io/proxy-send-timeout: {{ .Values.ingress.proxyTimeoutSeconds | quote }}
     {{- with .Values.ingress.annotations }}

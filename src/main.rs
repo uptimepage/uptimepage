@@ -1020,6 +1020,7 @@ async fn main() -> Result<()> {
     );
 
     let signal_token = root.clone();
+    let ad_hoc = state.ad_hoc.clone();
     let serve = axum::serve(
         listener,
         router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
@@ -1027,6 +1028,7 @@ async fn main() -> Result<()> {
     .with_graceful_shutdown(async move {
         wait_for_signal().await;
         signal_token.cancel();
+        ad_hoc.close();
     });
 
     if let Err(err) = serve.await {

@@ -46,7 +46,7 @@ Passing the secrets through `--set` also works and lets the chart build the Secr
 Both charts are signed with cosign keyless signing, so there is no public key to distribute:
 
 ```bash
-cosign verify ghcr.io/uptimepage/charts/uptimepage:0.5.2 \
+cosign verify ghcr.io/uptimepage/charts/uptimepage:0.6.0 \
   --certificate-identity-regexp '^https://github.com/uptimepage/uptimepage/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -88,7 +88,7 @@ Mint each token on the control plane first. In-cluster agents reach it over the 
 
 The chart replaces what Caddy does in the Docker Compose stack, so your ingress controller handles TLS.
 
-The agent dispatch long-poll holds a request open for 25 seconds and waits up to 30 more for a result. A proxy read timeout below that cuts the connection and "check now" stops working with no error anywhere. The chart writes ingress-nginx annotations from `ingress.proxyTimeoutSeconds`, which defaults to 75. On another controller, set the equivalent through `ingress.annotations`.
+A test or "check now" request waits up to 145 seconds for its result, the longest being a flow test with a 120-second timeout. A proxy read timeout below that cuts the connection and the request fails with no error anywhere. The chart writes ingress-nginx annotations from `ingress.proxyTimeoutSeconds`, which defaults to 150. Since chart 0.6.0 the schema rejects a value below 150, so an upgrade that pins an older, lower value fails until you raise it. On another controller, set the equivalent through `ingress.annotations`.
 
 `security.trustedProxies` has to cover the ingress controller's pod network. The default RFC1918 ranges usually do. Get it wrong and every request looks like it came from a single address, so the abuse guard throttles all of your users at once.
 

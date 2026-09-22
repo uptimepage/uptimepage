@@ -526,14 +526,11 @@ impl McpServer {
         regions: &[String],
     ) -> Result<(String, ProbeOutcome), McpToolError> {
         let default = self.state.cfg.scheduler.effective_default_region();
-        let live = |r: &&String| self.state.ad_hoc.region_live(r);
         // A region with no agent 503s the dispatch and takes the create with it,
-        // so liveness outranks the preference for home.
+        // so availability outranks the preference for home.
         let region = regions
             .iter()
-            .find(|r| r.as_str() == default && live(r))
-            .or_else(|| regions.iter().find(live))
-            .or_else(|| regions.first())
+            .min_by_key(|r| (self.state.ad_hoc.region_state(r), r.as_str() != default))
             .map_or_else(|| default.to_string(), String::clone);
         let delivered = crate::api::handlers::targets::run_ad_hoc(
             &self.state,

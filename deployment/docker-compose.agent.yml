@@ -23,8 +23,9 @@ services:
   agent:
     image: ${UPTIMEPAGE_IMAGE}
     restart: unless-stopped
-    # Let an in-flight batch flush on SIGTERM before SIGKILL.
-    stop_grace_period: 30s
+    # Let an in-flight batch flush, and a claim in flight (up to 30s) plus the
+    # test / check-now it hands over (up to 145s) finish, before SIGKILL.
+    stop_grace_period: 180s
     # The agent makes no inbound API connections, but it does serve its own
     # Prometheus metrics on 9090 (buffer depth, push outcomes). Exposed on the
     # internal network only — never published to the host — so an optional

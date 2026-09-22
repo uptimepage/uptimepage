@@ -966,10 +966,11 @@ pub(crate) fn validate_check(check: &crate::domain::CheckSpec, guard: &SsrfGuard
         CheckSpec::Flow(flow) => {
             use crate::domain::{FlowCheck, FlowStep};
             const FLOW: &str = codes::INVALID_FLOW_PARAMS;
-            if !(1_000..=120_000).contains(&flow.timeout.as_millis()) {
+            let max = crate::domain::MAX_CHECK_TIMEOUT.as_millis();
+            if !(1_000..=max).contains(&flow.timeout.as_millis()) {
                 return Err(AppError::bad_request_field(
                     FLOW,
-                    "flow timeout must be between 1000 and 120000 ms",
+                    format!("flow timeout must be between 1000 and {max} ms"),
                     "check.timeout",
                 ));
             }

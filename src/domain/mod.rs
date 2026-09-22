@@ -37,8 +37,9 @@ pub mod write_source;
 pub use alert::{AlertBinding, TargetAlerts};
 pub use check::{
     CheckSpec, DnsCheck, DnsRecordType, DomainExpiryCheck, ExpectedStatus, FlowCheck, FlowStep,
-    HeartbeatCheck, HttpCheck, HttpMethod, IntervalHints, PingCheck, TcpCheck, TlsCertCheck,
-    interval_hints_for_kind, min_interval_secs_for_kind, reduced_domain_hint, registered_domain,
+    HeartbeatCheck, HttpCheck, HttpMethod, IntervalHints, MAX_CHECK_TIMEOUT, PingCheck, TcpCheck,
+    TlsCertCheck, interval_hints_for_kind, min_interval_secs_for_kind, reduced_domain_hint,
+    registered_domain,
 };
 pub use check_error::{ErrorClass, ErrorFamily, classify_check_error, humanize_check_error};
 pub use credential::{CredentialAction, CredentialOrigin, LinkedIdentity, OauthProvider, WaysIn};

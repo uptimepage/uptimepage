@@ -149,6 +149,17 @@ fn a_probe_refusal_is_not_retryable_but_a_missing_agent_is() {
     assert_eq!(unavailable.code, codes::PROBE_UNAVAILABLE);
     assert!(unavailable.retryable);
     assert_eq!(outcome_for(&unavailable), Outcome::Error);
+
+    let busy = probe_dispatch_error(crate::error::AppError::service_unavailable(
+        crate::error::codes::PROBE_BUSY,
+        "every probe is busy",
+    ));
+    assert_eq!(busy.code, codes::PROBE_BUSY);
+    assert!(busy.retryable);
+    assert!(
+        !busy.is_fatal_to_batch(),
+        "one busy region fails one monitor"
+    );
 }
 
 #[test]

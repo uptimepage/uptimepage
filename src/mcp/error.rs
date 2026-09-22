@@ -30,6 +30,9 @@ pub mod codes {
     /// No probe could run right now (no live agent in the region). The
     /// arguments were fine, so an identical retry can succeed.
     pub const PROBE_UNAVAILABLE: &str = "probe_unavailable";
+    /// Every probe in the region was busy with other checks. Transient and
+    /// scoped to one check, so a batch carries on past it.
+    pub const PROBE_BUSY: &str = "probe_busy";
     /// The org's per-category rate limit was exhausted; retry after a delay.
     pub const RATE_LIMITED: &str = "rate_limited";
     /// The resource is declared in Terraform, which would revert a write here.
@@ -166,6 +169,10 @@ pub(super) fn config_error(e: crate::error::AppError) -> McpToolError {
 /// would loop the model against the check-now limiter.
 pub(super) fn probe_dispatch_error(e: crate::error::AppError) -> McpToolError {
     match e {
+        AppError::ServiceUnavailable {
+            code: crate::error::codes::PROBE_BUSY,
+            ..
+        } => McpToolError::new(codes::PROBE_BUSY, e.to_string(), true),
         AppError::ServiceUnavailable { .. } => {
             McpToolError::new(codes::PROBE_UNAVAILABLE, e.to_string(), true)
         }
@@ -179,7 +186,7 @@ pub(super) fn probe_dispatch_error(e: crate::error::AppError) -> McpToolError {
 /// `denied`.
 pub(super) fn outcome_for(e: &McpToolError) -> Outcome {
     match e.code {
-        codes::INTERNAL | codes::PROBE_UNAVAILABLE => Outcome::Error,
+        codes::INTERNAL | codes::PROBE_UNAVAILABLE | codes::PROBE_BUSY => Outcome::Error,
         _ => Outcome::Denied,
     }
 }

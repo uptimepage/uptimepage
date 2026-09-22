@@ -30,6 +30,9 @@ pub enum RunResult {
     },
     /// The engine/CDP transport broke: not a verdict on the target, an error.
     Engine(String),
+    /// No browser slot freed within the run's queue limit; the target was
+    /// never contacted.
+    Busy(String),
 }
 
 /// A step that did not pass: a flow failure, or a transport break.

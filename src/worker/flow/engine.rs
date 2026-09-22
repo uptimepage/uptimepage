@@ -24,7 +24,17 @@ use crate::domain::agent_wire::{FlowEvidence, StepTrace};
 /// Headroom over the flow's own budget for the outer backstop. The deadline
 /// inside a run ends it with a trace and a live page to snapshot, so the
 /// backstop should only ever fire for a CDP call that stopped returning to it.
-const BACKSTOP_GRACE: Duration = Duration::from_secs(5);
+pub const BACKSTOP_GRACE: Duration = Duration::from_secs(5);
+/// Longest an interactive run waits for a browser slot before it reports the
+/// engine busy, so a test never burns its wait queued behind scheduled flows.
+pub const INTERACTIVE_QUEUE_LIMIT: Duration = Duration::from_secs(10);
+const BUSY: &str = "every browser slot stayed busy with other flows";
+
+/// A run the engine turned away for want of a free slot: the target was never
+/// contacted.
+pub fn is_busy(result: &crate::domain::CheckResult) -> bool {
+    result.error.as_deref().is_some_and(|e| e.starts_with(BUSY))
+}
 
 /// Evidence is telemetry about a failure, so reading it must never cost the
 /// verdict and trace already in hand. Sits inside the backstop grace, which it
@@ -82,11 +92,31 @@ impl CdpEngine {
     }
 
     /// Elapsed excludes queue wait. Steps must already be variable-resolved.
+    /// With a `queue_limit`, a run that finds no free slot in time reports the
+    /// engine busy instead of waiting on.
     pub async fn run(
         &self,
         flow: &FlowCheck,
+        queue_limit: Option<Duration>,
     ) -> (RunResult, Option<FlowEvidence>, Vec<StepTrace>, u32) {
-        let _permit = match self.sem.acquire().await {
+        let acquired = match queue_limit {
+            Some(limit) => match tokio::time::timeout(limit, self.sem.acquire()).await {
+                Ok(acquired) => acquired,
+                Err(_) => {
+                    return (
+                        RunResult::Busy(format!(
+                            "{BUSY} for {} s; try again shortly",
+                            limit.as_secs()
+                        )),
+                        None,
+                        Vec::new(),
+                        0,
+                    );
+                }
+            },
+            None => self.sem.acquire().await,
+        };
+        let _permit = match acquired {
             Ok(p) => p,
             Err(_) => {
                 return (
@@ -330,4 +360,34 @@ async fn connect_with_retry(
         }
     }
     Err(format!("CDP connect failed after retries: {last}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn an_interactive_run_reports_busy_when_no_slot_frees() {
+        let engine = CdpEngine::new(FlowEngineConfig {
+            binary: "lightpanda".into(),
+            max_concurrency: 1,
+            mem_limit_bytes: 0,
+            block_private_networks: true,
+            block_cidrs: String::new(),
+            v8_max_heap_mb: 0,
+            max_response_bytes: 0,
+            user_agent_suffix: String::new(),
+        });
+        let _scheduled = engine.sem.acquire().await.unwrap();
+        let flow = FlowCheck {
+            start_url: url::Url::parse("https://example.com/").unwrap(),
+            steps: Vec::new(),
+            timeout: Duration::from_secs(30),
+            step_timeout: Duration::from_secs(5),
+            verify_tls: true,
+        };
+        let (run, _, _, elapsed) = engine.run(&flow, Some(INTERACTIVE_QUEUE_LIMIT)).await;
+        assert!(matches!(run, RunResult::Busy(_)));
+        assert_eq!(elapsed, 0);
+    }
 }

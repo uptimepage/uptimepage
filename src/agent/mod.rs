@@ -310,49 +310,50 @@ struct AgentDispatchClient {
 const DISPATCH_RECONNECT_BACKOFF: Duration = Duration::from_secs(3);
 
 impl AgentDispatchClient {
-    async fn run(self, cancel: CancellationToken) {
-        loop {
-            tokio::select! {
-                _ = cancel.cancelled() => return,
-                r = self.poll_once() => {
-                    if let Err(err) = r {
-                        tracing::warn!(error = %err, "agent dispatch long-poll failed; backing off");
-                        tokio::select! {
-                            _ = cancel.cancelled() => return,
-                            _ = tokio::time::sleep(DISPATCH_RECONNECT_BACKOFF) => {}
-                        }
-                    }
-                }
+    async fn run(self: Arc<Self>, cancel: CancellationToken) {
+        let claim = |limit| self.claim_or_back_off(limit);
+        let run = |check| {
+            let this = self.clone();
+            async move { this.execute(check).await }
+        };
+        crate::ad_hoc_dispatch::serve_claims(claim, run, cancel).await;
+    }
+
+    async fn claim_or_back_off(&self, limit: usize) -> Vec<DispatchedCheck> {
+        match self.claim(limit).await {
+            Ok(checks) => checks,
+            Err(err) => {
+                tracing::warn!(error = %err, "agent dispatch long-poll failed; backing off");
+                tokio::time::sleep(DISPATCH_RECONNECT_BACKOFF).await;
+                Vec::new()
             }
         }
     }
 
-    async fn poll_once(&self) -> Result<()> {
-        for check in self.claim().await? {
-            let deps = WorkerDeps {
-                http: self.http_clients.as_ref(),
-                domain_expiry: self.domain_runtime.as_ref(),
-                flow: self.flow_engine.as_deref(),
-            };
-            let target_id = check.target_id.unwrap_or_else(Uuid::nil);
-            let (result, probe) =
-                crate::worker::execute_with_probe(target_id, check.org_id, &check.spec, &deps)
-                    .await;
-            let payload = DispatchReport {
-                check_id: check.id,
-                result,
-                response_headers_preview: probe.response_headers_preview,
-                response_body_snippet: probe.response_body_snippet,
-                flow_evidence: probe.flow_evidence,
-                flow_steps: probe.flow_steps,
-            };
-            self.post_result(&payload).await?;
+    async fn execute(&self, check: DispatchedCheck) {
+        let deps = WorkerDeps {
+            http: self.http_clients.as_ref(),
+            domain_expiry: self.domain_runtime.as_ref(),
+            flow: self.flow_engine.as_deref(),
+        };
+        let target_id = check.target_id.unwrap_or_else(Uuid::nil);
+        let (result, probe) =
+            crate::worker::execute_with_probe(target_id, check.org_id, &check.spec, &deps).await;
+        let payload = DispatchReport {
+            check_id: check.id,
+            result,
+            response_headers_preview: probe.response_headers_preview,
+            response_body_snippet: probe.response_body_snippet,
+            flow_evidence: probe.flow_evidence,
+            flow_steps: probe.flow_steps,
+        };
+        if let Err(err) = self.post_result(&payload).await {
+            tracing::warn!(error = %err, check_id = %check.id, "agent dispatch result post failed");
         }
-        Ok(())
     }
 
-    async fn claim(&self) -> Result<Vec<DispatchedCheck>> {
-        let req = Request::get(&self.claim_url)
+    async fn claim(&self, limit: usize) -> Result<Vec<DispatchedCheck>> {
+        let req = Request::get(format!("{}?limit={limit}", self.claim_url))
             .header(AUTHORIZATION, format!("Bearer {}", self.token))
             .body(Full::new(Bytes::new()))
             .context("building dispatch-claim request")?;
@@ -530,7 +531,7 @@ pub async fn run(cfg: AppConfig) -> Result<()> {
         root.clone(),
     );
     drop(result_tx);
-    let job_client = AgentDispatchClient {
+    let job_client = Arc::new(AgentDispatchClient {
         client: http_outbound::build_outbound_client(SsrfGuard::new(
             cfg.security.allow_private_targets,
         )),
@@ -541,7 +542,7 @@ pub async fn run(cfg: AppConfig) -> Result<()> {
         http_clients: http_clients.clone(),
         domain_runtime,
         flow_engine,
-    };
+    });
     let job_handle = {
         let token = root.clone();
         tokio::spawn(async move { job_client.run(token).await })

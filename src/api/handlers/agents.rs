@@ -3,10 +3,11 @@
 //! membership and never the request body.
 
 use crate::api::json::LenientJson as Json;
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
+use serde::Deserialize;
 use std::collections::HashMap;
 
 use uuid::Uuid;
@@ -15,8 +16,8 @@ use crate::ad_hoc_dispatch::DeliveredResult;
 use crate::app::AppState;
 use crate::domain::OrgId;
 use crate::domain::agent_wire::{
-    AgentTargetDto, AgentTargetsResponse, DispatchBatch, DispatchKind, DispatchReport,
-    FlowRunRecord, IngestRequest, IngestResponse,
+    AgentTargetDto, AgentTargetsResponse, DispatchBatch, DispatchReport, FlowRunRecord,
+    IngestRequest, IngestResponse,
 };
 use crate::error::codes;
 use crate::error::{AppError, Result};
@@ -26,6 +27,12 @@ use crate::storage::operator::OperatorRepo;
 
 /// Max interactive checks handed to one agent per long-poll return.
 const DISPATCH_CLAIM_LIMIT: usize = 32;
+
+/// The agent asks for no more checks than it has free slots to run.
+#[derive(Deserialize)]
+pub struct ClaimQuery {
+    limit: Option<usize>,
+}
 
 const INGEST_MAX_BATCH: usize = 10_000;
 /// Far tighter than the result cap: a monitor runs one every 300s at most, so a
@@ -256,8 +263,12 @@ fn accepted(n: usize, dropped: usize, duplicate: bool) -> Response {
 pub async fn claim_dispatch(
     State(state): State<AppState>,
     agent: AgentIdentity,
+    Query(q): Query<ClaimQuery>,
 ) -> Result<Json<DispatchBatch>> {
-    let claim = state.ad_hoc.claim(&agent.region, DISPATCH_CLAIM_LIMIT);
+    let limit = q
+        .limit
+        .map_or(DISPATCH_CLAIM_LIMIT, |n| n.clamp(1, DISPATCH_CLAIM_LIMIT));
+    let claim = state.ad_hoc.claim(&agent.region, limit);
     // Return empty immediately on shutdown so a held long-poll doesn't stall
     // graceful drain for the full hold window; the agent reconnects on restart.
     let checks = match &state.shutdown {
@@ -287,7 +298,7 @@ pub async fn submit_dispatch_result(
         flow_steps: req.flow_steps,
     };
     if let Some(meta) = state.ad_hoc.complete(req.check_id, delivered)
-        && meta.kind == DispatchKind::CheckNow
+        && crate::ad_hoc_dispatch::persists(meta.kind, &result_for_ch)
         && let Some(target_id) = meta.target_id
     {
         let mut result = result_for_ch;

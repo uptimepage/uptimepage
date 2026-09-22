@@ -112,8 +112,8 @@
         "enabled": { "type": "boolean" },
         "proxyTimeoutSeconds": {
           "type": "integer",
-          "minimum": 60,
-          "description": "Must exceed the 25s dispatch long-poll plus its 30s result wait"
+          "minimum": 150,
+          "description": "Must exceed the longest test / check-now result wait (145s)"
         }
       }
     },

@@ -32,7 +32,7 @@ helm install probe-us-east oci://ghcr.io/uptimepage/charts/uptimepage-agent \
 Verify the chart before installing it. Releases are signed with cosign keyless signing:
 
 ```bash
-cosign verify ghcr.io/uptimepage/charts/uptimepage-agent:0.3.1 \
+cosign verify ghcr.io/uptimepage/charts/uptimepage-agent:0.3.2 \
   --certificate-identity-regexp '^https://github.com/uptimepage/uptimepage/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

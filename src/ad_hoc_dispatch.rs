@@ -12,34 +12,64 @@
 //! routing or a shared bus.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::future::Future;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dashmap::DashMap;
 use moka::sync::Cache;
-use tokio::sync::{Notify, oneshot};
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, oneshot};
+use tokio::task::JoinSet;
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::domain::CheckResult;
 use crate::domain::agent_wire::{DispatchKind, DispatchedCheck, HeaderPreview};
+use crate::domain::{CheckResult, CheckSpec, MAX_CHECK_TIMEOUT};
 use crate::http_client::HttpClients;
 use crate::storage::ResultSink;
+use crate::worker::flow::engine::{BACKSTOP_GRACE, INTERACTIVE_QUEUE_LIMIT};
 use crate::worker::{WorkerDeps, WorkerPool};
 
 /// How long the brain holds an agent's claim request before returning empty so
 /// the agent reconnects. Below the agent's HTTP client timeout.
 pub const HOLD: Duration = Duration::from_secs(25);
-/// How long a test/check-now request waits for an agent to run its check.
-pub const RESULT_WAIT: Duration = Duration::from_secs(30);
+/// Longest a dispatched check may sit unclaimed. Past it the region has no
+/// free slot after all, so the check is withdrawn and its request told so.
+pub const QUEUE_WAIT: Duration = Duration::from_secs(5);
+/// Wait beyond the check's own timeout: the queue, a flow's wait for a browser
+/// slot and its teardown backstop, plus 5 s for posting the result back.
+const RESULT_MARGIN: Duration = Duration::from_secs(
+    QUEUE_WAIT.as_secs() + INTERACTIVE_QUEUE_LIMIT.as_secs() + BACKSTOP_GRACE.as_secs() + 5,
+);
+/// An executor re-claims as soon as a claim returns. A check dispatched in that
+/// gap queues for the next claim instead of failing as "no probe available".
+const RECLAIM_GRACE: Duration = Duration::from_secs(5);
+/// Checks one executor runs at once, so a check burning its whole timeout on a
+/// dead host never stalls the rest of its region's interactive checks.
+pub const EXECUTOR_CONCURRENCY: usize = 8;
 /// Cap on queued-but-unclaimed checks per region, so a region that goes dark
 /// right after a liveness check can't grow memory without bound.
 const MAX_QUEUE: usize = 256;
-/// Pending-waiter lifetime. Outlives `RESULT_WAIT` so a check-now result still
-/// persists if the agent reports just after the request gave up, and bounds any
-/// waiter that is never completed (region died, queue eviction).
-const PENDING_TTL: Duration = Duration::from_secs(60);
+/// Pending-waiter lifetime. Outlives the longest [`result_wait`] so a check-now
+/// result still persists if the agent reports just after the request gave up,
+/// and bounds any waiter that is never completed (region died, queue eviction).
+const PENDING_TTL: Duration = Duration::from_secs(MAX_CHECK_TIMEOUT.as_secs() + 60);
+
+/// How long a test/check-now request waits for its check: the check's own
+/// timeout plus the dispatch overhead, so a dead host reports its timeout
+/// rather than a missing agent.
+pub fn result_wait(check: &CheckSpec) -> Duration {
+    check.timeout() + RESULT_MARGIN
+}
+
+/// Whether a delivered result belongs in the monitor's history: only a
+/// check-now, and never one turned away by a busy flow engine, since the probe's
+/// own capacity says nothing about the site.
+pub fn persists(kind: DispatchKind, result: &CheckResult) -> bool {
+    kind == DispatchKind::CheckNow && !crate::worker::flow::engine::is_busy(result)
+}
 
 /// Delivery handle behind interior mutability so the TTL cache can hold it
 /// (cache values must be `Clone`) while `complete`/`abandon` take the one-shot
@@ -64,23 +94,71 @@ pub struct DispatchMeta {
     pub target_id: Option<Uuid>,
 }
 
+/// How a dispatched check ended for the request waiting on it.
+pub enum Awaited {
+    Delivered(Box<DeliveredResult>),
+    /// No executor claimed it in time; it was withdrawn and never runs.
+    Unclaimed,
+    /// Claimed (or the region closed) but no result came back in time.
+    TimedOut,
+}
+
+/// Whether a region can take an interactive check right now, most available
+/// first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RegionState {
+    /// An executor holds a claim, or is about to claim again.
+    Live,
+    /// Its executors are all running checks they claimed; a new check would
+    /// wait in the queue past its own deadline.
+    Busy,
+    /// No executor serves it.
+    Absent,
+}
+
 #[derive(Default)]
 struct RegionSlot {
     queue: Mutex<VecDeque<DispatchedCheck>>,
     notify: Notify,
     holders: AtomicUsize,
+    /// An executor between claims is about to claim again until then.
+    reclaim_until: Mutex<Option<Instant>>,
+    /// The checks an executor claimed may still be running until then.
+    busy_until: Mutex<Option<Instant>>,
 }
 
-struct HolderGuard<'a>(&'a RegionSlot);
+fn extend_busy(until: &Mutex<Option<Instant>>, span: Duration) {
+    let at = Instant::now() + span;
+    let mut until = until.lock().unwrap();
+    *until = Some(until.map_or(at, |prev| prev.max(at)));
+}
+
+fn in_future(until: &Mutex<Option<Instant>>) -> bool {
+    until.lock().unwrap().is_some_and(|at| Instant::now() < at)
+}
+
+struct HolderGuard<'a> {
+    slot: &'a RegionSlot,
+    /// Whether the executor kept a free slot and so claims again at once.
+    reclaims: bool,
+}
 
 impl Drop for HolderGuard<'_> {
     fn drop(&mut self) {
-        self.0.holders.fetch_sub(1, Ordering::Relaxed);
+        // A full claim leaves the grace alone: it may be another executor's,
+        // and a stale one is caught by the queue wait.
+        if self.reclaims {
+            let at = Instant::now() + RECLAIM_GRACE;
+            let mut reclaim = self.slot.reclaim_until.lock().unwrap();
+            *reclaim = Some(reclaim.map_or(at, |prev| prev.max(at)));
+        }
+        self.slot.holders.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
 pub struct AdHocDispatch {
     regions: DashMap<String, Arc<RegionSlot>>,
+    closed: AtomicBool,
     /// `check_id` → (delivery handle, authoritative meta), TTL-bounded so a
     /// waiter that is never completed — region died, request timed out, queue
     /// eviction — can't leak, and a check-now result still persists if it lands
@@ -98,6 +176,7 @@ impl AdHocDispatch {
     pub fn new() -> Self {
         Self {
             regions: DashMap::new(),
+            closed: AtomicBool::new(false),
             pending: Cache::builder()
                 .time_to_live(PENDING_TTL)
                 .max_capacity(100_000)
@@ -109,11 +188,32 @@ impl AdHocDispatch {
         self.regions.entry(region.to_string()).or_default().clone()
     }
 
-    /// Whether an agent is currently holding a long-poll for this region.
+    /// Only a live region takes a check: an executor claims only while it has
+    /// a free slot, so a queued check is picked up at once or not in time.
+    pub fn region_state(&self, region: &str) -> RegionState {
+        if self.closed.load(Ordering::SeqCst) {
+            return RegionState::Absent;
+        }
+        let Some(s) = self.regions.get(region) else {
+            return RegionState::Absent;
+        };
+        if s.holders.load(Ordering::Relaxed) > 0 || in_future(&s.reclaim_until) {
+            RegionState::Live
+        } else if in_future(&s.busy_until) {
+            RegionState::Busy
+        } else {
+            RegionState::Absent
+        }
+    }
+
     pub fn region_live(&self, region: &str) -> bool {
-        self.regions
-            .get(region)
-            .is_some_and(|s| s.holders.load(Ordering::Relaxed) > 0)
+        self.region_state(region) == RegionState::Live
+    }
+
+    /// The first of `regions` in the most available state, so a busy region
+    /// answers "busy" rather than an absent one answering "no probe".
+    pub fn most_available<'a>(&self, regions: &'a [String]) -> Option<&'a String> {
+        regions.iter().min_by_key(|r| self.region_state(r))
     }
 
     /// Queue a check for `region` and return a receiver for its result. Register
@@ -131,11 +231,16 @@ impl AdHocDispatch {
             org_id: check.org_id,
             target_id: check.target_id,
         };
-        self.pending
-            .insert(check.id, (Arc::new(Mutex::new(Some(tx))), meta));
         let slot = self.slot(region);
         {
             let mut q = slot.queue.lock().unwrap();
+            // Under the queue lock, so `close` either sees this check or this
+            // sees `close`.
+            if self.closed.load(Ordering::SeqCst) {
+                return rx;
+            }
+            self.pending
+                .insert(check.id, (Arc::new(Mutex::new(Some(tx))), meta));
             if q.len() >= MAX_QUEUE
                 && let Some(evicted) = q.pop_front()
             {
@@ -147,12 +252,69 @@ impl AdHocDispatch {
         rx
     }
 
-    /// Stop delivering to a request that gave up, without discarding the meta —
-    /// a check-now result landing within the TTL still persists; the entry is
-    /// reclaimed by TTL.
-    pub fn abandon(&self, check_id: Uuid) {
-        if let Some((waiter, _)) = self.pending.get(&check_id) {
-            let _ = waiter.lock().unwrap().take();
+    /// On shutdown: refuse new checks, drop unclaimed ones, and fail every
+    /// waiting request now. An agent's result could not reach this draining
+    /// process anyway, so nothing is worth holding the drain for. Meta stays,
+    /// so a check-now the in-process executor finishes within the shutdown
+    /// deadline still persists.
+    pub fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        for slot in self.regions.iter() {
+            slot.queue.lock().unwrap().clear();
+        }
+        for (_, (waiter, _)) in self.pending.iter() {
+            waiter.lock().unwrap().take();
+        }
+    }
+
+    /// Pull a check nobody claimed out of its queue so it never runs for
+    /// nobody, and fail its request. False when an executor already has it.
+    fn withdraw(&self, region: &str, check_id: Uuid) -> bool {
+        let withdrawn = self.regions.get(region).is_some_and(|slot| {
+            let mut q = slot.queue.lock().unwrap();
+            let before = q.len();
+            q.retain(|c| c.id != check_id);
+            q.len() < before
+        });
+        if withdrawn && let Some((waiter, _)) = self.pending.remove(&check_id) {
+            waiter.lock().unwrap().take();
+        }
+        withdrawn
+    }
+
+    /// A request gave up. A check still queued is withdrawn. One already
+    /// claimed keeps its meta, so a check-now result landing within the TTL
+    /// still persists.
+    pub fn abandon(&self, region: &str, check_id: Uuid) {
+        if !self.withdraw(region, check_id)
+            && let Some((waiter, _)) = self.pending.get(&check_id)
+        {
+            waiter.lock().unwrap().take();
+        }
+    }
+
+    /// Wait for a dispatched check. One no executor claims within
+    /// [`QUEUE_WAIT`] is withdrawn: the region had no free slot after all.
+    pub async fn await_result(
+        &self,
+        region: &str,
+        check_id: Uuid,
+        mut rx: oneshot::Receiver<DeliveredResult>,
+        wait: Duration,
+    ) -> Awaited {
+        let deadline = Instant::now() + wait;
+        match tokio::time::timeout(QUEUE_WAIT, &mut rx).await {
+            Ok(Ok(delivered)) => return Awaited::Delivered(Box::new(delivered)),
+            Ok(Err(_)) => return Awaited::TimedOut,
+            Err(_) if self.withdraw(region, check_id) => return Awaited::Unclaimed,
+            Err(_) => {}
+        }
+        match tokio::time::timeout_at(deadline, rx).await {
+            Ok(Ok(delivered)) => Awaited::Delivered(Box::new(delivered)),
+            _ => {
+                self.abandon(region, check_id);
+                Awaited::TimedOut
+            }
         }
     }
 
@@ -162,18 +324,27 @@ impl AdHocDispatch {
     pub async fn claim(&self, region: &str, limit: usize) -> Vec<DispatchedCheck> {
         let slot = self.slot(region);
         slot.holders.fetch_add(1, Ordering::Relaxed);
-        let _guard = HolderGuard(&slot);
-        let deadline = tokio::time::Instant::now() + HOLD;
+        let mut guard = HolderGuard {
+            slot: &slot,
+            reclaims: true,
+        };
+        let deadline = Instant::now() + HOLD;
         loop {
             {
                 let mut q = slot.queue.lock().unwrap();
                 if !q.is_empty() {
-                    let n = q.len().min(limit.max(1));
-                    return q.drain(..n).collect();
+                    let limit = limit.max(1);
+                    let n = q.len().min(limit);
+                    let claimed: Vec<_> = q.drain(..n).collect();
+                    guard.reclaims = n < limit;
+                    if let Some(busy) = claimed.iter().map(|c| result_wait(&c.spec)).max() {
+                        extend_busy(&slot.busy_until, busy);
+                    }
+                    return claimed;
                 }
             }
             let notified = slot.notify.notified();
-            let now = tokio::time::Instant::now();
+            let now = Instant::now();
             if now >= deadline {
                 return Vec::new();
             }
@@ -196,13 +367,68 @@ impl AdHocDispatch {
     }
 }
 
+/// Claim→run loop shared by every executor. Claims no more checks than it has
+/// free slots and runs each on its own task, so one slow check never holds up
+/// the checks claimed beside it or blocks the next claim. Cancel is seen
+/// between claims, so `claim` must return within its hold.
+pub async fn serve_claims<C, CF, R, RF>(claim: C, run: R, cancel: CancellationToken)
+where
+    C: Fn(usize) -> CF,
+    CF: Future<Output = Vec<DispatchedCheck>>,
+    R: Fn(DispatchedCheck) -> RF,
+    RF: Future<Output = ()> + Send + 'static,
+{
+    let slots = Arc::new(Semaphore::new(EXECUTOR_CONCURRENCY));
+    let mut running = JoinSet::new();
+    while let Some(first) = free_slot(&slots, &cancel).await {
+        let mut free = vec![first];
+        while let Ok(more) = slots.clone().try_acquire_owned() {
+            free.push(more);
+        }
+        // Not raced against cancel: a claim answered in flight would drop
+        // checks the brain has already handed over.
+        let claimed = claim(free.len()).await;
+        for check in claimed {
+            // A brain that ignores the limit can over-deliver; the extra
+            // checks wait for a slot, even through shutdown, since they are
+            // already off the brain's queue.
+            let Some(slot) = (match free.pop() {
+                Some(slot) => Some(slot),
+                None => slots.clone().acquire_owned().await.ok(),
+            }) else {
+                break;
+            };
+            let task = run(check);
+            running.spawn(async move {
+                task.await;
+                drop(slot);
+            });
+        }
+        while running.try_join_next().is_some() {}
+    }
+    // Stop claiming but let claimed checks finish, so an agent still reports
+    // them to a live brain. The brain's own executor is cut off by its
+    // shutdown deadline.
+    while running.join_next().await.is_some() {}
+}
+
+async fn free_slot(
+    slots: &Arc<Semaphore>,
+    cancel: &CancellationToken,
+) -> Option<OwnedSemaphorePermit> {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => None,
+        p = slots.clone().acquire_owned() => p.ok(),
+    }
+}
+
 /// All-in-one executor: serve this brain's own region in-process so a
 /// self-hosted single process (no separate agent) still runs test / check-now.
 /// Mirrors the agent's claim→execute→complete loop but talks to the local
 /// dispatch directly and persists check-now via the local sink. Spawned only
 /// when the in-process scheduler is enabled (the same "this process probes its
 /// region" switch); a pure control plane leaves this to agents.
-#[allow(clippy::too_many_arguments)]
 pub async fn run_local_executor(
     dispatch: Arc<AdHocDispatch>,
     region: String,
@@ -211,45 +437,63 @@ pub async fn run_local_executor(
     result_sink: Arc<dyn ResultSink>,
     cancel: CancellationToken,
 ) {
-    loop {
-        let claimed = tokio::select! {
-            _ = cancel.cancelled() => return,
-            c = dispatch.claim(&region, 32) => c,
-        };
-        if claimed.is_empty() {
-            continue;
-        }
-        let domain_runtime = worker_pool.domain_expiry_runtime();
-        let flow_engine = worker_pool.flow_engine();
-        let deps = WorkerDeps {
-            http: &http_clients,
-            domain_expiry: &domain_runtime,
-            flow: flow_engine.as_deref(),
-        };
-        for check in claimed {
-            let target_id = check.target_id.unwrap_or_else(Uuid::nil);
-            let (result, probe) =
-                crate::worker::execute_with_probe(target_id, check.org_id, &check.spec, &deps)
-                    .await;
-            // We produced the result with the authoritative ids, so persist it
-            // as-is (mirrors the agent result-ingest path).
-            let persist = matches!(check.kind, DispatchKind::CheckNow).then(|| result.clone());
-            dispatch.complete(
-                check.id,
-                DeliveredResult {
-                    result,
-                    response_headers_preview: probe.response_headers_preview,
-                    response_body_snippet: probe.response_body_snippet,
-                    flow_evidence: probe.flow_evidence,
-                    flow_steps: probe.flow_steps,
-                },
-            );
-            if let Some(r) = persist
-                && let Err(err) = result_sink.write_batch(std::slice::from_ref(&r)).await
-            {
-                tracing::warn!(error = %err, "in-process check-now persist failed");
+    // In-process, a claim hands over nothing until it returns, so dropping it
+    // on cancel loses no check.
+    let claim = |limit| {
+        let (dispatch, region, cancel) = (&dispatch, &region, &cancel);
+        async move {
+            tokio::select! {
+                _ = cancel.cancelled() => Vec::new(),
+                c = dispatch.claim(region, limit) => c,
             }
         }
+    };
+    let run = |check| {
+        run_local_check(
+            dispatch.clone(),
+            worker_pool.clone(),
+            http_clients.clone(),
+            result_sink.clone(),
+            check,
+        )
+    };
+    serve_claims(claim, run, cancel.clone()).await;
+}
+
+async fn run_local_check(
+    dispatch: Arc<AdHocDispatch>,
+    worker_pool: Arc<WorkerPool>,
+    http_clients: Arc<HttpClients>,
+    result_sink: Arc<dyn ResultSink>,
+    check: DispatchedCheck,
+) {
+    let domain_runtime = worker_pool.domain_expiry_runtime();
+    let flow_engine = worker_pool.flow_engine();
+    let deps = WorkerDeps {
+        http: &http_clients,
+        domain_expiry: &domain_runtime,
+        flow: flow_engine.as_deref(),
+    };
+    let target_id = check.target_id.unwrap_or_else(Uuid::nil);
+    let (result, probe) =
+        crate::worker::execute_with_probe(target_id, check.org_id, &check.spec, &deps).await;
+    // We produced the result with the authoritative ids, so persist it as-is
+    // (mirrors the agent result-ingest path).
+    let persist = persists(check.kind, &result).then(|| result.clone());
+    dispatch.complete(
+        check.id,
+        DeliveredResult {
+            result,
+            response_headers_preview: probe.response_headers_preview,
+            response_body_snippet: probe.response_body_snippet,
+            flow_evidence: probe.flow_evidence,
+            flow_steps: probe.flow_steps,
+        },
+    );
+    if let Some(r) = persist
+        && let Err(err) = result_sink.write_batch(std::slice::from_ref(&r)).await
+    {
+        tracing::warn!(error = %err, "in-process check-now persist failed");
     }
 }
 
@@ -353,16 +597,233 @@ mod tests {
         assert!(d.complete(id, result()).is_none());
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn region_stays_live_between_claims_then_dies() {
+        let d = AdHocDispatch::new();
+        let claimed = d.claim("r", 8);
+        tokio::pin!(claimed);
+        tokio::select! {
+            biased;
+            _ = &mut claimed => unreachable!("empty queue holds until HOLD"),
+            _ = tokio::task::yield_now() => {}
+        }
+        assert!(d.region_live("r"));
+        assert!(claimed.await.is_empty());
+        assert!(
+            d.region_live("r"),
+            "a check sent before the re-claim queues"
+        );
+        tokio::time::advance(RECLAIM_GRACE).await;
+        assert!(!d.region_live("r"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_region_running_what_it_claimed_is_busy_not_live() {
+        let d = AdHocDispatch::new();
+        let mut check = dispatched(Uuid::now_v7());
+        let CheckSpec::Http(http) = &mut check.spec else {
+            unreachable!()
+        };
+        http.timeout = Duration::from_secs(60);
+        let wait = result_wait(&check.spec);
+        let _rx = d.dispatch("r", check);
+        assert_eq!(d.claim("r", 8).await.len(), 1);
+        assert_eq!(d.region_state("r"), RegionState::Live);
+        tokio::time::advance(RECLAIM_GRACE * 2).await;
+        assert_eq!(
+            d.region_state("r"),
+            RegionState::Busy,
+            "no free slot, so a new check would expire in the queue"
+        );
+        tokio::time::advance(wait).await;
+        assert_eq!(d.region_state("r"), RegionState::Absent);
+    }
+
+    #[test]
+    fn only_a_check_now_that_reached_the_target_persists() {
+        let mut busy = result().result;
+        busy.status = CheckStatus::Error;
+        busy.error = Some(
+            "every browser slot stayed busy with other flows for 10 s; try again shortly".into(),
+        );
+        assert!(persists(DispatchKind::CheckNow, &result().result));
+        assert!(!persists(DispatchKind::CheckNow, &busy));
+        assert!(!persists(DispatchKind::Test, &result().result));
+    }
+
+    #[test]
+    fn result_wait_outlasts_the_checks_own_timeout() {
+        let mut check = spec();
+        let CheckSpec::Http(http) = &mut check else {
+            unreachable!()
+        };
+        http.timeout = Duration::from_secs(60);
+        assert!(result_wait(&check) > Duration::from_secs(60));
+        assert!(result_wait(&check) < PENDING_TTL);
+    }
+
     #[tokio::test]
-    async fn abandon_stops_delivery_but_keeps_meta_for_late_persist() {
+    async fn a_slow_check_does_not_block_the_next_claim() {
+        let (slow, fast) = (Uuid::now_v7(), Uuid::now_v7());
+        let batches = Arc::new(Mutex::new(VecDeque::from([
+            vec![dispatched(slow)],
+            vec![dispatched(fast)],
+        ])));
+        let limits = Arc::new(Mutex::new(Vec::new()));
+        let cancel = CancellationToken::new();
+        let claim = |limit| {
+            limits.lock().unwrap().push(limit);
+            let next = batches.lock().unwrap().pop_front();
+            let cancel = cancel.clone();
+            async move {
+                match next {
+                    Some(batch) => batch,
+                    None => {
+                        cancel.cancelled().await;
+                        Vec::new()
+                    }
+                }
+            }
+        };
+        let (done_tx, mut done_rx) = tokio::sync::mpsc::unbounded_channel();
+        let release = Arc::new(Notify::new());
+        let run = |check: DispatchedCheck| {
+            let done_tx = done_tx.clone();
+            let release = release.clone();
+            async move {
+                if check.id == slow {
+                    release.notified().await;
+                }
+                let _ = done_tx.send(check.id);
+            }
+        };
+        let serving = serve_claims(claim, run, cancel.clone());
+        tokio::pin!(serving);
+        let ran = tokio::select! {
+            _ = &mut serving => unreachable!("serves until cancelled"),
+            id = done_rx.recv() => id,
+        };
+        assert_eq!(ran, Some(fast));
+        assert_eq!(
+            limits.lock().unwrap()[..2],
+            [EXECUTOR_CONCURRENCY, EXECUTOR_CONCURRENCY - 1],
+            "claims only as many checks as it has free slots"
+        );
+        cancel.cancel();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut serving)
+                .await
+                .is_err(),
+            "cancel waits for the checks already running"
+        );
+        release.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), serving)
+            .await
+            .expect("the loop ends once its running checks finish");
+        assert_eq!(done_rx.recv().await, Some(slow));
+    }
+
+    #[tokio::test]
+    async fn close_fails_every_waiting_request_but_keeps_meta() {
+        let d = AdHocDispatch::new();
+        let (claimed, queued) = (Uuid::now_v7(), Uuid::now_v7());
+        let claimed_rx = d.dispatch("r", dispatched(claimed));
+        assert_eq!(d.claim("r", 1).await.len(), 1);
+        let queued_rx = d.dispatch("r", dispatched(queued));
+        d.close();
+        assert!(queued_rx.await.is_err(), "an unclaimed check fails at once");
+        assert!(!d.region_live("r"));
+        assert!(d.dispatch("r", dispatched(Uuid::now_v7())).await.is_err());
+        assert!(
+            claimed_rx.await.is_err(),
+            "a claimed check's request fails too"
+        );
+        assert!(
+            d.complete(claimed, result()).is_some(),
+            "a finished check-now still persists"
+        );
+    }
+
+    #[tokio::test]
+    async fn abandon_withdraws_a_check_nobody_claimed() {
         let d = AdHocDispatch::new();
         let id = Uuid::now_v7();
         let rx = d.dispatch("r", dispatched(id));
-        d.abandon(id); // request gave up
+        d.abandon("r", id);
+        let closed = tokio::time::timeout(Duration::from_secs(1), rx).await;
+        assert!(closed.expect("sender dropped at once").is_err());
+        assert!(d.slot("r").queue.lock().unwrap().is_empty(), "never runs");
+        assert!(d.complete(id, result()).is_none(), "nothing to persist");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_claim_that_fills_every_free_slot_leaves_the_region_busy() {
+        let d = AdHocDispatch::new();
+        let _rx = d.dispatch("r", dispatched(Uuid::now_v7()));
+        assert_eq!(d.claim("r", 1).await.len(), 1);
+        assert_eq!(
+            d.region_state("r"),
+            RegionState::Busy,
+            "no reclaim grace for an executor with no free slot"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_full_claim_keeps_another_executors_grace() {
+        let d = AdHocDispatch::new();
+        assert!(d.claim("r", 8).await.is_empty(), "hold expires empty");
+        let _rx = d.dispatch("r", dispatched(Uuid::now_v7()));
+        assert_eq!(d.claim("r", 1).await.len(), 1);
+        assert_eq!(d.region_state("r"), RegionState::Live);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_busy_region_is_preferred_over_an_absent_one() {
+        let d = AdHocDispatch::new();
+        let _rx = d.dispatch("busy", dispatched(Uuid::now_v7()));
+        assert_eq!(d.claim("busy", 1).await.len(), 1);
+        let regions = ["absent".to_string(), "busy".to_string()];
+        assert_eq!(d.most_available(&regions).unwrap(), "busy");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_unclaimed_check_is_withdrawn_after_the_queue_wait() {
+        let d = AdHocDispatch::new();
+        let id = Uuid::now_v7();
+        let rx = d.dispatch("r", dispatched(id));
+        let awaited = d.await_result("r", id, rx, Duration::from_secs(60)).await;
+        assert!(matches!(awaited, Awaited::Unclaimed));
+        assert!(d.slot("r").queue.lock().unwrap().is_empty(), "never runs");
+        assert!(d.complete(id, result()).is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_claimed_check_gets_the_rest_of_its_wait() {
+        let d = Arc::new(AdHocDispatch::new());
+        let id = Uuid::now_v7();
+        let rx = d.dispatch("r", dispatched(id));
+        assert_eq!(d.claim("r", 8).await.len(), 1);
+        let deliver = {
+            let d = d.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(QUEUE_WAIT * 3).await;
+                d.complete(id, result());
+            })
+        };
+        let awaited = d.await_result("r", id, rx, QUEUE_WAIT * 4).await;
+        assert!(matches!(awaited, Awaited::Delivered(_)));
+        deliver.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn abandon_after_claim_keeps_meta_for_late_persist() {
+        let d = AdHocDispatch::new();
+        let id = Uuid::now_v7();
+        let rx = d.dispatch("r", dispatched(id));
+        assert_eq!(d.claim("r", 1).await.len(), 1);
+        d.abandon("r", id);
         assert!(rx.await.is_err(), "delivery sender dropped on abandon");
-        // Meta survives so a late check-now result still persists.
         assert!(d.complete(id, result()).is_some());
-        // Second complete is a no-op.
         assert!(d.complete(id, result()).is_none());
     }
 }

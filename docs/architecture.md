@@ -139,7 +139,7 @@ ClickHouse       check_results (per-row TTL) + 1-minute and 1-hour rollup views
 
 HTTP checks connect fresh every interval. There is no connection pool, because a monitor probes each target once per interval so a pool would rarely reuse a socket, and connecting fresh is exactly what lets the probe time DNS resolution, TCP connect, and the TLS handshake as separate phases and write them into each result. The connector resolves, applies the SSRF filter, dials with happy eyeballs, and optionally completes TLS, returning per-phase timings. See [Monitor types](monitor-types.md).
 
-On-demand checks (`POST /targets/{id}/check-now` and `POST /targets/test`) are dispatched to the target region's agent over a held long-poll, and the request waits for the result. If no agent is serving the region the request returns `503 PROBE_UNAVAILABLE`. This path is single-process: the claim and the originating request must land on the same control-plane process.
+On-demand checks (`POST /targets/{id}/check-now` and `POST /targets/test`) are dispatched to the target region's agent over a held long-poll, and the request waits for the result. If no agent is serving the region the request returns `503 PROBE_UNAVAILABLE`; if every agent there is busy with checks it already claimed, `503 PROBE_BUSY`. This path is single-process: the claim and the originating request must land on the same control-plane process.
 
 ## Detection, incidents, and paging
 

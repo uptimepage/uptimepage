@@ -183,9 +183,9 @@ ingress:
   tls:
     enabled: true
     secretName: ""
-  # LOAD-BEARING: the dispatch long-poll holds 25s + 30s, and a shorter read
-  # timeout kills "check now" with no error anywhere.
-  proxyTimeoutSeconds: 75
+  # LOAD-BEARING: a test / check-now waits up to 145s for its result (a 120s
+  # flow test), and a shorter read timeout kills it with no error anywhere.
+  proxyTimeoutSeconds: 150
 
 serviceAccount:
   create: true

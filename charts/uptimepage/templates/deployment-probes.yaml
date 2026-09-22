@@ -44,7 +44,9 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         {{- include "uptimepage.podSecurityContext" $root | nindent 8 }}
-      terminationGracePeriodSeconds: 30
+      # Lets a claim in flight (up to 30s) and the test / check-now it hands
+      # over (up to 145s) finish on SIGTERM.
+      terminationGracePeriodSeconds: 180
       {{- with .priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}

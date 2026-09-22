@@ -1246,7 +1246,7 @@ jobs:
 
           # New color is ready and Caddy's active /readyz check now routes to
           # it. Stop the previous color — axum drains in-flight requests
-          # within stop_grace_period (30s). Keep it stopped (not removed) so a
+          # within its stop_grace_period. Keep it stopped (not removed) so a
           # rollback is an instant `docker compose start uptimepage_${active}`.
           if [ -n "$active" ]; then
             echo "cutover ok; stopping previous color uptimepage_${active}"

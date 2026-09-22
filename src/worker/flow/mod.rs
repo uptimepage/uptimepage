@@ -7,6 +7,8 @@ pub mod engine;
 mod evidence;
 mod executor;
 
+use std::time::Duration;
+
 use chrono::Utc;
 use metrics::{counter, histogram};
 use uuid::Uuid;
@@ -31,19 +33,20 @@ pub async fn execute_flow_check(
     flow: &FlowCheck,
     engine: Option<&CdpEngine>,
 ) -> CheckResult {
-    execute_flow_check_probe(target_id, org_id, flow, engine)
+    execute_flow_check_probe(target_id, org_id, flow, engine, None)
         .await
         .0
 }
 
 /// Same run, plus what the page said when a step failed and how far the run
 /// got. Backs the test-check UI, where the error string alone rarely places
-/// the fault.
+/// the fault. `queue_limit` bounds the wait for a browser slot.
 pub async fn execute_flow_check_probe(
     target_id: Uuid,
     org_id: Uuid,
     flow: &FlowCheck,
     engine: Option<&CdpEngine>,
+    queue_limit: Option<Duration>,
 ) -> (CheckResult, FlowProbe) {
     let Some(engine) = engine else {
         counter!(metric_names::FLOW_RUNS, "outcome" => "unconfigured").increment(1);
@@ -56,7 +59,7 @@ pub async fn execute_flow_check_probe(
     let started = Utc::now();
     // `run` applies the flow deadline internally, after it holds a concurrency
     // slot, and returns the elapsed probe time excluding any queue wait.
-    let (run, evidence, steps, elapsed) = engine.run(flow).await;
+    let (run, evidence, steps, elapsed) = engine.run(flow, queue_limit).await;
 
     let total = flow.steps.len();
     let (outcome, status, error) = match run {
@@ -80,6 +83,7 @@ pub async fn execute_flow_check_probe(
             }),
         ),
         RunResult::Engine(e) => ("engine", CheckStatus::Error, Some(e)),
+        RunResult::Busy(e) => ("busy", CheckStatus::Error, Some(e)),
     };
 
     record_run(target_id, outcome, elapsed, &steps, error.as_deref());
@@ -221,7 +225,7 @@ mod tests {
             verify_tls: true,
         };
         let (r, probe) =
-            execute_flow_check_probe(Uuid::nil(), Uuid::nil(), &flow, Some(&engine)).await;
+            execute_flow_check_probe(Uuid::nil(), Uuid::nil(), &flow, Some(&engine), None).await;
         assert_eq!(r.status, CheckStatus::Up, "error={:?}", r.error);
         assert_eq!(probe.steps.len(), flow.steps.len());
         assert!(
@@ -258,6 +262,7 @@ mod tests {
             Uuid::nil(),
             &flow,
             Some(&sandbox_engine(&bin, false)),
+            None,
         )
         .await;
         server.abort();
@@ -314,6 +319,7 @@ mod tests {
             Uuid::nil(),
             &flow,
             Some(&sandbox_engine(&bin, false)),
+            None,
         )
         .await;
         server.abort();
@@ -459,6 +465,7 @@ mod tests {
             Uuid::nil(),
             &flow,
             Some(&sandbox_engine(&bin, false)),
+            None,
         )
         .await;
         server.abort();

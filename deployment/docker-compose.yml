@@ -82,8 +82,9 @@ services:
     image: ${UPTIMEPAGE_IMAGE:-uptimepage:latest}
     restart: unless-stopped
     logging: *logging
-    # Must outlast the longest in-flight request, the check-now long poll at
-    # ad_hoc_dispatch::RESULT_WAIT (30s), so SIGTERM drains it before SIGKILL.
+    # Must outlast the longest in-flight request plus the 10s background-task
+    # drain. A waiting test / check-now fails at once on SIGTERM
+    # (AdHocDispatch::close), so it never holds the drain.
     # The app drains via axum graceful shutdown; the default 10s grace would
     # truncate a slow request mid-cutover.
     stop_grace_period: 45s
@@ -264,7 +265,9 @@ services:
     image: ${AGENT_IMAGE:-${UPTIMEPAGE_IMAGE:-uptimepage:latest}}
     restart: unless-stopped
     logging: *logging
-    stop_grace_period: 30s
+    # Lets a claim in flight (up to 30s) and the test / check-now it hands over
+    # (up to 145s) finish on SIGTERM.
+    stop_grace_period: 180s
     # Distroless ships no writable /tmp; the flow engine needs scratch space.
     tmpfs:
       - /tmp

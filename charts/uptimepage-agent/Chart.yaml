@@ -2,7 +2,7 @@ apiVersion: v2
 name: uptimepage-agent
 description: Regional probe agent for an Uptimepage control plane, hosted or self-hosted
 type: application
-version: 0.3.1
+version: 0.3.2
 appVersion: "1.3.0"
 # `-0` so vendor builds (v1.31.1-gke.x) satisfy the constraint.
 kubeVersion: ">=1.29.0-0"

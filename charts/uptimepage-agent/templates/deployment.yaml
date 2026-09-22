@@ -34,8 +34,9 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         {{- include "uptimepage-agent.podSecurityContext" . | nindent 8 }}
-      # Long enough for a buffered batch to flush on SIGTERM.
-      terminationGracePeriodSeconds: 30
+      # Long enough for a buffered batch to flush, and a claim in flight (up
+      # to 30s) plus the test / check-now it hands over (up to 145s) to finish.
+      terminationGracePeriodSeconds: 180
       {{- with .Values.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}

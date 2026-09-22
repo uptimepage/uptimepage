@@ -107,9 +107,9 @@
 
 		transport http {
 			dial_timeout 5s
-			# Must exceed ad_hoc_dispatch::RESULT_WAIT (30s), which the
-			# check-now long poll awaits in full.
-			response_header_timeout 60s
+			# Must exceed the longest ad_hoc_dispatch::result_wait (145s, a
+			# 120s flow test), which the test / check-now request awaits in full.
+			response_header_timeout 150s
 			read_buffer 64KB
 			write_buffer 64KB
 		}

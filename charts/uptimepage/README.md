@@ -44,7 +44,7 @@ You can pass everything through `--set` instead, and the chart will build the Se
 Releases are signed with cosign keyless signing, so there is no public key to distribute:
 
 ```bash
-cosign verify ghcr.io/uptimepage/charts/uptimepage:0.5.2 \
+cosign verify ghcr.io/uptimepage/charts/uptimepage:0.6.0 \
   --certificate-identity-regexp '^https://github.com/uptimepage/uptimepage/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -84,7 +84,7 @@ This is a property of the app, not a chart limitation. Scale probing horizontall
 
 ## Ingress
 
-The dispatch long-poll holds a request open for 25 seconds and waits up to 30 more for a result, so the proxy read timeout has to clear 60 seconds or "check now" fails silently. The chart sets ingress-nginx annotations from `ingress.proxyTimeoutSeconds` (75 by default). On another controller, set the equivalent yourself through `ingress.annotations`.
+A test or "check now" request waits up to 145 seconds for its result (a flow test with a 120-second timeout), so the proxy read timeout has to clear that or the request fails silently. The chart sets ingress-nginx annotations from `ingress.proxyTimeoutSeconds` (150 by default). Since 0.6.0 the schema rejects a value below 150, so an upgrade that pins an older, lower value fails until you raise it. On another controller, set the equivalent yourself through `ingress.annotations`.
 
 Public status pages are served at `/status/<slug>` on the app host by default. To serve them at `<slug>.example.com`, set `tenancy.subdomainPublicRoutes=true` and `ingress.wildcard.enabled=true`, and issue the wildcard certificate through a DNS-01 issuer.
 

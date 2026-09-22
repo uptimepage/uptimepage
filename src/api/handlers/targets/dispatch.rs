@@ -2,7 +2,7 @@ use super::validate::reject_passive_probe;
 
 use uuid::Uuid;
 
-use crate::ad_hoc_dispatch::DeliveredResult;
+use crate::ad_hoc_dispatch::{Awaited, DeliveredResult, RegionState};
 use crate::app::AppState;
 use crate::domain::agent_wire::{DispatchKind, DispatchedCheck};
 use crate::domain::{CheckResult, CheckSpec, OrgId, Target};
@@ -87,7 +87,8 @@ pub(crate) async fn dispatch_first_check(
         if is_flow && !flow_regions.contains(region) {
             continue;
         }
-        if !state.ad_hoc.region_live(region) {
+        // Nobody waits on this one, so a busy region may queue it.
+        if state.ad_hoc.region_state(region) == RegionState::Absent {
             continue;
         }
         // Fire-and-forget: the dropped receiver is fine — the agent's result
@@ -119,12 +120,12 @@ pub(crate) async fn run_ad_hoc(
     // Chokepoint: every interactive dispatch funnels through here, so a future
     // caller can't hand a passive check to an agent by omission.
     reject_passive_probe(&check)?;
-    if !state.ad_hoc.region_live(region) {
-        return Err(AppError::service_unavailable(
-            codes::PROBE_UNAVAILABLE,
-            format!("no probe available in region '{region}'; probing runs on agents"),
-        ));
+    match state.ad_hoc.region_state(region) {
+        RegionState::Live => {}
+        RegionState::Busy => return Err(probe_busy(region)),
+        RegionState::Absent => return Err(no_probe(region)),
     }
+    let wait = crate::ad_hoc_dispatch::result_wait(&check);
     let (check, secrets) = resolve_spec_variables(state, org, check).await?;
     let check_id = Uuid::now_v7();
     let rx = state.ad_hoc.dispatch(
@@ -137,20 +138,36 @@ pub(crate) async fn run_ad_hoc(
             spec: check,
         },
     );
-    match tokio::time::timeout(crate::ad_hoc_dispatch::RESULT_WAIT, rx).await {
-        Ok(Ok(mut delivered)) => {
+    match state.ad_hoc.await_result(region, check_id, rx, wait).await {
+        Awaited::Delivered(delivered) => {
+            let mut delivered = *delivered;
             sanitize_delivered(&mut delivered, &secrets);
             store_check_now_flow_run(state, org, target_id, region, kind, &delivered).await;
             Ok(delivered)
         }
-        _ => {
-            state.ad_hoc.abandon(check_id);
-            Err(AppError::service_unavailable(
-                codes::PROBE_UNAVAILABLE,
-                "no probe completed this check in time; the region's agent may be offline",
-            ))
+        Awaited::Unclaimed if state.ad_hoc.region_state(region) == RegionState::Absent => {
+            Err(no_probe(region))
         }
+        Awaited::Unclaimed => Err(probe_busy(region)),
+        Awaited::TimedOut => Err(AppError::service_unavailable(
+            codes::PROBE_UNAVAILABLE,
+            "no probe completed this check in time; the region's agent may be offline",
+        )),
     }
+}
+
+fn no_probe(region: &str) -> AppError {
+    AppError::service_unavailable(
+        codes::PROBE_UNAVAILABLE,
+        format!("no probe available in region '{region}'; probing runs on agents"),
+    )
+}
+
+fn probe_busy(region: &str) -> AppError {
+    AppError::service_unavailable(
+        codes::PROBE_BUSY,
+        format!("every probe in region '{region}' is busy running other checks; try again shortly"),
+    )
 }
 
 /// Record a check-now flow run so the manual button and the schedule write the
@@ -204,10 +221,11 @@ pub(crate) async fn resolve_check_now_region(
     if regions.is_empty() {
         return Ok(state.cfg.scheduler.effective_default_region().to_string());
     }
-    if let Some(r) = regions.iter().find(|r| state.ad_hoc.region_live(r)) {
-        return Ok(r.clone());
-    }
-    Ok(regions[0].clone())
+    Ok(state
+        .ad_hoc
+        .most_available(&regions)
+        .unwrap_or(&regions[0])
+        .clone())
 }
 
 /// Pick a flow-capable region for an interactive flow check. `prefer` = the
@@ -240,11 +258,11 @@ pub(crate) async fn pick_flow_region(state: &AppState, prefer: &[String]) -> Res
         }
         filtered
     };
-    Ok(candidates
-        .iter()
-        .find(|r| state.ad_hoc.region_live(r))
-        .cloned()
-        .unwrap_or_else(|| candidates[0].clone()))
+    Ok(state
+        .ad_hoc
+        .most_available(&candidates)
+        .unwrap_or(&candidates[0])
+        .clone())
 }
 
 /// Substitute `{{var}}` references in an interactive check (test / check-now)

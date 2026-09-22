@@ -316,7 +316,7 @@ fn register_descriptions() {
     );
     describe_counter!(
         "uptimepage_flow_runs_total",
-        "Browser flow runs completed, labelled by outcome: passed, failed (a step failed — the journey is down), budget (the whole-run deadline arrived first), engine (CDP or the browser process broke), unconfigured (the check reached a node with no engine). Only `failed` is a verdict on the target"
+        "Browser flow runs completed, labelled by outcome: passed, failed (a step failed — the journey is down), budget (the whole-run deadline arrived first), engine (CDP or the browser process broke), busy (a test or check-now found every browser slot taken and gave up), unconfigured (the check reached a node with no engine). Only `failed` is a verdict on the target"
     );
     describe_histogram!(
         "uptimepage_flow_step_duration_ms",
