@@ -48,3 +48,25 @@ pub fn public_host_suffix(cfg: &crate::config::AppConfig) -> Option<String> {
         .subdomain_public_routes
         .then(|| format!(".{}", cfg.public_status.base_domain.trim_start_matches('.')))
 }
+
+/// Public origin (scheme + host, no trailing slash) a status page is served
+/// from: its verified custom domain, else its `{slug}.{base_domain}` subdomain,
+/// else the app's `public_base_url` for path-based/self-host deploys. Subscriber
+/// confirm/unsubscribe links use this so a white-labelled page never leaks the
+/// app host.
+pub fn page_origin(
+    base_domain: &str,
+    public_base_url: &str,
+    slug: &str,
+    custom_domain: Option<&str>,
+    custom_domain_verified: bool,
+) -> String {
+    if let Some(domain) = custom_domain.filter(|_| custom_domain_verified) {
+        return format!("https://{domain}");
+    }
+    let base = base_domain.trim();
+    if !base.is_empty() {
+        return format!("https://{slug}.{base}");
+    }
+    public_base_url.trim_end_matches('/').to_string()
+}

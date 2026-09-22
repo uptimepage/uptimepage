@@ -153,7 +153,7 @@ pub async fn subscribe(
     {
         let meta = page_meta(pool, page.page.0).await;
         let origin = match &meta {
-            Some(m) => crate::request::host::page_origin(
+            Some(m) => crate::public_status::urls::page_origin(
                 &state.cfg.public_status.base_domain,
                 &state.cfg.auth.public_base_url,
                 &m.slug,

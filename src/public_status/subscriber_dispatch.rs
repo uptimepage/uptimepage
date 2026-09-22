@@ -292,7 +292,7 @@ impl SubscriberDispatcher {
     }
 
     fn origin(&self, slug: &str, custom_domain: Option<&str>, verified: bool) -> String {
-        crate::request::host::page_origin(
+        crate::public_status::urls::page_origin(
             &self.cfg.base_domain,
             &self.cfg.public_base_url,
             slug,

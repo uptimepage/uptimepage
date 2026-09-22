@@ -1,11 +1,13 @@
 //! Marketing site & blog served from the apex host.
 //!
-//! **Hard-isolated by contract:** this module must not import
-//! `crate::storage`, `crate::domain`, `crate::tenancy`, `crate::state`,
-//! or `AppState`. The dispatch seam (one middleware, one router call —
-//! see `marketing::dispatch`) is the entire coupling to the rest of the
-//! binary; extracting marketing to its own service is a copy + delete.
-//! No-DB on the marketing path is what makes that extraction trivial.
+//! **Hard-isolated by contract:** this module may reach only
+//! `crate::templates`, `crate::security`, `crate::request` and
+//! `crate::http_outbound`, never a store, `AppState` or a pool;
+//! `tests/marketing_coupling_test.rs` scans the tree and fails on anything
+//! else. The dispatch seam (one middleware, one router call — see
+//! `marketing::dispatch`) is the entire coupling to the rest of the binary;
+//! extracting marketing to its own service is a copy + delete. No-DB on the
+//! marketing path is what makes that extraction trivial.
 //!
 //! Permitted shared deps: axum, askama, tower-http, the config crate,
 //! and `crate::templates::assets` (the fingerprinted-asset map + askama

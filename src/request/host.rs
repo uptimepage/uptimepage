@@ -421,28 +421,6 @@ const PUBLIC_TENANT_EXACT: &[&str] = &["/", "/status", "/subscribe", "/.well-kno
 /// ACME challenges run on the apex/`app.{base}` host.
 const PUBLIC_TENANT_PREFIXES: &[&str] = &["/status/", "/subscribe/", "/api/public/v1/", "/static/"];
 
-/// Public origin (scheme + host, no trailing slash) a status page is served
-/// from: its verified custom domain, else its `{slug}.{base_domain}` subdomain,
-/// else the app's `public_base_url` for path-based/self-host deploys. Subscriber
-/// confirm/unsubscribe links use this so a white-labelled page never leaks the
-/// app host.
-pub fn page_origin(
-    base_domain: &str,
-    public_base_url: &str,
-    slug: &str,
-    custom_domain: Option<&str>,
-    custom_domain_verified: bool,
-) -> String {
-    if let Some(domain) = custom_domain.filter(|_| custom_domain_verified) {
-        return format!("https://{domain}");
-    }
-    let base = base_domain.trim();
-    if !base.is_empty() {
-        return format!("https://{slug}.{base}");
-    }
-    public_base_url.trim_end_matches('/').to_string()
-}
-
 fn is_public_tenant_path(path: &str) -> bool {
     PUBLIC_TENANT_EXACT.contains(&path)
         || PUBLIC_TENANT_PREFIXES.iter().any(|p| path.starts_with(p))

@@ -1,10 +1,14 @@
-//! Model Context Protocol server — read tools at `/mcp`.
+//! Model Context Protocol server at `/mcp`: read tools plus scope-gated,
+//! confirmed, audited write tools.
 //!
-//! A customer's LLM (Claude Desktop / IDE via `mcp-remote`, or the claude.ai
-//! connector once OAuth lands) answers operational questions about **their own
-//! org** through typed, authorized, side-effect-free tools. This is another
-//! authorized front door to the same stores the web app and `/api/v1` use, not
-//! a bypass: tenant isolation, scopes, rate limits, and audit all apply.
+//! A customer's LLM (the claude.ai connector over the OAuth 2.1 server in
+//! `crate::oauth`, Claude Desktop, an IDE via `mcp-remote`, or a pasted token)
+//! answers operational questions about **their own org** and takes a few
+//! guarded actions on it. This is another authorized front door to the same
+//! stores the web app and `/api/v1` use, not a bypass: tenant isolation,
+//! scopes, rate limits, and audit all apply. Every write asks the person for
+//! confirmation through MCP elicitation (`confirm`), out of band of the tool
+//! arguments, and lands an audit row (`audit`) whatever the outcome.
 //!
 //! Transport: Streamable HTTP via the official `rmcp` crate's
 //! [`StreamableHttpService`], mounted as a `tower::Service` on the existing
@@ -36,7 +40,7 @@ use server::McpServer;
 
 use crate::request::MCP_PATH;
 
-/// Mount the read MCP server at `/mcp` when `cfg.mcp.enabled`. No-op otherwise,
+/// Mount the MCP server at `/mcp` when `cfg.mcp.enabled`. No-op otherwise,
 /// so a deployment without the dedicated host + Caddy route never exposes it.
 ///
 /// Layer order (outermost first): auth runs first and injects [`AuthContext`],
