@@ -90,6 +90,7 @@ services:
     # No `ports:` — only reachable via the internal network.
     expose:
       - "8080"   # API + UI
+      - "8081"   # Caddy's on-demand TLS `ask` gate (internal network only)
       - "9090"   # Prometheus metrics (scrape on internal network only)
     environment:
       UPTIMEPAGE_STORAGE__POSTGRES__URL: postgres://monitor:${POSTGRES_PASSWORD}@postgres:5432/monitor
@@ -153,6 +154,15 @@ services:
       # there is no `ports:` mapping for 9090, only `expose`. /metrics
       # has no auth, so it must stay internal-only.
       UPTIMEPAGE_SERVER__METRICS_BIND: 0.0.0.0:9090
+      # Authorizes on-demand certificates for custom status-page domains.
+      # A flag, not an address: the Caddyfile dials uptimepage_{blue,green}:8081
+      # and nothing checks the two agree, so an operator-supplied `127.0.0.1:…`
+      # or a different port would boot cleanly, log that it is listening, and
+      # authorize nothing. Empty = the listener never starts, which is right
+      # for self-host — the app refuses to boot with it set while subdomain
+      # routing is off. Same reasoning as metrics above for 0.0.0.0: reachable
+      # by Caddy over the compose network, never published to the host.
+      UPTIMEPAGE_SERVER__CUSTOM_DOMAIN_ASK_BIND: ${UPTIMEPAGE_CUSTOM_DOMAINS_ENABLED:+0.0.0.0:8081}
       # Optional in-app OTLP trace export to Grafana Cloud (or any OTLP
       # collector). Off unless all of these are set in .env. Distinct
       # from the Alloy metrics path above — traces go straight from the

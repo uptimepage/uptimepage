@@ -72,6 +72,9 @@ name: deploy
 #     WHATSAPP_APP_TEMPLATE_NAME   approved alert template name
 #   Repo var WHATSAPP_APP_ENABLED ("true") flips the spend gate — creds
 #   alone keep the surface off.
+#   Repo var UPTIMEPAGE_CUSTOM_DOMAINS_ENABLED ("true") starts the gate that
+#   authorizes TLS certificates for customer status-page domains. Unset, the
+#   edge still offers on-demand TLS but no name is ever authorized.
 #   Transactional mail (Resend; the key and the EMAIL_FROM_ADDRESS repo
 #   variable below are all-or-nothing, the secret is optional):
 #     RESEND_API_KEY            re_… API key — presence flips the provider
@@ -245,6 +248,9 @@ jobs:
           # Flips browser-flow probing on the co-located agent (compose gates the
           # agent's UPTIMEPAGE_FLOW__ENABLED on it). Absent = stays off.
           AGENT_FLOW_ENABLED: ${{ vars.AGENT_FLOW_ENABLED }}
+          # Starts the gate that authorizes certificates for customer domains.
+          # Compose turns any value into the fixed bind the Caddyfile dials.
+          UPTIMEPAGE_CUSTOM_DOMAINS_ENABLED: ${{ vars.UPTIMEPAGE_CUSTOM_DOMAINS_ENABLED }}
         run: |
           set -euo pipefail
           # Lowercase only the repo (GHCR requires it); OCI tags are
@@ -307,6 +313,7 @@ jobs:
                UPTIMEPAGE_SCHEDULER_REGION='${UPTIMEPAGE_SCHEDULER_REGION}' \
                UPTIMEPAGE_SCHEDULER_DEFAULT_REGION='${UPTIMEPAGE_SCHEDULER_DEFAULT_REGION}' \
                AGENT_FLOW_ENABLED='${AGENT_FLOW_ENABLED}' \
+               UPTIMEPAGE_CUSTOM_DOMAINS_ENABLED='${UPTIMEPAGE_CUSTOM_DOMAINS_ENABLED}' \
                bash -s" <<'REMOTE'
           # This script is delivered to `bash -s` over the ssh heredoc — i.e. on
           # stdin (fd 0). A `docker compose exec -T` / `docker exec -i` / nested
@@ -677,7 +684,7 @@ jobs:
             [ "$n" = 1 ] || { echo "::error::UPTIMEPAGE_OPERATOR_ADMIN_TOKEN not written exactly once to .env (count=${n})"; exit 1; }
           fi
 
-          # --- dashboard / agent split (optional) ----------------------------
+          # --- plain Actions-var config knobs (optional) ---------------------
           # HOME_AGENT_TOKEN is the co-located agent credential (secret); the
           # three SCHEDULER knobs select brain-only + home region (Actions vars,
           # plain config). Each key is upserted only when set; an absent one
@@ -689,7 +696,8 @@ jobs:
           for k in HOME_AGENT_TOKEN UPTIMEPAGE_SCHEDULER_ENABLED \
                    UPTIMEPAGE_SCHEDULER_REGION UPTIMEPAGE_SCHEDULER_DEFAULT_REGION \
                    AGENT_FLOW_ENABLED UPTIMEPAGE_EMAIL_POLICY_ENABLED \
-                   UPTIMEPAGE_EMAIL_POLICY_SIGNUP_POLICY; do
+                   UPTIMEPAGE_EMAIL_POLICY_SIGNUP_POLICY \
+                   UPTIMEPAGE_CUSTOM_DOMAINS_ENABLED; do
             v=$(printenv "$k" || true)
             [ -n "$v" ] || continue
             cp .env ".env.bak.$(date +%s).split.${k}"
@@ -1184,6 +1192,22 @@ jobs:
           echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
           docker compose pull "$TARGET_SVC"
 
+          # --- gate the Caddyfile before anything moves ----------------------
+          # The runbook's rule: never put an unvalidated config on the one
+          # service publishing 80/443, which has no reserve to fall back to.
+          # It runs here rather than beside the recreate below because by then
+          # the cutover has happened: a config that fails to adapt would abort
+          # the step with the new color live behind the old Caddyfile and the
+          # previous color already stopped. Costs about a second and needs
+          # nothing but .env and an image that already exists.
+          #
+          # `compose run` rather than `docker run --env-file`: the Caddyfile
+          # interpolates {$UPTIMEPAGE_DOMAIN} and friends, and Compose's own
+          # env parsing is what will resolve them at runtime — Docker's differs
+          # on quoting, so it could pass a config Compose then reads otherwise.
+          docker compose run --rm --no-deps --entrypoint caddy caddy \
+            validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
           # --- blue/green cutover -------------------------------------------
           # Boot the idle color on the new image while the active color keeps
           # serving. Its deps (postgres/clickhouse) start too if down, but the
@@ -1326,13 +1350,11 @@ jobs:
             # --pull: the bases are floating tags and the prune step wipes them,
             # so a cached FROM would silently re-tag the same old binary.
             docker compose build --pull caddy
-            # The runbook's own rule: never put an unvalidated config on the one
-            # service publishing 80/443. Validate in a throwaway container —
-            # a crash-looping caddy has no reserve to fall back to.
-            # --env-file: the Caddyfile interpolates {$UPTIMEPAGE_DOMAIN} and
-            # friends, so without the real env it fails to adapt on `email`.
-            docker run --rm --env-file .env -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
-              "$caddy_image" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+            # Re-validate against the freshly built binary: the gate before
+            # the cutover ran on the previous image, which may not have the
+            # plugins or directives this one introduces.
+            docker compose run --rm --no-deps --entrypoint caddy caddy \
+              validate --config /etc/caddy/Caddyfile --adapter caddyfile
             docker compose up -d --no-build caddy
             caddy_recreated=1
           fi

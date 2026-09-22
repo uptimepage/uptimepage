@@ -9,6 +9,9 @@
 #   *.{domain}                → Per-org public status pages (wildcard cert,
 #                               apex-wildcard shape — `acme.{domain}`, not
 #                               `acme.status.{domain}`)
+#   anything else             → A customer's own domain, CNAME'd here, with
+#                               its certificate issued on the first handshake
+#                               and only for a name the app authorizes
 #
 # What this does:
 #   - Automatic HTTPS via Let's Encrypt (HTTP/2 and HTTP/3)
@@ -17,6 +20,9 @@
 #     touches the operator host or the bearer tokens the connector carries
 #   - *.{domain} wildcard cert via Hetzner DNS-01 (scoped to that site —
 #     self-host needs no DNS token)
+#   - On-demand certificates for customer domains, gated by an `ask` endpoint
+#     the app serves on its own internal listener (127.0.0.1:8442 here proxies
+#     to it, so issuance survives a color being stopped mid-deploy)
 #   - Operator UI + API behind the app's GitHub OAuth session (no edge auth)
 #   - Public health probes (no auth) at /healthz and /readyz
 #   - Hides /metrics from the public internet (still scrapeable internally)
@@ -27,6 +33,9 @@
 # Required environment variables (see .env.example):
 #   UPTIMEPAGE_DOMAIN       — base domain, e.g. example.com
 #   UPTIMEPAGE_ACME_EMAIL   — for Let's Encrypt notifications
+#
+# Required only for custom status-page domains:
+#   UPTIMEPAGE_CUSTOM_DOMAINS_ENABLED — see deployment/README.md
 #
 # Required only for the *.{domain} wildcard surface (SaaS):
 #   HETZNER_DNS_API_TOKEN       — zone-edit token for the DNS-01 challenge
@@ -46,6 +55,22 @@
 	# {remote_host} must be the real client IP for the public rate limiter.
 	servers {
 		trusted_proxies static private_ranges
+	}
+
+	# SELF-HOST: remove this global, the :8442 site and the `https://` site.
+	#
+	# Certificates for customer domains pointed here by CNAME, issued on the
+	# first handshake. `ask` is the authorization gate: the app answers 200
+	# only for a domain its verified-domain snapshot serves, and any other
+	# status cancels issuance and fails the handshake. Without it an
+	# unauthenticated handshake could drive an ACME order, which is what the
+	# account-level new-order and failed-validation limits punish.
+	#
+	# Deliberately no `interval`/`burst`: upstream no longer recommends them,
+	# and Caddy already caches certificates and backs off failed issuance, so
+	# a second throttle here would refuse legitimate renewals.
+	on_demand_tls {
+		ask http://127.0.0.1:8442/custom-domain/ask
 	}
 }
 
@@ -88,6 +113,74 @@
 			read_buffer 64KB
 			write_buffer 64KB
 		}
+	}
+}
+
+# SELF-HOST: one of the three custom-domain pieces; remove all three together.
+#
+# The `ask` endpoint, reachable through Caddy's own load balancer rather than
+# by container name, so a certificate can still be authorized while one color
+# is stopped mid-deploy — Docker's DNS returns one address per service name and
+# would pin the ask to whichever color that is.
+#
+# The app serves it on a listener of its own, never on :8080, where a path
+# would be reachable through app.{domain} whatever it is called.
+#
+# No active health check: the endpoint's only route is the ask itself. The
+# timeouts are short because with the feature off both colors refuse, so this
+# budget is what an unknown SNI costs us; certmagic caps the whole ask at ~10s.
+:8442 {
+	# Loopback inside the container, so only Caddy's own ask client reaches
+	# it. A `127.0.0.1:8442` site address would not do this — Caddy reads the
+	# host there as a matcher and still listens on every interface.
+	bind 127.0.0.1
+
+	reverse_proxy uptimepage_blue:8081 uptimepage_green:8081 {
+		lb_policy round_robin
+		# Must exceed dial_timeout, or a blackholed color spends the whole
+		# budget on its own dial and the healthy one is never tried. Both
+		# stay well inside certmagic's ~10s ceiling on the ask.
+		lb_try_duration 3s
+		# Unlike the app upstream, nothing here is client-driven: no browser
+		# aborts a handshake mid-ask, so passive health checking cannot bench
+		# a color on somebody hanging up. Without it the only thing noticing a
+		# dark color is a real customer handshake, once every dial.
+		fail_duration 10s
+
+		transport http {
+			# A blackholed color answers no SYN-ACK; without this the dial
+			# waits on the OS connect timeout.
+			dial_timeout 1s
+		}
+	}
+
+	# No `log`: the directive enables access logging rather than redirecting
+	# it, and one line per handshake is the last thing an SNI flood needs.
+	# Outcomes are counted as uptimepage_custom_domain_ask_total.
+}
+
+# Edge policy shared by both public status surfaces, the `*.{domain}` wildcard
+# and the customer domains below. Kept in one place because a CSP or cache
+# change applied to only one of them breaks a branded page for a paying
+# customer and nothing else. HSTS is NOT here: the two differ on purpose.
+(public_status_edge) {
+	encode gzip zstd
+
+	# Public cache hint, a default only: the app stamps its own value on
+	# every public API route, and the logo carries a longer immutable one.
+	header ?Cache-Control "public, max-age=10, stale-while-revalidate=30"
+
+	import hardening_headers
+	header {
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+		# Strict CSP for the public page. style-src keeps 'unsafe-inline'
+		# because each page carries its own colours. No frame-ancestors on
+		# purpose: the badge is meant to be embedded on other sites, and a
+		# customer may frame the whole page the same way. The one form here
+		# is the double-opt-in subscribe box, pinned same-origin by
+		# form-action.
+		Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; form-action 'self'; object-src 'none'; base-uri 'none'"
+		defer
 	}
 }
 
@@ -530,7 +623,7 @@ mcp.{$UPTIMEPAGE_DOMAIN} {
 # or opted-out slug is a 404 from the app, never a cert error (the wildcard
 # cert covers all valid labels).
 *.{$UPTIMEPAGE_DOMAIN} {
-	encode gzip zstd
+	import public_status_edge
 
 	# Wildcard cert via Hetzner DNS-01 (HTTP-01 can't validate a wildcard),
 	# scoped to this site only. First issuance: Caddy writes a
@@ -560,21 +653,8 @@ mcp.{$UPTIMEPAGE_DOMAIN} {
 		}
 	}
 
-	# Public cache hint, a default only: the app stamps its own value on
-	# every public API route, and the logo carries a longer immutable one.
-	header ?Cache-Control "public, max-age=10, stale-while-revalidate=30"
-
-	import hardening_headers
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
-		# Strict CSP for the public page. style-src keeps 'unsafe-inline'
-		# because each page carries its own colours. No frame-ancestors on
-		# purpose: the badge is meant to be embedded on other sites, and a
-		# customer may frame the whole page the same way. The one form here
-		# is the double-opt-in subscribe box, pinned same-origin by
-		# form-action.
-		Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; form-action 'self'; object-src 'none'; base-uri 'none'"
 		defer
 	}
 
@@ -700,4 +780,59 @@ analytics.{$UPTIMEPAGE_DOMAIN} {
 		}
 		format json
 	}
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+# Custom status-page domains — on-demand TLS
+# ═══════════════════════════════════════════════════════════════════════
+# Customer domains CNAME'd here. Matched last: every block above names a host
+# and Caddy prefers the more specific one, so this only ever sees a name this
+# deployment does not otherwise serve.
+#
+# A certificate is issued on the first handshake and only for a domain the
+# `ask` gate authorizes; an unverified name fails the handshake and never
+# reaches the app. The app applies its own default-deny behind that, so a name
+# that clears TLS but has since lost its binding gets a 404 rather than a page.
+#
+# SELF-HOST: the last of the three; remove it with the `on_demand_tls` global
+# and the :8442 site. Leaving the env var unset authorizes nothing but does not
+# make this inert — the handshake still spends a failed lookup before it dies.
+https:// {
+	import public_status_edge
+
+	tls {
+		on_demand
+	}
+
+	# Same per-IP ceiling as the wildcard status surface, in its own zone so a
+	# flood against one custom domain cannot spend the subdomain allowance.
+	rate_limit {
+		zone custom_domains {
+			key {remote_host}
+			ipv6_prefix 64
+			events 60
+			window 1m
+		}
+	}
+
+	# A day, against a year on our own hosts, and no includeSubDomains. This
+	# name belongs to the customer and they can take it back: whatever we pin
+	# here outlives the binding, and only the host itself can unwind it by
+	# serving max-age=0, which we no longer would. On an apex CNAME
+	# includeSubDomains would pin their whole zone as well.
+	header {
+		Strict-Transport-Security "max-age=86400"
+		defer
+	}
+
+	log {
+		output file /var/log/caddy/access-custom-domains.log {
+			roll_size 20MiB
+			roll_keep 5
+			roll_keep_for 336h
+		}
+		format json
+	}
+
+	import app_upstream
 }

@@ -4,6 +4,19 @@ This directory contains the production deployment for uptimepage:
 **Caddy reverse proxy** (TLS, rate limits) in front of the Rust service,
 PostgreSQL, and ClickHouse.
 
+## Custom domains
+
+A customer points their own hostname at this deployment with a CNAME and the page is served there under their name. Caddy has no certificate for it in advance, so it obtains one during the first TLS handshake and asks the app first whether that name is allowed. The app answers from its snapshot of verified domains, which is also what decides whether the page is served at all, so a name can never hold a certificate for something we do not serve.
+
+`UPTIMEPAGE_CUSTOM_DOMAINS_ENABLED` starts the gate. Unset, no name is ever authorized — but the edge still offers on-demand TLS and every unknown hostname that reaches it spends a failed lookup before the handshake dies. A deployment that will never serve a custom domain is better off removing the three pieces marked `SELF-HOST:` in the Caddyfile: the `on_demand_tls` global, the `:8442` site and the `https://` site.
+
+Two things to know before turning it on:
+
+- **The gate has no authentication.** It is reachable by every container on the compose network, including ones belonging to other compose projects that share it. It answers only whether a hostname is served, which is enough to confirm that a given company is a customer.
+- **`caddy_data` becomes load-bearing.** Every customer certificate and key lives only in that volume. Losing it does not just cost the handful of named hosts: every custom domain re-issues on its next handshake, and Let's Encrypt's per-account new-order limit turns that into a staggered recovery measured in hours rather than minutes.
+
+Certificates renew through the same gate they were issued through, so a gate that breaks after issuance stops renewals silently and the failure surfaces as expired certificates weeks later. `uptimepage_custom_domain_ask_total` is the series that shows it, and it wants an alert before the first customer.
+
 ## What this gives you
 
 | Concern | How it's handled |
@@ -13,6 +26,7 @@ PostgreSQL, and ClickHouse.
 | Authentication | The app's own sign-in on `app.{domain}` (UI + operator API). The edge adds no second gate |
 | Public status surface | Self-host: `/status` on `app.{domain}`. SaaS: each org at `{slug}.{domain}` (apex wildcard) |
 | TLS for status pages | Wildcard cert for `*.{domain}` via Let's Encrypt + Hetzner DNS-01; `app.{domain}` and `mcp.{domain}` kept on their own per-host HTTP-01 certs |
+| Custom status-page domains | A customer CNAMEs their own hostname here; Caddy issues its certificate on the first handshake, but only for a domain the app's `ask` gate authorizes. `UPTIMEPAGE_CUSTOM_DOMAINS_ENABLED` turns the gate on, subdomain mode only. See [Custom domains](#custom-domains) for what unset actually leaves running |
 | MCP connector host | `mcp.{domain}` serves only `/mcp` and `/.well-known/*`; the app answers 404 for everything else there, so the operator surface and its edge limits stay single-host |
 | Public rate limit | Per-IP 60 req/min on the public surface (custom Caddy image, built automatically) |
 | Auth-endpoint rate limit | Per-IP 10 req/min on `/auth/*` and `/api/v1/me`; invitation accept has its own zone at 30/min |
