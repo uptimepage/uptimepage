@@ -40,6 +40,7 @@ async fn subdomain_only_mode_404s_path_routes() {
     let app = build_test_app_with_web(|cfg| {
         cfg.tenancy.path_based_public_routes = false;
         cfg.tenancy.subdomain_public_routes = true;
+        cfg.public_status.base_domain = common::SAAS_BASE_DOMAIN.into();
     });
     assert_eq!(
         status(app.clone(), "/api/public/v1/status").await,

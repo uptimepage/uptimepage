@@ -162,6 +162,14 @@ pub enum TenancyMode {
     Subdomain,
 }
 
+/// Base domain every SaaS-shaped fixture routes on. `app.` is the operator
+/// surface, `mcp.` the connector, `{slug}.` a tenant page.
+pub const SAAS_BASE_DOMAIN: &str = "example.test";
+
+pub fn saas_mcp_host() -> String {
+    format!("mcp.{SAAS_BASE_DOMAIN}")
+}
+
 impl TenancyMode {
     pub fn apply(self, cfg: &mut AppConfig) {
         match self {
@@ -172,6 +180,7 @@ impl TenancyMode {
             TenancyMode::Subdomain => {
                 cfg.tenancy.path_based_public_routes = false;
                 cfg.tenancy.subdomain_public_routes = true;
+                cfg.public_status.base_domain = SAAS_BASE_DOMAIN.into();
             }
         }
     }
@@ -578,6 +587,10 @@ pub async fn build_saas_router_with_pg_cfg(
     let mut cfg = test_config(|_| {});
     cfg.tenancy.path_based_public_routes = false;
     cfg.tenancy.subdomain_public_routes = true;
+    // Pinned rather than inherited: an ambient `UPTIMEPAGE__` override would
+    // otherwise decide whether the assertion below panics.
+    cfg.public_status.base_domain = SAAS_BASE_DOMAIN.into();
+    cfg.auth.session.cookie_domain = String::new();
     mutate(&mut cfg);
     assemble_pg_router(pool, cfg)
 }
@@ -596,6 +609,9 @@ fn assemble_pg_router_tweaked(
     cfg: AppConfig,
     tweak: impl FnOnce(AppState) -> AppState,
 ) -> Router {
+    // Subdomain routing without a base domain cannot boot, and 404s every
+    // request that carries a `Host`. Fail here, not as a mystery 404.
+    cfg.assert_per_org_status();
     let target_store = Arc::new(PostgresTargetStore::from_pool(pool.clone(), None));
     let sink = Arc::new(InMemorySink::new());
     let results_store: Arc<dyn ResultsStore> = sink.clone();

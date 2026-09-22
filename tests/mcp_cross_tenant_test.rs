@@ -16,7 +16,9 @@ mod common;
 use axum::Router;
 use axum::body::Body;
 use axum::http::Request;
-use common::{build_saas_router_with_pg_cfg, default_http_check, make_user, unique_slug};
+use common::{
+    build_saas_router_with_pg_cfg, default_http_check, make_user, saas_mcp_host, unique_slug,
+};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::time::Duration;
@@ -55,7 +57,7 @@ impl Connector {
                     .method("POST")
                     .uri("/mcp")
                     .header("content-type", "application/json")
-                    .header("host", "localhost")
+                    .header("host", saas_mcp_host())
                     .header("accept", "application/json, text/event-stream")
                     .header("authorization", format!("Bearer {}", self.token))
                     .header("mcp-session-id", &self.session)
@@ -221,7 +223,7 @@ async fn connect(pool: &PgPool) -> (Connector, OrgId, OrgId) {
                 .method("POST")
                 .uri("/mcp")
                 .header("content-type", "application/json")
-                .header("host", "localhost")
+                .header("host", saas_mcp_host())
                 .header("accept", "application/json, text/event-stream")
                 .header("authorization", format!("Bearer {}", created.token))
                 .body(Body::from(INITIALIZE))
