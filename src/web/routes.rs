@@ -193,7 +193,10 @@ pub fn routes(state: AppState) -> Router {
         .route("/abuse-policy", get(views::legal::abuse_policy))
         .route("/security-policy", get(views::legal::security_policy))
         .route("/licenses", get(views::legal::licenses))
-        .route("/.well-known/security.txt", get(views::legal::security_txt));
+        .route(
+            crate::security::disclosure::PATH,
+            get(crate::security::disclosure::serve),
+        );
 
     // Team-paging surfaces — mounted only when escalation is enabled, so a
     // single-responder deployment never exposes policy/schedule config that

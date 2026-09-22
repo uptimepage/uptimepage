@@ -1,6 +1,8 @@
 //! Public legal & policy pages on the marketing host:
 //! `/terms`, `/privacy`, `/cookies`, `/impressum`, `/abuse-policy`,
-//! `/security-policy`. Markdown sources under `docs/legal/` are
+//! `/security-policy`, plus the RFC 9116 `/.well-known/security.txt`,
+//! whose `Canonical` field names this host. Markdown sources under
+//! `docs/legal/` are
 //! compiled into the binary with `include_str!` and rendered to HTML
 //! once on first request, then memoised in a `OnceLock` per route.
 //!
@@ -24,6 +26,7 @@ use axum::routing::get;
 use super::config::{BRAND, MarketingCfg};
 use super::pages::{CachedRender, cached_render, serve_cached};
 use super::seo::OpenGraph;
+use crate::security::disclosure;
 use crate::templates::filters;
 
 const LEGAL_CACHE_CONTROL: HeaderValue =
@@ -158,8 +161,13 @@ async fn serve(
 }
 
 /// Mount every entry in [`ROUTES`] on the given router. One source of
-/// truth — no per-route handler functions, no `match` arm, no macro
-/// invocations to keep in lockstep.
+/// truth for the rendered pages — no per-route handler functions, no
+/// `match` arm, no macro invocations to keep in lockstep.
+///
+/// `security.txt` is the one exception, appended after the loop: it is
+/// plain text rather than a rendered page, and this host has to answer
+/// it because the file names this origin as its `Canonical` one. The
+/// handler is shared with the app router so the two cannot drift.
 pub fn mount(router: Router<Arc<MarketingCfg>>) -> Router<Arc<MarketingCfg>> {
     let mut r = router;
     for route in ROUTES {
@@ -168,7 +176,7 @@ pub fn mount(router: Router<Arc<MarketingCfg>>) -> Router<Arc<MarketingCfg>> {
             get(move |state, headers| serve(state, headers, route)),
         );
     }
-    r
+    r.route(disclosure::PATH, get(disclosure::serve))
 }
 
 #[cfg(test)]

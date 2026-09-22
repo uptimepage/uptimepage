@@ -410,6 +410,26 @@ async fn api_catalog_is_served_as_a_linkset() {
 }
 
 #[tokio::test]
+async fn security_txt_answers_on_its_canonical_host() {
+    let (status, body, headers) = get("/.well-known/security.txt").await;
+    assert_eq!(status, StatusCode::OK);
+    let ct = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
+    assert!(ct.starts_with("text/plain"), "got {ct:?}");
+    let cache = headers
+        .get(header::CACHE_CONTROL)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
+    assert!(cache.contains("max-age="), "got {cache:?}");
+    assert!(
+        body.contains("Canonical: https://uptimepage.dev/.well-known/security.txt"),
+        "Canonical must name this host: {body}"
+    );
+}
+
+#[tokio::test]
 async fn apex_points_at_the_mcp_hosts_server_card() {
     let (status, _, headers) = get("/.well-known/mcp/server-card.json").await;
     assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);

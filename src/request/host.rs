@@ -411,7 +411,10 @@ fn url_host(url: &str) -> Option<&str> {
 /// allowed to expose. Combined with [`PUBLIC_TENANT_PREFIXES`] this is
 /// the complete allow-list — every grep-able place a tenant-host route
 /// is whitelisted, so adding a new public-tenant route forces a visit
-/// here too. Mirrors the [`HEALTH_PATHS`] pattern.
+/// here too. Mirrors the [`HEALTH_PATHS`] pattern. Spelled out rather
+/// than pulled from `security::disclosure::PATH` on purpose: this list
+/// is audited by eye, and an opaque const hides a host's exposed
+/// surface from the person reading it.
 const PUBLIC_TENANT_EXACT: &[&str] = &["/", "/status", "/subscribe", "/.well-known/security.txt"];
 
 /// Path prefixes the public tenant surface is allowed to expose. No
@@ -467,6 +470,16 @@ pub async fn host_isolation(State(state): State<AppState>, req: Request, next: N
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The allow-list spells the path out for auditability, so this is
+    /// what stops it drifting from the const the routers mount.
+    #[test]
+    fn tenant_allow_list_matches_the_mounted_security_txt_path() {
+        assert!(
+            PUBLIC_TENANT_EXACT.contains(&crate::security::disclosure::PATH),
+            "security.txt is mounted at a path no tenant host allows"
+        );
+    }
 
     #[test]
     fn mcp_host_follows_the_resource_uri_and_the_mcp_label() {

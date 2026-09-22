@@ -895,8 +895,10 @@ async fn privacy_policy_renders_markdown_tables() {
     );
 }
 
-/// RFC 9116: served at the well-known path, `text/plain`, with the
-/// mandatory `Contact` and `Expires` fields.
+/// RFC 9116: served at the well-known path as `text/plain`, carrying
+/// the mandatory fields. That `Expires` is still in the future is a
+/// property of the file rather than of the transport, so it is checked
+/// in `security::disclosure`'s unit tests, on the `--lib` gate.
 #[tokio::test]
 async fn security_txt_served_per_rfc9116() {
     let resp = app()
@@ -923,7 +925,7 @@ async fn security_txt_served_per_rfc9116() {
         "security.txt needs a Contact field"
     );
     assert!(
-        body.contains("Expires: 2027-12-31T23:59:59.000Z"),
+        body.contains("Expires: "),
         "security.txt needs an Expires field"
     );
 }

@@ -1,6 +1,8 @@
 //! Public legal & policy pages: `/terms`, `/privacy`, `/cookies`,
-//! `/impressum`, `/abuse-policy`, `/security-policy`, plus the RFC 9116
-//! `/.well-known/security.txt`.
+//! `/impressum`, `/abuse-policy`, `/security-policy`. The RFC 9116
+//! `/.well-known/security.txt` is mounted alongside them by the router,
+//! from `security::disclosure` — it is plain text, shared with the
+//! marketing host, and renders through none of this.
 //!
 //! The markdown is first-party content compiled into the binary with
 //! `include_str!` and rendered to HTML once on first request. It is
@@ -15,8 +17,6 @@ use std::sync::LazyLock;
 
 use askama::Template;
 use askama_web::WebTemplate;
-use axum::http::header;
-use axum::response::IntoResponse;
 
 use crate::templates::filters;
 
@@ -107,14 +107,3 @@ legal_page!(
     "Third-Party Licenses",
     "../../../THIRD-PARTY-LICENSES.md"
 );
-
-/// `GET /.well-known/security.txt` (RFC 9116) — the canonical path. The
-/// bytes come from the one file under `static/`; it is also in the embedded
-/// asset bundle, but only this route is advertised, and `text/plain` here is
-/// explicit rather than mime-guessed.
-pub async fn security_txt() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-        include_str!("../../../static/.well-known/security.txt"),
-    )
-}
