@@ -417,9 +417,11 @@ fn host_surface(state: &AppState, headers: &HeaderMap) -> HostSurface {
         HostShape::Subdomain(slug) if subdomain_routes && !is_operator_label(slug) => {
             HostSurface::Tenant
         }
-        HostShape::Other if subdomain_routes => match state.custom_domains.lookup(host) {
+        HostShape::Other => match state.custom_domains.lookup(host) {
             Some(_) => HostSurface::Tenant,
-            None => HostSurface::Unknown,
+            None if subdomain_routes => HostSurface::Unknown,
+            // Path-based self-host answers on whatever host it is reached by.
+            None => HostSurface::Operator,
         },
         _ => HostSurface::Operator,
     }
@@ -514,7 +516,7 @@ pub async fn host_isolation(State(state): State<AppState>, req: Request, next: N
             // The dispatch seam counts its own denials, but exists only when
             // marketing is enabled.
             if surface == HostSurface::Unknown {
-                metrics::counter!(crate::metric_names::UNRECOGNISED_HOST_REQUESTS).increment(1);
+                crate::request::http_metrics::record_unrecognised_host();
             }
             return StatusCode::NOT_FOUND.into_response();
         }

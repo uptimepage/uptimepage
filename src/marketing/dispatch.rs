@@ -19,6 +19,7 @@ use tower::Service;
 
 use crate::request::custom_domains::CustomDomains;
 use crate::request::host::{HostClass, HostScheme, classify_host};
+use crate::request::http_metrics::record_unrecognised_host;
 use crate::request::is_health_path;
 
 /// Routes a request to one of two `axum::Router`s based on classified
@@ -66,7 +67,7 @@ impl Service<Request<Body>> for RouteByHost {
             HostClass::Marketing => self.marketing.clone(),
             HostClass::App | HostClass::TenantPublic => self.app.clone(),
             HostClass::Unknown => {
-                metrics::counter!(crate::metric_names::UNRECOGNISED_HOST_REQUESTS).increment(1);
+                record_unrecognised_host();
                 return Box::pin(async { Ok(StatusCode::NOT_FOUND.into_response()) });
             }
         };

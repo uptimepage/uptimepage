@@ -109,6 +109,15 @@ fn status_class(status: StatusCode) -> &'static str {
     }
 }
 
+/// Both default-deny fences emit this: `RouteByHost` when marketing is wired
+/// up, `host_isolation` otherwise. It lives here rather than at either denial
+/// site because `tests/marketing_coupling_test.rs` allows the marketing module
+/// to name only `crate::{marketing, templates, security, request,
+/// http_outbound}`.
+pub(crate) fn record_unrecognised_host() {
+    counter!(metric_names::UNRECOGNISED_HOST_REQUESTS).increment(1);
+}
+
 #[cfg(test)]
 mod tests {
     use super::{method_label, status_class};

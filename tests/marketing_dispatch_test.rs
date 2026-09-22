@@ -3,6 +3,8 @@
 //! sentinel mini-routers so the assertion is on the routing decision,
 //! not on any app-side handler.
 
+mod common;
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -14,6 +16,8 @@ use uptimepage::domain::{OrgId, PageRef, StatusPageId};
 use uptimepage::marketing::RouteByHost;
 use uptimepage::request::custom_domains::{CustomDomainRow, CustomDomains};
 use uptimepage::request::host::HostScheme;
+
+use common::{metric_value, metrics_handle};
 
 fn sentinel(name: &'static str) -> Router {
     Router::new().fallback(move || async move { name })
@@ -111,6 +115,24 @@ async fn unknown_host_is_404ed_at_the_seam() {
     assert_eq!(s, StatusCode::NOT_FOUND);
     assert_ne!(b, "marketing");
     assert_ne!(b, "app");
+}
+
+/// The 404 is asserted elsewhere and would survive losing the counter, so
+/// this pins the series itself: it is the evidence default-deny is live.
+#[tokio::test]
+async fn an_unknown_host_is_counted_not_only_refused() {
+    let h = metrics_handle();
+    let name = "uptimepage_unrecognised_host_requests_total";
+    let before = metric_value(&h.render(), name).unwrap_or(0.0);
+    let (s, _) = body_for("counted.unrelated.example").await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    // Sibling tests in this binary refuse unknown hosts too, and under a
+    // threaded runner they share the recorder, so the bound is one-sided.
+    let after = metric_value(&h.render(), name).expect("series exists once a host is refused");
+    assert!(
+        after >= before + 1.0,
+        "{name} did not move: {before} -> {after}"
+    );
 }
 
 #[tokio::test]

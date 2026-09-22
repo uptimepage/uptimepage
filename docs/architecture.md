@@ -106,8 +106,8 @@ One `RouteByHost` service (in `src/marketing/dispatch.rs`) inspects the Host hea
 
 - **Marketing** (apex and `www`): the marketing router, which touches no database.
 - **App** (the operator labels, `app` and `mcp`): the full application router. The MCP host is then narrowed to `/mcp` and `/.well-known/*` by the isolation middleware below.
-- **Tenant public** (any other subdomain): the application router behind a default-deny fence that allows only the public status, subscribe, public API, and static paths. Everything else 404s, so login and operator routes can never appear on a tenant host.
-- **Unknown**: the marketing router with a branded 404.
+- **Tenant public** (any other subdomain, and any host the verified-custom-domain snapshot serves): the application router behind a default-deny fence that allows only the public status, subscribe, public API, and static paths. Everything else 404s, so login and operator routes can never appear on a tenant host.
+- **Unknown** (anything else): a bare 404. Serving the marketing site here would put our pages and their canonical tags on a host somebody else controls.
 
 Inside the application router the middleware order is load-bearing and documented at the top of `src/router.rs`: `http_metrics` outermost, then `host_isolation`, then CSRF. Metrics must observe requests the later guards reject, and a tenant or MCP host must 404 an operator route before CSRF's constant-time compare runs. The `/api/v1` stack adds a body limit, API-token auth, and per-org-then-per-user rate limiting. Reordering these changes request semantics, not just style.
 

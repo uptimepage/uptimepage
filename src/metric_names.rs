@@ -110,9 +110,11 @@ pub const CUSTOM_DOMAINS_SERVED: &str = "uptimepage_custom_domains_served";
 /// The snapshot has no maximum age on purpose, so `time() - value` is the only
 /// thing that says a deployment is routing on stale ownership.
 pub const CUSTOM_DOMAINS_UPDATED: &str = "uptimepage_custom_domains_updated_timestamp_seconds";
-/// Requests answered at the dispatch seam because their `Host` named neither
-/// this deployment nor a served custom domain. The evidence that default-deny
-/// is live on an instance, and the shape of whatever is pointing DNS at us.
+/// Requests refused because their `Host` named neither this deployment nor a
+/// served custom domain, at whichever fence saw them first: the dispatch seam
+/// where marketing is enabled, `host_isolation` where it is not. The evidence
+/// that default-deny is live on an instance, and the shape of whatever is
+/// pointing DNS at us.
 pub const UNRECOGNISED_HOST_REQUESTS: &str = "uptimepage_unrecognised_host_requests_total";
 /// On-demand TLS authorization answers, labelled `outcome` (allowed | refused).
 /// One per handshake for a certificate Caddy does not already hold, so a rise

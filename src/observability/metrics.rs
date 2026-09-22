@@ -356,7 +356,7 @@ fn register_descriptions() {
     );
     describe_counter!(
         "uptimepage_unrecognised_host_requests_total",
-        "Requests refused at the dispatch seam because their `Host` named neither this deployment nor a custom domain it serves. Zero is the steady state on a deployment nobody points DNS at; it is also the series that shows default-deny is actually live on an instance"
+        "Requests refused because their `Host` named neither this deployment nor a custom domain it serves, counted at whichever default-deny fence saw them first: the dispatch seam where the marketing site is enabled, the host-isolation middleware where it is not. Zero is the steady state on a deployment nobody points DNS at; it is also the series that shows default-deny is actually live on an instance"
     );
     describe_counter!(
         "uptimepage_custom_domain_ask_total",
