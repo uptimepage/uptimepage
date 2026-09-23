@@ -82,6 +82,14 @@ name: deploy
 #     RESEND_WEBHOOK_SECRET     whsec_… Svix signing secret of the Resend
 #                               webhook endpoint; presence mounts the
 #                               /hooks/resend bounce receiver (sensitive)
+#   Paid plans via Paddle (trio all-or-nothing; the api key's presence
+#   writes billing.provider "paddle" on the live environment, and removing
+#   it later leaves that in the server .env):
+#     PADDLE_API_KEY            live API key (sensitive)
+#     PADDLE_WEBHOOK_SECRET     pdl_ntfset_… secret key of the notification
+#                               destination (sensitive)
+#     PADDLE_CLIENT_TOKEN       repo variable, live_… client-side token
+#                               (public by design)
 # Non-secret repo variables: RUST_LOG (log/trace verbosity),
 # TELEGRAM_BOT_USERNAME (the bot's public @handle, no leading @),
 # EMAIL_FROM_ADDRESS (verified sender on a read inbox, e.g. hello@<domain>;
@@ -234,6 +242,10 @@ jobs:
           RESEND_WEBHOOK_SECRET: ${{ secrets.RESEND_WEBHOOK_SECRET }}
           EMAIL_FROM_ADDRESS: ${{ vars.EMAIL_FROM_ADDRESS }}
           EMAIL_SUPPORT_ADDRESS: ${{ vars.EMAIL_SUPPORT_ADDRESS }}
+          # Paddle — api key presence turns paid plans on.
+          PADDLE_API_KEY: ${{ secrets.PADDLE_API_KEY }}
+          PADDLE_WEBHOOK_SECRET: ${{ secrets.PADDLE_WEBHOOK_SECRET }}
+          PADDLE_CLIENT_TOKEN: ${{ vars.PADDLE_CLIENT_TOKEN }}
           # Dashboard/agent split. Token is a secret (agent credential); the
           # three knobs are plain config (Actions variables). Set all three vars
           # + the token to switch prod to brain-only + a co-located agent (see
@@ -306,6 +318,9 @@ jobs:
                RESEND_WEBHOOK_SECRET='${RESEND_WEBHOOK_SECRET}' \
                EMAIL_FROM_ADDRESS='${EMAIL_FROM_ADDRESS}' \
                EMAIL_SUPPORT_ADDRESS='${EMAIL_SUPPORT_ADDRESS}' \
+               PADDLE_API_KEY='${PADDLE_API_KEY}' \
+               PADDLE_WEBHOOK_SECRET='${PADDLE_WEBHOOK_SECRET}' \
+               PADDLE_CLIENT_TOKEN='${PADDLE_CLIENT_TOKEN}' \
                HOME_AGENT_TOKEN='${HOME_AGENT_TOKEN}' \
                UPTIMEPAGE_EMAIL_POLICY_ENABLED='${UPTIMEPAGE_EMAIL_POLICY_ENABLED}' \
                UPTIMEPAGE_EMAIL_POLICY_SIGNUP_POLICY='${UPTIMEPAGE_EMAIL_POLICY_SIGNUP_POLICY}' \
@@ -1066,6 +1081,49 @@ jobs:
               "UPTIMEPAGE_EMAIL_FROM_ADDRESS=$(printenv EMAIL_FROM_ADDRESS)" \
               "UPTIMEPAGE_EMAIL_RESEND_API_KEY=$(printenv RESEND_API_KEY)" \
               "UPTIMEPAGE_EMAIL_RESEND_WEBHOOK_SECRET=$(printenv RESEND_WEBHOOK_SECRET)"; do
+              n=$(grep -cxF "$pair" .env || true)
+              [ "$n" = 1 ] || { echo "::error::${pair%%=*} not written exactly once to .env (count=${n})"; exit 1; }
+            done
+          fi
+
+          # --- paid plans via Paddle (optional) ------------------------------
+          # Same write contract as the blocks above. All-or-nothing on the
+          # trio: boot refuses provider "paddle" with any of them missing, so
+          # fail here instead of after the cutover.
+          if [ -n "${PADDLE_API_KEY:-}" ]; then
+            if [ -z "${PADDLE_WEBHOOK_SECRET:-}" ] || [ -z "${PADDLE_CLIENT_TOKEN:-}" ]; then
+              echo "::error::PADDLE_API_KEY is set but PADDLE_WEBHOOK_SECRET or PADDLE_CLIENT_TOKEN is empty"
+              exit 1
+            fi
+            cp .env ".env.bak.$(date +%s).paddle"
+            before=$(awk 'END { print NR }' .env)
+            awk '
+              BEGIN {
+                m["UPTIMEPAGE_BILLING_PROVIDER"]              = "paddle"
+                m["UPTIMEPAGE_BILLING_PADDLE_ENVIRONMENT"]    = "live"
+                m["UPTIMEPAGE_BILLING_PADDLE_API_KEY"]        = ENVIRON["PADDLE_API_KEY"]
+                m["UPTIMEPAGE_BILLING_PADDLE_WEBHOOK_SECRET"] = ENVIRON["PADDLE_WEBHOOK_SECRET"]
+                m["UPTIMEPAGE_BILLING_PADDLE_CLIENT_TOKEN"]   = ENVIRON["PADDLE_CLIENT_TOKEN"]
+              }
+              {
+                for (k in m) if ($0 ~ ("^" k "=")) { print k "=" m[k]; seen[k] = 1; next }
+                print
+              }
+              END { for (k in m) if (!seen[k]) print k "=" m[k] }
+            ' .env > .env.next
+            mv .env.next .env
+            after=$(awk 'END { print NR }' .env)
+            # 0..+5: appended only for keys absent before.
+            if [ "$after" -lt "$before" ] || [ "$after" -gt "$((before + 5))" ]; then
+              echo "::error::.env line count out of range after paddle upsert (${before} -> ${after})"
+              exit 1
+            fi
+            for pair in \
+              "UPTIMEPAGE_BILLING_PROVIDER=paddle" \
+              "UPTIMEPAGE_BILLING_PADDLE_ENVIRONMENT=live" \
+              "UPTIMEPAGE_BILLING_PADDLE_API_KEY=$(printenv PADDLE_API_KEY)" \
+              "UPTIMEPAGE_BILLING_PADDLE_WEBHOOK_SECRET=$(printenv PADDLE_WEBHOOK_SECRET)" \
+              "UPTIMEPAGE_BILLING_PADDLE_CLIENT_TOKEN=$(printenv PADDLE_CLIENT_TOKEN)"; do
               n=$(grep -cxF "$pair" .env || true)
               [ "$n" = 1 ] || { echo "::error::${pair%%=*} not written exactly once to .env (count=${n})"; exit 1; }
             done
