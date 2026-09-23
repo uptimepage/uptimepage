@@ -59,11 +59,58 @@ impl SubscriptionSnapshot {
     }
 }
 
+/// An amount in the currency's smallest unit, as the provider reports it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Money {
+    pub amount_minor: i64,
+    pub currency: String,
+}
+
+/// A settled charge, named as the provider's records name it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Payment {
+    pub transaction_ref: String,
+    pub total: Option<Money>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefundKind {
+    Refund,
+    /// Forced by the customer's bank.
+    Chargeback,
+    /// A chargeback the provider won back.
+    ChargebackReversed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefundStatus {
+    Pending,
+    Approved,
+    Rejected,
+    Reversed,
+}
+
+/// Money moving back on a charge. Only an approved one has left the
+/// provider.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Refund {
+    pub adjustment_ref: String,
+    pub transaction_ref: String,
+    pub action: RefundKind,
+    pub status: RefundStatus,
+    /// The whole charge, not part of it.
+    pub full: bool,
+    pub total: Option<Money>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EventKind {
-    Paid,
+    Paid(Payment),
     PaymentFailed,
+    Refunded(Refund),
     Subscription(SubscriptionSnapshot),
     /// Acknowledged and recorded, nothing to apply.
     Other,

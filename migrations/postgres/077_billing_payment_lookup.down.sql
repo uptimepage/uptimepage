@@ -1,0 +1,1 @@
+DROP INDEX idx_account_billing_events_payment_txn;

@@ -23,7 +23,8 @@ use uptimepage::billing::lifecycle::{ACK_BUDGET, EVENT_RETENTION_DAYS, GRACE_DAY
 use uptimepage::billing::mail::Mailer;
 use uptimepage::billing::provider::fake::{FakeProvider, SIGNATURE, SIGNATURE_HEADER};
 use uptimepage::billing::provider::{
-    EventKind, Interval, ProviderEvent, SubscriptionSnapshot, SubscriptionStatus,
+    EventKind, Interval, Money, Payment, ProviderEvent, Refund, RefundKind, RefundStatus,
+    SubscriptionSnapshot, SubscriptionStatus,
 };
 use uptimepage::billing::{Actor, Billing, PlanRequest, set_plan};
 use uptimepage::config::AppConfig;
@@ -213,6 +214,38 @@ fn event(account: AccountId, subscription_ref: &str, kind: EventKind) -> Provide
         subscription_ref: Some(subscription_ref.into()),
         kind,
     }
+}
+
+fn paid() -> EventKind {
+    paid_as(&format!("txn_{}", Uuid::now_v7().simple()))
+}
+
+fn paid_as(transaction_ref: &str) -> EventKind {
+    EventKind::Paid(Payment {
+        transaction_ref: transaction_ref.into(),
+        total: Some(Money {
+            amount_minor: 1900,
+            currency: "USD".into(),
+        }),
+    })
+}
+
+fn refund(transaction_ref: &str, approved: bool, full: bool) -> EventKind {
+    EventKind::Refunded(Refund {
+        adjustment_ref: format!("adj_{}", Uuid::now_v7().simple()),
+        transaction_ref: transaction_ref.into(),
+        action: RefundKind::Refund,
+        status: if approved {
+            RefundStatus::Approved
+        } else {
+            RefundStatus::Pending
+        },
+        full,
+        total: Some(Money {
+            amount_minor: 1900,
+            currency: "USD".into(),
+        }),
+    })
 }
 
 async fn row(pool: &PgPool, account: AccountId) -> uptimepage::domain::Subscription {
@@ -779,7 +812,7 @@ async fn a_failed_payment_opens_a_grace_window_the_sweep_closes_and_a_payment_re
     );
     let outcome = h
         .billing
-        .apply_event(&h.pool, &h.quotas, event(account, &fresh, EventKind::Paid))
+        .apply_event(&h.pool, &h.quotas, event(account, &fresh, paid()))
         .await
         .expect("paid");
     assert_eq!(outcome, Outcome::Applied);
@@ -947,7 +980,7 @@ async fn a_payment_inside_the_window_recovers_the_account_and_says_so() {
         .expect("failed");
 
     h.billing
-        .apply_event(&h.pool, &h.quotas, event(account, &sub, EventKind::Paid))
+        .apply_event(&h.pool, &h.quotas, event(account, &sub, paid()))
         .await
         .expect("paid");
     let s = row(&h.pool, account).await;
@@ -1125,7 +1158,7 @@ async fn a_payment_naming_no_subscription_cannot_touch_a_live_account() {
         .expect("failed");
     let outcome = h
         .billing
-        .apply_event(&h.pool, &h.quotas, nameless(EventKind::Paid))
+        .apply_event(&h.pool, &h.quotas, nameless(paid()))
         .await
         .expect("paid");
     assert_eq!(
@@ -1348,7 +1381,7 @@ async fn a_payment_never_hides_an_earlier_snapshot() {
 
     // Delivered out of order: the renewal's payment first, the cancel booked
     // a moment before it second.
-    let mut paid = event(account, &sub, EventKind::Paid);
+    let mut paid = event(account, &sub, paid());
     paid.occurred_at = now + Duration::seconds(2);
     h.billing
         .apply_event(&h.pool, &h.quotas, paid)
@@ -1399,10 +1432,7 @@ async fn a_late_payment_event_never_undoes_a_newer_one() {
             .expect("failed"),
         Outcome::Applied
     );
-    assert_eq!(
-        apply(at(3, EventKind::Paid)).await.expect("paid"),
-        Outcome::Applied
-    );
+    assert_eq!(apply(at(3, paid())).await.expect("paid"), Outcome::Applied);
     assert_eq!(
         apply(at(2, EventKind::PaymentFailed))
             .await
@@ -1425,7 +1455,7 @@ async fn a_late_payment_event_never_undoes_a_newer_one() {
     );
     let until = row(&h.pool, account).await.grace_until.expect("grace");
     assert_eq!(
-        apply(at(4, EventKind::Paid)).await.expect("late payment"),
+        apply(at(4, paid())).await.expect("late payment"),
         Outcome::Stale,
         "a payment older than the failure recovers nothing"
     );
@@ -1486,7 +1516,7 @@ async fn a_snapshot_older_than_the_last_payment_event_moves_no_status() {
         "but it is still applied"
     );
 
-    apply(at(3000, EventKind::Paid)).await.expect("paid");
+    apply(at(3000, paid())).await.expect("paid");
     assert_eq!(
         apply(taken(2000, SubscriptionStatus::PastDue))
             .await
@@ -1702,7 +1732,7 @@ async fn noise_without_an_account_is_not_an_unmatched_purchase() {
         .expect("noise");
     assert_eq!(outcome, Outcome::Applied);
 
-    let mut paid = event(AccountId(Uuid::nil()), "sub_none", EventKind::Paid);
+    let mut paid = event(AccountId(Uuid::nil()), "sub_none", paid());
     paid.account = None;
     paid.subscription_ref = None;
     let outcome = h
@@ -2219,7 +2249,7 @@ async fn a_first_payment_whose_lookup_stalls_is_refused_within_the_providers_pat
         sub.clone(),
         snapshot(&sub, SubscriptionStatus::Active, TEAM_MONTH, Utc::now()),
     );
-    let paid = event(account, &sub, EventKind::Paid);
+    let paid = event(account, &sub, paid());
     let stalled = || {
         metric_value(
             &metrics_handle().render(),
@@ -3885,4 +3915,151 @@ async fn billing_is_absent_without_a_provider() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[ignore]
+async fn every_payment_is_logged_with_its_transaction() {
+    let Some(h) = harness().await else { return };
+    let (account, _, _) = account(&h.pool, "founding", 0).await;
+    let sub = sub_ref();
+    activate(&h, account, &sub, TEAM_MONTH).await;
+    let payment = paid();
+    let EventKind::Paid(Payment {
+        transaction_ref, ..
+    }) = &payment
+    else {
+        unreachable!()
+    };
+    let transaction_ref = transaction_ref.clone();
+    h.billing
+        .apply_event(&h.pool, &h.quotas, event(account, &sub, payment))
+        .await
+        .expect("paid");
+
+    let (payload,): (serde_json::Value,) = sqlx::query_as(
+        "SELECT payload FROM account_billing_events WHERE account_id = $1 AND kind = 'payment_received'",
+    )
+    .bind(account.0)
+    .fetch_one(&h.pool)
+    .await
+    .expect("payment logged");
+    assert_eq!(payload["transaction"], transaction_ref.as_str());
+    assert_eq!(payload["subscription"], sub.as_str());
+    assert_eq!(payload["total"]["amount_minor"], 1900);
+    assert_eq!(payload["total"]["currency"], "USD");
+}
+
+#[tokio::test]
+#[ignore]
+async fn refunds_are_logged_and_never_touch_the_plan() {
+    let Some(h) = harness().await else { return };
+    let (account, _, _) = account(&h.pool, "founding", 0).await;
+    let sub = sub_ref();
+    activate(&h, account, &sub, TEAM_MONTH).await;
+    h.billing
+        .apply_event(&h.pool, &h.quotas, event(account, &sub, paid_as("txn_1")))
+        .await
+        .expect("paid");
+    h.provider.calls.lock().unwrap().clear();
+
+    for kind in [refund("txn_1", false, true), refund("txn_1", true, true)] {
+        h.billing
+            .apply_event(&h.pool, &h.quotas, event(account, &sub, kind))
+            .await
+            .expect("refund");
+    }
+    assert!(
+        h.provider.calls.lock().unwrap().is_empty(),
+        "ending the subscription stays a support decision"
+    );
+    assert_eq!(row(&h.pool, account).await.status, BillingStatus::Active);
+    let kinds = ledger_kinds(&h.pool, account).await;
+    assert_eq!(
+        kinds.iter().filter(|k| *k == "refund_recorded").count(),
+        2,
+        "{kinds:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn a_refund_on_a_replaced_subscription_finds_its_account_through_the_payment() {
+    let Some(h) = harness().await else { return };
+    let (account, _, _) = account(&h.pool, "founding", 0).await;
+    let old = sub_ref();
+    activate(&h, account, &old, TEAM_MONTH).await;
+    let txn = format!("txn_{}", Uuid::now_v7().simple());
+    h.billing
+        .apply_event(&h.pool, &h.quotas, event(account, &old, paid_as(&txn)))
+        .await
+        .expect("paid");
+    let ended = snapshot(&old, SubscriptionStatus::Canceled, TEAM_MONTH, Utc::now());
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &old, EventKind::Subscription(ended)),
+        )
+        .await
+        .expect("ended");
+    let new = sub_ref();
+    activate(&h, account, &new, TEAM_MONTH).await;
+    assert_eq!(
+        row(&h.pool, account).await.subscription_ref.as_deref(),
+        Some(new.as_str())
+    );
+
+    let mut late = event(account, &old, refund(&txn, true, true));
+    late.account = None;
+    h.billing
+        .apply_event(&h.pool, &h.quotas, late)
+        .await
+        .expect("refund");
+    assert!(
+        ledger_kinds(&h.pool, account)
+            .await
+            .contains(&"refund_recorded".to_string())
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn a_late_payment_on_a_replaced_subscription_is_logged_without_touching_the_plan() {
+    let Some(h) = harness().await else { return };
+    let (account, _, _) = account(&h.pool, "founding", 0).await;
+    let old = sub_ref();
+    activate(&h, account, &old, TEAM_MONTH).await;
+    let ended = snapshot(&old, SubscriptionStatus::Canceled, TEAM_MONTH, Utc::now());
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &old, EventKind::Subscription(ended)),
+        )
+        .await
+        .expect("ended");
+    let new = sub_ref();
+    activate(&h, account, &new, TEAM_MONTH).await;
+    let before = row(&h.pool, account).await;
+
+    let txn = format!("txn_{}", Uuid::now_v7().simple());
+    h.billing
+        .apply_event(&h.pool, &h.quotas, event(account, &old, paid_as(&txn)))
+        .await
+        .expect("late payment");
+    let after = row(&h.pool, account).await;
+    assert_eq!(after.subscription_ref, before.subscription_ref);
+    assert_eq!(after.plan_id, before.plan_id);
+    assert_eq!(after.status, before.status);
+
+    let mut late_refund = event(account, &old, refund(&txn, true, true));
+    late_refund.account = None;
+    h.billing
+        .apply_event(&h.pool, &h.quotas, late_refund)
+        .await
+        .expect("refund");
+    let kinds = ledger_kinds(&h.pool, account).await;
+    assert!(kinds.contains(&"payment_received".to_string()), "{kinds:?}");
+    assert!(kinds.contains(&"refund_recorded".to_string()), "{kinds:?}");
 }

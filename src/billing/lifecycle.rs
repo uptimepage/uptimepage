@@ -29,7 +29,8 @@ use sqlx::{PgExecutor, PgPool, Postgres, Transaction};
 use super::mail::Mailer;
 use super::provider::SubscriptionStatus as Remote;
 use super::provider::{
-    BillingProvider, ChangeTiming, EventKind, ProviderEvent, SubscriptionSnapshot,
+    BillingProvider, ChangeTiming, EventKind, ProviderEvent, RefundKind, RefundStatus,
+    SubscriptionSnapshot,
 };
 use super::{Actor, PlanRequest, set_plan_tx};
 use crate::config::{AppConfig, PaddleEnvironment};
@@ -515,6 +516,61 @@ impl Billing {
         if matches!(event.kind, EventKind::Other) {
             return Ok(Outcome::Applied);
         }
+        // Money going back is on the record whatever subscription or order it
+        // arrives in: an account only ever resolves for it through its own
+        // subscription or a payment already recorded here.
+        if let EventKind::Refunded(refund) = &event.kind {
+            ledger::record_tx(
+                tx,
+                sub.account,
+                ledger::REFUND_RECORDED,
+                json!({
+                    "adjustment": refund.adjustment_ref,
+                    "transaction": refund.transaction_ref,
+                    "subscription": event.subscription_ref,
+                    "action": refund.action,
+                    "status": refund.status,
+                    "full": refund.full,
+                    "total": refund.total,
+                }),
+            )
+            .await?;
+            let live = matches!(sub.status, BillingStatus::Active | BillingStatus::PastDue);
+            if refund.action != RefundKind::ChargebackReversed
+                && refund.status == RefundStatus::Approved
+                && refund.full
+                && live
+                && event.subscription_ref.is_some()
+                && event.subscription_ref == sub.subscription_ref
+            {
+                tracing::warn!(
+                    account = %sub.account,
+                    subscription_ref = ?event.subscription_ref,
+                    transaction_ref = %refund.transaction_ref,
+                    "billing: a whole charge was refunded on a live subscription; cancel it at the provider if this was a withdrawal"
+                );
+            }
+            return Ok(Outcome::Applied);
+        }
+        // A payment is on the record for the account it resolved to, whatever
+        // order it arrives in: through the subscription the account holds, or
+        // the signed claim a checkout opened for it carries back, which also
+        // covers a late payment on a subscription since replaced. Whether it
+        // moves the plan is decided below.
+        if let EventKind::Paid(payment) = &event.kind {
+            ledger::record_tx(
+                tx,
+                sub.account,
+                ledger::PAYMENT_RECEIVED,
+                json!({
+                    "transaction": payment.transaction_ref,
+                    "subscription": event.subscription_ref,
+                    "total": payment.total,
+                    "at": event.occurred_at,
+                }),
+            )
+            .await?;
+        }
         // A stranger's event is answered whatever its age.
         if !binds(sub, event.subscription_ref.as_deref()) {
             let live = matches!(&event.kind, EventKind::Subscription(s) if s.status.is_live());
@@ -532,14 +588,16 @@ impl Billing {
         // Payments never move the snapshot watermark, so they are also
         // ordered among themselves.
         let watermark = match event.kind {
-            EventKind::Paid | EventKind::PaymentFailed => sub.synced_at.max(sub.payment_synced_at),
+            EventKind::Paid(_) | EventKind::PaymentFailed => {
+                sub.synced_at.max(sub.payment_synced_at)
+            }
             _ => sub.synced_at,
         };
         if watermark.is_some_and(|at| event.occurred_at < at) {
             return Ok(Outcome::Stale);
         }
         match event.kind {
-            EventKind::Paid => {
+            EventKind::Paid(_) => {
                 sub.payment_synced_at = Some(event.occurred_at);
                 match (sub.status, fetched) {
                     (BillingStatus::PastDue, _) => self.recover(tx, sub, fx).await?,
@@ -558,7 +616,7 @@ impl Billing {
             EventKind::Subscription(snapshot) => {
                 return self.on_snapshot(tx, sub, snapshot, false, now, fx).await;
             }
-            EventKind::Other => {}
+            EventKind::Refunded(_) | EventKind::Other => {}
         }
         Ok(Outcome::Applied)
     }
@@ -1042,7 +1100,7 @@ impl Billing {
         account: AccountId,
         event: &ProviderEvent,
     ) -> Result<Option<SubscriptionSnapshot>> {
-        let (EventKind::Paid, Some(subscription_ref)) = (&event.kind, &event.subscription_ref)
+        let (EventKind::Paid(_), Some(subscription_ref)) = (&event.kind, &event.subscription_ref)
         else {
             return Ok(None);
         };
@@ -1070,7 +1128,14 @@ impl Billing {
         )
         .await?;
         tx.commit().await.context("billing apply: commit")?;
-        if fresh && !matches!(event.kind, EventKind::Other) {
+        if fresh && let EventKind::Refunded(refund) = &event.kind {
+            tracing::warn!(
+                event_id = %event.event_id,
+                adjustment_ref = %refund.adjustment_ref,
+                transaction_ref = %refund.transaction_ref,
+                "billing: refund for a payment no account recorded; look it up at the provider"
+            );
+        } else if fresh && !matches!(event.kind, EventKind::Other) {
             tracing::warn!(
                 event_id = %event.event_id,
                 event_type = %event.event_type,
@@ -1255,14 +1320,14 @@ async fn record_booked(
 
 /// A subscription already bound answers to its account whatever the event
 /// says; the account the event names only claims a subscription nobody holds.
-async fn resolve_account<'e, E: PgExecutor<'e>>(
-    exec: E,
+async fn resolve_account(
+    pool: &PgPool,
     provider: &str,
     event: &ProviderEvent,
 ) -> Result<Option<AccountId>> {
     if let Some(subscription_ref) = &event.subscription_ref
         && let Some(bound) =
-            store::account_for_subscription_ref(exec, provider, subscription_ref).await?
+            store::account_for_subscription_ref(pool, provider, subscription_ref).await?
     {
         if let Some(named) = event.account
             && named != bound
@@ -1276,6 +1341,13 @@ async fn resolve_account<'e, E: PgExecutor<'e>>(
             );
         }
         return Ok(Some(bound));
+    }
+    // Money going back on a subscription since replaced is found through
+    // the payment it reverses.
+    if event.account.is_none()
+        && let EventKind::Refunded(refund) = &event.kind
+    {
+        return ledger::account_for_payment(pool, &refund.transaction_ref).await;
     }
     Ok(event.account)
 }

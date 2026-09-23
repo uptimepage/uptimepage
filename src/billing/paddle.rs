@@ -20,8 +20,9 @@ use url::Url;
 use uuid::Uuid;
 
 use super::provider::{
-    BillingProvider, ChangeTiming, CheckoutRequest, EventKind, PortalLinks, ProviderEvent,
-    SubscriptionSnapshot, SubscriptionStatus, WebhookRejected,
+    BillingProvider, ChangeTiming, CheckoutRequest, EventKind, Money, Payment, PortalLinks,
+    ProviderEvent, Refund, RefundKind, RefundStatus, SubscriptionSnapshot, SubscriptionStatus,
+    WebhookRejected,
 };
 use crate::config::PaddleEnvironment;
 use crate::domain::AccountId;
@@ -251,12 +252,60 @@ const CARD_CHANGE_ORIGIN: &str = "subscription_payment_method_change";
 
 #[derive(Deserialize)]
 struct TransactionData {
+    id: String,
     #[serde(default)]
     customer_id: Option<String>,
     #[serde(default)]
     subscription_id: Option<String>,
     #[serde(default)]
     origin: Option<String>,
+    #[serde(default)]
+    currency_code: Option<String>,
+    #[serde(default)]
+    details: Option<TransactionDetails>,
+}
+
+#[derive(Deserialize)]
+struct TransactionDetails {
+    #[serde(default)]
+    totals: Option<TransactionTotals>,
+}
+
+#[derive(Deserialize)]
+struct TransactionTotals {
+    grand_total: String,
+}
+
+#[derive(Deserialize)]
+struct AdjustmentData {
+    id: String,
+    action: String,
+    transaction_id: String,
+    #[serde(default)]
+    customer_id: Option<String>,
+    #[serde(default)]
+    subscription_id: Option<String>,
+    status: String,
+    #[serde(default, rename = "type")]
+    extent: Option<String>,
+    #[serde(default)]
+    currency_code: Option<String>,
+    #[serde(default)]
+    totals: Option<AdjustmentTotals>,
+}
+
+#[derive(Deserialize)]
+struct AdjustmentTotals {
+    total: String,
+}
+
+/// Paddle sends amounts as strings in the currency's smallest unit. One it
+/// cannot read is left out rather than guessed.
+fn money(amount: Option<&str>, currency: Option<String>) -> Option<Money> {
+    Some(Money {
+        amount_minor: amount?.parse().ok()?,
+        currency: currency?,
+    })
 }
 
 #[derive(Deserialize)]
@@ -336,11 +385,55 @@ fn map_event(
                 (None, None, EventKind::Other)
             } else {
                 let kind = if envelope.event_type == "transaction.completed" {
-                    EventKind::Paid
+                    let total = t.details.and_then(|d| d.totals);
+                    EventKind::Paid(Payment {
+                        transaction_ref: t.id,
+                        total: money(
+                            total.as_ref().map(|t| t.grand_total.as_str()),
+                            t.currency_code,
+                        ),
+                    })
                 } else {
                     EventKind::PaymentFailed
                 };
                 (t.customer_id, t.subscription_id, kind)
+            }
+        }
+        "adjustment.created" | "adjustment.updated" => {
+            let a = AdjustmentData::deserialize(&envelope.data).map_err(malformed)?;
+            let action = match a.action.as_str() {
+                "refund" => Some(RefundKind::Refund),
+                "chargeback" => Some(RefundKind::Chargeback),
+                "chargeback_reverse" => Some(RefundKind::ChargebackReversed),
+                _ => None,
+            };
+            let status = match a.status.as_str() {
+                "pending_approval" => Some(RefundStatus::Pending),
+                "approved" => Some(RefundStatus::Approved),
+                "rejected" => Some(RefundStatus::Rejected),
+                "reversed" => Some(RefundStatus::Reversed),
+                _ => None,
+            };
+            if let (Some(action), Some(status)) = (action, status) {
+                // Paddle marks a whole-transaction adjustment `full`. Its items
+                // only name the lines touched, so without the mark nothing
+                // proves the whole charge went back.
+                let full = a.extent.as_deref() == Some("full");
+                let refund = Refund {
+                    adjustment_ref: a.id,
+                    transaction_ref: a.transaction_id,
+                    action,
+                    status,
+                    full,
+                    total: money(a.totals.as_ref().map(|t| t.total.as_str()), a.currency_code),
+                };
+                (
+                    a.customer_id,
+                    a.subscription_id,
+                    EventKind::Refunded(refund),
+                )
+            } else {
+                (None, None, EventKind::Other)
             }
         }
         kind if kind.starts_with("subscription.") => {
@@ -812,6 +905,121 @@ mod tests {
     }
 
     #[test]
+    fn a_payment_carries_its_transaction_and_total() {
+        let txn = json!({
+            "id": "txn_07",
+            "status": "completed",
+            "customer_id": "ctm_01",
+            "subscription_id": "sub_01",
+            "currency_code": "EUR",
+            "details": { "totals": { "grand_total": "1089" } }
+        });
+        let paid = map_event(SECRET, envelope("transaction.completed", txn)).unwrap();
+        assert_eq!(
+            paid.kind,
+            EventKind::Paid(Payment {
+                transaction_ref: "txn_07".into(),
+                total: Some(Money {
+                    amount_minor: 1089,
+                    currency: "EUR".into(),
+                }),
+            })
+        );
+    }
+
+    #[test]
+    fn refunds_and_chargebacks_map_and_credits_are_noise() {
+        let adjustment = |action: &str, status: &str, extent: &str| {
+            json!({
+                "id": "adj_01",
+                "action": action,
+                "transaction_id": "txn_01",
+                "customer_id": "ctm_01",
+                "subscription_id": "sub_01",
+                "status": status,
+                "type": extent,
+                "currency_code": "USD",
+                "totals": { "total": "900" }
+            })
+        };
+        let refund = map_event(
+            SECRET,
+            envelope(
+                "adjustment.updated",
+                adjustment("refund", "approved", "full"),
+            ),
+        )
+        .unwrap();
+        assert_eq!(refund.subscription_ref.as_deref(), Some("sub_01"));
+        let round_trip: ProviderEvent =
+            serde_json::from_value(serde_json::to_value(&refund).unwrap()).unwrap();
+        assert_eq!(round_trip, refund);
+        assert_eq!(
+            refund.kind,
+            EventKind::Refunded(Refund {
+                adjustment_ref: "adj_01".into(),
+                transaction_ref: "txn_01".into(),
+                action: RefundKind::Refund,
+                status: RefundStatus::Approved,
+                full: true,
+                total: Some(Money {
+                    amount_minor: 900,
+                    currency: "USD".into(),
+                }),
+            })
+        );
+        let pending = map_event(
+            SECRET,
+            envelope(
+                "adjustment.created",
+                adjustment("chargeback", "pending_approval", "partial"),
+            ),
+        )
+        .unwrap();
+        assert!(matches!(
+            pending.kind,
+            EventKind::Refunded(Refund {
+                action: RefundKind::Chargeback,
+                status: RefundStatus::Pending,
+                full: false,
+                ..
+            })
+        ));
+        let mut untyped = adjustment("chargeback", "approved", "full");
+        untyped["type"] = Value::Null;
+        untyped["items"] = json!([{ "id": "adjitm_01", "type": "full" }]);
+        let unmarked = map_event(SECRET, envelope("adjustment.created", untyped)).unwrap();
+        assert!(matches!(
+            unmarked.kind,
+            EventKind::Refunded(Refund { full: false, .. })
+        ));
+        let won_back = map_event(
+            SECRET,
+            envelope(
+                "adjustment.created",
+                adjustment("chargeback_reverse", "approved", "full"),
+            ),
+        )
+        .unwrap();
+        assert!(matches!(
+            won_back.kind,
+            EventKind::Refunded(Refund {
+                action: RefundKind::ChargebackReversed,
+                ..
+            })
+        ));
+        let credit = map_event(
+            SECRET,
+            envelope(
+                "adjustment.created",
+                adjustment("credit", "approved", "full"),
+            ),
+        )
+        .unwrap();
+        assert_eq!(credit.kind, EventKind::Other);
+    }
+
+    #[test]
     fn transactions_map_to_paid_and_failed_and_the_rest_is_noise() {
         let mut txn = json!({
             "id": "txn_01",
@@ -821,7 +1029,13 @@ mod tests {
             "custom_data": signed_custom_data()
         });
         let paid = map_event(SECRET, envelope("transaction.completed", txn.clone())).unwrap();
-        assert_eq!(paid.kind, EventKind::Paid);
+        assert_eq!(
+            paid.kind,
+            EventKind::Paid(Payment {
+                transaction_ref: "txn_01".into(),
+                total: None,
+            })
+        );
         assert_eq!(paid.account, Some(account()));
         assert_eq!(paid.subscription_ref.as_deref(), Some("sub_01"));
         txn["custom_data"] = json!({ "account_id": "not-a-uuid" });

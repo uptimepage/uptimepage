@@ -20,6 +20,8 @@ pub const CANCEL_SCHEDULED: &str = "cancel_scheduled";
 pub const PENDING_CHANGE_CLEARED: &str = "pending_change_cleared";
 pub const SUBSCRIPTION_ENDED: &str = "subscription_ended";
 pub const CHECKOUT_STARTED: &str = "checkout_started";
+pub const PAYMENT_RECEIVED: &str = "payment_received";
+pub const REFUND_RECORDED: &str = "refund_recorded";
 pub const FOREIGN_SUBSCRIPTION_IGNORED: &str = "foreign_subscription_ignored";
 
 /// Written inside the transaction that makes the change, so the ledger can
@@ -40,4 +42,22 @@ pub async fn record_tx(
     .await
     .context("billing_events::record_tx")?;
     Ok(())
+}
+
+/// The account that made a recorded payment, for money going back on a
+/// subscription the account has since replaced.
+pub async fn account_for_payment(
+    pool: &sqlx::PgPool,
+    transaction_ref: &str,
+) -> Result<Option<AccountId>> {
+    let row: Option<(uuid::Uuid,)> = sqlx::query_as(
+        "SELECT account_id FROM account_billing_events
+          WHERE kind = 'payment_received' AND payload->>'transaction' = $1
+          ORDER BY id DESC LIMIT 1",
+    )
+    .bind(transaction_ref)
+    .fetch_optional(pool)
+    .await
+    .context("billing_events::account_for_payment")?;
+    Ok(row.map(|(id,)| AccountId(id)))
 }
