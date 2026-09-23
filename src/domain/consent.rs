@@ -8,5 +8,5 @@
 //! saw the new document — the policy page's own "Last updated" line is what a
 //! data-subject request reads.
 
-pub const TERMS_VERSION: &str = "v1";
-pub const PRIVACY_VERSION: &str = "v1";
+pub const TERMS_VERSION: &str = "v2";
+pub const PRIVACY_VERSION: &str = "v2";
