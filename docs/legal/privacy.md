@@ -16,6 +16,8 @@ We do not have a designated Data Protection Officer as we do not meet the thresh
 
 ## 2. What Data We Collect
 
+To have an account you must give us an email address and a way to sign in; without them we cannot create one. Everything else is optional: a feature whose data you leave out simply does not work, and nothing else changes.
+
 We collect data in three ways:
 
 **You provide:**
@@ -133,6 +135,12 @@ Data is primarily stored in Finland (Hetzner data centre, Helsinki). Resend, Git
 An AI assistant you connect over MCP (see §3) reads your monitoring wherever that assistant runs, which may be outside the EU. You choose that client and its operator, and it retrieves only what it asks for on your instruction, so we do not treat it as a processor acting for us. If that matters to you, the connector is optional and revoking it in Settings stops it.
 
 Monitoring checks can run from probe regions outside the EU. Those probes receive the check configuration they need to run (URL, headers, resolved credentials) and produce technical results (status codes, latencies, error text) that are sent back to our EU infrastructure; long-term storage stays in Finland.
+
+**Access by authorities outside the EU.** This paragraph covers all data we hold for you, personal or not. The infrastructure that stores it is in Finland and subject to the law of the European Union and its Member States. The probes outside the EU, and the processors listed in Section 5 that are based outside the EU, are subject to the law of the country they run in, and hold only the data their task needs while they do it. To keep your data from authorities outside the EU where that would conflict with EU law:
+
+- we store it only in the EU, and send a probe outside the EU only what a check in that region needs;
+- credentials are encrypted at rest (Section 7);
+- we disclose data to an authority only when a legal order binding on us under EU or Cyprus law requires it, we do not comply with a request that conflicts with EU law, and we tell you about any request unless the law forbids it.
 
 ## 7. Security
 

@@ -178,6 +178,10 @@ Your Content, your use of the Service, or your violation of these Terms.
 
 Everything you put into the Service and the results of your checks can be exported. We do not export our own operational records, such as security and anti-abuse signals and infrastructure metrics.
 
+**Help with moving.** Moving your data is self-service: the account export, the documented API and the open-source code for self-hosting. If you move to another provider, we answer reasonable questions by email about what the export contains and how it is structured, from you or from a provider you authorise from your account's email address, in time for your move to finish within 30 days. That is the extent of our help: we do not convert data into another provider's format, import it anywhere, write migration scripts, create custom exports or join calls.
+
+**Where your data is held.** Where we store your data, which countries' law applies to the infrastructure behind the Service, and how we guard it against access by authorities outside the EU are described in Section 6 of our [Privacy Policy](/privacy).
+
 **After you delete your account.** It is suspended at once and purged 30 days later. During those 30 days your data is kept, and if you email us we restore your access or send you an export, so you can finish moving it. After that it is gone, except what the law requires us to keep.
 
 **Suspension by us.** We may suspend or terminate your account for material violations of these Terms, after notice where reasonable. Unless the law or an authority prevents it, you keep the 30 days above to take your data.
