@@ -440,7 +440,7 @@ fn badge_alt_label(display_name: &str, name: &str) -> String {
     } else {
         display_name
     };
-    label.replace('"', "")
+    crate::public_status::status_title(&label.replace('"', ""))
 }
 
 #[cfg(test)]
@@ -484,7 +484,7 @@ mod tests {
                 "https://acme.uptimepage.dev?utm_source=status-badge&utm_medium=badge&utm_campaign=embed"
                     .into(),
             ),
-            badge_alt: "Acme".into(),
+            badge_alt: "Acme Status".into(),
             logo_url: String::new(),
             logo_w: 0,
             logo_h: 0,
@@ -543,14 +543,15 @@ mod tests {
         assert!(html.contains("rel=\"noopener\""));
         assert!(html.contains("utm_source=status-badge"));
         assert!(html.contains("[!["));
-        assert!(html.contains("alt=\"Acme status\""));
+        assert!(html.contains("alt=\"Acme Status\""));
     }
 
     #[test]
     fn badge_alt_prefers_display_name_and_strips_quotes() {
-        assert_eq!(badge_alt_label("", "acme"), "acme");
-        assert_eq!(badge_alt_label("Acme Public", "acme"), "Acme Public");
-        assert_eq!(badge_alt_label("Acme \"Pro\"", "acme"), "Acme Pro");
+        assert_eq!(badge_alt_label("", "acme"), "acme Status");
+        assert_eq!(badge_alt_label("Acme Public", "acme"), "Acme Public Status");
+        assert_eq!(badge_alt_label("Acme \"Pro\"", "acme"), "Acme Pro Status");
+        assert_eq!(badge_alt_label("Acme status", "acme"), "Acme status");
     }
 
     /// Slug and branding ride one PATCH, so the editor must offer one save

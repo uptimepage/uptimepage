@@ -283,17 +283,17 @@
       {% if let Some(link) = badge_link %}
       <div class="flex items-center gap-3">
         <span class="w-16 shrink-0 font-mono text-[10px] uppercase text-quiet">HTML</span>
-        <code id="badge-html-overall" class="flex-1 overflow-x-auto whitespace-nowrap rounded-sm bg-[color:var(--theme-surface-sunk)] px-2 py-1 font-mono text-xs text-body">&lt;a href="{{ link }}" target="_blank" rel="noopener"&gt;&lt;img src="{{ badge }}" alt="{{ badge_alt }} status" height="20" loading="lazy" decoding="async"&gt;&lt;/a&gt;</code>
+        <code id="badge-html-overall" class="flex-1 overflow-x-auto whitespace-nowrap rounded-sm bg-[color:var(--theme-surface-sunk)] px-2 py-1 font-mono text-xs text-body">&lt;a href="{{ link }}" target="_blank" rel="noopener"&gt;&lt;img src="{{ badge }}" alt="{{ badge_alt }}" height="20" loading="lazy" decoding="async"&gt;&lt;/a&gt;</code>
         <button type="button" data-copy="#badge-html-overall" class="sticker-btn shrink-0 px-2.5 py-1 text-xs"><span data-copy-label>copy</span></button>
       </div>
       <div class="flex items-center gap-3">
         <span class="w-16 shrink-0 font-mono text-[10px] uppercase text-quiet">Markdown</span>
-        <code id="badge-md-overall" class="flex-1 overflow-x-auto whitespace-nowrap rounded-sm bg-[color:var(--theme-surface-sunk)] px-2 py-1 font-mono text-xs text-body">[![{{ badge_alt }} status]({{ badge }})]({{ link }})</code>
+        <code id="badge-md-overall" class="flex-1 overflow-x-auto whitespace-nowrap rounded-sm bg-[color:var(--theme-surface-sunk)] px-2 py-1 font-mono text-xs text-body">[![{{ badge_alt }}]({{ badge }})]({{ link }})</code>
         <button type="button" data-copy="#badge-md-overall" class="sticker-btn shrink-0 px-2.5 py-1 text-xs"><span data-copy-label>copy</span></button>
       </div>
       {% else %}
       <div class="flex items-center gap-3">
-        <code id="badge-md-overall" class="flex-1 overflow-x-auto whitespace-nowrap rounded-sm bg-[color:var(--theme-surface-sunk)] px-2 py-1 font-mono text-xs text-body">![{{ badge_alt }} status]({{ badge }})</code>
+        <code id="badge-md-overall" class="flex-1 overflow-x-auto whitespace-nowrap rounded-sm bg-[color:var(--theme-surface-sunk)] px-2 py-1 font-mono text-xs text-body">![{{ badge_alt }}]({{ badge }})</code>
         <button type="button" data-copy="#badge-md-overall" class="sticker-btn shrink-0 px-2.5 py-1 text-xs"><span data-copy-label>copy</span></button>
       </div>
       {% endif %}

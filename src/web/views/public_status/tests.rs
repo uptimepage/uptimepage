@@ -566,6 +566,23 @@ fn incident_description_drops_the_subject_when_the_component_is_unnamed() {
 }
 
 #[test]
+fn incident_description_names_the_page_once() {
+    assert!(incident_description("Outage", "", "Acme").ends_with("on the Acme Status page."));
+    assert!(
+        incident_description("Outage", "", "Acme Status").ends_with("on the Acme Status page.")
+    );
+    let long = incident_description("Outage", "", "Northwind Trading Co. Status Page");
+    assert!(long.ends_with(" Status page."), "{long}");
+    let ends_in_status = incident_description("Outage", "", "Northwind Trading Company Status");
+    assert!(
+        ends_in_status.ends_with("on the Northwind Trading Company Status page."),
+        "{ends_in_status}"
+    );
+    let longer = incident_description("Outage", "", "Northwind Trading Company Europe Status");
+    assert!(longer.ends_with(" Status page."), "{longer}");
+}
+
+#[test]
 fn incident_descriptions_differ_per_incident() {
     assert_ne!(
         incident_description("Checkout 500s", "API", "Acme"),

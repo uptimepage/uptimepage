@@ -8,6 +8,7 @@ use crate::domain::{OrgId, PublicOrgBranding, StatusPageId};
 use crate::request::host::is_subdomain_public_request;
 use crate::storage::orgs::{OrgBranding, load_page_branding};
 
+use crate::public_status::status_title;
 use crate::public_status::urls::LOGO_ROUTE;
 
 /// Operator-controlled branding, resolved for rendering. Optional DB fields
@@ -47,6 +48,10 @@ impl BrandingView {
             Some(_) if !self.follow_website_link => Some("nofollow"),
             _ => None,
         }
+    }
+
+    pub fn status_title(&self) -> String {
+        status_title(&self.display_name)
     }
 
     pub fn robots(&self) -> &'static str {

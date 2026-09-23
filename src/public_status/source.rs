@@ -482,7 +482,7 @@ pub fn build_rss(site_name: &str, links: FeedLinks<'_>, items: &[PublicIncident]
     out.push_str("\n<rss version=\"2.0\"><channel>");
     out.push_str(&format!(
         "<title>{}</title><link>{}</link><description>Operational status</description><lastBuildDate>{}</lastBuildDate>",
-        xml_escape(&format!("{site_name} Status Incidents")),
+        xml_escape(&format!("{} Incidents", super::status_title(site_name))),
         xml_escape(links.page.trim_end_matches('/')),
         now,
     ));

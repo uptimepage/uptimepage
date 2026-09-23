@@ -175,7 +175,7 @@ pub(super) fn build_view(
         .collect::<Vec<_>>();
 
     let (overall_class, overall_icon, overall_aria) = overall_classes(page.overall.state);
-    let site_title = format!("{} Status", page.site_name);
+    let site_title = crate::public_status::status_title(&page.site_name);
 
     StatusView {
         site_name: page.site_name.clone(),

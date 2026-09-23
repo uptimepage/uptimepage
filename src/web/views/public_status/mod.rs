@@ -157,7 +157,7 @@ pub async fn index(
             &headers,
             page_ref.page,
             branding.home,
-            format!("{} Status", branding.display_name),
+            branding.status_title(),
             format!(
                 "Live and past status for {}: current uptime for every component, open and recent incidents, scheduled maintenance windows, and email or webhook updates.",
                 branding.display_name
@@ -242,10 +242,15 @@ fn incident_description(title: &str, component_name: &str, display_name: &str) -
     } else {
         format!(", affecting {}", cap(component_name, 30))
     };
+    let full = crate::public_status::status_title(display_name);
+    let page = if full.chars().count() <= 37 {
+        full
+    } else {
+        format!("{} Status", cap(display_name, 30))
+    };
     format!(
-        "{}{affected}: current phase, when it started and ended, and every update posted on the {} status page.",
+        "{}{affected}: current phase, when it started and ended, and every update posted on the {page} page.",
         cap(title, 60),
-        cap(display_name, 30)
     )
 }
 
@@ -284,7 +289,7 @@ pub async fn incident(
         &headers,
         page_ref.page,
         &format!("/status/incidents/{id}"),
-        format!("{} · {} Status", inc.title, branding.display_name),
+        format!("{} · {}", inc.title, branding.status_title()),
         incident_description(&inc.title, &inc.component_name, &branding.display_name),
         "article",
         &branding,
@@ -360,10 +365,10 @@ pub async fn archive(
         &headers,
         page_ref.page,
         &path,
-        format!("Incident history · {} Status", branding.display_name),
+        format!("Incident history · {}", branding.status_title()),
         format!(
-            "Every incident published on the {} status page, grouped by month, with the components affected, when each one started and ended, and the updates posted.",
-            branding.display_name
+            "Every incident published on the {} page, grouped by month, with the components affected, when each one started and ended, and the updates posted.",
+            branding.status_title()
         ),
         "website",
         &branding,

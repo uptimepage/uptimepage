@@ -24,3 +24,36 @@ pub use incident_writer::{
 };
 pub use logo_storage::LogoMime;
 pub use source::{IncidentListQuery, NoopPublicSource, OrgPublicSource, PublicSource};
+
+/// `"{name} Status"`, unless the name already ends in the word "status".
+pub fn status_title(name: &str) -> String {
+    let name = name.trim_end();
+    if names_status(name) {
+        name.to_owned()
+    } else {
+        format!("{name} Status")
+    }
+}
+
+fn names_status(name: &str) -> bool {
+    name.trim_end_matches(|c: char| !c.is_alphanumeric())
+        .rsplit(|c: char| !c.is_alphanumeric())
+        .next()
+        .is_some_and(|w| w.eq_ignore_ascii_case("status"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::status_title;
+
+    #[test]
+    fn status_title_does_not_repeat_a_trailing_status() {
+        assert_eq!(status_title("Acme"), "Acme Status");
+        assert_eq!(status_title("Acme status"), "Acme status");
+        assert_eq!(status_title("ACME STATUS "), "ACME STATUS");
+        assert_eq!(status_title("Acme · Status"), "Acme · Status");
+        assert_eq!(status_title("Acme Status."), "Acme Status.");
+        assert_eq!(status_title("Acme (Status)"), "Acme (Status)");
+        assert_eq!(status_title("Statuspage"), "Statuspage Status");
+    }
+}
