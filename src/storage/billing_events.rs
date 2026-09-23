@@ -44,6 +44,27 @@ pub async fn record_tx(
     Ok(())
 }
 
+/// What the account was charged in a recorded payment, as its `total`
+/// object (`amount_minor`, `currency`), when the provider reported one.
+pub async fn payment_total(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account: AccountId,
+    transaction_ref: &str,
+) -> Result<Option<Value>> {
+    let row: Option<(Option<Value>,)> = sqlx::query_as(
+        "SELECT payload->'total' FROM account_billing_events
+          WHERE account_id = $1 AND kind = 'payment_received'
+            AND payload->>'transaction' = $2
+          ORDER BY id DESC LIMIT 1",
+    )
+    .bind(account.0)
+    .bind(transaction_ref)
+    .fetch_optional(&mut **tx)
+    .await
+    .context("billing_events::payment_total")?;
+    Ok(row.and_then(|(total,)| total).filter(|t| !t.is_null()))
+}
+
 /// The account that made a recorded payment, for money going back on a
 /// subscription the account has since replaced.
 pub async fn account_for_payment(

@@ -4112,6 +4112,43 @@ async fn refunds_are_logged_and_never_touch_the_plan() {
 
 #[tokio::test]
 #[ignore]
+async fn a_refund_labelled_partial_for_the_whole_payment_counts_as_full() {
+    let Some(h) = harness().await else { return };
+    let (account, _, _) = account(&h.pool, "founding", 0).await;
+    let sub = sub_ref();
+    activate(&h, account, &sub, TEAM_MONTH).await;
+    let txn = format!("txn_{}", Uuid::now_v7().simple());
+    h.billing
+        .apply_event(&h.pool, &h.quotas, event(account, &sub, paid_as(&txn)))
+        .await
+        .expect("paid");
+
+    let mut part = refund(&txn, true, false);
+    if let EventKind::Refunded(r) = &mut part {
+        r.total = Some(Money {
+            amount_minor: 500,
+            currency: "USD".into(),
+        });
+    }
+    for kind in [refund(&txn, true, false), part] {
+        h.billing
+            .apply_event(&h.pool, &h.quotas, event(account, &sub, kind))
+            .await
+            .expect("refund");
+    }
+    let full: Vec<bool> = sqlx::query_scalar(
+        "SELECT (payload->>'full')::bool FROM account_billing_events
+          WHERE account_id = $1 AND kind = 'refund_recorded' ORDER BY id",
+    )
+    .bind(account.0)
+    .fetch_all(&h.pool)
+    .await
+    .expect("refunds");
+    assert_eq!(full, vec![true, false]);
+}
+
+#[tokio::test]
+#[ignore]
 async fn a_refund_on_a_replaced_subscription_finds_its_account_through_the_payment() {
     let Some(h) = harness().await else { return };
     let (account, _, _) = account(&h.pool, "founding", 0).await;

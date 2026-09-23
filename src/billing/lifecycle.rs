@@ -579,6 +579,17 @@ impl Billing {
         // arrives in: an account only ever resolves for it through its own
         // subscription or a payment already recorded here.
         if let EventKind::Refunded(refund) = &event.kind {
+            // Paddle labels a refund made line by line `partial` even when the
+            // lines add up to the whole charge, so one matching the recorded
+            // payment counts too. A hint for the warning below, not a sum:
+            // credits, split refunds or a refund ahead of its payment miss it.
+            let full = refund.full
+                || match &refund.total {
+                    Some(total) => ledger::payment_total(tx, sub.account, &refund.transaction_ref)
+                        .await?
+                        .is_some_and(|paid| paid == json!(total)),
+                    None => false,
+                };
             ledger::record_tx(
                 tx,
                 sub.account,
@@ -589,7 +600,7 @@ impl Billing {
                     "subscription": event.subscription_ref,
                     "action": refund.action,
                     "status": refund.status,
-                    "full": refund.full,
+                    "full": full,
                     "total": refund.total,
                 }),
             )
@@ -597,7 +608,7 @@ impl Billing {
             let live = matches!(sub.status, BillingStatus::Active | BillingStatus::PastDue);
             if refund.action != RefundKind::ChargebackReversed
                 && refund.status == RefundStatus::Approved
-                && refund.full
+                && full
                 && live
                 && event.subscription_ref.is_some()
                 && event.subscription_ref == sub.subscription_ref

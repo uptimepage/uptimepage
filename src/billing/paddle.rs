@@ -415,9 +415,10 @@ fn map_event(
                 _ => None,
             };
             if let (Some(action), Some(status)) = (action, status) {
-                // Paddle marks a whole-transaction adjustment `full`. Its items
-                // only name the lines touched, so without the mark nothing
-                // proves the whole charge went back.
+                // Only a `full` mark is taken as the whole charge here: items
+                // name just the lines touched. A refund made line by line
+                // comes marked `partial`; the lifecycle compares its amount
+                // with the recorded payment.
                 let full = a.extent.as_deref() == Some("full");
                 let refund = Refund {
                     adjustment_ref: a.id,
