@@ -61,6 +61,8 @@ You agree NOT to:
 We may suspend or terminate accounts that violate this section. See our
 [Abuse Policy](/abuse-policy) for our reporting and response process.
 
+**How we moderate content.** We do not review status pages before they are published. We act on reports sent under the Abuse Policy and on what our own abuse controls detect, and a person decides every report. If we remove or restrict content, or suspend or close an account, we tell the account owner what we did, why, and which rule or law it rests on, and how to appeal. The Abuse Policy sets out the process.
+
 ## 6. Plans, Billing and Reasonable Use
 
 The Service is offered on several plans, listed at
@@ -141,6 +143,7 @@ the Service entirely, we will:
 - Provide at least 90 days' notice
 - Allow data export during that period
 - Publish migration guidance to self-hosted deployments
+- Refund the unused part of any paid period that runs past the shutdown date
 
 ## 10. Limitation of Liability
 
@@ -163,14 +166,21 @@ cases of gross negligence or wilful misconduct.
 If you are a business user, you agree to indemnify and hold us harmless from claims arising from
 Your Content, your use of the Service, or your violation of these Terms.
 
-## 12. Termination
+## 12. Termination, Leaving and Your Data
 
-You may terminate your account at any time at /settings/account.
-Termination causes deletion of your data per our Privacy Policy and the
-30-day deletion grace period defined therein.
+**Leaving.** You may stop using the Service, or move to another provider or to your own self-hosted installation, at any time and without notice. Delete your account at /settings/account, or ask us by email to do it. A paid plan is cancelled as Section 6 describes. We charge nothing for leaving or for taking your data with you.
 
-We may suspend or terminate your account for material violations of
-these Terms, after notice where reasonable.
+**Taking your data.** You can export your data at any time while your account is open:
+
+- the account export at /settings/account, a JSON file with your account, sign-in methods, the organisations you own and your activity logs;
+- the documented API (<https://uptimepage.dev/docs>), which returns your monitors, notification channels, check results, uptime, incidents, status pages and their settings in JSON, for as far back as the retention periods in the Privacy Policy reach;
+- by email to [hello@uptimepage.dev](mailto:hello@uptimepage.dev), for anything the two above do not cover, such as your status-page subscribers. We send it within 30 days.
+
+Everything you put into the Service and the results of your checks can be exported. We do not export our own operational records, such as security and anti-abuse signals and infrastructure metrics.
+
+**After you delete your account.** It is suspended at once and purged 30 days later. During those 30 days your data is kept, and if you email us we restore your access or send you an export, so you can finish moving it. After that it is gone, except what the law requires us to keep.
+
+**Suspension by us.** We may suspend or terminate your account for material violations of these Terms, after notice where reasonable. Unless the law or an authority prevents it, you keep the 30 days above to take your data.
 
 ## 13. Governing Law and Disputes
 
@@ -226,6 +236,8 @@ This section applies if you are a consumer. It adds to your rights under the law
 > Date:
 
 **Legal guarantee of conformity.** You have a legal guarantee that the Service, including any paid plan, conforms to these Terms and to the description we give of it, for as long as we supply it to you. If it does not, you may ask us to bring it into conformity, and if we do not do so within a reasonable time, or the lack of conformity is serious, you may be entitled to a price reduction or to end the contract and get a refund for the affected period. The statements in Sections 8 and 10 that the Service is provided "as is" do not limit this guarantee.
+
+**Changes to the Service.** We change the Service to fix it, keep it secure, follow the law or improve it, and such changes cost you nothing extra. If a change makes your access to or use of a paid plan worse in more than a minor way, we tell you by email in good time before it happens. You may then end your subscription free of charge within 30 days of the change, or of our email if it comes later, and we refund the unused part of the period you paid for.
 
 **Liability.** We are liable to you under the applicable law for damage we cause by breaching these Terms, but not for loss that was not foreseeable when you accepted them, and not for loss you could have avoided by following the Service's documented setup, such as binding a notification channel to a monitor. Nothing in these Terms limits our liability for death or personal injury caused by our negligence, for fraud, or for any other liability that cannot be limited by law.
 
