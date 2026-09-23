@@ -208,16 +208,26 @@ pub async fn unsubscribe(pool: &PgPool, subscriber_id: Uuid) -> Result<bool> {
     Ok(res.rows_affected() > 0)
 }
 
-/// Periodic cleanup: expired tokens, and used tokens older than 7 days.
+/// Periodic cleanup: subscriptions left unconfirmed for a day with no live
+/// link, expired tokens, and used tokens older than 7 days.
 pub async fn purge_old_tokens(pool: &PgPool) -> sqlx::Result<u64> {
-    let res = sqlx::query(
+    let unconfirmed = sqlx::query(
+        "DELETE FROM status_page_subscribers s
+         WHERE s.verified_at IS NULL
+           AND s.updated_at < now() - INTERVAL '1 day'
+           AND NOT EXISTS (SELECT 1 FROM status_page_subscriber_tokens t
+                            WHERE t.subscriber_id = s.id AND t.expires_at >= now())",
+    )
+    .execute(pool)
+    .await?;
+    let tokens = sqlx::query(
         "DELETE FROM status_page_subscriber_tokens
          WHERE expires_at < now()
             OR (used_at IS NOT NULL AND used_at < now() - INTERVAL '7 days')",
     )
     .execute(pool)
     .await?;
-    Ok(res.rows_affected())
+    Ok(unconfirmed.rows_affected() + tokens.rows_affected())
 }
 
 /// How far back the dispatcher will reach for an unsent public update, so a
