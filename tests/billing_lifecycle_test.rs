@@ -2657,7 +2657,7 @@ async fn the_owner_buys_moves_up_moves_down_and_cancels_through_the_api() {
             // "free" is never priced, so this exercises the not-for-sale path
             // without depending on which prices other tests leave in the
             // shared plan_prices table.
-            Some(json!({ "plan_id": "free", "interval": "month" })),
+            Some(json!({ "plan_id": "free", "interval": "month", "accept_terms": true })),
         ))
         .await
         .unwrap();
@@ -2670,6 +2670,18 @@ async fn the_owner_buys_moves_up_moves_down_and_cancels_through_the_api() {
             "POST",
             "/api/v1/account/billing/checkout",
             Some(json!({ "plan_id": "pro", "interval": "month" })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body_json(resp).await["error"]["code"], "TERMS_NOT_ACCEPTED");
+
+    let resp = app
+        .clone()
+        .oneshot(api(
+            "POST",
+            "/api/v1/account/billing/checkout",
+            Some(json!({ "plan_id": "pro", "interval": "month", "accept_terms": true })),
         ))
         .await
         .unwrap();
@@ -2703,7 +2715,7 @@ async fn the_owner_buys_moves_up_moves_down_and_cancels_through_the_api() {
         .oneshot(api(
             "POST",
             "/api/v1/account/billing/checkout",
-            Some(json!({ "plan_id": "team", "interval": "month" })),
+            Some(json!({ "plan_id": "team", "interval": "month", "accept_terms": true })),
         ))
         .await
         .unwrap();

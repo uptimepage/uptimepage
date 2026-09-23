@@ -227,6 +227,8 @@ pub const REASON_INVALID: &str = "REASON_INVALID";
 pub const BILLING_UNAVAILABLE: &str = "BILLING_UNAVAILABLE";
 /// The plan is not sold on that cadence (422).
 pub const PLAN_NOT_FOR_SALE: &str = "PLAN_NOT_FOR_SALE";
+/// A checkout was started without accepting the Terms of Service (422).
+pub const TERMS_NOT_ACCEPTED: &str = "TERMS_NOT_ACCEPTED";
 /// The account's subscription is not in a state the call applies to (409).
 pub const SUBSCRIPTION_STATE: &str = "SUBSCRIPTION_STATE";
 pub const SUBSCRIPTION_NOT_FOUND: &str = "SUBSCRIPTION_NOT_FOUND";

@@ -26,7 +26,10 @@
         errorBox.classList.remove("hidden");
     }
 
+    let pending = false;
+
     function busy(on) {
+        pending = on;
         form.querySelectorAll("[data-act]").forEach(b => { b.disabled = on; });
         if (msg) msg.textContent = on ? "talking to the provider…" : "";
         // Enabling every button again would undo what layout() decided.
@@ -91,6 +94,8 @@
         });
     }
 
+    const termsAccepted = () => form.querySelector("[data-terms] input")?.checked === true;
+
     function spotlight(pick) {
         const id = pick ? pick.id : null;
         form.querySelectorAll("[data-pitch]").forEach(p => { p.hidden = p.dataset.pitch !== id; });
@@ -100,6 +105,7 @@
     }
 
     function layout() {
+        if (pending) return;
         const pick = selected();
         const otherPlan = pick && pick.id !== currentId;
         const otherCadence = pick && !otherPlan && currentInterval && interval() !== currentInterval;
@@ -118,9 +124,11 @@
         const revoke = act("revoke");
         const portal = act("portal");
         const card = act("card");
+        const terms = form.querySelector("[data-terms]");
+        if (terms) terms.hidden = live || unpaid;
         if (checkout) {
             checkout.hidden = live || unpaid;
-            checkout.disabled = !other;
+            checkout.disabled = !other || !termsAccepted();
             checkout.textContent = other ? `checkout ${pick.name}` : "checkout";
         }
         if (change) {
@@ -144,6 +152,7 @@
     }
 
     cards.forEach(c => c.addEventListener("change", layout));
+    form.querySelector("[data-terms] input")?.addEventListener("change", layout);
     form.querySelectorAll("[data-interval-rail] input").forEach(r => r.addEventListener("change", () => {
         form.dataset.interval = r.value;
         priceCards();
@@ -165,7 +174,7 @@
 
     act("checkout")?.addEventListener("click", () => run(async () => {
         const pick = selected();
-        const handoff = await call("POST", "/checkout", { plan_id: pick.id, interval: form.dataset.interval });
+        const handoff = await call("POST", "/checkout", { plan_id: pick.id, interval: form.dataset.interval, accept_terms: termsAccepted() });
         location.href = handoff.url;
     }));
 

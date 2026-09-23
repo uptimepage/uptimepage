@@ -153,6 +153,10 @@
     <aside class="action-rail lg:col-span-2 xl:col-span-1 xl:sticky xl:top-6">
       <div class="flex flex-wrap items-center gap-3 xl:flex-col xl:items-stretch">
         {% if owner %}
+        <label data-terms hidden class="flex items-start gap-2 text-xs text-muted">
+          <input type="checkbox" class="mt-0.5">
+          <span>I agree to the <a class="underline hover:text-body" href="/terms" target="_blank" rel="noopener">Terms of Service</a>, including billing and the 14-day withdrawal right.</span>
+        </label>
         <button type="button" data-act="checkout" hidden
                 class="sticker-btn sticker-btn--primary px-4 py-2 text-sm font-medium motion-safe:hover:-translate-y-0.5">checkout</button>
         <button type="button" data-act="change" hidden

@@ -53,7 +53,7 @@ Documentation pages, blog posts and the homepage also answer `Accept: text/markd
 | `GET` | `/api/v1/account/holds` | list monitors and status pages the plan is holding |
 | `PUT` | `/api/v1/account/holds` | choose what the plan keeps (`keep_monitors`, `keep_status_pages`) |
 | `GET` | `/api/v1/account/billing` | subscription status, plan, period end, the cadence it bills on (`interval`), a booked move and the cadence it lands on (`pending_plan_id`, `plan_change_at`, `pending_interval`), and the plans on sale with their price (`amount_minor`, `currency`) per cadence (session only) |
-| `POST` | `/api/v1/account/billing/checkout` | start a checkout for a plan (`plan_id`, `interval`); returns a provider URL |
+| `POST` | `/api/v1/account/billing/checkout` | start a checkout for a plan (`plan_id`, `interval`, `accept_terms: true`); returns a provider URL |
 | `POST` | `/api/v1/account/billing/portal` | open the provider's customer portal (invoices, card, cancel) |
 | `PUT` | `/api/v1/account/billing/plan` | move the subscription to another plan — up now, down at period end |
 | `POST` | `/api/v1/account/billing/cancel` | cancel: at the end of the paid period, or at once while the last payment failed |
@@ -646,6 +646,7 @@ Common codes: `INVALID_URL_SCHEME`, `INVALID_URL_FORMAT`, `SSRF_BLOCKED`, `INVAL
 | `DOMAIN_DENYLISTED` | 400 | Target domain (or a parent) is on the deny-list. |
 | `BILLING_UNAVAILABLE` | 404 | No payment provider is configured (a self-host build, or the hosted service before one is wired). |
 | `PLAN_NOT_FOR_SALE` | 422 | The plan is not sold on the requested cadence (`interval`). |
+| `TERMS_NOT_ACCEPTED` | 422 | A checkout was started without `accept_terms: true`. |
 | `SUBSCRIPTION_STATE` | 409 | The billing action does not apply to the subscription's current state. |
 | `BILLING_PROVIDER_REFUSED` | 409 | The payment provider declined the change; the message carries its reason. |
 | `BILLING_PROVIDER_UNREACHABLE` | 503 | The payment provider gave no usable answer. Retry in a moment. |

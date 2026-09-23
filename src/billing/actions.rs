@@ -10,7 +10,7 @@ use url::Url;
 
 use super::lifecycle::{Billing, cancel_despite_refusal, smaller};
 use super::provider::{ChangeTiming, CheckoutRequest, SubscriptionSnapshot, SubscriptionStatus};
-use crate::domain::{AccountId, BillingStatus, Interval, Subscription};
+use crate::domain::{AccountId, BillingStatus, Interval, Subscription, consent};
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::quotas::QuotaService;
@@ -70,7 +70,11 @@ impl Billing {
             &mut tx,
             account,
             ledger::CHECKOUT_STARTED,
-            json!({ "plan": plan_id, "interval": interval.as_db_str() }),
+            json!({
+                "plan": plan_id,
+                "interval": interval.as_db_str(),
+                "terms": consent::TERMS_VERSION,
+            }),
         )
         .await?;
         tx.commit().await.map_err(|e| AppError::Other(e.into()))?;

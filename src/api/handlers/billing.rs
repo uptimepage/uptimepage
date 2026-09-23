@@ -134,6 +134,16 @@ pub struct PlanChoice {
     pub interval: Interval,
 }
 
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutChoice {
+    pub plan_id: String,
+    pub interval: Interval,
+    /// The buyer accepts the current Terms of Service, billing included.
+    #[serde(default)]
+    pub accept_terms: bool,
+}
+
 /// A page on the provider's side to send the customer to.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Handoff {
@@ -143,11 +153,11 @@ pub struct Handoff {
 #[utoipa::path(
     post, path = "/api/v1/account/billing/checkout", tag = "account",
     summary = "Start a checkout for a plan",
-    request_body = PlanChoice,
+    request_body = CheckoutChoice,
     responses(
         (status = 200, body = Handoff),
         (status = 409, body = ApiError, description = "the account already has a subscription"),
-        (status = 422, body = ApiError, description = "the plan is not sold on that cadence"),
+        (status = 422, body = ApiError, description = "the plan is not sold on that cadence, or the terms were not accepted"),
         (status = 503, body = ApiError, description = "the provider gave no answer; retry later"),
     ),
 )]
@@ -155,9 +165,15 @@ pub async fn checkout(
     State(state): State<AppState>,
     CurrentOrg(org): CurrentOrg,
     BrowserUser(CurrentUser(user)): BrowserUser,
-    Json(choice): Json<PlanChoice>,
+    Json(choice): Json<CheckoutChoice>,
 ) -> Result<Json<Handoff>> {
     let (billing, pool, account) = owned(&state, org, user).await?;
+    if !choice.accept_terms {
+        return Err(AppError::unprocessable(
+            codes::TERMS_NOT_ACCEPTED,
+            "accept the Terms of Service to start a checkout",
+        ));
+    }
     let url = billing
         .checkout(
             pool,
