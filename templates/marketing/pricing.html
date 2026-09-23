@@ -90,12 +90,12 @@
                 <div class="mk-price__amt{% if checkout_open %} mk-cad--month{% endif %}"><b>$9</b><span>/ month</span></div>
                 {% if checkout_open %}
                 <div class="mk-price__amt mk-cad--year"><b>$90</b><span>/ year</span></div>
-                <p class="mk-price__note mk-cad--month">billed monthly · cancel any time</p>
-                <p class="mk-price__note mk-cad--year">$7.50 a month, paid yearly</p>
+                <p class="mk-price__note mk-cad--month">billed monthly · plus tax · cancel any time</p>
+                <p class="mk-price__note mk-cad--year">$7.50 a month, paid yearly · plus tax</p>
                 <a href="{{ app_url }}/login?redirect_after=%2Fsettings%2Fbilling%3Fplan%3Dpro%26interval%3Dmonth" class="mk-cta mk-cta--ghost mk-cta--block mk-cad--month" data-umami-event="checkout-start" data-umami-event-plan="pro" data-umami-event-interval="month">choose pro</a>
                 <a href="{{ app_url }}/login?redirect_after=%2Fsettings%2Fbilling%3Fplan%3Dpro%26interval%3Dyear" class="mk-cta mk-cta--ghost mk-cta--block mk-cad--year" data-umami-event="checkout-start" data-umami-event-plan="pro" data-umami-event-interval="year">choose pro</a>
                 {% else %}
-                <p class="mk-price__note">billed monthly or yearly</p>
+                <p class="mk-price__note">billed monthly or yearly · plus tax</p>
                 <a href="mailto:hello@uptimepage.dev?subject=Tell%20me%20when%20Pro%20launches" class="mk-cta mk-cta--ghost mk-cta--block" data-umami-event="plan-notify" data-umami-event-plan="pro">notify me</a>
                 {% endif %}
                 <p class="mk-price__head">everything in standard, plus</p>
@@ -120,12 +120,12 @@
                 <div class="mk-price__amt{% if checkout_open %} mk-cad--month{% endif %}"><b>$19</b><span>/ month</span></div>
                 {% if checkout_open %}
                 <div class="mk-price__amt mk-cad--year"><b>$190</b><span>/ year</span></div>
-                <p class="mk-price__note mk-cad--month">billed monthly · cancel any time</p>
-                <p class="mk-price__note mk-cad--year">$15.83 a month, paid yearly</p>
+                <p class="mk-price__note mk-cad--month">billed monthly · plus tax · cancel any time</p>
+                <p class="mk-price__note mk-cad--year">$15.83 a month, paid yearly · plus tax</p>
                 <a href="{{ app_url }}/login?redirect_after=%2Fsettings%2Fbilling%3Fplan%3Dteam%26interval%3Dmonth" class="mk-cta mk-cta--ghost mk-cta--block mk-cad--month" data-umami-event="checkout-start" data-umami-event-plan="team" data-umami-event-interval="month">choose team</a>
                 <a href="{{ app_url }}/login?redirect_after=%2Fsettings%2Fbilling%3Fplan%3Dteam%26interval%3Dyear" class="mk-cta mk-cta--ghost mk-cta--block mk-cad--year" data-umami-event="checkout-start" data-umami-event-plan="team" data-umami-event-interval="year">choose team</a>
                 {% else %}
-                <p class="mk-price__note">billed monthly or yearly</p>
+                <p class="mk-price__note">billed monthly or yearly · plus tax</p>
                 <a href="mailto:hello@uptimepage.dev?subject=Tell%20me%20when%20Team%20launches" class="mk-cta mk-cta--ghost mk-cta--block" data-umami-event="plan-notify" data-umami-event-plan="team">notify me</a>
                 {% endif %}
                 <p class="mk-price__head">everything in pro, plus</p>
@@ -143,7 +143,7 @@
             </div>
 
         </div>
-        <p class="mk-price__legal">Prices are in USD.{% if checkout_open %} Yearly is ten months for twelve.{% endif %} Founding accounts keep the founding limits for life, at no cost.</p>
+        <p class="mk-price__legal">Prices are in USD and exclude VAT and sales tax, which Paddle adds at checkout where they apply.{% if checkout_open %} Yearly is ten months for twelve.{% endif %} Founding accounts keep the founding limits for life, at no cost.</p>
     </section>
 
     <section class="space-y-8">

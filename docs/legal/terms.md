@@ -75,7 +75,7 @@ at /settings/usage, and apply per organisation.
 
 **Accepting these Terms.** Before you start a checkout we ask you to accept these Terms, including this section, and we record the version you accepted.
 
-**Price and taxes.** Prices are listed in USD at <https://uptimepage.dev/pricing>. Paddle applies VAT or sales tax where the law requires it and shows you the total, taxes included, before you pay. We do not charge anything for placing the order beyond that total.
+**Price and taxes.** Prices are listed in USD at <https://uptimepage.dev/pricing> and exclude VAT and sales tax. Paddle applies VAT or sales tax where the law requires it and shows you the total, taxes included, before you pay. We do not charge anything for placing the order beyond that total.
 
 **Billing period and renewal.** You pay in advance, monthly or yearly. A subscription renews automatically at the end of each period for another period of the same length, at the price then in force, until you cancel. There is no minimum term beyond the period you have paid for.
 
