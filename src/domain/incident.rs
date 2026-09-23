@@ -631,7 +631,11 @@ pub struct NewManualIncident {
     #[serde(default)]
     #[schema(nullable = true)]
     pub target_id: Option<Uuid>,
-    /// Publish to the status pages carrying the monitor as the incident opens.
+    /// Pages a monitor-less incident appears on once published. Refused
+    /// alongside `target_id`, whose pages are the ones carrying that monitor.
+    #[serde(default)]
+    pub status_page_ids: Vec<Uuid>,
+    /// Publish to the incident's status pages as it opens.
     #[serde(default)]
     pub visibility: IncidentVisibility,
     /// Alert the org's channels. Off by default: an unasked-for page reads as

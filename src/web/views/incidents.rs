@@ -709,6 +709,9 @@ pub struct IncidentDetailPage {
     pub ack_delay_label: Option<String>,
     /// Bad checks folded into this incident. Zero for a hand-declared one.
     pub check_count: u64,
+    /// The org's pages, marked where this incident is posted. Empty for an
+    /// incident with a monitor, whose pages are the ones carrying it.
+    pub pages: Vec<PageChoice>,
 }
 
 /// One paging-delivery row for the incident's notifications section.
@@ -862,6 +865,12 @@ pub async fn detail(
     }));
 
     let recovered_at = monitor_recovered_at(&state, org, &inc).await;
+    let pages = if inc.target_id.is_none() {
+        let linked = state.incident_ops_store.status_pages(org, id).await?;
+        page_choices(&state, org, &linked).await?
+    } else {
+        Vec::new()
+    };
     let label = inc
         .title
         .clone()
@@ -880,6 +889,7 @@ pub async fn detail(
     page.owner_options = owner_options;
     page.notifications = notifications;
     page.monitor_recovered_at = recovered_at;
+    page.pages = pages;
     Ok(page)
 }
 
@@ -928,6 +938,7 @@ fn make_detail_page(
         duration_label,
         ack_delay_label,
         check_count,
+        pages: Vec::new(),
     }
 }
 
@@ -978,11 +989,37 @@ pub struct MonitorOption {
     pub name: String,
 }
 
+/// A status page an incident with no monitor can be posted to.
+pub struct PageChoice {
+    pub id: String,
+    pub name: String,
+    pub selected: bool,
+}
+
+async fn page_choices(
+    state: &AppState,
+    org: OrgId,
+    selected: &[Uuid],
+) -> WebResult<Vec<PageChoice>> {
+    Ok(state
+        .status_page_store
+        .list(org)
+        .await?
+        .into_iter()
+        .map(|p| PageChoice {
+            selected: selected.contains(&p.id.0),
+            id: p.id.0.to_string(),
+            name: p.name,
+        })
+        .collect())
+}
+
 #[derive(Template, WebTemplate)]
 #[template(path = "incidents/declare.html")]
 pub struct DeclareIncidentPage {
     pub active_tab: &'static str,
     pub monitors: Vec<MonitorOption>,
+    pub pages: Vec<PageChoice>,
 }
 
 pub async fn declare_form(
@@ -1010,6 +1047,7 @@ pub async fn declare_form(
     Ok(DeclareIncidentPage {
         active_tab: "incidents",
         monitors,
+        pages: page_choices(&state, org, &[]).await?,
     })
 }
 
@@ -1576,9 +1614,18 @@ mod tests {
                 id: Uuid::now_v7().to_string(),
                 name: "api-prod".into(),
             }],
+            pages: vec![PageChoice {
+                id: Uuid::nil().to_string(),
+                name: "Acme customers".into(),
+                selected: false,
+            }],
         }
         .render()
         .unwrap();
+        assert!(
+            html.contains(r#"data-incident-page value="00000000-0000-0000-0000-000000000000" class="sr-only">Acme customers"#),
+            "{html}"
+        );
         assert!(
             html.contains(r#"name="notify" value="0" class="sr-only" checked"#),
             "{html}"

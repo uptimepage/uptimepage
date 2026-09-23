@@ -37,7 +37,9 @@
                     {% if incident.header.ongoing %}
                         <span class="status-badge status-badge--down">Ongoing</span>
                     {% endif %}
-                    <span class="text-muted">· {{ incident.header.component_name }}</span>
+                    {% if !incident.header.component_name.is_empty() %}
+                        <span class="text-muted">· {{ incident.header.component_name }}</span>
+                    {% endif %}
                 </p>
                 <p class="text-sm text-muted">
                     Started

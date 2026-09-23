@@ -10,16 +10,16 @@ use uuid::Uuid;
 
 use crate::api::handlers::validation::{MAX_DESCRIPTION, MAX_TITLE};
 use crate::auth::scope::Scope;
-use crate::domain::IncidentVisibility;
 use crate::domain::incident::{NewIncidentUpdate, OpsIncident};
 use crate::domain::public::IncidentStatusPhase;
+use crate::domain::{IncidentVisibility, OrgId};
 use crate::quotas::ratelimit::RateLimitCategory;
 use crate::storage::Actor;
 use crate::storage::incident_ops::opening_update_message;
 
 use crate::mcp::auth::McpAuth;
 use crate::mcp::confirm::require_confirmation;
-use crate::mcp::error::McpToolError;
+use crate::mcp::error::{McpToolError, config_error};
 use crate::mcp::schema::{
     IncidentActionArgs, IncidentActionResult, IncidentIdArg, IncidentUpdatePosted,
     IncidentVisibilityResult, PostIncidentUpdateArgs, PublishIncidentArgs,
@@ -172,7 +172,26 @@ impl McpServer {
             "public_description",
             MAX_DESCRIPTION,
         )?;
-        let label = self.incident_label(auth.org, id).await?;
+        let pages = args
+            .status_page_ids
+            .as_deref()
+            .map(|ids| {
+                ids.iter()
+                    .map(|p| parse_uuid(p, "status page id"))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+        let incident = self
+            .state
+            .incident_ops_store
+            .get(auth.org, id)
+            .await
+            .map_err(|e| McpToolError::internal(format!("get incident: {e}")))?
+            .ok_or_else(|| McpToolError::not_found("incident not found"))?;
+        let label = self.label_for(auth.org, &incident).await?;
+        let where_ = self
+            .publish_destination(auth.org, &incident, pages.as_deref())
+            .await?;
         // Publishing posts an opening update, and that update is what reaches
         // subscribers, so the prompt has to show the words they will receive.
         let opening = opening_update_message(title.as_deref(), description.as_deref());
@@ -180,7 +199,7 @@ impl McpServer {
             ctx,
             auth,
             format!(
-                "Publish {label} on your public status pages?{}\n\nSubscribers receive:\n\n\"{}\"",
+                "Publish {label} on {where_}?{}\n\nSubscribers receive:\n\n\"{}\"",
                 match &title {
                     Some(t) => format!(" Headline: \"{}\".", sanitize_prompt(t)),
                     None => String::new(),
@@ -189,15 +208,18 @@ impl McpServer {
             ),
         )
         .await?;
-        let incident = self
-            .state
-            .incident_ops_store
-            .publish(auth.org, id, title, description, Actor::Mcp(auth.user_id))
-            .await
-            .map_err(|e| McpToolError::internal(format!("publish_incident: {e}")))?
-            .ok_or_else(|| McpToolError::not_found("incident not found"))?;
-        self.invalidate_status_pages(auth.org, incident.target_id)
-            .await;
+        let incident = crate::api::handlers::publish_and_invalidate(
+            &self.state,
+            auth.org,
+            id,
+            title,
+            description,
+            pages,
+            Actor::Mcp(auth.user_id),
+        )
+        .await
+        .map_err(config_error)?
+        .ok_or_else(|| McpToolError::not_found("incident not found"))?;
         Ok(Json(visibility_result(id, incident.visibility)))
     }
 
@@ -225,8 +247,7 @@ impl McpServer {
             .await
             .map_err(|e| McpToolError::internal(format!("unpublish_incident: {e}")))?
             .ok_or_else(|| McpToolError::not_found("incident not found"))?;
-        self.invalidate_status_pages(auth.org, incident.target_id)
-            .await;
+        self.invalidate_status_pages(auth.org, &incident).await;
         Ok(Json(visibility_result(id, incident.visibility)))
     }
 
@@ -272,6 +293,65 @@ impl McpServer {
             // A declared incident can carry neither monitor nor title; the id is
             // then the only handle, and it beats approving an unnamed thing.
             (None, None) => format!("incident {}", incident.id),
+        })
+    }
+
+    /// Where a publish will show the incident, refused up front when the store
+    /// would refuse it, so the user never confirms a publish that cannot happen.
+    async fn publish_destination(
+        &self,
+        org: OrgId,
+        incident: &OpsIncident,
+        pages: Option<&[Uuid]>,
+    ) -> Result<String, McpToolError> {
+        if incident.target_id.is_some() {
+            if pages.is_some_and(|p| !p.is_empty()) {
+                return Err(config_error(
+                    crate::storage::incident_ops::pages_with_monitor(),
+                ));
+            }
+            return Ok("the status pages carrying its monitor".to_string());
+        }
+        let pages = match pages {
+            Some(ids) => ids.to_vec(),
+            None => self
+                .state
+                .incident_ops_store
+                .status_pages(org, incident.id)
+                .await
+                .map_err(|e| McpToolError::internal(format!("incident pages: {e}")))?,
+        };
+        if pages.is_empty() {
+            return Err(config_error(
+                crate::storage::incident_ops::status_page_required(),
+            ));
+        }
+        self.page_names(org, &pages).await
+    }
+
+    async fn page_names(&self, org: OrgId, ids: &[Uuid]) -> Result<String, McpToolError> {
+        let pages = self
+            .state
+            .status_page_store
+            .list(org)
+            .await
+            .map_err(|e| McpToolError::internal(format!("list status pages: {e}")))?;
+        let names: Vec<String> = pages
+            .iter()
+            .filter(|p| ids.contains(&p.id.0))
+            .map(|p| format!("\"{}\"", sanitize_prompt(&p.name)))
+            .collect();
+        let mut wanted = ids.to_vec();
+        wanted.sort_unstable();
+        wanted.dedup();
+        if names.len() < wanted.len() {
+            return Err(config_error(
+                crate::storage::incident_ops::unknown_status_pages(wanted.len() - names.len()),
+            ));
+        }
+        Ok(match names.len() {
+            1 => format!("the status page {}", names[0]),
+            _ => format!("the status pages {}", names.join(", ")),
         })
     }
 }

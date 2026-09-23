@@ -71,6 +71,18 @@ impl Default for AggregatorConfig {
 // full `history_days` window independent of the shorter 1m-rollup TTL.
 const CH_HISTORY_MV: &str = "check_results_1h";
 
+/// Whether incident `i` shows on a page: through one of its components
+/// (`components`, a uuid array), or, with no monitor, through the pages it
+/// was published to (`page`).
+pub(crate) fn on_page(components: &str, page: &str) -> String {
+    format!(
+        "(i.target_id = ANY({components}) OR EXISTS (\
+             SELECT 1 FROM incident_status_pages isp \
+             WHERE isp.incident_id = i.id AND isp.org_id = i.org_id \
+               AND isp.status_page_id = {page}))"
+    )
+}
+
 /// One monitor as it sits on a page: its target id, the resolved public name
 /// (per-page override or the monitor's own name), and the page-local grouping.
 struct PageComponent {
@@ -136,8 +148,8 @@ impl OrgAggregator {
             hide_from_search,
         ) = tokio::try_join!(
             self.load_maintenance(org, now, &component_ids, &name_by_id),
-            self.load_active_incidents(org, &component_ids, &name_by_id),
-            self.load_recent_incidents(org, now, &component_ids, &name_by_id),
+            self.load_active_incidents(page, org, &component_ids, &name_by_id),
+            self.load_recent_incidents(page, org, now, &component_ids, &name_by_id),
             self.load_marker_windows(org, now, &component_ids),
             self.load_paint_windows(org, now, &component_ids, days),
             self.load_day_presence(org, &component_ids, now, days),
@@ -203,9 +215,17 @@ impl OrgAggregator {
             }
         }
 
+        // An incident with no monitor has no component to colour, so its
+        // impact reaches the headline directly.
         let component_statuses: Vec<PublicComponentStatus> = groups
             .iter()
             .flat_map(|g| g.components.iter().map(|c| c.current_status))
+            .chain(
+                active_incidents
+                    .iter()
+                    .filter(|i| i.component_id.is_none())
+                    .map(|i| component_status(Some(i.impact), false, true)),
+            )
             .collect();
         let overall = overall_status(overall_state(&component_statuses));
 
@@ -390,14 +410,12 @@ impl OrgAggregator {
 
     async fn load_active_incidents(
         &self,
+        page: StatusPageId,
         org: OrgId,
         component_ids: &[Uuid],
         name_by_id: &HashMap<Uuid, String>,
     ) -> Result<Vec<PublicIncident>> {
-        if component_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let rows: Vec<IncidentRow> = sqlx::query_as::<_, IncidentRow>(
+        let rows: Vec<IncidentRow> = sqlx::query_as::<_, IncidentRow>(&format!(
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
                       i.origin, i.regions_up,
@@ -405,12 +423,14 @@ impl OrgAggregator {
                FROM incidents i
                WHERE i.org_id = $1
                  AND i.ended_at IS NULL
-                 AND i.target_id = ANY($2)
+                 AND {on_page}
                  AND i.visibility = 'public'
                ORDER BY i.started_at DESC"#,
-        )
+            on_page = on_page("$2", "$3"),
+        ))
         .bind(org.0)
         .bind(component_ids)
+        .bind(page.0)
         .fetch_all(&self.pg)
         .await
         .context("load active incidents")?;
@@ -419,17 +439,15 @@ impl OrgAggregator {
 
     async fn load_recent_incidents(
         &self,
+        page: StatusPageId,
         org: OrgId,
         now: DateTime<Utc>,
         component_ids: &[Uuid],
         name_by_id: &HashMap<Uuid, String>,
     ) -> Result<(Vec<PublicIncident>, bool)> {
-        if component_ids.is_empty() {
-            return Ok((Vec::new(), false));
-        }
         let since = now - ChronoDuration::days(self.cfg.recent_incidents_days as i64);
         let peek_limit = self.cfg.max_recent_incidents as i64 + 1;
-        let mut rows: Vec<IncidentRow> = sqlx::query_as::<_, IncidentRow>(
+        let mut rows: Vec<IncidentRow> = sqlx::query_as::<_, IncidentRow>(&format!(
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
                       i.origin, i.regions_up,
@@ -437,15 +455,17 @@ impl OrgAggregator {
                FROM incidents i
                WHERE i.org_id = $3
                  AND i.started_at >= $1
-                 AND i.target_id = ANY($4)
+                 AND {on_page}
                  AND i.visibility = 'public'
                ORDER BY i.started_at DESC, i.id DESC
                LIMIT $2"#,
-        )
+            on_page = on_page("$4", "$5"),
+        ))
         .bind(since)
         .bind(peek_limit)
         .bind(org.0)
         .bind(component_ids)
+        .bind(page.0)
         .fetch_all(&self.pg)
         .await
         .context("load recent incidents")?;
@@ -554,7 +574,10 @@ impl OrgAggregator {
         Ok(rows
             .into_iter()
             .map(|r| {
-                let component_name = name_by_id.get(&r.target_id).cloned().unwrap_or_default();
+                let component_name = r
+                    .target_id
+                    .and_then(|t| name_by_id.get(&t).cloned())
+                    .unwrap_or_default();
                 let my_updates: Vec<PublicIncidentUpdate> = updates
                     .iter()
                     .filter(|u| u.incident_id == r.id)
@@ -772,7 +795,7 @@ struct MaintenanceRow {
 #[derive(FromRow)]
 struct IncidentRow {
     id: Uuid,
-    target_id: Uuid,
+    target_id: Option<Uuid>,
     started_at: DateTime<Utc>,
     ended_at: Option<DateTime<Utc>>,
     severity: String,

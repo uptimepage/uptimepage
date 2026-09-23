@@ -1786,7 +1786,8 @@ fn incident_detail_maps_state_severity_and_updates() {
         regions_down: vec!["us-east".into()],
         regions_up: vec!["eu-helsinki".into()],
     };
-    let d = incident_detail(&inc, Some("api".into()));
+    let page = Uuid::now_v7();
+    let d = incident_detail(&inc, Some("api".into()), &[page]);
     assert_eq!(d.state, "down");
     assert_eq!(d.severity, "major");
     assert_eq!(d.monitor_name.as_deref(), Some("api"));
@@ -1796,6 +1797,7 @@ fn incident_detail_maps_state_severity_and_updates() {
     assert_eq!(d.error_sample.as_deref(), Some("boom"));
     assert_eq!(d.updates.len(), 1);
     assert_eq!(d.updates[0].phase, "investigating");
+    assert_eq!(d.status_page_ids, vec![page.to_string()]);
 }
 
 fn metrics(samples: u64, last_status: &str, last_minute_ts: Option<i64>) -> DashboardMetrics {

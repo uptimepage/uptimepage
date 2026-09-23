@@ -25,7 +25,7 @@
     <div class="flex flex-wrap items-center gap-3">
       <h1 class="page-title"><span class="page-title__prefix" aria-hidden="true">$</span>{{ label }}</h1>
       {% if visibility == "public" %}
-      <span class="status-badge status-badge--tag" title="Live on every status page carrying this monitor">public</span>
+      <span class="status-badge status-badge--tag" title="{% if target_id.is_some() %}Live on every status page carrying this monitor{% else %}Live on the status pages picked below{% endif %}">public</span>
       {% endif %}
     </div>
     <p class="text-sm text-muted">
@@ -183,6 +183,19 @@
     </ol>
     {% endif %}
   </section>
+
+  {% if target_id.is_none() %}
+  <section class="sticker-card p-5">
+    <h2 class="panel-label">where it shows</h2>
+    {% include "incidents/_page_picker.html" %}
+    {% if visibility == "public" && !pages.is_empty() %}
+    <div class="mt-4">
+      <button type="button" data-incident-save-pages data-incident-id="{{ id }}"
+              class="sticker-btn min-h-10 px-4 py-2 text-sm font-medium">save pages</button>
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
 
   <section class="sticker-card overflow-hidden" data-incident-id="{{ id }}">
     <div class="flex items-baseline justify-between px-5 pt-5 pb-3">

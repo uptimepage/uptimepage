@@ -175,13 +175,19 @@ pub struct PublicIncidentUpdate {
 /// Title of an incident whose operator never set `public_title`: the
 /// component plus the status it opened in, as in `"API major outage"`.
 pub fn auto_incident_title(component_name: &str, status_at_start: &str) -> String {
+    if component_name.is_empty() {
+        return "Service disruption".to_string();
+    }
     format!("{} {}", component_name, status_at_start.replace('_', " "))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PublicIncident {
     pub id: Uuid,
-    pub component_id: Uuid,
+    /// `null` for an incident posted to the page itself rather than raised by
+    /// one of its components; `component_name` is then empty.
+    #[schema(nullable = true)]
+    pub component_id: Option<Uuid>,
     pub component_name: String,
     /// `public_title` if set; otherwise auto-generated like `"API major outage"`.
     pub title: String,

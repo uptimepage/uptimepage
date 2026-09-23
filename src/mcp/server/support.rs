@@ -158,15 +158,15 @@ impl McpServer {
         result
     }
 
-    /// Drop the cached status-page HTML carrying this monitor, so a visibility
+    /// Drop the cached status-page HTML showing this incident, so a visibility
     /// flip shows up immediately instead of after the page TTL. Best-effort,
     /// exactly as the REST publish path does it.
     pub(super) async fn invalidate_status_pages(
         &self,
         org: crate::domain::OrgId,
-        target_id: Option<Uuid>,
+        incident: &crate::domain::OpsIncident,
     ) {
-        crate::api::handlers::invalidate_pages_for(&self.state, org, target_id.as_slice()).await;
+        crate::api::handlers::invalidate_incident_pages(&self.state, org, incident).await;
     }
 
     /// Public URL of a status page slug, mirroring the operator UI's own

@@ -796,7 +796,7 @@ async fn build_component_state_follows_confirmed_incidents() {
         let impact = |id: Uuid| {
             page.active_incidents
                 .iter()
-                .find(|i| i.component_id == id)
+                .find(|i| i.component_id == Some(id))
                 .expect("active incident listed")
                 .impact
         };
@@ -1162,6 +1162,140 @@ async fn published_postmortem_surfaces_on_public_incident() {
         let inc = source.incident_by_id(page_ref, incident_id).await.expect("incident");
         let pm = inc.postmortem.expect("published postmortem surfaces");
         assert_eq!(pm.summary.as_deref(), Some("draft secret"));
+    })
+    .await;
+}
+
+/// An incident with no monitor shows on the pages it was posted to, even one
+/// with no components, sets their headline from its severity, and stays off
+/// every other page of the org.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL + CLICKHOUSE_URL"]
+async fn a_page_incident_shows_only_on_the_pages_it_names() {
+    use uptimepage::domain::{IncidentSeverity, NewManualIncident, PageRef};
+    use uptimepage::error::public::PublicAppError;
+    use uptimepage::public_status::{IncidentListQuery, OrgPublicSource, PageCache, PublicSource};
+    use uptimepage::storage::{Actor, IncidentOpsStore, PgIncidentOpsStore};
+
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let Some(ch) = common::ch_client_from_env().await else {
+        return;
+    };
+    purge_prefix(&pool, "agg-pgi-").await;
+
+    let org_id = seed_org(&pool, "agg-pgi").await;
+    let store = Arc::new(PostgresTargetStore::from_pool(pool.clone(), None));
+    let target = store
+        .create(
+            org_id,
+            public_target(&format!("agg-pgi-{}", Uuid::now_v7())),
+            WriteSource::Ui,
+            i64::MAX,
+            i64::MAX,
+        )
+        .await
+        .expect("create target");
+    let target_id = target.id;
+    let pool_for_cleanup = pool.clone();
+
+    with_cleanup(&pool_for_cleanup, target_id, async move {
+        let posted = seed_page_with_target(&pool, org_id, target_id).await;
+        let unposted = seed_page_with_target(&pool, org_id, target_id).await;
+        let bare = PgStatusPageStore::new(pool.clone())
+            .create(
+                org_id,
+                NewStatusPage {
+                    slug: format!("aggbare{}", &Uuid::now_v7().simple().to_string()[..20]),
+                    name: "Bare".into(),
+                    enabled: true,
+                },
+                WriteSource::Ui,
+                i64::MAX,
+                None,
+            )
+            .await
+            .expect("create bare page")
+            .expect("within page cap")
+            .id;
+
+        let ops = PgIncidentOpsStore::new(pool.clone());
+        let incident = ops
+            .declare(
+                org_id,
+                NewManualIncident {
+                    title: Some("Network outage in Frankfurt".into()),
+                    severity: IncidentSeverity::Critical,
+                    status_page_ids: vec![posted.0, bare.0],
+                    ..Default::default()
+                },
+                Actor::System,
+            )
+            .await
+            .expect("declare");
+        ops.publish(
+            org_id,
+            incident.id,
+            Some("Network outage in Frankfurt".into()),
+            None,
+            None,
+            Actor::System,
+        )
+        .await
+        .expect("publish")
+        .expect("incident exists");
+
+        let cfg = uptimepage::config::PublicStatusConfig::default();
+        let agg = Arc::new(OrgAggregator::new(
+            pool.clone(),
+            ch,
+            AggregatorConfig::default(),
+            None,
+        ));
+        for page_id in [posted, bare] {
+            let (page, _, _, _) = agg.build(page_id, org_id).await.expect("build");
+            let shown = page
+                .active_incidents
+                .iter()
+                .find(|i| i.id == incident.id)
+                .expect("posted page shows the incident");
+            assert_eq!(shown.component_id, None);
+            assert_eq!(shown.title, "Network outage in Frankfurt");
+            assert_eq!(page.overall.state, OverallState::MajorOutage);
+        }
+        let (page, _, _, _) = agg.build(unposted, org_id).await.expect("build");
+        assert!(page.active_incidents.iter().all(|i| i.id != incident.id));
+        assert_eq!(page.overall.state, OverallState::Operational);
+
+        let source = OrgPublicSource::new(agg, PageCache::new(&cfg), pool.clone(), "uptimepage");
+        let on = PageRef {
+            page: posted,
+            org: org_id,
+        };
+        let off = PageRef {
+            page: unposted,
+            org: org_id,
+        };
+        let q = || IncidentListQuery {
+            limit: 50,
+            cursor: None,
+            ongoing_only: false,
+        };
+        let listed = source.list_incidents(on, q()).await.expect("list");
+        assert!(listed.items.iter().any(|i| i.id == incident.id));
+        let listed = source.list_incidents(off, q()).await.expect("list");
+        assert!(listed.items.iter().all(|i| i.id != incident.id));
+        assert!(source.incident_by_id(on, incident.id).await.is_ok());
+        assert!(matches!(
+            source.incident_by_id(off, incident.id).await,
+            Err(PublicAppError::NotFound)
+        ));
+
+        let _ = sqlx::query("DELETE FROM incidents WHERE id = $1")
+            .bind(incident.id)
+            .execute(&pool)
+            .await;
     })
     .await;
 }

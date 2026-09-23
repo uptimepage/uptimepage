@@ -923,6 +923,10 @@ pub struct IncidentDetail {
     pub regions_up: Vec<String>,
     /// Operator updates, oldest first.
     pub updates: Vec<IncidentUpdateItem>,
+    /// Pages an incident with no monitor is posted to. `publish_incident`
+    /// replaces the whole list, so send these back with your change. Empty for
+    /// a monitor's incident.
+    pub status_page_ids: Vec<String>,
 }
 
 /// `list_status_pages` arguments.
@@ -1139,6 +1143,11 @@ pub struct PublishIncidentArgs {
     pub public_title: Option<String>,
     /// Public summary shown under the headline.
     pub public_description: Option<String>,
+    /// Status page ids (from `list_status_pages`) for an incident with no
+    /// monitor; replaces its pages, so start from `get_incident`'s
+    /// `status_page_ids` to add or drop one. Leave unset for a monitor's incident,
+    /// which shows on the pages carrying that monitor.
+    pub status_page_ids: Option<Vec<String>>,
 }
 
 /// `publish_incident` / `unpublish_incident` result.

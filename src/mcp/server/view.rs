@@ -367,7 +367,11 @@ pub(super) fn incident_summary(i: &IncidentBrief) -> IncidentSummary {
 }
 
 /// Callers pass the raw incident; error text is humanized and scrubbed here.
-pub(super) fn incident_detail(i: &Incident, monitor_name: Option<String>) -> IncidentDetail {
+pub(super) fn incident_detail(
+    i: &Incident,
+    monitor_name: Option<String>,
+    status_page_ids: &[Uuid],
+) -> IncidentDetail {
     IncidentDetail {
         id: i.id.to_string(),
         monitor_id: i.target_id.map(|t| t.to_string()).unwrap_or_default(),
@@ -388,6 +392,7 @@ pub(super) fn incident_detail(i: &Incident, monitor_name: Option<String>) -> Inc
                 message: sanitize_data(&u.message),
             })
             .collect(),
+        status_page_ids: status_page_ids.iter().map(Uuid::to_string).collect(),
     }
 }
 

@@ -393,6 +393,50 @@ async fn an_activated_custom_domain_is_published_only_while_the_plan_sells_one()
     cleanup(&pool, org).await;
 }
 
+/// An incident with no monitor has no component to route by, so its updates
+/// reach a page's subscribers only when it was posted to that page.
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_page_incident_reaches_only_the_subscribers_of_its_pages() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let org = seed_org(&pool).await;
+    let posted_page = seed_page(&pool, org).await;
+    let other_page = seed_page(&pool, org).await;
+    let told = confirmed_subscriber(&pool, org, posted_page, "told@example.com").await;
+    let untold = confirmed_subscriber(&pool, org, other_page, "untold@example.com").await;
+
+    let incident: Uuid = sqlx::query_scalar(
+        "INSERT INTO incidents (org_id, started_at, status_at_start, origin, visibility, public_title)
+         VALUES ($1, now(), 'down', 'manual', 'public', 'Network outage in Frankfurt')
+         RETURNING id",
+    )
+    .bind(org)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO incident_status_pages (org_id, incident_id, status_page_id) VALUES ($1, $2, $3)",
+    )
+    .bind(org)
+    .bind(incident)
+    .bind(posted_page)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let update = add_update(&pool, org, incident, 0).await;
+
+    let pending = subscribers::list_pending(&pool, 1000).await.unwrap();
+    let mine: Vec<_> = pending.iter().filter(|p| p.update_id == update).collect();
+    assert_eq!(mine.len(), 1, "one delivery, to the posted page only");
+    assert_eq!(mine[0].subscriber_id, told);
+    assert_eq!(mine[0].incident_title(), "Network outage in Frankfurt");
+    assert!(pending.iter().all(|p| p.subscriber_id != untold));
+
+    cleanup(&pool, org).await;
+}
+
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
 async fn unpublished_incident_fans_out_only_the_resolved_closer() {

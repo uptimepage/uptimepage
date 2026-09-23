@@ -18,6 +18,7 @@ use crate::error::Result;
 use super::{
     Actor, DueIncident, EmergencyAck, INCIDENT_DETAIL_ROW_CAP, IncidentOpsFilter, IncidentOpsStore,
     IncidentSort, IncidentStateCounts, LifecycleOutcome, PendingNotification, QUEUED_TAKEOVER_SECS,
+    pages_with_monitor, status_page_required,
 };
 
 #[derive(Default)]
@@ -31,6 +32,7 @@ struct MemState {
     events: Vec<IncidentEvent>,
     notifications: Vec<(OrgId, IncidentNotification)>,
     renotify_counts: std::collections::HashMap<Uuid, u32>,
+    status_pages: std::collections::HashMap<Uuid, Vec<Uuid>>,
 }
 
 /// Episode number off the timeline, matching the Postgres store.
@@ -340,6 +342,9 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         new: NewManualIncident,
         actor: Actor,
     ) -> Result<OpsIncident> {
+        if new.target_id.is_some() && !new.status_page_ids.is_empty() {
+            return Err(pages_with_monitor());
+        }
         let now = Utc::now();
         let inc = OpsIncident {
             id: Uuid::now_v7(),
@@ -371,6 +376,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         };
         let mut g = self.inner.lock();
         g.incidents.push(inc.clone());
+        g.status_pages.insert(inc.id, new.status_page_ids);
         Self::push_event(&mut g, inc.id, IncidentEventKind::Triggered, actor, None);
         Ok(inc)
     }
@@ -500,17 +506,38 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         id: Uuid,
         _public_title: Option<String>,
         _public_description: Option<String>,
+        status_page_ids: Option<Vec<Uuid>>,
         actor: Actor,
     ) -> Result<Option<OpsIncident>> {
         let mut g = self.inner.lock();
         let Some(idx) = g.incidents.iter().position(|i| i.id == id) else {
             return Ok(None);
         };
+        if g.incidents[idx].target_id.is_none() {
+            let pages = status_page_ids
+                .unwrap_or_else(|| g.status_pages.get(&id).cloned().unwrap_or_default());
+            if pages.is_empty() {
+                return Err(status_page_required());
+            }
+            g.status_pages.insert(id, pages);
+        } else if status_page_ids.is_some_and(|p| !p.is_empty()) {
+            return Err(pages_with_monitor());
+        }
         g.incidents[idx].visibility = IncidentVisibility::Public;
         g.incidents[idx].updated_at = Utc::now();
         let updated = g.incidents[idx].clone();
         Self::push_event(&mut g, id, IncidentEventKind::Published, actor, None);
         Ok(Some(updated))
+    }
+
+    async fn status_pages(&self, _org: OrgId, id: Uuid) -> Result<Vec<Uuid>> {
+        Ok(self
+            .inner
+            .lock()
+            .status_pages
+            .get(&id)
+            .cloned()
+            .unwrap_or_default())
     }
 
     async fn unpublish(&self, _org: OrgId, id: Uuid, actor: Actor) -> Result<Option<OpsIncident>> {

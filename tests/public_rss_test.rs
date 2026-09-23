@@ -65,7 +65,7 @@ impl PublicSource for TwoIncidentSource {
         let items = vec![
             PublicIncident {
                 id: incident_id(),
-                component_id: Uuid::nil(),
+                component_id: Some(Uuid::nil()),
                 component_name: "Edge".into(),
                 title: INCIDENT_TITLE.into(),
                 started_at: now - chrono::Duration::minutes(30),
@@ -82,7 +82,7 @@ impl PublicSource for TwoIncidentSource {
             },
             PublicIncident {
                 id: Uuid::parse_str("00000000-0000-0000-0000-000000000c02").unwrap(),
-                component_id: Uuid::nil(),
+                component_id: Some(Uuid::nil()),
                 component_name: "Edge".into(),
                 title: "Origin TLS renewal".into(),
                 started_at: now - chrono::Duration::hours(6),

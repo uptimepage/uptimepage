@@ -23,7 +23,7 @@ use crate::error::public::PublicAppError;
 use crate::pagination::cursor::IncidentCursor;
 use crate::pagination::page::CursorPage;
 
-use super::aggregator::OrgAggregator;
+use super::aggregator::{OrgAggregator, on_page};
 use super::cache::{HistoryIncidentMarker, PageCache, PageCacheError, PageData};
 use super::overall_status::stored_incident_impact;
 use super::xml::xml_escape;
@@ -187,12 +187,8 @@ impl PublicSource for OrgPublicSource {
         q: IncidentListQuery,
     ) -> Result<CursorPage<PublicIncident>, PublicAppError> {
         // The page's component set + per-page names, reused from the cached
-        // page snapshot. An incident is on this page iff its target is one of
-        // these components.
+        // page snapshot.
         let names = self.cached(page).await?.component_names.clone();
-        if names.is_empty() {
-            return Ok(CursorPage::new(Vec::new(), None));
-        }
         let component_ids: Vec<Uuid> = names.keys().copied().collect();
 
         let since = Utc::now() - ChronoDuration::days(self.rss_lookback_days as i64);
@@ -204,14 +200,14 @@ impl PublicSource for OrgPublicSource {
             None => (None, None),
         };
 
-        let rows: Vec<IncidentRow> = sqlx::query_as::<_, IncidentRow>(
+        let rows: Vec<IncidentRow> = sqlx::query_as::<_, IncidentRow>(&format!(
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
                       i.origin, i.regions_up,
                       i.public_title, i.public_description
                FROM incidents i
                WHERE i.org_id = $5
-                 AND i.target_id = ANY($7)
+                 AND {on_page}
                  AND i.visibility = 'public'
                  AND i.started_at >= $1
                  AND ($2 = false OR i.ended_at IS NULL)
@@ -221,7 +217,8 @@ impl PublicSource for OrgPublicSource {
                  )
                ORDER BY i.started_at DESC, i.id DESC
                LIMIT $6"#,
-        )
+            on_page = on_page("$7", "$8"),
+        ))
         .bind(since)
         .bind(ongoing_only)
         .bind(cursor_ts)
@@ -229,6 +226,7 @@ impl PublicSource for OrgPublicSource {
         .bind(page.org.0)
         .bind(fetch)
         .bind(&component_ids)
+        .bind(page.page.0)
         .fetch_all(&self.pg)
         .await
         .context("public list incidents")
@@ -262,7 +260,7 @@ impl PublicSource for OrgPublicSource {
     ) -> Result<PublicIncident, PublicAppError> {
         let names = self.cached(page).await?.component_names.clone();
         let component_ids: Vec<Uuid> = names.keys().copied().collect();
-        let row: Option<IncidentRow> = sqlx::query_as::<_, IncidentRow>(
+        let row: Option<IncidentRow> = sqlx::query_as::<_, IncidentRow>(&format!(
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
                       i.origin, i.regions_up,
@@ -270,12 +268,14 @@ impl PublicSource for OrgPublicSource {
                FROM incidents i
                WHERE i.id = $1
                  AND i.org_id = $2
-                 AND i.target_id = ANY($3)
+                 AND {on_page}
                  AND i.visibility = 'public'"#,
-        )
+            on_page = on_page("$3", "$4"),
+        ))
         .bind(id)
         .bind(page.org.0)
         .bind(&component_ids)
+        .bind(page.page.0)
         .fetch_optional(&self.pg)
         .await
         .context("public get incident")
@@ -342,7 +342,10 @@ impl OrgPublicSource {
         Ok(rows
             .into_iter()
             .map(|r| {
-                let component_name = names.get(&r.target_id).cloned().unwrap_or_default();
+                let component_name = r
+                    .target_id
+                    .and_then(|t| names.get(&t).cloned())
+                    .unwrap_or_default();
                 let mut my_updates: Vec<PublicIncidentUpdate> = updates
                     .iter()
                     .filter(|u| u.incident_id == r.id)
@@ -440,7 +443,7 @@ struct PostmortemRow {
 #[derive(FromRow)]
 struct IncidentRow {
     id: Uuid,
-    target_id: Uuid,
+    target_id: Option<Uuid>,
     started_at: DateTime<Utc>,
     ended_at: Option<DateTime<Utc>>,
     severity: String,
@@ -631,7 +634,7 @@ mod tests {
             .with_timezone(&Utc);
         PublicIncident {
             id: Uuid::from_u128(id),
-            component_id: Uuid::nil(),
+            component_id: Some(Uuid::nil()),
             component_name: "Edge".into(),
             title: "Edge proxy 5xx".into(),
             started_at: started,

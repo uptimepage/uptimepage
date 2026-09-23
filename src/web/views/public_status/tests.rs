@@ -240,7 +240,7 @@ fn active_incident_banner_renders_when_present() {
     };
     p.active_incidents.push(PublicIncident {
         id: Uuid::nil(),
-        component_id: Uuid::nil(),
+        component_id: Some(Uuid::nil()),
         component_name: "Gateway".into(),
         title: "Latency spike".into(),
         started_at: Utc::now() - ChronoDuration::minutes(14),
@@ -333,7 +333,7 @@ fn component_uptime_is_the_aggregator_figure_not_a_day_ratio() {
 fn incident_detail_renders() {
     let inc = PublicIncident {
         id: Uuid::nil(),
-        component_id: Uuid::nil(),
+        component_id: Some(Uuid::nil()),
         component_name: "Gateway".into(),
         title: "Latency spike".into(),
         started_at: Utc::now() - ChronoDuration::minutes(30),
@@ -658,7 +658,7 @@ fn fake_incident(started_at: DateTime<Utc>, id_low: u8, title: &str) -> PublicIn
     id_bytes[15] = id_low;
     PublicIncident {
         id: Uuid::from_bytes(id_bytes),
-        component_id: Uuid::nil(),
+        component_id: Some(Uuid::nil()),
         component_name: "API".into(),
         title: title.into(),
         started_at,

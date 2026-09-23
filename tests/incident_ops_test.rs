@@ -680,6 +680,7 @@ async fn publish_sets_visibility_and_narration_then_unpublish_pg() {
             id,
             Some("EU API outage".into()),
             None,
+            None,
             Actor::User(user),
         )
         .await
@@ -701,7 +702,7 @@ async fn publish_sets_visibility_and_narration_then_unpublish_pg() {
 
     // A second publish without a title must not clobber the stored copy.
     store
-        .publish(org, id, None, None, Actor::User(user))
+        .publish(org, id, None, None, None, Actor::User(user))
         .await
         .unwrap()
         .unwrap();
@@ -735,7 +736,7 @@ async fn publish_sets_visibility_and_narration_then_unpublish_pg() {
         .unwrap();
     assert!(
         store
-            .publish(other.id, id, None, None, Actor::User(other_user))
+            .publish(other.id, id, None, None, None, Actor::User(other_user))
             .await
             .unwrap()
             .is_none(),
@@ -1555,6 +1556,7 @@ async fn publish_posts_opening_update_pg() {
             id,
             Some("API errors".into()),
             Some("Looking into it".into()),
+            None,
             Actor::User(user),
         )
         .await
@@ -1571,7 +1573,7 @@ async fn publish_posts_opening_update_pg() {
 
     // Re-publishing does not post a second opening update.
     store
-        .publish(org, id, None, None, Actor::User(user))
+        .publish(org, id, None, None, None, Actor::User(user))
         .await
         .unwrap();
     let count: i64 =
@@ -1594,7 +1596,7 @@ async fn publish_posts_opening_update_pg() {
     .await
     .unwrap();
     store
-        .publish(org2, id2, None, None, Actor::User(user2))
+        .publish(org2, id2, None, None, None, Actor::User(user2))
         .await
         .unwrap();
     let count2: i64 =
@@ -1613,7 +1615,7 @@ async fn publish_posts_opening_update_pg() {
         .await
         .unwrap();
     store
-        .publish(org3, id3, None, None, Actor::User(user3))
+        .publish(org3, id3, None, None, None, Actor::User(user3))
         .await
         .unwrap();
     let count3: i64 =
@@ -1638,7 +1640,14 @@ async fn resolve_after_unpublish_still_writes_closing_update_pg() {
     // being internal at resolve time.
     let (org, user, id) = seed(&pool, "increunpub").await;
     store
-        .publish(org, id, Some("Outage".into()), None, Actor::User(user))
+        .publish(
+            org,
+            id,
+            Some("Outage".into()),
+            None,
+            None,
+            Actor::User(user),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -1759,7 +1768,14 @@ async fn a_repeated_resolve_posts_one_public_update_pg() {
     let store = PgIncidentOpsStore::new(pool.clone());
 
     store
-        .publish(org, id, Some("outage".into()), None, Actor::User(user))
+        .publish(
+            org,
+            id,
+            Some("outage".into()),
+            None,
+            None,
+            Actor::User(user),
+        )
         .await
         .expect("publish");
     store
@@ -1963,5 +1979,235 @@ async fn an_emergency_receipt_remembers_the_outage_it_paged_for_pg() {
         )
         .state,
         IncidentState::Acknowledged
+    );
+}
+
+async fn seed_status_page(pool: &PgPool, org: OrgId) -> Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO status_pages (org_id, slug, name, enabled) VALUES ($1, $2, 'p', true) \
+         RETURNING id",
+    )
+    .bind(org.0)
+    .bind(unique_slug("incpage"))
+    .fetch_one(pool)
+    .await
+    .expect("insert status page")
+}
+
+fn refused_with(err: uptimepage::error::AppError, want: &str) {
+    match err {
+        uptimepage::error::AppError::BadRequest { code, .. } => assert_eq!(code, want),
+        other => panic!("expected {want}, got {other:?}"),
+    }
+}
+
+/// With no monitor there is no component to route by, so the pages it shows
+/// on are exactly the ones named, and publishing to none is refused rather
+/// than reported as a success nobody can see.
+#[tokio::test]
+#[ignore]
+async fn an_incident_without_a_monitor_is_published_to_the_pages_it_names_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, user, _) = seed(&pool, "incpages").await;
+    let store = PgIncidentOpsStore::new(pool.clone());
+    let first = seed_status_page(&pool, org).await;
+    let second = seed_status_page(&pool, org).await;
+    let codes = uptimepage::error::codes::INCIDENT_STATUS_PAGE_REQUIRED;
+
+    let bare = store
+        .declare(
+            org,
+            NewManualIncident {
+                title: Some("network outage".into()),
+                ..Default::default()
+            },
+            Actor::User(user),
+        )
+        .await
+        .expect("declare");
+    refused_with(
+        store
+            .publish(org, bare.id, None, None, None, Actor::User(user))
+            .await
+            .expect_err("no page to show it on"),
+        codes,
+    );
+    let still: String = sqlx::query_scalar("SELECT visibility FROM incidents WHERE id = $1")
+        .bind(bare.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(still, "internal", "a refused publish leaves it internal");
+
+    store
+        .publish(
+            org,
+            bare.id,
+            None,
+            None,
+            Some(vec![first, second, first]),
+            Actor::User(user),
+        )
+        .await
+        .expect("publish to two pages")
+        .expect("incident exists");
+    let mut want = vec![first, second];
+    want.sort();
+    assert_eq!(store.status_pages(org, bare.id).await.unwrap(), want);
+
+    store
+        .publish(
+            org,
+            bare.id,
+            None,
+            None,
+            Some(vec![second]),
+            Actor::User(user),
+        )
+        .await
+        .expect("narrow to one page");
+    assert_eq!(
+        store.status_pages(org, bare.id).await.unwrap(),
+        vec![second]
+    );
+    let published: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT metadata->'status_page_ids' FROM org_audit_log \
+         WHERE org_id = $1 AND action = 'incident.published' ORDER BY occurred_at",
+    )
+    .bind(org.0)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        published,
+        vec![serde_json::json!(want), serde_json::json!([second])],
+        "each publish records the pages it left the incident on"
+    );
+
+    let paged = store
+        .declare(
+            org,
+            NewManualIncident {
+                title: Some("dns outage".into()),
+                status_page_ids: vec![first],
+                ..Default::default()
+            },
+            Actor::User(user),
+        )
+        .await
+        .expect("declare with a page");
+    let declared: Vec<Option<serde_json::Value>> = sqlx::query_scalar(
+        "SELECT metadata->'status_page_ids' FROM org_audit_log \
+         WHERE org_id = $1 AND action = 'incident.declared' \
+           AND metadata->>'incident_id' IN ($2::text, $3::text) ORDER BY occurred_at",
+    )
+    .bind(org.0)
+    .bind(bare.id)
+    .bind(paged.id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(declared, vec![None, Some(serde_json::json!([first]))]);
+
+    refused_with(
+        store
+            .publish(org, bare.id, None, None, Some(vec![]), Actor::User(user))
+            .await
+            .expect_err("clearing every page"),
+        codes,
+    );
+    assert_eq!(
+        store.status_pages(org, bare.id).await.unwrap(),
+        vec![second],
+        "a refused publish keeps the pages it had"
+    );
+}
+
+/// A page id from another org reads as unknown, and nothing is linked.
+#[tokio::test]
+#[ignore]
+async fn an_incident_cannot_be_posted_to_another_orgs_page_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, user, _) = seed(&pool, "incpagex").await;
+    let (other_org, _, _) = seed(&pool, "incpagey").await;
+    let store = PgIncidentOpsStore::new(pool.clone());
+    let mine = seed_status_page(&pool, org).await;
+    let theirs = seed_status_page(&pool, other_org).await;
+
+    refused_with(
+        store
+            .declare(
+                org,
+                NewManualIncident {
+                    title: Some("x".into()),
+                    status_page_ids: vec![mine, theirs],
+                    ..Default::default()
+                },
+                Actor::User(user),
+            )
+            .await
+            .expect_err("foreign page"),
+        uptimepage::error::codes::INVALID_STATUS_PAGE_ID,
+    );
+    let linked: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM incident_status_pages WHERE status_page_id = $1")
+            .bind(theirs)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(linked, 0);
+    let declared: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM incidents WHERE org_id = $1 AND origin = 'manual'",
+    )
+    .bind(org.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(declared, 0, "the declaration rolled back with its pages");
+}
+
+/// A monitor's incident shows wherever the monitor does, so naming pages for
+/// it is refused rather than silently ignored.
+#[tokio::test]
+#[ignore]
+async fn pages_are_refused_for_an_incident_with_a_monitor_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, user, id) = seed(&pool, "incpagemon").await;
+    let store = PgIncidentOpsStore::new(pool.clone());
+    let page = seed_status_page(&pool, org).await;
+    let codes = uptimepage::error::codes::INCIDENT_STATUS_PAGES_WITH_MONITOR;
+    let target: Uuid = sqlx::query_scalar("SELECT target_id FROM incidents WHERE id = $1")
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    refused_with(
+        store
+            .publish(org, id, None, None, Some(vec![page]), Actor::User(user))
+            .await
+            .expect_err("pages on a monitor's incident"),
+        codes,
+    );
+    refused_with(
+        store
+            .declare(
+                org,
+                NewManualIncident {
+                    target_id: Some(target),
+                    status_page_ids: vec![page],
+                    ..Default::default()
+                },
+                Actor::User(user),
+            )
+            .await
+            .expect_err("pages on a monitor's declaration"),
+        codes,
     );
 }

@@ -894,7 +894,7 @@ impl McpServer {
     /// `list_incidents`/`get_org_health` to read what's been posted before
     /// acknowledging.
     #[tool(
-        description = "One incident: affected monitor, severity, open/resolved times, error sample, and the full operator-update timeline. Read-only.",
+        description = "One incident: affected monitor, severity, open/resolved times, error sample, the full operator-update timeline, and the status pages an incident with no monitor is posted to. Read-only.",
         title = "Incident details",
         annotations(read_only_hint = true)
     )]
@@ -928,7 +928,14 @@ impl McpServer {
             None => None,
         };
 
-        Ok(Json(incident_detail(&incident, monitor_name)))
+        let pages = self
+            .state
+            .incident_ops_store
+            .status_pages(org, id)
+            .await
+            .map_err(|e| McpToolError::internal(format!("incident pages: {e}")))?;
+
+        Ok(Json(incident_detail(&incident, monitor_name, &pages)))
     }
 
     /// Incident reporting over a trailing window: MTTA/MTTR, counts by

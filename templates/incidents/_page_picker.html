@@ -1,0 +1,18 @@
+<div data-incident-pages class="mt-5">
+  <span class="mb-1.5 block text-xs text-muted">Status pages</span>
+  {% if pages.is_empty() %}
+  <p class="font-mono text-xs text-quiet"># no status pages yet, <a href="/settings/pages" class="underline decoration-dotted underline-offset-2 hover:text-body">create one</a> to post this where customers look</p>
+  {% else %}
+  <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Status pages">
+    <label class="scope-token">
+      <input type="checkbox" data-incident-page-all class="sr-only">all pages
+    </label>
+    {% for p in pages %}
+    <label class="scope-token">
+      <input type="checkbox" data-incident-page value="{{ p.id }}" class="sr-only"{% if p.selected %} checked{% endif %}>{{ p.name }}
+    </label>
+    {% endfor %}
+  </div>
+  <p class="mt-1 text-xs text-muted">With no monitor, the incident shows only on the pages picked here.</p>
+  {% endif %}
+</div>

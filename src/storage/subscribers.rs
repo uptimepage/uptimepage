@@ -265,7 +265,8 @@ impl PendingUpdate {
 /// Verified subscribers (email or webhook) with an unclaimed update on an
 /// ever-published incident, posted since they subscribed and within the
 /// lookback. The incident→page link is `incident.target_id` ∈ the page's
-/// curated components. Updates flow while the incident is public; once
+/// curated components, or for an incident with no monitor, the pages it was
+/// published to. Updates flow while the incident is public; once
 /// unpublished, only the `resolved` closer still fans out, so an incident taken
 /// off the page before it ends doesn't strand subscribers on its last update.
 pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingUpdate>> {
@@ -273,7 +274,7 @@ pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingUpdate
         "SELECT s.id AS subscriber_id, u.id AS update_id, s.org_id, s.channel, s.target,
                 u.phase, u.message,
                 i.id AS incident_id, i.public_title, i.status_at_start,
-                COALESCE(NULLIF(c.public_name, ''), t.name) AS component_name,
+                COALESCE(NULLIF(c.public_name, ''), t.name, '') AS component_name,
                 COALESCE(NULLIF(sp.public_display_name, ''), sp.name) AS page_name,
                 sp.slug::text AS slug,
                 sp.custom_domain::text AS custom_domain,
@@ -282,11 +283,11 @@ pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingUpdate
          FROM status_page_subscribers s
          JOIN status_pages sp ON sp.id = s.status_page_id
          {PAGE_PLAN_JOIN}
-         JOIN status_page_components c
+         JOIN incidents i ON i.org_id = s.org_id
+         LEFT JOIN status_page_components c
               ON c.status_page_id = s.status_page_id AND c.org_id = s.org_id
-         JOIN targets t ON t.id = c.target_id AND t.org_id = c.org_id
-         JOIN incidents i
-              ON i.target_id = c.target_id AND i.org_id = c.org_id
+             AND c.target_id = i.target_id
+         LEFT JOIN targets t ON t.id = c.target_id AND t.org_id = c.org_id
          JOIN incident_updates u ON u.incident_id = i.id AND u.org_id = i.org_id
               AND (i.visibility = 'public'
                    OR (u.phase = 'resolved'
@@ -297,7 +298,11 @@ pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingUpdate
            -- The page drops a held monitor from its component list, so mailing
            -- about one would send readers to a page that shows neither the
            -- component nor the incident.
-           AND t.plan_hold_at IS NULL
+           AND ((t.id IS NOT NULL AND t.plan_hold_at IS NULL)
+                OR (i.target_id IS NULL AND EXISTS (
+                    SELECT 1 FROM incident_status_pages isp
+                    WHERE isp.incident_id = i.id AND isp.org_id = i.org_id
+                      AND isp.status_page_id = s.status_page_id)))
            AND u.posted_at >= s.verified_at
            AND u.posted_at >= now() - make_interval(hours => $2)
            AND NOT EXISTS (

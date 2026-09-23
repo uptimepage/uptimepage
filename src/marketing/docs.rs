@@ -183,7 +183,7 @@ pub const DOCS: &[DocPage] = &[
         blurb: "Acknowledgement, ownership, on-call, escalation, and the retrospective around a failing check.",
         section: Section::Guide,
         scope: Scope::Everyone,
-        lastmod: "2026-09-08",
+        lastmod: "2026-09-23",
         source: include_str!("../../docs/incidents.md"),
         dir: "",
     },

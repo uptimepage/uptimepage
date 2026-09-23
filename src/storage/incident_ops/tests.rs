@@ -201,7 +201,14 @@ async fn publish_then_unpublish_flips_visibility_and_logs() {
     let id = seed_triggered(&store);
     let u = user();
     let pubd = store
-        .publish(org(), id, Some("EU outage".into()), None, Actor::User(u))
+        .publish(
+            org(),
+            id,
+            Some("EU outage".into()),
+            None,
+            None,
+            Actor::User(u),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -227,7 +234,7 @@ async fn publish_then_unpublish_flips_visibility_and_logs() {
 async fn publish_missing_incident_is_none() {
     let store = InMemoryIncidentOpsStore::new();
     let res = store
-        .publish(org(), Uuid::now_v7(), None, None, Actor::System)
+        .publish(org(), Uuid::now_v7(), None, None, None, Actor::System)
         .await
         .unwrap();
     assert!(res.is_none());
@@ -440,4 +447,35 @@ fn ack_link_is_bound_to_incident_episode_channel_and_expiry() {
         )
         .is_none()
     );
+}
+
+#[tokio::test]
+async fn an_incident_without_a_monitor_publishes_only_to_named_pages() {
+    let store = InMemoryIncidentOpsStore::new();
+    let u = user();
+    let inc = store
+        .declare(
+            org(),
+            crate::domain::NewManualIncident::default(),
+            Actor::User(u),
+        )
+        .await
+        .unwrap();
+    let refused = store
+        .publish(org(), inc.id, None, None, None, Actor::User(u))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(refused, crate::error::AppError::BadRequest { code, .. }
+            if code == crate::error::codes::INCIDENT_STATUS_PAGE_REQUIRED),
+        "{refused:?}"
+    );
+    let page = Uuid::now_v7();
+    let pubd = store
+        .publish(org(), inc.id, None, None, Some(vec![page]), Actor::User(u))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(pubd.visibility, IncidentVisibility::Public);
+    assert_eq!(store.status_pages(org(), inc.id).await.unwrap(), vec![page]);
 }

@@ -250,6 +250,30 @@ pub struct DueIncident {
     pub escalation_round: i32,
 }
 
+pub(crate) fn pages_with_monitor() -> crate::error::AppError {
+    crate::error::AppError::bad_request_field(
+        crate::error::codes::INCIDENT_STATUS_PAGES_WITH_MONITOR,
+        "an incident with a monitor appears on the status pages carrying that monitor",
+        "status_page_ids",
+    )
+}
+
+pub(crate) fn unknown_status_pages(missing: usize) -> crate::error::AppError {
+    crate::error::AppError::bad_request_field(
+        crate::error::codes::INVALID_STATUS_PAGE_ID,
+        format!("{missing} status page id(s) do not exist"),
+        "status_page_ids",
+    )
+}
+
+pub(crate) fn status_page_required() -> crate::error::AppError {
+    crate::error::AppError::bad_request_field(
+        crate::error::codes::INCIDENT_STATUS_PAGE_REQUIRED,
+        "an incident with no monitor needs at least one status page to appear on",
+        "status_page_ids",
+    )
+}
+
 /// Body of the update that publishing an incident posts for it. Subscribers are
 /// notified per update, so publishing without one would reach nobody; shared so
 /// a confirmation prompt can show the text before it goes out.
@@ -342,14 +366,22 @@ pub trait IncidentOpsStore: Send + Sync {
     /// Flip an incident to public visibility, optionally seeding the public
     /// narration (a `None` field leaves the stored copy untouched). Logs a
     /// `published` event. `None` ⇒ no such incident in `org`.
+    ///
+    /// `status_page_ids` replaces a monitor-less incident's pages (`None`
+    /// keeps them). Refused when the incident has a monitor, or when a
+    /// monitor-less one would end up on no page at all.
     async fn publish(
         &self,
         org: OrgId,
         id: Uuid,
         public_title: Option<String>,
         public_description: Option<String>,
+        status_page_ids: Option<Vec<Uuid>>,
         actor: Actor,
     ) -> Result<Option<OpsIncident>>;
+    /// Pages a monitor-less incident was published to, empty for one with a
+    /// monitor.
+    async fn status_pages(&self, org: OrgId, id: Uuid) -> Result<Vec<Uuid>>;
     /// Flip an incident back to internal visibility. Logs an `unpublished`
     /// event. `None` ⇒ no such incident in `org`.
     async fn unpublish(&self, org: OrgId, id: Uuid, actor: Actor) -> Result<Option<OpsIncident>>;

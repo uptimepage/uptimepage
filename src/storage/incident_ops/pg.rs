@@ -21,7 +21,8 @@ use crate::storage::locks::{advisory_xact_lock, incident_lock_key};
 use super::{
     AUTO_RESOLVED_MESSAGE, Actor, DueIncident, EmergencyAck, INCIDENT_DETAIL_ROW_CAP,
     IncidentOpsFilter, IncidentOpsStore, IncidentStateCounts, LifecycleOutcome,
-    PendingNotification, QUEUED_TAKEOVER_SECS, opening_update_message,
+    PendingNotification, QUEUED_TAKEOVER_SECS, opening_update_message, pages_with_monitor,
+    status_page_required,
 };
 
 pub struct PgIncidentOpsStore {
@@ -41,6 +42,64 @@ const OPS_COLS: &str = "id, target_id, title, state, severity, urgency, origin, 
      acknowledged_by, assigned_to, resolved_by, escalation_policy_id, escalation_level, \
      escalation_round, next_escalation_at, \
      check_count, error_sample, regions_down, regions_up, created_at, updated_at";
+
+/// Point a monitor-less incident at exactly `pages`. A page outside `org`
+/// is refused as unknown, so the answer never confirms another tenant's id.
+async fn replace_status_pages_tx(
+    conn: &mut sqlx::PgConnection,
+    org: OrgId,
+    id: Uuid,
+    pages: &[Uuid],
+) -> Result<Vec<Uuid>> {
+    sqlx::query("DELETE FROM incident_status_pages WHERE org_id = $1 AND incident_id = $2")
+        .bind(org.0)
+        .bind(id)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| anyhow::anyhow!("clear incident pages: {e}"))?;
+    if pages.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut wanted = pages.to_vec();
+    wanted.sort_unstable();
+    wanted.dedup();
+    let linked = sqlx::query(
+        "INSERT INTO incident_status_pages (org_id, incident_id, status_page_id) \
+         SELECT $1, $2, sp.id FROM status_pages sp WHERE sp.org_id = $1 AND sp.id = ANY($3)",
+    )
+    .bind(org.0)
+    .bind(id)
+    .bind(&wanted)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| anyhow::anyhow!("link incident pages: {e}"))?
+    .rows_affected();
+    if linked != wanted.len() as u64 {
+        return Err(super::unknown_status_pages(wanted.len() - linked as usize));
+    }
+    Ok(wanted)
+}
+
+/// Names the pages in the audit row only when they are the incident's own;
+/// a monitor's incident reaches pages through their components instead.
+fn incident_audit_meta(mut meta: serde_json::Value, pages: &[Uuid]) -> serde_json::Value {
+    if !pages.is_empty() {
+        meta["status_page_ids"] = serde_json::json!(pages);
+    }
+    meta
+}
+
+async fn status_pages_tx(conn: &mut sqlx::PgConnection, org: OrgId, id: Uuid) -> Result<Vec<Uuid>> {
+    sqlx::query_scalar(
+        "SELECT status_page_id FROM incident_status_pages \
+         WHERE org_id = $1 AND incident_id = $2 ORDER BY status_page_id",
+    )
+    .bind(org.0)
+    .bind(id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|e| anyhow::anyhow!("incident pages: {e}").into())
+}
 
 /// A `%…%` `LIKE` pattern with the operator's wildcards neutralised, so a
 /// literal `%` or `_` in the search box matches itself, not everything.
@@ -617,6 +676,9 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         new: NewManualIncident,
         actor: Actor,
     ) -> Result<OpsIncident> {
+        if new.target_id.is_some() && !new.status_page_ids.is_empty() {
+            return Err(pages_with_monitor());
+        }
         let mut tx = self
             .pool
             .begin()
@@ -654,18 +716,22 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             )
         })?;
         let id = row.id;
+        let pages = replace_status_pages_tx(&mut tx, org, id, &new.status_page_ids).await?;
         insert_event_tx(&mut tx, org, id, IncidentEventKind::Triggered, actor, None).await?;
         record_incident_audit_tx(
             &mut tx,
             org,
             actor,
             "incident.declared",
-            serde_json::json!({
-                "incident_id": id,
-                "target_id": row.target_id,
-                "severity": row.severity,
-                "urgency": row.urgency,
-            }),
+            incident_audit_meta(
+                serde_json::json!({
+                    "incident_id": id,
+                    "target_id": row.target_id,
+                    "severity": row.severity,
+                    "urgency": row.urgency,
+                }),
+                &pages,
+            ),
         )
         .await?;
         tx.commit()
@@ -872,6 +938,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         id: Uuid,
         public_title: Option<String>,
         public_description: Option<String>,
+        status_page_ids: Option<Vec<Uuid>>,
         actor: Actor,
     ) -> Result<Option<OpsIncident>> {
         let mut tx = self
@@ -882,14 +949,31 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         // Lock the row and read the pre-publish visibility so the opening
         // update below only fires on an internal->public transition, not on a
         // re-publish.
-        let prior_visibility: Option<String> = sqlx::query_scalar(
-            "SELECT visibility FROM incidents WHERE id = $1 AND org_id = $2 FOR UPDATE",
+        let prior: Option<(String, Option<Uuid>)> = sqlx::query_as(
+            "SELECT visibility, target_id FROM incidents WHERE id = $1 AND org_id = $2 FOR UPDATE",
         )
         .bind(id)
         .bind(org.0)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| anyhow::anyhow!("publish lock: {e}"))?;
+        let Some((prior_visibility, target_id)) = prior else {
+            return Ok(None);
+        };
+        let pages = if target_id.is_none() {
+            let pages = match &status_page_ids {
+                Some(pages) => replace_status_pages_tx(&mut tx, org, id, pages).await?,
+                None => status_pages_tx(&mut tx, org, id).await?,
+            };
+            if pages.is_empty() {
+                return Err(status_page_required());
+            }
+            pages
+        } else if status_page_ids.is_some_and(|p| !p.is_empty()) {
+            return Err(pages_with_monitor());
+        } else {
+            Vec::new()
+        };
         let opening_message =
             opening_update_message(public_title.as_deref(), public_description.as_deref());
         // A provided narration field overwrites; an omitted one keeps the stored
@@ -919,14 +1003,17 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             org,
             actor,
             "incident.published",
-            serde_json::json!({ "incident_id": id, "target_id": row.target_id }),
+            incident_audit_meta(
+                serde_json::json!({ "incident_id": id, "target_id": row.target_id }),
+                &pages,
+            ),
         )
         .await?;
         // On the first publish of a still-active incident, post an opening
         // update unless the operator already narrated one, so subscriber
         // fan-out has a row to send. A retro-published, already-resolved
         // incident gets no "investigating" blast.
-        if prior_visibility.as_deref() == Some("internal") && row.state != "resolved" {
+        if prior_visibility == "internal" && row.state != "resolved" {
             let has_update: bool = sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM incident_updates WHERE incident_id = $1 AND org_id = $2)",
             )
@@ -957,6 +1044,15 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             .await
             .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
         Ok(Some(row_to_ops(row)))
+    }
+
+    async fn status_pages(&self, org: OrgId, id: Uuid) -> Result<Vec<Uuid>> {
+        let mut conn = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|e| anyhow::anyhow!("acquire: {e}"))?;
+        status_pages_tx(&mut conn, org, id).await
     }
 
     async fn unpublish(&self, org: OrgId, id: Uuid, actor: Actor) -> Result<Option<OpsIncident>> {

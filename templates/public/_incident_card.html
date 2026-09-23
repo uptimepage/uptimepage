@@ -14,7 +14,7 @@
         {% endif %}
     </div>
     <p class="text-xs text-quiet">
-        {{ inc.header.component_name }} ·
+        {% if !inc.header.component_name.is_empty() %}{{ inc.header.component_name }} ·{% endif %}
         <time datetime="{{ inc.header.started_at|iso_ts }}" data-tz="exact">{{ inc.header.started_at|human_ts }}</time>
         · {{ inc.header.duration_secs|humanize_dur }}
         {% match inc.ended_at %}

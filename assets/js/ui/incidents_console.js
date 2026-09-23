@@ -121,13 +121,44 @@
     window.location.reload();
   }
 
+  // Checked page ids, or null where the incident has a monitor and so no
+  // picker: its pages are the ones carrying that monitor.
+  function pickedPages(scope) {
+    const picker = scope.querySelector("[data-incident-pages]");
+    if (!picker || picker.hidden) return null;
+    return Array.from(picker.querySelectorAll("[data-incident-page]:checked")).map((c) => c.value);
+  }
+
+  function syncAllPages(picker) {
+    const all = picker.querySelector("[data-incident-page-all]");
+    if (!all) return;
+    const boxes = picker.querySelectorAll("[data-incident-page]");
+    all.checked = boxes.length > 0 && Array.from(boxes).every((b) => b.checked);
+  }
+
+  async function savePages(id) {
+    const pages = pickedPages(root);
+    if (!id || !pages) return;
+    const res = await post("/api/v1/incidents/" + encodeURIComponent(id) + "/publish", {
+      status_page_ids: pages,
+    });
+    if (!res.ok) return showError(errMsg(res));
+    if (window.smToast) window.smToast({ message: "Pages saved", kind: "ok" });
+    window.location.reload();
+  }
+
   async function publish(id) {
     if (!id) return;
+    const pages = pickedPages(root);
     let title = "";
     if (window.smPrompt) {
       const r = await window.smPrompt({
         title: "Publish to status page?",
-        body: "Shows this incident on any status page that lists its monitor. Optional public title:",
+        body:
+          (pages
+            ? "Shows this incident on the status pages picked on this page."
+            : "Shows this incident on any status page that lists its monitor.") +
+          " Optional public title:",
         placeholder: "leave blank to keep the current title",
         optional: true,
       });
@@ -139,6 +170,7 @@
       if (!ok) return;
     }
     const body = title ? { public_title: title } : {};
+    if (pages) body.status_page_ids = pages;
     const res = await post("/api/v1/incidents/" + encodeURIComponent(id) + "/publish", body);
     if (!res.ok) return showError(errMsg(res));
     if (window.smToast) window.smToast({ message: "Published", kind: "ok" });
@@ -210,6 +242,8 @@
       counts_as_downtime: (fd.get("counts_as_downtime") || "0").toString() === "1",
     };
     if (tid) body.target_id = tid;
+    const pages = pickedPages(form);
+    if (pages) body.status_page_ids = pages;
     const res = await post("/api/v1/incidents", body);
     if (!res.ok) return showError(errMsg(res));
     const id = res.json && res.json.id;
@@ -232,6 +266,11 @@
       ev.preventDefault();
       return addNote(note.dataset.incidentId);
     }
+    const save = ev.target.closest("[data-incident-save-pages]");
+    if (save) {
+      ev.preventDefault();
+      return savePages(save.dataset.incidentId);
+    }
     const pub = ev.target.closest("[data-incident-publish]");
     if (pub) {
       ev.preventDefault();
@@ -247,7 +286,24 @@
   root.addEventListener("change", function (ev) {
     const sel = ev.target.closest("[data-incident-assign-select]");
     if (sel) return assignTo(sel);
+    const all = ev.target.closest("[data-incident-page-all]");
+    if (all) {
+      const picker = all.closest("[data-incident-pages]");
+      picker.querySelectorAll("[data-incident-page]").forEach((b) => {
+        b.checked = all.checked;
+      });
+      return;
+    }
+    const one = ev.target.closest("[data-incident-page]");
+    if (one) return syncAllPages(one.closest("[data-incident-pages]"));
+    const target = ev.target.closest("[data-incident-declare-form] select[name=target_id]");
+    if (target) {
+      const picker = target.form.querySelector("[data-incident-pages]");
+      if (picker) picker.hidden = !!target.value;
+    }
   });
+
+  root.querySelectorAll("[data-incident-pages]").forEach(syncAllPages);
 
   root.addEventListener("submit", function (ev) {
     const declare = ev.target.closest("[data-incident-declare-form]");

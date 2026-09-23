@@ -100,6 +100,11 @@ pub const MAINTENANCE_NOT_FOUND: &str = "MAINTENANCE_NOT_FOUND";
 pub const INCIDENT_NOT_FOUND: &str = "INCIDENT_NOT_FOUND";
 pub const INCIDENT_INVALID_STATE: &str = "INCIDENT_INVALID_STATE";
 pub const INCIDENT_DOWNTIME_NOT_EDITABLE: &str = "INCIDENT_DOWNTIME_NOT_EDITABLE";
+/// Publishing an incident with no monitor names no status page to show it on.
+pub const INCIDENT_STATUS_PAGE_REQUIRED: &str = "INCIDENT_STATUS_PAGE_REQUIRED";
+/// Status pages were chosen for an incident whose monitor already decides them.
+pub const INCIDENT_STATUS_PAGES_WITH_MONITOR: &str = "INCIDENT_STATUS_PAGES_WITH_MONITOR";
+pub const INVALID_STATUS_PAGE_ID: &str = "INVALID_STATUS_PAGE_ID";
 pub const POSTMORTEM_NOT_FOUND: &str = "POSTMORTEM_NOT_FOUND";
 pub const ASSIGNEE_NOT_MEMBER: &str = "ASSIGNEE_NOT_MEMBER";
 pub const INVALID_SEVERITY: &str = "INVALID_SEVERITY";

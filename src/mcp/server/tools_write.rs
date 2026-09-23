@@ -222,7 +222,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Publish an incident so it appears on every status page carrying the affected monitor, optionally seeding the public title and description. Status-page subscribers may be notified. Asks for confirmation where the client can show a prompt; otherwise runs on the token's scope. Not read-only; idempotent.",
+        description = "Publish an incident so it appears on every status page carrying the affected monitor, optionally seeding the public title and description. An incident with no monitor needs `status_page_ids` naming the pages to show it on; the list replaces its pages, so start from `get_incident`'s `status_page_ids`. Status-page subscribers may be notified. Asks for confirmation where the client can show a prompt; otherwise runs on the token's scope. Not read-only; idempotent.",
         title = "Publish incident",
         annotations(
             read_only_hint = false,

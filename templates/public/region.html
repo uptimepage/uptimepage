@@ -54,7 +54,7 @@
                     <p class="text-pretty text-sm text-muted">
                         Started
                         <time datetime="{{ inc.header.started_at|iso_ts }}" data-tz="exact">{{ inc.header.started_at|human_ts }}</time>
-                        — {{ inc.header.duration_secs|humanize_dur }} ago — {{ inc.header.component_name }}
+                        — {{ inc.header.duration_secs|humanize_dur }} ago{% if !inc.header.component_name.is_empty() %} — {{ inc.header.component_name }}{% endif %}
                     </p>
                     {% match inc.latest_message %}
                         {% when Some with (msg) %}

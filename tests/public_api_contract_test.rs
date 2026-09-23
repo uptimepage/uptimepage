@@ -75,7 +75,7 @@ impl PublicSource for FakePublicSource {
         };
         let incident = PublicIncident {
             id: public_incident_id(),
-            component_id: public_component_id(),
+            component_id: Some(public_component_id()),
             component_name: PUBLIC_COMPONENT_NAME.into(),
             title: PUBLIC_INCIDENT_TITLE.into(),
             started_at: Utc::now(),
@@ -141,7 +141,7 @@ impl PublicSource for FakePublicSource {
     ) -> Result<CursorPage<PublicIncident>, PublicAppError> {
         let item = PublicIncident {
             id: public_incident_id(),
-            component_id: public_component_id(),
+            component_id: Some(public_component_id()),
             component_name: PUBLIC_COMPONENT_NAME.into(),
             title: PUBLIC_INCIDENT_TITLE.into(),
             started_at: Utc::now(),
@@ -165,7 +165,7 @@ impl PublicSource for FakePublicSource {
         }
         Ok(PublicIncident {
             id,
-            component_id: public_component_id(),
+            component_id: Some(public_component_id()),
             component_name: PUBLIC_COMPONENT_NAME.into(),
             title: PUBLIC_INCIDENT_TITLE.into(),
             started_at: Utc::now(),

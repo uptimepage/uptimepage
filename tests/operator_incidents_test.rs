@@ -265,7 +265,10 @@ async fn a_declared_incident_stays_internal_unless_it_asks_to_be_public() {
     assert_eq!(quiet["visibility"], "internal");
     assert_eq!(quiet["origin"], "manual");
 
+    // With no monitor, public means the pages it names; naming none would
+    // publish to nobody while answering success.
     let resp = app
+        .clone()
         .oneshot(owner_json(
             "POST",
             "/api/v1/incidents",
@@ -273,8 +276,49 @@ async fn a_declared_incident_stays_internal_unless_it_asks_to_be_public() {
         ))
         .await
         .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body_json(resp).await["error"]["code"],
+        "INCIDENT_STATUS_PAGE_REQUIRED"
+    );
+
+    let page = Uuid::now_v7();
+    let resp = app
+        .clone()
+        .oneshot(owner_json(
+            "POST",
+            "/api/v1/incidents",
+            json!({
+                "title": "partner API down",
+                "visibility": "public",
+                "status_page_ids": [page],
+            }),
+        ))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
-    assert_eq!(body_json(resp).await["visibility"], "public");
+    let published = body_json(resp).await;
+    assert_eq!(published["visibility"], "public");
+    assert!(
+        published["public_title"].is_null(),
+        "the internal title is not the customers' headline"
+    );
+
+    // Publish replaces the list, so a client has to be able to read it back.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/incidents/{}",
+                    published["id"].as_str().unwrap()
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["status_page_ids"], json!([page]));
 }
 
 /// A note about an outage the checks never saw must not quietly dent uptime.

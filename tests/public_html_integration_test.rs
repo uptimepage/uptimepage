@@ -58,7 +58,7 @@ impl PublicSource for PublishedSource {
         };
         let incident = PublicIncident {
             id: fixed_incident_id(),
-            component_id: component.id,
+            component_id: Some(component.id),
             component_name: component.name.clone(),
             title: OPERATOR_TITLE.into(),
             started_at: Utc::now() - chrono::Duration::minutes(8),
