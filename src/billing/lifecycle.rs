@@ -390,7 +390,12 @@ impl Billing {
         let now = Utc::now();
         let mut changed = 0;
         for account in store::due_for_sweep(pool, now, SWEEP_BATCH).await? {
-            match self.apply(pool, quotas, account, Input::Clock(now)).await {
+            let swept = match self.paid_since(pool, quotas, account, now).await {
+                Ok(true) => Ok(Outcome::Applied),
+                Ok(false) => self.apply(pool, quotas, account, Input::Clock(now)).await,
+                Err(err) => Err(err),
+            };
+            match swept {
                 Ok(Outcome::Applied) => changed += 1,
                 Ok(_) => {}
                 Err(err) => {
@@ -404,6 +409,54 @@ impl Billing {
         }
         publish_status_gauge(pool).await?;
         Ok(changed)
+    }
+
+    /// A grace window that ran out is checked with the provider before it
+    /// ends anything: a card retry that went through while its webhook
+    /// lagged recovers the account instead of cancelling what was just paid.
+    /// Any other answer, a subscription the provider no longer knows, or an
+    /// answer that did not lift the account out of past due leaves the
+    /// expiry to the clock. No usable answer skips the account until the
+    /// next tick, and so does a busy one, as the clock itself would; a day
+    /// of that past the window ends the wait. A paid answer this side fails
+    /// to record never ends it: the account is retried, not cancelled.
+    async fn paid_since(
+        &self,
+        pool: &PgPool,
+        quotas: &QuotaService,
+        account: AccountId,
+        now: DateTime<Utc>,
+    ) -> Result<bool> {
+        let sub = self.subscription(pool, account).await?;
+        let (BillingStatus::PastDue, Some(grace_until), Some(subscription_ref)) =
+            (sub.status, sub.grace_until, sub.subscription_ref.as_deref())
+        else {
+            return Ok(false);
+        };
+        if grace_until > now || sub.provider.as_deref() != Some(self.provider.name()) {
+            return Ok(false);
+        }
+        let Some(turn) = self.try_turn(account) else {
+            return Ok(false);
+        };
+        let waiting = now < grace_until + Duration::days(1);
+        let seen = match self.provider.fetch_subscription(subscription_ref).await {
+            Ok(seen) => seen,
+            Err(AppError::NotFound { .. }) => return Ok(false),
+            Err(err) if waiting => return Err(err),
+            Err(_) => return Ok(false),
+        };
+        if !matches!(seen.status, Remote::Active | Remote::Trialing) {
+            return Ok(false);
+        }
+        let (_, after) = self
+            .commit_in_turn(pool, account, Input::Snapshot(Box::new(seen)))
+            .await?;
+        drop(turn);
+        if let Some(after) = after {
+            self.settle(pool, quotas, &after.sub, after.fx).await;
+        }
+        Ok(self.subscription(pool, account).await?.status != BillingStatus::PastDue)
     }
 
     async fn apply(

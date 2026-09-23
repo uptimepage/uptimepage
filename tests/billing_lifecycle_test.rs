@@ -833,6 +833,130 @@ async fn a_failed_payment_opens_a_grace_window_the_sweep_closes_and_a_payment_re
     h.finish().await;
 }
 
+/// A past-due account whose grace window has just run out, the provider
+/// holding its subscription as `status`.
+async fn expired_grace(h: &Harness, status: SubscriptionStatus) -> (AccountId, String) {
+    let (account, _, _) = account(&h.pool, "founding", 52).await;
+    let sub = sub_ref();
+    activate(h, account, &sub, TEAM_MONTH).await;
+    h.billing
+        .apply_event(
+            &h.pool,
+            &h.quotas,
+            event(account, &sub, EventKind::PaymentFailed),
+        )
+        .await
+        .expect("failed");
+    h.provider
+        .subscriptions
+        .lock()
+        .unwrap()
+        .insert(sub.clone(), snapshot(&sub, status, TEAM_MONTH, Utc::now()));
+    sqlx::query("UPDATE accounts SET grace_until = now() - interval '1 second' WHERE id = $1")
+        .bind(account.0)
+        .execute(&h.pool)
+        .await
+        .expect("age the grace");
+    h.provider.calls.lock().unwrap().clear();
+    (account, sub)
+}
+
+#[tokio::test]
+#[ignore]
+async fn a_retry_paid_before_its_webhook_recovers_the_account_at_grace_expiry() {
+    let Some(h) = isolated("billing").await else {
+        return;
+    };
+    let (account, sub) = expired_grace(&h, SubscriptionStatus::Active).await;
+
+    assert_eq!(h.billing.sweep(&h.pool, &h.quotas).await.expect("sweep"), 1);
+    let s = row(&h.pool, account).await;
+    assert_eq!(
+        (s.plan_id.as_str(), s.status, s.grace_until),
+        ("team", BillingStatus::Active, None)
+    );
+    assert_eq!(
+        *h.provider.calls.lock().unwrap(),
+        vec![format!("fetch:{sub}")],
+        "nothing paid for is cancelled"
+    );
+    assert_eq!(
+        subjects(&h.mail),
+        vec!["payment_failed", "payment_recovered"]
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn a_grace_expiry_waits_for_the_provider_to_answer() {
+    let Some(h) = isolated("billing").await else {
+        return;
+    };
+    let (account, sub) = expired_grace(&h, SubscriptionStatus::PastDue).await;
+
+    h.provider.fetch_fails.store(true, Ordering::Relaxed);
+    assert_eq!(h.billing.sweep(&h.pool, &h.quotas).await.expect("sweep"), 0);
+    let s = row(&h.pool, account).await;
+    assert_eq!(
+        (s.plan_id.as_str(), s.status),
+        ("team", BillingStatus::PastDue)
+    );
+    assert!(
+        !h.provider
+            .calls
+            .lock()
+            .unwrap()
+            .contains(&format!("cancel:{sub}:Now"))
+    );
+
+    h.provider.fetch_fails.store(false, Ordering::Relaxed);
+    assert_eq!(h.billing.sweep(&h.pool, &h.quotas).await.expect("sweep"), 1);
+    let s = row(&h.pool, account).await;
+    assert_eq!(
+        (s.plan_id.as_str(), s.status),
+        ("founding", BillingStatus::Canceled)
+    );
+    assert!(
+        h.provider
+            .calls
+            .lock()
+            .unwrap()
+            .contains(&format!("cancel:{sub}:Now"))
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn a_day_of_provider_silence_past_the_window_ends_the_wait() {
+    let Some(h) = isolated("billing").await else {
+        return;
+    };
+    let (account, sub) = expired_grace(&h, SubscriptionStatus::PastDue).await;
+    sqlx::query("UPDATE accounts SET grace_until = now() - interval '25 hours' WHERE id = $1")
+        .bind(account.0)
+        .execute(&h.pool)
+        .await
+        .expect("age the grace a day more");
+
+    h.provider.fetch_fails.store(true, Ordering::Relaxed);
+    assert_eq!(h.billing.sweep(&h.pool, &h.quotas).await.expect("sweep"), 1);
+    let s = row(&h.pool, account).await;
+    assert_eq!(
+        (s.plan_id.as_str(), s.status),
+        ("founding", BillingStatus::Canceled)
+    );
+    let calls = h.provider.calls.lock().unwrap().clone();
+    assert_eq!(
+        calls.first(),
+        Some(&format!("fetch:{sub}")),
+        "still asked first"
+    );
+    assert!(calls.contains(&format!("cancel:{sub}:Now")));
+    h.finish().await;
+}
+
 const CANCEL_FAILED: &str = "uptimepage_billing_provider_cancel_failed_total";
 
 fn cancel_failures() -> f64 {
@@ -953,7 +1077,11 @@ async fn a_refused_cancel_is_counted_unless_the_provider_shows_the_subscription_
     assert_eq!(h.billing.sweep(&h.pool, &h.quotas).await.expect("sweep"), 1);
     assert_eq!(
         *h.provider.calls.lock().unwrap(),
-        vec![format!("cancel:{sub}:Now"), format!("fetch:{sub}")]
+        vec![
+            format!("fetch:{sub}"),
+            format!("cancel:{sub}:Now"),
+            format!("fetch:{sub}")
+        ]
     );
     assert_eq!(
         cancel_failures(),
