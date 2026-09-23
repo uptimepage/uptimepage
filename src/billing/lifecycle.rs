@@ -391,8 +391,12 @@ impl Billing {
         let mut changed = 0;
         for account in store::due_for_sweep(pool, now, SWEEP_BATCH).await? {
             let swept = match self.paid_since(pool, quotas, account, now).await {
-                Ok(true) => Ok(Outcome::Applied),
-                Ok(false) => self.apply(pool, quotas, account, Input::Clock(now)).await,
+                Ok(Some(true)) => Ok(Outcome::Applied),
+                Ok(Some(false)) => self.apply(pool, quotas, account, Input::Clock(now)).await,
+                Ok(None) => {
+                    tracing::debug!(account = %account, "billing sweep: account busy, next tick");
+                    Ok(Outcome::Unchanged)
+                }
                 Err(err) => Err(err),
             };
             match swept {
@@ -426,28 +430,28 @@ impl Billing {
         quotas: &QuotaService,
         account: AccountId,
         now: DateTime<Utc>,
-    ) -> Result<bool> {
+    ) -> Result<Option<bool>> {
         let sub = self.subscription(pool, account).await?;
         let (BillingStatus::PastDue, Some(grace_until), Some(subscription_ref)) =
             (sub.status, sub.grace_until, sub.subscription_ref.as_deref())
         else {
-            return Ok(false);
+            return Ok(Some(false));
         };
         if grace_until > now || sub.provider.as_deref() != Some(self.provider.name()) {
-            return Ok(false);
+            return Ok(Some(false));
         }
         let Some(turn) = self.try_turn(account) else {
-            return Ok(false);
+            return Ok(None);
         };
         let waiting = now < grace_until + Duration::days(1);
         let seen = match self.provider.fetch_subscription(subscription_ref).await {
             Ok(seen) => seen,
-            Err(AppError::NotFound { .. }) => return Ok(false),
+            Err(AppError::NotFound { .. }) => return Ok(Some(false)),
             Err(err) if waiting => return Err(err),
-            Err(_) => return Ok(false),
+            Err(_) => return Ok(Some(false)),
         };
         if !matches!(seen.status, Remote::Active | Remote::Trialing) {
-            return Ok(false);
+            return Ok(Some(false));
         }
         let (_, after) = self
             .commit_in_turn(pool, account, Input::Snapshot(Box::new(seen)))
@@ -456,7 +460,9 @@ impl Billing {
         if let Some(after) = after {
             self.settle(pool, quotas, &after.sub, after.fx).await;
         }
-        Ok(self.subscription(pool, account).await?.status != BillingStatus::PastDue)
+        Ok(Some(
+            self.subscription(pool, account).await?.status != BillingStatus::PastDue,
+        ))
     }
 
     async fn apply(
