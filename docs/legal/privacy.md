@@ -1,16 +1,16 @@
 # Privacy Policy
 
-**Last updated:** 2026-08-23
+**Last updated:** 2026-09-23
 
 This Privacy Policy explains how the uptimepage service ("we", "us") collects and processes personal data. It is intended to satisfy our obligations under the EU General Data Protection Regulation (GDPR) and similar laws.
 
 ## 1. Data Controller
 
-Artem Senenko, Nicosia, Cyprus, is the data controller for personal data processed via the Service. The controller is a natural person; no company is currently registered.
+Artem Senenko, Dimitriou Karatasou 5, 2024 Nicosia, Cyprus, is the data controller for personal data processed via the Service. The controller is a natural person; no company is currently registered.
 
-**Contact:** hello@uptimepage.dev
+**Contact:** [hello@uptimepage.dev](mailto:hello@uptimepage.dev), +357 97 425258
 
-**For data-subject requests:** hello@uptimepage.dev (see §10)
+**For data-subject requests:** [hello@uptimepage.dev](mailto:hello@uptimepage.dev) (see §10)
 
 We do not have a designated Data Protection Officer as we do not meet the thresholds under GDPR Article 37.
 
@@ -19,12 +19,14 @@ We do not have a designated Data Protection Officer as we do not meet the thresh
 We collect data in three ways:
 
 **You provide:**
-- Email address (via GitHub or Google OAuth, or magic-link sign-in)
-- Display name (via GitHub or Google OAuth)
+- Email address (via GitHub, Google, Microsoft or GitLab sign-in, or email sign-in)
+- Display name (via GitHub, Google, Microsoft or GitLab sign-in)
 - Passkey public keys and the name you give each one. The private key is created by your device and never leaves it, so we never receive it
 - Organisation names, slugs, branding (display name, about text, logo)
 - Target configurations (URLs, intervals, headers, optional credentials)
 - Status-page customisation (incident narration, maintenance windows)
+
+**If you buy a paid plan:** Paddle collects your payment details, billing address and tax details directly in its checkout. We never see or store your card number. From Paddle we receive a customer ID, a subscription ID, the plan and billing interval you chose, the subscription status, and the dates of the current period and of payments.
 
 **We generate automatically:**
 - Session identifiers (random)
@@ -56,6 +58,7 @@ We do **not** use third-party analytics services that export your data (no Googl
 | Browser flow runs and failure evidence | Show why a monitored journey broke | Contract |
 | Heartbeat pings and the output your job sends with them | Show when a scheduled job ran and why it failed | Contract |
 | Sessions, API tokens | Authenticate API requests | Contract |
+| Subscription records and billing history | Provide the paid plan you bought, apply its limits, handle cancellations and failed payments | Contract |
 | Hashed IP, login attempts | Detect security threats | Legitimate interest |
 | Sign-in method changes | Let you see, and challenge, every credential that opens your account | Legitimate interest |
 | Audit log | Compliance and accountability | Legitimate interest |
@@ -67,6 +70,8 @@ We do **not** use third-party analytics services that export your data (no Googl
 **Heartbeat monitors:** if your job POSTs a body to its ping URL, we keep the first few kilobytes of it as that run's output, so a failure can be read without going back to the machine that ran it. Whatever the job prints is what we store, so do not print secrets to it. It is never put into an alert or notification, and it is deleted on a shorter clock than the ping itself.
 
 **MCP connector:** when you connect an AI assistant to our MCP server, it reads your monitoring because you asked it to, and every action that would change something is recorded, whether it succeeded, was refused, or you declined it. The record names the tool, identifies what it acted on, and states the outcome, so it can include a monitor's name and address, the tags and group a retune moved it to, and the names of the channels it alerts. A refused action is recorded too, which means a monitor name your assistant proposed can be kept even though you declined it. What you write for customers is not kept here: an incident's public title and description, the updates you post, and any note on acknowledging or resolving are not part of this record. Read-only calls are not recorded at all. We never receive or store your conversation with the assistant, only the tool calls it makes. The client you connect is one you chose and someone else operates, so the answers it asks for reach whoever runs it; that is your instruction to it, not a transfer we make (see §6).
+
+**Status page subscribers:** if you subscribe to a status page run by one of our customers, that customer decides how your data is used and is its controller; we process it on their behalf. We store your email address or webhook URL, when you confirmed the subscription, and a record of each notification we send you. We use it only to send that page's incident and maintenance updates. Emails go out through Resend. Every email carries an unsubscribe link, and an address that bounces or reports a message as spam is removed. For any other request about your data, contact the organisation that runs the page, or write to us and we will pass it on.
 
 We do not engage in automated decision-making with significant effects on you (no profiling, no scoring).
 
@@ -88,6 +93,10 @@ We do not engage in automated decision-making with significant effects on you (n
 | Audit log | 2 years |
 | MCP write actions (tool, what it acted on, outcome, and the person and token behind it) | 2 years |
 | Quota events | 90 days |
+| Status page subscriptions (email address or webhook URL) | Until you unsubscribe, your address bounces, or the page owner removes you or deletes the page. Unconfirmed ones are deleted once the confirmation link expires |
+| Status page notification records | 30 days |
+| Subscription records and billing history (plan changes and why) | Until account deletion |
+| Payment provider event IDs (to ignore duplicate deliveries) | 30 days |
 | Server access logs | 30 days |
 | Application error logs | 30 days |
 | Aggregate analytics (marketing and sign-in pages) | Indefinite (aggregate only; no identifiers that single you out) |
@@ -104,7 +113,11 @@ We use these third-party processors:
 | Resend | Transactional emails | USA | Standard Contractual Clauses |
 | GitHub | OAuth authentication | USA | Standard Contractual Clauses |
 | Google | OAuth authentication | USA | Standard Contractual Clauses |
+| Microsoft | OAuth authentication | USA | Standard Contractual Clauses |
+| GitLab | OAuth authentication | USA | Standard Contractual Clauses |
 | Fly.io | Probe infrastructure for non-EU check regions | USA | Standard Contractual Clauses |
+
+When you buy a paid plan, Paddle sells it to you as Merchant of Record: Paddle.com Market Limited (United Kingdom), or for some customers its affiliate Paddle.com Inc. (United States). Paddle is a separate controller for the payment, billing and tax data it collects, and handles it under its own privacy policy (<https://www.paddle.com/legal/privacy>). We share with Paddle only what it needs to link a purchase to your account: your account ID and the plan you chose.
 
 We do **not** sell or rent your data. We do not share it for marketing.
 
@@ -115,7 +128,7 @@ We may disclose data:
 
 ## 6. International Transfers
 
-Data is primarily stored in Finland (Hetzner data centre, Helsinki). Resend, GitHub, Google, and Fly.io are based in the United States; transfers to them are protected by Standard Contractual Clauses adopted by the European Commission.
+Data is primarily stored in Finland (Hetzner data centre, Helsinki). Resend, GitHub, Google, Microsoft, GitLab and Fly.io are based in the United States; transfers to them are protected by Standard Contractual Clauses adopted by the European Commission. Paddle.com Market Limited is based in the United Kingdom, which the European Commission recognises as providing adequate protection.
 
 An AI assistant you connect over MCP (see §3) reads your monitoring wherever that assistant runs, which may be outside the EU. You choose that client and its operator, and it retrieves only what it asks for on your instruction, so we do not treat it as a processor acting for us. If that matters to you, the connector is optional and revoking it in Settings stops it.
 
@@ -145,7 +158,7 @@ Under GDPR, you have the right to:
 - **Data portability** (Article 20) — see §10
 - **Object** to processing based on legitimate interest (Article 21) — contact us
 - **Withdraw consent** (Article 7(3)) — applies only if we relied on consent for processing
-- **Lodge a complaint** with your local supervisory authority. Our supervisory authority is the Office of the Commissioner for Personal Data Protection, Cyprus (https://www.dataprotection.gov.cy/)
+- **Lodge a complaint** with your local supervisory authority. Our supervisory authority is the Office of the Commissioner for Personal Data Protection, Cyprus (<https://www.dataprotection.gov.cy/>)
 
 ## 9. Cookies
 
@@ -164,7 +177,7 @@ Two channels — use whichever is convenient:
 - **Export:** Visit /settings/account → "Export My Data". You receive a JSON file with the data associated with your account. Activity logs (sign-ins, sign-in method changes, audit events, MCP write actions) cover the last 90 days; ask us by email if you need the full retained history.
 - **Deletion:** Visit /settings/account → "Delete My Account". The account is immediately suspended and permanently purged after 30 days.
 
-**Email:** Send a request to hello@uptimepage.dev. We will:
+**Email:** Send a request to [hello@uptimepage.dev](mailto:hello@uptimepage.dev). We will:
 
 - Acknowledge receipt within 7 days
 - Verify your identity (typically: email match with account email)
@@ -182,4 +195,4 @@ We may update this Policy. Material changes will be announced via email 30 days 
 
 ## 13. Contact
 
-hello@uptimepage.dev
+[hello@uptimepage.dev](mailto:hello@uptimepage.dev)

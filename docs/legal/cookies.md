@@ -1,10 +1,10 @@
 # Cookie Policy
 
-**Last updated:** 2026-08-24
+**Last updated:** 2026-09-23
 
 ## What Cookies We Use
 
-Every cookie below is set by the Service itself. None of them identify you to third parties, track your browsing across other sites, or facilitate advertising.
+Every cookie below is set by the Service itself. The one exception is Paddle's checkout, described under [Paying for a plan](#paying-for-a-plan). None of them identify you to third parties, track your browsing across other sites, or facilitate advertising.
 
 ### Signing in
 
@@ -33,18 +33,22 @@ Without `_sm_session` you cannot stay signed in. The other two are set only whil
 
 These two mirror preferences already stored on your account. They are issued when you sign in and updated when you change the setting.
 
+### Paying for a plan
+
+When you open checkout to buy or manage a paid plan, the payment page loads Paddle.js from Paddle, our reseller. Paddle may set its own cookies or similar storage there to run the checkout and prevent fraud, as its privacy policy describes (<https://www.paddle.com/legal/privacy>). This happens only on the payment page, only after you choose to pay. Nothing from Paddle loads anywhere else in the Service.
+
 ## What Cookies We Don't Use
 
 We do not use:
 
 - Analytics cookies (our analytics is self-hosted and cookieless, so it sets none; see the Privacy Policy)
 - Advertising cookies (no Google Ads, no Facebook Pixel, no DoubleClick)
-- Third-party tracking cookies of any kind
+- Third-party tracking cookies of any kind (Paddle's checkout cookies serve the payment you started, not tracking)
 - Fingerprinting techniques as cookie alternatives
 
 ## Consent
 
-Under the ePrivacy Directive and GDPR, cookies strictly necessary for a service you explicitly requested do not require consent, and neither do cookies that only remember a choice you made yourself. Every cookie above falls into one of those two groups: you receive them by signing in, or by changing a setting. We set no analytics, advertising or tracking cookie, so there is nothing to consent to and no banner to dismiss.
+Under the ePrivacy Directive and GDPR, cookies strictly necessary for a service you explicitly requested do not require consent, and neither do cookies that only remember a choice you made yourself. Every cookie above falls into one of those two groups: you receive them by signing in, by changing a setting, or by opening checkout to pay. We set no analytics, advertising or tracking cookie, so there is nothing to consent to and no banner to dismiss.
 
 You can configure your browser to reject all cookies, but you would not be able to sign in.
 
@@ -55,4 +59,4 @@ do **not** set any cookies. They are fully anonymous.
 
 ## Contact
 
-hello@uptimepage.dev
+[hello@uptimepage.dev](mailto:hello@uptimepage.dev)

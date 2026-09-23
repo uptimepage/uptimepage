@@ -5,14 +5,16 @@
 ## Operator
 
 Artem Senenko
-Nicosia, Cyprus
+Dimitriou Karatasou 5
+2024 Nicosia, Cyprus
 
 The Service is operated by a natural person. No company is currently
 registered.
 
 ## Contact
 
-Email: hello@uptimepage.dev
+Email: [hello@uptimepage.dev](mailto:hello@uptimepage.dev)
+Telephone: +357 97 425258
 
 ## Responsible for Content
 
