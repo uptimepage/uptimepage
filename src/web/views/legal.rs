@@ -1,4 +1,4 @@
-//! Public legal & policy pages: `/terms`, `/privacy`, `/cookies`,
+//! Public legal & policy pages: `/terms`, `/privacy`, `/cookies`, `/refund-policy`,
 //! `/impressum`, `/abuse-policy`, `/security-policy`. The RFC 9116
 //! `/.well-known/security.txt` is mounted alongside them by the router,
 //! from `security::disclosure` — it is plain text, shared with the
@@ -79,6 +79,12 @@ legal_page!(
     cookies,
     "Cookie Policy",
     "../../../docs/legal/cookies.md"
+);
+legal_page!(
+    REFUND,
+    refund_policy,
+    "Refund Policy",
+    "../../../docs/legal/refund-policy.md"
 );
 legal_page!(
     IMPRESSUM,

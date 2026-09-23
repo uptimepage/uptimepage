@@ -722,6 +722,7 @@ async fn legal_pages_render_public_without_auth_nav() {
         ("/terms", "Terms of Service"),
         ("/privacy", "Privacy Policy"),
         ("/cookies", "Cookie Policy"),
+        ("/refund-policy", "Refund Policy"),
         ("/impressum", "Impressum"),
         ("/abuse-policy", "Abuse Policy"),
         ("/security-policy", "Security Policy"),

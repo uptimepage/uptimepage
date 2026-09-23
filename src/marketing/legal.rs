@@ -60,6 +60,8 @@ static COOKIES: LazyLock<String> =
     LazyLock::new(|| render_trusted_unsanitised(include_str!("../../docs/legal/cookies.md")));
 static IMPRESSUM: LazyLock<String> =
     LazyLock::new(|| render_trusted_unsanitised(include_str!("../../docs/legal/impressum.md")));
+static REFUND: LazyLock<String> =
+    LazyLock::new(|| render_trusted_unsanitised(include_str!("../../docs/legal/refund-policy.md")));
 static ABUSE: LazyLock<String> =
     LazyLock::new(|| render_trusted_unsanitised(include_str!("../../docs/legal/abuse-policy.md")));
 static SECURITY: LazyLock<String> = LazyLock::new(|| {
@@ -91,6 +93,11 @@ pub const ROUTES: &[LegalRoute] = &[
         path: "/cookies",
         title: "Cookie Policy",
         body: &COOKIES,
+    },
+    LegalRoute {
+        path: "/refund-policy",
+        title: "Refund Policy",
+        body: &REFUND,
     },
     LegalRoute {
         path: "/impressum",

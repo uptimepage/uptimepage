@@ -189,6 +189,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/terms", get(views::legal::terms))
         .route("/privacy", get(views::legal::privacy))
         .route("/cookies", get(views::legal::cookies))
+        .route("/refund-policy", get(views::legal::refund_policy))
         .route("/impressum", get(views::legal::impressum))
         .route("/abuse-policy", get(views::legal::abuse_policy))
         .route("/security-policy", get(views::legal::security_policy))
