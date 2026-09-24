@@ -3065,7 +3065,10 @@ html:has(.marketing-shell) {
     isolation: isolate;
 }
 /* Clip at the viewport, not the hero box, so translated map art can continue
-   through the container gutter without creating horizontal page scroll. */
+   through the container gutter without creating horizontal page scroll. The
+   shell is <body>, whose overflow propagates to the viewport as `hidden`,
+   which still scrolls; clipping the root too keeps the clip on <body>. */
+html:has(.mk-hero),
 .marketing-shell:has(.mk-hero) { overflow-x: clip; }
 .mk-hero__copy,
 .mk-hero__map { grid-area: 1 / 1; }

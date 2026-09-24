@@ -1158,7 +1158,7 @@ static KUMA_GATUS_MATRIX: Matrix = Matrix {
             cells: &[
                 ("yes, custom domains", "yes"),
                 ("dashboard doubles as page", "part"),
-                ("branded, own subdomain", "yes"),
+                ("branded, custom domain on Pro", "yes"),
             ],
         },
         MatrixRow {
@@ -1271,7 +1271,7 @@ static KUMA_UPPTIME_MATRIX: Matrix = Matrix {
             cells: &[
                 ("yes, custom domains", "yes"),
                 ("GitHub Pages + custom domain", "yes"),
-                ("branded, own subdomain", "yes"),
+                ("branded, custom domain on Pro", "yes"),
             ],
         },
         MatrixRow {
@@ -1479,7 +1479,7 @@ static KUMA_KENER_MATRIX: Matrix = Matrix {
             cells: &[
                 ("yes, custom domains", "yes"),
                 ("logo · colors · CSS · themes · i18n", "yes"),
-                ("branded, own subdomain", "yes"),
+                ("branded, custom domain on Pro", "yes"),
             ],
         },
         MatrixRow {
@@ -1662,7 +1662,7 @@ static KUMA_HEALTHCHECKS_MATRIX: Matrix = Matrix {
             cells: &[
                 ("basic", "part"),
                 ("badges only", "no"),
-                ("branded, own subdomain", "yes"),
+                ("branded, custom domain on Pro", "yes"),
             ],
         },
         MatrixRow {
@@ -1778,7 +1778,7 @@ static KUMA_CACHET_MATRIX: Matrix = Matrix {
             cells: &[
                 ("basic", "part"),
                 ("components · incidents · maintenance · metrics", "yes"),
-                ("branded, own subdomain", "yes"),
+                ("branded, custom domain on Pro", "yes"),
             ],
         },
         MatrixRow {
@@ -1900,7 +1900,7 @@ static OPENSTATUS_GATUS_MATRIX: Matrix = Matrix {
             cells: &[
                 ("yes, custom domains", "yes"),
                 ("dashboard doubles as page", "part"),
-                ("branded, own subdomain", "yes"),
+                ("branded, custom domain on Pro", "yes"),
             ],
         },
         MatrixRow {

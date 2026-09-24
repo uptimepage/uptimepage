@@ -2905,7 +2905,7 @@ resource "uptimepage_target" "api" {
             },
             Section {
                 heading: "How it is paid for",
-                body: "The Standard plan is $0 a month and does not ask for a card. Paid hosted plans are not open yet; when they are, they are what will pay for the work. Self-hosting stays free, because the licence is AGPL and the source is public.",
+                body: "The Standard plan is $0 a month and does not ask for a card. The paid hosted plans, Pro and Team, are what pay for the work. Self-hosting stays free, because the licence is AGPL and the source is public.",
             },
             Section {
                 heading: "Getting in touch",

@@ -91,8 +91,9 @@ const FAQS: &[(&str, &str)] = &[
     (
         "Can I use my own domain for the status page?",
         "Every org gets <code class=\"mk-chip\" translate=\"no\">your-org.uptimepage.dev</code> \
-         out of the box. A custom CNAME (<code class=\"mk-chip\" translate=\"no\">status.yourcompany.com</code>) \
-         is coming. Drop a line if you need it sooner.",
+         out of the box. On Pro and Team it can also live on your own hostname, such as \
+         <code class=\"mk-chip\" translate=\"no\">status.yourcompany.com</code>. Setup is by email for now: \
+         send the hostname, add the CNAME I reply with, and the certificate is issued automatically.",
     ),
     (
         "What kinds of monitors are supported?",
