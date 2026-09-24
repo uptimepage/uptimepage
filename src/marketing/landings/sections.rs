@@ -106,7 +106,7 @@ pub(super) static FITS: &[(&str, &str)] = &[
     ),
     (
         "/compare/uptime-kuma-vs-kener",
-        "Kener already handles branding well, so Uptimepage's advantages here are narrow. Uptimepage is one binary, with no second service to run. Its probes check from several regions, not one. You can declare monitors with a Terraform provider, a REST API and an MCP server. Its status pages take email and webhook subscribers once they confirm. And incidents open on their own when checks fail, so nobody has to write them by hand. Host it free with no card, or self-host it under AGPL.",
+        "Kener already handles branding well, so Uptimepage's advantages here are narrow. Uptimepage is one binary, with no second service to run. Its probes check from several regions, not one. You can declare monitors with a Terraform provider, a REST API and an MCP server. And status page subscribers can follow updates by signed webhook as well as confirmed email. Host it free with no card, or self-host it under AGPL.",
     ),
     (
         "/compare/terraform-providers",
@@ -204,7 +204,7 @@ pub(super) static CALLOUTS: &[(&str, Section)] = &[
         "/compare/uptime-kuma-vs-kener",
         Section {
             heading: "The limits of both",
-            body: "Kener's official compose setup runs Redis next to the app, so you run two parts, not one. Its check list is short, so an unusual protocol may be missing. Uptime Kuma's limits come from how it is built. It has one shared login and no user roles. It has no official REST API to manage monitors, and no Terraform provider. Its status pages take no subscribers, and it checks from the server where you installed it, unless you add its Globalping monitor type.",
+            body: "Kener's official compose setup runs Redis next to the app, so you run two parts, not one. Its check list is short, so an unusual protocol may be missing. Uptime Kuma's limits come from how it is built. It has one shared login and no user roles. It has no official REST API to manage monitors, and no Terraform provider. Its status pages offer RSS only, with no email or webhook subscribers, and it checks from the server where you installed it, unless you add its Globalping monitor type.",
         },
     ),
 ];

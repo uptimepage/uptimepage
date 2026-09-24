@@ -259,7 +259,8 @@ static SELF_HOSTED_MATRIX: Matrix = Matrix {
 
 /// Head-to-head facts for `/vs/self-hosted-monitoring`, verified in July 2026
 /// against each project's local source: Uptime Kuma 2.4.0, OpenStatus (HEAD
-/// 2026-05), OneUptime 11.0.12, Gatus 5.36.0, Kener 4.1.1. Cells are
+/// 2026-05), OneUptime 11.0.12, Gatus 5.36.0, Kener 4.1.1, with Kener's check,
+/// incident and subscriber cells rechecked against 4.1.5 in September 2026. Cells are
 /// `(text, tone)`; the first column is always Uptimepage.
 static MONITORING_MATRIX: Matrix = Matrix {
     heading: "How they compare",
@@ -291,7 +292,7 @@ static MONITORING_MATRIX: Matrix = Matrix {
                 ("HTTP·TCP·DNS", ""),
                 ("25+ types", "yes"),
                 ("11 protocols", "yes"),
-                ("9 types", ""),
+                ("12 types", "yes"),
             ],
         },
         MatrixRow {
@@ -368,7 +369,7 @@ static MONITORING_MATRIX: Matrix = Matrix {
                 ("yes", ""),
                 ("yes", ""),
                 ("no", "no"),
-                ("yes", ""),
+                ("opt-in", "part"),
             ],
         },
         MatrixRow {
@@ -455,7 +456,7 @@ static MONITORING_MATRIX: Matrix = Matrix {
         "Uptime Kuma has 31 monitor types and 94 alert integrations, but it is single-user, is configured over a socket API rather than REST or Terraform, and its status pages offer RSS, not email or webhook subscribers.",
         "Gatus is a health dashboard with badges rather than a subscriber status page, and its multi-region support is an experimental status-federation feature, not distributed probes.",
         "Alert-channel counts mix first-class and niche providers: Uptime Kuma's total includes the Apprise meta-provider and dozens of SMS gateways, and Gatus's includes automation bridges like Zapier, IFTTT and n8n. Uptimepage's fourteen are native integrations.",
-        "Facts verified against each project's source in July 2026 (Uptime Kuma 2.4.0, OpenStatus, OneUptime 11.0.12, Gatus 5.36.0, Kener 4.1.1). Open-source projects move quickly, so check their current source before you decide.",
+        "Facts verified against each project's source in July 2026 (Uptime Kuma 2.4.0, OpenStatus, OneUptime 11.0.12, Gatus 5.36.0, Kener 4.1.1), with Kener's check, incident and subscriber cells rechecked against Kener 4.1.5 in September 2026. Open-source projects move quickly, so check their current source before you decide.",
     ],
 };
 
@@ -1421,8 +1422,8 @@ static KUMA_ONEUPTIME_MATRIX: Matrix = Matrix {
 };
 
 /// Third-party face-off for `/compare/uptime-kuma-vs-kener`, verified July 2026
-/// against both repositories. Kener's check interval and whether its pages take
-/// end-user subscribers are not documented, so no row claims either.
+/// against both repositories, Kener's checks and subscriptions rechecked in
+/// September 2026. Kener schedules checks with cron expressions, so its floor is one minute.
 static KUMA_KENER_MATRIX: Matrix = Matrix {
     heading: "The facts, side by side",
     columns: &["Uptime Kuma", "Kener", "Uptimepage"],
@@ -1459,7 +1460,7 @@ static KUMA_KENER_MATRIX: Matrix = Matrix {
             label: "check types",
             cells: &[
                 ("31 incl. DBs · MQTT · browser", ""),
-                ("8 incl. SQL · heartbeat · GameDig", ""),
+                ("12 incl. gRPC · SQL · heartbeat · GameDig", ""),
                 (
                     "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
                     "",
@@ -1504,9 +1505,9 @@ static KUMA_KENER_MATRIX: Matrix = Matrix {
         },
     ],
     notes: &[
-        "Kener's check and alert lists come from its README. Its check interval and page subscriptions are not documented, so no row claims either.",
+        "Kener's check list comes from its monitor docs and its alert list from its README. Kener schedules checks with cron expressions, so the fastest it runs is once a minute.",
         "Star counts rounded from GitHub, July 2026.",
-        "Verified July 2026 against both repositories. Refresh when a project releases a new version.",
+        "Verified July 2026 against both repositories, and Kener rechecked in September 2026. Refresh when a project releases a new version.",
     ],
 };
 

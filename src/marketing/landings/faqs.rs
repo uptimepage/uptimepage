@@ -110,7 +110,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "Which checks more things?",
-                "Uptime Kuma, by a long way: 31 monitor types against Kener's eight, and 94 alert services against email, webhook, Slack and Discord.",
+                "Uptime Kuma, by a long way: 31 monitor types against Kener's twelve, and 94 alert services against email, webhook, Slack and Discord.",
             ),
             (
                 "Does Kener have a REST API?",
@@ -574,7 +574,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "Do they all have status-page subscribers?",
-                "Uptimepage, OpenStatus, OneUptime and Kener let visitors subscribe (email, and webhook or more). Uptime Kuma offers an RSS feed only, and Gatus is a health dashboard with no subscriber feature.",
+                "Uptimepage, OpenStatus and OneUptime let visitors subscribe by email plus webhook or more, and Kener by email with an RSS feed. Uptime Kuma offers an RSS feed only, and Gatus is a health dashboard with no subscriber feature.",
             ),
             (
                 "Can I self-host Uptimepage?",

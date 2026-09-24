@@ -1,6 +1,7 @@
 +++
 title = "8 best Statuspage alternatives in 2026, free and paid"
 date = "2026-08-06"
+updated = "2026-09-24"
 slug = "statuspage-alternatives"
 excerpt = "Eight real Atlassian Statuspage alternatives compared honestly: which include the monitoring it leaves out, and which stop charging you per subscriber."
 tags = ["status-page", "alternatives", "monitoring"]
@@ -99,7 +100,7 @@ Read the licence before you build on it. Cachet 2.x was BSD-3-Clause, but the v3
 
 ## 6. Upptime
 
-Upptime has the cleverest design here and is the cheapest to run. It runs its checks as scheduled GitHub Actions, stores history as commits in your own repository, files incidents as GitHub Issues and serves a static page from GitHub Pages. There is no server to run and no bill. That design is also the limit: Actions cron will not run more often than every five minutes and often runs late, so short outages go unseen. Alerts go to your own team through Slack, email, SMS or a custom webhook, and there is no subscriber list your customers can join. For an open-source project or a personal site it is close to perfect. For a company that promises customers an SLA, the five-minute limit is the problem. I compare it with the others in [Uptimepage vs Upptime, Cachet and Statping](/vs/self-hosted-status-pages).
+Upptime has the cleverest design here and is the cheapest to run. It runs its checks as scheduled GitHub Actions, stores history as commits in your own repository, files incidents as GitHub Issues and serves a static page from GitHub Pages. There is no server to run and no bill. That design is also the limit: Actions cron will not run more often than every five minutes and often runs late, so short outages go unseen. Alerts go to your own team through Slack, email, SMS or a custom webhook, and there is no subscriber list your customers can join. For an open-source project or a personal site it is close to perfect. For a company that promises customers an SLA, the five-minute limit is the problem. I compare it with the others in [Uptimepage vs Upptime, Cachet and Statping](/vs/self-hosted-status-pages), and with every other self-hosted option in [the best open-source status pages](/blog/best-open-source-status-pages).
 
 ## 7. OneUptime
 
