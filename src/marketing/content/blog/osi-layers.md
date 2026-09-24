@@ -1,7 +1,7 @@
 +++
 title = "The mystery of the \"down\" website"
 date = "2026-06-18"
-updated = "2026-09-05"
+updated = "2026-09-24"
 slug = "osi-layers"
 excerpt = "\"The site is down!\" But what does \"down\" really mean? A detective story through the seven network layers, and the one quiet failure no alarm caught."
 tags = ["monitoring", "networking", "osi", "tls", "dns"]
@@ -67,7 +67,7 @@ looks like an outage. This looked like a *trap*.
 
 ## The fix, and the lesson
 
-A few clicks. Jamie renewed the certificate, the chain of trust
+A few clicks. Jamie renewed the certificate, the [chain of trust](/blog/what-is-an-ssl-certificate-chain)
 re-formed, and the website sprang back to life. Total time once they
 knew *where* to look: minutes.
 

@@ -1,7 +1,7 @@
 +++
 title = "How to monitor SSL certificate expiry when auto-renewal fails"
 date = "2026-09-05"
-updated = "2026-09-18"
+updated = "2026-09-24"
 slug = "how-to-monitor-ssl-certificate-expiry"
 excerpt = "Check the certificate your server serves, catch failed renewals before expiry, and set up TLS alerts alongside HTTPS monitoring. Includes OpenSSL checks."
 tags = ["ssl", "tls", "certificates", "monitoring", "reliability"]
@@ -72,7 +72,7 @@ The [TLS monitor reference](/docs/monitor-types#tls-certificate) describes the s
 
 ## Keep an HTTPS check beside the expiry check
 
-A certificate can have weeks left and still fail for your customers. It may cover the wrong hostname, or the server may send a chain the client cannot validate.
+A certificate can have weeks left and still fail for your customers. It may cover the wrong hostname, or the server may send a [chain the client cannot validate](/blog/what-is-an-ssl-certificate-chain), usually because the intermediate certificate is missing.
 
 Uptimepage's TLS expiry monitor deliberately accepts the presented chain so it can read the date even from an expired or self-signed certificate. Its day-count result is not a trust verdict. The [TLS API reference](/docs/api#tls-certificate-expiry) documents this behavior.
 
