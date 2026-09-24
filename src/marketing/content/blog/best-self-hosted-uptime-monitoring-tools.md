@@ -13,9 +13,11 @@ list_items = [
     "Checkmate",
     "OneUptime",
     "Apache HertzBeat",
+    "Zabbix",
     "Cachet",
     "Statping-ng",
     "Blackbox exporter",
+    "Nagios Core",
     "OpenStatus",
     "Uptimepage",
 ]
@@ -33,6 +35,10 @@ q = "What is external uptime monitoring?"
 a = "It means checking your service from outside your own network, the way a real user reaches it, rather than from a process on the same box. External checks catch DNS, TLS and edge failures that an internal healthcheck never sees. Every tool on this list does external monitoring; the ones with multi-region probes, like Uptimepage, let you check from more than one place at once."
 
 [[faqs]]
+q = "Is Zabbix or Nagios a good uptime monitor?"
+a = "They are infrastructure monitors that can also check uptime. Both probe URLs from the server, Zabbix with web scenarios and Nagios with plugins like check_http, but neither gives your customers a status page, and both take more to run than a dedicated uptime tool. Plenty of teams run one inside and a separate checker outside."
+
+[[faqs]]
 q = "Can I white-label the status page?"
 a = "Some can. If you run an agency or resell monitoring and need your own logo, colours and domain in front of clients, look for a tool built for it. That is the slice we cover on white-label uptime monitoring, where each client gets a branded page with no vendor name shown."
 +++
@@ -47,6 +53,7 @@ We build one of the tools on this list, Uptimepage, so keep that in mind. We hav
 > - Gatus is the pick when monitoring should live in Git as YAML for your own team.
 > - Checkmate is the freshest Kuma-style option, with a modern UI and themed status pages, if you can run a Node and MongoDB stack.
 > - OneUptime and Apache HertzBeat are full platforms for the whole incident lifecycle, or for databases and network gear, when you can carry the weight.
+> - Zabbix and Nagios Core watch your servers from the inside; they can probe a URL, but neither gives customers a status page.
 > - Cachet and Statping are status-page-first; teams already on Prometheus can add the Blackbox exporter.
 > - OpenStatus is the nearest AGPL alternative that does both jobs with monitoring as code, though self-hosting it runs several services rather than one.
 > - Uptimepage (ours) pairs monitoring with a customer status page in one AGPL binary, with a REST API, Terraform, roles and subscribers, for when you outgrow a single shared login.
@@ -69,8 +76,10 @@ Hold those three in mind and the choices get obvious. Here is the whole list aga
 | OpenStatus | Yes | Yes, Terraform + REST + MCP | ~6 Docker services |
 | Apache HertzBeat | Yes | Yes, YAML templates | Java + database + time-series |
 | Cachet | Yes, with subscribers | API, feed it | PHP app + DB + queue + cron |
+| Zabbix | No, operator dashboards | JSON-RPC API, no official Terraform | Server + database + PHP frontend |
 | Statping-ng | Yes | No | One Go binary |
 | Blackbox exporter | No, build it yourself | Yes, config | Prometheus + Alertmanager |
+| Nagios Core | No, operator console | Yes, text config files | Server + plugins |
 
 ## Uptime Kuma
 
@@ -104,6 +113,12 @@ HertzBeat is what happens when uptime monitoring grows into a full monitoring pl
 
 The cost is complexity. A production deployment is a Java application plus a relational database plus a time-series store, which is a different commitment from one Go binary. Pick it when the wide coverage is the point, when you want one system watching databases and middleware and network gear, not just URLs. For plain uptime checks and a customer status page, it is more platform than the job needs.
 
+## Zabbix
+
+Zabbix turns up on most lists of self-hosted monitors, and it earns the spot, but it answers a different question. It is agent-based: an agent on each host reports CPU, memory, disk, processes, logs and database internals to a central server that stores everything and evaluates triggers. So it can tell you why a server is unhealthy, which no outside checker can. It has been AGPL-3.0 since 7.0.
+
+It can check a website too. Web scenarios run a sequence of HTTP steps and assert on status codes, body strings and response time, and simple checks like icmpping and net.tcp.service need no agent. You configure them the Zabbix way, though, as hosts, templates, items and triggers rather than by pasting in a URL. What you operate is a server, a database and a PHP frontend, usually plus a proxy for anything across a network boundary. It has operational dashboards rather than a page your customers can read, and a full JSON-RPC API but no official Terraform provider. Pick it when you want the inside of your servers watched. For outside-in checks alone, it is a lot of platform to run. [Uptime Kuma against Zabbix](/compare/uptime-kuma-vs-zabbix) goes through that split in detail.
+
 ## Cachet and Statping-ng
 
 These two cover the status-page corner. Cachet is a long-running, PHP-based status page going through a rebuild, and the rebuild is where the caveats live: v3 is still in development with no stable release, the newest tagged release remains v2.4.1 from 2023, and the v3 branch ships under a custom source-available license rather than the BSD one 2.x carried. What it does well is the status-page job itself, now including confirmed email subscribers. It is a page first: v3 added a basic HTTP check, but you schedule it yourself and a failure colours a component rather than opening an incident, so in practice you still feed it from elsewhere. Statping-ng is a community-kept fork of the older Statping, a single Go binary that does both monitoring and a status page, with a smaller community behind it.
@@ -114,9 +129,11 @@ Pick these if a status page is the actual product you need and the monitoring is
 
 Beszel comes up in every "Kuma alternative" thread, so let us save you time: it is not an uptime monitor. It is a very good, very light server dashboard. An agent on each host reports CPU, memory, disk, network, temperatures and per-container Docker stats back to a single hub, with alerts to about twenty services. What it does not do is probe an endpoint: no HTTP, TCP, DNS or TLS checks, and no public status page. People run it next to an uptime monitor, not instead of one. If you want host metrics with your uptime checks in a single tool, that is what HertzBeat or OneUptime are for.
 
-## Prometheus and Blackbox exporter
+## Prometheus, Nagios and the infrastructure stack
 
 Not a product, a pattern, and worth naming because plenty of teams already work this way. If you run Prometheus, the Blackbox exporter probes HTTP, TCP, DNS, and ICMP, and Alertmanager handles the alerting. You get enormous power and you build the experience yourself, including the status page and the on-call flow. For a team that is already deep in Prometheus, adding uptime checks is a small step. For anyone else it is a lot of work to put together. [The Blackbox exporter against Uptime Kuma](/compare/blackbox-exporter-vs-uptime-kuma) counts up what the assembled version actually costs.
+
+Nagios Core is the oldest member of this family and still maintained. It runs every check as a small plugin that returns OK, WARNING, CRITICAL or UNKNOWN, so check_http or check_ping on the Nagios server gives you outside-in probing, and NRPE reaches inside a host. Everything is declared in text configuration files, which suits Git, and it is GPL-2.0. What it lacks is a status page for customers: its web interface is an operator console. Icinga started as a Nagios fork and Checkmk grew up on the Nagios core, so the same trade applies to both. They are very good at watching infrastructure you own, and publishing uptime to anyone outside your team is a separate job.
 
 ## OpenStatus
 
@@ -134,7 +151,7 @@ The caveat: it is younger than Uptime Kuma and has a smaller community, so it ha
 
 ## How to choose without overthinking it
 
-For a homelab or a few personal projects, install Uptime Kuma and move on, or try Checkmate if you want the fresher UI. For a team that wants config in Git and only needs internal alerts, use Gatus; we wrote a closer look at [how Kuma and Gatus differ](/compare/uptime-kuma-vs-gatus) if you are torn between those two. If a polished customer status page with subscribers and an API is the point, look at [an open-source status page](/open-source-status-page) with monitoring built in, which is the slice we focus on. If you want to own the entire incident lifecycle and you already run Kubernetes, OneUptime is the broad option. And if you already live in Prometheus, the Blackbox exporter is a small addition.
+For a homelab or a few personal projects, install Uptime Kuma and move on, or try Checkmate if you want the fresher UI. For a team that wants config in Git and only needs internal alerts, use Gatus; we wrote a closer look at [how Kuma and Gatus differ](/compare/uptime-kuma-vs-gatus) if you are torn between those two. If a polished customer status page with subscribers and an API is the point, look at [an open-source status page](/open-source-status-page) with monitoring built in, which is the slice we focus on. If you want to own the entire incident lifecycle and you already run Kubernetes, OneUptime is the broad option. And if you already live in Prometheus, the Blackbox exporter is a small addition. If you need to know why a server is sick, not only whether it answers, that is Zabbix or Nagios territory, and many teams run one of them next to an outside checker.
 
 There is no single best tool here, only the one that matches your three answers. The good news is that all of them are free to try and free to leave, which is the whole point of staying open-source.
 
@@ -163,6 +180,15 @@ If you want everything in Git and reviewed in a pull request, Gatus and Uptimepa
 <div class="mk-faq__body">
 
 It means checking your service from outside your own network, the way a real user reaches it, rather than from a process on the same box. External checks catch DNS, TLS and edge failures that an internal healthcheck never sees. Every tool on this list does external monitoring; the ones with multi-region probes, like Uptimepage, let you check from more than one place at once.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>Is Zabbix or Nagios a good uptime monitor?</summary>
+<div class="mk-faq__body">
+
+They are infrastructure monitors that can also check uptime. Both probe URLs from the server, Zabbix with web scenarios and Nagios with plugins like check_http, but neither gives your customers a status page, and both take more to run than a dedicated uptime tool. Plenty of teams run one inside and a separate checker outside.
 
 </div>
 </details>
