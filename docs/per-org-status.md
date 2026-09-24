@@ -115,12 +115,12 @@ Unpublishing a page (`enabled` → false) makes the host resolver stop resolving
 
 The `[public_status]` block and the split tenancy flags are documented in [Configuration → Public status page](configuration.md#public-status-page) and [Configuration → Public status routing](configuration.md#public-status-routing).
 
-## Coming later: custom domains
+## Custom domains
 
-Today every page is served under the shared `*.{base_domain}` apex wildcard. A future release will let an org point its own hostname (e.g. `status.theirbrand.com`) at a specific page:
+Every page is served under the shared `*.{base_domain}` apex wildcard. On a plan with `custom_domain_enabled` (Pro and Team on the hosted service), a page can also be served on the org's own hostname, such as `status.theirbrand.com`. On the hosted service, setup is by email for now: write to hello@uptimepage.dev with the hostname. On a self-hosted instance, the operator first switches to subdomain mode as `deployment/.env.example` describes (it needs the wildcard certificate's DNS token), then sets `UPTIMEPAGE_CUSTOM_DOMAINS_ENABLED` in `.env` and keeps the Caddyfile blocks marked `SELF-HOST` (see [Custom domains](https://github.com/uptimepage/uptimepage/tree/main/deployment#custom-domains) in the deployment README). The org's plan must allow it too: the org seeded from `bootstrap.email` gets `quotas.default_plan` (`team` by default, which does), while an org created later by signup starts on `founding` or `free`, neither of which does. There is no settings form yet on either: the steps below are direct updates to the page's `custom_domain`, `custom_domain_verified_at` and `custom_domain_activated_at` columns.
 
-- the org adds a `CNAME` to `{slug}.{base_domain}` and registers the custom hostname on the page's settings;
-- the reverse proxy issues a per-hostname certificate on demand (no wildcard for custom domains — each is a distinct name);
-- host resolution gains a custom-domain → page lookup ahead of the subdomain parser; everything downstream (cache, branding, isolation) is unchanged.
+- The org adds a `CNAME` for its hostname to the target it is given.
+- The operator sets `custom_domain` to the hostname and stamps `custom_domain_verified_at`. Within 30 seconds the running instances pick it up, and Caddy issues a certificate for that name on the first HTTPS request (on-demand TLS, gated by the `ask` endpoint in [Configuration](configuration.md#sections), which answers 200 only for a verified hostname on a plan that allows it).
+- Once the page loads over HTTPS on the new name, the operator stamps `custom_domain_activated_at`. Only then do subscriber mail, the feed, `og:url` and the canonical tag switch to the custom hostname; until then they keep the subdomain, so no link points at a host that has not completed a TLS handshake.
 
-This is intentionally additive: the subdomain path keeps working as the always-available default, and nothing in the current data model blocks it. Custom domains are **not** available yet — track the roadmap before promising a customer a vanity status URL.
+The subdomain keeps working alongside the custom hostname. A host that is neither a subdomain nor a verified custom domain gets a 404, never the page or the operator app. Apex domains are not supported, because an apex cannot carry a `CNAME`.

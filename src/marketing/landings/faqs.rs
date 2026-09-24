@@ -418,7 +418,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
         "/white-label-uptime-monitoring" => &[
             (
                 "Can I put my own brand on the status page?",
-                "Yes. Every page carries your logo and colours on your own subdomain. To drop the powered-by badge entirely, use the Pro plan or a self-hosted instance.",
+                "Yes. Every page carries your logo and colours on your own subdomain, and on Pro and Team it can be served on the client’s own domain, such as status.theirbrand.com. To drop the powered-by badge entirely, use the Pro plan or a self-hosted instance.",
             ),
             (
                 "Can I manage many clients from one account?",
@@ -458,7 +458,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "Does it include a public status page?",
-                "It does: a branded status page on your own subdomain, with automatic incident detection, maintenance windows, and email or webhook subscribers.",
+                "It does: a branded status page on your own subdomain, or on your own domain on Pro, with automatic incident detection, maintenance windows, and email or webhook subscribers.",
             ),
             (
                 "Can I manage monitors as code?",
@@ -606,7 +606,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "Does each client get a separate branded page?",
-                "Yes. Each status page carries that client’s own logo and colours on its own subdomain.",
+                "Yes. Each status page carries that client’s own logo and colours on its own subdomain, or on the client’s own domain on Pro and Team.",
             ),
             (
                 "Can I control who sees what?",
@@ -734,7 +734,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "Does it include a status page?",
-                "Yes. A branded status page on your own subdomain is part of the same product, with automatic incidents, maintenance windows, and email or webhook subscribers.",
+                "Yes. A branded status page on your own subdomain, or your own domain on Pro, is part of the same product, with automatic incidents, maintenance windows, and email or webhook subscribers.",
             ),
             (
                 "How often does it check?",

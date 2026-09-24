@@ -1,6 +1,6 @@
 +++
 title = "Is 98% uptime good? It allows 7.3 days of downtime a year"
-meta_title = "Is 98% Uptime Good? When It Works—and When It Fails"
+meta_title = "Is 98% Uptime Good? When It Works and When It Fails"
 date = "2026-07-17"
 updated = "2026-08-03"
 slug = "is-98-uptime-good"

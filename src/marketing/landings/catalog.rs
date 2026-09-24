@@ -13,7 +13,7 @@ pub const LANDINGS: &[Landing] = &[
         eyebrow: "for saas teams",
         h1: "A status page your SaaS customers actually trust",
         meta_description: "Public status pages and 60-second uptime monitoring for SaaS teams. 8 check types from HTTP to browser logins, Slack and email alerts, 90-day history.",
-        lede: "Monitor every dependency, open incidents automatically, and show customers a branded status page on your own subdomain, without standing up a status tool of your own.",
+        lede: "Monitor every dependency, open incidents automatically, and show customers a branded status page on your own subdomain or, on Pro, your own domain, without standing up a status tool of your own.",
         features: &[
             Feature {
                 label: "Check interval",
@@ -55,7 +55,7 @@ pub const LANDINGS: &[Landing] = &[
             },
             Section {
                 heading: "A page that reads as yours",
-                body: "The page lives on your own subdomain with your logo and colours, so it reads as part of your product rather than a third-party widget. Scheduled maintenance windows announce planned work ahead of time, so a migration weekend arrives as a calendar note instead of a surprise incident.",
+                body: "The page lives on your own subdomain with your logo and colours, or on a hostname you own such as status.yourcompany.com on Pro and Team, so it reads as part of your product rather than a third-party widget. Scheduled maintenance windows announce planned work ahead of time, so a migration weekend arrives as a calendar note instead of a surprise incident.",
             },
         ],
         code: None,
@@ -94,12 +94,12 @@ pub const LANDINGS: &[Landing] = &[
     Landing {
         path: "/status-page-for-agencies",
         created: "2026-06-16",
-        lastmod: "2026-08-08",
+        lastmod: "2026-09-24",
         title: "Status Pages for Agencies & Client Sites",
         eyebrow: "for agencies",
         h1: "One account. A branded status page for every client.",
         meta_description: "Monitor every client site and give each a branded status page from one account. 60s checks, Slack, email and webhook alerts. Free to start.",
-        lede: "Watch all your clients’ sites from a single dashboard and hand each one a status URL on its own subdomain, with no per-client tool and no per-client invoice.",
+        lede: "Watch all your clients’ sites from a single dashboard and hand each one a status URL on its own subdomain, or on the client’s own domain on Pro, with no per-client tool and no per-client invoice.",
         features: &[
             Feature {
                 label: "Clients per account",
@@ -133,7 +133,7 @@ pub const LANDINGS: &[Landing] = &[
             },
             Section {
                 heading: "Look like the shop they hired",
-                body: "Each page carries the client’s logo and brand colour on its own subdomain, with a 90-day uptime history, live incidents and scheduled maintenance windows. It reads like something you built, because as far as the client can tell, you did. On Pro or a self-hosted instance the vendor badge comes off entirely.",
+                body: "Each page carries the client’s logo and brand colour on its own subdomain, or on the client’s own hostname on Pro and Team, with a 90-day uptime history, live incidents and scheduled maintenance windows. It reads like something you built, because as far as the client can tell, you did. On Pro or a self-hosted instance the vendor badge comes off entirely.",
             },
             Section {
                 heading: "Planned work stays planned",
@@ -177,7 +177,7 @@ pub const LANDINGS: &[Landing] = &[
         eyebrow: "open source",
         h1: "An open-source status page you can self-host",
         meta_description: "An open-source status page with uptime monitoring built in, self-hosted with docker compose or free on the hosted tier. Branded pages, subscribers, incidents.",
-        lede: "Uptimepage is an AGPL status page with website and uptime monitoring built in. Publish a branded page on your own subdomain, let customers subscribe, and run the whole thing yourself with docker compose or start free on the hosted tier.",
+        lede: "Uptimepage is an AGPL status page with website and uptime monitoring built in. Publish a branded page on your own subdomain, or your own domain when self-hosted or on hosted Pro, let customers subscribe, and run the whole thing yourself with docker compose or start free on the hosted tier.",
         features: &[
             Feature {
                 label: "License",
@@ -353,12 +353,12 @@ docker compose up -d"#,
     Landing {
         path: "/white-label-uptime-monitoring",
         created: "2026-07-01",
-        lastmod: "2026-08-08",
+        lastmod: "2026-09-24",
         title: "White-Label Uptime Monitoring & Status Pages",
         eyebrow: "white label",
         h1: "White-label uptime monitoring and status pages",
-        meta_description: "White-label uptime monitoring and branded status pages for resellers and MSPs. Your logo, colours and subdomain per client. Free to start, no card.",
-        lede: "Put your own brand on the monitoring. Give every client a branded status page on your own subdomain with your logo and colours, all from one account. On Pro or a self-hosted instance you can take the vendor badge off entirely, so your clients only ever see your name.",
+        meta_description: "White-label uptime monitoring and branded status pages for resellers and MSPs. Your logo and colours per client, on a subdomain or the client’s own domain.",
+        lede: "Put your own brand on the monitoring. Give every client a branded status page on your own subdomain with your logo and colours, all from one account. On Pro the page can sit on the client’s own domain, and on Pro or a self-hosted instance you can take the vendor badge off entirely, so your clients only ever see your name.",
         features: &[
             Feature {
                 label: "Branding",
@@ -366,7 +366,7 @@ docker compose up -d"#,
             },
             Feature {
                 label: "Domain",
-                value: "branded subdomain per client",
+                value: "subdomain, or own domain on Pro",
             },
             Feature {
                 label: "Clients",
@@ -387,8 +387,8 @@ docker compose up -d"#,
         ],
         sections: &[
             Section {
-                heading: "A white-label status page on your own subdomain",
-                body: "Each status page carries your logo and colours on a subdomain you choose, so it reads as yours from the first visit. On Pro or a self-hosted instance you can switch the powered-by badge off too, and the tool behind the page disappears completely. What the client sees is your name and your uptime record.",
+                heading: "A white-label status page on your subdomain or theirs",
+                body: "Each status page carries your logo and colours on a subdomain you choose, and on Pro or Team it can be served on a hostname the client owns, such as status.theirbrand.com, so it reads as yours from the first visit. On Pro or a self-hosted instance you can switch the powered-by badge off too, and the tool behind the page disappears completely. What the client sees is your name and your uptime record.",
             },
             Section {
                 heading: "What your client actually sees",
@@ -794,7 +794,7 @@ tail -c 4000 backup.log | curl -fsS --data-binary @- "$URL/$code""#,
     Landing {
         path: "/vs/uptimerobot",
         created: "2026-06-16",
-        lastmod: "2026-09-03",
+        lastmod: "2026-09-24",
         title: "An UptimeRobot Alternative with Status Pages",
         eyebrow: "switching monitors",
         h1: "Looking for an UptimeRobot alternative?",
@@ -840,7 +840,7 @@ tail -c 4000 backup.log | curl -fsS --data-binary @- "$URL/$code""#,
         eyebrow: "switching status pages",
         h1: "A Statuspage alternative with monitoring built in",
         meta_description: "Uptimepage pairs a branded public status page with uptime monitoring in one product: 60s checks, email and webhook subscribers, incidents. Free to start.",
-        lede: "Here the status page and the monitoring behind it are the same product. Flip any monitor public and customers get a branded page on your own subdomain, all of it on the free tier.",
+        lede: "Here the status page and the monitoring behind it are the same product. Flip any monitor public and customers get a branded page on your own subdomain, all of it on the free tier. Pro adds your own domain.",
         features: &[],
         sections: &[
             Section {
@@ -853,7 +853,7 @@ tail -c 4000 backup.log | curl -fsS --data-binary @- "$URL/$code""#,
             },
             Section {
                 heading: "Branded, on your own subdomain",
-                body: "Logo, colour, and a status URL on your subdomain. The page serves HTML for people and JSON plus RSS for machines, and stays up even when the backend behind it is failing.",
+                body: "Logo, colour, and a status URL on your subdomain, or on your own domain on Pro. The page serves HTML for people and JSON plus RSS for machines, and stays up even when the backend behind it is failing.",
             },
         ],
         code: None,
@@ -1026,7 +1026,7 @@ tail -c 4000 backup.log | curl -fsS --data-binary @- "$URL/$code""#,
     Landing {
         path: "/vs/pingdom",
         created: "2026-06-25",
-        lastmod: "2026-09-03",
+        lastmod: "2026-09-24",
         title: "Pingdom Alternative with Status Pages Built In",
         eyebrow: "switching monitors",
         h1: "A Pingdom alternative with status pages built in",

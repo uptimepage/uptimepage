@@ -649,7 +649,7 @@ async fn blog_meta_title_only_changes_the_document_title() {
     let (status, body, _) = get("/blog/is-98-uptime-good").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
-        body.contains("<title>Is 98% Uptime Good? When It Works—and When It Fails</title>"),
+        body.contains("<title>Is 98% Uptime Good? When It Works and When It Fails</title>"),
         "meta_title must control the document title"
     );
     assert!(

@@ -227,7 +227,7 @@ pub const DOCS: &[DocPage] = &[
         blurb: "Running one or more branded status pages per organization, each on its own subdomain.",
         section: Section::Guide,
         scope: Scope::Everyone,
-        lastmod: "2026-09-10",
+        lastmod: "2026-09-24",
         source: include_str!("../../docs/per-org-status.md"),
         dir: "",
     },
