@@ -45,7 +45,7 @@ First the math. The allowed failure is 0.05%, so multiply the period by 0.0005.
 
 If your internal target and your contract number are the same, they fail on the same day. The first month you miss your engineering goal is also the first month you owe [service credits](/blog/uptime-sla), write an apology and put an account at risk. There is no space between the technical problem and the business problem.
 
-Setting the internal target at 99.95% behind a [99.9% contract](/blog/how-much-downtime-is-99-9-uptime) gives you about 21 minutes of that space every month. When you pass 21 minutes 36 seconds, your own alarm goes off and the team treats the month as bad, while the customer is still inside the promise you sold them. That is the difference between hearing about the problem from your monitoring and hearing about it from your customer.
+Setting the internal target at 99.95% behind a [99.9% contract](/blog/how-much-downtime-is-99-9-uptime) gives you about 21 minutes of that space every month. When you pass 21 minutes 36 seconds, your own alarm goes off and the team treats the month as bad, while the customer is still inside the promise you sold them. That is the difference between hearing about the problem from your monitoring and hearing about it from your customer. Google's SRE book calls this [keeping a safety margin](https://sre.google/sre-book/service-level-objectives/).
 
 This is the same idea as an error budget, measured in minutes instead of a percentage. When the budget for the month is used up, the sensible response is to stop shipping risky changes until the next month starts, which is [what error budgets are for](/blog/error-budgets-explained).
 

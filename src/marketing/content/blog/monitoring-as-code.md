@@ -58,11 +58,11 @@ Notice the `check` block is nested, not a flat pile of fields. You set `type = "
 
 Every Terraform tutorial stops at "and now run apply." Three things they don't tell you, in rough order of how badly they'll bite.
 
-**State, not the dashboard.** Terraform records what it believes exists. Bump an interval in the web UI and Terraform doesn't know; the next `plan` cheerfully proposes to revert your hand-edit back to what the code says. This is working as designed: once a monitor is in code, *the code wins*, and clicking around the dashboard becomes drift that Terraform will quietly undo. Decide that up front. Run `terraform plan -refresh-only` to see drift before it surprises you.
+**State, not the dashboard.** Terraform records what it believes exists. Bump an interval in the web UI and Terraform doesn't know; the next `plan` cheerfully proposes to revert your hand-edit back to what the code says. This is working as designed: once a monitor is in code, *the code wins*, and clicking around the dashboard becomes drift that Terraform will quietly undo. Decide that up front. Run [`terraform plan -refresh-only`](https://developer.hashicorp.com/terraform/cli/commands/plan) to see drift before it surprises you.
 
 **Delete the block, delete the monitor.** Remove those eight lines from your `.tf` file, run apply, and the actual check stops running. Silently. For most resources that's a shrug. For the thing watching your production API, "I cleaned up some config and we stopped monitoring payments for a week" is a real sentence people have said out loud. I have come closer to saying it than I'd like. Treat a removed monitor with the same suspicion as a dropped table, because the blast radius is the same: you don't notice until the thing you stopped watching breaks.
 
-**Secrets in state.** If your check needs basic auth or a token, that value has to get to the provider somehow, and whatever you pass is written to the state file in plaintext, for anyone with read access to the backend. The provider marks the password `sensitive`, and it's worth being precise about what that buys you: `sensitive` keeps the value out of plan output and logs. It does not keep it out of state. Terraform 1.11, back in February 2025, added the real fix, write-only arguments: values that flow through to the provider on apply and are never persisted to state. Until the Uptimepage provider adopts them, treat the state file itself as a secret:
+**Secrets in state.** If your check needs basic auth or a token, that value has to get to the provider somehow, and whatever you pass is [written to the state file in plaintext](https://developer.hashicorp.com/terraform/language/state/sensitive-data), for anyone with read access to the backend. The provider marks the password `sensitive`, and it's worth being precise about what that buys you: `sensitive` keeps the value out of plan output and logs. It does not keep it out of state. Terraform 1.11, back in February 2025, added the real fix, [write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral/write-only): values that flow through to the provider on apply and are never persisted to state. Until the Uptimepage provider adopts them, treat the state file itself as a secret:
 
 ```terraform
 variable "admin_password" {
@@ -98,7 +98,7 @@ The password reaches the API and stays out of your terminal, but it still lands 
 
 ## Don't rebuild what you already have
 
-If you've already got monitors created by hand, and you do, you don't have to re-enter them. Config-driven import has been in Terraform since 1.5: write the resource block the way you want it, add an `import` block pointing at the existing monitor's id, and `apply` adopts it instead of creating a duplicate.
+If you've already got monitors created by hand, and you do, you don't have to re-enter them. [Config-driven import](https://developer.hashicorp.com/terraform/language/import) has been in Terraform since 1.5: write the resource block the way you want it, add an `import` block pointing at the existing monitor's id, and `apply` adopts it instead of creating a duplicate.
 
 ```terraform
 import {

@@ -140,11 +140,11 @@ Then stop. Six checks that people trust beat sixty that everyone learned to igno
 
 ## Does downtime hurt your search ranking?
 
-A little, but the effect is often overstated. A short outage does not hurt you. Googlebot gets an error, backs off, comes back later, and nothing changes in the rankings. Uptime is not a ranking factor you can win.
+A little, but the effect is often overstated. A short outage does not hurt you. Googlebot gets an error, [backs off](https://developers.google.com/search/docs/crawling-indexing/http-network-errors), comes back later, and nothing changes in the rankings. Uptime is not a ranking factor you can win.
 
 Repeated or long outages are a different problem. Crawling slows down when a site keeps failing, and after long enough, pages start falling out of the index. Coming back takes weeks of crawling, not hours.
 
-Slow pages are worth watching too. Response time feeds into Core Web Vitals, which is a real ranking signal, and pages usually get slower over months instead of all at once. A monitor that records response time shows you the trend before it costs you anything.
+Slow pages are worth watching too. Response time feeds into [Core Web Vitals](https://developers.google.com/search/docs/appearance/core-web-vitals), which is a real ranking signal, and pages usually get slower over months instead of all at once. A monitor that records response time shows you the trend before it costs you anything.
 
 So the honest version: monitoring protects your search traffic. It does not grow it. Treat it as insurance.
 

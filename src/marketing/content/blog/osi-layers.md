@@ -46,8 +46,8 @@ its way across the internet and home again. *Good. The foundation
 holds.* Up a rung.
 
 **The transport (layer 4).** Now the question got sharper: is anything
-*listening*? Jamie opened a TCP connection to port 443, the three-way
-handshake that proves a service is awake, no website required, just the
+*listening*? Jamie opened a TCP connection to port 443, the [three-way
+handshake](https://www.rfc-editor.org/rfc/rfc9293) that proves a service is awake, no website required, just the
 raw "hello / hello back / got it." Port 443 answered. The service was
 running. *Strange.* The packets routed. The port was open. By the usual
 panic logic, the site was up.
@@ -84,7 +84,8 @@ just knowing which rung to stand on.
 ## The alarm that should have rung first
 
 Here's the part that nags Jamie on the walk home. The certificate
-didn't expire *suddenly.* It had been counting down for ninety days. At
+didn't expire *suddenly.* It had been counting down for ninety days, the default lifetime of a
+[Let's Encrypt certificate](https://letsencrypt.org/docs/faq/). At
 any point in those three months, something could have tapped Jamie on
 the shoulder and said *"this lapses Tuesday."* Nothing did. The only
 monitor watching the site was checking HTTP, and HTTP looked perfect

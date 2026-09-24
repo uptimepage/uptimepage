@@ -74,7 +74,7 @@ hammered. Bots scrape it. Customers refresh it. Your support team links
 to it in every reply. If rendering that page touches the database that
 just fell over, congratulations: now you have two outages instead of
 one. The fix is unglamorous. Cache the bytes, set a short
-`Cache-Control`, let the edge do the work. Ten seconds of caching turns
+[`Cache-Control`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Cache-Control), let the edge do the work. Ten seconds of caching turns
 a thundering herd into a polite trickle.
 
 ## The line nobody wants to draw

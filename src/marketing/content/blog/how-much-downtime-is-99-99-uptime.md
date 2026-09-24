@@ -79,7 +79,7 @@ Last, find out what counts as down at all. It might mean a complete outage, or a
 
 ## About 100% uptime SLAs
 
-Some providers advertise 100%. It is not a claim that the service never fails, and reading it that way is the mistake. It means the amount of downtime needed to earn a credit is zero, so any outage at all gives you money back. Whether that is generous depends on the exceptions and on the size of the credit. Take a 100% SLA with wide maintenance exceptions and a 10% limit on the credit. It can be worth less than an honest 99.9% with a narrow definition and a bigger payout.
+Some providers advertise 100%, [Cloudflare's Business SLA](https://www.cloudflare.com/business-sla/) among them. It is not a claim that the service never fails, and reading it that way is the mistake. It means the amount of downtime needed to earn a credit is zero, so any outage at all gives you money back. Whether that is generous depends on the exceptions and on the size of the credit. Take a 100% SLA with wide maintenance exceptions and a 10% limit on the credit. It can be worth less than an honest 99.9% with a narrow definition and a bigger payout.
 
 In every case the credit pays back part of your bill. It does not pay back your customers' time, and no percentage in a contract keeps anything running.
 

@@ -30,7 +30,7 @@ a = "No. Closing needs real proof: the down votes must fall below the threshold 
 
 The phone buzzes at 3 a.m. "Your API is down." You get up, open the laptop, and everything is green. The site was fine the whole time. One monitoring server, somewhere far away, had a bad network moment and sent an alert about nothing.
 
-This is the false alert everyone in monitoring knows. It costs you sleep, and then it costs you something worse: the next alert feels less serious. The day a real outage comes, you look at your phone and think "probably nothing again."
+This is the false alert everyone in monitoring knows. It costs you sleep, and then it costs you something worse: the next alert feels less serious. Google's SRE book describes the same thing: when pages come [too often](https://sre.google/sre-book/monitoring-distributed-systems/), people start to ignore them, sometimes including the real one. The day a real outage comes, you look at your phone and think "probably nothing again."
 
 I knew this failure mode before I wrote the first line of the scheduler, so it became a requirement, on the same level as "checks must run on time." The rule I started from: a single bad location must never be able to page a customer. The whole checking pipeline, from how probes report to how incidents open, is shaped by that rule.
 

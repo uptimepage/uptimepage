@@ -71,7 +71,7 @@ At 99.99% you are down to 4 minutes 19 seconds a month. Someone has to be paged,
 
 The safer way to use 99.9% is as the contract number only, with a tighter target inside the company. [99.95%](/blog/how-much-downtime-is-99-95-uptime) allows 21 minutes 36 seconds a month, which is half as much.
 
-The reason is arithmetic. If your internal target and your contract number are the same, then the first month you miss the target is also the first month you owe credits and have to explain yourself to a customer. Leave a gap and your own alarm goes off while half the contract budget is still unused. You find out before the customer does.
+The reason is arithmetic. If your internal target and your contract number are the same, then the first month you miss the target is also the first month you owe credits and have to explain yourself to a customer. Leave a gap and your own alarm goes off while half the contract budget is still unused. You find out before the customer does. Google's SRE book calls this [keeping a safety margin](https://sre.google/sre-book/service-level-objectives/).
 
 ## Reading a 99.9% SLA that you are buying
 
@@ -79,7 +79,7 @@ The percentage is only part of [what an uptime SLA promises](/blog/uptime-sla). 
 
 Start with what counts as down. Some contracts measure only a total outage of the whole service, so a service where half the requests fail, or where every request takes 30 seconds, can still count as up all month. The definition sets the value of the number above it.
 
-Then find what the credit pays. It is almost always a percentage of that month's bill. If you pay $200 a month and the provider is down for four hours, you get back some part of $200, and your own customers get whatever your own contract promises them. The credit reduces your invoice. It does not cover what the outage cost you, and an SLA has never kept a service running.
+Then find what the credit pays. It is almost always a percentage of that month's bill, as in the [AWS compute SLA](https://aws.amazon.com/compute/sla/). If you pay $200 a month and the provider is down for four hours, you get back some part of $200, and your own customers get whatever your own contract promises them. The credit reduces your invoice. It does not cover what the outage cost you, and an SLA has never kept a service running.
 
 ## You cannot claim a number you have not measured
 

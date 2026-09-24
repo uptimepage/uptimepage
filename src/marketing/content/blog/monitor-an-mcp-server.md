@@ -36,7 +36,7 @@ The endpoint answers HTTP, so it is tempting to point a monitor at it, watch for
 
 ## Why the port tells you nothing
 
-Streamable HTTP, the transport every remote MCP server uses today, puts everything on a single endpoint that handles both POST and GET. That is convenient to deploy, and it means the URL you would instinctively curl is not the one doing the work.
+[Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports), the transport every remote MCP server uses today, puts everything on a single endpoint that handles both POST and GET. That is convenient to deploy, and it means the URL you would instinctively curl is not the one doing the work.
 
 A GET against that path can return a 200 from a load balancer, from a health handler mounted alongside, or from a container that started but never finished wiring up its tools. None of those paths touch JSON-RPC, so the monitor reports green while the product is down.
 
@@ -73,11 +73,11 @@ A healthy server replies with a JSON-RPC result carrying `protocolVersion`, `cap
 
 ## Where it goes wrong
 
-The `Accept` header is the usual reason a first attempt fails. The spec requires clients to list both `application/json` and `text/event-stream` on every POST, and a server that follows it will reject anything offering only JSON. That is an afternoon spent debugging a monitor instead of a server.
+The `Accept` header is the usual reason a first attempt fails. The spec requires clients to list both `application/json` and `text/event-stream` on every POST, and a server that follows it will [reject anything offering only JSON](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports). That is an afternoon spent debugging a monitor instead of a server.
 
 The response might not be JSON at all. For any request the server may answer with a single JSON object or open an SSE stream, and clients have to handle both. When it opens a stream the body arrives as `event: message` followed by a `data:` line wrapping the same payload. So the assertion wants a substring like `protocolVersion` that survives both shapes. Matching on a body that starts with `{"jsonrpc"` will make the monitor flap according to which branch the server happened to take.
 
-Probe with `initialize` rather than `tools/list`. `initialize` is valid with no session because it is what starts one. Stateful servers hand back an `MCP-Session-Id` header and answer later sessionless requests with a 400, so a monitor firing `tools/list` by itself reports a hard failure against a healthy server.
+Probe with [`initialize`](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle) rather than `tools/list`. `initialize` is valid with no session because it is what starts one. Stateful servers hand back an `MCP-Session-Id` header and answer later sessionless requests with a 400, so a monitor firing `tools/list` by itself reports a hard failure against a healthy server.
 
 Repeated handshakes can also leak sessions. A server that allocates state on `initialize` and expects an HTTP `DELETE` to release it will accumulate one session per probe. Most implementations expire them on a timer and it never comes up. If yours does not, probe less often, or find out whether the server exposes a cheaper liveness path.
 

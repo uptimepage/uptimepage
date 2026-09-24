@@ -44,7 +44,7 @@ For years, working with monitoring meant the same loop: open the
 dashboard, navigate, read, interpret, act. Five steps, every one a place
 to lose time and focus at 2 a.m. with one eye open.
 
-What Emma used is **MCP**, the Model Context Protocol. It's the standard
+What Emma used is **MCP**, the [Model Context Protocol](https://modelcontextprotocol.io/). It's the standard
 that lets an AI assistant call your tools instead of guessing about them.
 Her monitoring exposes itself as a set of tools; her chat client
 discovers them and reads back real, typed data. "What's broken?" stops
