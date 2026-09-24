@@ -81,7 +81,7 @@ pub const LANDINGS: &[Landing] = &[
                 href: "/vs/statuspage",
             },
             ResourceLink {
-                label: "8 Statuspage alternatives, compared",
+                label: "11 Statuspage alternatives, compared",
                 href: "/blog/statuspage-alternatives",
             },
             ResourceLink {
@@ -163,7 +163,7 @@ pub const LANDINGS: &[Landing] = &[
                 href: "/white-label-uptime-monitoring",
             },
             ResourceLink {
-                label: "8 Statuspage alternatives, compared",
+                label: "11 Statuspage alternatives, compared",
                 href: "/blog/statuspage-alternatives",
             },
         ],
@@ -344,7 +344,7 @@ docker compose up -d"#,
                 href: "/blog/best-self-hosted-uptime-monitoring-tools",
             },
             ResourceLink {
-                label: "8 Statuspage alternatives, compared",
+                label: "11 Statuspage alternatives, compared",
                 href: "/blog/statuspage-alternatives",
             },
         ],
@@ -434,7 +434,7 @@ docker compose up -d"#,
                 href: "/blog/best-self-hosted-uptime-monitoring-tools",
             },
             ResourceLink {
-                label: "8 Statuspage alternatives, compared",
+                label: "11 Statuspage alternatives, compared",
                 href: "/blog/statuspage-alternatives",
             },
         ],
@@ -859,7 +859,7 @@ tail -c 4000 backup.log | curl -fsS --data-binary @- "$URL/$code""#,
         code: None,
         resources: &[
             ResourceLink {
-                label: "8 Statuspage alternatives, compared",
+                label: "11 Statuspage alternatives, compared",
                 href: "/blog/statuspage-alternatives",
             },
             ResourceLink {
@@ -1123,7 +1123,7 @@ tail -c 4000 backup.log | curl -fsS --data-binary @- "$URL/$code""#,
                 href: "/blog/best-self-hosted-uptime-monitoring-tools",
             },
             ResourceLink {
-                label: "8 Statuspage alternatives, compared",
+                label: "11 Statuspage alternatives, compared",
                 href: "/blog/statuspage-alternatives",
             },
         ],
@@ -1197,7 +1197,7 @@ tail -c 4000 backup.log | curl -fsS --data-binary @- "$URL/$code""#,
     Landing {
         path: "/compare/openstatus-vs-uptime-kuma",
         created: "2026-07-05",
-        lastmod: "2026-09-03",
+        lastmod: "2026-09-24",
         title: "OpenStatus vs Uptime Kuma",
         eyebrow: "comparing self-hosted",
         h1: "OpenStatus vs Uptime Kuma: which fits how you work?",
@@ -1413,7 +1413,7 @@ tail -c 4000 backup.log | curl -fsS --data-binary @- "$URL/$code""#,
                 href: "/blog/best-self-hosted-uptime-monitoring-tools",
             },
             ResourceLink {
-                label: "8 Statuspage alternatives, compared",
+                label: "11 Statuspage alternatives, compared",
                 href: "/blog/statuspage-alternatives",
             },
         ],
@@ -1961,7 +1961,7 @@ resource "uptimepage_status_page_component" "api" {
                 href: "/vs/statuspage",
             },
             ResourceLink {
-                label: "8 Statuspage alternatives, compared",
+                label: "11 Statuspage alternatives, compared",
                 href: "/blog/statuspage-alternatives",
             },
             ResourceLink {

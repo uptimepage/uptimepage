@@ -60,7 +60,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "Which one can my customers subscribe to?",
-                "OpenStatus status pages take email and RSS subscribers. Uptime Kuma pages have no subscriber notifications. Uptimepage pages take confirmed email and webhook subscribers, and incidents open automatically from failing checks.",
+                "OpenStatus status pages take email, webhook, Slack and RSS subscribers. Uptime Kuma pages have no subscriber notifications. Uptimepage pages take confirmed email and webhook subscribers, and incidents open automatically from failing checks.",
             ),
             (
                 "Is Uptime Kuma still fine for a homelab?",

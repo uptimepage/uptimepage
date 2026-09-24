@@ -1,9 +1,9 @@
 +++
-title = "8 best Statuspage alternatives in 2026, free and paid"
+title = "11 best Statuspage alternatives in 2026, free and paid"
 date = "2026-08-06"
 updated = "2026-09-24"
 slug = "statuspage-alternatives"
-excerpt = "Eight real Atlassian Statuspage alternatives compared honestly: which include the monitoring it leaves out, and which stop charging you per subscriber."
+excerpt = "Eleven real Atlassian Statuspage alternatives compared honestly: which include the monitoring it leaves out, and which stop charging you per subscriber."
 tags = ["status-page", "alternatives", "monitoring"]
 draft = false
 cta_label = "Publish a status page free"
@@ -13,8 +13,11 @@ list_items = [
     "Better Stack",
     "Hyperping",
     "Uptime.com",
+    "incident.io",
+    "OpenStatus",
     "Cachet",
     "Upptime",
+    "Uptime Kuma",
     "OneUptime",
     "Uptimepage",
 ]
@@ -25,7 +28,7 @@ a = "No, and this surprises people. Statuspage shows the status that you or an i
 
 [[faqs]]
 q = "Is there a free Statuspage alternative?"
-a = "Yes. Uptimepage has a free hosted tier with monitoring included and can also be self-hosted. Instatus, Hyperping and Better Stack have free hosted tiers too. Upptime and OneUptime are open source and free at any size if you host them, and Cachet is free to host, though its v3 licence is source-available rather than open source."
+a = "Yes. Uptimepage has a free hosted tier with monitoring included and can also be self-hosted. Instatus, Hyperping, Better Stack, OpenStatus and incident.io have free hosted tiers too. Upptime, Uptime Kuma and OneUptime are open source and free at any size if you host them, and Cachet is free to host, though its v3 licence is source-available rather than open source."
 
 [[faqs]]
 q = "Why do teams leave Statuspage?"
@@ -40,11 +43,11 @@ a = "Use Uptimepage's free hosted tier if you want monitoring and a branded page
 > - Statuspage does not run uptime checks itself. It shows what you or an integration report, so it is usually a second bill on top of a monitoring tool.
 > - Its price goes up with **subscribers**, the number you most want to grow.
 > - **Best default:** Uptimepage combines the checks and the public page, never charges per subscriber, and runs on the hosted service or on your own server.
-> - If you like your monitoring and only want the page replaced, Instatus.
+> - If you like your monitoring and only want the page replaced, Instatus. If your incidents already run in Slack or Teams, incident.io includes a free status page.
 > - Choose Better Stack when you also need logs and advanced on-call; choose Hyperping for a hosted monitoring and incident-response suite.
-> - To run the whole incident stack yourself, compare Uptimepage with OneUptime. Upptime and Cachet suit narrower self-hosted jobs.
+> - To run the whole incident stack yourself, compare Uptimepage with OneUptime. OpenStatus also does monitoring and the page in one open-source product, mostly used hosted. Upptime, Uptime Kuma and Cachet suit narrower self-hosted jobs.
 
-I should say this first: I build Uptimepage. I picked these eight for four distinct jobs (drop-in page replacement, all-in-one monitoring, broad monitoring, self-hosting) and checked each vendor's official pricing or documentation in August 2026. Pricing and limits move, so verify the current figures before you buy.
+I should say this first: I build Uptimepage. I picked these eleven for five distinct jobs (drop-in page replacement, incident response, all-in-one monitoring, broad monitoring, self-hosting) and checked each vendor's official pricing or documentation in August 2026, and for incident.io, OpenStatus and Uptime Kuma in September 2026. Pricing and limits move, so verify the current figures before you buy.
 
 ## What are you actually replacing?
 
@@ -71,8 +74,11 @@ The shortlist, side by side.
 | Better Stack | Monitoring, logs and advanced on-call | Hosted | 10 monitors at 3-min, 1 status page | Yes | Blocks of monitors |
 | Hyperping | Hosted monitoring and incident response | Hosted | 20 monitors, 5-min checks, 1 page | Yes | Monitors and seats |
 | Uptime.com | A broad probe network and procurement-heavy teams | Hosted, with private probes | No free tier or trial; 30-day money-back | Yes | Plan tier, users unlimited |
+| incident.io | Incident response run from Slack or Teams | Hosted | 1 public page, unlimited subscribers | No uptime checks of its own | Users |
+| OpenStatus | Open-source monitoring and page, hosted or self-hosted | Hosted or self-hosted | 1 monitor at 10-min, 1 page with 3 components | Yes | Plan tier, add-on pages and monitors |
 | Cachet | A self-hosted page driven by existing monitoring | Self-hosted | Free, you host it | HTTP in v3, you schedule it | Nothing but hosting |
 | Upptime | Open-source projects already on GitHub | Self-hosted on GitHub | Free | Yes, via Actions | Nothing but hosting |
+| Uptime Kuma | A homelab or internal page | Self-hosted | Free, you host it | Yes | Nothing but hosting |
 | OneUptime | A full incident stack under your control | Hosted or self-hosted | Free self-hosted, paid cloud | Yes | Nothing self-hosted |
 | Uptimepage | Monitoring plus a status page without subscriber fees | Hosted or self-hosted | 50 at 60s while the founding tier lasts, then 20 at 3-min | Yes | Monitors, never subscribers |
 
@@ -92,21 +98,33 @@ Hyperping bundles monitoring, on-call and a status page on your own domain inste
 
 Uptime.com is the broad monitoring option. Every plan includes unlimited users, so nobody pays per seat, and status pages come with email and SMS subscribers, password protection and a custom subdomain instead of costing extra. It runs more than a hundred public probe servers and can put private ones inside your own network, and few tools here have a probe network that big. Its Terraform provider is vendor maintained and shipping. Check that it fits you first, though. There is no free tier and no trial, so you evaluate it on a paid plan, backed by a 30-day money-back guarantee for new accounts. Its breadth is useful for procurement-heavy teams, but a three-person team may be happier further up this list.
 
-## 5. Cachet
+## 5. incident.io
+
+incident.io is an incident management tool first. Incidents are declared and run from Slack or Microsoft Teams, and a status page is part of the product rather than a separate purchase. The free Basic plan includes one public status page with unlimited subscribers, along with Slack or Teams incident response and on-call for a single team. Paid plans are priced per user: Team is $19 per user a month, or $15 on annual billing, and Pro is $25, with on-call as an extra per-user charge. Subscribers are unlimited on every plan, so the Statuspage subscriber meter goes away. What it does not do is check your services. Like Statuspage, it needs alerts from your monitoring tools before it knows something is wrong. Choose it when the real problem is how your team runs incidents, and the page is part of that.
+
+## 6. OpenStatus
+
+OpenStatus is an AGPL project that does monitoring and the status page in one product, as a hosted service or on your own servers. Failing checks open incidents, and visitors can subscribe by email, webhook, Slack or RSS. The free Hobby plan is small: one monitor at a ten-minute interval and one status page with three components. Starter is $30 a month for 20 monitors at one-minute checks, one page with 20 components, subscribers and a custom domain. Pro is $100 a month for 50 monitors at 30-second checks and five pages. Extra pages and monitors are sold as add-ons, and monitors run from up to 28 regions. It also has a REST API, a Terraform provider and an MCP server. Self-hosting means running several services rather than one process, and its storage leans on Turso and Tinybird. [OpenStatus against Uptime Kuma](/compare/openstatus-vs-uptime-kuma) covers the open-source side in more detail.
+
+## 7. Cachet
 
 Cachet is the best known self-hosted status page and still the one others get compared with. It began as a pure communication tool, exactly like Statuspage: you set components up or down by hand or over its API. Version 3, in the `cachethq/core` repo, added component checks and verified email subscribers in mid-2026. The old gap is closing, but those checks are thinner than they sound. They are HTTP only, with none of the TCP, DNS, TLS or ping coverage a dedicated monitor gives you, and nothing schedules them for you: the command exists, but Cachet's own scheduler never calls it, so you add your own cron entry.
 
 Read the licence before you build on it. Cachet 2.x was BSD-3-Clause, but the v3 branch ships a custom source-available licence and declares itself proprietary in `composer.json`, so v3 is not open source in the way the other self-hosted tools here are. Three more things to expect: the project says v3 is still under active development and not yet ready for production, there is no tagged release, so you install from the repository, and subscriptions are global only, so a customer cannot follow one component and ignore the rest. Pick Cachet if you want something shaped like Statuspage, self-hosted, you already have monitoring that can drive it over the API, and its licence works for you.
 
-## 6. Upptime
+## 8. Upptime
 
 Upptime has the cleverest design here and is the cheapest to run. It runs its checks as scheduled GitHub Actions, stores history as commits in your own repository, files incidents as GitHub Issues and serves a static page from GitHub Pages. There is no server to run and no bill. That design is also the limit: Actions cron will not run more often than every five minutes and often runs late, so short outages go unseen. Alerts go to your own team through Slack, email, SMS or a custom webhook, and there is no subscriber list your customers can join. For an open-source project or a personal site it is close to perfect. For a company that promises customers an SLA, the five-minute limit is the problem. I compare it with the others in [Uptimepage vs Upptime, Cachet and Statping](/vs/self-hosted-status-pages), and with every other self-hosted option in [the best open-source status pages](/blog/best-open-source-status-pages).
 
-## 7. OneUptime
+## 9. Uptime Kuma
+
+Uptime Kuma is the most popular self-hosted monitor, and it publishes status pages too, with your own domain and scheduled maintenance. It runs as one container and has 31 check types, so the monitoring side is strong. The status page is the weaker half. Incidents are posted by hand even though Kuma already knows when a check fails, and visitors can follow updates by RSS only, with no email or webhook subscribers. It also has a single shared login and no official REST API for managing monitors. For a homelab or an internal page it is the obvious free choice. For a page your customers depend on, the missing subscriber list is usually the first gap you hit. [Uptime Kuma against Cachet](/compare/uptime-kuma-vs-cachet) shows the difference between a monitor with a page and a page with checks.
+
+## 10. OneUptime
 
 Monitoring, status pages, incident management, on-call rotations and alert workflows all live in one open-source codebase you can self-host for free, with a hosted cloud if you would rather not run it. OneUptime publishes a vendor Terraform provider and an MCP server, though the MCP only supports API-key auth. What it costs you is the work of running it: this is a Docker or Kubernetes deployment with many services, not a single container, so you are taking on a platform. If your team already runs Kubernetes and wants the whole incident process in-house, this is the most complete answer on the list. More on it in my [self-hosted uptime monitoring guide](/blog/best-self-hosted-uptime-monitoring-tools).
 
-## 8. Uptimepage
+## 11. Uptimepage
 
 Uptimepage is the open-source project I maintain, and it is the default I recommend when you want to replace both Statuspage and the monitor behind it. The checks and the public page are one product: a failing check can open an incident and publish it without you wiring two vendors together. It never charges by subscriber. You can use Uptimepage as a [hosted status page](/status-page-for-saas) with monitoring built in and operate nothing, or [self-host the same AGPL application](/open-source-status-page) on your own infrastructure without changing products later.
 
@@ -122,7 +140,7 @@ Answer one question first: are you replacing the page, or the page and the monit
 
 If you want one product for monitoring and the public page, start with Uptimepage. Use the hosted service when you do not want infrastructure to operate, or self-host the same application when control and data ownership matter. There is no subscriber meter in either model.
 
-The exceptions are about scope. If you like your existing monitoring and only the page annoys you, choose Instatus, or Cachet when that page must be self-hosted and its licence works for you. Choose Better Stack when logs and advanced on-call are part of the purchase, Hyperping when you want a hosted monitoring and incident-response suite, and Uptime.com when a broad probe network and procurement support matter. If you want a fully self-hosted operations platform and are prepared to run it, compare Uptimepage with OneUptime. Upptime remains the lightweight answer for GitHub-based projects that can accept five-minute checks.
+The exceptions are about scope. If you like your existing monitoring and only the page annoys you, choose Instatus, or Cachet when that page must be self-hosted and its licence works for you. If your team already runs incidents in Slack or Teams, incident.io gives you the page with the incident process. Choose Better Stack when logs and advanced on-call are part of the purchase, Hyperping when you want a hosted monitoring and incident-response suite, and Uptime.com when a broad probe network and procurement support matter. If you want a fully self-hosted operations platform and are prepared to run it, compare Uptimepage with OneUptime. OpenStatus fits when you want monitoring and the page in one open-source tool, mostly on its hosted service. Upptime remains the lightweight answer for GitHub-based projects that can accept five-minute checks, and Uptime Kuma for a homelab or internal page where RSS is enough.
 
 Whatever you pick, decide what your uptime number means before you publish it, because your customers will treat that percentage as a promise. If you are also putting the number in a contract, [what an uptime SLA actually promises](/blog/uptime-sla) is worth ten minutes of your time first.
 
@@ -141,7 +159,7 @@ No, and this surprises people. Statuspage shows the status that you or an integr
 <summary>Is there a free Statuspage alternative?</summary>
 <div class="mk-faq__body">
 
-Yes. Uptimepage has a free hosted tier with monitoring included and can also be self-hosted. Instatus, Hyperping and Better Stack have free hosted tiers too. Upptime and OneUptime are open source and free at any size if you host them, and Cachet is free to host, though its v3 licence is source-available rather than open source.
+Yes. Uptimepage has a free hosted tier with monitoring included and can also be self-hosted. Instatus, Hyperping, Better Stack, OpenStatus and incident.io have free hosted tiers too. Upptime, Uptime Kuma and OneUptime are open source and free at any size if you host them, and Cachet is free to host, though its v3 licence is source-available rather than open source.
 
 </div>
 </details>

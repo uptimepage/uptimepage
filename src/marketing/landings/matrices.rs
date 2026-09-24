@@ -964,7 +964,7 @@ static OPENSTATUS_KUMA_MATRIX: Matrix = Matrix {
         MatrixRow {
             label: "status page subscribers",
             cells: &[
-                ("email · webhook · Slack", "yes"),
+                ("email · webhook · Slack · RSS", "yes"),
                 ("RSS only", "part"),
                 ("email · webhook", "yes"),
             ],
@@ -994,7 +994,7 @@ static OPENSTATUS_KUMA_MATRIX: Matrix = Matrix {
         "OpenStatus's open-source checker implements HTTP, TCP and DNS; ICMP, UDP and TLS-certificate monitor types exist in its API schema.",
         "Uptime Kuma's 2.x line added a Globalping monitor type, so checks can run from other locations without a second instance; it is still not a probe fleet you control.",
         "Star counts rounded from GitHub, July 2026.",
-        "Verified July 2026 against each project's repository, documentation and plan pages. Refresh when a project releases a new version.",
+        "Verified July 2026 against each project's repository, documentation and plan pages, with OpenStatus subscriber channels rechecked in September 2026. Refresh when a project releases a new version.",
     ],
 };
 
