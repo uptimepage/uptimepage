@@ -175,4 +175,57 @@ fn main() {
         .status()
         .expect("tailwind build failed — is ./bin/tailwindcss present?");
     assert!(status.success(), "tailwind exited non-zero");
+
+    precompress_assets();
+}
+
+/// Release writes a quality-11 brotli sibling (`app.css.br`) for every CSS and
+/// JS asset, which `assets::serve` hands to clients that accept `br`. The
+/// on-the-fly compression layer runs at a fast level and ships about a third
+/// more bytes.
+fn precompress_assets() {
+    if std::env::var("PROFILE").as_deref() != Ok("release") {
+        return;
+    }
+    let mut files = Vec::new();
+    for dir in ["static/css", "static/js"] {
+        collect_files(Path::new(dir), &mut files);
+    }
+    for file in files {
+        if matches!(
+            file.extension().and_then(|e| e.to_str()),
+            Some("css" | "js")
+        ) {
+            write_brotli(&file);
+        }
+    }
+}
+
+fn collect_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).expect("read static dir") {
+        let path = entry.expect("static dir entry").path();
+        if path.is_dir() {
+            collect_files(&path, out);
+        } else {
+            out.push(path);
+        }
+    }
+}
+
+fn write_brotli(src: &Path) {
+    let mut dst = src.as_os_str().to_owned();
+    dst.push(".br");
+    let dst = std::path::PathBuf::from(dst);
+    let modified = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    if matches!((modified(src), modified(&dst)), (Some(s), Some(d)) if d >= s) {
+        return;
+    }
+    let data = std::fs::read(src).expect("read asset to compress");
+    let mut out = Vec::new();
+    let params = brotli::enc::BrotliEncoderParams {
+        quality: 11,
+        ..Default::default()
+    };
+    brotli::BrotliCompress(&mut data.as_slice(), &mut out, &params).expect("brotli compress");
+    std::fs::write(&dst, out).expect("write brotli asset");
 }

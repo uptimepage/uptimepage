@@ -52,6 +52,9 @@ skills-lock.json
 /static/js/manifest.json
 /static/js/.esbuild-meta.json
 
+# Release-only brotli siblings of CSS/JS assets (written by build.rs).
+/static/**/*.br
+
 # Secrets and local-only test overrides (never commit)
 .env
 # Minted agent tokens for the local multi-region harness (scripts/dev-regions.sh)

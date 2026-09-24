@@ -194,6 +194,7 @@ schemars = "1"
 [build-dependencies]
 # build.rs parses esbuild's metafile to emit the asset manifest.
 serde_json = "1.0"
+brotli = "8"
 
 [dev-dependencies]
 # test-util unlocks tokio::time pause for the send-budget timing tests.

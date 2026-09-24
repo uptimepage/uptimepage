@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use axum::extract::{Path, RawQuery};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use rust_embed::Embed;
 
@@ -106,7 +106,11 @@ fn root_icon(asset: &str) -> Response {
         .into_response()
 }
 
-pub async fn serve(Path(path): Path<String>, RawQuery(query): RawQuery) -> Response {
+pub async fn serve(
+    Path(path): Path<String>,
+    RawQuery(query): RawQuery,
+    headers: HeaderMap,
+) -> Response {
     let Some(content) = StaticAssets::get(&path) else {
         return (StatusCode::NOT_FOUND, "not found").into_response();
     };
@@ -124,14 +128,55 @@ pub async fn serve(Path(path): Path<String>, RawQuery(query): RawQuery) -> Respo
         "public, max-age=300"
     };
 
-    (
-        [
-            (header::CONTENT_TYPE, mime.as_ref().to_owned()),
-            (header::CACHE_CONTROL, cache_control.to_owned()),
-        ],
-        content.data,
-    )
-        .into_response()
+    let headers_out = [
+        (header::CONTENT_TYPE, mime.as_ref().to_owned()),
+        (header::CACHE_CONTROL, cache_control.to_owned()),
+    ];
+    let Some(brotli) = brotli_sibling(&path) else {
+        return (headers_out, content.data).into_response();
+    };
+    let vary = (header::VARY, "accept-encoding".to_owned());
+    if accepts_brotli(&headers) {
+        let encoding = (header::CONTENT_ENCODING, "br".to_owned());
+        (headers_out, [vary, encoding], brotli.data).into_response()
+    } else {
+        (headers_out, [vary], content.data).into_response()
+    }
+}
+
+/// Release only: debug reads assets from disk, where a `.br` left by an earlier
+/// release build would shadow every later edit.
+#[cfg(assets_manifest)]
+fn brotli_sibling(path: &str) -> Option<rust_embed::EmbeddedFile> {
+    StaticAssets::get(&format!("{path}.br"))
+}
+
+#[cfg(not(assets_manifest))]
+fn brotli_sibling(_path: &str) -> Option<rust_embed::EmbeddedFile> {
+    None
+}
+
+/// True when `Accept-Encoding` lists `br` without `q=0`.
+fn accepts_brotli(headers: &HeaderMap) -> bool {
+    headers
+        .get_all(header::ACCEPT_ENCODING)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .any(|item| {
+            let mut parts = item.split(';');
+            let is_br = parts
+                .next()
+                .is_some_and(|coding| coding.trim().eq_ignore_ascii_case("br"));
+            is_br
+                && parts.all(|param| {
+                    param
+                        .split_once('=')
+                        .filter(|(name, _)| name.trim().eq_ignore_ascii_case("q"))
+                        .and_then(|(_, q)| q.trim().parse::<f32>().ok())
+                        .is_none_or(|q| q > 0.0)
+                })
+        })
 }
 
 /// Mount the fingerprinted static-asset route on the given router. Two
@@ -196,7 +241,7 @@ mod tests {
             StaticAssets::get(&path).is_some(),
             "JS url points at missing asset {path}"
         );
-        let resp = serve(Path(path), RawQuery(query)).await;
+        let resp = serve(Path(path), RawQuery(query), HeaderMap::new()).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
             resp.headers().get(header::CACHE_CONTROL).unwrap(),
@@ -244,6 +289,7 @@ mod tests {
         let resp = serve(
             Path("css/app.css".into()),
             RawQuery(Some("v=deadbeef".into())),
+            HeaderMap::new(),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -259,9 +305,26 @@ mod tests {
         assert!(std::str::from_utf8(&body).unwrap().contains("tailwindcss"));
     }
 
+    #[test]
+    fn accepts_brotli_reads_accept_encoding() {
+        let with = |v: &'static str| {
+            let mut h = HeaderMap::new();
+            h.insert(header::ACCEPT_ENCODING, v.parse().unwrap());
+            accepts_brotli(&h)
+        };
+        assert!(with("gzip, deflate, br, zstd"));
+        assert!(with("br;q=0.5"));
+        assert!(with("BR"));
+        assert!(!with("gzip, zstd"));
+        assert!(!with("br;q=0"));
+        assert!(!with("br; Q=0"));
+        assert!(!with("brotli"));
+        assert!(!accepts_brotli(&HeaderMap::new()));
+    }
+
     #[tokio::test]
     async fn unversioned_request_is_short_lived() {
-        let resp = serve(Path("css/app.css".into()), RawQuery(None)).await;
+        let resp = serve(Path("css/app.css".into()), RawQuery(None), HeaderMap::new()).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
             resp.headers().get(header::CACHE_CONTROL).unwrap(),
@@ -271,7 +334,12 @@ mod tests {
 
     #[tokio::test]
     async fn serves_htmx_js() {
-        let resp = serve(Path("js/htmx.min.js".into()), RawQuery(None)).await;
+        let resp = serve(
+            Path("js/htmx.min.js".into()),
+            RawQuery(None),
+            HeaderMap::new(),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let mime = resp
             .headers()
@@ -310,7 +378,12 @@ mod tests {
 
     #[tokio::test]
     async fn missing_asset_returns_404() {
-        let resp = serve(Path("does/not/exist".into()), RawQuery(None)).await;
+        let resp = serve(
+            Path("does/not/exist".into()),
+            RawQuery(None),
+            HeaderMap::new(),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
