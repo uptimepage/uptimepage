@@ -34,7 +34,7 @@ a = "Push monitors are the one automation surface Uptime Kuma supports on purpos
 
 You want fifty monitors created from a CSV. Or a check added in the same pull request that adds the service. Or a deploy script that pauses one monitor while it runs, then puts it back. So you go looking for the API docs and you cannot find them.
 
-They do not exist. So this is the surface as it stands in version 2.5.3, read out of the source on 5 September 2026.
+They do not exist. So this is the surface as it stands in [version 2.5.3](https://github.com/louislam/uptime-kuma/releases/tag/2.5.3), read out of the source on 5 September 2026.
 
 ## Every HTTP route Uptime Kuma serves
 
@@ -82,17 +82,17 @@ Creating a monitor is an event literally named `add`.
 
 To reach any of them you log in first, as the admin, over that same socket. The login event hands back a JWT you can reuse, and if the account has two-factor auth switched on, your script also has to produce a TOTP code from the shared secret. Then you emit `add` with a monitor object whose shape is written down nowhere, so you either copy what the browser sends or lean on somebody's wrapper that already did.
 
-That matters for three reasons. The credential is the whole instance: there is no read-only token and no per-monitor scope, so a deploy script that pauses one monitor is holding the login that could delete all of them and change the admin password. The payload shape is not a contract, it is whatever the current UI happens to send, so a field can be renamed in a minor release and the project has broken nothing, because nothing outside the UI was meant to depend on it. And none of it is documented, so you learn it by reading `server/server.js` or by reading someone else's wrapper.
+That matters for three reasons. The credential is the whole instance: there is no read-only token and no per-monitor scope, so a deploy script that pauses one monitor is holding the login that could delete all of them and change the admin password. The payload shape is not a contract, it is whatever the current UI happens to send, so a field can be renamed in a minor release and the project has broken nothing, because nothing outside the UI was meant to depend on it. And none of it is documented, so you learn it by reading [`server/server.js`](https://github.com/louislam/uptime-kuma/blob/master/server/server.js) or by reading someone else's wrapper.
 
 ## This is on purpose, and the project says so
 
-It is worth being fair to Uptime Kuma here. This is not neglect. The README lists the project's motivations, and one of them is:
+It is worth being fair to Uptime Kuma here. This is not neglect. The [README lists the project's motivations](https://github.com/louislam/uptime-kuma#motivation), and one of them is:
 
 > Try to use WebSocket with SPA instead of a REST API.
 
 Uptime Kuma set out to be a single-page app with a live socket behind it, which is a good fit for a dashboard you keep open all day. A REST API was never the goal, so asking for one is asking for a different product.
 
-The request is not being ignored either. Issue 118, "API functionality", has been open since July 2021 with 776 reactions and 77 comments, which makes it the most-reacted open issue in the repository. The maintainer went further than acknowledging it. In October 2023 he opened a pull request against that issue, number 3854, called "Document the Socket.io API and try to convert it to a HTTP request". It is still a draft, and both it and the issue were open when this was written.
+The request is not being ignored either. [Issue 118](https://github.com/louislam/uptime-kuma/issues/118), "API functionality", has been open since July 2021 with 776 reactions and 77 comments, which makes it the most-reacted open issue in the repository. The maintainer went further than acknowledging it. In October 2023 he opened a pull request against that issue, [number 3854](https://github.com/louislam/uptime-kuma/pull/3854), called "Document the Socket.io API and try to convert it to a HTTP request". It is still a draft, and both it and the issue were open when this was written.
 
 ## The wrapper ecosystem, with dates
 
@@ -100,13 +100,13 @@ Every library called an Uptime Kuma API is a Socket.IO client wearing a nicer co
 
 | Project | Stars | Last commit | Notes |
 |---|---|---|---|
-| `lucasheld/uptime-kuma-api` (Python) | 394 | 2023-09-26 | The canonical one. Compatibility table stops at Kuma 1.23.2 |
-| `lucasheld/ansible-uptime-kuma` | 188 | 2023-09-26 | Ansible modules built on the above |
-| `MedAziz11/Uptime-Kuma-Web-API` | 279 | 2023-08-10 | A FastAPI bridge that gives you a REST facade over the socket |
-| `breml/go-uptime-kuma-client` | 16 | 2026-08-30 | Go client |
-| `pablofmorales/kuma-cli` | 14 | 2026-04-02 | Command line client |
-| `exaland/uptime-kuma-api-v2` | 11 | 2026-08-23 | Fork of the Python wrapper for Kuma 2 |
-| `pbarone/uptime-kuma-api2` | 11 | 2026-08-15 | Another fork of the same wrapper for Kuma 2 |
+| [`lucasheld/uptime-kuma-api`](https://github.com/lucasheld/uptime-kuma-api) (Python) | 394 | 2023-09-26 | The canonical one. Compatibility table stops at Kuma 1.23.2 |
+| [`lucasheld/ansible-uptime-kuma`](https://github.com/lucasheld/ansible-uptime-kuma) | 188 | 2023-09-26 | Ansible modules built on the above |
+| [`MedAziz11/Uptime-Kuma-Web-API`](https://github.com/MedAziz11/Uptime-Kuma-Web-API) | 279 | 2023-08-10 | A FastAPI bridge that gives you a REST facade over the socket |
+| [`breml/go-uptime-kuma-client`](https://github.com/breml/go-uptime-kuma-client) | 16 | 2026-08-30 | Go client |
+| [`pablofmorales/kuma-cli`](https://github.com/pablofmorales/kuma-cli) | 14 | 2026-04-02 | Command line client |
+| [`exaland/uptime-kuma-api-v2`](https://github.com/exaland/uptime-kuma-api-v2) | 11 | 2026-08-23 | Fork of the Python wrapper for Kuma 2 |
+| [`pbarone/uptime-kuma-api2`](https://github.com/pbarone/uptime-kuma-api2) | 11 | 2026-08-15 | Another fork of the same wrapper for Kuma 2 |
 
 So the client almost everyone links to predates Uptime Kuma 2 entirely, and the forks that do cover version 2 are tiny. Two of them are the same idea, started a year apart by different people, with eleven stars each. That is what happens when the protocol underneath is neither stable nor written down: people rebuild the same wrapper instead of maintaining one together.
 

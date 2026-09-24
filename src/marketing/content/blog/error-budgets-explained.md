@@ -40,7 +40,7 @@ An SLO is your reliability target, for example 99.9%. The gap to 100% is the fai
 
 A 99.9% SLO over a 30-day month is 2,592,000 seconds times 0.001. That is 43 minutes and 12 seconds. That is the whole budget for the month, shared across every incident, not a fresh 43 minutes each day.
 
-So three nines is not "never go down". It is a 43-minute budget each month. Every extra nine costs about ten times more engineering, for downtime that most users never notice. This is why Google says that 100% is the wrong target for almost every service. The [uptime SLA calculator](/tools/uptime-sla-calculator) shows the full downtime-per-nine table if you want to compare targets.
+So three nines is not "never go down". It is a 43-minute budget each month. Every extra nine costs about ten times more engineering, for downtime that most users never notice. This is why [Google says](https://sre.google/sre-book/embracing-risk/) that 100% is the wrong target for almost every service. The [uptime SLA calculator](/tools/uptime-sla-calculator) shows the full downtime-per-nine table if you want to compare targets.
 
 ## Burn rate is the speed
 
@@ -58,7 +58,7 @@ At 2x, a 30-day budget is gone in fifteen days. At 14.4x it is gone in about two
 
 ## Turning burn rate into alerts
 
-One threshold is not enough. It either alerts too late or it sends too many [false alarms](/blog/boring-uptime). The common fix uses two windows: a long one to confirm the problem is real, and a short one to clear the alert quickly once you fix it. Both have to be burning for the alert to fire. For a 30-day budget, these are the usual settings:
+One threshold is not enough. It either alerts too late or it sends too many [false alarms](/blog/boring-uptime). The common fix uses two windows: a long one to confirm the problem is real, and a short one to clear the alert quickly once you fix it. Both have to be burning for the alert to fire. For a 30-day budget, these are the usual settings, from [Google's SRE workbook](https://sre.google/workbook/alerting-on-slos/):
 
 - Fast page: 2% of the budget in 1 hour (with a 5-minute short window). This is a 14.4x burn.
 - Page: 5% in 6 hours (30-minute short window). This is a 6x burn.
@@ -68,7 +68,7 @@ The fast page catches a sudden outage. The slow ticket catches a slow problem th
 
 ## The rule is the point
 
-The math is the easy part. The value comes from a rule you agree on before anything breaks. The rule is simple. When the budget runs out, risky launches stop, and the team works on reliability until the budget grows back. While the budget is healthy, you ship and you take the risk.
+The math is the easy part. The value comes from a rule you agree on before anything breaks, which Google writes down as an [error budget policy](https://sre.google/workbook/error-budget-policy/). The rule is simple. When the budget runs out, risky launches stop, and the team works on reliability until the budget grows back. While the budget is healthy, you ship and you take the risk.
 
 One more rule keeps it fair. If you never spend your budget, your SLO is too strict, and you are paying for reliability that no user asked for.
 

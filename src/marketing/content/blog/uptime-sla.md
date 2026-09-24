@@ -66,11 +66,11 @@ A service credit pays back a percentage of what you paid the provider for the af
 
 Three details worth reading before you rely on one:
 
-Credits are usually tiered. Miss by a little and you get a small percentage back, miss badly and you get more, but the ladder is normally capped at the monthly fee for that service. The provider's worst case is giving you the month for free.
+Credits are usually tiered. Miss by a little and you get a small percentage back, miss badly and you get more, but the ladder is normally capped at the monthly fee for that service. The provider's worst case is giving you the month for free. The [EC2 SLA](https://aws.amazon.com/compute/sla/) is a typical ladder: 10%, 30%, then 100% of the bill.
 
 Credits usually have to be claimed. They are rarely automatic. Most contracts give you a window, often 30 days from the incident, and require you to submit the request with your own evidence. Miss the window and the credit is gone even though the outage happened.
 
-Credits are often the sole remedy. Contracts commonly state that the credit is the only compensation available for missed availability, which closes off other claims.
+Credits are often the sole remedy. Contracts commonly state that the credit is the only compensation available for missed availability, which closes off other claims. AWS and [Google Cloud](https://cloud.google.com/compute/sla) both call it the "sole and exclusive remedy".
 
 ## The definition of downtime does more work than the number
 
