@@ -1,0 +1,17 @@
+@import "tailwindcss" source(none);
+
+/* The marketing site's own bundle: its shell, the shared theme tokens and the
+   few app primitives its pages reuse, without the org app's components. */
+@import "./_marketing.css";
+
+@source "../../templates/marketing/**/*.html";
+@source "../../src/marketing/**/*.{rs,md}";
+@source "../../assets/js/marketing/**/*.js";
+@source "../../assets/js/architecture/**/*.js";
+@source "../../assets/js/ui/combobox.js";
+@source "../../assets/js/ui/popover_pos.js";
+
+@import "./_theme.css";
+@import "./_shell.css";
+@import "./_controls.css";
+@import "./_combobox.css";

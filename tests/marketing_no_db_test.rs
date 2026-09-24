@@ -1255,10 +1255,10 @@ async fn etag_is_stable_and_returns_304() {
 async fn marketing_serves_fingerprinted_assets() {
     // The dispatcher routes the whole apex/www host to the marketing
     // router, so marketing must own its own /static/{*path} route.
-    // Without it, every <link href="/static/css/app.css?v=...">
+    // Without it, every <link href="/static/css/marketing.css?v=...">
     // emitted by a marketing template falls through to the marketing
     // 404 — page renders unstyled.
-    let (status, _, headers) = get("/static/css/app.css").await;
+    let (status, _, headers) = get("/static/css/marketing.css").await;
     assert_eq!(
         status,
         StatusCode::OK,

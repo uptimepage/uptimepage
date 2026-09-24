@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-CSS = REPO / "static/css/app.css"
+CSS = REPO / "static/css/marketing.css"
 TEMPLATE = REPO / "templates/marketing/landing.html"
 WRAPPER = '<div class="space-y-24 sm:space-y-28">'
 

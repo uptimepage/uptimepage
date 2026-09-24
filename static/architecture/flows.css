@@ -3,7 +3,7 @@
 
 /* The map is a self-contained island: every custom property and selector is
    scoped to .archmap so it neither inherits from nor leaks into the
-   surrounding marketing shell (Tailwind app.css). */
+   surrounding marketing shell (Tailwind marketing.css). */
 .archmap{
   --surface:oklch(0.985 0.003 240);
   --elev:oklch(0.995 0.001 240);

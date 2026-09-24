@@ -2962,7 +2962,7 @@ html:has(.marketing-shell) {
 
 /* Lightbox — CSS :target drives open/close/prev/next; arrow keys are a progressive JS enhancement */
 
-/* `.marketing-shell > *` (input.css, @layer base) makes <main> a stacking
+/* `.marketing-shell > *` (_shell.css, @layer base) makes <main> a stacking
    context, so the lightbox's own z-index can never beat the sticky header.
    Unlayered here, to win over that layered rule without !important. */
 .marketing-shell > main:has(.mk-lightbox:target) { z-index: 70; }

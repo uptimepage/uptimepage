@@ -1,0 +1,44 @@
+@layer base {
+    /* Shared faint-horizontal-scanline atmosphere across the three shells.
+       Dark themes lift the opacity + blend-mode further down; .theme-classic
+       and .theme-corporate kill it via `content: none`. */
+    .app-shell::before,
+    .public-shell::before,
+    .marketing-shell::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        background-image: repeating-linear-gradient(
+            to bottom,
+            transparent 0,
+            transparent 3px,
+            oklch(0 0 0 / 0.018) 3px,
+            oklch(0 0 0 / 0.018) 4px
+        );
+    }
+    .app-shell::after { content: none; }
+    .app-shell > *,
+    .public-shell > *,
+    .marketing-shell > * { position: relative; z-index: 1; }
+
+    /* Visible focus ring on every interactive element. Must be a real
+       `outline`, not Tailwind `ring` (a box-shadow): the cartoon controls
+       (.sticker-btn, .field) own a box-shadow,
+       and this rule is zero-specificity :where(), so a ring box-shadow
+       loses to theirs and the indicator vanishes. outline is an
+       independent property — never eaten. WCAG 2.2 / 2.4.7 (≥3:1). */
+    :where(button, [role="button"], a, input, select, textarea, summary):focus-visible {
+        outline: 2px solid var(--theme-focus-ring);
+        outline-offset: 0;
+    }
+
+    /* Tailwind preflight zeroes margin on every element including <dialog>,
+       which kills the UA's `margin: auto` that centers a modal dialog.
+       Restore it so showModal() lands the dialog at viewport center
+       instead of (0, 0). */
+    dialog[open] {
+        margin: auto;
+    }
+}

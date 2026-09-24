@@ -117,18 +117,37 @@ fn write_js_manifest(meta_path: &str, manifest_path: &str) {
     .expect("write JS manifest");
 }
 
+/// Tailwind inputs and their outputs: the org app, and the marketing site,
+/// which loads only its own shell plus the partials both share.
+const TAILWIND_BUNDLES: [(&str, &str); 2] = [
+    ("input.css", "app.css"),
+    ("marketing-input.css", "marketing.css"),
+];
+
+/// Every hand-written stylesheet under static/css that a bundle imports.
+const TAILWIND_SOURCES: [&str; 7] = [
+    "input.css",
+    "marketing-input.css",
+    "_marketing.css",
+    "_theme.css",
+    "_shell.css",
+    "_controls.css",
+    "_combobox.css",
+];
+
 fn main() {
     emit_source_identity();
 
     // Tailwind v4 scans `templates/**/*.html`, `src/**/*.rs`, AND
-    // `assets/js/**/*.js` for class names (see @source directives in
-    // static/css/input.css), so the CSS must rebuild whenever any of those
+    // `assets/js/**/*.js` for class names (see @source directives in the
+    // two bundle inputs, TAILWIND_BUNDLES), so the CSS must rebuild whenever any of those
     // trees changes — including Rust files and JS modals that emit class
     // strings. The ~40ms overhead is the cost of co-locating class names with
     // the code that uses them.
     println!("cargo::rerun-if-changed=templates");
-    println!("cargo::rerun-if-changed=static/css/input.css");
-    println!("cargo::rerun-if-changed=static/css/_marketing.css");
+    for css in TAILWIND_SOURCES {
+        println!("cargo::rerun-if-changed=static/css/{css}");
+    }
     println!("cargo::rerun-if-changed=assets/js");
     println!("cargo::rerun-if-changed=src");
     println!("cargo::rerun-if-changed=scripts/fetch-tailwind.sh");
@@ -160,21 +179,23 @@ fn main() {
         assert!(fetch.success(), "fetch-tailwind.sh exited non-zero");
     }
 
-    // Serialize the shared app.css write; concurrent tailwind writers wedge.
+    // Serialize the shared CSS writes; concurrent tailwind writers wedge.
     let lock = File::create("static/css/.tailwind.lock").expect("create tailwind lock");
     lock.lock().expect("acquire tailwind lock");
 
-    let status = Command::new("./bin/tailwindcss")
-        .args([
-            "--input",
-            "static/css/input.css",
-            "--output",
-            "static/css/app.css",
-            "--minify",
-        ])
-        .status()
-        .expect("tailwind build failed — is ./bin/tailwindcss present?");
-    assert!(status.success(), "tailwind exited non-zero");
+    for (input, output) in TAILWIND_BUNDLES {
+        let status = Command::new("./bin/tailwindcss")
+            .args([
+                "--input",
+                &format!("static/css/{input}"),
+                "--output",
+                &format!("static/css/{output}"),
+                "--minify",
+            ])
+            .status()
+            .expect("tailwind build failed — is ./bin/tailwindcss present?");
+        assert!(status.success(), "tailwind exited non-zero for {input}");
+    }
 
     precompress_assets();
 }

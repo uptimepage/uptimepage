@@ -1,0 +1,66 @@
+@layer base {
+    /* Native checkbox / radio restyled to the CLI register: hairline
+       1px border, 2px corners (round for radio), --theme-accent fill
+       on check. No press-in physics, no offset shadow — flat to match
+       the rest of the surface. */
+    input[type="checkbox"],
+    input[type="radio"] {
+        appearance: none;
+        -webkit-appearance: none;
+        flex-shrink: 0;
+        display: inline-grid;
+        place-content: center;
+        width: var(--control-size);
+        height: var(--control-size);
+        margin: 0;
+        vertical-align: middle;
+        cursor: pointer;
+        background-color: var(--theme-surface-elev);
+        border: 1px solid var(--theme-line);
+        transition: border-color 120ms ease, background-color 120ms ease;
+    }
+    input[type="checkbox"] { border-radius: 2px; }
+    input[type="radio"]    { border-radius: 9999px; }
+
+    input[type="checkbox"]:not(:checked):hover:not(:disabled),
+    input[type="radio"]:not(:checked):hover:not(:disabled) {
+        border-color: var(--theme-ink);
+    }
+
+    input[type="checkbox"]:checked,
+    input[type="radio"]:checked {
+        background-color: var(--control-on);
+        border-color: var(--control-on);
+    }
+
+    input[type="checkbox"]::after {
+        content: "";
+        width: 0.32rem;
+        height: 0.6rem;
+        border: solid #fff;
+        border-width: 0 2.5px 2.5px 0;
+        transform: rotate(45deg) translateY(-1px);
+        opacity: 0;
+    }
+    input[type="checkbox"]:checked::after { opacity: 1; }
+    input[type="radio"]::after {
+        content: "";
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 9999px;
+        background-color: #fff;
+        opacity: 0;
+    }
+    input[type="radio"]:checked::after { opacity: 1; }
+
+    input[type="checkbox"]:disabled,
+    input[type="radio"]:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        input[type="checkbox"],
+        input[type="radio"] { transition: none; }
+    }
+}

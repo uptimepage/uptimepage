@@ -30,4 +30,4 @@ EXPOSE 8080 9090
 # cargo-watch re-runs on src/templates/static/migrations changes. The ignore
 # rules avoid restart loops on build.rs's own outputs: fetched binaries in bin/,
 # the tailwind CSS, and the esbuild JS bundles + manifest in static/js/.
-CMD ["cargo", "watch", "-i", "bin/*", "-i", "static/css/app.css", "-i", "static/js/ui/*", "-i", "static/js/public/*", "-i", "static/js/charts/*", "-i", "static/js/manifest.json", "-i", "static/js/.esbuild-meta.json", "-x", "run --bin uptimepage"]
+CMD ["cargo", "watch", "-i", "bin/*", "-i", "static/css/app.css", "-i", "static/css/marketing.css", "-i", "static/js/ui/*", "-i", "static/js/public/*", "-i", "static/js/charts/*", "-i", "static/js/manifest.json", "-i", "static/js/.esbuild-meta.json", "-x", "run --bin uptimepage"]
