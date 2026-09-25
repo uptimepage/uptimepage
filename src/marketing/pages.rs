@@ -238,6 +238,7 @@ pub fn not_found_page(cfg: &MarketingCfg) -> Response {
 }
 
 pub(crate) const ARCHITECTURE_PATH: &str = "/architecture";
+pub(crate) const ARCHITECTURE_CREATED: &str = "2026-07-23";
 pub(crate) const ARCHITECTURE_LASTMOD: &str = "2026-08-03";
 
 /// The map's own data, shared with `assets/js/architecture/_data.js` so the
@@ -388,6 +389,17 @@ fn render_architecture(cfg: &MarketingCfg) -> CachedRender {
         .iter()
         .filter_map(|id| flows.iter().find(|f| f.id == *id))
         .collect();
+    // TechArticle, not WebPage: the page explains how the system works and
+    // carries an author, which is what a citation needs.
+    let article_json_ld = json_ld_tech_article(
+        &cfg.canonical_origin,
+        ARCHITECTURE_PATH,
+        &title,
+        description,
+        ARCHITECTURE_CREATED,
+        ARCHITECTURE_LASTMOD,
+        &og.image,
+    );
     let body = ArchitecturePage {
         app_url: cfg.app_url.clone(),
         canonical_url,
@@ -397,15 +409,7 @@ fn render_architecture(cfg: &MarketingCfg) -> CachedRender {
             "Architecture",
             ARCHITECTURE_PATH,
         ),
-        // TechArticle, not WebPage: the page explains how the system works and
-        // carries an author, which is what a citation needs.
-        article_json_ld: json_ld_tech_article(
-            &cfg.canonical_origin,
-            ARCHITECTURE_PATH,
-            &title,
-            description,
-            ARCHITECTURE_LASTMOD,
-        ),
+        article_json_ld,
         columns,
         flows,
         reference,

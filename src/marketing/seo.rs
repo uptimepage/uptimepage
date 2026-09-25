@@ -387,7 +387,9 @@ pub fn json_ld_tech_article(
     path: &str,
     name: &str,
     description: &str,
+    created: &str,
     modified: &str,
+    image: &str,
 ) -> JsonLd {
     let payload = serde_json::json!({
         "@context": "https://schema.org",
@@ -397,6 +399,8 @@ pub fn json_ld_tech_article(
         "name": name,
         "description": description,
         "url": format!("{canonical_origin}{path}"),
+        "image": image,
+        "datePublished": iso_datetime(created),
         "dateModified": iso_datetime(modified),
         "inLanguage": "en",
         "isPartOf": { "@id": format!("{canonical_origin}/#website") },

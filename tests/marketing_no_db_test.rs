@@ -1505,6 +1505,14 @@ async fn architecture_carries_structured_data() {
     .unwrap();
     // The citation-relevant edges: who wrote it and what it is about.
     assert!(article["author"].is_object(), "TechArticle needs an author");
+    assert!(
+        article["datePublished"].is_string(),
+        "TechArticle needs datePublished"
+    );
+    assert_eq!(
+        article["image"], "https://uptimepage.dev/static/marketing/og-architecture.png",
+        "the article image must be the page's social card"
+    );
     assert_eq!(
         article["about"]["@id"], "https://uptimepage.dev/#software",
         "the article must point at the product node"
