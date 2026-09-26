@@ -153,7 +153,7 @@ async fn override_crud_and_resolution_pg() {
     let at = "2026-06-01T12:00:00Z".parse().unwrap();
     assert_eq!(
         store.resolve_now(org, sched.schedule.id, at).await.unwrap(),
-        vec![owner]
+        Some(vec![owner])
     );
 
     let ov = store
@@ -172,18 +172,71 @@ async fn override_crud_and_resolution_pg() {
         .unwrap();
     assert_eq!(
         store.resolve_now(org, sched.schedule.id, at).await.unwrap(),
-        vec![cover]
+        Some(vec![cover])
     );
 
+    let before = "2026-05-31T00:00:00Z".parse().unwrap();
     assert!(
         store
-            .delete_override(org, sched.schedule.id, ov.id)
+            .remove_override(org, sched.schedule.id, ov.id, before)
             .await
             .unwrap()
     );
     assert_eq!(
         store.resolve_now(org, sched.schedule.id, at).await.unwrap(),
-        vec![owner]
+        Some(vec![owner])
+    );
+
+    // Removed once begun, it ends then and keeps the part already run.
+    let ov = store
+        .add_override(
+            org,
+            sched.schedule.id,
+            Some(owner),
+            window(cover, "2026-06-01T00:00:00Z", "2026-06-02T00:00:00Z"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        store
+            .remove_override(org, sched.schedule.id, ov.id, at)
+            .await
+            .unwrap()
+    );
+    let kept = store.get(org, sched.schedule.id).await.unwrap().unwrap();
+    assert_eq!(kept.overrides.len(), 1);
+    assert_eq!(kept.overrides[0].ends_at, at);
+    let earlier = "2026-06-01T06:00:00Z".parse().unwrap();
+    assert_eq!(
+        store
+            .resolve_now(org, sched.schedule.id, earlier)
+            .await
+            .unwrap(),
+        Some(vec![cover])
+    );
+    assert!(
+        !store
+            .remove_override(org, sched.schedule.id, Uuid::now_v7(), at)
+            .await
+            .unwrap()
+    );
+    // Sent again, it keeps what already ran; a deleted schedule has none.
+    let later = "2026-06-01T15:00:00Z".parse().unwrap();
+    assert!(
+        store
+            .remove_override(org, sched.schedule.id, ov.id, later)
+            .await
+            .unwrap()
+    );
+    let kept = store.get(org, sched.schedule.id).await.unwrap().unwrap();
+    assert_eq!(kept.overrides[0].ends_at, at);
+    assert!(store.delete(org, sched.schedule.id).await.unwrap());
+    assert!(
+        !store
+            .remove_override(org, sched.schedule.id, ov.id, later)
+            .await
+            .unwrap()
     );
 }
 
@@ -421,7 +474,7 @@ async fn responders_contacts_and_pagers_stay_live_and_per_org_pg() {
         (sched.schedule.id, cover),
     ];
     expected.sort_by_key(|(s, u)| (*s, u.0));
-    assert_eq!(on_call.responders(org).await.unwrap(), expected);
+    assert_eq!(responders(&on_call, org).await, expected);
 
     let contacts = PgContactStore::new(pool.clone());
     let slack = seed_channel(&pool, org, "owner-slack").await;
@@ -468,7 +521,7 @@ async fn responders_contacts_and_pagers_stay_live_and_per_org_pg() {
     );
 
     let (other, _) = seed_org(&pool, "ocgapo").await;
-    assert!(on_call.responders(other).await.unwrap().is_empty());
+    assert!(responders(&on_call, other).await.is_empty());
     assert!(contacts.for_org(other).await.unwrap().is_empty());
     assert!(esc.schedule_pagers(other).await.unwrap().is_empty());
 }
@@ -627,10 +680,8 @@ async fn a_removed_member_is_paged_no_more_pg() {
     assert_eq!(rung.targets.len(), 1);
     assert_eq!(rung.targets[0].target_type, EscalationTargetType::Schedule);
     assert!(
-        on_call
-            .responders(org)
+        responders(&on_call, org)
             .await
-            .unwrap()
             .iter()
             .all(|(_, u)| *u != leaver)
     );
@@ -714,4 +765,208 @@ async fn a_removed_member_is_paged_no_more_pg() {
     .execute(&pool)
     .await;
     assert!(orphan.is_err(), "a non-member cannot be wired to be paged");
+}
+
+/// Who each live schedule can put on call from now, deduped.
+async fn responders(store: &PgOnCallStore, org: OrgId) -> Vec<(Uuid, UserId)> {
+    let mut out: Vec<(Uuid, UserId)> = store
+        .current(org, chrono::Utc::now())
+        .await
+        .unwrap()
+        .iter()
+        .flat_map(|d| {
+            d.responders()
+                .map(|u| (d.schedule.id, u))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    out.sort_by_key(|(s, u)| (*s, u.0));
+    out.dedup();
+    out
+}
+
+fn window(user: UserId, from: &str, to: &str) -> NewOnCallOverride {
+    NewOnCallOverride {
+        user_id: user,
+        starts_at: from.parse().unwrap(),
+        ends_at: to.parse().unwrap(),
+    }
+}
+
+#[tokio::test]
+#[ignore]
+async fn one_person_cannot_cover_overlapping_windows_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, owner) = seed_org(&pool, "ocoverlap").await;
+    let second = add_member(&pool, org, "ocoverlap2").await;
+    let store = PgOnCallStore::new(pool.clone());
+    let id = store
+        .create(org, schedule("overlap", "UTC", vec![owner]), 10)
+        .await
+        .unwrap()
+        .schedule
+        .id;
+
+    // Two racing adds of the same window: the schedule lock lets one through.
+    let (a, b) = tokio::join!(
+        store.add_override(
+            org,
+            id,
+            None,
+            window(second, "2026-07-01T00:00:00Z", "2026-07-03T00:00:00Z")
+        ),
+        store.add_override(
+            org,
+            id,
+            None,
+            window(second, "2026-07-02T00:00:00Z", "2026-07-04T00:00:00Z")
+        ),
+    );
+    let overlapping =
+        |r: &uptimepage::error::Result<Option<uptimepage::domain::OnCallOverride>>| {
+            matches!(r, Err(uptimepage::error::AppError::Unprocessable { code, .. })
+            if *code == uptimepage::error::codes::ON_CALL_OVERRIDE_OVERLAPS)
+        };
+    let stored = |r: &uptimepage::error::Result<Option<uptimepage::domain::OnCallOverride>>| {
+        matches!(r, Ok(Some(_)))
+    };
+    assert!(
+        (stored(&a) && overlapping(&b)) || (overlapping(&a) && stored(&b)),
+        "one stored, one refused: {a:?} / {b:?}"
+    );
+
+    // Someone else in the same window, or the same person right after, is fine.
+    for w in [
+        window(owner, "2026-07-01T00:00:00Z", "2026-07-03T00:00:00Z"),
+        window(second, "2026-07-10T00:00:00Z", "2026-07-11T00:00:00Z"),
+    ] {
+        assert!(
+            store
+                .add_override(org, id, None, w)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore]
+async fn current_loads_every_schedule_with_overrides_not_yet_over_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, owner) = seed_org(&pool, "occurrent").await;
+    let (other_org, other_owner) = seed_org(&pool, "occurrentoth").await;
+    let store = PgOnCallStore::new(pool.clone());
+    let older = store
+        .create(org, schedule("older", "UTC", vec![owner]), 10)
+        .await
+        .unwrap();
+    let newer = store
+        .create(org, schedule("newer", "Europe/Kyiv", vec![owner]), 10)
+        .await
+        .unwrap();
+    store
+        .create(other_org, schedule("theirs", "UTC", vec![other_owner]), 10)
+        .await
+        .unwrap();
+    for w in [
+        window(owner, "2026-07-01T00:00:00Z", "2026-07-02T00:00:00Z"),
+        window(owner, "2026-07-05T00:00:00Z", "2026-07-06T00:00:00Z"),
+    ] {
+        store
+            .add_override(org, older.schedule.id, None, w)
+            .await
+            .unwrap();
+    }
+
+    let at: chrono::DateTime<chrono::Utc> = "2026-07-03T00:00:00Z".parse().unwrap();
+    let got = store.current(org, at).await.unwrap();
+    let ids: Vec<Uuid> = got.iter().map(|d| d.schedule.id).collect();
+    assert_eq!(
+        ids,
+        [newer.schedule.id, older.schedule.id],
+        "newest first, own org only"
+    );
+    assert_eq!(got[0].layers[0].participants[0].user_id, owner);
+    assert!(got[0].overrides.is_empty());
+    let mut full = store.get(org, older.schedule.id).await.unwrap().unwrap();
+    full.overrides.retain(|o| o.ends_at > at);
+    assert_eq!(full.overrides.len(), 1);
+    assert_eq!(got[1], full, "the batch load assembles what get does");
+    assert_eq!(
+        store.get_from(org, older.schedule.id, at).await.unwrap(),
+        Some(full),
+        "one schedule from an instant keeps the same overrides"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn the_schema_refuses_a_custom_rotation_under_an_hour_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, owner) = seed_org(&pool, "ocfloor").await;
+    let store = PgOnCallStore::new(pool.clone());
+    let id = store
+        .create(org, schedule("floor", "UTC", vec![owner]), 10)
+        .await
+        .unwrap()
+        .schedule
+        .id;
+    let insert = |secs: i32| {
+        sqlx::query(
+            "INSERT INTO on_call_layers \
+                (org_id, schedule_id, rotation_type, rotation_length_secs, handoff_at, layer_order) \
+             VALUES ($1, $2, 'custom', $3, now(), 1)",
+        )
+        .bind(org.0)
+        .bind(id)
+        .bind(secs)
+        .execute(&pool)
+    };
+    let err = insert(1_800).await.unwrap_err();
+    assert!(
+        err.as_database_error()
+            .and_then(|e| e.constraint())
+            .is_some_and(|c| c == "ck_on_call_layers_custom_length"),
+        "{err}"
+    );
+    insert(3_600).await.expect("an hour is allowed");
+}
+
+#[tokio::test]
+#[ignore]
+async fn two_layers_of_one_schedule_cannot_share_an_order_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, owner) = seed_org(&pool, "octiedorder").await;
+    let store = PgOnCallStore::new(pool.clone());
+    let mut tied = schedule("tied", "UTC", vec![owner]);
+    tied.layers.push(tied.layers[0].clone());
+
+    let err = store.create(org, tied.clone(), 10).await.unwrap_err();
+    assert!(
+        matches!(err, uptimepage::error::AppError::Unprocessable { code, .. }
+            if code == uptimepage::error::codes::ON_CALL_SCHEDULE_INVALID),
+        "{err:?}"
+    );
+    assert!(store.list(org).await.unwrap().is_empty(), "nothing stored");
+
+    let id = store
+        .create(org, schedule("tied", "UTC", vec![owner]), 10)
+        .await
+        .unwrap()
+        .schedule
+        .id;
+    assert!(store.replace(org, id, tied.clone()).await.is_err());
+    tied.layers[1].layer_order = 1;
+    let saved = store.replace(org, id, tied).await.unwrap().unwrap();
+    let orders: Vec<i32> = saved.layers.iter().map(|l| l.layer_order).collect();
+    assert_eq!(orders, [0, 1]);
 }

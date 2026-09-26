@@ -7,6 +7,10 @@
 //                        PM"). For data/audit tables (check results, incident
 //                        times, sessions) where "exactly when" is the point and
 //                        a drifting relative label would mislead.
+//   data-tz="at"      — the day and time, worded to end a sentence such as
+//                        "until …" ("today at 6:00 PM", "tomorrow at 9:00
+//                        AM", "Mon at 9:00 AM", then the date). For instants
+//                        near now or ahead of it, where "ago" would misread.
 // The title tooltip always carries the full local timestamp with zone name.
 //
 // The server emits a UTC fallback as the element's text, so the page is fully
@@ -27,7 +31,7 @@
         return undefined;
     }
 
-    var timeFmt, timeSecFmt, dateFmt, dateYearFmt, dayTimeFmt, exactFmt, fullFmt;
+    var timeFmt, timeSecFmt, dateFmt, dateYearFmt, dayTimeFmt, dayTimeYearFmt, weekdayFmt, exactFmt, fullFmt;
     try {
         // hourCycle is one of the few component options allowed alongside
         // timeStyle; undefined leaves the locale default untouched.
@@ -37,6 +41,8 @@
         dateFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
         dateYearFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
         dayTimeFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hourCycle: hc });
+        dayTimeYearFmt = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hourCycle: hc });
+        weekdayFmt = new Intl.DateTimeFormat(undefined, { weekday: "short" });
         exactFmt = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium", hourCycle: hc });
         fullFmt = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "long", hourCycle: hc });
     } catch (_) { /* Intl unavailable: leave server text untouched */ }
@@ -58,6 +64,27 @@
             && a.getDate() === b.getDate();
     }
 
+    function shiftDays(d, n) {
+        var out = new Date(d.getTime());
+        out.setDate(d.getDate() + n);
+        return out;
+    }
+
+    function atLabel(then, now) {
+        var time = " at " + timeFmt.format(then);
+        if (sameDay(then, now)) return "today" + time;
+        if (sameDay(then, shiftDays(now, 1))) return "tomorrow" + time;
+        if (sameDay(then, shiftDays(now, -1))) return "yesterday" + time;
+        // Under six days ahead a weekday cannot be mistaken for today's.
+        var ahead = then.getTime() - now.getTime();
+        if (ahead > 0 && ahead < 6 * 86400000) {
+            return weekdayFmt.format(then) + time;
+        }
+        return then.getFullYear() === now.getFullYear()
+            ? dayTimeFmt.format(then)
+            : dayTimeYearFmt.format(then);
+    }
+
     function relativeLabel(then, now) {
         var elapsedSec = Math.round((now.getTime() - then.getTime()) / 1000);
         // Clock skew or pending writes can put an instant slightly ahead.
@@ -65,9 +92,7 @@
         var mins = Math.round(elapsedSec / 60);
         if (mins < 60) return mins + (mins === 1 ? " min ago" : " mins ago");
         if (sameDay(then, now)) return "Today at " + timeFmt.format(then);
-        var yesterday = new Date(now.getTime());
-        yesterday.setDate(now.getDate() - 1);
-        if (sameDay(then, yesterday)) return "Yesterday at " + timeFmt.format(then);
+        if (sameDay(then, shiftDays(now, -1))) return "Yesterday at " + timeFmt.format(then);
         if (then.getFullYear() === now.getFullYear()) return dateFmt.format(then);
         return dateYearFmt.format(then);
     }
@@ -83,8 +108,9 @@
             var then = new Date(el.getAttribute("datetime"));
             if (isNaN(then.getTime())) continue;
             var full = fullFmt.format(then);
-            el.textContent = el.getAttribute("data-tz") === "exact"
-                ? exactFmt.format(then)
+            var mode = el.getAttribute("data-tz");
+            el.textContent = mode === "exact" ? exactFmt.format(then)
+                : mode === "at" ? atLabel(then, now)
                 : relativeLabel(then, now);
             // Visible relative text loses the precise instant; keep the full
             // local timestamp reachable to assistive tech and on hover.

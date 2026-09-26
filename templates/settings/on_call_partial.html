@@ -1,6 +1,3 @@
-<div data-member-map class="hidden">
-  {% for m in members %}<span data-member-id="{{ m.id }}" data-member-email="{{ m.email }}"></span>{% endfor %}
-</div>
 {% if schedules.is_empty() %}
 <div class="sticker-card flex items-center gap-3 px-4 py-6 text-sm text-muted">
   <span aria-hidden="true" class="text-base text-quiet">↘</span>
@@ -31,7 +28,16 @@
           {% endif %}
         </td>
         <td class="px-4 py-2 align-top text-body">
-          <span data-who-on-call data-schedule-id="{{ s.id }}" class="text-muted">…</span>
+          <div>
+            {% if s.coverage.now.is_empty() %}<span class="flash-text--warn">no one</span>{% else %}{{ s.coverage.now|join(", ") }}{% endif %}
+            {% if s.coverage.overridden %}<span class="text-xs text-quiet">override</span>{% endif %}
+          </div>
+          {% if let Some(until) = s.coverage.until %}
+          <div class="text-xs text-muted">
+            until <time data-tz="at" datetime="{{ until|iso_ts }}">{{ until|human_ts }}</time>, then
+            {% if s.coverage.next.is_empty() %}<span class="flash-text--warn">no one</span>{% else %}{{ s.coverage.next|join(", ") }}{% endif %}
+          </div>
+          {% endif %}
         </td>
         <td class="px-4 py-2 align-top font-mono text-xs text-muted">{{ s.timezone }}</td>
         <td class="px-4 py-2 align-top tabular-nums">{{ s.layer_count }}</td>

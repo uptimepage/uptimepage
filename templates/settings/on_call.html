@@ -27,7 +27,7 @@
     <h2 class="panel-label">on the Team plan</h2>
     <ul class="list-inside list-disc space-y-1 text-sm">
       <li>Rotations hand off daily or weekly at the same local time in the team's timezone, or on an interval you set.</li>
-      <li>Overrides on a calendar cover a swap or a sick day without touching the rotation.</li>
+      <li>A calendar shows who is on call each day, and overrides on it cover a swap or a sick day without touching the rotation.</li>
       <li>Each responder picks the channels that page them.</li>
     </ul>
     {% include "settings/_team_cta.html" %}
@@ -46,13 +46,13 @@
       <tbody class="divide-y divide-[color:var(--theme-line)]">
         <tr>
           <td class="px-4 py-2 font-medium">Primary</td>
-          <td class="px-4 py-2">olena@example.com</td>
+          <td class="px-4 py-2">olena@example.com<div class="text-xs text-muted">until tomorrow at 09:00, then taras@example.com</div></td>
           <td class="px-4 py-2 font-mono text-xs text-muted">Europe/Kyiv</td>
           <td class="px-4 py-2 tabular-nums">2</td>
         </tr>
         <tr>
           <td class="px-4 py-2 font-medium">Database</td>
-          <td class="px-4 py-2">taras@example.com</td>
+          <td class="px-4 py-2">taras@example.com<div class="text-xs text-muted">until Mon at 09:00, then iryna@example.com</div></td>
           <td class="px-4 py-2 font-mono text-xs text-muted">Europe/Kyiv</td>
           <td class="px-4 py-2 tabular-nums">1</td>
         </tr>
@@ -111,7 +111,6 @@
 </section>
 
 {% if !self.teaser() %}
-<script defer src="{{ "js/ui/on_call_list.js"|asset }}"></script>
 <script defer src="{{ "js/ui/contact_channels.js"|asset }}"></script>
 {% endif %}
 {% endblock %}

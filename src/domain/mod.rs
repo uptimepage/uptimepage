@@ -74,9 +74,10 @@ pub use notification_channel::{
     validate_channel_name,
 };
 pub use on_call::{
-    NewOnCallLayer, NewOnCallOverride, NewOnCallParticipant, NewOnCallSchedule, OnCallLayer,
-    OnCallOverride, OnCallParticipant, OnCallSchedule, OnCallScheduleDetail, OnCallScheduleSummary,
-    RotationType, resolve_on_call,
+    FIRST_YEAR, LAST_YEAR, NewOnCallLayer, NewOnCallOverride, NewOnCallParticipant,
+    NewOnCallSchedule, OnCallLayer, OnCallOverride, OnCallParticipant, OnCallSchedule,
+    OnCallScheduleDetail, OnCallScheduleSummary, OnCallShift, RotationType, local_to_utc,
+    on_call_shifts, resolve_on_call,
 };
 pub use org::{
     AccountId, BrandingError, OrgId, Organization, PublicOrgBranding, PublicStyle, SlugError,

@@ -70,41 +70,26 @@
     </div>
   </form>
 
-  {% if form.mode == "edit" %}
-  <section class="space-y-3" aria-labelledby="overrides-heading"
+  {% if let Some(cal) = form.calendar %}
+  <section class="space-y-3" aria-labelledby="calendar-heading"
            data-overrides
-           data-schedule-id="{{ form.schedule_id }}"
-           data-timezone="{{ form.timezone }}">
-    <h2 id="overrides-heading" class="panel-label">Overrides</h2>
+           data-schedule-id="{{ form.schedule_id }}">
+    <h2 id="calendar-heading" class="panel-label">calendar</h2>
     <p class="text-xs text-muted">
-      Click a start day and an end day, then pick who covers. Days run midnight
-      to midnight in <span class="font-mono">{{ form.timezone }}</span>. An
-      override beats the rotation for its window. Click one to remove it.
+      Who is on call each day of the saved schedule, with days and handoff
+      times in the zone named above the grid. Overrides are highlighted and
+      beat the rotation for their window. To add one, click a start day and an
+      end day, then pick who covers.
     </p>
     <div class="sticker-card space-y-3 p-4">
-      <div class="flex items-center justify-between">
-        <button type="button" data-cal-prev class="row-link text-sm"><span aria-hidden="true">←</span> prev</button>
-        <span data-cal-title class="text-sm font-medium"></span>
-        <button type="button" data-cal-next class="row-link text-sm">next <span aria-hidden="true">→</span></button>
-      </div>
-      <div data-cal-grid class="grid grid-cols-7 gap-px overflow-hidden rounded bg-[color:var(--theme-line)] text-xs"></div>
-      <p data-cal-hint class="text-xs text-muted">Click a start day, then an end day, then choose who covers.</p>
-      <p data-cal-zone-note class="flash-text flash-text--warn text-xs" hidden></p>
-      <div data-cal-picker class="hidden flex-wrap items-center gap-2"></div>
+      <div id="on-call-calendar" hx-sync="this:replace">{% include "settings/_on_call_calendar.html" %}</div>
+      <p data-cal-hint aria-live="polite" class="text-xs text-muted">Click a start day, then an end day, then choose who covers.</p>
+      <div data-cal-picker hidden class="flex flex-wrap items-center gap-2"></div>
       <p data-cal-result role="status" aria-live="polite" class="flash-text text-xs"></p>
     </div>
-    <ul data-override-seed class="hidden">
-      {% for o in form.overrides %}
-      <li data-override-id="{{ o.id }}"
-          data-user-id="{{ o.user_id }}"
-          data-email="{{ o.email }}"
-          data-start="{{ o.starts_at|iso_ts }}"
-          data-end="{{ o.ends_at|iso_ts }}"></li>
-      {% endfor %}
-    </ul>
     <select data-override-members class="hidden">
       {% for m in form.members %}
-      <option value="{{ m.id }}" data-email="{{ m.email }}">{{ m.email }}{% if !m.reachable %} (no paging channels){% endif %}</option>
+      <option value="{{ m.id }}">{{ m.email }}{% if !m.reachable %} (no paging channels){% endif %}</option>
       {% endfor %}
     </select>
   </section>
@@ -120,7 +105,7 @@
 
 <script defer src="{{ "js/ui/api_form.js"|asset }}"></script>
 <script defer src="{{ "js/ui/on_call_schedule.js"|asset }}"></script>
-{% if form.mode == "edit" %}
+{% if form.calendar.is_some() %}
 <script defer src="{{ "js/ui/on_call_calendar.js"|asset }}"></script>
 {% endif %}
 {% endblock %}

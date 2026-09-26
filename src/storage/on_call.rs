@@ -8,6 +8,8 @@
 //! be members of `org` on write (the parent-chain org-match trigger guards the
 //! schedule↔layer chain, not the user reference, so this closes the IDOR).
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
@@ -28,12 +30,20 @@ use crate::storage::{accounts, orgs};
 pub trait OnCallStore: Send + Sync {
     /// Lightweight index (no layers loaded), newest first.
     async fn list(&self, org: OrgId) -> Result<Vec<OnCallScheduleSummary>>;
-    /// Who a live schedule can put on call, as `(schedule_id, user)`: every
-    /// layer participant, plus whoever covers an override not yet over.
-    async fn responders(&self, org: OrgId) -> Result<Vec<(Uuid, UserId)>>;
     /// Full schedule with ordered layers + participants + overrides. `None`
     /// for a missing or soft-deleted schedule.
     async fn get(&self, org: OrgId, id: Uuid) -> Result<Option<OnCallScheduleDetail>>;
+    /// [`Self::get`] with only the overrides not yet over at `from`: enough to
+    /// say who is on call from `from` on.
+    async fn get_from(
+        &self,
+        org: OrgId,
+        id: Uuid,
+        from: DateTime<Utc>,
+    ) -> Result<Option<OnCallScheduleDetail>>;
+    /// Every live schedule, newest first, with only the overrides not yet
+    /// over at `now`: enough to say who is on call from `now` on.
+    async fn current(&self, org: OrgId, now: DateTime<Utc>) -> Result<Vec<OnCallScheduleDetail>>;
     /// Create one schedule with its layer stack. Atomically capped at
     /// `max_schedules`; a duplicate name yields `ON_CALL_SCHEDULE_NAME_TAKEN`.
     async fn create(
@@ -51,7 +61,9 @@ pub trait OnCallStore: Send + Sync {
     ) -> Result<Option<OnCallScheduleDetail>>;
     /// Soft-delete. Returns `false` when nothing live matched.
     async fn delete(&self, org: OrgId, id: Uuid) -> Result<bool>;
-    /// Add a coverage override. `None` when the schedule is missing/deleted.
+    /// Add a coverage override. `None` when the schedule is missing/deleted;
+    /// `ON_CALL_OVERRIDE_OVERLAPS` when the same person already covers part of
+    /// the window on this schedule.
     async fn add_override(
         &self,
         org: OrgId,
@@ -59,25 +71,28 @@ pub trait OnCallStore: Send + Sync {
         created_by: Option<UserId>,
         new: NewOnCallOverride,
     ) -> Result<Option<OnCallOverride>>;
-    /// Remove an override. `false` when nothing matched.
-    async fn delete_override(
+    /// Take an override off a live schedule from `now` on: one not begun is
+    /// deleted, one begun ends by `now`, so who was on call before stays as
+    /// it was. `false` when nothing matched.
+    async fn remove_override(
         &self,
         org: OrgId,
         schedule_id: Uuid,
         override_id: Uuid,
+        now: DateTime<Utc>,
     ) -> Result<bool>;
-    /// Who is on call for a schedule at `at` — the pure resolver over the live
-    /// rows. Empty for a missing/deleted schedule.
+    /// Who is on call for a schedule at `at`: the pure resolver over the
+    /// live rows. `None` for a missing or deleted schedule.
     async fn resolve_now(
         &self,
         org: OrgId,
         schedule_id: Uuid,
         at: DateTime<Utc>,
-    ) -> Result<Vec<UserId>> {
-        match self.get(org, schedule_id).await? {
-            Some(d) => Ok(resolve_on_call(&d.schedule, &d.layers, &d.overrides, at)),
-            None => Ok(vec![]),
-        }
+    ) -> Result<Option<Vec<UserId>>> {
+        Ok(self
+            .get_from(org, schedule_id, at)
+            .await?
+            .map(|d| resolve_on_call(&d.schedule, &d.layers, &d.overrides, at)))
     }
 }
 
@@ -90,6 +105,20 @@ fn name_taken() -> AppError {
     AppError::unprocessable(
         codes::ON_CALL_SCHEDULE_NAME_TAKEN,
         "an on-call schedule with this name already exists",
+    )
+}
+
+fn overlaps() -> AppError {
+    AppError::unprocessable(
+        codes::ON_CALL_OVERRIDE_OVERLAPS,
+        "this person already covers part of that window",
+    )
+}
+
+fn order_taken() -> AppError {
+    AppError::unprocessable(
+        codes::ON_CALL_SCHEDULE_INVALID,
+        "each layer needs its own layer_order",
     )
 }
 
@@ -124,6 +153,7 @@ struct ScheduleRow {
 #[derive(sqlx::FromRow)]
 struct LayerRow {
     id: Uuid,
+    schedule_id: Uuid,
     name: Option<String>,
     rotation_type: String,
     rotation_length_secs: i32,
@@ -143,6 +173,7 @@ struct ParticipantRow {
 #[derive(sqlx::FromRow)]
 struct OverrideRow {
     id: Uuid,
+    schedule_id: Uuid,
     user_id: Uuid,
     starts_at: DateTime<Utc>,
     ends_at: DateTime<Utc>,
@@ -165,6 +196,15 @@ async fn lock_participants_tx(
         return Err(not_member());
     }
     Ok(())
+}
+
+/// `rows` by `key`, each group in the order the rows came.
+fn group<T>(rows: &[T], key: impl Fn(&T) -> Uuid) -> HashMap<Uuid, Vec<&T>> {
+    let mut out: HashMap<Uuid, Vec<&T>> = HashMap::new();
+    for row in rows {
+        out.entry(key(row)).or_default().push(row);
+    }
+    out
 }
 
 /// Insert a schedule's layers + participants inside an open transaction.
@@ -190,7 +230,16 @@ async fn insert_layers_tx(
         .bind(layer.layer_order)
         .fetch_one(&mut **tx)
         .await
-        .map_err(|e| AppError::Other(anyhow::anyhow!("insert on_call_layer: {e}")))?;
+        .map_err(
+            |e| match e.as_database_error().and_then(|d| d.constraint()) {
+                Some("idx_on_call_layers_schedule") => order_taken(),
+                Some("ck_on_call_layers_custom_length") => AppError::unprocessable(
+                    codes::ON_CALL_SCHEDULE_INVALID,
+                    "a custom rotation length must be at least an hour",
+                ),
+                _ => AppError::Other(anyhow::anyhow!("insert on_call_layer: {e}")),
+            },
+        )?;
         for (position, p) in layer.participants.iter().enumerate() {
             sqlx::query(
                 "INSERT INTO on_call_participants (org_id, layer_id, user_id, position) \
@@ -210,32 +259,32 @@ async fn insert_layers_tx(
 
 fn assemble(
     schedule: ScheduleRow,
-    layers: Vec<LayerRow>,
-    participants: Vec<ParticipantRow>,
-    overrides: Vec<OverrideRow>,
+    layers: Vec<&LayerRow>,
+    participants: &HashMap<Uuid, Vec<&ParticipantRow>>,
+    overrides: Vec<&OverrideRow>,
 ) -> OnCallScheduleDetail {
-    let mut out: Vec<OnCallLayer> = layers
+    let layers = layers
         .into_iter()
         .map(|l| OnCallLayer {
             id: l.id,
-            name: l.name,
+            name: l.name.clone(),
             rotation_type: RotationType::from_db_str(&l.rotation_type),
             rotation_length_secs: l.rotation_length_secs,
             handoff_at: l.handoff_at,
             layer_order: l.layer_order,
             created_at: l.created_at,
-            participants: vec![],
+            participants: participants
+                .get(&l.id)
+                .into_iter()
+                .flatten()
+                .map(|p| OnCallParticipant {
+                    id: p.id,
+                    user_id: UserId(p.user_id),
+                    position: p.position,
+                })
+                .collect(),
         })
         .collect();
-    for p in participants {
-        if let Some(layer) = out.iter_mut().find(|l| l.id == p.layer_id) {
-            layer.participants.push(OnCallParticipant {
-                id: p.id,
-                user_id: UserId(p.user_id),
-                position: p.position,
-            });
-        }
-    }
     OnCallScheduleDetail {
         schedule: OnCallSchedule {
             id: schedule.id,
@@ -244,7 +293,7 @@ fn assemble(
             created_at: schedule.created_at,
             updated_at: schedule.updated_at,
         },
-        layers: out,
+        layers,
         overrides: overrides
             .into_iter()
             .map(|o| OnCallOverride {
@@ -260,50 +309,90 @@ fn assemble(
 }
 
 impl PgOnCallStore {
-    async fn hydrate(&self, org: OrgId, schedule: ScheduleRow) -> Result<OnCallScheduleDetail> {
-        let id = schedule.id;
-        let layers: Vec<LayerRow> = sqlx::query_as(
-            "SELECT id, name, rotation_type, rotation_length_secs, handoff_at, layer_order, \
-                created_at \
-             FROM on_call_layers WHERE org_id = $1 AND schedule_id = $2 ORDER BY layer_order, created_at",
+    /// Live schedules, newest first (all of them, or the one `only` names),
+    /// with their layers, participants and overrides, keeping only the
+    /// overrides that end after `overrides_after` when set. One snapshot, so
+    /// a save landing between the reads cannot pair old layers with new
+    /// participants.
+    async fn load(
+        &self,
+        org: OrgId,
+        only: Option<Uuid>,
+        overrides_after: Option<DateTime<Utc>>,
+    ) -> Result<Vec<OnCallScheduleDetail>> {
+        let db = |what: &'static str| {
+            move |e: sqlx::Error| AppError::Other(anyhow::anyhow!("{what}: {e}"))
+        };
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .await
+            .map_err(db("begin"))?;
+        let schedules: Vec<ScheduleRow> = sqlx::query_as(
+            "SELECT id, name, timezone, created_at, updated_at FROM on_call_schedules \
+             WHERE org_id = $1 AND deleted_at IS NULL AND ($2::uuid IS NULL OR id = $2) \
+             ORDER BY created_at DESC",
         )
         .bind(org.0)
-        .bind(id)
-        .fetch_all(&self.pool)
+        .bind(only)
+        .fetch_all(&mut *tx)
         .await
-        .map_err(|e| AppError::Other(anyhow::anyhow!("load on_call_layers: {e}")))?;
+        .map_err(db("load on_call_schedules"))?;
+        if schedules.is_empty() {
+            return Ok(vec![]);
+        }
+        let ids: Vec<Uuid> = schedules.iter().map(|s| s.id).collect();
+        let layers: Vec<LayerRow> = sqlx::query_as(
+            "SELECT id, schedule_id, name, rotation_type, rotation_length_secs, handoff_at, \
+                layer_order, created_at \
+             FROM on_call_layers WHERE org_id = $1 AND schedule_id = ANY($2) \
+             ORDER BY layer_order, created_at, id",
+        )
+        .bind(org.0)
+        .bind(&ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db("load on_call_layers"))?;
         let participants: Vec<ParticipantRow> = sqlx::query_as(
             "SELECT p.id, p.layer_id, p.user_id, p.position \
              FROM on_call_participants p JOIN on_call_layers l ON l.id = p.layer_id \
-             WHERE p.org_id = $1 AND l.schedule_id = $2 ORDER BY p.layer_id, p.position",
+             WHERE p.org_id = $1 AND l.org_id = $1 AND l.schedule_id = ANY($2) \
+             ORDER BY p.layer_id, p.position",
         )
         .bind(org.0)
-        .bind(id)
-        .fetch_all(&self.pool)
+        .bind(&ids)
+        .fetch_all(&mut *tx)
         .await
-        .map_err(|e| AppError::Other(anyhow::anyhow!("load on_call_participants: {e}")))?;
+        .map_err(db("load on_call_participants"))?;
         let overrides: Vec<OverrideRow> = sqlx::query_as(
-            "SELECT id, user_id, starts_at, ends_at, created_by, created_at \
-             FROM on_call_overrides WHERE org_id = $1 AND schedule_id = $2 ORDER BY starts_at",
+            "SELECT id, schedule_id, user_id, starts_at, ends_at, created_by, created_at \
+             FROM on_call_overrides \
+             WHERE org_id = $1 AND schedule_id = ANY($2) \
+               AND ($3::timestamptz IS NULL OR ends_at > $3) \
+             ORDER BY starts_at",
         )
         .bind(org.0)
-        .bind(id)
-        .fetch_all(&self.pool)
+        .bind(&ids)
+        .bind(overrides_after)
+        .fetch_all(&mut *tx)
         .await
-        .map_err(|e| AppError::Other(anyhow::anyhow!("load on_call_overrides: {e}")))?;
-        Ok(assemble(schedule, layers, participants, overrides))
-    }
-
-    async fn schedule_row(&self, org: OrgId, id: Uuid) -> Result<Option<ScheduleRow>> {
-        sqlx::query_as(
-            "SELECT id, name, timezone, created_at, updated_at FROM on_call_schedules \
-             WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL",
-        )
-        .bind(id)
-        .bind(org.0)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AppError::Other(anyhow::anyhow!("get on_call_schedule: {e}")))
+        .map_err(db("load on_call_overrides"))?;
+        tx.commit().await.map_err(db("commit"))?;
+        let by_layer = group(&participants, |p| p.layer_id);
+        let mut layers_of = group(&layers, |l| l.schedule_id);
+        let mut overrides_of = group(&overrides, |o| o.schedule_id);
+        Ok(schedules
+            .into_iter()
+            .map(|s| {
+                let id = s.id;
+                assemble(
+                    s,
+                    layers_of.remove(&id).unwrap_or_default(),
+                    &by_layer,
+                    overrides_of.remove(&id).unwrap_or_default(),
+                )
+            })
+            .collect())
     }
 }
 
@@ -337,33 +426,21 @@ impl OnCallStore for PgOnCallStore {
             .collect())
     }
 
-    async fn responders(&self, org: OrgId) -> Result<Vec<(Uuid, UserId)>> {
-        let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
-            "SELECT l.schedule_id, p.user_id FROM on_call_participants p \
-             JOIN on_call_layers l ON l.id = p.layer_id \
-             JOIN on_call_schedules s ON s.id = l.schedule_id \
-             WHERE s.org_id = $1 AND s.deleted_at IS NULL \
-             UNION \
-             SELECT o.schedule_id, o.user_id FROM on_call_overrides o \
-             JOIN on_call_schedules s ON s.id = o.schedule_id \
-             WHERE o.org_id = $1 AND s.deleted_at IS NULL AND o.ends_at > now() \
-             ORDER BY 1, 2",
-        )
-        .bind(org.0)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Other(anyhow::anyhow!("on_call responders: {e}")))?;
-        Ok(rows
-            .into_iter()
-            .map(|(schedule, user)| (schedule, UserId(user)))
-            .collect())
+    async fn get(&self, org: OrgId, id: Uuid) -> Result<Option<OnCallScheduleDetail>> {
+        Ok(self.load(org, Some(id), None).await?.pop())
     }
 
-    async fn get(&self, org: OrgId, id: Uuid) -> Result<Option<OnCallScheduleDetail>> {
-        match self.schedule_row(org, id).await? {
-            Some(s) => Ok(Some(self.hydrate(org, s).await?)),
-            None => Ok(None),
-        }
+    async fn get_from(
+        &self,
+        org: OrgId,
+        id: Uuid,
+        from: DateTime<Utc>,
+    ) -> Result<Option<OnCallScheduleDetail>> {
+        Ok(self.load(org, Some(id), Some(from)).await?.pop())
+    }
+
+    async fn current(&self, org: OrgId, now: DateTime<Utc>) -> Result<Vec<OnCallScheduleDetail>> {
+        self.load(org, None, Some(now)).await
     }
 
     async fn create(
@@ -501,9 +578,11 @@ impl OnCallStore for PgOnCallStore {
             .begin()
             .await
             .map_err(|e| AppError::Other(anyhow::anyhow!("begin: {e}")))?;
+        // Two adds to one schedule take turns, so the overlap check below
+        // sees the other's row.
         let live: Option<(Uuid,)> = sqlx::query_as(
             "SELECT id FROM on_call_schedules \
-             WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL",
+             WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL FOR NO KEY UPDATE",
         )
         .bind(schedule_id)
         .bind(org.0)
@@ -516,11 +595,27 @@ impl OnCallStore for PgOnCallStore {
         if !orgs::lock_memberships(&mut tx, org, &[new.user_id]).await? {
             return Err(not_member());
         }
+        let clash: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM on_call_overrides \
+             WHERE org_id = $1 AND schedule_id = $2 AND user_id = $3 \
+               AND starts_at < $5 AND ends_at > $4)",
+        )
+        .bind(org.0)
+        .bind(schedule_id)
+        .bind(new.user_id.0)
+        .bind(new.starts_at)
+        .bind(new.ends_at)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| AppError::Other(anyhow::anyhow!("check override overlap: {e}")))?;
+        if clash {
+            return Err(overlaps());
+        }
         let row: OverrideRow = sqlx::query_as(
             r#"INSERT INTO on_call_overrides
                    (org_id, schedule_id, user_id, starts_at, ends_at, created_by)
                VALUES ($1, $2, $3, $4, $5, $6)
-               RETURNING id, user_id, starts_at, ends_at, created_by, created_at"#,
+               RETURNING id, schedule_id, user_id, starts_at, ends_at, created_by, created_at"#,
         )
         .bind(org.0)
         .bind(schedule_id)
@@ -544,22 +639,36 @@ impl OnCallStore for PgOnCallStore {
         }))
     }
 
-    async fn delete_override(
+    async fn remove_override(
         &self,
         org: OrgId,
         schedule_id: Uuid,
         override_id: Uuid,
+        now: DateTime<Utc>,
     ) -> Result<bool> {
-        let result = sqlx::query(
-            "DELETE FROM on_call_overrides WHERE id = $1 AND schedule_id = $2 AND org_id = $3",
+        sqlx::query_scalar(
+            "WITH live AS ( \
+                 SELECT 1 FROM on_call_schedules \
+                  WHERE id = $2 AND org_id = $3 AND deleted_at IS NULL), \
+             ended AS ( \
+                 UPDATE on_call_overrides SET ends_at = LEAST(ends_at, $4) \
+                  WHERE id = $1 AND schedule_id = $2 AND org_id = $3 \
+                    AND starts_at < $4 AND EXISTS (SELECT 1 FROM live) \
+                 RETURNING id), \
+             dropped AS ( \
+                 DELETE FROM on_call_overrides \
+                  WHERE id = $1 AND schedule_id = $2 AND org_id = $3 \
+                    AND starts_at >= $4 AND EXISTS (SELECT 1 FROM live) \
+                 RETURNING id) \
+             SELECT EXISTS (SELECT 1 FROM ended UNION ALL SELECT 1 FROM dropped)",
         )
         .bind(override_id)
         .bind(schedule_id)
         .bind(org.0)
-        .execute(&self.pool)
+        .bind(now)
+        .fetch_one(&self.pool)
         .await
-        .map_err(|e| AppError::Other(anyhow::anyhow!("delete on_call_override: {e}")))?;
-        Ok(result.rows_affected() > 0)
+        .map_err(|e| AppError::Other(anyhow::anyhow!("remove on_call_override: {e}")))
     }
 }
 
@@ -656,34 +765,6 @@ impl OnCallStore for InMemoryOnCallStore {
             .collect())
     }
 
-    async fn responders(&self, org: OrgId) -> Result<Vec<(Uuid, UserId)>> {
-        let now = Utc::now();
-        let mut out: Vec<(Uuid, UserId)> = self
-            .inner
-            .lock()
-            .schedules
-            .iter()
-            .filter(|(o, _, deleted)| *o == org && !*deleted)
-            .flat_map(|(_, d, _)| {
-                let id = d.schedule.id;
-                d.layers
-                    .iter()
-                    .flat_map(|l| l.participants.iter().map(|p| p.user_id))
-                    .chain(
-                        d.overrides
-                            .iter()
-                            .filter(|o| o.ends_at > now)
-                            .map(|o| o.user_id),
-                    )
-                    .map(move |u| (id, u))
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        out.sort_by_key(|(s, u)| (*s, u.0));
-        out.dedup();
-        Ok(out)
-    }
-
     async fn get(&self, org: OrgId, id: Uuid) -> Result<Option<OnCallScheduleDetail>> {
         Ok(self
             .inner
@@ -692,6 +773,35 @@ impl OnCallStore for InMemoryOnCallStore {
             .iter()
             .find(|(o, d, deleted)| *o == org && d.schedule.id == id && !*deleted)
             .map(|(_, d, _)| d.clone()))
+    }
+
+    async fn get_from(
+        &self,
+        org: OrgId,
+        id: Uuid,
+        from: DateTime<Utc>,
+    ) -> Result<Option<OnCallScheduleDetail>> {
+        Ok(self.get(org, id).await?.map(|mut d| {
+            d.overrides.retain(|o| o.ends_at > from);
+            d
+        }))
+    }
+
+    async fn current(&self, org: OrgId, now: DateTime<Utc>) -> Result<Vec<OnCallScheduleDetail>> {
+        let mut out: Vec<OnCallScheduleDetail> = self
+            .inner
+            .lock()
+            .schedules
+            .iter()
+            .filter(|(o, _, deleted)| *o == org && !*deleted)
+            .map(|(_, d, _)| {
+                let mut d = d.clone();
+                d.overrides.retain(|o| o.ends_at > now);
+                d
+            })
+            .collect();
+        out.sort_by_key(|d| std::cmp::Reverse(d.schedule.created_at));
+        Ok(out)
     }
 
     async fn create(
@@ -796,24 +906,28 @@ impl OnCallStore for InMemoryOnCallStore {
             created_by,
             created_at: Utc::now(),
         };
-        match g
+        let Some(slot) = g
             .schedules
             .iter_mut()
             .find(|(o, d, deleted)| *o == org && d.schedule.id == schedule_id && !*deleted)
-        {
-            Some(slot) => {
-                slot.1.overrides.push(ov.clone());
-                Ok(Some(ov))
-            }
-            None => Ok(None),
+        else {
+            return Ok(None);
+        };
+        if slot.1.overrides.iter().any(|o| {
+            o.user_id == ov.user_id && o.starts_at < ov.ends_at && o.ends_at > ov.starts_at
+        }) {
+            return Err(overlaps());
         }
+        slot.1.overrides.push(ov.clone());
+        Ok(Some(ov))
     }
 
-    async fn delete_override(
+    async fn remove_override(
         &self,
         org: OrgId,
         schedule_id: Uuid,
         override_id: Uuid,
+        now: DateTime<Utc>,
     ) -> Result<bool> {
         let mut g = self.inner.lock();
         let Some(slot) = g
@@ -823,9 +937,16 @@ impl OnCallStore for InMemoryOnCallStore {
         else {
             return Ok(false);
         };
-        let before = slot.1.overrides.len();
-        slot.1.overrides.retain(|o| o.id != override_id);
-        Ok(slot.1.overrides.len() != before)
+        let overrides = &mut slot.1.overrides;
+        let Some(i) = overrides.iter().position(|o| o.id == override_id) else {
+            return Ok(false);
+        };
+        if overrides[i].starts_at < now {
+            overrides[i].ends_at = overrides[i].ends_at.min(now);
+        } else {
+            overrides.remove(i);
+        }
+        Ok(true)
     }
 }
 
@@ -921,11 +1042,98 @@ mod tests {
         let day1 = "2026-06-02T12:00:00Z".parse().unwrap();
         assert_eq!(
             store.resolve_now(org(), d.schedule.id, day0).await.unwrap(),
-            vec![user(1)]
+            Some(vec![user(1)])
         );
         assert_eq!(
             store.resolve_now(org(), d.schedule.id, day1).await.unwrap(),
-            vec![user(2)]
+            Some(vec![user(2)])
+        );
+    }
+
+    #[tokio::test]
+    async fn refuses_an_override_the_same_person_already_covers() {
+        let store = store_with_members().await;
+        let d = store
+            .create(org(), schedule("p", vec![user(1), user(2)]), 10)
+            .await
+            .unwrap();
+        let window = |from: &str, to: &str, u: UserId| NewOnCallOverride {
+            user_id: u,
+            starts_at: from.parse().unwrap(),
+            ends_at: to.parse().unwrap(),
+        };
+        let id = d.schedule.id;
+        store
+            .add_override(
+                org(),
+                id,
+                None,
+                window("2026-06-01T00:00:00Z", "2026-06-03T00:00:00Z", user(1)),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let err = store
+            .add_override(
+                org(),
+                id,
+                None,
+                window("2026-06-02T00:00:00Z", "2026-06-04T00:00:00Z", user(1)),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::Unprocessable { code, .. } if code == codes::ON_CALL_OVERRIDE_OVERLAPS)
+        );
+        // Someone else, or the same person right after, is fine.
+        for w in [
+            window("2026-06-02T00:00:00Z", "2026-06-04T00:00:00Z", user(2)),
+            window("2026-06-03T00:00:00Z", "2026-06-04T00:00:00Z", user(1)),
+        ] {
+            assert!(
+                store
+                    .add_override(org(), id, None, w)
+                    .await
+                    .unwrap()
+                    .is_some()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn current_keeps_only_overrides_not_yet_over() {
+        let store = store_with_members().await;
+        let d = store
+            .create(org(), schedule("p", vec![user(1)]), 10)
+            .await
+            .unwrap();
+        for (from, to) in [
+            ("2026-06-01T00:00:00Z", "2026-06-02T00:00:00Z"),
+            ("2026-06-05T00:00:00Z", "2026-06-06T00:00:00Z"),
+        ] {
+            store
+                .add_override(
+                    org(),
+                    d.schedule.id,
+                    None,
+                    NewOnCallOverride {
+                        user_id: user(2),
+                        starts_at: from.parse().unwrap(),
+                        ends_at: to.parse().unwrap(),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        let got = store
+            .current(org(), "2026-06-03T00:00:00Z".parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].overrides.len(), 1);
+        assert_eq!(
+            got[0].overrides[0].starts_at,
+            "2026-06-05T00:00:00Z".parse::<DateTime<Utc>>().unwrap()
         );
     }
 
@@ -954,17 +1162,74 @@ mod tests {
         let at = "2026-06-01T12:00:00Z".parse().unwrap();
         assert_eq!(
             store.resolve_now(org(), d.schedule.id, at).await.unwrap(),
-            vec![user(9)]
+            Some(vec![user(9)])
         );
+        let before = "2026-05-31T00:00:00Z".parse().unwrap();
         assert!(
             store
-                .delete_override(org(), d.schedule.id, ov.id)
+                .remove_override(org(), d.schedule.id, ov.id, before)
                 .await
                 .unwrap()
         );
         assert_eq!(
             store.resolve_now(org(), d.schedule.id, at).await.unwrap(),
-            vec![user(1)]
+            Some(vec![user(1)])
         );
+        assert_eq!(
+            store.resolve_now(org(), Uuid::now_v7(), at).await.unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn removing_a_begun_override_ends_it_now() {
+        let store = store_with_members().await;
+        store.add_member(org(), user(9));
+        let d = store
+            .create(org(), schedule("p", vec![user(1), user(2)]), 10)
+            .await
+            .unwrap();
+        let ov = store
+            .add_override(
+                org(),
+                d.schedule.id,
+                None,
+                NewOnCallOverride {
+                    user_id: user(9),
+                    starts_at: "2026-06-01T00:00:00Z".parse().unwrap(),
+                    ends_at: "2026-06-02T00:00:00Z".parse().unwrap(),
+                },
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let now: DateTime<Utc> = "2026-06-01T12:00:00Z".parse().unwrap();
+        assert!(
+            store
+                .remove_override(org(), d.schedule.id, ov.id, now)
+                .await
+                .unwrap()
+        );
+        let kept = store.get(org(), d.schedule.id).await.unwrap().unwrap();
+        assert_eq!(kept.overrides[0].ends_at, now, "the part already run stays");
+        let resolve = |at: &str| store.resolve_now(org(), d.schedule.id, at.parse().unwrap());
+        assert_eq!(
+            resolve("2026-06-01T11:00:00Z").await.unwrap(),
+            Some(vec![user(9)])
+        );
+        assert_eq!(
+            resolve("2026-06-01T13:00:00Z").await.unwrap(),
+            Some(vec![user(1)])
+        );
+        // Sent again, it keeps what already ran.
+        let later = "2026-06-01T15:00:00Z".parse().unwrap();
+        assert!(
+            store
+                .remove_override(org(), d.schedule.id, ov.id, later)
+                .await
+                .unwrap()
+        );
+        let kept = store.get(org(), d.schedule.id).await.unwrap().unwrap();
+        assert_eq!(kept.overrides[0].ends_at, now);
     }
 }

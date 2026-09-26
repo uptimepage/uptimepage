@@ -290,7 +290,12 @@ impl Worker {
         if let Some(users) = self.on_call_cache.get(&(org, schedule_id)).await {
             return Ok(users);
         }
-        let users = Arc::new(self.on_call.resolve_now(org, schedule_id, at).await?);
+        let users = Arc::new(
+            self.on_call
+                .resolve_now(org, schedule_id, at)
+                .await?
+                .unwrap_or_default(),
+        );
         // Don't cache an empty roster: a coverage gap an operator fixes
         // mid-incident must take effect next tick, not after the TTL.
         if !users.is_empty() {

@@ -84,16 +84,18 @@ While an incident stays **unacknowledged**, the engine re-sends a reminder on th
 
 On-call schedules (owner-managed at `/settings/on-call`) decide *which human* a `user` or `schedule` target pages.
 
-A schedule has a timezone and one or more **layers**. Higher layers win when stacked. Within a layer, participants rotate in listed order on a cadence:
+A schedule has a timezone and one or more **layers**. Higher layers win when stacked, and no two layers of a schedule share a place in the stack (`layer_order` in the API). Within a layer, participants rotate in listed order on a cadence:
 
 | Rotation | Handoff |
 |---|---|
 | `daily` / `weekly` | Hands off at the same wall-clock time each period, in the schedule's timezone — stable across daylight-saving changes. |
-| `custom` | A fixed duration, written like `12h` or `90m` in the editor (`rotation_length_secs` in the API), counted from the first handoff, so it does not follow daylight-saving changes. |
+| `custom` | A fixed duration of at least an hour, written like `12h` or `90m` in the editor (`rotation_length_secs` in the API), counted from the first handoff, so it does not follow daylight-saving changes. |
 
 The editor lists each layer's participants in rotation order; move one up or down to change who follows whom. A layer's first handoff is typed as local time in the schedule's timezone.
 
-**Overrides** cover a specific window with a chosen person (vacations, swaps) and beat the rotation while active. The editor's calendar builds one by clicking a start day, then an end day, then choosing who covers; its days run midnight to midnight in the schedule's timezone. A "who's on call now" widget resolves the current responder, and `GET /api/v1/on-call/who` answers it programmatically.
+**Overrides** cover a specific window with a chosen person (vacations, swaps) and beat the rotation while active.
+
+The edit page carries a calendar of the saved schedule. Each day names who is on call, with the local time of any handoff that day, and overrides are highlighted over the rotation; its days run midnight to midnight in the schedule's timezone. Build an override there by clicking a start day, then an end day, then choosing who covers. Days already over cannot start one, and the API refuses a window that has ended; one that has already begun starts when it is added, so the calendar keeps who was on call before it. The same person cannot cover two overlapping windows on one schedule; the API refuses the second with `ON_CALL_OVERRIDE_OVERLAPS`. The overrides still to come are listed under the calendar, where you can remove one; removing one that has begun ends it now instead, so who was on call before stays as it was. The schedule list names who is on call now, until when, and who takes over, and `GET /api/v1/on-call/who` answers who is on call at any instant.
 
 Resolution at page time, for a given instant: an override covering that instant wins; otherwise the highest layer that has participants, advanced by its rotation. The result is a set of users.
 

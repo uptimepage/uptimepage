@@ -9,6 +9,7 @@
 use crate::api::json::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
+use chrono::Datelike;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
@@ -16,8 +17,8 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::preferences::validate_timezone;
 use crate::domain::{
-    NewOnCallOverride, NewOnCallSchedule, OnCallOverride, OnCallScheduleDetail,
-    OnCallScheduleSummary, RotationType, UserId,
+    FIRST_YEAR, LAST_YEAR, NewOnCallOverride, NewOnCallSchedule, OnCallOverride,
+    OnCallScheduleDetail, OnCallScheduleSummary, RotationType, UserId,
 };
 use crate::error::ApiError;
 use crate::error::codes;
@@ -27,6 +28,7 @@ use crate::request::{Authorized, CurrentUser, OnCallRead, OnCallWrite, OwnerAuth
 const MAX_NAME: usize = 100;
 const MAX_LAYERS: usize = 10;
 const MAX_PARTICIPANTS: usize = 50;
+const HOUR_SECS: i32 = 3_600;
 const DAY_SECS: i32 = 86_400;
 const WEEK_SECS: i32 = 7 * DAY_SECS;
 
@@ -55,6 +57,10 @@ fn validate(new: &NewOnCallSchedule) -> Result<()> {
     if new.layers.len() > MAX_LAYERS {
         return Err(invalid("too many layers"));
     }
+    let mut orders = std::collections::HashSet::new();
+    if !new.layers.iter().all(|l| orders.insert(l.layer_order)) {
+        return Err(invalid("each layer needs its own layer_order"));
+    }
     for layer in &new.layers {
         if layer.rotation_length_secs <= 0 {
             return Err(invalid("rotation length must be positive"));
@@ -70,7 +76,15 @@ fn validate(new: &NewOnCallSchedule) -> Result<()> {
                     "a weekly rotation length must be a whole number of weeks",
                 ));
             }
+            RotationType::Custom if layer.rotation_length_secs < HOUR_SECS => {
+                return Err(invalid("a custom rotation length must be at least an hour"));
+            }
             _ => {}
+        }
+        if !(FIRST_YEAR..=LAST_YEAR).contains(&layer.handoff_at.year()) {
+            return Err(invalid(format!(
+                "the first handoff must fall within years {FIRST_YEAR} to {LAST_YEAR}"
+            )));
         }
         if layer.participants.is_empty() {
             return Err(invalid("each layer needs at least one participant"));
@@ -82,11 +96,28 @@ fn validate(new: &NewOnCallSchedule) -> Result<()> {
     Ok(())
 }
 
-fn validate_override(new: &NewOnCallOverride) -> Result<()> {
+/// The window to store. One already over would change no page, and could
+/// only be removed by id, so it must still reach past `now`; one already
+/// begun starts at `now`, since who was paged before it stays as it was.
+fn override_from(
+    new: NewOnCallOverride,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<NewOnCallOverride> {
     if new.ends_at <= new.starts_at {
         return Err(invalid("override end must be after its start"));
     }
-    Ok(())
+    if new.ends_at <= now {
+        return Err(invalid("override must end in the future"));
+    }
+    if new.ends_at.year() > LAST_YEAR {
+        return Err(invalid(format!(
+            "override must end by the year {LAST_YEAR}"
+        )));
+    }
+    Ok(NewOnCallOverride {
+        starts_at: new.starts_at.max(now),
+        ..new
+    })
 }
 
 #[utoipa::path(
@@ -195,7 +226,7 @@ pub async fn add_override(
     Path(id): Path<Uuid>,
     Json(new): Json<NewOnCallOverride>,
 ) -> Result<(StatusCode, Json<OnCallOverride>)> {
-    validate_override(&new)?;
+    let new = override_from(new, chrono::Utc::now())?;
     let plan = state.quotas.limit_for_org(org).await?;
     gate_on_call(&state, &plan)?;
     state
@@ -209,6 +240,7 @@ pub async fn add_override(
 #[utoipa::path(
     delete, path = "/api/v1/on-call/schedules/{id}/overrides/{override_id}", tag = "on-call",
     summary = "Remove a coverage override",
+    description = "One not yet begun is deleted; one that has begun ends now instead, so who was on call before stays as it was.",
     params(("id" = Uuid, Path), ("override_id" = Uuid, Path)),
     responses((status = 204), (status = 404, body = ApiError)),
 )]
@@ -219,7 +251,7 @@ pub async fn delete_override(
 ) -> Result<StatusCode> {
     if state
         .on_call_store
-        .delete_override(org, id, override_id)
+        .remove_override(org, id, override_id, chrono::Utc::now())
         .await?
     {
         Ok(StatusCode::NO_CONTENT)
@@ -252,21 +284,26 @@ pub struct WhoResponse {
     get, path = "/api/v1/on-call/who", tag = "on-call",
     summary = "Resolve who is on call for a schedule",
     params(WhoQuery),
-    responses((status = 200, body = WhoResponse), (status = 404, body = ApiError)),
+    responses((status = 200, body = WhoResponse), (status = 400, body = ApiError), (status = 404, body = ApiError)),
 )]
 pub async fn who(
     State(state): State<AppState>,
     Authorized(org, _): Authorized<OnCallRead>,
     Query(q): Query<WhoQuery>,
 ) -> Result<Json<WhoResponse>> {
-    if state.on_call_store.get(org, q.schedule_id).await?.is_none() {
-        return Err(not_found());
-    }
     let at = q.at.unwrap_or_else(chrono::Utc::now);
+    if !(FIRST_YEAR..=LAST_YEAR).contains(&at.year()) {
+        return Err(AppError::bad_request_field(
+            codes::BAD_TIME_RANGE,
+            format!("at must fall within years {FIRST_YEAR} to {LAST_YEAR}"),
+            "at",
+        ));
+    }
     let user_ids = state
         .on_call_store
         .resolve_now(org, q.schedule_id, at)
-        .await?;
+        .await?
+        .ok_or_else(not_found)?;
     Ok(Json(WhoResponse {
         schedule_id: q.schedule_id,
         at,
@@ -411,6 +448,36 @@ mod tests {
     }
 
     #[test]
+    fn rejects_custom_length_under_an_hour() {
+        assert!(validate(&schedule("UTC", vec![layer(RotationType::Custom, 1800)])).is_err());
+        assert!(
+            validate(&schedule(
+                "UTC",
+                vec![layer(RotationType::Custom, HOUR_SECS)]
+            ))
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_a_handoff_outside_the_years() {
+        let mut l = layer(RotationType::Daily, DAY_SECS);
+        l.handoff_at = "+10000-01-01T00:00:00Z".parse().unwrap();
+        assert!(validate(&schedule("UTC", vec![l])).is_err());
+    }
+
+    #[test]
+    fn rejects_layers_sharing_an_order() {
+        let base = layer(RotationType::Daily, DAY_SECS);
+        let top = NewOnCallLayer {
+            layer_order: 1,
+            ..base.clone()
+        };
+        assert!(validate(&schedule("UTC", vec![base.clone(), base.clone()])).is_err());
+        assert!(validate(&schedule("UTC", vec![base, top])).is_ok());
+    }
+
+    #[test]
     fn rejects_layer_with_no_participants() {
         let mut l = layer(RotationType::Daily, DAY_SECS);
         l.participants.clear();
@@ -424,6 +491,32 @@ mod tests {
             starts_at: "2026-06-02T00:00:00Z".parse().unwrap(),
             ends_at: "2026-06-01T00:00:00Z".parse().unwrap(),
         };
-        assert!(validate_override(&bad).is_err());
+        assert!(override_from(bad, "2026-05-01T00:00:00Z".parse().unwrap()).is_err());
+    }
+
+    #[test]
+    fn rejects_an_override_already_over() {
+        let window = NewOnCallOverride {
+            user_id: UserId(Uuid::now_v7()),
+            starts_at: "2026-06-01T00:00:00Z".parse().unwrap(),
+            ends_at: "2026-06-02T00:00:00Z".parse().unwrap(),
+        };
+        assert!(override_from(window, "2026-06-02T00:00:00Z".parse().unwrap()).is_err());
+    }
+
+    #[test]
+    fn an_override_already_begun_starts_now() {
+        let window = || NewOnCallOverride {
+            user_id: UserId(Uuid::now_v7()),
+            starts_at: "2026-06-01T00:00:00Z".parse().unwrap(),
+            ends_at: "2026-06-02T00:00:00Z".parse().unwrap(),
+        };
+        let now: chrono::DateTime<chrono::Utc> = "2026-06-01T12:00:00Z".parse().unwrap();
+        assert_eq!(override_from(window(), now).unwrap().starts_at, now);
+        let early: chrono::DateTime<chrono::Utc> = "2026-05-31T12:00:00Z".parse().unwrap();
+        assert_eq!(
+            override_from(window(), early).unwrap().starts_at,
+            window().starts_at
+        );
     }
 }

@@ -210,6 +210,9 @@ import { knowsZone, parseZoned } from "./_zoned.js";
                 const want = type === "custom" ? "a duration with a unit, such as 12h or 90m" : `a whole number of ${type === "weekly" ? "weeks" : "days"}`;
                 return { error: `Layer ${i + 1}: write the rotation length as ${want}.` };
             }
+            if (type === "custom" && secs < 3600) {
+                return { error: `Layer ${i + 1}: a custom rotation length must be at least 1h.` };
+            }
             const input = row.querySelector("[data-handoff]");
             if (!input.value) return { error: `Layer ${i + 1}: pick a first handoff time.` };
             // Untouched, the stored instant goes back as it came.

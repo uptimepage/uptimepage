@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::app::AppState;
-use crate::domain::{EscalationTargetType, OrgId};
+use crate::domain::{EscalationTargetType, OrgId, UserId};
 use crate::error::AppError;
 use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser};
 use crate::templates::filters;
@@ -269,10 +269,10 @@ pub async fn edit_form(
         })?;
     let channels = org_channels(&state, org).await?;
     let schedules = org_schedules(&state, org).await?;
-    let members: HashMap<String, MemberChoice> = org_members(&state, org)
+    let members: HashMap<UserId, MemberChoice> = org_members(&state, org)
         .await?
         .into_iter()
-        .map(|m| (m.id.clone(), m))
+        .map(|m| (m.id, m))
         .collect();
     let mut levels: Vec<LevelModel> = policy
         .steps
@@ -298,7 +298,7 @@ pub async fn edit_form(
                     .targets
                     .iter()
                     .filter(|t| t.target_type == EscalationTargetType::User)
-                    .filter_map(|t| members.get(&t.user_id?.to_string()).cloned())
+                    .filter_map(|t| members.get(&UserId(t.user_id?)).cloned())
                     .collect(),
             }
         })
@@ -546,12 +546,12 @@ mod tests {
                 repeat_count: 0,
                 levels: vec![level(vec![
                     MemberChoice {
-                        id: "uid".into(),
+                        id: UserId(Uuid::from_u128(1)),
                         email: "olena@example.com".into(),
                         reachable: true,
                     },
                     MemberChoice {
-                        id: "u2".into(),
+                        id: UserId(Uuid::from_u128(2)),
                         email: "taras@example.com".into(),
                         reachable: false,
                     },
@@ -562,7 +562,7 @@ mod tests {
         }
         .render()
         .unwrap();
-        assert!(html.contains(r#"data-person="uid""#));
+        assert!(html.contains(&format!(r#"data-person="{}""#, Uuid::from_u128(1))));
         assert!(html.contains("olena@example.com"));
         assert!(html.contains("taras@example.com (no paging channels)"));
         assert!(html.contains("data-remove-person"));

@@ -1,6 +1,6 @@
 // Wall-clock time in an IANA zone ↔ instants, resolved the way the server's
 // `local_to_utc` resolves them: the earlier of two on a fall-back hour, and a
-// time the spring-forward gap skips moved on by whole hours until it exists.
+// time the spring-forward gap skips read with the offset before the jump.
 
 export function knowsZone(tz) {
     try {
@@ -36,13 +36,9 @@ function offsetAt(ms, tz) {
 
 // The instant that wall-clock `y-m-d h:min` (month 0-based; out-of-range
 // days roll over like Date.UTC) names in `tz`.
-export function zonedInstant(tz, y, m, d, h = 0, min = 0) {
+function zonedInstant(tz, y, m, d, h = 0, min = 0) {
     const wall = Date.UTC(y, m, d, h, min);
-    for (const step of [0, 1, 2, 3, 4]) {
-        const hit = earliestAt(wall + step * 3600000, tz);
-        if (hit !== null) return new Date(hit);
-    }
-    return new Date(wall - offsetAt(wall, tz));
+    return new Date(earliestAt(wall, tz) ?? wall - offsetAt(wall - 86400000, tz));
 }
 
 // The earliest instant whose wall clock in `tz` reads `wall`, or null.
@@ -58,12 +54,4 @@ function earliestAt(wall, tz) {
 export function parseZoned(local, tz) {
     const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(local);
     return m ? zonedInstant(tz, +m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : null;
-}
-
-// Today's year and 0-based month in `tz`.
-export function zonedToday(tz) {
-    const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, year: "numeric", month: "2-digit" })
-        .formatToParts(new Date());
-    const n = (type) => Number(parts.find((p) => p.type === type).value);
-    return { year: n("year"), month: n("month") - 1 };
 }
