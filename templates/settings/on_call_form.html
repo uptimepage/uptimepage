@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "settings/_on_call_layer.html" as oc %}
 {% block title %}{% if form.mode == "create" %}New on-call schedule{% else %}Edit on-call schedule{% endif %} · Uptimepage{% endblock %}
 {% block content %}
 <section class="space-y-6">
@@ -39,68 +40,20 @@
         <span class="field-outline__label">Timezone</span>
         <input name="timezone" type="text" required value="{{ form.timezone }}" list="tz-list"
                autocomplete="off" class="w-full field font-mono">
-        <span class="mt-1 text-xs text-muted">IANA name. Daily/weekly handoffs land at the same wall-clock time here.</span>
+        <span class="mt-1 text-xs text-muted">IANA name. Handoff times below are read in this zone, and daily or weekly handoffs keep the same local time across daylight saving.</span>
       </label>
       <datalist id="tz-list">
-        <option value="UTC"></option>
-        <option value="America/New_York"></option>
-        <option value="America/Chicago"></option>
-        <option value="America/Los_Angeles"></option>
-        <option value="Europe/London"></option>
-        <option value="Europe/Berlin"></option>
-        <option value="Europe/Nicosia"></option>
-        <option value="Asia/Kolkata"></option>
-        <option value="Asia/Tokyo"></option>
-        <option value="Australia/Sydney"></option>
+        {% for tz in form.timezones %}<option value="{{ tz }}"></option>{% endfor %}
       </datalist>
     </fieldset>
 
     <fieldset class="space-y-4">
       <legend class="px-1 text-sm font-medium">Layers</legend>
-      <p class="text-xs text-muted">Higher layers win when stacked. Participants rotate in listed order, handing off each period.</p>
+      <p class="text-xs text-muted">Higher layers win when stacked. Participants rotate in the order listed, handing off each period.</p>
 
       <div id="layers" class="space-y-4">
         {% for layer in form.layers %}
-        <div data-layer-row class="sticker-card space-y-4 p-4">
-          <div class="flex items-center justify-between">
-            <h3 class="text-sm font-medium">layer <span data-layer-num>{{ loop.index }}</span></h3>
-            <button type="button" data-remove-layer class="row-link row-link--danger text-xs">remove</button>
-          </div>
-          <label class="field-outline max-w-xs">
-            <span class="field-outline__label">Label <span class="text-quiet">(optional)</span></span>
-            <input type="text" data-layer-name maxlength="100" value="{{ layer.name }}" class="w-full field">
-          </label>
-          <div class="flex flex-wrap gap-4">
-            <label class="field-outline">
-              <span class="field-outline__label">Rotation</span>
-              <select data-rotation-type class="field">
-                <option value="daily"{% if layer.rotation_type == "daily" %} selected{% endif %}>Daily</option>
-                <option value="weekly"{% if layer.rotation_type == "weekly" %} selected{% endif %}>Weekly</option>
-                <option value="custom"{% if layer.rotation_type == "custom" %} selected{% endif %}>Custom</option>
-              </select>
-            </label>
-            <label class="field-outline">
-              <span class="field-outline__label">Every</span>
-              <span class="flex items-center gap-2">
-                <input type="number" data-rotation-length min="1" value="{{ layer.rotation_length }}" class="w-24 field">
-                <span data-rotation-unit class="text-sm text-muted"></span>
-              </span>
-            </label>
-            <label class="field-outline">
-              <span class="field-outline__label">First handoff</span>
-              <input type="datetime-local" data-handoff data-iso="{{ layer.handoff_at }}" class="field">
-            </label>
-          </div>
-          <fieldset class="space-y-2" data-layer-participants>
-            <legend class="text-xs uppercase text-muted">Participants (rotation order)</legend>
-            {% for p in layer.participants %}
-            <label class="mr-4 inline-flex items-center gap-2">
-              <input type="checkbox" data-participant value="{{ p.id }}"{% if p.checked %} checked{% endif %}>
-              <span class="text-sm">{{ p.email }}</span>
-            </label>
-            {% endfor %}
-          </fieldset>
-        </div>
+        {% call oc::layer(layer, form.members, loop.index) %}{% endcall %}
         {% endfor %}
       </div>
 
@@ -120,11 +73,13 @@
   {% if form.mode == "edit" %}
   <section class="space-y-3" aria-labelledby="overrides-heading"
            data-overrides
-           data-schedule-id="{{ form.schedule_id }}">
+           data-schedule-id="{{ form.schedule_id }}"
+           data-timezone="{{ form.timezone }}">
     <h2 id="overrides-heading" class="panel-label">Overrides</h2>
     <p class="text-xs text-muted">
-      Drag across days to cover a gap, then pick who. An override beats the
-      rotation for its window. Click an override to remove it.
+      Click a start day and an end day, then pick who covers. Days run midnight
+      to midnight in <span class="font-mono">{{ form.timezone }}</span>. An
+      override beats the rotation for its window. Click one to remove it.
     </p>
     <div class="sticker-card space-y-3 p-4">
       <div class="flex items-center justify-between">
@@ -134,6 +89,7 @@
       </div>
       <div data-cal-grid class="grid grid-cols-7 gap-px overflow-hidden rounded bg-[color:var(--theme-line)] text-xs"></div>
       <p data-cal-hint class="text-xs text-muted">Click a start day, then an end day, then choose who covers.</p>
+      <p data-cal-zone-note class="flash-text flash-text--warn text-xs" hidden></p>
       <div data-cal-picker class="hidden flex-wrap items-center gap-2"></div>
       <p data-cal-result role="status" aria-live="polite" class="flash-text text-xs"></p>
     </div>
@@ -148,53 +104,17 @@
     </ul>
     <select data-override-members class="hidden">
       {% for m in form.members %}
-      <option value="{{ m.id }}">{{ m.email }}</option>
+      <option value="{{ m.id }}" data-email="{{ m.email }}">{{ m.email }}{% if !m.reachable %} (no paging channels){% endif %}</option>
       {% endfor %}
     </select>
   </section>
   {% endif %}
 
   <template id="layer-template">
-    <div data-layer-row class="sticker-card space-y-4 p-4">
-      <div class="flex items-center justify-between">
-        <h3 class="text-sm font-medium">layer <span data-layer-num>1</span></h3>
-        <button type="button" data-remove-layer class="row-link row-link--danger text-xs">remove</button>
-      </div>
-      <label class="field-outline max-w-xs">
-        <span class="field-outline__label">Label <span class="text-quiet">(optional)</span></span>
-        <input type="text" data-layer-name maxlength="100" value="" class="w-full field">
-      </label>
-      <div class="flex flex-wrap gap-4">
-        <label class="field-outline">
-          <span class="field-outline__label">Rotation</span>
-          <select data-rotation-type class="field">
-            <option value="daily" selected>Daily</option>
-            <option value="weekly">Weekly</option>
-            <option value="custom">Custom</option>
-          </select>
-        </label>
-        <label class="field-outline">
-          <span class="field-outline__label">Every</span>
-          <span class="flex items-center gap-2">
-            <input type="number" data-rotation-length min="1" value="7" class="w-24 field">
-            <span data-rotation-unit class="text-sm text-muted"></span>
-          </span>
-        </label>
-        <label class="field-outline">
-          <span class="field-outline__label">First handoff</span>
-          <input type="datetime-local" data-handoff data-iso="" class="field">
-        </label>
-      </div>
-      <fieldset class="space-y-2" data-layer-participants>
-        <legend class="text-xs uppercase text-muted">Participants (rotation order)</legend>
-        {% for m in form.members %}
-        <label class="mr-4 inline-flex items-center gap-2">
-          <input type="checkbox" data-participant value="{{ m.id }}">
-          <span class="text-sm">{{ m.email }}</span>
-        </label>
-        {% endfor %}
-      </fieldset>
-    </div>
+    {% call oc::layer(form.blank_layer, form.members, 1) %}{% endcall %}
+  </template>
+  <template id="participant-template">
+    {% call oc::participant("", "", true) %}{% endcall %}
   </template>
 </section>
 

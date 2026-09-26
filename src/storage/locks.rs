@@ -21,6 +21,9 @@
 //!   account's orgs, so its guard must serialise on the account, not on one of
 //!   its orgs. Account deletion's membership freeze takes the same key: it
 //!   holds against member adds only if it contends with them.
+//! - [`membership_lock_key`] — one org's memberships. Removing a member and
+//!   changing a role each lock the target and then every owner row; holding
+//!   this first keeps two of them in one org from deadlocking.
 //! - [`user_lock_key`] — one user. The per-user API-token cap guard.
 //! - [`user_delete_lock_key`] — one user, a deliberately distinct namespace
 //!   from [`user_lock_key`] so account deletion does not serialise against
@@ -52,6 +55,11 @@ pub fn org_lock_key(org: OrgId) -> String {
 /// account's orgs: two creates in two orgs of one account must contend.
 pub fn account_lock_key(account: AccountId) -> String {
     format!("account:{}", account.0)
+}
+
+/// Lock key for changes to one org's memberships (removal, role change).
+pub fn membership_lock_key(org: OrgId) -> String {
+    format!("membership:{}", org.0)
 }
 
 /// Lock key for a per-user cap critical section (the API-token count, and the

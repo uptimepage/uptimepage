@@ -1,7 +1,8 @@
 // "Channels that page you" toggles on /settings/on-call. Each change replaces
 // the member's full contact set via PUT /api/v1/on-call/my-contacts. A refused
 // save puts the saved set back, so the next change is not built on a channel
-// the server turned down.
+// the server turned down. A landed save redraws what depends on it: the
+// "no channel pages you" notice and the schedule list's reachability notes.
 (function () {
     const root = document.querySelector("[data-contacts]");
     if (!root) return;
@@ -39,6 +40,11 @@
             });
             if (res.ok) {
                 boxes.forEach((b) => (b.defaultChecked = b.checked));
+                const notice = document.querySelector("[data-unpageable]");
+                if (notice) {
+                    notice.hidden = Array.from(boxes).some((b) => b.checked && b.hasAttribute("data-delivers"));
+                }
+                document.body.dispatchEvent(new CustomEvent("oncall:refresh"));
                 show("✓ saved", true);
             } else {
                 let msg = "save failed";

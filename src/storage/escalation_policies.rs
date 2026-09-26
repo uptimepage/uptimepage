@@ -16,12 +16,12 @@ use uuid::Uuid;
 
 use crate::domain::{
     EscalationPolicy, EscalationPolicySummary, EscalationStep, EscalationTarget,
-    EscalationTargetType, NewEscalationPolicy, OrgId,
+    EscalationTargetType, NewEscalationPolicy, OrgId, UserId,
 };
 use crate::error::codes;
 use crate::error::{AppError, Result};
-use crate::storage::accounts;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock};
+use crate::storage::{accounts, orgs};
 
 #[async_trait]
 pub trait EscalationPolicyStore: Send + Sync {
@@ -66,6 +66,9 @@ pub trait EscalationPolicyStore: Send + Sync {
     ) -> Result<bool>;
     /// The org's default policy id, if set and live.
     async fn org_default(&self, org: OrgId) -> Result<Option<Uuid>>;
+    /// The live policies that page each schedule, as `(schedule_id, policy
+    /// name)`, names in order.
+    async fn schedule_pagers(&self, org: OrgId) -> Result<Vec<(Uuid, String)>>;
     /// Set (or clear) the org default. Caller validates the policy.
     async fn set_org_default(&self, org: OrgId, policy_id: Option<Uuid>) -> Result<()>;
 }
@@ -145,9 +148,32 @@ async fn assert_owned_tx(
     Ok(())
 }
 
+/// Lock the membership of every person a step names for the write, or refuse
+/// the whole ladder when one of them is not a member.
+async fn lock_target_users_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+    steps: &[crate::domain::NewEscalationStep],
+) -> Result<()> {
+    let users: Vec<UserId> = steps
+        .iter()
+        .flat_map(|s| s.targets.iter().filter_map(|t| t.user_id))
+        .map(UserId)
+        .collect();
+    if !orgs::lock_memberships(tx, org, &users).await? {
+        return Err(AppError::unprocessable(
+            codes::ESCALATION_POLICY_INVALID,
+            "escalation target references a user who is not a member of this organization",
+        ));
+    }
+    Ok(())
+}
+
 /// Insert a policy's steps + targets inside an open transaction. Validates that
-/// every target's referenced id belongs to `org` (the parent-chain org-match
-/// trigger guards step↔policy, not the leaf references, so this closes the IDOR).
+/// every channel and schedule a target names belongs to `org` (the
+/// parent-chain org-match trigger guards step↔policy, not the leaf references,
+/// so this closes the IDOR); people are checked by [`lock_target_users_tx`],
+/// which a caller runs first.
 async fn insert_steps_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: OrgId,
@@ -176,9 +202,9 @@ async fn insert_steps_tx(
             }
         })?;
         for target in &step.targets {
-            // Each id type is validated against `org` so a policy cannot page a
-            // foreign channel, schedule, or non-member (closes the IDOR the
-            // parent-chain org-match trigger does not cover).
+            // Channel and schedule ids are validated against `org` so a policy
+            // cannot page a foreign one (closes the IDOR the parent-chain
+            // org-match trigger does not cover).
             if let Some(cid) = target.channel_id {
                 assert_owned_tx(
                     tx,
@@ -186,16 +212,6 @@ async fn insert_steps_tx(
                     "SELECT id FROM notification_channels WHERE id = $1 AND org_id = $2",
                     cid,
                     "escalation target references an unknown notification channel",
-                )
-                .await?;
-            }
-            if let Some(uid) = target.user_id {
-                assert_owned_tx(
-                    tx,
-                    org,
-                    "SELECT user_id FROM memberships WHERE user_id = $1 AND org_id = $2",
-                    uid,
-                    "escalation target references a user who is not a member of this organization",
                 )
                 .await?;
             }
@@ -391,6 +407,7 @@ impl EscalationPolicyStore for PgEscalationPolicyStore {
             ));
         };
         let id = policy.id;
+        lock_target_users_tx(&mut tx, org, &new.steps).await?;
         insert_steps_tx(&mut tx, org, id, &new.steps).await?;
         tx.commit()
             .await
@@ -443,6 +460,7 @@ impl EscalationPolicyStore for PgEscalationPolicyStore {
                 AppError::Other(anyhow::anyhow!("update escalation_policy: {e}"))
             }
         })?;
+        lock_target_users_tx(&mut tx, org, &new.steps).await?;
         // Replace the whole ladder: targets cascade with their steps.
         sqlx::query("DELETE FROM escalation_steps WHERE policy_id = $1 AND org_id = $2")
             .bind(id)
@@ -577,6 +595,20 @@ impl EscalationPolicyStore for PgEscalationPolicyStore {
         .map_err(|e| AppError::Other(anyhow::anyhow!("org_default: {e}")))?
         .flatten();
         Ok(id)
+    }
+
+    async fn schedule_pagers(&self, org: OrgId) -> Result<Vec<(Uuid, String)>> {
+        sqlx::query_as(
+            "SELECT DISTINCT t.schedule_id, p.name FROM escalation_targets t \
+             JOIN escalation_steps st ON st.id = t.step_id \
+             JOIN escalation_policies p ON p.id = st.policy_id \
+             WHERE t.org_id = $1 AND t.schedule_id IS NOT NULL AND p.deleted_at IS NULL \
+             ORDER BY t.schedule_id, p.name",
+        )
+        .bind(org.0)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Other(anyhow::anyhow!("schedule_pagers: {e}")))
     }
 
     async fn set_org_default(&self, org: OrgId, policy_id: Option<Uuid>) -> Result<()> {
@@ -814,6 +846,26 @@ impl EscalationPolicyStore for InMemoryEscalationPolicyStore {
                     .iter()
                     .any(|(o, p, deleted)| *o == org && p.id == *pid && !*deleted)
             }))
+    }
+
+    async fn schedule_pagers(&self, org: OrgId) -> Result<Vec<(Uuid, String)>> {
+        let mut out: Vec<(Uuid, String)> = self
+            .inner
+            .lock()
+            .policies
+            .iter()
+            .filter(|(o, _, deleted)| *o == org && !*deleted)
+            .flat_map(|(_, p, _)| {
+                p.steps
+                    .iter()
+                    .flat_map(|st| st.targets.iter().filter_map(|t| t.schedule_id))
+                    .map(|sid| (sid, p.name.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        out.sort();
+        out.dedup();
+        Ok(out)
     }
 
     async fn set_org_default(&self, org: OrgId, policy_id: Option<Uuid>) -> Result<()> {

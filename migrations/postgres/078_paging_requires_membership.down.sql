@@ -1,0 +1,4 @@
+ALTER TABLE escalation_targets DROP CONSTRAINT IF EXISTS fk_escalation_targets_membership;
+ALTER TABLE user_contact_channels DROP CONSTRAINT IF EXISTS fk_user_contact_channels_membership;
+ALTER TABLE on_call_overrides DROP CONSTRAINT IF EXISTS fk_on_call_overrides_membership;
+ALTER TABLE on_call_participants DROP CONSTRAINT IF EXISTS fk_on_call_participants_membership;

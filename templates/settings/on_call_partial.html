@@ -23,6 +23,12 @@
       <tr>
         <td class="px-4 py-2 align-top text-body">
           <div class="font-medium">{{ s.name }}</div>
+          {% if !s.unreachable.is_empty() %}
+          <div class="flash-text flash-text--warn text-xs">no paging channels: {{ s.unreachable|join(", ") }}</div>
+          {% endif %}
+          {% if s.paged_by.is_empty() %}
+          <div class="text-xs text-quiet">no escalation policy pages it</div>
+          {% endif %}
         </td>
         <td class="px-4 py-2 align-top text-body">
           <span data-who-on-call data-schedule-id="{{ s.id }}" class="text-muted">…</span>
@@ -38,7 +44,7 @@
                     data-on-ok-trigger="oncall:refresh"
                     data-confirm-modal
                     data-confirm-title="Delete on-call schedule?"
-                    data-confirm-body="Escalation policies that page {{ s.name }} reach no one through it until repointed."
+                    data-confirm-body="{% if s.paged_by.is_empty() %}No escalation policy pages {{ s.name }}.{% else %}{{ s.paged_by|join(", ") }} page{% if s.paged_by.len() == 1 %}s{% endif %} {{ s.name }} and will reach no one through it until repointed.{% endif %}"
                     data-confirm-label="Delete schedule"
                     data-confirm-danger
                     class="row-link row-link--danger">Delete</button>

@@ -18,7 +18,9 @@ use crate::domain::{
 use crate::error::{AppError, Result};
 use crate::storage::accounts;
 use crate::storage::count_sql;
-use crate::storage::locks::{account_lock_key, advisory_xact_lock, signup_lock_key, user_lock_key};
+use crate::storage::locks::{
+    account_lock_key, advisory_xact_lock, membership_lock_key, signup_lock_key, user_lock_key,
+};
 
 /// Returns the id of the single live (non-soft-deleted) organisation, or
 /// `None` if zero or more than one exist. Used by the path-based public
@@ -1021,6 +1023,33 @@ pub async fn list_members(pool: &PgPool, org: OrgId) -> Result<Vec<MemberView>> 
         .collect())
 }
 
+/// Hold the listed members' membership rows until the transaction ends, so a
+/// removal waits for a write that names them rather than racing it; the rows
+/// that write adds hang off the membership and leave with it. Taken in id
+/// order. `false` when any of them is not a member of `org`.
+pub async fn lock_memberships(
+    conn: &mut sqlx::PgConnection,
+    org: OrgId,
+    users: &[UserId],
+) -> Result<bool> {
+    let mut ids: Vec<Uuid> = users.iter().map(|u| u.0).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.is_empty() {
+        return Ok(true);
+    }
+    let held: Vec<(Uuid,)> = sqlx::query_as(
+        "SELECT user_id FROM memberships WHERE org_id = $1 AND user_id = ANY($2) \
+         ORDER BY user_id FOR KEY SHARE",
+    )
+    .bind(org.0)
+    .bind(&ids)
+    .fetch_all(conn)
+    .await
+    .context("lock_memberships")?;
+    Ok(held.len() == ids.len())
+}
+
 /// Remove a member from an org. Refuses to remove the last owner (would leave
 /// the org headless) and the owner of the account the org bills to (the org
 /// would keep counting against a pool its payer can no longer open). Writes a
@@ -1033,6 +1062,11 @@ pub async fn remove_member(
     user: UserId,
 ) -> Result<RemoveOutcome> {
     let mut tx = pool.begin().await.context("remove_member: begin")?;
+    // One membership change per org at a time: each locks its target, then
+    // every owner, so two at once could otherwise deadlock.
+    advisory_xact_lock(&mut *tx, &membership_lock_key(org))
+        .await
+        .context("remove_member: org lock")?;
     let row: Option<(String,)> = sqlx::query_as(
         r#"SELECT role FROM memberships
            WHERE org_id = $1 AND user_id = $2 FOR UPDATE"#,
@@ -1050,10 +1084,13 @@ pub async fn remove_member(
         // Lock ALL owner rows, not just the target: two concurrent
         // demote/remove calls against different owners would otherwise each
         // count 2 and leave the org ownerless. (Aggregate + FOR UPDATE is
-        // invalid SQL — lock the rows, count what came back.)
+        // invalid SQL — lock the rows, count what came back.) NO KEY UPDATE
+        // leaves alone the KEY SHARE a paging write holds on another owner,
+        // which would otherwise wait on this lock while this waits on the
+        // write's hold of the target.
         let owners: Vec<(Uuid,)> = sqlx::query_as(
             r#"SELECT user_id FROM memberships
-               WHERE org_id = $1 AND role = 'owner' FOR UPDATE"#,
+               WHERE org_id = $1 AND role = 'owner' FOR NO KEY UPDATE"#,
         )
         .bind(org.0)
         .fetch_all(&mut *tx)
@@ -1080,6 +1117,28 @@ pub async fn remove_member(
     .await
     .context("remove_member: disown targets")?
     .rows_affected();
+    // The membership's cascade takes these; count the live ones first so the
+    // audit row explains a rotation or an escalation level that changed.
+    let (rotation_slots, overrides, rungs): (i64, i64, i64) = sqlx::query_as(
+        r#"SELECT
+             (SELECT count(*) FROM on_call_participants p
+                JOIN on_call_layers l ON l.id = p.layer_id
+                JOIN on_call_schedules s ON s.id = l.schedule_id
+               WHERE p.org_id = $1 AND p.user_id = $2 AND s.deleted_at IS NULL),
+             (SELECT count(*) FROM on_call_overrides o
+                JOIN on_call_schedules s ON s.id = o.schedule_id
+               WHERE o.org_id = $1 AND o.user_id = $2
+                 AND s.deleted_at IS NULL AND o.ends_at > now()),
+             (SELECT count(*) FROM escalation_targets t
+                JOIN escalation_steps st ON st.id = t.step_id
+                JOIN escalation_policies pol ON pol.id = st.policy_id
+               WHERE t.org_id = $1 AND t.user_id = $2 AND pol.deleted_at IS NULL)"#,
+    )
+    .bind(org.0)
+    .bind(user.0)
+    .fetch_one(&mut *tx)
+    .await
+    .context("remove_member: count paging")?;
     sqlx::query(r#"DELETE FROM memberships WHERE org_id = $1 AND user_id = $2"#)
         .bind(org.0)
         .bind(user.0)
@@ -1091,7 +1150,13 @@ pub async fn remove_member(
         org,
         Some(actor),
         "member.removed",
-        serde_json::json!({ "user_id": user.0, "monitors_disowned": disowned }),
+        serde_json::json!({
+            "user_id": user.0,
+            "monitors_disowned": disowned,
+            "rotation_slots_dropped": rotation_slots,
+            "overrides_dropped": overrides,
+            "escalation_targets_dropped": rungs,
+        }),
     )
     .await
     .context("remove_member: audit")?;
@@ -1127,9 +1192,15 @@ pub async fn set_member_role(
     new_role: Role,
 ) -> Result<SetRoleOutcome> {
     let mut tx = pool.begin().await.context("set_member_role: begin")?;
+    // Serialised with remove_member; see the lock there.
+    advisory_xact_lock(&mut *tx, &membership_lock_key(org))
+        .await
+        .context("set_member_role: org lock")?;
+    // A role change leaves the key alone, so it need not wait on paging
+    // writes that hold this membership.
     let row: Option<(String,)> = sqlx::query_as(
         r#"SELECT role FROM memberships
-           WHERE org_id = $1 AND user_id = $2 FOR UPDATE"#,
+           WHERE org_id = $1 AND user_id = $2 FOR NO KEY UPDATE"#,
     )
     .bind(org.0)
     .bind(target.0)
@@ -1148,7 +1219,7 @@ pub async fn set_member_role(
         // Same all-owner-rows lock as remove_member — see the comment there.
         let owners: Vec<(Uuid,)> = sqlx::query_as(
             r#"SELECT user_id FROM memberships
-               WHERE org_id = $1 AND role = 'owner' FOR UPDATE"#,
+               WHERE org_id = $1 AND role = 'owner' FOR NO KEY UPDATE"#,
         )
         .bind(org.0)
         .fetch_all(&mut *tx)

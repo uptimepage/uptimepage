@@ -89,15 +89,17 @@ A schedule has a timezone and one or more **layers**. Higher layers win when sta
 | Rotation | Handoff |
 |---|---|
 | `daily` / `weekly` | Hands off at the same wall-clock time each period, in the schedule's timezone — stable across daylight-saving changes. |
-| `custom` | A fixed number of seconds. |
+| `custom` | A fixed duration, written like `12h` or `90m` in the editor (`rotation_length_secs` in the API), counted from the first handoff, so it does not follow daylight-saving changes. |
 
-**Overrides** cover a specific window with a chosen person (vacations, swaps) and beat the rotation while active. The editor's calendar builds one by clicking a start day, then an end day, then choosing who covers. A "who's on call now" widget resolves the current responder, and `GET /api/v1/on-call/who` answers it programmatically.
+The editor lists each layer's participants in rotation order; move one up or down to change who follows whom. A layer's first handoff is typed as local time in the schedule's timezone.
+
+**Overrides** cover a specific window with a chosen person (vacations, swaps) and beat the rotation while active. The editor's calendar builds one by clicking a start day, then an end day, then choosing who covers; its days run midnight to midnight in the schedule's timezone. A "who's on call now" widget resolves the current responder, and `GET /api/v1/on-call/who` answers it programmatically.
 
 Resolution at page time, for a given instant: an override covering that instant wins; otherwise the highest layer that has participants, advanced by its rotation. The result is a set of users.
 
 ### Contact channels
 
-A resolved user is paged through the org [notification channels](notifications.md) they have opted into — each member picks, on the on-call page, which notification channels reach them. A `user`/`schedule` target therefore resolves to people, then to their chosen channels; the paging log records the targeted user alongside the channel. If a member has chosen no channels, they resolve but cannot be paged.
+A resolved user is paged through the org [notification channels](notifications.md) they have opted into — each member picks, on the on-call page, which notification channels reach them. A `user`/`schedule` target therefore resolves to people, then to their chosen channels; the paging log records the targeted user alongside the channel. If none of a member's chosen channels can deliver (switched off, or an email address not yet confirmed), they resolve but cannot be paged. The schedule list names such members on each schedule, rotation or override alike, and the on-call page warns a member who is on call without one. When someone leaves the organization, removed by an owner or by deleting their account, they come off every rotation, override and escalation level there, and their choice of paging channels is dropped. The channels themselves stay: one bound directly to a monitor or to a level keeps paging wherever it is bound.
 
 ## Publishing to a status page
 

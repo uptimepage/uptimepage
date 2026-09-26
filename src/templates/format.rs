@@ -18,7 +18,9 @@ pub fn fmt_human(t: DateTime<Utc>) -> String {
 /// that must round-trip — the lossy two-unit display lives in [`HumanDur`].
 /// Days start at two, so a 24h interval stays hours.
 pub fn exact_duration(secs: u64) -> String {
-    if secs >= 172_800 && secs.is_multiple_of(86_400) {
+    if secs == 0 {
+        "0s".to_owned()
+    } else if secs >= 172_800 && secs.is_multiple_of(86_400) {
         format!("{}d", secs / 86_400)
     } else if secs.is_multiple_of(3_600) {
         format!("{}h", secs / 3_600)
@@ -85,6 +87,7 @@ mod tests {
 
     #[test]
     fn exact_duration_reaches_days_without_moving_a_daily_interval() {
+        assert_eq!(exact_duration(0), "0s");
         assert_eq!(exact_duration(45), "45s");
         assert_eq!(exact_duration(300), "5m");
         assert_eq!(exact_duration(4_980), "83m");

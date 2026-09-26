@@ -21,13 +21,16 @@ use crate::domain::{
 };
 use crate::error::codes;
 use crate::error::{AppError, Result};
-use crate::storage::accounts;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock};
+use crate::storage::{accounts, orgs};
 
 #[async_trait]
 pub trait OnCallStore: Send + Sync {
     /// Lightweight index (no layers loaded), newest first.
     async fn list(&self, org: OrgId) -> Result<Vec<OnCallScheduleSummary>>;
+    /// Who a live schedule can put on call, as `(schedule_id, user)`: every
+    /// layer participant, plus whoever covers an override not yet over.
+    async fn responders(&self, org: OrgId) -> Result<Vec<(Uuid, UserId)>>;
     /// Full schedule with ordered layers + participants + overrides. `None`
     /// for a missing or soft-deleted schedule.
     async fn get(&self, org: OrgId, id: Uuid) -> Result<Option<OnCallScheduleDetail>>;
@@ -147,20 +150,18 @@ struct OverrideRow {
     created_at: DateTime<Utc>,
 }
 
-/// Validate `user_id` is an active member of `org` inside an open transaction.
-async fn assert_member_tx(
+/// Lock every participant's membership for the write, or refuse the whole
+/// schedule when one of them is not a member.
+async fn lock_participants_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: OrgId,
-    user_id: UserId,
+    layers: &[NewOnCallLayer],
 ) -> Result<()> {
-    let ok: Option<Uuid> =
-        sqlx::query_scalar("SELECT user_id FROM memberships WHERE user_id = $1 AND org_id = $2")
-            .bind(user_id.0)
-            .bind(org.0)
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(|e| AppError::Other(anyhow::anyhow!("validate member: {e}")))?;
-    if ok.is_none() {
+    let users: Vec<UserId> = layers
+        .iter()
+        .flat_map(|l| l.participants.iter().map(|p| p.user_id))
+        .collect();
+    if !orgs::lock_memberships(tx, org, &users).await? {
         return Err(not_member());
     }
     Ok(())
@@ -191,7 +192,6 @@ async fn insert_layers_tx(
         .await
         .map_err(|e| AppError::Other(anyhow::anyhow!("insert on_call_layer: {e}")))?;
         for (position, p) in layer.participants.iter().enumerate() {
-            assert_member_tx(tx, org, p.user_id).await?;
             sqlx::query(
                 "INSERT INTO on_call_participants (org_id, layer_id, user_id, position) \
                  VALUES ($1, $2, $3, $4)",
@@ -337,6 +337,28 @@ impl OnCallStore for PgOnCallStore {
             .collect())
     }
 
+    async fn responders(&self, org: OrgId) -> Result<Vec<(Uuid, UserId)>> {
+        let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
+            "SELECT l.schedule_id, p.user_id FROM on_call_participants p \
+             JOIN on_call_layers l ON l.id = p.layer_id \
+             JOIN on_call_schedules s ON s.id = l.schedule_id \
+             WHERE s.org_id = $1 AND s.deleted_at IS NULL \
+             UNION \
+             SELECT o.schedule_id, o.user_id FROM on_call_overrides o \
+             JOIN on_call_schedules s ON s.id = o.schedule_id \
+             WHERE o.org_id = $1 AND s.deleted_at IS NULL AND o.ends_at > now() \
+             ORDER BY 1, 2",
+        )
+        .bind(org.0)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Other(anyhow::anyhow!("on_call responders: {e}")))?;
+        Ok(rows
+            .into_iter()
+            .map(|(schedule, user)| (schedule, UserId(user)))
+            .collect())
+    }
+
     async fn get(&self, org: OrgId, id: Uuid) -> Result<Option<OnCallScheduleDetail>> {
         match self.schedule_row(org, id).await? {
             Some(s) => Ok(Some(self.hydrate(org, s).await?)),
@@ -388,6 +410,7 @@ impl OnCallStore for PgOnCallStore {
                 "on-call schedule limit reached for this plan",
             ));
         };
+        lock_participants_tx(&mut tx, org, &new.layers).await?;
         insert_layers_tx(&mut tx, org, id, &new.layers).await?;
         tx.commit()
             .await
@@ -439,6 +462,7 @@ impl OnCallStore for PgOnCallStore {
                 AppError::Other(anyhow::anyhow!("update on_call_schedule: {e}"))
             }
         })?;
+        lock_participants_tx(&mut tx, org, &new.layers).await?;
         sqlx::query("DELETE FROM on_call_layers WHERE schedule_id = $1 AND org_id = $2")
             .bind(id)
             .bind(org.0)
@@ -489,7 +513,9 @@ impl OnCallStore for PgOnCallStore {
         if live.is_none() {
             return Ok(None);
         }
-        assert_member_tx(&mut tx, org, new.user_id).await?;
+        if !orgs::lock_memberships(&mut tx, org, &[new.user_id]).await? {
+            return Err(not_member());
+        }
         let row: OverrideRow = sqlx::query_as(
             r#"INSERT INTO on_call_overrides
                    (org_id, schedule_id, user_id, starts_at, ends_at, created_by)
@@ -628,6 +654,34 @@ impl OnCallStore for InMemoryOnCallStore {
                 updated_at: d.schedule.updated_at,
             })
             .collect())
+    }
+
+    async fn responders(&self, org: OrgId) -> Result<Vec<(Uuid, UserId)>> {
+        let now = Utc::now();
+        let mut out: Vec<(Uuid, UserId)> = self
+            .inner
+            .lock()
+            .schedules
+            .iter()
+            .filter(|(o, _, deleted)| *o == org && !*deleted)
+            .flat_map(|(_, d, _)| {
+                let id = d.schedule.id;
+                d.layers
+                    .iter()
+                    .flat_map(|l| l.participants.iter().map(|p| p.user_id))
+                    .chain(
+                        d.overrides
+                            .iter()
+                            .filter(|o| o.ends_at > now)
+                            .map(|o| o.user_id),
+                    )
+                    .map(move |u| (id, u))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        out.sort_by_key(|(s, u)| (*s, u.0));
+        out.dedup();
+        Ok(out)
     }
 
     async fn get(&self, org: OrgId, id: Uuid) -> Result<Option<OnCallScheduleDetail>> {

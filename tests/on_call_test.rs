@@ -364,3 +364,354 @@ async fn create_enforces_quota_and_unique_name_pg() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+#[ignore]
+async fn responders_contacts_and_pagers_stay_live_and_per_org_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    use uptimepage::domain::{
+        EscalationTargetType, NewEscalationPolicy, NewEscalationStep, NewEscalationTarget,
+    };
+    use uptimepage::storage::{EscalationPolicyStore, PgEscalationPolicyStore};
+
+    let (org, owner) = seed_org(&pool, "ocgap").await;
+    let quiet = add_member(&pool, org, "ocgapq").await;
+    let cover = add_member(&pool, org, "ocgapc").await;
+    let lapsed = add_member(&pool, org, "ocgapl").await;
+    let on_call = PgOnCallStore::new(pool.clone());
+    let sched = on_call
+        .create(org, schedule("primary", "UTC", vec![owner, quiet]), 10)
+        .await
+        .unwrap();
+    let gone = on_call
+        .create(org, schedule("gone", "UTC", vec![owner]), 10)
+        .await
+        .unwrap();
+    assert!(on_call.delete(org, gone.schedule.id).await.unwrap());
+
+    // An override counts while it is not over, and not once it is.
+    let now = chrono::Utc::now();
+    for (starts, ends) in [
+        (now, now + chrono::Duration::days(1)),
+        (
+            now - chrono::Duration::days(3),
+            now - chrono::Duration::days(2),
+        ),
+    ] {
+        on_call
+            .add_override(
+                org,
+                sched.schedule.id,
+                Some(owner),
+                NewOnCallOverride {
+                    user_id: if ends > now { cover } else { lapsed },
+                    starts_at: starts,
+                    ends_at: ends,
+                },
+            )
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    let mut expected = vec![
+        (sched.schedule.id, owner),
+        (sched.schedule.id, quiet),
+        (sched.schedule.id, cover),
+    ];
+    expected.sort_by_key(|(s, u)| (*s, u.0));
+    assert_eq!(on_call.responders(org).await.unwrap(), expected);
+
+    let contacts = PgContactStore::new(pool.clone());
+    let slack = seed_channel(&pool, org, "owner-slack").await;
+    contacts
+        .replace_for_user(org, owner, vec![slack])
+        .await
+        .unwrap();
+    assert_eq!(contacts.for_org(org).await.unwrap(), vec![(owner, slack)]);
+
+    let esc = PgEscalationPolicyStore::new(pool.clone());
+    let mut ids = Vec::new();
+    for name in ["nights", "business", "retired"] {
+        let p = esc
+            .create(
+                org,
+                NewEscalationPolicy {
+                    name: name.into(),
+                    description: None,
+                    repeat_count: 0,
+                    steps: vec![NewEscalationStep {
+                        level: 1,
+                        delay_secs: 0,
+                        targets: vec![NewEscalationTarget {
+                            target_type: EscalationTargetType::Schedule,
+                            user_id: None,
+                            schedule_id: Some(sched.schedule.id),
+                            channel_id: None,
+                        }],
+                    }],
+                },
+                10,
+            )
+            .await
+            .unwrap();
+        ids.push(p.id);
+    }
+    assert!(esc.delete(org, ids[2]).await.unwrap());
+    assert_eq!(
+        esc.schedule_pagers(org).await.unwrap(),
+        vec![
+            (sched.schedule.id, "business".to_owned()),
+            (sched.schedule.id, "nights".to_owned()),
+        ]
+    );
+
+    let (other, _) = seed_org(&pool, "ocgapo").await;
+    assert!(on_call.responders(other).await.unwrap().is_empty());
+    assert!(contacts.for_org(other).await.unwrap().is_empty());
+    assert!(esc.schedule_pagers(other).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+#[ignore]
+async fn a_removed_member_is_paged_no_more_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    use uptimepage::domain::{
+        EscalationTargetType, NewEscalationPolicy, NewEscalationStep, NewEscalationTarget,
+    };
+    use uptimepage::storage::orgs::{RemoveOutcome, remove_member};
+    use uptimepage::storage::{EscalationPolicyStore, PgEscalationPolicyStore};
+
+    let (org, owner) = seed_org(&pool, "ocleave").await;
+    let leaver = add_member(&pool, org, "ocleaver").await;
+    // The same person on call in a second org, which they do not leave.
+    let (kept_org, kept_owner) = seed_org(&pool, "ockept").await;
+    sqlx::query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'member')")
+        .bind(leaver.0)
+        .bind(kept_org.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let on_call = PgOnCallStore::new(pool.clone());
+    let sched = on_call
+        .create(org, schedule("primary", "UTC", vec![owner, leaver]), 10)
+        .await
+        .unwrap();
+    on_call
+        .add_override(
+            org,
+            sched.schedule.id,
+            Some(owner),
+            NewOnCallOverride {
+                user_id: leaver,
+                starts_at: chrono::Utc::now(),
+                ends_at: chrono::Utc::now() + chrono::Duration::days(3),
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let contacts = PgContactStore::new(pool.clone());
+    let channel = seed_channel(&pool, org, "leaver-slack").await;
+    contacts
+        .replace_for_user(org, leaver, vec![channel])
+        .await
+        .unwrap();
+    let kept_sched = on_call
+        .create(
+            kept_org,
+            schedule("kept", "UTC", vec![kept_owner, leaver]),
+            10,
+        )
+        .await
+        .unwrap();
+    let kept_channel = seed_channel(&pool, kept_org, "kept-slack").await;
+    contacts
+        .replace_for_user(kept_org, leaver, vec![kept_channel])
+        .await
+        .unwrap();
+    on_call
+        .add_override(
+            kept_org,
+            kept_sched.schedule.id,
+            Some(kept_owner),
+            NewOnCallOverride {
+                user_id: leaver,
+                starts_at: chrono::Utc::now(),
+                ends_at: chrono::Utc::now() + chrono::Duration::days(3),
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let esc = PgEscalationPolicyStore::new(pool.clone());
+    let kept_policy = esc
+        .create(
+            kept_org,
+            NewEscalationPolicy {
+                name: "kept-ladder".into(),
+                description: None,
+                repeat_count: 0,
+                steps: vec![NewEscalationStep {
+                    level: 1,
+                    delay_secs: 0,
+                    targets: vec![
+                        NewEscalationTarget {
+                            target_type: EscalationTargetType::User,
+                            user_id: Some(leaver.0),
+                            schedule_id: None,
+                            channel_id: None,
+                        },
+                        NewEscalationTarget {
+                            target_type: EscalationTargetType::Channel,
+                            user_id: None,
+                            schedule_id: None,
+                            channel_id: Some(kept_channel),
+                        },
+                    ],
+                }],
+            },
+            10,
+        )
+        .await
+        .unwrap();
+    let policy = esc
+        .create(
+            org,
+            NewEscalationPolicy {
+                name: "ladder".into(),
+                description: None,
+                repeat_count: 0,
+                steps: vec![NewEscalationStep {
+                    level: 1,
+                    delay_secs: 0,
+                    targets: vec![
+                        NewEscalationTarget {
+                            target_type: EscalationTargetType::User,
+                            user_id: Some(leaver.0),
+                            schedule_id: None,
+                            channel_id: None,
+                        },
+                        NewEscalationTarget {
+                            target_type: EscalationTargetType::Schedule,
+                            user_id: None,
+                            schedule_id: Some(sched.schedule.id),
+                            channel_id: None,
+                        },
+                    ],
+                }],
+            },
+            10,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        remove_member(&pool, org, owner, leaver).await.unwrap(),
+        RemoveOutcome::Removed
+    );
+
+    let after = on_call.get(org, sched.schedule.id).await.unwrap().unwrap();
+    let on_rota: Vec<UserId> = after.layers[0]
+        .participants
+        .iter()
+        .map(|p| p.user_id)
+        .collect();
+    assert_eq!(on_rota, vec![owner]);
+    assert!(after.overrides.is_empty());
+    assert!(contacts.for_user(org, leaver).await.unwrap().is_empty());
+    let rung = &esc.get(org, policy.id).await.unwrap().unwrap().steps[0];
+    assert_eq!(rung.targets.len(), 1);
+    assert_eq!(rung.targets[0].target_type, EscalationTargetType::Schedule);
+    assert!(
+        on_call
+            .responders(org)
+            .await
+            .unwrap()
+            .iter()
+            .all(|(_, u)| *u != leaver)
+    );
+
+    // Their place in the other org is untouched.
+    let kept = on_call
+        .get(kept_org, kept_sched.schedule.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        kept.layers[0]
+            .participants
+            .iter()
+            .any(|p| p.user_id == leaver)
+    );
+    assert_eq!(kept.overrides.len(), 1);
+    assert_eq!(
+        contacts.for_user(kept_org, leaver).await.unwrap(),
+        vec![kept_channel]
+    );
+    let kept_rung = &esc
+        .get(kept_org, kept_policy.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .steps[0];
+    assert_eq!(kept_rung.targets.len(), 2);
+
+    // However the membership goes, account deletion included, every paging
+    // row goes with it; and none can be written for a non-member.
+    sqlx::query("DELETE FROM memberships WHERE user_id = $1 AND org_id = $2")
+        .bind(leaver.0)
+        .bind(kept_org.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let kept = on_call
+        .get(kept_org, kept_sched.schedule.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        kept.layers[0]
+            .participants
+            .iter()
+            .all(|p| p.user_id != leaver)
+    );
+    assert!(kept.overrides.is_empty());
+    assert!(
+        contacts
+            .for_user(kept_org, leaver)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let kept_rung = &esc
+        .get(kept_org, kept_policy.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .steps[0];
+    assert_eq!(kept_rung.targets.len(), 1);
+    assert_eq!(
+        kept_rung.targets[0].target_type,
+        EscalationTargetType::Channel
+    );
+    assert!(
+        contacts
+            .replace_for_user(kept_org, leaver, vec![kept_channel])
+            .await
+            .is_err(),
+        "a non-member is refused before any write"
+    );
+    let orphan = sqlx::query(
+        "INSERT INTO user_contact_channels (org_id, user_id, channel_id) VALUES ($1, $2, $3)",
+    )
+    .bind(kept_org.0)
+    .bind(leaver.0)
+    .bind(kept_channel)
+    .execute(&pool)
+    .await;
+    assert!(orphan.is_err(), "a non-member cannot be wired to be paged");
+}

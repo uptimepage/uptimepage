@@ -6,22 +6,11 @@
 //   - Cmd/Ctrl+Enter to submit
 // Headers are gathered via window.smCollectHeaders (header_rows.js).
 // Tags are gathered via window.smCollectTags (tag_chip_input.js).
+import { parseDuration } from "./_duration.js";
 
 (function () {
     const form = document.getElementById("check-form");
     if (!form) return;
-
-    // Reads back what web::views::exact_duration renders, so the two must
-    // agree on the grammar. `""` is 0, so an empty optional field is off.
-    const DURATION_UNITS = { s: 1, m: 60, h: 3600, d: 86400 };
-
-    function parseDuration(raw) {
-        const t = String(raw ?? "").trim().toLowerCase();
-        if (t === "") return 0;
-        const m = t.match(/^(\d+)\s*([smhd])?$/);
-        if (!m) return null;
-        return parseInt(m[1], 10) * (DURATION_UNITS[m[2]] || 1);
-    }
 
     const DURATION_HELP = (label, lo, hi) =>
         `${label} must be between ${lo} and ${hi}. Use a number of seconds, or a unit: 90s, 15m, 2h, 30d.`;

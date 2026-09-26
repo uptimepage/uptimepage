@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "settings/_escalation_level.html" as esc %}
 {% block title %}{% if form.mode == "create" %}New escalation policy{% else %}Edit escalation policy{% endif %} · Uptimepage{% endblock %}
 {% block content %}
 <section class="space-y-6">
@@ -55,36 +56,7 @@
 
       <div id="levels" class="space-y-4">
         {% for level in form.levels %}
-        <div data-level-row class="sticker-card space-y-4 p-4">
-          <div class="flex items-center justify-between">
-            <h3 class="text-sm font-medium">level <span data-level-num>{{ loop.index }}</span></h3>
-            <button type="button" data-remove-level class="row-link row-link--danger text-xs">remove</button>
-          </div>
-          <label class="field-outline max-w-xs">
-            <span class="field-outline__label">Wait before next level (seconds)</span>
-            <input type="number" data-delay min="0" value="{{ level.delay_secs }}" class="w-full field">
-          </label>
-          <fieldset class="space-y-2" data-level-channels>
-            <legend class="text-xs uppercase text-muted">Channels paged at this level</legend>
-            {% for ch in level.channels %}
-            <label class="mr-4 inline-flex items-center gap-2">
-              <input type="checkbox" data-channel value="{{ ch.id }}"{% if ch.selected %} checked{% endif %}>
-              <span class="text-sm">{{ ch.name }}</span>
-            </label>
-            {% endfor %}
-          </fieldset>
-          {% if !form.schedule_choices.is_empty() %}
-          <fieldset class="space-y-2" data-level-schedules>
-            <legend class="text-xs uppercase text-muted">On-call schedules paged at this level</legend>
-            {% for sc in level.schedules %}
-            <label class="mr-4 inline-flex items-center gap-2">
-              <input type="checkbox" data-schedule value="{{ sc.id }}"{% if sc.selected %} checked{% endif %}>
-              <span class="text-sm">{{ sc.name }}</span>
-            </label>
-            {% endfor %}
-          </fieldset>
-          {% endif %}
-        </div>
+        {% call esc::level(level, loop.index) %}{% endcall %}
         {% endfor %}
       </div>
 
@@ -102,36 +74,7 @@
   </form>
 
   <template id="level-template">
-    <div data-level-row class="sticker-card space-y-4 p-4">
-      <div class="flex items-center justify-between">
-        <h3 class="text-sm font-medium">level <span data-level-num>1</span></h3>
-        <button type="button" data-remove-level class="row-link row-link--danger text-xs">remove</button>
-      </div>
-      <label class="field-outline max-w-xs">
-        <span class="field-outline__label">Wait before next level (seconds)</span>
-        <input type="number" data-delay min="0" value="300" class="w-full field">
-      </label>
-      <fieldset class="space-y-2" data-level-channels>
-        <legend class="text-xs uppercase text-muted">Channels paged at this level</legend>
-        {% for ch in form.channel_choices %}
-        <label class="mr-4 inline-flex items-center gap-2">
-          <input type="checkbox" data-channel value="{{ ch.id }}">
-          <span class="text-sm">{{ ch.name }}</span>
-        </label>
-        {% endfor %}
-      </fieldset>
-      {% if !form.schedule_choices.is_empty() %}
-      <fieldset class="space-y-2" data-level-schedules>
-        <legend class="text-xs uppercase text-muted">On-call schedules paged at this level</legend>
-        {% for sc in form.schedule_choices %}
-        <label class="mr-4 inline-flex items-center gap-2">
-          <input type="checkbox" data-schedule value="{{ sc.id }}">
-          <span class="text-sm">{{ sc.name }}</span>
-        </label>
-        {% endfor %}
-      </fieldset>
-      {% endif %}
-    </div>
+    {% call esc::level(form.blank_level, 1) %}{% endcall %}
   </template>
 </section>
 

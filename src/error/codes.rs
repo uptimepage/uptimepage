@@ -120,6 +120,8 @@ pub const ON_CALL_SCHEDULE_QUOTA_EXCEEDED: &str = "ON_CALL_SCHEDULE_QUOTA_EXCEED
 pub const ON_CALL_SCHEDULE_INVALID: &str = "ON_CALL_SCHEDULE_INVALID";
 pub const ON_CALL_OVERRIDE_NOT_FOUND: &str = "ON_CALL_OVERRIDE_NOT_FOUND";
 pub const CONTACT_CHANNEL_INVALID: &str = "CONTACT_CHANNEL_INVALID";
+/// Paging channels were set for someone who is not a member of the org.
+pub const CONTACT_NOT_MEMBER: &str = "CONTACT_NOT_MEMBER";
 // Notification channels (operator surface).
 pub const CHANNEL_NOT_FOUND: &str = "CHANNEL_NOT_FOUND";
 pub const CHANNEL_NAME_TAKEN: &str = "CHANNEL_NAME_TAKEN";

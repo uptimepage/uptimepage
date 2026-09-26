@@ -13,6 +13,7 @@ use askama::Template;
 use askama_web::WebTemplate;
 use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Redirect, Response};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::app::AppState;
@@ -20,7 +21,9 @@ use crate::domain::{EscalationTargetType, OrgId};
 use crate::error::AppError;
 use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser};
 use crate::templates::filters;
+use crate::templates::format::exact_duration;
 use crate::web::error::WebResult;
+use crate::web::views::on_call::{MemberChoice, org_members};
 use crate::web::views::resolve_org;
 use crate::web::views::team_lock::{TeamLock, plan_locked, shows_teaser, team_lock};
 
@@ -70,10 +73,14 @@ pub struct EscalationPartial {
 /// The rung number is rendered from the row's position (`loop.index`) — the JS
 /// renumbers on add/remove — so the level value itself is not carried here.
 pub struct LevelModel {
-    pub delay_secs: i32,
+    /// Wait before the next level, as a duration such as `5m`.
+    pub delay: String,
     pub channels: Vec<Choice>,
     /// On-call schedules paged at this level (resolved to whoever is on call).
     pub schedules: Vec<Choice>,
+    /// People this level pages directly, set through the API. The form shows
+    /// them, flags any no page can reach, and sends back the ones kept.
+    pub people: Vec<MemberChoice>,
 }
 
 pub struct PolicyFormModel {
@@ -83,11 +90,9 @@ pub struct PolicyFormModel {
     pub name: String,
     pub description: String,
     pub repeat_count: i32,
-    /// All org channels, unchecked — the template for a freshly-added level.
-    pub channel_choices: Vec<Choice>,
-    /// All org on-call schedules, unchecked — for a freshly-added level.
-    pub schedule_choices: Vec<Choice>,
     pub levels: Vec<LevelModel>,
+    /// What "add level" clones: every choice unchecked, the default wait.
+    pub blank_level: LevelModel,
     /// True when the org has no channels yet (the builder warns + links out).
     pub no_channels: bool,
 }
@@ -191,6 +196,16 @@ fn choices_from(channels: &[ChannelOption], selected: &[Uuid]) -> Vec<Choice> {
         .collect()
 }
 
+/// A level with nothing chosen and the default five-minute wait.
+fn blank_level(channels: &[ChannelOption], schedules: &[ChannelOption]) -> LevelModel {
+    LevelModel {
+        delay: "5m".into(),
+        channels: choices_from(channels, &[]),
+        schedules: choices_from(schedules, &[]),
+        people: Vec::new(),
+    }
+}
+
 /// Org on-call schedules, listed once per request, as the parallel target set.
 async fn org_schedules(state: &AppState, org: OrgId) -> WebResult<Vec<ChannelOption>> {
     Ok(state
@@ -225,14 +240,8 @@ pub async fn new_form(
         name: String::new(),
         description: String::new(),
         repeat_count: 0,
-        channel_choices: choices_from(&channels, &[]),
-        schedule_choices: choices_from(&schedules, &[]),
-        // One empty rung to start.
-        levels: vec![LevelModel {
-            delay_secs: 300,
-            channels: choices_from(&channels, &[]),
-            schedules: choices_from(&schedules, &[]),
-        }],
+        levels: vec![blank_level(&channels, &schedules)],
+        blank_level: blank_level(&channels, &schedules),
         no_channels: channels.is_empty(),
     };
     Ok(PolicyFormPage {
@@ -260,6 +269,11 @@ pub async fn edit_form(
         })?;
     let channels = org_channels(&state, org).await?;
     let schedules = org_schedules(&state, org).await?;
+    let members: HashMap<String, MemberChoice> = org_members(&state, org)
+        .await?
+        .into_iter()
+        .map(|m| (m.id.clone(), m))
+        .collect();
     let mut levels: Vec<LevelModel> = policy
         .steps
         .iter()
@@ -277,18 +291,20 @@ pub async fn edit_form(
                 .filter_map(|t| t.schedule_id)
                 .collect();
             LevelModel {
-                delay_secs: step.delay_secs,
+                delay: exact_duration(step.delay_secs.unsigned_abs().into()),
                 channels: choices_from(&channels, &sel_channels),
                 schedules: choices_from(&schedules, &sel_schedules),
+                people: step
+                    .targets
+                    .iter()
+                    .filter(|t| t.target_type == EscalationTargetType::User)
+                    .filter_map(|t| members.get(&t.user_id?.to_string()).cloned())
+                    .collect(),
             }
         })
         .collect();
     if levels.is_empty() {
-        levels.push(LevelModel {
-            delay_secs: 300,
-            channels: choices_from(&channels, &[]),
-            schedules: choices_from(&schedules, &[]),
-        });
+        levels.push(blank_level(&channels, &schedules));
     }
     let form = PolicyFormModel {
         mode: "edit",
@@ -297,9 +313,8 @@ pub async fn edit_form(
         name: policy.name,
         description: policy.description.unwrap_or_default(),
         repeat_count: policy.repeat_count,
-        channel_choices: choices_from(&channels, &[]),
-        schedule_choices: choices_from(&schedules, &[]),
         levels,
+        blank_level: blank_level(&channels, &schedules),
         no_channels: channels.is_empty(),
     };
     Ok(PolicyFormPage {
@@ -488,13 +503,18 @@ mod tests {
                 name: String::new(),
                 description: String::new(),
                 repeat_count: 0,
-                channel_choices: vec![choice("Ops")],
-                schedule_choices: vec![],
                 levels: vec![LevelModel {
-                    delay_secs: 300,
+                    delay: "5m".into(),
                     channels: vec![choice("Ops")],
                     schedules: vec![],
+                    people: vec![],
                 }],
+                blank_level: LevelModel {
+                    delay: "5m".into(),
+                    channels: vec![choice("Ops")],
+                    schedules: vec![],
+                    people: vec![],
+                },
                 no_channels: false,
             },
         }
@@ -504,5 +524,48 @@ mod tests {
         assert!(html.contains(r#"data-action="/api/v1/escalation-policies""#));
         assert!(html.contains(r#"data-method="POST""#));
         assert!(html.contains("data-level-row"));
+        assert!(!html.contains("People paged at this level"));
+    }
+
+    #[test]
+    fn a_level_keeps_the_people_it_pages() {
+        let level = |people: Vec<MemberChoice>| LevelModel {
+            delay: "0s".into(),
+            channels: vec![choice("Ops")],
+            schedules: vec![],
+            people,
+        };
+        let html = PolicyFormPage {
+            active_tab: TAB_ESCALATION,
+            form: PolicyFormModel {
+                mode: "edit",
+                action: "/api/v1/escalation-policies/p".into(),
+                submit_method: "PATCH",
+                name: "Primary".into(),
+                description: String::new(),
+                repeat_count: 0,
+                levels: vec![level(vec![
+                    MemberChoice {
+                        id: "uid".into(),
+                        email: "olena@example.com".into(),
+                        reachable: true,
+                    },
+                    MemberChoice {
+                        id: "u2".into(),
+                        email: "taras@example.com".into(),
+                        reachable: false,
+                    },
+                ])],
+                blank_level: level(vec![]),
+                no_channels: false,
+            },
+        }
+        .render()
+        .unwrap();
+        assert!(html.contains(r#"data-person="uid""#));
+        assert!(html.contains("olena@example.com"));
+        assert!(html.contains("taras@example.com (no paging channels)"));
+        assert!(html.contains("data-remove-person"));
+        assert!(html.contains(r#"value="0s""#));
     }
 }

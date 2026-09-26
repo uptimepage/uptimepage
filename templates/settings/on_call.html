@@ -83,6 +83,11 @@
       When an escalation policy pages a schedule you are on, you are reached
       through the channels you pick here. Saved as you toggle.
     </p>
+    {% if on_duty %}
+    <div data-unpageable class="alert-card alert-card--warn text-sm"{% if !unpageable %} hidden{% endif %}>
+      You are on an on-call schedule, but none of the channels you picked can deliver a page, so a page on your shift reaches no one.
+    </div>
+    {% endif %}
     <div class="sticker-card space-y-3 p-5" data-contacts>
       {% if no_channels %}
       <p class="text-sm text-muted">
@@ -92,8 +97,9 @@
       <div class="flex flex-wrap gap-x-6 gap-y-2">
         {% for c in contacts %}
         <label class="inline-flex items-center gap-2">
-          <input type="checkbox" data-contact value="{{ c.id }}"{% if c.checked %} checked{% endif %}>
+          <input type="checkbox" data-contact value="{{ c.id }}"{% if c.blocked.is_none() %} data-delivers{% endif %}{% if c.checked %} checked{% endif %}>
           <span class="text-sm">{{ c.name }}</span>
+          {% if let Some(why) = c.blocked %}<span class="text-xs text-quiet">{{ why }}</span>{% endif %}
         </label>
         {% endfor %}
       </div>

@@ -1,6 +1,8 @@
 // Escalation-policy builder. Manages the dynamic level rows and serialises them
 // into a NewEscalationPolicy body for POST/PATCH /api/v1/escalation-policies.
 // Shares the error-banner layer from api_form.js (loaded before this).
+import { parseSpan } from "./_duration.js";
+
 (function () {
     const form = document.getElementById("escalation-form");
     if (!form) return;
@@ -21,6 +23,11 @@
     });
 
     levels.addEventListener("click", (evt) => {
+        const person = evt.target.closest("[data-remove-person]");
+        if (person) {
+            person.closest("[data-person]").remove();
+            return;
+        }
         const rm = evt.target.closest("[data-remove-level]");
         if (!rm) return;
         if (levels.querySelectorAll("[data-level-row]").length <= 1) {
@@ -80,17 +87,22 @@
         if (rows.length === 0) return { error: "Add at least one level." };
         const steps = [];
         for (let i = 0; i < rows.length; i++) {
-            const delay = parseInt(rows[i].querySelector("[data-delay]").value, 10);
+            const delay = parseSpan(rows[i].querySelector("[data-delay]").value);
+            if (delay === null) {
+                return { error: `Level ${i + 1}: write the wait before the next level with a unit, such as 90s, 5m or 1h, or 0 to page it at once.` };
+            }
             const channels = Array.from(rows[i].querySelectorAll("[data-channel]:checked")).map(c => c.value);
             const schedules = Array.from(rows[i].querySelectorAll("[data-schedule]:checked")).map(c => c.value);
-            if (channels.length === 0 && schedules.length === 0) {
+            const people = Array.from(rows[i].querySelectorAll("[data-person]")).map(p => p.dataset.person);
+            if (channels.length === 0 && schedules.length === 0 && people.length === 0) {
                 return { error: `Level ${i + 1} needs at least one channel or schedule.` };
             }
             const targets = channels.map(id => ({ target_type: "channel", channel_id: id }))
-                .concat(schedules.map(id => ({ target_type: "schedule", schedule_id: id })));
+                .concat(schedules.map(id => ({ target_type: "schedule", schedule_id: id })))
+                .concat(people.map(id => ({ target_type: "user", user_id: id })));
             steps.push({
                 level: i + 1,
-                delay_secs: Number.isFinite(delay) ? delay : 300,
+                delay_secs: delay,
                 targets,
             });
         }

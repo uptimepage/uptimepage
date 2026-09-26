@@ -1,0 +1,48 @@
+{# One level in the escalation-policy builder, shared by the rendered rows and
+   the clone <template> for a new one. #}
+{% macro level(level, num) %}
+<div data-level-row class="sticker-card space-y-4 p-4">
+  <div class="flex items-center justify-between">
+    <h3 class="text-sm font-medium">level <span data-level-num>{{ num }}</span></h3>
+    <button type="button" data-remove-level class="row-link row-link--danger text-xs">remove</button>
+  </div>
+  <label class="field-outline max-w-xs">
+    <span class="field-outline__label">Wait before next level</span>
+    <input type="text" data-delay value="{{ level.delay }}" placeholder="5m" autocomplete="off" spellcheck="false" class="w-full field">
+  </label>
+  <fieldset class="space-y-2" data-level-channels>
+    <legend class="text-xs uppercase text-muted">Channels paged at this level</legend>
+    {% for ch in level.channels %}
+    <label class="mr-4 inline-flex items-center gap-2">
+      <input type="checkbox" data-channel value="{{ ch.id }}"{% if ch.selected %} checked{% endif %}>
+      <span class="text-sm">{{ ch.name }}</span>
+    </label>
+    {% endfor %}
+  </fieldset>
+  {% if !level.schedules.is_empty() %}
+  <fieldset class="space-y-2" data-level-schedules>
+    <legend class="text-xs uppercase text-muted">On-call schedules paged at this level</legend>
+    {% for sc in level.schedules %}
+    <label class="mr-4 inline-flex items-center gap-2">
+      <input type="checkbox" data-schedule value="{{ sc.id }}"{% if sc.selected %} checked{% endif %}>
+      <span class="text-sm">{{ sc.name }}</span>
+    </label>
+    {% endfor %}
+  </fieldset>
+  {% endif %}
+  {% if !level.people.is_empty() %}
+  <div class="space-y-1">
+    <span class="block text-xs uppercase text-muted">People paged at this level</span>
+    <ul class="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+      {% for p in level.people %}
+      <li data-person="{{ p.id }}" class="inline-flex items-center gap-2">
+        <span>{{ p.email }}{% if !p.reachable %} (no paging channels){% endif %}</span>
+        <button type="button" data-remove-person class="row-link row-link--danger text-xs" aria-label="Stop paging {{ p.email }} at this level">remove</button>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="text-xs text-muted">Set through the API. Saving here keeps the ones still listed.</p>
+  </div>
+  {% endif %}
+</div>
+{% endmacro %}

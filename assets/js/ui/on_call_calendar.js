@@ -1,11 +1,21 @@
 // Overrides calendar on the on-call schedule edit page. Click a start day, then
 // an end day, then pick who covers — the override is POSTed to
 // /api/v1/on-call/schedules/{id}/overrides. Existing overrides render as bars;
-// click one to delete it. Dates are handled in the browser's local zone.
+// click one to delete it. Days run midnight to midnight in the schedule's
+// timezone, the zone its handoffs are set in.
+import { knowsZone, zonedInstant, zonedToday } from "./_zoned.js";
+
 (function () {
     const root = document.querySelector("[data-overrides]");
     if (!root) return;
     const scheduleId = root.getAttribute("data-schedule-id");
+    const stored = root.getAttribute("data-timezone") || "UTC";
+    const tz = knowsZone(stored) ? stored : "UTC";
+    const zoneNote = root.querySelector("[data-cal-zone-note]");
+    if (zoneNote && tz !== stored) {
+        zoneNote.textContent = `This browser does not know ${stored}, so the days below run in UTC.`;
+        zoneNote.hidden = false;
+    }
     const grid = root.querySelector("[data-cal-grid]");
     const title = root.querySelector("[data-cal-title]");
     const hint = root.querySelector("[data-cal-hint]");
@@ -22,9 +32,9 @@
         end: new Date(li.getAttribute("data-end")),
     }));
 
-    const today = new Date();
-    let viewYear = today.getFullYear();
-    let viewMonth = today.getMonth();
+    const today = zonedToday(tz);
+    let viewYear = today.year;
+    let viewMonth = today.month;
     // Selection is two clicks: selStart set on the first, selEnd on the second.
     let selStart = null;
     let selEnd = null;
@@ -41,13 +51,11 @@
     }
     function setHint(msg) { if (hint) hint.textContent = msg; }
 
-    function dayStart(y, m, d) { return new Date(y, m, d, 0, 0, 0, 0); }
+    function dayStart(y, m, d) { return zonedInstant(tz, y, m, d); }
 
     // An override covers a calendar day when its [start,end) window overlaps the
     // day's [00:00, next 00:00) window.
-    function coversDay(ov, y, m, d) {
-        const s = dayStart(y, m, d);
-        const e = dayStart(y, m, d + 1);
+    function coversDay(ov, s, e) {
         return ov.start < e && ov.end > s;
     }
 
@@ -73,14 +81,16 @@
             head.textContent = h;
             grid.appendChild(head);
         });
-        const first = new Date(viewYear, viewMonth, 1);
-        const lead = (first.getDay() + 6) % 7; // Monday-first column for the 1st.
-        const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+        // Plain calendar arithmetic, the same in every zone.
+        const lead = (new Date(Date.UTC(viewYear, viewMonth, 1)).getUTCDay() + 6) % 7; // Monday-first column for the 1st.
+        const daysInMonth = new Date(Date.UTC(viewYear, viewMonth + 1, 0)).getUTCDate();
         for (let i = 0; i < lead; i++) {
             const blank = document.createElement("div");
             blank.className = "bg-[color:var(--theme-surface)] min-h-16";
             grid.appendChild(blank);
         }
+        // Each midnight once: day d runs from bounds[d - 1] to bounds[d].
+        const bounds = Array.from({ length: daysInMonth + 1 }, (_, i) => dayStart(viewYear, viewMonth, i + 1));
         for (let d = 1; d <= daysInMonth; d++) {
             const cell = document.createElement("div");
             cell.setAttribute("data-day", String(d));
@@ -92,7 +102,7 @@
             num.className = "text-right text-quiet";
             num.textContent = String(d);
             cell.appendChild(num);
-            overrides.filter((ov) => coversDay(ov, viewYear, viewMonth, d)).forEach((ov) => {
+            overrides.filter((ov) => coversDay(ov, bounds[d - 1], bounds[d])).forEach((ov) => {
                 const bar = document.createElement("button");
                 bar.type = "button";
                 bar.setAttribute("data-override-bar", ov.id);
@@ -167,7 +177,7 @@
         cancel.textContent = "Cancel";
         assign.addEventListener("click", () => {
             const opt = select.options[select.selectedIndex];
-            assignOverride(lo, hi, opt.value, opt.textContent);
+            assignOverride(lo, hi, opt.value, opt.dataset.email || opt.textContent);
         });
         cancel.addEventListener("click", clearSelection);
         picker.append(label, select, assign, cancel);

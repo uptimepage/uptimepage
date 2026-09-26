@@ -19,6 +19,8 @@ use crate::error::{AppError, Result};
 pub trait ContactStore: Send + Sync {
     /// The channel ids that page this user, in stable insertion order.
     async fn for_user(&self, org: OrgId, user: UserId) -> Result<Vec<Uuid>>;
+    /// Every member's channels in the org, as `(user, channel)` pairs.
+    async fn for_org(&self, org: OrgId) -> Result<Vec<(UserId, Uuid)>>;
     /// Replace a user's contact channels wholesale. Every id must be a channel
     /// in `org`; an unknown id yields `CONTACT_CHANNEL_INVALID`.
     async fn replace_for_user(&self, org: OrgId, user: UserId, channels: Vec<Uuid>) -> Result<()>;
@@ -58,12 +60,30 @@ impl ContactStore for PgContactStore {
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
+    async fn for_org(&self, org: OrgId) -> Result<Vec<(UserId, Uuid)>> {
+        let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
+            "SELECT user_id, channel_id FROM user_contact_channels \
+             WHERE org_id = $1 ORDER BY user_id, created_at, channel_id",
+        )
+        .bind(org.0)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Other(anyhow::anyhow!("contact for_org: {e}")))?;
+        Ok(rows.into_iter().map(|(u, c)| (UserId(u), c)).collect())
+    }
+
     async fn replace_for_user(&self, org: OrgId, user: UserId, channels: Vec<Uuid>) -> Result<()> {
         let mut tx = self
             .pool
             .begin()
             .await
             .map_err(|e| AppError::Other(anyhow::anyhow!("begin: {e}")))?;
+        if !crate::storage::orgs::lock_memberships(&mut tx, org, &[user]).await? {
+            return Err(AppError::unprocessable(
+                codes::CONTACT_NOT_MEMBER,
+                "only a member of this organization can be paged here",
+            ));
+        }
         sqlx::query("DELETE FROM user_contact_channels WHERE org_id = $1 AND user_id = $2")
             .bind(org.0)
             .bind(user.0)
@@ -130,6 +150,16 @@ impl ContactStore for InMemoryContactStore {
             .iter()
             .filter(|(o, u, _)| *o == org && *u == user)
             .map(|(_, _, c)| *c)
+            .collect())
+    }
+
+    async fn for_org(&self, org: OrgId) -> Result<Vec<(UserId, Uuid)>> {
+        Ok(self
+            .inner
+            .lock()
+            .iter()
+            .filter(|(o, _, _)| *o == org)
+            .map(|(_, u, c)| (*u, *c))
             .collect())
     }
 

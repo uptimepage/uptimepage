@@ -326,7 +326,19 @@ impl NotificationChannel {
     /// Whether a page aimed here would be attempted at all: a disabled
     /// channel and an unconfirmed address both swallow every delivery.
     pub fn can_deliver(&self) -> bool {
-        self.enabled && !self.awaiting_verification()
+        self.delivery_block().is_none()
+    }
+
+    /// Why a page aimed here would not be attempted, in a word a person
+    /// reads next to the channel's name; `None` when it would be.
+    pub fn delivery_block(&self) -> Option<&'static str> {
+        if !self.enabled {
+            Some("off")
+        } else if self.awaiting_verification() {
+            Some("unverified")
+        } else {
+            None
+        }
     }
 
     /// One tag in common is enough: a team owns a set of resources, not an
