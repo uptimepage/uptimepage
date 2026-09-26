@@ -5,12 +5,10 @@
    class="monitors-popover__item"{% if active_tab == "variables" %} aria-current="page"{% endif %}><svg class="mp-icon" aria-hidden="true"><use href="#i-variable" /></svg>variables</a>
 <a href="/settings/team" role="menuitem"
    class="monitors-popover__item"{% if active_tab == "team" %} aria-current="page"{% endif %}><svg class="mp-icon" aria-hidden="true"><use href="#i-users" /></svg>team</a>
-{% if ""|escalation_ui %}
 <a href="/settings/escalation" role="menuitem"
    class="monitors-popover__item"{% if active_tab == "escalation" %} aria-current="page"{% endif %}><svg class="mp-icon" aria-hidden="true"><use href="#i-alert" /></svg>escalation</a>
 <a href="/settings/on-call" role="menuitem"
    class="monitors-popover__item"{% if active_tab == "on-call" %} aria-current="page"{% endif %}><svg class="mp-icon" aria-hidden="true"><use href="#i-users" /></svg>on-call</a>
-{% endif %}
 <div class="monitors-popover__sep"></div>
 <div class="monitors-popover__label">account</div>
 <a href="/settings/organizations" role="menuitem"

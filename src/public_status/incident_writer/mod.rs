@@ -155,7 +155,7 @@ pub struct IncidentWriter {
     incident_store: Arc<dyn IncidentStore>,
     cfg: IncidentWriterConfig,
     /// Notifies the escalation engine when an incident opens or auto-resolves.
-    /// `None` leaves the writer paging-agnostic (tests, escalation disabled).
+    /// `None` leaves the writer paging-agnostic (tests).
     signal_tx: Option<mpsc::Sender<IncidentSignal>>,
 }
 

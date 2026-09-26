@@ -7,7 +7,7 @@ use super::fields::{
     DnsFields, DomainExpiryFields, FlowFields, HeaderPair, HeartbeatFields, HttpFields, PingFields,
     TcpFields, TlsCertFields, flow_fields_from,
 };
-use super::model::FormModel;
+use super::model::{EscalationOffer, FormModel};
 
 /// Whether `form_from_target` produces an edit form (PATCH the same monitor)
 /// or a copy (POST a new monitor seeded from an existing one).
@@ -48,7 +48,7 @@ pub(super) fn empty_create_form() -> FormModel {
         renotify_interval_secs: 3600,
         escalation_choices: Vec::new(),
         escalation_hint: String::new(),
-        show_escalation: false,
+        escalation: EscalationOffer::Open,
         region_groups: Vec::new(),
         region_threshold_options: Vec::new(),
         show_regions: false,
@@ -188,7 +188,7 @@ pub(super) fn form_from_target(t: Target, kind: FormKind) -> Result<FormModel, A
         renotify_interval_secs,
         escalation_choices: Vec::new(),
         escalation_hint: String::new(),
-        show_escalation: false,
+        escalation: EscalationOffer::Open,
         region_groups: Vec::new(),
         region_threshold_options: Vec::new(),
         show_regions: false,

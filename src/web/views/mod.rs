@@ -29,6 +29,7 @@ pub mod targets_detail;
 pub mod targets_form;
 pub mod targets_list;
 pub mod team;
+pub mod team_lock;
 pub mod telegram;
 pub mod variables;
 pub mod verify_channel;

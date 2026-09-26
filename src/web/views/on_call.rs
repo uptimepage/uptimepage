@@ -6,20 +6,25 @@
 //! this module renders chrome, the member/channel choices, and prefills the
 //! builder. Editing is owner-only — the API enforces it; a non-owner sees the
 //! page but a mutation returns 403, mirroring the escalation surface.
+//!
+//! On a plan without on-call, an org that has built nothing sees what the
+//! feature does and how to get it; one that has built schedules keeps the
+//! working page with a notice, since what exists keeps paging.
 
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::extract::{Path, State};
-use axum::response::{IntoResponse, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::{OrgId, RotationType};
 use crate::error::AppError;
-use crate::request::CurrentOrg;
+use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser};
 use crate::templates::filters;
 use crate::web::error::WebResult;
 use crate::web::views::resolve_org;
+use crate::web::views::team_lock::{TeamLock, plan_locked, shows_teaser, team_lock};
 
 const TAB_ON_CALL: &str = "on-call";
 
@@ -69,6 +74,13 @@ pub struct OnCallPage {
     /// The member's own paging contacts, every org channel offered as a toggle.
     pub contacts: Vec<ContactChoice>,
     pub no_channels: bool,
+    pub lock: Option<TeamLock>,
+}
+
+impl OnCallPage {
+    fn teaser(&self) -> bool {
+        shows_teaser(&self.lock)
+    }
 }
 
 #[derive(Template, WebTemplate)]
@@ -78,6 +90,8 @@ pub struct OnCallPartial {
     /// Member id → email, rendered hidden so the who-on-call widget can name
     /// the user ids the resolver returns without a second request.
     pub members: Vec<MemberChoice>,
+    /// No add button above to point an empty list at.
+    pub locked: bool,
 }
 
 /// One layer prefilled in the builder. Participants carry the member id so the
@@ -123,16 +137,26 @@ pub struct ScheduleFormPage {
 }
 
 pub async fn index(
+    _auth: AuthedBrowser,
+    CurrentUser(user): CurrentUser,
     State(state): State<AppState>,
     org: Result<CurrentOrg, AppError>,
-    user: crate::request::CurrentUser,
 ) -> WebResult<Response> {
     let org = match resolve_org(org, "/settings/on-call") {
         Ok(o) => o,
         Err(resp) => return Ok(*resp),
     };
-    let channels = state.notification_channel_store.list(org).await?;
-    let mine = state.contact_store.for_user(org, user.0).await?;
+    let mine = state.contact_store.for_user(org, user).await?;
+    // A member still wired to be paged keeps the page, so they can unwire.
+    let lock = team_lock(&state, org, user, async {
+        Ok(!mine.is_empty() || !state.on_call_store.list(org).await?.is_empty())
+    })
+    .await?;
+    let channels = if shows_teaser(&lock) {
+        Vec::new()
+    } else {
+        state.notification_channel_store.list(org).await?
+    };
     let contacts = channels
         .into_iter()
         .map(|c| ContactChoice {
@@ -145,6 +169,7 @@ pub async fn index(
         active_tab: TAB_ON_CALL,
         no_channels: contacts.is_empty(),
         contacts,
+        lock,
     }
     .into_response())
 }
@@ -157,7 +182,7 @@ pub async fn list_partial(
         Ok(o) => o,
         Err(resp) => return Ok(*resp),
     };
-    let schedules = state
+    let schedules: Vec<ScheduleRow> = state
         .on_call_store
         .list(org)
         .await?
@@ -171,7 +196,13 @@ pub async fn list_partial(
         })
         .collect();
     let members = org_members(&state, org).await?;
-    Ok(OnCallPartial { schedules, members }.into_response())
+    let locked = schedules.is_empty() && plan_locked(&state, org).await?;
+    Ok(OnCallPartial {
+        schedules,
+        members,
+        locked,
+    }
+    .into_response())
 }
 
 /// Org members as builder choices. Empty without a DB (single-tenant dev).
@@ -208,6 +239,11 @@ pub async fn new_form(
         Ok(o) => o,
         Err(resp) => return Ok(*resp),
     };
+    // The list page says why and how to get it; a blank builder would only
+    // fail on save.
+    if plan_locked(&state, org).await? {
+        return Ok(Redirect::to("/settings/on-call").into_response());
+    }
     let members = org_members(&state, org).await?;
     let form = ScheduleFormModel {
         mode: "create",
@@ -329,6 +365,7 @@ mod tests {
                 id: "uid".into(),
                 email: "a@b.c".into(),
             }],
+            locked: false,
         }
         .render()
         .unwrap();
@@ -343,15 +380,29 @@ mod tests {
         let html = OnCallPartial {
             schedules: vec![],
             members: vec![],
+            locked: false,
         }
         .render()
         .unwrap();
         assert!(html.contains("No on-call schedules yet"));
+        assert!(html.contains("add one above"));
     }
 
     #[test]
-    fn page_renders_contact_card() {
-        let html = OnCallPage {
+    fn empty_locked_list_points_at_the_plan_not_a_missing_button() {
+        let html = OnCallPartial {
+            schedules: vec![],
+            members: vec![],
+            locked: true,
+        }
+        .render()
+        .unwrap();
+        assert!(!html.contains("add one above"));
+        assert!(html.contains("Team plan"));
+    }
+
+    fn page(lock: Option<TeamLock>) -> OnCallPage {
+        OnCallPage {
             active_tab: TAB_ON_CALL,
             no_channels: false,
             contacts: vec![ContactChoice {
@@ -359,12 +410,44 @@ mod tests {
                 name: "Ops Slack".into(),
                 checked: true,
             }],
+            lock,
         }
-        .render()
-        .unwrap();
+    }
+
+    fn locked(teaser: bool) -> Option<TeamLock> {
+        Some(TeamLock {
+            payer: false,
+            teaser,
+        })
+    }
+
+    #[test]
+    fn page_renders_contact_card() {
+        let html = page(None).render().unwrap();
         assert!(html.starts_with("<!doctype html>"));
         assert!(html.contains("channels that page you"));
         assert!(html.contains(r#"data-contact value="cid" checked"#));
+        assert!(html.contains(r#"href="/settings/on-call/new""#));
+        assert!(!html.contains("Team plan"));
+    }
+
+    #[test]
+    fn locked_org_with_nothing_built_sees_the_pitch_not_the_page() {
+        let html = page(locked(true)).render().unwrap();
+        assert!(html.contains("Team plan"));
+        assert!(html.contains("Ask the account owner"));
+        assert!(!html.contains(r#"href="/settings/on-call/new""#));
+        assert!(!html.contains("hx-get=\"/web/partials/settings/on-call\""));
+        assert!(!html.contains("channels that page you"));
+    }
+
+    #[test]
+    fn downgraded_org_keeps_its_schedules_under_a_notice() {
+        let html = page(locked(false)).render().unwrap();
+        assert!(html.contains("keeps paging"));
+        assert!(html.contains("hx-get=\"/web/partials/settings/on-call\""));
+        assert!(html.contains("channels that page you"));
+        assert!(!html.contains(r#"href="/settings/on-call/new""#));
     }
 
     fn form(mode: &'static str) -> ScheduleFormModel {

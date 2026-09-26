@@ -69,7 +69,7 @@ src/
 │
 │   detection and delivery
 ├── public_status/    incident writer (poller), status-page aggregator, subscriber dispatch
-├── escalation/       paging engine + on-call resolution (feature-flagged, off by default)
+├── escalation/       paging engine + on-call resolution
 ├── notifier/         one transport per channel kind + IncidentNotice event
 ├── email/ telegram/ whatsapp/    transport-specific helpers
 ├── http_outbound.rs  shared outbound client for webhooks and provider APIs
@@ -146,7 +146,7 @@ On-demand checks (`POST /targets/{id}/check-now` and `POST /targets/test`) are d
 Results do not page directly. A separate follower turns them into confirmed incidents:
 
 - **Incident writer** (`src/public_status/incident_writer/`) is a poller, not an event listener. On a default 30-second tick it keyset-paginates enabled targets across tenants, reads each target's recent results per a lookback tier, and applies the target's region quorum policy (Any, Majority, All, or Count) to decide up or down. Insert-open and close are race-safe, so exactly one writer pages. This confirmation step is why public status derives from confirmed incidents and never from raw samples.
-- **Escalation engine** (`src/escalation/engine/`) is feature-flagged and off by default. When on it is the single source of down and up notifications: it opens a paging episode, walks the escalation ladder, renotifies, retries with backoff into a dead-letter, and resolves only to the channels paged this episode. On-call is never stored; who is on call is a pure function resolved at page time. The `escalation.enabled` switch gates only the ladder machinery: on, a policy walks levels and renotifies; off, a monitor's directly bound channels are still paged, just without the ladder.
+- **Escalation engine** (`src/escalation/engine/`) always runs and is the single source of down and up notifications: it opens a paging episode, walks the escalation ladder, renotifies, retries with backoff into a dead-letter, and resolves only to the channels paged this episode. On-call is never stored; who is on call is a pure function resolved at page time. A monitor with no policy pages its directly bound channels, just without the ladder. Whether an org may add paging coverage (a policy, schedule, override, paging contact, or binding) is the plan flag `plans.on_call_enabled`, checked on the write; a self-hosted install is exempt, and the plan's caps decide how many it may keep.
 - **No-data detection** (`src/jobs/silence.rs`) handles monitors whose covering regions all went dark, notifying bound channels once per episode. Above a fraction of the fleet it is treated as one infra outage and per-customer notices are suppressed.
 
 Internal incident state (Triggered, Acknowledged, Resolved) and the public communication phase are orthogonal tracks and never share a field. See [Incident management](incidents.md) and [Notifications](notifications.md).

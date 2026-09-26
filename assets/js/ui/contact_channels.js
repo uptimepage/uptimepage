@@ -1,5 +1,7 @@
 // "Channels that page you" toggles on /settings/on-call. Each change replaces
-// the member's full contact set via PUT /api/v1/on-call/my-contacts.
+// the member's full contact set via PUT /api/v1/on-call/my-contacts. A refused
+// save puts the saved set back, so the next change is not built on a channel
+// the server turned down.
 (function () {
     const root = document.querySelector("[data-contacts]");
     if (!root) return;
@@ -36,10 +38,12 @@
                 body: JSON.stringify({ channel_ids: currentIds() }),
             });
             if (res.ok) {
+                boxes.forEach((b) => (b.defaultChecked = b.checked));
                 show("✓ saved", true);
             } else {
                 let msg = "save failed";
                 try { const b = await res.json(); if (b && b.error && b.error.message) msg = b.error.message; } catch { /* */ }
+                boxes.forEach((b) => (b.checked = b.defaultChecked));
                 show("✗ " + msg, false);
             }
         } catch {

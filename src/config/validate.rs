@@ -76,17 +76,15 @@ impl AppConfig {
                 )));
             }
         }
-        if self.escalation.enabled {
-            ge1_u64(
-                self.escalation.tick_interval_secs,
-                "escalation.tick_interval_secs",
-            )?;
-            if self.escalation.max_attempts < 1 {
-                return Err(crate::error::AppError::Other(anyhow::anyhow!(
-                    "escalation.max_attempts must be >= 1 (got {})",
-                    self.escalation.max_attempts
-                )));
-            }
+        ge1_u64(
+            self.escalation.tick_interval_secs,
+            "escalation.tick_interval_secs",
+        )?;
+        if self.escalation.max_attempts < 1 {
+            return Err(crate::error::AppError::Other(anyhow::anyhow!(
+                "escalation.max_attempts must be >= 1 (got {})",
+                self.escalation.max_attempts
+            )));
         }
         // Zero is "keep nothing", not "keep nothing older than the window".
         for (days, field) in [

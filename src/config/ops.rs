@@ -108,18 +108,12 @@ impl Default for AgentConfig {
     }
 }
 
-/// `[escalation]`. Incident paging engine and its operator surfaces (escalation
-/// policies, on-call schedules). Off by default: a single-responder deployment
-/// gets direct alerting and the engine + its UI stay hidden. When `enabled`, an
-/// open incident pages the monitor's bound notification channels and the legacy
-/// direct alert dispatch is suppressed (the incident becomes the single source
-/// of down/up notification), and the escalation + on-call UI is mounted. When
-/// disabled, incidents still open and show in the console but page no one — the
-/// legacy alert path keeps firing.
+/// `[escalation]`. Tuning for the incident paging engine: retries, backoff,
+/// the reconcile sweep, and flap damping. Whether an org may build escalation
+/// policies and on-call schedules is a plan question, not a deployment one.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct EscalationConfig {
-    pub enabled: bool,
     /// Retry-sweep cadence: how often failed pages are re-attempted.
     pub tick_interval_secs: u64,
     /// Backpressure: max pages re-sent per sweep.
@@ -154,7 +148,6 @@ pub struct EscalationConfig {
 impl Default for EscalationConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
             tick_interval_secs: 15,
             max_pages_per_tick: 500,
             max_attempts: 5,

@@ -6,21 +6,23 @@
 //! channel choices, and prefills the builder. The org is resolved by
 //! [`CurrentOrg`] exactly as the API resolves it. Editing/creating a policy is
 //! owner-only — the API enforces it; a non-owner sees the page but a mutation
-//! returns 403, mirroring the other owner-config surfaces.
+//! returns 403, mirroring the other owner-config surfaces. The plan lock
+//! behaves as on the on-call page.
 
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::extract::{Path, State};
-use axum::response::{IntoResponse, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::{EscalationTargetType, OrgId};
 use crate::error::AppError;
-use crate::request::CurrentOrg;
+use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser};
 use crate::templates::filters;
 use crate::web::error::WebResult;
 use crate::web::views::resolve_org;
+use crate::web::views::team_lock::{TeamLock, plan_locked, shows_teaser, team_lock};
 
 const TAB_ESCALATION: &str = "escalation";
 
@@ -44,6 +46,13 @@ pub struct Choice {
 #[template(path = "settings/escalation.html")]
 pub struct EscalationPage {
     pub active_tab: &'static str,
+    pub lock: Option<TeamLock>,
+}
+
+impl EscalationPage {
+    fn teaser(&self) -> bool {
+        shows_teaser(&self.lock)
+    }
 }
 
 #[derive(Template, WebTemplate)]
@@ -53,6 +62,8 @@ pub struct EscalationPartial {
     /// Policy choices for the org-default selector (the current default marked).
     pub default_choices: Vec<Choice>,
     pub has_default: bool,
+    /// No add button above to point an empty list at.
+    pub locked: bool,
 }
 
 /// One level row in the builder, with every channel offered as a checkbox.
@@ -88,14 +99,25 @@ pub struct PolicyFormPage {
     pub form: PolicyFormModel,
 }
 
-pub async fn index(org: Result<CurrentOrg, AppError>) -> Response {
-    match resolve_org(org, "/settings/escalation") {
-        Ok(_) => EscalationPage {
-            active_tab: TAB_ESCALATION,
-        }
-        .into_response(),
-        Err(resp) => *resp,
+pub async fn index(
+    _auth: AuthedBrowser,
+    CurrentUser(user): CurrentUser,
+    State(state): State<AppState>,
+    org: Result<CurrentOrg, AppError>,
+) -> WebResult<Response> {
+    let org = match resolve_org(org, "/settings/escalation") {
+        Ok(o) => o,
+        Err(resp) => return Ok(*resp),
+    };
+    let lock = team_lock(&state, org, user, async {
+        Ok(!state.escalation_policy_store.list(org).await?.is_empty())
+    })
+    .await?;
+    Ok(EscalationPage {
+        active_tab: TAB_ESCALATION,
+        lock,
     }
+    .into_response())
 }
 
 pub async fn list_partial(
@@ -116,7 +138,7 @@ pub async fn list_partial(
             selected: Some(p.id) == default_id,
         })
         .collect();
-    let rows = policies
+    let rows: Vec<PolicyRow> = policies
         .into_iter()
         .map(|p| PolicyRow {
             id: p.id.to_string(),
@@ -127,10 +149,12 @@ pub async fn list_partial(
             created: p.created_at,
         })
         .collect();
+    let locked = rows.is_empty() && plan_locked(&state, org).await?;
     Ok(EscalationPartial {
         policies: rows,
         default_choices,
         has_default: default_id.is_some(),
+        locked,
     }
     .into_response())
 }
@@ -189,6 +213,9 @@ pub async fn new_form(
         Ok(o) => o,
         Err(resp) => return Ok(*resp),
     };
+    if plan_locked(&state, org).await? {
+        return Ok(Redirect::to("/settings/escalation").into_response());
+    }
     let channels = org_channels(&state, org).await?;
     let schedules = org_schedules(&state, org).await?;
     let form = PolicyFormModel {
@@ -282,15 +309,33 @@ pub async fn edit_form(
     .into_response())
 }
 
+/// A monitor's escalation as its form shows it.
+pub struct MonitorBinding {
+    /// Every org policy, the monitor's own binding marked selected.
+    pub choices: Vec<Choice>,
+    /// What an unbound monitor escalates through; empty when bound.
+    pub hint: String,
+    /// Paged through a policy, its own or the org default.
+    pub escalating: bool,
+}
+
 /// Per-monitor escalation selector choices + an "inheriting …" hint, shared by
-/// the monitor form's Alerts section. The monitor's own binding is marked
-/// selected; the hint shows what an unbound monitor escalates through.
+/// the monitor form's Alerts section.
 pub async fn monitor_binding(
     state: &AppState,
     org: OrgId,
     target_id: Uuid,
-) -> WebResult<(Vec<Choice>, String)> {
+) -> WebResult<MonitorBinding> {
+    const SIMPLE_MODE: &str =
+        "No escalation policy: pages this monitor's channels, without a ladder.";
     let policies = state.escalation_policy_store.list(org).await?;
+    if policies.is_empty() {
+        return Ok(MonitorBinding {
+            choices: Vec::new(),
+            hint: SIMPLE_MODE.into(),
+            escalating: false,
+        });
+    }
     let own = state
         .escalation_policy_store
         .target_policy(org, target_id)
@@ -303,23 +348,26 @@ pub async fn monitor_binding(
             selected: Some(p.id) == own,
         })
         .collect();
-    let hint = if own.is_some() {
-        String::new()
-    } else {
-        match state
-            .escalation_policy_store
-            .org_default(org)
-            .await?
-            .and_then(|d| policies.iter().find(|p| p.id == d))
-        {
-            Some(p) => format!("Inheriting the org default: {}", p.name),
-            None => {
-                "No escalation — pages no one until a policy is bound or an org default is set."
-                    .into()
-            }
-        }
-    };
-    Ok((choices, hint))
+    if own.is_some() {
+        return Ok(MonitorBinding {
+            choices,
+            hint: String::new(),
+            escalating: true,
+        });
+    }
+    let inherited = state
+        .escalation_policy_store
+        .org_default(org)
+        .await?
+        .and_then(|d| policies.iter().find(|p| p.id == d));
+    Ok(MonitorBinding {
+        choices,
+        hint: inherited.map_or_else(
+            || SIMPLE_MODE.into(),
+            |p| format!("Inheriting the org default: {}", p.name),
+        ),
+        escalating: inherited.is_some(),
+    })
 }
 
 #[cfg(test)]
@@ -351,6 +399,7 @@ mod tests {
                 selected: true,
             }],
             has_default: true,
+            locked: false,
         }
         .render()
         .unwrap();
@@ -366,10 +415,66 @@ mod tests {
             policies: vec![],
             default_choices: vec![],
             has_default: false,
+            locked: false,
         }
         .render()
         .unwrap();
         assert!(html.contains("No escalation policies yet"));
+        assert!(html.contains("add one above"));
+    }
+
+    #[test]
+    fn empty_locked_list_points_at_the_plan_not_a_missing_button() {
+        let html = EscalationPartial {
+            policies: vec![],
+            default_choices: vec![],
+            has_default: false,
+            locked: true,
+        }
+        .render()
+        .unwrap();
+        assert!(!html.contains("add one above"));
+        assert!(html.contains("Team plan"));
+    }
+
+    fn page(lock: Option<TeamLock>) -> String {
+        EscalationPage {
+            active_tab: TAB_ESCALATION,
+            lock,
+        }
+        .render()
+        .unwrap()
+    }
+
+    fn locked(teaser: bool) -> Option<TeamLock> {
+        Some(TeamLock {
+            payer: false,
+            teaser,
+        })
+    }
+
+    #[test]
+    fn page_offers_add_policy_when_the_plan_allows() {
+        let html = page(None);
+        assert!(html.contains(r#"href="/settings/escalation/new""#));
+        assert!(!html.contains("Team plan"));
+    }
+
+    #[test]
+    fn locked_org_with_nothing_built_sees_the_pitch_not_the_page() {
+        let html = page(locked(true));
+        assert!(html.contains("Team plan"));
+        assert!(html.contains("Ask the account owner"));
+        assert!(!html.contains(r#"href="/settings/escalation/new""#));
+        assert!(!html.contains("hx-get=\"/web/partials/settings/escalation\""));
+    }
+
+    #[test]
+    fn downgraded_org_keeps_its_policies_under_a_notice() {
+        let html = page(locked(false));
+        assert!(html.contains("keep paging"));
+        assert!(html.contains("hx-get=\"/web/partials/settings/escalation\""));
+        assert!(!html.contains(r#"href="/settings/escalation/new""#));
     }
 
     #[test]

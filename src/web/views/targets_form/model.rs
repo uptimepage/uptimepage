@@ -70,9 +70,7 @@ pub struct FormModel {
     pub escalation_choices: Vec<crate::web::views::escalation::Choice>,
     /// What an unbound monitor escalates through — shown while inheriting.
     pub escalation_hint: String,
-    /// Whether the escalation-policy section renders at all (off when the
-    /// team-paging feature is disabled for the deployment).
-    pub show_escalation: bool,
+    pub escalation: EscalationOffer,
     /// The enabled region catalog grouped by continent, with this monitor's
     /// assignments prefilled (edit only). Empty when single-region.
     pub region_groups: Vec<RegionGroup>,
@@ -374,4 +372,27 @@ pub(super) fn region_groups(
         });
     }
     groups
+}
+
+/// How the monitor form's escalation section reads for the org's plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EscalationOffer {
+    /// The plan allows it: the picker, or "save first" on create.
+    Open,
+    /// The plan lacks it and this monitor is on no ladder: a line naming the
+    /// plan instead of a picker whose every choice would be refused.
+    Locked,
+    /// The plan lacks it but this monitor is still on a ladder, its own or the
+    /// org default: the picker keeps only what will not be refused.
+    Lapsed,
+}
+
+impl EscalationOffer {
+    pub fn is_locked(self) -> bool {
+        self == Self::Locked
+    }
+
+    pub fn is_lapsed(self) -> bool {
+        self == Self::Lapsed
+    }
 }

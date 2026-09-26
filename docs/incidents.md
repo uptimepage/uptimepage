@@ -74,7 +74,7 @@ A policy's targets can be:
 
 Policies are owner-managed at `/settings/escalation`: build the ladder, set per-level targets, and pick an org-default policy. Bind a specific policy to a monitor from the monitor's edit form. Resolution at page time is: the monitor's own policy, else the org default, else **simple mode** — the monitor's bound notification channels are paged directly, with no laddered re-paging.
 
-> **One notification source.** Every down/up notification flows through the incident engine — there is no separate per-monitor alert dispatch, so a monitor can never double-page. The `escalation.enabled` switch gates only the policy machinery (ladder walk, policy UI); with it off, monitors still page their bound channels in simple mode.
+> **One notification source.** Every down/up notification flows through the incident engine — there is no separate per-monitor alert dispatch, so a monitor can never double-page. A monitor with no policy and no org default pages its bound channels in simple mode.
 
 A monitor inside an active maintenance window with `suppress_alerts` on pages nobody while the window runs. The incident opens and records normally and the timeline says paging was held; the page itself is held, not dropped, so when the window ends with the incident still open the release sweep pages the channels the hold never reached. An escalation ladder mid-walk parks rather than stopping, and picks up where it left off. An incident that was already paged before the window simply resumes its reminders afterwards — its backoff is left alone, since the on-call already knows about it. An incident an operator declares by hand always pages, window or not: they declared it during the window on purpose.
 
@@ -146,7 +146,6 @@ The `[escalation]` block (env prefix `UPTIMEPAGE_ESCALATION__*`) controls the en
 
 | Key | Default | Purpose |
 |---|---|---|
-| `enabled` | `false` | Enable escalation policies (ladder walk + policy/on-call UI). Off, incidents still page the monitor's bound channels directly (simple mode). |
 | `tick_interval_secs` | `15` | How often the engine sweeps for due escalations and failed-page retries. |
 | `max_pages_per_tick` | `500` | Backpressure cap on pages re-sent per sweep. |
 | `max_attempts` | `5` | Give up paging a channel after this many failed attempts. |

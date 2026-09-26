@@ -73,6 +73,15 @@
             const opt = select.options[select.selectedIndex];
             label.textContent = opt ? opt.text : "";
         }
+        // Label and listbox both follow the <select>, so a programmatic
+        // change (a refused save putting the old value back) reads right.
+        function syncSelection() {
+            for (const li of panel.children) {
+                if (li.dataset.value === select.value) li.setAttribute("aria-selected", "true");
+                else li.removeAttribute("aria-selected");
+            }
+            syncLabel();
+        }
         function reflectDisabled() {
             const off = select.disabled;
             trigger.disabled = off;
@@ -133,15 +142,12 @@
             idx = (idx + delta + items.length) % items.length;
             setCursor(items[idx]);
         }
+        // Like a native <select>, re-picking the current option is not a change.
         function selectValue(value) {
+            const changed = select.value !== value;
             select.value = value;
-            for (const li of panel.children) {
-                if (li.dataset.value === value) li.setAttribute("aria-selected", "true");
-                else li.removeAttribute("aria-selected");
-            }
-            syncLabel();
             close();
-            select.dispatchEvent(new Event("change", { bubbles: true }));
+            if (changed) select.dispatchEvent(new Event("change", { bubbles: true }));
             trigger.focus();
         }
         function commit() {
@@ -193,7 +199,7 @@
         });
         mo.observe(select, { childList: true, attributes: true, attributeFilter: ["disabled"] });
         select._smComboboxObserver = mo;
-        select.addEventListener("change", syncLabel);
+        select.addEventListener("change", syncSelection);
 
         const api = {
             root, trigger, panel, select,

@@ -761,10 +761,16 @@
           </div>
         </div>
 
-        {% if form.show_escalation %}
         <div class="space-y-3">
           <span class="flag-label block">escalation</span>
+          {% if form.escalation.is_locked() %}
+          <p class="text-xs text-muted">A multi-level paging ladder for this monitor's incidents comes with the Team plan. See <a href="/settings/escalation" class="underline">escalation</a>.</p>
+          {% if !form.escalation_hint.is_empty() %}<p class="text-xs text-muted">{{ form.escalation_hint }}</p>{% endif %}
+          {% else %}
           <p class="text-xs text-muted">A multi-level paging ladder for this monitor's incidents. Manage policies under <a href="/settings/escalation" class="underline">escalation</a>.</p>
+          {% if form.escalation.is_lapsed() %}
+          <p class="text-xs text-muted">Your plan no longer includes escalation: the ladder this monitor is on keeps paging, and choosing a new one needs the Team plan.</p>
+          {% endif %}
           {% if form.mode == "edit" %}
           <div class="flex flex-wrap items-center gap-3 pt-1">
             <div class="field-outline w-64">
@@ -783,8 +789,8 @@
           {% else %}
           <p class="text-xs text-muted">Save the monitor first, then pick its escalation policy here.</p>
           {% endif %}
+          {% endif %}
         </div>
-        {% endif %}
 
       </div>
       </div>

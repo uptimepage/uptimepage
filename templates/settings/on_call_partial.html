@@ -4,7 +4,7 @@
 {% if schedules.is_empty() %}
 <div class="sticker-card flex items-center gap-3 px-4 py-6 text-sm text-muted">
   <span aria-hidden="true" class="text-base text-quiet">↘</span>
-  <span>No on-call schedules yet — add one above, then page it from an escalation policy.</span>
+  <span>{% if locked %}No on-call schedules. New ones need the Team plan.{% else %}No on-call schedules yet — add one above, then page it from an escalation policy.{% endif %}</span>
 </div>
 {% else %}
 <div class="sticker-card overflow-hidden">

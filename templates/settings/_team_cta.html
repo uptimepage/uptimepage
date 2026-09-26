@@ -1,0 +1,9 @@
+{# Expects `lock: TeamLock` in scope. #}
+{% if !lock.payer %}
+<p class="text-xs text-muted">Ask the account owner to switch to Team.</p>
+{% else if ""|billing_ui %}
+<a href="/settings/billing"
+   class="sticker-btn sticker-btn--primary shrink-0 px-3 py-1.5 text-sm font-medium">
+  switch to Team
+</a>
+{% endif %}

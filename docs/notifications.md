@@ -115,7 +115,7 @@ Scheduled maintenance windows do **not** silence channel alerting. They repaint 
 
 ## On-call
 
-Where on-call schedules are enabled, paging works differently: an incident targets a person or a rotation, that resolves to whoever is on shift, and they are reached through the channels **they** opted into on the on-call page. A member who has chosen no channels resolves as on-call but cannot be paged. See [Incident management](incidents.md#paging-and-escalation).
+Where an organization uses on-call schedules, paging works differently: an incident targets a person or a rotation, that resolves to whoever is on shift, and they are reached through the channels **they** opted into on the on-call page. A member who has chosen no channels resolves as on-call but cannot be paged. See [Incident management](incidents.md#paging-and-escalation).
 
 ## Deleting a channel
 

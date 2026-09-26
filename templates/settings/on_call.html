@@ -13,12 +13,61 @@
         rotation.
       </p>
     </div>
+    {% if lock.is_none() %}
     <a href="/settings/on-call/new"
        class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">
       add schedule
     </a>
+    {% endif %}
   </header>
 
+  {% if let Some(lock) = lock %}
+  {% if lock.teaser %}
+  <div class="sticker-card space-y-4 p-5">
+    <h2 class="panel-label">on the Team plan</h2>
+    <ul class="list-inside list-disc space-y-1 text-sm">
+      <li>Rotations hand off daily or weekly at the same local time in the team's timezone, or on an interval you set.</li>
+      <li>Overrides on a calendar cover a swap or a sick day without touching the rotation.</li>
+      <li>Each responder picks the channels that page them.</li>
+    </ul>
+    {% include "settings/_team_cta.html" %}
+  </div>
+
+  <div class="sticker-card overflow-hidden opacity-50" aria-hidden="true" inert>
+    <table class="w-full text-left text-sm">
+      <thead class="bg-[color:var(--theme-surface-sunk)] text-xs uppercase text-muted">
+        <tr>
+          <th class="px-4 py-2">Name</th>
+          <th class="px-4 py-2">On call now</th>
+          <th class="px-4 py-2">Timezone</th>
+          <th class="px-4 py-2">Layers</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-[color:var(--theme-line)]">
+        <tr>
+          <td class="px-4 py-2 font-medium">Primary</td>
+          <td class="px-4 py-2">olena@example.com</td>
+          <td class="px-4 py-2 font-mono text-xs text-muted">Europe/Kyiv</td>
+          <td class="px-4 py-2 tabular-nums">2</td>
+        </tr>
+        <tr>
+          <td class="px-4 py-2 font-medium">Database</td>
+          <td class="px-4 py-2">taras@example.com</td>
+          <td class="px-4 py-2 font-mono text-xs text-muted">Europe/Kyiv</td>
+          <td class="px-4 py-2 tabular-nums">1</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="alert-card alert-card--warn flex flex-wrap items-center justify-between gap-3 text-sm">
+    <p class="max-w-prose">On-call is part of the Team plan. What is already set up keeps paging and stays editable; new schedules, overrides and paging channels need Team.</p>
+    {% include "settings/_team_cta.html" %}
+  </div>
+  {% endif %}
+  {% endif %}
+
+  {% if !self.teaser() %}
   <div id="on-call-list" data-hx-loader
        hx-get="/web/partials/settings/on-call"
        hx-trigger="load, every 60s, oncall:refresh from:body, sm:poll-resume from:body"
@@ -52,8 +101,11 @@
       {% endif %}
     </div>
   </section>
+  {% endif %}
 </section>
 
+{% if !self.teaser() %}
 <script defer src="{{ "js/ui/on_call_list.js"|asset }}"></script>
 <script defer src="{{ "js/ui/contact_channels.js"|asset }}"></script>
+{% endif %}
 {% endblock %}

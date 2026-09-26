@@ -746,8 +746,7 @@ fn edit_form_maps_dns_target_fields() {
 #[test]
 fn escalation_selector_is_edit_only() {
     // Create has no monitor id to bind yet → a prompt, no selector.
-    let mut create_form = empty_create_form();
-    create_form.show_escalation = true;
+    let create_form = empty_create_form();
     let create = FormPage {
         active_tab: "targets",
         form: create_form,
@@ -760,7 +759,6 @@ fn escalation_selector_is_edit_only() {
     // Edit renders the binding selector with the inherit option.
     let mut form = empty_create_form();
     form.mode = "edit";
-    form.show_escalation = true;
     form.id = "00000000-0000-0000-0000-000000000001".into();
     form.escalation_choices = vec![crate::web::views::escalation::Choice {
         id: "p1".into(),
@@ -780,18 +778,39 @@ fn escalation_selector_is_edit_only() {
 }
 
 #[test]
-fn escalation_section_hidden_when_disabled() {
-    // show_escalation defaults off → the whole policy block is absent.
-    let form = empty_create_form();
-    assert!(!form.show_escalation);
+fn locked_escalation_names_the_plan_instead_of_a_picker() {
+    let mut form = empty_create_form();
+    form.mode = "edit";
+    form.escalation = EscalationOffer::Locked;
     let html = FormPage {
         active_tab: "targets",
         form,
     }
     .render()
     .unwrap();
-    assert!(!html.contains("Escalation policy"));
+    assert!(html.contains("comes with the Team plan"));
+    assert!(!html.contains("data-monitor-policy-select"));
     assert!(!html.contains("Save the monitor first"));
+}
+
+#[test]
+fn lapsed_escalation_keeps_the_picker_and_says_new_bindings_are_refused() {
+    let mut form = empty_create_form();
+    form.mode = "edit";
+    form.escalation = EscalationOffer::Lapsed;
+    form.escalation_choices = vec![crate::web::views::escalation::Choice {
+        id: "p1".into(),
+        name: "Primary".into(),
+        selected: true,
+    }];
+    let html = FormPage {
+        active_tab: "targets",
+        form,
+    }
+    .render()
+    .unwrap();
+    assert!(html.contains("data-monitor-policy-select"));
+    assert!(html.contains("choosing a new one needs the Team plan"));
 }
 
 #[test]

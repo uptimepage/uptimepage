@@ -470,12 +470,6 @@ oauth_enabled = false
 access_token_ttl_secs = 3600
 
 [escalation]
-# Escalation policies. The incident notifier always runs — incidents page the
-# monitor's bound channels on open/resolve regardless of this flag. Enabling it
-# adds the policy machinery on top: escalation ladders, on-call schedules, and
-# their settings UI.
-enabled = false
-
 # How often failed pages are re-attempted.
 tick_interval_secs = 15
 

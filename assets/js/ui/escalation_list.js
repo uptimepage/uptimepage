@@ -1,7 +1,11 @@
 // Org-default escalation-policy selector on /settings/escalation. The list is
 // swapped in by HTMX, so the change handler is delegated from <body> and
 // survives every refresh. Saves to PUT /api/v1/escalation-policies/default.
+// A refused save puts the saved choice back.
 (function () {
+    const revert = (sel) => {
+        for (const o of sel.options) o.selected = o.defaultSelected;
+    };
     let clearTimer;
     document.body.addEventListener("change", async (evt) => {
         const sel = evt.target.closest && evt.target.closest("[data-default-select]");
@@ -27,6 +31,7 @@
                 body: JSON.stringify({ policy_id: policyId }),
             });
             if (res.ok) {
+                for (const o of sel.options) o.defaultSelected = o.selected;
                 show("✓ saved", true);
             } else {
                 let msg = "save failed";
@@ -34,6 +39,7 @@
                     const b = await res.json();
                     if (b && b.error && b.error.message) msg = b.error.message;
                 } catch { /* non-JSON body */ }
+                revert(sel);
                 show("✗ " + msg, false);
             }
         } catch (err) {

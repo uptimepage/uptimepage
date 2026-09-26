@@ -70,22 +70,6 @@ mod static_refs {
         Ok(*YEAR.get_or_init(|| chrono::Utc::now().year()))
     }
 
-    static ESCALATION_UI: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-
-    /// Set once at startup from `[escalation].enabled`. The nav entries and the
-    /// monitor-form binding read it through [`escalation_ui`] so the team-paging
-    /// surfaces stay hidden on a single-responder deployment; the routes are
-    /// mounted on the same flag.
-    pub fn set_escalation_ui(enabled: bool) {
-        let _ = ESCALATION_UI.set(enabled);
-    }
-
-    /// `{% if ""|escalation_ui %}` → whether the escalation + on-call UI is on.
-    #[askama::filter_fn]
-    pub fn escalation_ui(_: &str, _: &dyn askama::Values) -> askama::Result<bool> {
-        Ok(*ESCALATION_UI.get().unwrap_or(&false))
-    }
-
     static SUPPORT_UI: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
     /// Set once at startup from `[email].support_address`. Nav, page and

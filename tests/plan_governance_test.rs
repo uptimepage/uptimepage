@@ -9,8 +9,8 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use common::{
-    body_json, build_test_app_with_pg_store, default_http_check, make_user, pg_pool_from_env,
-    unique_slug,
+    body_json, build_test_app_with_pg_store, build_test_app_with_pg_store_anon, default_http_check,
+    make_user, pg_pool_from_env, unique_slug,
 };
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -304,14 +304,7 @@ async fn a_downgrade_takes_effect_without_touching_the_monitor() {
     let before = region_set(&pool, &region).await;
     assert_eq!(interval_of(&before, target), Duration::from_secs(60));
 
-    sqlx::query(
-        "UPDATE accounts SET plan_id = 'free' \
-         WHERE id = (SELECT account_id FROM organizations WHERE id = $1)",
-    )
-    .bind(org.0)
-    .execute(&pool)
-    .await
-    .expect("downgrade");
+    move_to_plan(&pool, org, "free").await;
 
     let after = region_set(&pool, &region).await;
     assert_eq!(interval_of(&after, target), Duration::from_secs(180));
@@ -488,14 +481,7 @@ async fn the_region_etag_changes_when_the_plan_does() {
 
     let before = region_etag(&pool, &region).await;
 
-    sqlx::query(
-        "UPDATE accounts SET plan_id = 'free' \
-         WHERE id = (SELECT account_id FROM organizations WHERE id = $1)",
-    )
-    .bind(org.0)
-    .execute(&pool)
-    .await
-    .expect("downgrade");
+    move_to_plan(&pool, org, "free").await;
 
     let after = region_etag(&pool, &region).await;
     assert_ne!(
@@ -963,6 +949,54 @@ async fn clearing_an_escalation_binding_is_allowed_without_the_feature() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
+async fn resending_the_current_binding_is_allowed_without_the_feature() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (app, org) =
+        build_test_app_with_pg_store(pool.clone(), |cfg| cfg.marketing.enabled = true).await;
+    let (policy,): (Uuid,) = sqlx::query_as(
+        "INSERT INTO escalation_policies (org_id, name) VALUES ($1, 'ladder') RETURNING id",
+    )
+    .bind(org.0)
+    .fetch_one(&pool)
+    .await
+    .expect("policy");
+    sqlx::query("UPDATE organizations SET default_escalation_policy_id = $2 WHERE id = $1")
+        .bind(org.0)
+        .bind(policy)
+        .execute(&pool)
+        .await
+        .expect("default");
+
+    let put = |policy_id: Option<Uuid>| {
+        Request::builder()
+            .method("PUT")
+            .uri("/api/v1/escalation-policies/default")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({ "policy_id": policy_id }).to_string(),
+            ))
+            .unwrap()
+    };
+
+    // A repeated PUT of what is already set adds no coverage.
+    let resp = app.clone().oneshot(put(Some(policy))).await.expect("same");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let (other,): (Uuid,) = sqlx::query_as(
+        "INSERT INTO escalation_policies (org_id, name) VALUES ($1, 'other') RETURNING id",
+    )
+    .bind(org.0)
+    .fetch_one(&pool)
+    .await
+    .expect("other policy");
+    let resp = app.oneshot(put(Some(other))).await.expect("other");
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
 async fn a_self_hosted_install_may_build_an_on_call_ladder() {
     let Some(pool) = pg_pool_from_env().await else {
         return;
@@ -1059,4 +1093,148 @@ async fn dropping_one_of_two_contacts_works_without_the_on_call_tier() {
     assert_eq!(body_json(resp).await["error"]["code"], "ON_CALL_DISABLED");
 
     cleanup(&pool, org, user).await;
+}
+
+/// GET a console page: status, `Location` when redirected, and the HTML.
+async fn page(app: &axum::Router, uri: &str) -> (StatusCode, Option<String>, String) {
+    let resp = app
+        .clone()
+        .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+        .await
+        .expect("page");
+    let status = resp.status();
+    let location = resp
+        .headers()
+        .get("location")
+        .map(|v| v.to_str().unwrap().to_owned());
+    let bytes = axum::body::to_bytes(resp.into_body(), 8 << 20)
+        .await
+        .expect("body");
+    (
+        status,
+        location,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
+}
+
+async fn move_to_plan(pool: &PgPool, org: OrgId, plan: &str) {
+    sqlx::query(
+        "UPDATE accounts SET plan_id = $2 \
+         WHERE id = (SELECT account_id FROM organizations WHERE id = $1)",
+    )
+    .bind(org.0)
+    .bind(plan)
+    .execute(pool)
+    .await
+    .expect("move plan");
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_plan_without_on_call_gets_the_team_pitch_in_place_of_the_pages() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (app, _org) = build_test_app_with_pg_store(pool, |cfg| cfg.marketing.enabled = true).await;
+
+    for (list, new) in [
+        ("/settings/on-call", "/settings/on-call/new"),
+        ("/settings/escalation", "/settings/escalation/new"),
+    ] {
+        let (status, _, html) = page(&app, list).await;
+        assert_eq!(status, StatusCode::OK, "{list}");
+        assert!(html.contains("on the Team plan"), "{list}: {html}");
+        assert!(!html.contains(&format!(r#"href="{new}""#)), "{list}");
+
+        let (status, location, _) = page(&app, new).await;
+        assert!(status.is_redirection(), "{new}: {status}");
+        assert_eq!(location.as_deref(), Some(list));
+    }
+
+    let (_, _, form) = page(&app, "/targets/new").await;
+    assert!(form.contains("comes with the Team plan"));
+    assert!(!form.contains("Save the monitor first"));
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_downgraded_org_keeps_its_schedules_under_a_notice() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (app, org) =
+        build_test_app_with_pg_store(pool.clone(), |cfg| cfg.marketing.enabled = true).await;
+    sqlx::query("INSERT INTO on_call_schedules (org_id, name) VALUES ($1, 'primary')")
+        .bind(org.0)
+        .execute(&pool)
+        .await
+        .expect("schedule");
+
+    let (status, _, html) = page(&app, "/settings/on-call").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("keeps paging"), "{html}");
+    assert!(html.contains("channels that page you"));
+    assert!(!html.contains("on the Team plan"));
+    assert!(!html.contains(r#"href="/settings/on-call/new""#));
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_team_org_gets_the_working_pages() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (app, org) =
+        build_test_app_with_pg_store(pool.clone(), |cfg| cfg.marketing.enabled = true).await;
+    move_to_plan(&pool, org, "team").await;
+
+    for (list, new) in [
+        ("/settings/on-call", "/settings/on-call/new"),
+        ("/settings/escalation", "/settings/escalation/new"),
+    ] {
+        let (status, _, html) = page(&app, list).await;
+        assert_eq!(status, StatusCode::OK, "{list}");
+        assert!(html.contains(&format!(r#"href="{new}""#)), "{list}: {html}");
+        assert!(!html.contains("Team plan"), "{list}");
+
+        let (status, _, _) = page(&app, new).await;
+        assert_eq!(status, StatusCode::OK, "{new}");
+    }
+
+    let (_, _, form) = page(&app, "/targets/new").await;
+    assert!(form.contains("Save the monitor first"));
+    assert!(!form.contains("comes with the Team plan"));
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_self_hosted_install_gets_the_working_pages_on_any_plan() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (app, _org) = build_test_app_with_pg_store(pool, |cfg| cfg.marketing.enabled = false).await;
+
+    let (status, _, html) = page(&app, "/settings/on-call").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains(r#"href="/settings/on-call/new""#), "{html}");
+    assert!(!html.contains("Team plan"));
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_signed_out_browser_is_sent_to_sign_in() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (app, _org) =
+        build_test_app_with_pg_store_anon(pool, |cfg| cfg.marketing.enabled = true).await;
+
+    for uri in ["/settings/on-call", "/settings/escalation"] {
+        let (status, location, _) = page(&app, uri).await;
+        assert!(status.is_redirection(), "{uri}: {status}");
+        assert!(
+            location.as_deref().is_some_and(|l| l.starts_with("/login")),
+            "{uri}: {location:?}"
+        );
+    }
 }

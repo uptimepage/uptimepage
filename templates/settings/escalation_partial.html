@@ -2,8 +2,9 @@
   <div class="space-y-1">
     <h2 class="panel-label">org default</h2>
     <p class="text-xs text-muted">
-      Pages this policy for any monitor that has no policy of its own. Leave as
-      <em>no default</em> to page only monitors with an explicit binding.
+      Pages this policy for any monitor that has no policy of its own. With
+      <em>no default</em>, such a monitor pages its own channels, without a
+      ladder.
     </p>
   </div>
   <div class="flex flex-wrap items-center gap-3">
@@ -20,7 +21,7 @@
 {% if policies.is_empty() %}
 <div class="sticker-card flex items-center gap-3 px-4 py-6 text-sm text-muted">
   <span aria-hidden="true" class="text-base text-quiet">↘</span>
-  <span>No escalation policies yet — add one above to start paging on-call through a ladder.</span>
+  <span>{% if locked %}No escalation policies. New ones need the Team plan.{% else %}No escalation policies yet — add one above to start paging on-call through a ladder.{% endif %}</span>
 </div>
 {% else %}
 <div class="sticker-card overflow-hidden">

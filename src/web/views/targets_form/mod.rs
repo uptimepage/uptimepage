@@ -5,6 +5,7 @@ use askama_web::WebTemplate;
 use axum::extract::{Path, Query, State};
 use uuid::Uuid;
 
+use crate::api::handlers::on_call::on_call_available;
 use crate::app::AppState;
 use crate::domain::{CadenceAdvice, OrgId, RegionIncidentPolicy, TargetAlerts};
 use crate::error::AppError;
@@ -31,7 +32,7 @@ pub use model::{
 pub use prefill::NewParams;
 
 use from_target::{FormKind, empty_create_form, form_from_target};
-use model::{region_groups, region_threshold_choices};
+use model::{EscalationOffer, region_groups, region_threshold_choices};
 use options::{ensure_tags_listed, form_options, plan_min_interval};
 use prefill::{apply_kind_param, prefill_host, prefill_url};
 
@@ -100,7 +101,9 @@ pub async fn new_form(
     form.group_options = group_options;
     form.tag_options = tag_options;
     ensure_tags_listed(&mut form);
-    form.show_escalation = state.cfg.escalation.enabled;
+    if !on_call_available(&state, &plan) {
+        form.escalation = EscalationOffer::Locked;
+    }
     form.flow_available = plan.max_flow_checks > 0;
     // `?kind=flow` and a copy both pick the kind before the plan is known.
     if form.check_type == "flow" && !form.flow_available {
@@ -180,10 +183,18 @@ pub async fn edit_form(
     if form.check_type == "heartbeat" {
         form.heartbeat.cadence = cadence_hint(&state, org, id, &form.heartbeat).await;
     }
-    form.show_escalation = state.cfg.escalation.enabled;
-    if form.show_escalation {
-        (form.escalation_choices, form.escalation_hint) =
-            crate::web::views::escalation::monitor_binding(&state, org, id).await?;
+    let binding = crate::web::views::escalation::monitor_binding(&state, org, id).await?;
+    form.escalation_choices = binding.choices;
+    form.escalation_hint = binding.hint;
+    if !on_call_available(&state, &plan) {
+        form.escalation = if binding.escalating {
+            // Only choices that will not be refused: the current binding, and
+            // the template's "inherit".
+            form.escalation_choices.retain(|c| c.selected);
+            EscalationOffer::Lapsed
+        } else {
+            EscalationOffer::Locked
+        };
     }
     // Meaningless unless the deployment has >1 region and the plan allows >1.
     let max_regions = plan.max_regions;

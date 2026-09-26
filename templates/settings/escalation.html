@@ -13,12 +13,58 @@
         default that covers every monitor without its own.
       </p>
     </div>
+    {% if lock.is_none() %}
     <a href="/settings/escalation/new"
        class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">
       add policy
     </a>
+    {% endif %}
   </header>
 
+  {% if let Some(lock) = lock %}
+  {% if lock.teaser %}
+  <div class="sticker-card space-y-4 p-5">
+    <h2 class="panel-label">on the Team plan</h2>
+    <ul class="list-inside list-disc space-y-1 text-sm">
+      <li>Nobody acknowledged in five minutes? The next level pages the next person.</li>
+      <li>A level can page a channel or an on-call schedule, so a page follows the rotation.</li>
+      <li>One org default covers every monitor; any monitor can take its own policy.</li>
+    </ul>
+    {% include "settings/_team_cta.html" %}
+  </div>
+
+  <div class="sticker-card overflow-hidden opacity-50" aria-hidden="true" inert>
+    <table class="w-full text-left text-sm">
+      <thead class="bg-[color:var(--theme-surface-sunk)] text-xs uppercase text-muted">
+        <tr>
+          <th class="px-4 py-2">Name</th>
+          <th class="px-4 py-2">Levels</th>
+          <th class="px-4 py-2">Repeat</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-[color:var(--theme-line)]">
+        <tr>
+          <td class="px-4 py-2 font-medium">Production</td>
+          <td class="px-4 py-2 tabular-nums">3</td>
+          <td class="px-4 py-2 tabular-nums">×2</td>
+        </tr>
+        <tr>
+          <td class="px-4 py-2 font-medium">Business hours</td>
+          <td class="px-4 py-2 tabular-nums">1</td>
+          <td class="px-4 py-2 tabular-nums">—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="alert-card alert-card--warn flex flex-wrap items-center justify-between gap-3 text-sm">
+    <p class="max-w-prose">Escalation is part of the Team plan. These policies keep paging and stay editable, and a binding or the org default can be cleared; a new policy, binding or org default needs Team.</p>
+    {% include "settings/_team_cta.html" %}
+  </div>
+  {% endif %}
+  {% endif %}
+
+  {% if !self.teaser() %}
   <div id="escalation-list" data-hx-loader
        hx-get="/web/partials/settings/escalation"
        hx-trigger="load, every 60s, escalation:refresh from:body, sm:poll-resume from:body"
@@ -27,7 +73,10 @@
        class="space-y-6">
     {% call reg::loading("loading…", "sticker-card") %}{% endcall %}
   </div>
+  {% endif %}
 </section>
 
+{% if !self.teaser() %}
 <script defer src="{{ "js/ui/escalation_list.js"|asset }}"></script>
+{% endif %}
 {% endblock %}

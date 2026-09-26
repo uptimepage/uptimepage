@@ -21,18 +21,25 @@ use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::request::{Authorized, OnCallRead, OnCallWrite, OwnerAuthorized};
 
-/// Pointing something at a policy is new paging coverage and needs the plan to
-/// sell it; clearing a binding is always allowed, so an org that has lost the
-/// feature can still unwire what it has.
+/// Pointing something at a policy it is not already on is new paging coverage
+/// and needs the plan to sell it. Clearing a binding, or sending the one already
+/// set, is always allowed: an org that has lost the feature can still unwire
+/// what it has, and a repeated PUT stays idempotent.
 async fn gate_binding(
     state: &AppState,
     org: crate::domain::OrgId,
     b: &PolicyBinding,
+    current: impl std::future::Future<Output = Result<Option<Uuid>>>,
 ) -> Result<()> {
-    if b.policy_id.is_none() {
+    let Some(wanted) = b.policy_id else {
+        return Ok(());
+    };
+    let plan = state.quotas.limit_for_org(org).await?;
+    if crate::api::handlers::on_call::on_call_available(state, &plan)
+        || current.await? == Some(wanted)
+    {
         return Ok(());
     }
-    let plan = state.quotas.limit_for_org(org).await?;
     crate::api::handlers::on_call::gate_on_call(state, &plan)
 }
 
@@ -263,7 +270,13 @@ pub async fn set_org_default(
     OwnerAuthorized(org, _): OwnerAuthorized<OnCallWrite>,
     Json(b): Json<PolicyBinding>,
 ) -> Result<Json<PolicyBinding>> {
-    gate_binding(&state, org, &b).await?;
+    gate_binding(
+        &state,
+        org,
+        &b,
+        state.escalation_policy_store.org_default(org),
+    )
+    .await?;
     validate_binding(&state, org, &b).await?;
     state
         .escalation_policy_store
@@ -307,7 +320,13 @@ pub async fn set_target_policy(
     Path(id): Path<Uuid>,
     Json(b): Json<PolicyBinding>,
 ) -> Result<Json<PolicyBinding>> {
-    gate_binding(&state, org, &b).await?;
+    gate_binding(
+        &state,
+        org,
+        &b,
+        state.escalation_policy_store.target_policy(org, id),
+    )
+    .await?;
     validate_binding(&state, org, &b).await?;
     if !state
         .escalation_policy_store

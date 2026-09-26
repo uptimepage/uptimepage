@@ -480,8 +480,7 @@ async fn main() -> Result<()> {
 
     // Incident paging worker: the single notification path. Always running — it
     // pages a monitor's bound channels on open/resolve (region-aware) and walks
-    // an escalation policy when one is bound. The `escalation.enabled` flag only
-    // gates the policy/on-call UI, not whether incidents notify.
+    // an escalation policy when one is bound.
     let escalation_policy_store: Arc<dyn uptimepage::storage::EscalationPolicyStore> = Arc::new(
         uptimepage::storage::PgEscalationPolicyStore::new(pg_pool_for_stores.clone()),
     );

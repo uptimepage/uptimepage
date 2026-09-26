@@ -270,8 +270,8 @@ pub struct AppState {
     /// Empty denies every custom domain. `main` fills it before the listener
     /// binds; a deployment without the subdomain surface leaves it empty.
     pub custom_domains: Arc<crate::request::custom_domains::CustomDomains>,
-    /// Escalation-engine signal channel. `Some` only when paging is enabled;
-    /// lifecycle handlers (declare/resolve/reopen) nudge the engine through it.
+    /// Escalation-engine signal channel. `Some` once `main` attaches the
+    /// engine; lifecycle handlers (declare/resolve/reopen) nudge it through it.
     pub incident_signal_tx: Option<tokio::sync::mpsc::Sender<crate::escalation::IncidentSignal>>,
     /// KEK cipher for decrypting check credentials — needed by the agent
     /// config-pull API, which serves decrypted params to region agents.
