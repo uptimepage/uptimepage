@@ -1100,6 +1100,10 @@ async fn calendar_feed_follows_the_member_and_their_newest_link_pg() {
     assert!(ics.contains("SUMMARY:On call: Nights\r\n"), "{ics}");
     let (_, _, partial) = fetch(&app, "/web/partials/settings/on-call/mine").await;
     assert!(partial.contains(&format!("{first}</code>")), "{partial}");
+    assert!(
+        partial.contains("&#38;name=On%20call%20%C2%B7%20n\""),
+        "{partial}"
+    );
 
     let second = new_feed_path(&app).await;
     assert_ne!(first, second);

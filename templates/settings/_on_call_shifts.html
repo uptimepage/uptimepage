@@ -20,10 +20,33 @@
 
   <div class="space-y-2">
     <h3 class="panel-label">calendar feed</h3>
-    {% if let Some(url) = feed_url %}
+    {% if let Some(feed) = feed %}
+    <div class="flex flex-wrap items-center gap-2">
+      <span class="text-xs text-muted">subscribe in</span>
+      <a href="{{ feed.google }}" target="_blank" rel="noopener"
+         aria-label="Subscribe in Google Calendar (opens in a new tab)"
+         class="sticker-btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium">
+        <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" class="h-4 w-4 fill-current"><use href="#cal-google"></use></svg>
+        google</a>
+      <a href="{{ feed.webcal }}"
+         aria-label="Subscribe in this device's calendar app"
+         class="sticker-btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium">
+        <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" class="h-4 w-4 fill-current"><use href="#cal-app"></use></svg>
+        calendar app</a>
+      <a href="{{ feed.outlook_com }}" target="_blank" rel="noopener"
+         aria-label="Subscribe in Outlook.com (opens in a new tab)"
+         class="sticker-btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium">
+        <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" class="h-4 w-4 fill-current"><use href="#cal-outlook"></use></svg>
+        outlook.com</a>
+      <a href="{{ feed.microsoft_365 }}" target="_blank" rel="noopener"
+         aria-label="Subscribe in Microsoft 365 (opens in a new tab)"
+         class="sticker-btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium">
+        <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" class="h-4 w-4 fill-current"><use href="#cal-microsoft"></use></svg>
+        microsoft 365</a>
+    </div>
     <div class="flex flex-wrap items-center gap-2">
       <code id="on-call-feed-url"
-            class="min-w-0 flex-1 break-all rounded-sm bg-[color:var(--theme-surface-sunk)] px-2 py-1.5 font-mono text-xs">{{ url }}</code>
+            class="min-w-0 flex-1 break-all rounded-sm bg-[color:var(--theme-surface-sunk)] px-2 py-1.5 font-mono text-xs">{{ feed.url }}</code>
       <button type="button" data-copy="#on-call-feed-url" aria-label="Copy calendar feed link"
               class="sticker-btn px-3 py-1.5 text-sm font-medium">copy</button>
       <button type="button"
@@ -39,8 +62,11 @@
               class="sticker-btn px-3 py-1.5 text-sm font-medium">new link</button>
     </div>
     <p class="text-xs text-muted">
-      Add it to your calendar app by URL. Anyone holding the link sees your
-      shifts; if it gets out, make a new one.
+      A subscribed calendar picks up swaps and overrides by itself, but Google
+      and Outlook can take up to a day to fetch a change; the list above is
+      always current. Google subscribes from a computer, not from its phone
+      app. Any other app takes the link by URL. Anyone holding the link sees
+      your shifts; if it gets out, make a new one.
     </p>
     {% else %}
     <p class="text-xs text-muted">

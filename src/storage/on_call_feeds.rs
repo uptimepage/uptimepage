@@ -24,23 +24,34 @@ pub fn feed_url(public_base_url: &str, token: &str) -> String {
     format!("{}/ical/{token}.ics", public_base_url.trim_end_matches('/'))
 }
 
-/// The member's feed token. `None` when they have not made one, or its
-/// sealed copy no longer opens.
-pub async fn token(
+/// A member's feed as their own page shows it. No `Debug`: it holds the raw
+/// token.
+pub struct MemberFeed {
+    pub token: String,
+    pub org_name: String,
+}
+
+/// The member's feed. `None` when they have not made one, its sealed copy no
+/// longer opens, or the org is deleted.
+pub async fn member_feed(
     pool: &PgPool,
     cipher: Option<&Cipher>,
     org: OrgId,
     user: UserId,
-) -> Result<Option<String>> {
-    let sealed: Option<String> = sqlx::query_scalar(
-        "SELECT token_enc FROM on_call_feeds WHERE user_id = $1 AND org_id = $2",
+) -> Result<Option<MemberFeed>> {
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT f.token_enc, o.name FROM on_call_feeds f \
+         JOIN organizations o ON o.id = f.org_id AND o.deleted_at IS NULL \
+         WHERE f.user_id = $1 AND f.org_id = $2",
     )
     .bind(user.0)
     .bind(org.0)
     .fetch_optional(pool)
     .await
-    .context("on_call_feeds token")?;
-    Ok(sealed.and_then(|s| capability_token::open(&s, cipher)))
+    .context("on_call_feeds member_feed")?;
+    Ok(row.and_then(|(sealed, org_name)| {
+        capability_token::open(&sealed, cipher).map(|token| MemberFeed { token, org_name })
+    }))
 }
 
 /// A new token for the member's feed. The link before it stops working.

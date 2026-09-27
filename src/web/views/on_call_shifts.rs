@@ -13,6 +13,7 @@ use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, NaiveTime, TimeDelta, Utc};
 
 use crate::app::AppState;
+use crate::auth::url::url_encode;
 use crate::domain::{OnCallScheduleDetail, UserId, shifts_held_by};
 use crate::error::AppError;
 use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser};
@@ -42,8 +43,47 @@ pub struct MyShift {
 #[template(path = "settings/_on_call_shifts.html")]
 pub struct ShiftsPartial {
     pub shifts: Vec<MyShift>,
-    /// The feed link, once the member has made one.
-    pub feed_url: Option<String>,
+    /// The feed's links, once the member has made one.
+    pub feed: Option<CalendarLinks>,
+}
+
+/// The feed's link, and the links that subscribe an app to it in one click.
+pub struct CalendarLinks {
+    pub url: String,
+    /// Hands the feed to the device's own calendar app.
+    pub webcal: String,
+    pub google: String,
+    pub outlook_com: String,
+    pub microsoft_365: String,
+}
+
+impl CalendarLinks {
+    /// Links for the feed at `url`, offered to the app under `name`. The
+    /// device's app and Google take its `webcal` form; Outlook takes it as it
+    /// is.
+    fn new(url: String, name: &str) -> Self {
+        let webcal = format!(
+            "webcal://{}",
+            url.split_once("://").map_or(url.as_str(), |(_, rest)| rest)
+        );
+        let outlook = format!("url={}&name={}", component(&url), component(name));
+        Self {
+            google: format!(
+                "https://calendar.google.com/calendar/u/0/r?cid={}",
+                component(&webcal)
+            ),
+            outlook_com: format!("https://outlook.live.com/calendar/0/addfromweb/?{outlook}"),
+            microsoft_365: format!("https://outlook.office.com/calendar/0/addfromweb/?{outlook}"),
+            webcal,
+            url,
+        }
+    }
+}
+
+/// `s` escaped for a query value, a space as `%20`. Form encoding escapes a
+/// literal `+`, so every `+` it leaves stands for a space.
+fn component(s: &str) -> String {
+    url_encode(s).replace('+', "%20")
 }
 
 pub async fn partial(
@@ -58,13 +98,18 @@ pub async fn partial(
     };
     let now = Utc::now();
     let pool = state.require_db()?;
-    let (schedules, token) = tokio::try_join!(
+    let (schedules, feed) = tokio::try_join!(
         state.on_call_store.current(org, now),
-        on_call_feeds::token(pool, state.cipher.as_deref(), org, user),
+        on_call_feeds::member_feed(pool, state.cipher.as_deref(), org, user),
     )?;
     Ok(ShiftsPartial {
         shifts: upcoming(&schedules, user, now),
-        feed_url: token.map(|t| feed_url(&state.cfg.auth.public_base_url, &t)),
+        feed: feed.map(|f| {
+            CalendarLinks::new(
+                feed_url(&state.cfg.auth.public_base_url, &f.token),
+                &feed_name(&f.org_name),
+            )
+        }),
     }
     .into_response())
 }
@@ -162,7 +207,12 @@ fn ical(
             })
         })
         .collect();
-    calendar(&format!("On call · {}", owner.org_name), now, &events)
+    calendar(&feed_name(&owner.org_name), now, &events)
+}
+
+/// What a calendar app calls the feed.
+fn feed_name(org_name: &str) -> String {
+    format!("On call · {org_name}")
 }
 
 #[cfg(test)]
@@ -305,16 +355,40 @@ mod tests {
     }
 
     #[test]
+    fn calendar_links_subscribe_in_one_click() {
+        let links = CalendarLinks::new(
+            "https://app.example.com/ical/tok.ics".into(),
+            "On call · A+B, Inc",
+        );
+        assert_eq!(links.url, "https://app.example.com/ical/tok.ics");
+        assert_eq!(links.webcal, "webcal://app.example.com/ical/tok.ics");
+        assert_eq!(
+            links.google,
+            "https://calendar.google.com/calendar/u/0/r?cid=webcal%3A%2F%2Fapp.example.com%2Fical%2Ftok.ics"
+        );
+        let query = "url=https%3A%2F%2Fapp.example.com%2Fical%2Ftok.ics&name=On%20call%20%C2%B7%20A%2BB%2C%20Inc";
+        assert_eq!(
+            links.outlook_com,
+            format!("https://outlook.live.com/calendar/0/addfromweb/?{query}")
+        );
+        assert_eq!(
+            links.microsoft_365,
+            format!("https://outlook.office.com/calendar/0/addfromweb/?{query}")
+        );
+    }
+
+    #[test]
     fn partial_offers_a_link_until_there_is_one() {
         let html = ShiftsPartial {
             shifts: vec![],
-            feed_url: None,
+            feed: None,
         }
         .render()
         .unwrap();
         assert!(html.contains("# no shifts for you in the next 90 days"));
         assert!(html.contains("make calendar link"));
         assert!(!html.contains("data-copy"));
+        assert!(!html.contains("webcal://"));
     }
 
     #[test]
@@ -334,10 +408,23 @@ mod tests {
                     ends_at: None,
                 },
             ],
-            feed_url: Some("https://app.example.com/ical/tok.ics".into()),
+            feed: Some(CalendarLinks::new(
+                "https://app.example.com/ical/tok.ics".into(),
+                "On call · Acme",
+            )),
         }
         .render()
         .unwrap();
+        let sprite = include_str!("../../../templates/settings/_calendar_icons.html");
+        let icons: Vec<&str> = html
+            .split(r##"<use href="#"##)
+            .skip(1)
+            .filter_map(|rest| rest.split('"').next())
+            .collect();
+        assert_eq!(icons.len(), 4);
+        for id in icons {
+            assert!(sprite.contains(&format!(r#"id="{id}""#)), "no symbol {id}");
+        }
         assert!(html.contains(
             r#"now
           until <time data-tz="at" datetime="2026-09-27T09:00:00Z">"#
@@ -346,6 +433,13 @@ mod tests {
         assert!(html.contains("with no handoff in the next 90 days"));
         assert!(html.contains("https://app.example.com/ical/tok.ics</code>"));
         assert!(html.contains(r##"data-copy="#on-call-feed-url""##));
+        assert!(html.contains(r#"href="webcal://app.example.com/ical/tok.ics""#));
+        assert!(html.contains(
+            r#"href="https://calendar.google.com/calendar/u/0/r?cid=webcal%3A%2F%2Fapp.example.com%2Fical%2Ftok.ics""#
+        ));
+        assert!(html.contains(
+            "addfromweb/?url=https%3A%2F%2Fapp.example.com%2Fical%2Ftok.ics&#38;name=On%20call%20%C2%B7%20Acme"
+        ));
         assert!(html.contains("new link"));
         assert!(!html.contains("make calendar link"));
     }
