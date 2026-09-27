@@ -44,14 +44,28 @@
       </thead>
       <tbody class="divide-y divide-[color:var(--theme-line)]">
         <tr>
-          <td class="px-4 py-2 font-medium">Production</td>
-          <td class="px-4 py-2 tabular-nums">3</td>
-          <td class="px-4 py-2 font-mono tabular-nums">3×</td>
+          <td class="px-4 py-2 align-top">
+            <div class="font-medium">Production</div>
+            <p class="text-xs text-muted">Primary on-call, then Database on-call, then the #incidents Slack channel.</p>
+          </td>
+          <td class="px-4 py-2 align-top font-mono tabular-nums">3</td>
+          <td class="px-4 py-2 align-top font-mono tabular-nums">3×</td>
         </tr>
         <tr>
-          <td class="px-4 py-2 font-medium">Business hours</td>
-          <td class="px-4 py-2 tabular-nums">1</td>
-          <td class="px-4 py-2 font-mono tabular-nums">once</td>
+          <td class="px-4 py-2 align-top">
+            <div class="font-medium">Payments</div>
+            <p class="text-xs text-muted">Payments on-call, then Primary on-call after 10 minutes.</p>
+          </td>
+          <td class="px-4 py-2 align-top font-mono tabular-nums">2</td>
+          <td class="px-4 py-2 align-top font-mono tabular-nums">2×</td>
+        </tr>
+        <tr>
+          <td class="px-4 py-2 align-top">
+            <div class="font-medium">Internal tools</div>
+            <p class="text-xs text-muted">Posts to the #ops Slack channel only.</p>
+          </td>
+          <td class="px-4 py-2 align-top font-mono tabular-nums">1</td>
+          <td class="px-4 py-2 align-top font-mono tabular-nums">once</td>
         </tr>
       </tbody>
     </table>
