@@ -81,10 +81,24 @@
   <section class="sticker-card overflow-hidden" aria-labelledby="you-heading">
     <h2 id="you-heading" class="card-band panel-label">your on-call</h2>
     <div class="divide-y divide-[color:var(--theme-line)]">
+      {% if on_duty %}
+      <div data-unpageable class="p-5"{% if !unpageable %} hidden{% endif %}>
+        <div class="alert-card alert-card--warn text-sm">
+          You are on an on-call schedule, but none of the channels you picked can deliver a page, so a page on your shift reaches no one. See channels that page you, below.
+        </div>
+      </div>
+      {% endif %}
       <div data-hx-loader
            hx-get="/web/partials/settings/on-call/mine"
-           hx-trigger="load, every 60s, oncall:feed from:body, oncall:refresh from:body, sm:poll-resume from:body"
+           hx-trigger="load, every 60s, oncall:refresh from:body, sm:poll-resume from:body"
            data-poll-pause
+           hx-swap="innerHTML">
+        {% call reg::loading("loading…", "") %}{% endcall %}
+      </div>
+
+      <div data-hx-loader
+           hx-get="/web/partials/settings/on-call/my-calendar"
+           hx-trigger="load, oncall:feed from:body, sm:poll-resume from:body"
            hx-swap="innerHTML">
         {% call reg::loading("loading…", "") %}{% endcall %}
       </div>
@@ -95,11 +109,6 @@
           When an escalation policy pages a schedule you are on, you are reached
           through the channels you pick here. Saved as you toggle.
         </p>
-        {% if on_duty %}
-        <div data-unpageable class="alert-card alert-card--warn text-sm"{% if !unpageable %} hidden{% endif %}>
-          You are on an on-call schedule, but none of the channels you picked can deliver a page, so a page on your shift reaches no one.
-        </div>
-        {% endif %}
         {% if no_channels %}
         <p class="font-mono text-xs text-quiet">
           # no notification channels yet — <a href="/settings/notifications/new" class="underline decoration-dotted hover:text-body">add one</a> to be reachable

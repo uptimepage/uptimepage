@@ -1,84 +1,37 @@
-<div class="space-y-4 p-5">
-  <div class="space-y-2">
-    <h3 class="panel-label">your shifts</h3>
-    {% if shifts.is_empty() %}
-    <p class="font-mono text-xs text-quiet"># no shifts for you in the next 90 days</p>
-    {% else %}
-    <ul class="space-y-1.5 text-sm">
+<h3 class="panel-label px-5 pb-2 pt-5">your shifts</h3>
+{% if shifts.is_empty() %}
+<p class="px-5 pb-5 font-mono text-xs text-quiet"># no shifts for you in the next 90 days</p>
+{% else %}
+<div class="overflow-x-auto">
+  <table class="w-full text-left text-sm">
+    <thead class="table-head bg-[color:var(--theme-surface-sunk)]">
+      <tr>
+        <th class="py-2 pl-5 pr-3">Schedule</th>
+        <th class="px-3 py-2">From</th>
+        <th class="px-3 py-2">Until</th>
+        <th class="py-2 pl-3 pr-5 text-right">Length</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-[color:var(--theme-line)]">
       {% for s in shifts %}
-      <li>
-        <span class="font-medium">{{ s.schedule }}</span>
-        <span class="text-muted">
-          {% if s.now %}now{% else %}<time data-tz="at" datetime="{{ s.starts_at|iso_ts }}">{{ s.starts_at|human_ts }}</time>{% endif %}
-          {% if let Some(end) = s.ends_at %}until <time data-tz="at" datetime="{{ end|iso_ts }}">{{ end|human_ts }}</time>{% else %}with no handoff in the next 90 days{% endif %}
-        </span>
-      </li>
+      <tr{% if !s.now %} class="text-muted"{% endif %}>
+        <td class="py-2 pl-5 pr-3 text-body">
+          <a href="/settings/on-call/{{ s.schedule_id }}/edit" class="font-medium decoration-dotted underline-offset-2 hover:underline">{{ s.schedule }}</a>
+        </td>
+        <td class="whitespace-nowrap px-3 py-2 font-mono text-xs">
+          {%- if s.now %}<span class="inline-flex items-center gap-1.5 text-body"><span class="dashboard-dot dashboard-dot--up" aria-hidden="true"></span>on call now</span>
+          {%- else %}<time data-tz="at" datetime="{{ s.starts_at|iso_ts }}">{{ s.starts_at|human_ts }}</time>{% endif -%}
+        </td>
+        <td class="whitespace-nowrap px-3 py-2 font-mono text-xs">
+          {%- if let Some(end) = s.ends_at %}<time data-tz="at" datetime="{{ end|iso_ts }}">{{ end|human_ts }}</time>
+          {%- else %}<span class="text-quiet">no handoff in 90 days</span>{% endif -%}
+        </td>
+        <td class="whitespace-nowrap py-2 pl-3 pr-5 text-right font-mono text-xs tabular-nums">
+          {%- if let Some(len) = s.length() %}{{ len }}{% if s.now %} left{% endif %}{% endif -%}
+        </td>
+      </tr>
       {% endfor %}
-    </ul>
-    {% endif %}
-  </div>
-
-  <div class="space-y-2">
-    <h3 class="panel-label">calendar feed</h3>
-    {% if let Some(feed) = feed %}
-    <div class="flex flex-wrap items-center gap-2">
-      <span class="text-xs text-muted">subscribe in</span>
-      <a href="{{ feed.google }}" target="_blank" rel="noopener"
-         aria-label="Subscribe in Google Calendar (opens in a new tab)"
-         class="sticker-btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium">
-        <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" class="h-4 w-4 fill-current"><use href="#cal-google"></use></svg>
-        google</a>
-      <a href="{{ feed.webcal }}"
-         aria-label="Subscribe in this device's calendar app"
-         class="sticker-btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium">
-        <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" class="h-4 w-4 fill-current"><use href="#cal-app"></use></svg>
-        calendar app</a>
-      <a href="{{ feed.outlook_com }}" target="_blank" rel="noopener"
-         aria-label="Subscribe in Outlook.com (opens in a new tab)"
-         class="sticker-btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium">
-        <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" class="h-4 w-4 fill-current"><use href="#cal-outlook"></use></svg>
-        outlook.com</a>
-      <a href="{{ feed.microsoft_365 }}" target="_blank" rel="noopener"
-         aria-label="Subscribe in Microsoft 365 (opens in a new tab)"
-         class="sticker-btn inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium">
-        <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" class="h-4 w-4 fill-current"><use href="#cal-microsoft"></use></svg>
-        microsoft 365</a>
-    </div>
-    <div class="flex flex-wrap items-center gap-2">
-      <code id="on-call-feed-url"
-            class="min-w-0 flex-1 break-all rounded-sm bg-[color:var(--theme-surface-sunk)] px-2 py-1.5 font-mono text-xs">{{ feed.url }}</code>
-      <button type="button" data-copy="#on-call-feed-url" aria-label="Copy calendar feed link"
-              class="sticker-btn px-3 py-1.5 text-sm font-medium">copy</button>
-      <button type="button"
-              hx-post="/api/v1/on-call/my-calendar"
-              hx-headers='{"X-Requested-With":"uptimepage"}'
-              hx-swap="none"
-              data-on-ok-trigger="oncall:feed"
-              data-on-fail-toast="Could not make a new link."
-              data-confirm-modal
-              data-confirm-title="Make a new calendar link?"
-              data-confirm-body="The link you have now stops working, and calendars subscribed to it stop updating."
-              data-confirm-label="make new link"
-              class="sticker-btn px-3 py-1.5 text-sm font-medium">new link</button>
-    </div>
-    <p class="text-xs text-muted">
-      A subscribed calendar picks up swaps and overrides by itself, but Google
-      and Outlook can take up to a day to fetch a change; the list above is
-      always current. Google subscribes from a computer, not from its phone
-      app. Any other app takes the link by URL. Anyone holding the link sees
-      your shifts; if it gets out, make a new one.
-    </p>
-    {% else %}
-    <p class="text-xs text-muted">
-      Your shifts from the last 30 days and the next 90, in your own calendar app.
-    </p>
-    <button type="button"
-            hx-post="/api/v1/on-call/my-calendar"
-            hx-headers='{"X-Requested-With":"uptimepage"}'
-            hx-swap="none"
-            data-on-ok-trigger="oncall:feed"
-            data-on-fail-toast="Could not make a calendar link."
-            class="sticker-btn px-3 py-1.5 text-sm font-medium">make calendar link</button>
-    {% endif %}
-  </div>
+    </tbody>
+  </table>
 </div>
+{% endif %}

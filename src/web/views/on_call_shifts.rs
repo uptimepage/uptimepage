@@ -11,6 +11,7 @@ use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, NaiveTime, TimeDelta, Utc};
+use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::auth::url::url_encode;
@@ -19,6 +20,7 @@ use crate::error::AppError;
 use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser};
 use crate::storage::on_call_feeds::{self, FeedOwner, feed_url};
 use crate::templates::filters;
+use crate::templates::format::HumanDur;
 use crate::web::error::WebResult;
 use crate::web::ical::{Event, calendar};
 use crate::web::views::resolve_org;
@@ -31,6 +33,7 @@ const AHEAD_DAYS: i64 = 90;
 const SHIFTS_SHOWN: usize = 5;
 
 pub struct MyShift {
+    pub schedule_id: Uuid,
     pub schedule: String,
     /// Already on when the page was drawn.
     pub now: bool,
@@ -39,10 +42,23 @@ pub struct MyShift {
     pub ends_at: Option<DateTime<Utc>>,
 }
 
+impl MyShift {
+    /// How long it runs, or what is left of it once on.
+    pub fn length(&self) -> Option<HumanDur> {
+        self.ends_at
+            .map(|end| HumanDur((end - self.starts_at).num_seconds()))
+    }
+}
+
 #[derive(Template, WebTemplate)]
 #[template(path = "settings/_on_call_shifts.html")]
 pub struct ShiftsPartial {
     pub shifts: Vec<MyShift>,
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "settings/_on_call_feed.html")]
+pub struct FeedPartial {
     /// The feed's links, once the member has made one.
     pub feed: Option<CalendarLinks>,
 }
@@ -86,7 +102,7 @@ fn component(s: &str) -> String {
     url_encode(s).replace('+', "%20")
 }
 
-pub async fn partial(
+pub async fn shifts_partial(
     _auth: AuthedBrowser,
     CurrentUser(user): CurrentUser,
     State(state): State<AppState>,
@@ -97,21 +113,37 @@ pub async fn partial(
         Err(resp) => return Ok(*resp),
     };
     let now = Utc::now();
-    let pool = state.require_db()?;
-    let (schedules, feed) = tokio::try_join!(
-        state.on_call_store.current(org, now),
-        on_call_feeds::member_feed(pool, state.cipher.as_deref(), org, user),
-    )?;
+    let schedules = state.on_call_store.current(org, now).await?;
     Ok(ShiftsPartial {
         shifts: upcoming(&schedules, user, now),
+    }
+    .into_response())
+}
+
+/// The feed's links. Unlike the shifts, which redraw as time passes, they
+/// change only when the member makes a link. They carry the feed's secret, so
+/// nothing may cache them.
+pub async fn feed_partial(
+    _auth: AuthedBrowser,
+    CurrentUser(user): CurrentUser,
+    State(state): State<AppState>,
+    org: Result<CurrentOrg, AppError>,
+) -> WebResult<Response> {
+    let org = match resolve_org(org, "/settings/on-call") {
+        Ok(o) => o,
+        Err(resp) => return Ok(*resp),
+    };
+    let pool = state.require_db()?;
+    let feed = on_call_feeds::member_feed(pool, state.cipher.as_deref(), org, user).await?;
+    let partial = FeedPartial {
         feed: feed.map(|f| {
             CalendarLinks::new(
                 feed_url(&state.cfg.auth.public_base_url, &f.token),
                 &feed_name(&f.org_name),
             )
         }),
-    }
-    .into_response())
+    };
+    Ok(([(header::CACHE_CONTROL, "no-store")], partial).into_response())
 }
 
 /// The member's next [`SHIFTS_SHOWN`] shifts across every schedule, soonest
@@ -124,6 +156,7 @@ fn upcoming(schedules: &[OnCallScheduleDetail], user: UserId, now: DateTime<Utc>
             shifts_held_by(&d.schedule, &d.layers, &d.overrides, user, now, horizon)
                 .take(SHIFTS_SHOWN)
                 .map(|r| MyShift {
+                    schedule_id: d.schedule.id,
                     schedule: d.schedule.name.clone(),
                     now: r.start == now,
                     starts_at: r.start,
@@ -221,7 +254,6 @@ mod tests {
     use crate::domain::{
         OnCallLayer, OnCallOverride, OnCallParticipant, OnCallSchedule, OrgId, RotationType,
     };
-    use uuid::Uuid;
 
     fn t(s: &str) -> DateTime<Utc> {
         s.parse().unwrap()
@@ -378,36 +410,56 @@ mod tests {
     }
 
     #[test]
-    fn partial_offers_a_link_until_there_is_one() {
-        let html = ShiftsPartial {
-            shifts: vec![],
-            feed: None,
-        }
-        .render()
-        .unwrap();
+    fn no_shifts_say_so() {
+        let html = ShiftsPartial { shifts: vec![] }.render().unwrap();
         assert!(html.contains("# no shifts for you in the next 90 days"));
-        assert!(html.contains("make calendar link"));
-        assert!(!html.contains("data-copy"));
-        assert!(!html.contains("webcal://"));
+        assert!(!html.contains("<table"));
     }
 
     #[test]
-    fn partial_lists_shifts_and_the_link() {
+    fn shifts_list_the_one_on_now_with_what_is_left() {
         let html = ShiftsPartial {
             shifts: vec![
                 MyShift {
+                    schedule_id: Uuid::from_u128(1),
                     schedule: "Primary".into(),
                     now: true,
                     starts_at: t("2026-09-26T12:00:00Z"),
                     ends_at: Some(t("2026-09-27T09:00:00Z")),
                 },
                 MyShift {
+                    schedule_id: Uuid::from_u128(2),
                     schedule: "Database".into(),
                     now: false,
                     starts_at: t("2026-10-01T09:00:00Z"),
                     ends_at: None,
                 },
             ],
+        }
+        .render()
+        .unwrap();
+        assert!(html.contains(&format!(
+            r#"href="/settings/on-call/{}/edit""#,
+            Uuid::from_u128(1)
+        )));
+        assert!(html.contains("on call now</span>"));
+        assert!(html.contains(r#"<time data-tz="at" datetime="2026-09-27T09:00:00Z">"#));
+        assert!(html.contains(">21h left</td>"));
+        assert!(html.contains(r#"<time data-tz="at" datetime="2026-10-01T09:00:00Z">"#));
+        assert!(html.contains("no handoff in 90 days"));
+    }
+
+    #[test]
+    fn feed_offers_a_link_until_there_is_one() {
+        let html = FeedPartial { feed: None }.render().unwrap();
+        assert!(html.contains("make calendar link"));
+        assert!(!html.contains("data-copy"));
+        assert!(!html.contains("webcal://"));
+    }
+
+    #[test]
+    fn feed_subscribes_in_one_click_or_copies_the_raw_link() {
+        let html = FeedPartial {
             feed: Some(CalendarLinks::new(
                 "https://app.example.com/ical/tok.ics".into(),
                 "On call · Acme",
@@ -421,18 +473,10 @@ mod tests {
             .skip(1)
             .filter_map(|rest| rest.split('"').next())
             .collect();
-        assert_eq!(icons.len(), 4);
+        assert_eq!(icons.len(), 5);
         for id in icons {
             assert!(sprite.contains(&format!(r#"id="{id}""#)), "no symbol {id}");
         }
-        assert!(html.contains(
-            r#"now
-          until <time data-tz="at" datetime="2026-09-27T09:00:00Z">"#
-        ));
-        assert!(html.contains(r#"<time data-tz="at" datetime="2026-10-01T09:00:00Z">"#));
-        assert!(html.contains("with no handoff in the next 90 days"));
-        assert!(html.contains("https://app.example.com/ical/tok.ics</code>"));
-        assert!(html.contains(r##"data-copy="#on-call-feed-url""##));
         assert!(html.contains(r#"href="webcal://app.example.com/ical/tok.ics""#));
         assert!(html.contains(
             r#"href="https://calendar.google.com/calendar/u/0/r?cid=webcal%3A%2F%2Fapp.example.com%2Fical%2Ftok.ics""#
@@ -440,7 +484,11 @@ mod tests {
         assert!(html.contains(
             "addfromweb/?url=https%3A%2F%2Fapp.example.com%2Fical%2Ftok.ics&#38;name=On%20call%20%C2%B7%20Acme"
         ));
-        assert!(html.contains("new link"));
+        assert!(html.contains(r#"<code id="on-call-feed-url" hidden"#));
+        assert!(html.contains(">https://app.example.com/ical/tok.ics</code>"));
+        assert!(html.contains(r##"data-copy="#on-call-feed-url""##));
+        assert!(html.contains("make a new link</button>"));
+        assert!(!html.contains("<details"));
         assert!(!html.contains("make calendar link"));
     }
 }

@@ -1098,7 +1098,7 @@ async fn calendar_feed_follows_the_member_and_their_newest_link_pg() {
     assert_eq!(kind.as_deref(), Some("text/calendar; charset=utf-8"));
     assert!(ics.contains("X-WR-CALNAME:On call · n\r\n"), "{ics}");
     assert!(ics.contains("SUMMARY:On call: Nights\r\n"), "{ics}");
-    let (_, _, partial) = fetch(&app, "/web/partials/settings/on-call/mine").await;
+    let (_, _, partial) = fetch(&app, "/web/partials/settings/on-call/my-calendar").await;
     assert!(partial.contains(&format!("{first}</code>")), "{partial}");
     assert!(
         partial.contains("&#38;name=On%20call%20%C2%B7%20n\""),

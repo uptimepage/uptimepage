@@ -951,7 +951,19 @@ mod tests {
         assert!(html.contains("channels that page you"));
         assert!(html.contains(r#"data-contact value="cid" data-delivers checked"#));
         assert!(html.contains(r#"href="/settings/on-call/new""#));
-        assert!(html.contains(r#"hx-get="/web/partials/settings/on-call/mine""#));
+        let (_, mine) = html
+            .split_once(r#"hx-get="/web/partials/settings/on-call/mine""#)
+            .unwrap();
+        assert!(!mine.split_once('>').unwrap().0.contains("oncall:feed"));
+        let (_, feed) = html
+            .split_once(r#"hx-get="/web/partials/settings/on-call/my-calendar""#)
+            .unwrap();
+        assert!(
+            feed.split_once('>')
+                .unwrap()
+                .0
+                .contains("oncall:feed from:body")
+        );
         assert!(!html.contains("Team plan"));
         assert!(!html.contains("reaches no one"));
     }
@@ -962,10 +974,8 @@ mod tests {
         p.on_duty = true;
         p.unpageable = true;
         let html = p.render().unwrap();
+        assert!(html.contains(r#"<div data-unpageable class="p-5">"#));
         assert!(html.contains("reaches no one"));
-        assert!(
-            !html.contains("data-unpageable class=\"alert-card alert-card--warn text-sm\" hidden")
-        );
     }
 
     #[test]
@@ -973,9 +983,7 @@ mod tests {
         let mut p = page(None);
         p.on_duty = true;
         let html = p.render().unwrap();
-        assert!(
-            html.contains("data-unpageable class=\"alert-card alert-card--warn text-sm\" hidden")
-        );
+        assert!(html.contains(r#"data-unpageable class="p-5" hidden"#));
         assert!(html.contains(r#"data-contact value="cid" data-delivers checked"#));
     }
 

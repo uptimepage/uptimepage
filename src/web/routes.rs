@@ -226,7 +226,11 @@ pub fn routes(state: AppState) -> Router {
         )
         .route(
             "/web/partials/settings/on-call/mine",
-            get(views::on_call_shifts::partial),
+            get(views::on_call_shifts::shifts_partial),
+        )
+        .route(
+            "/web/partials/settings/on-call/my-calendar",
+            get(views::on_call_shifts::feed_partial),
         );
 
     // Only where an operator staffs an inbox, so no page goes nowhere.

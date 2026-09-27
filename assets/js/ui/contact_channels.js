@@ -45,7 +45,9 @@
                     notice.hidden = Array.from(boxes).some((b) => b.checked && b.hasAttribute("data-delivers"));
                 }
                 document.body.dispatchEvent(new CustomEvent("oncall:refresh"));
-                show("✓ saved", true);
+                // The notice sits at the top of the card, out of view from here.
+                if (notice && !notice.hidden) show("⚠ saved, but none of these can deliver a page", false);
+                else show("✓ saved", true);
             } else {
                 let msg = "save failed";
                 try { const b = await res.json(); if (b && b.error && b.error.message) msg = b.error.message; } catch { /* */ }
