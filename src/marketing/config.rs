@@ -19,13 +19,13 @@ pub const ANALYTICS_TAG: &str = if GALLERY_VISIBLE {
     "gallery-off"
 };
 
-/// Short one-line pitch. Used by llms.txt and as the in-image subtitle
-/// on the OG card.
-pub const TAGLINE: &str = "Uptime monitoring and public status pages that just work.";
+/// Short one-line pitch, the blockquote under the title in llms.txt and
+/// llms-full.txt.
+pub const TAGLINE: &str = "Uptime monitoring, public status pages and on-call in one.";
 
 /// `<meta name="description">` + OG `og:description`. Sized to Google's
 /// 110–160 char sweet spot so search snippets don't truncate mid-sentence.
-pub const META_DESCRIPTION: &str = "Uptime monitoring and public status pages that just work. Eight check types from HTTP and DNS to cron heartbeats and browser logins. Start free, no card.";
+pub const META_DESCRIPTION: &str = "Uptime monitoring, public status pages and on-call in one tool. Eight check types including HTTP, DNS, cron and browser logins. Start free, no card.";
 
 /// Automation surfaces on their own prod hosts — not derived from
 /// `canonical_origin` (separate hostnames), so authored absolute.

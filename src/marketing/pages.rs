@@ -104,9 +104,16 @@ const FAQS: &[(&str, &str)] = &[
     ),
     (
         "Where do alerts come from?",
-        "Slack, Discord, Teams, Mattermost, Telegram, email, PagerDuty, ntfy, \
-         Pushover, Gotify, WhatsApp, or any HTTPS webhook. Each monitor binds its own channels, so \
-         a marketing-site flap doesn’t page on-call.",
+        "Slack, Discord, Teams, Google Chat, Mattermost, Telegram, email, SMS, PagerDuty, ntfy, \
+         Pushover, Gotify, WhatsApp, or any HTTPS webhook. Each monitor can carry its own \
+         escalation policy, so a marketing-site flap can page a quiet channel while your API’s monitor pages on-call.",
+    ),
+    (
+        "Can it page whoever is on call?",
+        "Yes. On-call schedules rotate your team daily, weekly or on a length you set, \
+         with overrides for holidays and swaps, and each person can add their shifts to \
+         their calendar app. Escalation policies page the next level when nobody \
+         acknowledges, and acknowledging or resolving the incident stops them.",
     ),
     (
         "Can I export my data?",
@@ -140,11 +147,11 @@ pub(crate) struct CachedRender {
 fn render_landing(cfg: &MarketingCfg) -> CachedRender {
     let canonical_url = cfg.canonical_origin.clone();
     let mut og = OpenGraph::default_for(
-        &format!("{BRAND}: uptime monitoring and status pages in one"),
+        &format!("{BRAND}: uptime monitoring, status pages and on-call"),
         &canonical_url,
         &cfg.canonical_origin,
     );
-    og.description = "Hosted uptime monitoring for websites and APIs, with multi-region checks, team alerts, incidents, and public status pages. Start free; open source for control.".to_string();
+    og.description = "Hosted uptime monitoring for websites and APIs, with multi-region checks, on-call rotations, incidents, and public status pages. Start free; open source.".to_string();
     let page = LandingPage {
         app_url: cfg.app_url.clone(),
         canonical_url,

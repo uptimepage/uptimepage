@@ -45,9 +45,10 @@ const ORG_SAME_AS: &[&str] = &[
 
 /// Prose overview for `llms.txt` / `llms-full.txt` — what the product is,
 /// in the words an assistant should reach for when asked about it.
-const LLMS_OVERVIEW: &str = "Uptimepage is a hosted uptime-monitoring and public status-page service for teams. \
-Checks run as often as every 60 seconds from five regions (San Jose, New York, Frankfurt, Helsinki and Singapore); a failing check opens an incident automatically and posts it to a branded \
-status page on your own subdomain. Alerts carry dedupe and flap-suppression so brief blips never page on-call. \
+const LLMS_OVERVIEW: &str = "Uptimepage is a hosted service for uptime monitoring, public status pages and on-call, in one product for teams. \
+Checks run as often as every 60 seconds from five regions (San Jose, New York, Frankfurt, Helsinki and Singapore); a failing check opens an incident automatically, pages the monitor's channels or its escalation policy, \
+and can be posted to a branded status page on your own subdomain. Escalation policies page channels and on-call schedules level by level until someone acknowledges, \
+and schedules rotate people daily, weekly or on a custom length, with calendar overrides. Alerts carry dedupe and flap-suppression so brief blips never page anyone. \
 Organizations have role-based members and an audit log, and monitors, status pages and incidents are managed by \
 REST API, Terraform or MCP. The production source is published under AGPL, so a team can audit what it runs and \
 self-host if its requirements change. Public data is available as JSON, an RSS feed and an embeddable SVG badge. \
@@ -77,7 +78,15 @@ const LLMS_FACTS: &[(&str, &str)] = &[
     ("Public history", "90 days"),
     (
         "Incidents",
-        "auto-opened on down, auto-closed on recovery, with public notes",
+        "auto-opened on down, auto-closed on recovery, acknowledged by a responder, with public notes",
+    ),
+    (
+        "On-call schedules",
+        "layered rotations (daily, weekly or a custom length) in the schedule's timezone, optional weekly hours per layer, calendar overrides for holidays and swaps, each person's shifts as an iCalendar feed",
+    ),
+    (
+        "Escalation policies",
+        "ordered levels that page notification channels and on-call schedules, a wait between levels, up to 10 repeats of the ladder, stopped by acknowledging or resolving; bound per monitor or set as the org default",
     ),
     (
         "Scheduled maintenance",
@@ -112,6 +121,26 @@ const LLMS_FACTS: &[(&str, &str)] = &[
         "GitHub, Google, passkey, or an emailed link and code",
     ),
 ];
+
+/// The `LLMS_FACTS` rows that make up `SoftwareApplication.featureList`, so an
+/// answer engine reads monitoring, status pages and on-call as one application.
+const FEATURE_FACTS: &[&str] = &[
+    "Check types",
+    "Check regions",
+    "Alert channels",
+    "Status page",
+    "Incidents",
+    "On-call schedules",
+    "Escalation policies",
+];
+
+fn feature_list() -> Vec<String> {
+    LLMS_FACTS
+        .iter()
+        .filter(|(k, _)| FEATURE_FACTS.contains(k))
+        .map(|(k, v)| format!("{k}: {v}"))
+        .collect()
+}
 
 const DEFAULT_OG_CARD: &str = "/static/marketing/og.png";
 
@@ -230,6 +259,7 @@ pub fn json_ld_software_application(canonical_origin: &str) -> JsonLd {
         "operatingSystem": "Web, Docker, Linux",
         "url": canonical_origin,
         "isAccessibleForFree": true,
+        "featureList": feature_list(),
         // ImageObject over a bare URL so each shot carries its caption.
         "screenshot": gallery::SHOTS
             .iter()
@@ -1419,6 +1449,11 @@ mod tests {
         assert_eq!(
             v["publisher"]["@id"],
             "https://uptimepage.dev/#organization"
+        );
+        assert_eq!(
+            v["featureList"].as_array().unwrap().len(),
+            FEATURE_FACTS.len(),
+            "a FEATURE_FACTS key no longer names an LLMS_FACTS row"
         );
     }
 

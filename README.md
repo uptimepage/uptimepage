@@ -4,12 +4,13 @@
 
 # uptimepage
 
-**Status pages + uptime monitoring. Open source, free to start. Live in 5 minutes.**
+**Uptime monitoring, status pages and on-call. Open source, free to start. Live in 5 minutes.**
 
 Monitor HTTP, TCP, ICMP ping, cron-job heartbeats, DNS, TLS-certificate and
 domain expiry, plus scripted browser login flows, from multiple regions — then
 turn green and red into a polished
-public status page your customers can subscribe to. Drive it by click, REST
+public status page your customers can subscribe to, and page whoever is on
+call through rotations and escalation policies. Drive it by click, REST
 API, or Terraform. Self-host the single binary or use the hosted service.
 
 [![Terraform Registry](https://img.shields.io/badge/terraform-registry-7B42BC?logo=terraform&logoColor=white)](https://registry.terraform.io/providers/uptimepage/uptimepage)
@@ -43,7 +44,7 @@ free, self-hostable, and fully as code:
 - **One self-contained binary** — `docker compose up` and you're live, not a Kubernetes platform to operate.
 - **Everything as code** — REST API, scoped tokens, an official Terraform provider, and an MCP server your LLM can query.
 - **Probes you own** — run multi-region agents wherever your users are, on your own boxes.
-- **Status page + incidents + alerting in one** — components, subscribers, and multi-channel paging that repeats until acknowledged, no second tool.
+- **Status page + incidents + on-call in one** — components, subscribers, on-call rotations and escalation, and multi-channel paging that repeats until acknowledged, no second tool.
 - **Core isn't paywalled** — checks, status pages, subscribers, the API and every alert channel are in the free tier.
 
 ### Who it's for
@@ -75,6 +76,7 @@ Embed your own with the snippet in **Settings → Pages → your page → Badge*
 | **Public status page** | HTML + JSON + RSS, per-component opt-in, incident narration, maintenance windows, email + webhook subscribers |
 | **Alerting** | Slack, PagerDuty, Discord, Microsoft Teams, Google Chat, Mattermost, Telegram, WhatsApp, SMS, email, webhook, ntfy, Gotify, Pushover — per-org channels, sealed secrets, fire-once + recovery, repeat until acknowledged |
 | **Incidents** | Internal incident state ⊥ public phase, acknowledge to silence paging, per-monitor reminder cadence |
+| **On-call** | Layered rotations (daily, weekly, custom) with weekly hours, calendar overrides, your shifts as an iCalendar feed, escalation policies that page channels and schedules level by level |
 | **Multi-region** | Regional probe agents, per-region views, run your own agent anywhere |
 | **Automation** | REST API, scoped API tokens, Terraform provider, MCP server for LLM clients |
 | **Built on** | Rust 1.95 / Tokio / Axum, Postgres + ClickHouse, one ~23 MB self-contained binary |

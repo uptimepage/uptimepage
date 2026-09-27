@@ -505,6 +505,10 @@ static UPTIME_KUMA_MATRIX: Matrix = Matrix {
             cells: &[("yes", "yes"), ("manual", "no")],
         },
         MatrixRow {
+            label: "on-call & escalation",
+            cells: &[("yes", "yes"), ("none", "no")],
+        },
+        MatrixRow {
             label: "multi-region probes",
             cells: &[("5 hosted regions", "yes"), ("add-on", "part")],
         },
@@ -1335,7 +1339,7 @@ static KUMA_ONEUPTIME_MATRIX: Matrix = Matrix {
             cells: &[
                 ("uptime only", ""),
                 ("uptime + status + on-call + APM + logs", ""),
-                ("uptime + status + incidents", ""),
+                ("uptime + status + on-call", ""),
             ],
         },
         MatrixRow {

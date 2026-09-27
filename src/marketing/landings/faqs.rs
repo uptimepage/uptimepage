@@ -22,6 +22,7 @@ pub(super) const FAQ_PATHS: &[&str] = &[
     "/open-source-status-page",
     "/open-source-uptime-monitoring",
     "/cron-job-monitoring",
+    "/on-call-scheduling",
     "/white-label-uptime-monitoring",
     "/uptime-monitoring-for-developers",
     "/vs/uptimerobot",
@@ -389,6 +390,32 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
                 "Self-hosting under AGPL is free. The hosted tier is also $0 a month if you prefer not to run it yourself.",
             ),
         ],
+        "/on-call-scheduling" => &[
+            (
+                "How does it decide who gets paged?",
+                "The monitor's escalation policy, or the org default, names a schedule on one of its levels. At the moment that level pages, an override covering that moment wins. Otherwise the first layer on call at that moment pages, and its rotation says which participant that is. The person is then reached through the channels they picked on the on-call page.",
+            ),
+            (
+                "What happens when nobody acknowledges?",
+                "With an escalation policy, the next level pages once the current level's wait runs out, and the ladder can start again from the top up to ten more times. After the final page, the monitor's reminders keep coming with a growing gap, up to one a day, until someone acknowledges or the monitor recovers, unless reminders are switched off for that monitor. A monitor without a policy of its own follows the org default policy. With no default either, it pages its own channels and the reminders do the rest.",
+            ),
+            (
+                "Does acknowledging an incident update the status page?",
+                "No. Acknowledging records who took the incident and stops the paging, and it posts nothing to the status page. What customers read there comes from the incident itself: a monitor that is a component of the page shows the incident as it opens and again when it resolves, and the updates in between are the ones you write.",
+            ),
+            (
+                "Can I see my shifts in Google Calendar?",
+                "Yes. The on-call page gives you a private link to a calendar feed of your shifts, from the last 30 days to the next 90. Google Calendar, Apple Calendar and Outlook subscribe to it by URL. Anyone holding the link can read your shifts, and making a new link stops the old one.",
+            ),
+            (
+                "Do I still need PagerDuty or Opsgenie?",
+                "Not for rotations and escalation, as long as the channels here reach your team: SMS, Pushover emergency priority, Telegram, Slack and the rest. There is no phone call yet. If you already run PagerDuty, put its service on an escalation level as a channel, and each incident becomes one PagerDuty alert.",
+            ),
+            (
+                "Does a self-hosted install have on-call?",
+                "Yes. On-call schedules and escalation policies are part of the AGPL build. On your own install, the plan limits you set decide how many of each an organization may keep.",
+            ),
+        ],
         "/cron-job-monitoring" => &[
             (
                 "How do I monitor a cron job?",
@@ -506,7 +533,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "Does it do incident paging?",
-                "Yes. It pages your team on Slack, Telegram, WhatsApp, SMS, PagerDuty and more, and the reminders repeat until someone acknowledges.",
+                "Yes. It pages your team on Slack, Telegram, WhatsApp, SMS, PagerDuty and more, on-call rotations decide who is paged, escalation policies move on when nobody answers, and the reminders repeat until someone acknowledges.",
             ),
         ],
         "/vs/oneuptime" => &[

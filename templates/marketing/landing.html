@@ -1,5 +1,5 @@
 {% extends "marketing/base.html" %}
-{% block title %}Uptimepage: uptime monitoring and status pages in one{% endblock %}
+{% block title %}{{ og.title }}{% endblock %}
 {% block head %}
 <script type="application/ld+json">{{ org_json_ld.as_str()|safe }}</script>
 <script type="application/ld+json">{{ website_json_ld.as_str()|safe }}</script>
@@ -17,14 +17,14 @@
     <section class="mk-hero">
         <div class="mk-hero__copy space-y-7">
             <h1 class="mk-display">
-                An uptime monitor and status page <span class="mk-display-em">in one</span>.
+                An uptime monitor, status page and on-call schedule <span class="mk-display-em">in one</span>.
             </h1>
 
             <p class="mk-lede">
                 Uptimepage is an uptime monitor for websites and APIs.
-                Check availability from multiple regions, alert your team when
-                something fails, and keep customers informed on a public status
-                page. We run the monitoring service. Your team handles the fix.
+                Check availability from multiple regions, alert your team or
+                whoever is on call when something fails, and keep customers
+                informed on a public status page. We run the monitoring service. Your team handles the fix.
             </p>
 
             <div class="flex flex-wrap items-center gap-3 pt-1">
@@ -189,8 +189,9 @@
                 </div>
                 <p class="mk-body mt-2">
                     Alerts reach Slack, PagerDuty, email or a webhook, and
-                    failure thresholds filter brief interruptions. On-call
-                    rotations decide who is paged, escalation policies move on
+                    failure thresholds filter brief interruptions.
+                    <a href="/on-call-scheduling" class="mk-footer-link mk-footer-link--inline">On-call rotations</a>
+                    decide who is paged, escalation policies move on
                     to the next level when nobody acknowledges, and reminders
                     keep an open incident visible until someone does.
                 </p>

@@ -792,6 +792,100 @@ tail -c 4000 backup.log | curl -fsS --data-binary @- "$URL/$code""#,
         cta: "Start free",
     },
     Landing {
+        path: "/on-call-scheduling",
+        created: "2026-09-27",
+        lastmod: "2026-09-27",
+        title: "On-Call Scheduling and Escalation Policies",
+        eyebrow: "on-call",
+        h1: "Page the person on call, from the tool that saw it fail",
+        meta_description: "On-call schedules and escalation policies built into uptime monitoring and status pages. Rotations, calendar overrides, shifts in your calendar app.",
+        lede: "An alert posted to a shared channel at 3 a.m. often reaches nobody. An escalation policy decides who a failing monitor pages and who comes next when nobody answers, and an on-call schedule on one of its levels decides which person that is right now. Both live in the same product as your checks and your status page, so there is no second tool to connect.",
+        features: &[
+            Feature {
+                label: "Rotations",
+                value: "daily, weekly or a custom length",
+            },
+            Feature {
+                label: "Layer hours",
+                value: "all hours, or weekly windows",
+            },
+            Feature {
+                label: "Overrides",
+                value: "pick the days on a calendar",
+            },
+            Feature {
+                label: "Your shifts",
+                value: "a feed for your calendar app",
+            },
+            Feature {
+                label: "Escalation",
+                value: "levels with a wait between them",
+            },
+            Feature {
+                label: "Stops when",
+                value: "someone acknowledges or it resolves",
+            },
+        ],
+        sections: &[
+            Section {
+                heading: "Three jobs, one incident",
+                body: "The usual setup is three products: a monitor that sees the failure, an on-call tool that decides who hears about it, and a status page for your customers. Each has its own account and its own list of services, and the glue between them is yours to maintain. Here a failing monitor opens an incident, and an escalation policy on that monitor, or your org default, pages whoever is on call. When the monitor is a component of your status page, the same incident shows there on its own as it opens and resolves, and you narrate what happens in between. Acknowledging it stops the paging and posts nothing publicly.",
+            },
+            Section {
+                heading: "Layers for working hours and nights",
+                body: "A schedule is one or more rotations, called layers, in the schedule's timezone. A layer is on call at all hours or only in the weekly windows you give it, such as Monday to Friday 09:00 to 17:00. At any moment the first layer on call pages, and later layers fill the hours the earlier ones leave. One layer for working hours and a second at all hours covers nights and weekends in a single schedule. A layer whose hours the earlier layers already cover would never page, and the editor tells you so before you save.",
+            },
+            Section {
+                heading: "Handoffs that keep their time",
+                body: "Daily and weekly rotations hand off at the same local time every period, so a Monday 09:00 handoff is still at 09:00 after the clocks change. A custom rotation runs on a fixed length of an hour or more, such as twelve hours, counted from the first handoff, so it does not follow daylight-saving changes. The schedule list shows who is on call now, until when, and who takes over next.",
+            },
+            Section {
+                heading: "Holidays and swaps without touching the rotation",
+                body: "A saved schedule opens on a calendar of who is on call each day. Click a start day and an end day, pick who covers, and that override beats the rotation for the window. The rotation itself does not change, so when the override ends the order carries on where it would have been.",
+            },
+            Section {
+                heading: "Your shifts in your own calendar",
+                body: "The on-call page lists your next shifts across every schedule, overrides you cover included. It also gives you a private link that Google Calendar, Apple Calendar or Outlook can subscribe to, so your shifts sit next to the rest of your week. Making a new link stops the old one, and the link ends when you leave the organization.",
+            },
+            Section {
+                heading: "Escalation when nobody answers",
+                body: "An escalation policy is a ladder of levels. Level 1 pages when the incident opens, and each level waits before the next one pages. A level can page notification channels, on-call schedules, or both, and the ladder can repeat from the top up to ten more times. Bind a policy to one monitor, or make it the default for every monitor without its own. Acknowledging or resolving the incident stops the ladder. After the last page, the monitor's reminders take over, unless you switched them off for that monitor.",
+            },
+            Section {
+                heading: "A warning before a page reaches no one",
+                body: "Each person picks the channels that page them: SMS, Slack, Telegram, Pushover, ntfy, PagerDuty, email or any of the others. A person who has not picked one resolves as on call but cannot be paged, and both the schedule list and the on-call page warn about it while there is still time to fix it. From a phone, the Acknowledge button on an ntfy page takes the incident, and acknowledging a Pushover emergency page does the same, so the reminders stop without opening a laptop.",
+            },
+        ],
+        code: None,
+        resources: &[
+            ResourceLink {
+                label: "On-call schedules in the docs",
+                href: "/docs/incidents#on-call-schedules",
+            },
+            ResourceLink {
+                label: "Paging and escalation",
+                href: "/docs/incidents#paging-and-escalation",
+            },
+            ResourceLink {
+                label: "Notification channels",
+                href: "/docs/notifications",
+            },
+            ResourceLink {
+                label: "Stop one bad probe waking you at 3 a.m.",
+                href: "/blog/stop-false-uptime-alerts",
+            },
+            ResourceLink {
+                label: "Status pages for SaaS",
+                href: "/status-page-for-saas",
+            },
+            ResourceLink {
+                label: "Why people pick Uptimepage",
+                href: "/why-uptimepage",
+            },
+        ],
+        cta: "Start free",
+    },
+    Landing {
         path: "/vs/uptimerobot",
         created: "2026-06-16",
         lastmod: "2026-09-24",
@@ -876,12 +970,12 @@ tail -c 4000 backup.log | curl -fsS --data-binary @- "$URL/$code""#,
     Landing {
         path: "/vs/better-stack",
         created: "2026-06-19",
-        lastmod: "2026-09-03",
+        lastmod: "2026-09-27",
         title: "Better Uptime (Better Stack) Alternative",
         eyebrow: "comparing platforms",
         h1: "The Better Uptime (Better Stack) alternative for teams",
         meta_description: "Better Uptime is now Better Stack. Uptimepage is hosted monitoring and status pages for teams, driven as code, AGPL if you self-host.",
-        lede: "Better Uptime rebranded to Better Stack, and if it got too expensive, Uptimepage is a focused monitor and status page for your team, hosted and ready to use. Monitors, status pages and notification channels are declarable in Terraform, with an MCP server for assistants. Start free, no card. The source is AGPL if you ever want your data on your own servers.",
+        lede: "Better Uptime rebranded to Better Stack, and if it got too expensive, Uptimepage is a focused monitor, status page and on-call for your team, hosted and ready to use. Monitors, status pages and notification channels are declarable in Terraform, with an MCP server for assistants. Start free, no card. The source is AGPL if you ever want your data on your own servers.",
         features: &[],
         sections: &[
             Section {
@@ -913,12 +1007,12 @@ tail -c 4000 backup.log | curl -fsS --data-binary @- "$URL/$code""#,
     Landing {
         path: "/vs/oneuptime",
         created: "2026-06-19",
-        lastmod: "2026-09-03",
+        lastmod: "2026-09-27",
         title: "A OneUptime Alternative That’s Quick to Run",
         eyebrow: "comparing open source",
         h1: "A OneUptime alternative that’s quick to run",
         meta_description: "An open-source monitor and status page that’s quick to run: one binary plus Postgres and ClickHouse, Terraform and MCP, AGPL. Free on the hosted tier.",
-        lede: "Uptimepage is open source and focused on two jobs done well: uptime monitoring and a public status page. One binary plus two databases, up with a single command, or skip hosting it and use the free tier. No card.",
+        lede: "Uptimepage is open source and focused on three jobs done well: uptime monitoring, a public status page and on-call. One binary plus two databases, up with a single command, or skip hosting it and use the free tier. No card.",
         features: &[],
         sections: &[
             Section {
@@ -944,12 +1038,12 @@ tail -c 4000 backup.log | curl -fsS --data-binary @- "$URL/$code""#,
     Landing {
         path: "/vs/uptime-kuma",
         created: "2026-06-20",
-        lastmod: "2026-09-03",
+        lastmod: "2026-09-27",
         title: "An Uptime Kuma Alternative You Run as Code",
         eyebrow: "comparing open source",
         h1: "An Uptime Kuma alternative you run as code",
         meta_description: "Open-source uptime monitoring and branded status pages, managed as code with Terraform, a REST API and MCP. Team roles and subscribers. Free to start, no card.",
-        lede: "Uptimepage is open source and does two jobs well: uptime monitoring and a public status page. Manage all of it as code, give your team roles, and let customers subscribe to status updates. Run the single binary yourself or use the free hosted tier. No card.",
+        lede: "Uptimepage is open source and does three jobs well: uptime monitoring, a public status page and on-call. Manage monitors and pages as code, give your team roles, and let customers subscribe to status updates. Run the single binary yourself or use the free hosted tier. No card.",
         features: &[],
         sections: &[
             Section {
@@ -1132,7 +1226,7 @@ tail -c 4000 backup.log | curl -fsS --data-binary @- "$URL/$code""#,
     Landing {
         path: "/vs/self-hosted-monitoring",
         created: "2026-07-01",
-        lastmod: "2026-09-24",
+        lastmod: "2026-09-27",
         title: "Uptimepage vs the Self-Hosted Monitoring Tools",
         eyebrow: "comparing self-hosted",
         h1: "Uptimepage vs the self-hosted monitoring tools",
@@ -1146,7 +1240,7 @@ tail -c 4000 backup.log | curl -fsS --data-binary @- "$URL/$code""#,
             },
             Section {
                 heading: "OpenStatus and OneUptime: the dev-first platforms",
-                body: "These are the closest to Uptimepage in philosophy. OpenStatus is monitoring-as-code done well: a Terraform provider, a CLI, an MCP server, auto-resolving incidents, email and webhook subscribers, and probes across twenty-eight regions with sub-minute checks. Its trade-offs are a heavier stack (Turso plus Tinybird plus hosted queues) and an open-source checker that implements only HTTP, TCP and DNS, with ICMP, UDP and SSL-certificate monitors declared in config but not built. OneUptime does everything Uptimepage does and then adds on-call scheduling, escalation, logs, tracing and APM, but that reach costs you a Postgres, ClickHouse, Redis and many-service deployment to operate. Uptimepage aims at the same developer surface, Terraform, REST and MCP, but as one binary you can actually run. It matches those sub-minute checks too: 30 seconds on Team and 10 seconds self-hosted, while the free founding plan already carries fifty monitors at sixty seconds.",
+                body: "These are the closest to Uptimepage in philosophy. OpenStatus is monitoring-as-code done well: a Terraform provider, a CLI, an MCP server, auto-resolving incidents, email and webhook subscribers, and probes across twenty-eight regions with sub-minute checks. Its trade-offs are a heavier stack (Turso plus Tinybird plus hosted queues) and an open-source checker that implements only HTTP, TCP and DNS, with ICMP, UDP and SSL-certificate monitors declared in config but not built. OneUptime covers the same ground, on-call scheduling and escalation included, and then adds logs, tracing and APM, but that reach costs you a Postgres, ClickHouse, Redis and many-service deployment to operate. Uptimepage aims at the same developer surface, Terraform, REST and MCP, but as one binary you can actually run. It matches those sub-minute checks too: 30 seconds on Team and 10 seconds self-hosted, while the free founding plan already carries fifty monitors at sixty seconds.",
             },
             Section {
                 heading: "Gatus: the protocol-rich checker",
@@ -1614,7 +1708,7 @@ tail -c 4000 backup.log | curl -fsS --data-binary @- "$URL/$code""#,
     Landing {
         path: "/compare/uptime-kuma-vs-oneuptime",
         created: "2026-07-17",
-        lastmod: "2026-09-03",
+        lastmod: "2026-09-27",
         title: "Uptime Kuma vs OneUptime",
         eyebrow: "comparing self-hosted",
         h1: "Uptime Kuma vs OneUptime: one tool, or the whole stack?",
@@ -2739,7 +2833,7 @@ resource "uptimepage_target" "api" {
     Landing {
         path: "/why-uptimepage",
         created: "2026-08-15",
-        lastmod: "2026-08-19",
+        lastmod: "2026-09-27",
         title: "Why Uptimepage",
         eyebrow: "why this one",
         h1: "Why people pick Uptimepage",
@@ -2760,7 +2854,7 @@ resource "uptimepage_target" "api" {
             },
             Feature {
                 label: "In the box",
-                value: "status page, incidents, subscribers, alerts",
+                value: "status page, incidents, alerts, on-call",
             },
             Feature {
                 label: "Your team",
@@ -2782,7 +2876,7 @@ resource "uptimepage_target" "api" {
             },
             Section {
                 heading: "One tool instead of three",
-                body: "Most people end up paying for a checker, then a status page, then something to route the alerts. Here the checks, the public page your customers read, the incident timeline you narrate while you work, and the alerting are one product. A failing monitor opens an incident by itself; you decide whether it goes public. Visitors subscribe to the page by confirmed email or signed webhook and get told when it is fixed, which is roughly the whole support inbox you would have answered by hand.",
+                body: "Most people end up paying for a checker, then a status page, then an on-call tool to decide who gets woken. Here the checks, the public page your customers read, the incident timeline you narrate while you work, and the on-call rotations with their escalation are one product. A failing monitor opens an incident by itself and pages its channels or whoever is on call, and you decide which monitors appear on the public page. Visitors subscribe to the page by confirmed email or signed webhook and get told when it is fixed, which is roughly the whole support inbox you would have answered by hand.",
             },
             Section {
                 heading: "Set it up by asking, not by filling forms",
@@ -2847,6 +2941,10 @@ resource "uptimepage_target" "api" {
             ResourceLink {
                 label: "Monitoring a login, not a login page",
                 href: "/browser-login-monitoring",
+            },
+            ResourceLink {
+                label: "On-call schedules and escalation",
+                href: "/on-call-scheduling",
             },
             ResourceLink {
                 label: "Open-source uptime monitoring",

@@ -1,9 +1,10 @@
+{% let nav_product = canonical_url.contains("/on-call-scheduling") %}
 {% let nav_solutions = canonical_url.contains("/status-page-for-") || canonical_url.contains("/uptime-monitoring-for-developers") || canonical_url.contains("/white-label-uptime-monitoring") || canonical_url.contains("/open-source-status-page") %}
 {% let nav_compare = canonical_url.contains("/vs/") || canonical_url.contains("/compare/") || canonical_url.contains("/open-source-uptime-monitoring") %}
 {% let nav_resources = canonical_url.contains("/docs") || canonical_url.contains("/blog") || canonical_url.contains("/tools") || canonical_url.contains("/mcp-server") || canonical_url.contains("/terraform-uptime-monitoring") || canonical_url.contains("/terraform-status-page") || canonical_url.contains("/about") %}
 {% let nav_pricing = canonical_url.ends_with("/pricing") %}
 <details class="mk-navgrp">
-    <summary class="mk-navgrp__trigger">product<span class="mk-navgrp__caret" aria-hidden="true"></span></summary>
+    <summary class="mk-navgrp__trigger{% if nav_product %} is-active{% endif %}">product<span class="mk-navgrp__caret" aria-hidden="true"></span></summary>
     <div class="mk-mega">
         <div class="mk-mega__col">
             <p class="mk-mega__head">the product</p>
@@ -14,6 +15,10 @@
             <a href="/#checks" class="mk-mega__item">
                 <span class="mk-mega__item-title">what you can check</span>
                 <span class="mk-mega__item-desc">8 kinds, one monitor list</span>
+            </a>
+            <a href="/on-call-scheduling" class="mk-mega__item">
+                <span class="mk-mega__item-title">on-call</span>
+                <span class="mk-mega__item-desc">rotations and escalation</span>
             </a>
             {% if false %}
             <a href="/#see" class="mk-mega__item">

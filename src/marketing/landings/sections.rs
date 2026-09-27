@@ -42,11 +42,11 @@ pub(super) static FITS: &[(&str, &str)] = &[
     ),
     (
         "/vs/better-stack",
-        "Uptimepage is deliberately smaller: uptime monitoring and a status page, with no log platform or incident suite beside them. It is one Rust binary with Postgres and ClickHouse, so self-hosting is a compose file rather than a project, and the licence is AGPL, so leaving the hosted tier is a migration instead of a rewrite. Checks run from several regions, and you can run your own probe agent for targets that never leave your network.",
+        "Uptimepage is deliberately smaller: uptime monitoring, a status page and on-call, with no log platform or tracing beside them. It is one Rust binary with Postgres and ClickHouse, so self-hosting is a compose file rather than a project, and the licence is AGPL, so leaving the hosted tier is a migration instead of a rewrite. Checks run from several regions, and you can run your own probe agent for targets that never leave your network.",
     ),
     (
         "/vs/oneuptime",
-        "Two jobs done properly, with no platform built around them. Checks over HTTP, TCP, DNS, TLS, domain expiry, ping, heartbeat and browser flows, organizations with roles, a Terraform provider, a REST API and an MCP server, and a branded status page where incidents open on their own and customers subscribe by confirmed email or signed webhook. One binary and two databases, up with a single command, or hosted free with no card.",
+        "Monitoring, a status page and on-call done properly, with no platform built around them. Checks over HTTP, TCP, DNS, TLS, domain expiry, ping, heartbeat and browser flows, on-call rotations with escalation, organizations with roles, a Terraform provider, a REST API and an MCP server, and a branded status page where incidents open on their own and customers subscribe by confirmed email or signed webhook. One binary and two databases, up with a single command, or hosted free with no card.",
     ),
     (
         "/vs/uptime-kuma",
@@ -62,7 +62,7 @@ pub(super) static FITS: &[(&str, &str)] = &[
     ),
     (
         "/vs/self-hosted-monitoring",
-        "Uptimepage is not the very fastest interval or the widest protocol list here, and it is honest about that. What it does is put the two halves together: real HTTP, TCP, DNS, TLS-certificate, domain-expiry, ping, cron-heartbeat and browser-flow monitoring, and a branded public status page with confirmed email and webhook subscribers, auto-opened incidents and scheduled maintenance. All of it is driven from code with a Terraform provider, a full REST API and an MCP server, isolated per organization with roles, and checked from probes you can run in any region. It runs as one binary with Postgres and ClickHouse, hosted for free or self-hosted under AGPL.",
+        "Uptimepage is not the very fastest interval or the widest protocol list here, and it is honest about that. What it does is put the parts together: real HTTP, TCP, DNS, TLS-certificate, domain-expiry, ping, cron-heartbeat and browser-flow monitoring, a branded public status page with confirmed email and webhook subscribers, auto-opened incidents and scheduled maintenance, and on-call rotations with escalation. All of it is driven from code with a Terraform provider, a full REST API and an MCP server, isolated per organization with roles, and checked from probes you can run in any region. It runs as one binary with Postgres and ClickHouse, hosted for free or self-hosted under AGPL.",
     ),
     (
         "/compare/openstatus-vs-uptime-kuma",
