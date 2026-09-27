@@ -24,6 +24,7 @@ use crate::error::ApiError;
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::request::{Authorized, CurrentUser, OnCallRead, OnCallWrite, OwnerAuthorized};
+use crate::storage::on_call_feeds;
 
 const MAX_NAME: usize = 100;
 const MAX_LAYERS: usize = 10;
@@ -365,6 +366,30 @@ pub async fn set_my_contacts(
         .replace_for_user(org, user, body.channel_ids.clone())
         .await?;
     Ok(Json(body))
+}
+
+/// The link a calendar app subscribes to for your own on-call shifts.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CalendarFeed {
+    pub url: String,
+}
+
+#[utoipa::path(
+    post, path = "/api/v1/on-call/my-calendar", tag = "on-call",
+    summary = "Make a new calendar link for your on-call shifts",
+    description = "An iCalendar feed of your shifts from the last 30 days and the next 90, read from the schedules as they stand now, which a calendar app fetches without signing in. The link made before this one stops working.",
+    responses((status = 200, body = CalendarFeed)),
+)]
+pub async fn reset_my_calendar(
+    State(state): State<AppState>,
+    Authorized(org, _): Authorized<OnCallWrite>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<CalendarFeed>> {
+    let token =
+        on_call_feeds::reset(state.require_db()?, state.cipher.as_deref(), org, user).await?;
+    Ok(Json(CalendarFeed {
+        url: on_call_feeds::feed_url(&state.cfg.auth.public_base_url, &token),
+    }))
 }
 
 /// Whether the org may add on-call coverage.

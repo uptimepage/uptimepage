@@ -372,6 +372,24 @@ app.{$UPTIMEPAGE_DOMAIN} {
 		import app_upstream
 	}
 
+	# ─── On-call calendar feeds, anonymous capability token, per-IP cap ─
+	# Same enumeration case as the pings. Generous ceiling: calendar apps
+	# fetch every subscriber's feed from a shared pool of provider IPs, and a
+	# throttled fetch leaves a stale calendar, so the cap leaves room for
+	# that shared traffic.
+	@on_call_feed path /ical/*
+	handle @on_call_feed {
+		rate_limit {
+			zone on_call_feed {
+				key {remote_host}
+				ipv6_prefix 64
+				events 600
+				window 1m
+			}
+		}
+		import app_upstream
+	}
+
 	# ─── Email-channel verification — anonymous token link ──────────────
 	# Single-use sha256-at-rest tokens; the per-IP cap bounds brute probing
 	# of the public endpoint.

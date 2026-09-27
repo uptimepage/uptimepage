@@ -77,6 +77,17 @@
     {% call reg::loading("loading…", "sticker-card") %}{% endcall %}
   </div>
 
+  <section class="space-y-3" aria-labelledby="shifts-heading">
+    <h2 id="shifts-heading" class="panel-label">your shifts</h2>
+    <div data-hx-loader
+         hx-get="/web/partials/settings/on-call/mine"
+         hx-trigger="load, every 60s, oncall:feed from:body, oncall:refresh from:body, sm:poll-resume from:body"
+         data-poll-pause
+         hx-swap="innerHTML">
+      {% call reg::loading("loading…", "sticker-card") %}{% endcall %}
+    </div>
+  </section>
+
   <section class="space-y-3" aria-labelledby="contacts-heading">
     <h2 id="contacts-heading" class="panel-label">channels that page you</h2>
     <p class="text-xs text-muted">
@@ -112,5 +123,6 @@
 
 {% if !self.teaser() %}
 <script defer src="{{ "js/ui/contact_channels.js"|asset }}"></script>
+<script defer src="{{ "js/public/copy.js"|asset }}"></script>
 {% endif %}
 {% endblock %}

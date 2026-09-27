@@ -10,8 +10,11 @@
 
 mod common;
 
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
 use common::{make_user, unique_slug};
 use sqlx::PgPool;
+use tower::ServiceExt;
 use uptimepage::domain::{
     NewOnCallLayer, NewOnCallOverride, NewOnCallParticipant, NewOnCallSchedule, OrgId,
     RotationType, UserId,
@@ -969,4 +972,114 @@ async fn two_layers_of_one_schedule_cannot_share_an_order_pg() {
     let saved = store.replace(org, id, tied).await.unwrap().unwrap();
     let orders: Vec<i32> = saved.layers.iter().map(|l| l.layer_order).collect();
     assert_eq!(orders, [0, 1]);
+}
+
+/// GET `uri`: status, content type and body.
+async fn fetch(app: &axum::Router, uri: &str) -> (StatusCode, Option<String>, String) {
+    let resp = app
+        .clone()
+        .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+        .await
+        .expect("get");
+    let status = resp.status();
+    let kind = resp
+        .headers()
+        .get("content-type")
+        .map(|v| v.to_str().unwrap().to_owned());
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .expect("body");
+    (
+        status,
+        kind,
+        String::from_utf8(bytes.to_vec()).expect("utf-8"),
+    )
+}
+
+/// Make the session member a new feed link; its path.
+async fn new_feed_path(app: &axum::Router) -> String {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/on-call/my-calendar")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("post");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let url = common::body_json(resp).await["url"]
+        .as_str()
+        .expect("url")
+        .to_owned();
+    let (_, rest) = url.split_once("://").expect("absolute url");
+    rest[rest.find('/').expect("path")..].to_owned()
+}
+
+#[tokio::test]
+#[ignore]
+async fn calendar_feed_follows_the_member_and_their_newest_link_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, owner) = seed_org(&pool, "ocfeed").await;
+    let member = add_member(&pool, org, "ocfeedm").await;
+    PgOnCallStore::new(pool.clone())
+        .create(org, schedule("Nights", "UTC", vec![owner, member]), 10)
+        .await
+        .unwrap();
+    let router = common::build_saas_router_with_pg_cfg(pool.clone(), |_| {}).await;
+    let app = common::with_session(router.clone(), member, Some(org), None);
+
+    let first = new_feed_path(&app).await;
+    let (status, kind, ics) = fetch(&router, &first).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(kind.as_deref(), Some("text/calendar; charset=utf-8"));
+    assert!(ics.contains("X-WR-CALNAME:On call · n\r\n"), "{ics}");
+    assert!(ics.contains("SUMMARY:On call: Nights\r\n"), "{ics}");
+    let (_, _, partial) = fetch(&app, "/web/partials/settings/on-call/mine").await;
+    assert!(partial.contains(&format!("{first}</code>")), "{partial}");
+
+    let second = new_feed_path(&app).await;
+    assert_ne!(first, second);
+    assert_eq!(
+        fetch(&router, &first).await.0,
+        StatusCode::NOT_FOUND,
+        "a new link ends the old one"
+    );
+    assert_eq!(fetch(&router, &second).await.0, StatusCode::OK);
+    let resets: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM org_audit_log \
+         WHERE org_id = $1 AND actor_id = $2 AND action = 'on_call_feed.reset'",
+    )
+    .bind(org.0)
+    .bind(member.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(resets, 2);
+
+    let set_deleted = |deleted: bool| {
+        sqlx::query(
+            "UPDATE organizations SET deleted_at = CASE WHEN $2 THEN now() END WHERE id = $1",
+        )
+        .bind(org.0)
+        .bind(deleted)
+        .execute(&pool)
+    };
+    set_deleted(true).await.unwrap();
+    assert_eq!(fetch(&router, &second).await.0, StatusCode::NOT_FOUND);
+    set_deleted(false).await.unwrap();
+
+    sqlx::query("DELETE FROM memberships WHERE user_id = $1 AND org_id = $2")
+        .bind(member.0)
+        .bind(org.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        fetch(&router, &second).await.0,
+        StatusCode::NOT_FOUND,
+        "leaving the org ends the feed"
+    );
 }

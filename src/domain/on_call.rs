@@ -9,6 +9,7 @@
 //! unit-tested here; the store loads the rows and the engine maps the resolved
 //! users to their contact channels.
 
+use std::ops::Range;
 use std::str::FromStr;
 
 use chrono::{
@@ -288,6 +289,29 @@ pub fn on_call_shifts<'a>(
             user_ids,
             overridden,
         })
+    })
+}
+
+/// The stretches of `[from, to)` that `user` is on call for, each without a
+/// break: who else is on alongside them, and why, does not split one.
+pub fn shifts_held_by<'a>(
+    schedule: &OnCallSchedule,
+    layers: &'a [OnCallLayer],
+    overrides: &'a [OnCallOverride],
+    user: UserId,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> impl Iterator<Item = Range<DateTime<Utc>>> + 'a {
+    let mut held = on_call_shifts(schedule, layers, overrides, from, to)
+        .filter(move |s| s.user_ids.contains(&user))
+        .map(|s| s.starts_at..s.ends_at)
+        .peekable();
+    std::iter::from_fn(move || {
+        let mut stretch = held.next()?;
+        while let Some(next) = held.next_if(|n| n.start == stretch.end) {
+            stretch.end = next.end;
+        }
+        Some(stretch)
     })
 }
 
@@ -1039,6 +1063,65 @@ mod tests {
         assert_eq!(got.len(), 1);
         assert!(got[0].user_ids.is_empty());
         assert!(!got[0].overridden);
+    }
+
+    #[test]
+    fn a_person_holds_their_turns_in_the_rotation() {
+        let l = layer(
+            0,
+            RotationType::Daily,
+            86_400,
+            "2026-06-01T00:00:00Z",
+            vec![participant(uid(1), 0), participant(uid(2), 1)],
+        );
+        let got = shifts_held_by(
+            &schedule("UTC"),
+            &[l],
+            &[],
+            uid(2),
+            t("2026-06-01T00:00:00Z"),
+            t("2026-06-05T00:00:00Z"),
+        )
+        .collect::<Vec<_>>();
+        assert_eq!(
+            got,
+            vec![
+                t("2026-06-02T00:00:00Z")..t("2026-06-03T00:00:00Z"),
+                t("2026-06-04T00:00:00Z")..t("2026-06-05T00:00:00Z"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_person_s_shift_breaks_only_where_they_go_off() {
+        let l = layer(
+            0,
+            RotationType::Daily,
+            86_400,
+            "2026-06-01T00:00:00Z",
+            vec![participant(uid(1), 0)],
+        );
+        let overrides = [
+            cover(uid(1), "2026-06-02T06:00:00Z", "2026-06-02T18:00:00Z"),
+            cover(uid(7), "2026-06-02T16:00:00Z", "2026-06-02T20:00:00Z"),
+            cover(uid(9), "2026-06-02T20:00:00Z", "2026-06-02T22:00:00Z"),
+        ];
+        let got = shifts_held_by(
+            &schedule("UTC"),
+            &[l],
+            &overrides,
+            uid(1),
+            t("2026-06-02T00:00:00Z"),
+            t("2026-06-03T00:00:00Z"),
+        )
+        .collect::<Vec<_>>();
+        assert_eq!(
+            got,
+            vec![
+                t("2026-06-02T00:00:00Z")..t("2026-06-02T18:00:00Z"),
+                t("2026-06-02T22:00:00Z")..t("2026-06-03T00:00:00Z"),
+            ]
+        );
     }
 
     /// Every instant of every shift resolves to that shift's users, the shifts

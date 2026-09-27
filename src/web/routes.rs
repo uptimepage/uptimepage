@@ -72,6 +72,9 @@ pub fn routes(state: AppState) -> Router {
             "/ping/{token}/{signal}",
             get(views::heartbeat::ping_signal).post(views::heartbeat::ping_signal),
         )
+        // A member's on-call shifts as a calendar feed, token-authenticated
+        // like the share links so a calendar app can fetch it.
+        .route("/ical/{file}", get(views::on_call_shifts::feed))
         // Public email-channel verification: possession of the mailed token
         // is the proof; same always-mounted reasoning as the share links.
         .route("/verify-channel", get(views::verify_channel::verify))
@@ -220,6 +223,10 @@ pub fn routes(state: AppState) -> Router {
         .route(
             "/web/partials/settings/on-call/{id}/calendar",
             get(views::on_call_calendar::partial),
+        )
+        .route(
+            "/web/partials/settings/on-call/mine",
+            get(views::on_call_shifts::partial),
         );
 
     // Only where an operator staffs an inbox, so no page goes nowhere.

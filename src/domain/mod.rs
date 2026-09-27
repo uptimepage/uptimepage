@@ -77,7 +77,7 @@ pub use on_call::{
     FIRST_YEAR, LAST_YEAR, NewOnCallLayer, NewOnCallOverride, NewOnCallParticipant,
     NewOnCallSchedule, OnCallLayer, OnCallOverride, OnCallParticipant, OnCallSchedule,
     OnCallScheduleDetail, OnCallScheduleSummary, OnCallShift, RotationType, local_to_utc,
-    on_call_shifts, resolve_on_call,
+    on_call_shifts, resolve_on_call, shifts_held_by,
 };
 pub use org::{
     AccountId, BrandingError, OrgId, Organization, PublicOrgBranding, PublicStyle, SlugError,

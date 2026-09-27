@@ -852,6 +852,7 @@ mod tests {
         assert!(html.contains("channels that page you"));
         assert!(html.contains(r#"data-contact value="cid" data-delivers checked"#));
         assert!(html.contains(r#"href="/settings/on-call/new""#));
+        assert!(html.contains(r#"hx-get="/web/partials/settings/on-call/mine""#));
         assert!(!html.contains("Team plan"));
         assert!(!html.contains("reaches no one"));
     }
@@ -886,6 +887,7 @@ mod tests {
         assert!(html.contains("Ask the account owner"));
         assert!(!html.contains(r#"href="/settings/on-call/new""#));
         assert!(!html.contains("hx-get=\"/web/partials/settings/on-call\""));
+        assert!(!html.contains("your shifts"));
         assert!(!html.contains("channels that page you"));
     }
 

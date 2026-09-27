@@ -96,11 +96,12 @@ async fn access_log(req: Request, next: Next) -> Response {
 }
 
 /// Replace a path-segment capability token (`/m/{token}` share links,
-/// `/ping/{token}` heartbeat pings) with a placeholder so the secret never
-/// reaches stdout logs or the exported span. It's a path segment, not a query
-/// param, so the access path's query-stripping would miss it.
+/// `/ping/{token}` heartbeat pings, `/ical/{token}.ics` on-call feeds) with a
+/// placeholder so the secret never reaches stdout logs or the exported span.
+/// It's a path segment, not a query param, so the access path's
+/// query-stripping would miss it.
 fn scrub_capability_token(path: &str) -> std::borrow::Cow<'_, str> {
-    for prefix in ["/m/", "/ping/"] {
+    for prefix in ["/m/", "/ping/", "/ical/"] {
         if let Some(rest) = path.strip_prefix(prefix) {
             let tail = rest
                 .split_once('/')
@@ -1148,6 +1149,10 @@ mod tests {
         assert_eq!(
             scrub_capability_token("/m/abc/latency"),
             "/m/{token}/latency"
+        );
+        assert_eq!(
+            scrub_capability_token("/ical/abc123secret.ics"),
+            "/ical/{token}"
         );
     }
 

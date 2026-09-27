@@ -4,6 +4,7 @@
 
 pub mod avatar;
 pub mod error;
+pub mod ical;
 pub mod robots;
 pub mod routes;
 pub mod views;

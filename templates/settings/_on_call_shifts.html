@@ -1,0 +1,55 @@
+<div class="sticker-card space-y-4 p-5">
+  {% if shifts.is_empty() %}
+  <p class="text-sm text-muted">No shifts for you in the next 90 days.</p>
+  {% else %}
+  <ul class="space-y-1.5 text-sm">
+    {% for s in shifts %}
+    <li>
+      <span class="font-medium">{{ s.schedule }}</span>
+      <span class="text-muted">
+        {% if s.now %}now{% else %}<time data-tz="at" datetime="{{ s.starts_at|iso_ts }}">{{ s.starts_at|human_ts }}</time>{% endif %}
+        {% if let Some(end) = s.ends_at %}until <time data-tz="at" datetime="{{ end|iso_ts }}">{{ end|human_ts }}</time>{% else %}with no handoff in the next 90 days{% endif %}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <div class="space-y-2 border-t border-[color:var(--theme-line)] pt-3">
+    <p class="panel-label">calendar feed</p>
+    {% if let Some(url) = feed_url %}
+    <div class="flex flex-wrap items-center gap-2">
+      <code id="on-call-feed-url"
+            class="min-w-0 flex-1 break-all rounded-sm bg-[color:var(--theme-surface-sunk)] px-2 py-1.5 font-mono text-xs">{{ url }}</code>
+      <button type="button" data-copy="#on-call-feed-url" aria-label="Copy calendar feed link"
+              class="sticker-btn px-3 py-1.5 text-sm font-medium">copy</button>
+      <button type="button"
+              hx-post="/api/v1/on-call/my-calendar"
+              hx-headers='{"X-Requested-With":"uptimepage"}'
+              hx-swap="none"
+              data-on-ok-trigger="oncall:feed"
+              data-on-fail-toast="Could not make a new link."
+              data-confirm-modal
+              data-confirm-title="Make a new calendar link?"
+              data-confirm-body="The link you have now stops working, and calendars subscribed to it stop updating."
+              data-confirm-label="make new link"
+              class="sticker-btn px-3 py-1.5 text-sm font-medium">new link</button>
+    </div>
+    <p class="text-xs text-muted">
+      Add it to your calendar app by URL. Anyone holding the link sees your
+      shifts; if it gets out, make a new one.
+    </p>
+    {% else %}
+    <p class="text-xs text-muted">
+      Your shifts from the last 30 days and the next 90, in your own calendar app.
+    </p>
+    <button type="button"
+            hx-post="/api/v1/on-call/my-calendar"
+            hx-headers='{"X-Requested-With":"uptimepage"}'
+            hx-swap="none"
+            data-on-ok-trigger="oncall:feed"
+            data-on-fail-toast="Could not make a calendar link."
+            class="sticker-btn px-3 py-1.5 text-sm font-medium">make calendar link</button>
+    {% endif %}
+  </div>
+</div>

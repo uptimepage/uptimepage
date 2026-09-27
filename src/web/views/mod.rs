@@ -18,6 +18,7 @@ pub mod nav;
 pub mod notification_channels;
 pub mod on_call;
 pub mod on_call_calendar;
+pub mod on_call_shifts;
 pub mod organizations;
 pub mod pages;
 pub mod public_status;

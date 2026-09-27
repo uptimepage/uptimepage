@@ -99,6 +99,10 @@ The edit page carries a calendar of the saved schedule. Each day names who is on
 
 Resolution at page time, for a given instant: an override covering that instant wins; otherwise the highest layer that has participants, advanced by its rotation. The result is a set of users.
 
+### Your shifts
+
+The on-call page lists your next shifts across every schedule, overrides you cover included. It also gives you a calendar link: an iCalendar feed of your shifts from the last 30 days and the next 90, which Google Calendar, Apple Calendar or Outlook subscribe to by URL without signing in. Its past shifts are worked out from the schedules as they stand now, as on the schedule calendar, so editing a rotation changes them too and deleting a schedule drops them. Anyone holding the link can read your shifts, so keep it to yourself. Making a new link, on the page or with `POST /api/v1/on-call/my-calendar`, stops the old one working, and the link ends when you leave the organization.
+
 ### Contact channels
 
 A resolved user is paged through the org [notification channels](notifications.md) they have opted into — each member picks, on the on-call page, which notification channels reach them. A `user`/`schedule` target therefore resolves to people, then to their chosen channels; the paging log records the targeted user alongside the channel. If none of a member's chosen channels can deliver (switched off, or an email address not yet confirmed), they resolve but cannot be paged. The schedule list names such members on each schedule, rotation or override alike, and the on-call page warns a member who is on call without one. When someone leaves the organization, removed by an owner or by deleting their account, they come off every rotation, override and escalation level there, and their choice of paging channels is dropped. The channels themselves stay: one bound directly to a monitor or to a level keeps paging wherever it is bound.

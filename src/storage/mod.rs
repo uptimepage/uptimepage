@@ -22,6 +22,7 @@ pub mod monitor_shares;
 pub mod notification_channels;
 pub mod oauth_identities;
 pub mod on_call;
+pub mod on_call_feeds;
 pub mod operator;
 pub mod org_ttl;
 pub mod orgs;

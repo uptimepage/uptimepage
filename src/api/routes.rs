@@ -299,6 +299,10 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
             get(handlers::on_call::get_my_contacts).put(handlers::on_call::set_my_contacts),
         )
         .route(
+            "/on-call/my-calendar",
+            post(handlers::on_call::reset_my_calendar),
+        )
+        .route(
             "/on-call/schedules/{id}",
             get(handlers::on_call::get)
                 .patch(handlers::on_call::replace)
