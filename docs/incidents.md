@@ -64,7 +64,7 @@ Every lifecycle action writes an append-only event to the incident's internal ti
 
 When an incident opens, the escalation engine pages the responsible channels. Paging reuses the same transports as regular notifications, every channel kind included: Slack, Discord, Teams, Google Chat, Mattermost, Telegram (one-tap linked or bring-your-own bot), WhatsApp, email, SMS, PagerDuty, ntfy, Pushover, Gotify, and webhooks (see [Notifications](notifications.md)). Pushover emergency-priority pages are receipt-tracked and cancelled on resolve. Telegram rate-limit responses are honoured: a 429 with `retry_after` pushes the retry out at least that far.
 
-An **escalation policy** is an ordered ladder of levels. Each level waits a delay, then pages its targets; if no one acknowledges, the engine advances to the next level, and can repeat the ladder a configured number of times before giving up. Acknowledging the incident halts the walk.
+An **escalation policy** is an ordered ladder of levels. The first level pages as soon as the incident opens; each level pages its targets when it is reached, then waits its delay, and if no one has acknowledged by then the engine pages the next level. After the last level's delay the ladder can be walked again from the top, a configured number of times (at most 10 extra walks). Once the final page is sent the walk ends and the monitor's outage reminders take over, so with a single walk the last level's delay does nothing. Acknowledging the incident halts the walk.
 
 A policy's targets can be:
 
@@ -84,20 +84,20 @@ While an incident stays **unacknowledged**, the engine re-sends a reminder on th
 
 On-call schedules (owner-managed at `/settings/on-call`) decide *which human* a `user` or `schedule` target pages.
 
-A schedule has a timezone and one or more **layers**. Higher layers win when stacked, and no two layers of a schedule share a place in the stack (`layer_order` in the API). Within a layer, participants rotate in listed order on a cadence:
+A schedule has a timezone and one or more **layers**, in order (`layer_order` in the API, lowest first, no two the same). A layer is on call at all hours, or only in its **hours**: weekly windows in the schedule's timezone, each some days of the week from one time to another (`windows` in the API, such as `{"days": ["mon","tue","wed","thu","fri"], "from": "09:00", "to": "17:00"}`). A window whose end is at or before its start runs into the next day, so `22:00` to `06:00` covers the night after each day it names. At any moment the first layer on call pages, and later layers fill the hours earlier ones leave: weekday working hours on the first layer and a second layer at all hours covers nights and weekends. A layer on call at all hours must therefore be the last; the API refuses any layer whose hours the layers before it already cover, since it would never page. Hours no layer covers page no one; the calendar and the schedule list show them as "no one". Within a layer, participants rotate in listed order on a cadence:
 
 | Rotation | Handoff |
 |---|---|
 | `daily` / `weekly` | Hands off at the same wall-clock time each period, in the schedule's timezone — stable across daylight-saving changes. |
 | `custom` | A fixed duration of at least an hour, written like `12h` or `90m` in the editor (`rotation_length_secs` in the API), counted from the first handoff, so it does not follow daylight-saving changes. |
 
-The editor lists each layer's participants in rotation order; move one up or down to change who follows whom. A layer's first handoff is typed as local time in the schedule's timezone.
+The editor lists each layer's participants in rotation order; move one up or down to change who follows whom. A layer's first handoff is typed as local time in the schedule's timezone, and a new schedule starts in your browser's timezone with the first handoff next Monday at 09:00. A rotation keeps counting outside its layer's hours: a weekly rotation on weekday working hours gives each person the working days of their week.
 
 **Overrides** cover a specific window with a chosen person (vacations, swaps) and beat the rotation while active.
 
-The edit page carries a calendar of the saved schedule. Each day names who is on call, with the local time of any handoff that day, and overrides are highlighted over the rotation; its days run midnight to midnight in the schedule's timezone. Build an override there by clicking a start day, then an end day, then choosing who covers. Days already over cannot start one, and the API refuses a window that has ended; one that has already begun starts when it is added, so the calendar keeps who was on call before it. The same person cannot cover two overlapping windows on one schedule; the API refuses the second with `ON_CALL_OVERRIDE_OVERLAPS`. The overrides still to come are listed under the calendar, where you can remove one; removing one that has begun ends it now instead, so who was on call before stays as it was. The schedule list names who is on call now, until when, and who takes over, and `GET /api/v1/on-call/who` answers who is on call at any instant.
+The edit page opens on a calendar of the saved schedule, with the rotation below it. Each day names who is on call, with the local time of any handoff that day, and overrides are highlighted over the rotation; its days run midnight to midnight in the schedule's timezone. Build an override there by clicking a start day, then an end day, then choosing who covers. Days already over cannot start one, and the API refuses a window that has ended; one that has already begun starts when it is added, so the calendar keeps who was on call before it. The same person cannot cover two overlapping windows on one schedule; the API refuses the second with `ON_CALL_OVERRIDE_OVERLAPS`. The overrides still to come are listed under the calendar, where you can remove one; removing one that has begun ends it now instead, so who was on call before stays as it was. The schedule list names who is on call now, until when, and who takes over, and `GET /api/v1/on-call/who` answers who is on call at any instant.
 
-Resolution at page time, for a given instant: an override covering that instant wins; otherwise the highest layer that has participants, advanced by its rotation. The result is a set of users.
+Resolution at page time, for a given instant: an override covering that instant wins; otherwise the first layer on call at that instant, advanced by its rotation. The result is a set of users.
 
 ### Your shifts
 

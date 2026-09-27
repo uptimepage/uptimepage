@@ -47,6 +47,7 @@ const MAX_NAME: usize = 100;
 const MAX_DESCRIPTION: usize = 2000;
 const MAX_STEPS: usize = 20;
 const MAX_TARGETS_PER_STEP: usize = 20;
+const MAX_REPEATS: i32 = 10;
 
 /// Bind a monitor or the org default to a policy (or clear it with `null`).
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -80,8 +81,10 @@ fn validate(new: &NewEscalationPolicy) -> Result<()> {
     {
         return Err(invalid("policy description is too long"));
     }
-    if new.repeat_count < 0 {
-        return Err(invalid("repeat_count must be >= 0"));
+    if !(0..=MAX_REPEATS).contains(&new.repeat_count) {
+        return Err(invalid(format!(
+            "repeat_count must be between 0 and {MAX_REPEATS}"
+        )));
     }
     if new.steps.len() > MAX_STEPS {
         return Err(invalid("too many escalation steps"));
@@ -379,6 +382,21 @@ mod tests {
             },
         ]);
         assert!(validate(&p).is_ok());
+    }
+
+    #[test]
+    fn repeats_run_from_none_to_ten() {
+        let mut p = policy(vec![]);
+        for (repeats, ok) in [
+            (-1, false),
+            (0, true),
+            (10, true),
+            (11, false),
+            (i32::MAX, false),
+        ] {
+            p.repeat_count = repeats;
+            assert_eq!(validate(&p).is_ok(), ok, "{repeats}");
+        }
     }
 
     #[test]

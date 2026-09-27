@@ -26,11 +26,11 @@ use crate::domain::{
     NewMaintenanceWindow, NewManualIncident, NewNotificationChannel, NewOnCallLayer,
     NewOnCallOverride, NewOnCallParticipant, NewOnCallSchedule, NewTarget, NotificationChannel,
     NotificationChannelUpdate, OnCallLayer, OnCallOverride, OnCallParticipant, OnCallSchedule,
-    OnCallScheduleDetail, OnCallScheduleSummary, OpsIncident, OverallState, OverallStatus,
-    PingCheck, PublicActionItem, PublicComponent, PublicComponentGroup, PublicComponentStatus,
-    PublicIncident, PublicIncidentUpdate, PublicMaintenance, PublicMaintenanceList,
-    PublicPostmortem, PublicStatusPage, RotationType, Target, TargetAlerts, TargetUpdate, TcpCheck,
-    TlsCertCheck, WriteSource,
+    OnCallScheduleDetail, OnCallScheduleSummary, OnCallWindow, OpsIncident, OverallState,
+    OverallStatus, PingCheck, PublicActionItem, PublicComponent, PublicComponentGroup,
+    PublicComponentStatus, PublicIncident, PublicIncidentUpdate, PublicMaintenance,
+    PublicMaintenanceList, PublicPostmortem, PublicStatusPage, RotationType, Target, TargetAlerts,
+    TargetUpdate, TcpCheck, TlsCertCheck, Weekday, WriteSource,
 };
 use crate::error::public::{PublicApiError, PublicApiErrorBody};
 use crate::error::{ApiError, ApiErrorBody};
@@ -325,6 +325,8 @@ use crate::storage::UptimeStats;
             OnCallScheduleSummary,
             OnCallScheduleDetail,
             OnCallLayer,
+            OnCallWindow,
+            Weekday,
             OnCallParticipant,
             OnCallOverride,
             RotationType,

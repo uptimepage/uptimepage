@@ -50,6 +50,7 @@
     function clearSelection() {
         sel = null;
         picker.hidden = true;
+        window.smCleanupComboboxes?.(picker);
         picker.textContent = "";
         hint.textContent = HINT;
         paint();
@@ -102,7 +103,7 @@
         if (!sel || sel.to !== null) {
             clearSelection();
             sel = { from: i, to: null };
-            hint.textContent = `Start ${cell.getAttribute("data-label")}, now click the end day.`;
+            hint.textContent = `# start ${cell.getAttribute("data-label")}, now click the end day`;
             paint();
             return;
         }
@@ -123,9 +124,11 @@
         label.className = "text-sm text-muted";
         const first = cells[lo].getAttribute("data-label");
         const last = cells[hi].getAttribute("data-label");
-        label.textContent = `Cover ${lo === hi ? first : `${first}–${last}`}:`;
+        label.textContent = `cover ${lo === hi ? first : `${first}–${last}`}:`;
         const select = memberSelect.cloneNode(true);
         select.className = "field";
+        select.setAttribute("data-sm-combobox", "");
+        select.setAttribute("aria-label", "Who covers");
         const assign = document.createElement("button");
         assign.type = "button";
         assign.className = "sticker-btn sticker-btn--primary px-3 py-1 text-sm";
@@ -154,6 +157,7 @@
         });
         cancel.addEventListener("click", clearSelection);
         picker.append(label, select, assign, cancel);
+        window.smInitComboboxes?.();
         picker.hidden = false;
     }
 

@@ -99,6 +99,31 @@
         margin: 0;
         border-radius: var(--radius-sm);
     }
+    .sm-combobox__panel:has(.sm-combobox__search-row) { scroll-padding-top: 2.75rem; }
+    /* Above the options, which are positioned for their tick mark. */
+    .sm-combobox__search-row {
+        position: sticky;
+        z-index: 1;
+        top: -0.25rem;
+        margin: -0.25rem -0.25rem 0.25rem;
+        padding: 0.25rem;
+        background: var(--theme-surface-elev);
+        border-bottom: 1px solid var(--theme-line);
+    }
+    .sm-combobox__search {
+        width: 100%;
+        padding: 0.3rem 0.5rem;
+        border: 1px solid var(--theme-line);
+        border-radius: var(--radius-sm);
+        background: var(--theme-surface);
+        color: var(--theme-text);
+        font: inherit;
+        font-size: 0.8125rem;
+    }
+    .sm-combobox__search:focus {
+        border-color: var(--theme-accent);
+        outline: none;
+    }
     .sm-combobox__option {
         position: relative;
         padding-left: 1.4rem;

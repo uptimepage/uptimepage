@@ -7,7 +7,9 @@
 //
 // Opt in: `<select data-sm-combobox …>`. Idempotent — safe to re-scan
 // after HTMX swaps. Keyboard: ArrowDown/Up navigate, Enter selects,
-// Escape closes, A-Z type-ahead jumps to the next matching option.
+// Escape closes, A-Z type-ahead jumps to the next matching option. A long
+// list adds `data-sm-combobox-search`: the panel opens on a search box that
+// filters the options as you type, in place of the type-ahead.
 
 (function () {
     let openApi = null;
@@ -56,8 +58,28 @@
         panel.hidden = true;
         if (ariaLabel) panel.setAttribute("aria-label", ariaLabel);
 
+        let search = null;
+        if (select.hasAttribute("data-sm-combobox-search")) {
+            const row = document.createElement("li");
+            row.className = "sm-combobox__search-row";
+            row.setAttribute("role", "presentation");
+            search = document.createElement("input");
+            search.type = "search";
+            search.className = "sm-combobox__search";
+            search.placeholder = "search…";
+            search.autocomplete = "off";
+            search.spellcheck = false;
+            search.setAttribute("aria-label", `Search ${ariaLabel || "options"}`);
+            row.appendChild(search);
+        }
+        // Case, underscores and slashes aside, so `new york` finds
+        // America/New_York.
+        const fold = (t) => t.toLowerCase().replace(/[_/]+/g, " ");
+        const options = () => Array.from(panel.querySelectorAll(".sm-combobox__option:not([hidden])"));
+
         function rebuildOptions() {
             panel.textContent = "";
+            if (search) panel.appendChild(search.parentElement);
             for (let i = 0; i < select.options.length; i++) {
                 const opt = select.options[i];
                 const li = document.createElement("li");
@@ -129,12 +151,26 @@
             if (openApi && openApi.root !== root) openApi.close();
             openApi = api;
             trigger.setAttribute("aria-expanded", "true");
+            if (search) {
+                search.value = "";
+                filter();
+            }
             position();
-            const sel = panel.querySelector('[aria-selected="true"]') || panel.firstElementChild;
+            const sel = panel.querySelector('[aria-selected="true"]') || options()[0];
             setCursor(sel);
+            // Keys reach an open panel only through its own controls.
+            (search || trigger).focus();
         }
+        function filter() {
+            const q = fold(search.value.trim());
+            for (const li of panel.querySelectorAll(".sm-combobox__option")) {
+                li.hidden = q !== "" && !fold(li.textContent).includes(q);
+            }
+            setCursor(options()[0]);
+        }
+        if (search) search.addEventListener("input", filter);
         function moveCursor(delta) {
-            const items = Array.from(panel.children);
+            const items = options();
             if (!items.length) return;
             let idx = items.findIndex(it => it.getAttribute("aria-current") === "true");
             if (idx < 0) idx = items.findIndex(it => it.getAttribute("aria-selected") === "true");
@@ -160,19 +196,25 @@
             if (openApi && openApi.root === root) close();
             else open();
         });
+        // Opens only, and leaves Cmd/Ctrl keys to the page's shortcuts. Once
+        // open, the document handler below drives the keys; its
+        // defaultPrevented check keeps the key that opened the panel from
+        // acting a second time.
         trigger.addEventListener("keydown", e => {
-            if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+            if (openApi === api || e.metaKey || e.ctrlKey) return;
+            if (["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key)) {
                 e.preventDefault();
-                if (openApi !== api) open();
-                else moveCursor(1);
-            } else if (e.key === "ArrowUp") {
-                e.preventDefault();
-                if (openApi !== api) open();
-                else moveCursor(-1);
+                open();
             }
+        });
+        // Space clicks a button on keyup, after the keydown already opened
+        // the panel or picked from it.
+        trigger.addEventListener("keyup", e => {
+            if (e.key === " ") e.preventDefault();
         });
         window.smPreventPanelBlur(panel);
         panel.addEventListener("click", e => {
+            if (e.target.closest("input")) return;
             e.preventDefault();
             const li = e.target.closest(".sm-combobox__option");
             if (li) selectValue(li.dataset.value);
@@ -202,19 +244,21 @@
         select.addEventListener("change", syncSelection);
 
         const api = {
-            root, trigger, panel, select,
+            root, trigger, panel, select, search,
             open, close, moveCursor, commit, position,
         };
     }
 
     document.addEventListener("keydown", e => {
-        if (!openApi) return;
+        if (!openApi || e.defaultPrevented || e.isComposing || !openApi.root.contains(e.target)) return;
         switch (e.key) {
-            case "Escape":
+            case "Escape": {
                 e.preventDefault();
-                openApi.close();
-                openApi.trigger.focus();
+                const api = openApi;
+                api.close();
+                api.trigger.focus();
                 return;
+            }
             case "ArrowDown":
                 e.preventDefault();
                 openApi.moveCursor(1);
@@ -227,11 +271,19 @@
                 e.preventDefault();
                 openApi.commit();
                 return;
+            case " ":
+                if (openApi.search) break;
+                e.preventDefault();
+                openApi.commit();
+                return;
             case "Tab":
                 openApi.close();
                 return;
         }
-        if (e.key.length === 1 && /[a-z0-9]/i.test(e.key)) {
+        if (!openApi.search && !e.metaKey && !e.ctrlKey && !e.altKey
+            && e.key.length === 1 && /[a-z0-9]/i.test(e.key)) {
+            // The letter is the picker's, not a page shortcut's.
+            e.preventDefault();
             // Type-ahead — let the document handler skip if the open combo
             // is the one initialised; ev still fires here because focus
             // sits on .sm-combobox__trigger inside openApi.root.
@@ -268,6 +320,7 @@
                 ? Array.from(root.querySelectorAll("select[data-sm-combobox]"))
                 : []);
         for (const s of selects) {
+            if (openApi && openApi.select === s) openApi.close();
             if (s._smComboboxObserver) {
                 s._smComboboxObserver.disconnect();
                 s._smComboboxObserver = null;
@@ -275,6 +328,7 @@
         }
     }
     window.smInitComboboxes = scan;
+    window.smCleanupComboboxes = cleanup;
     document.addEventListener("DOMContentLoaded", scan);
     document.body.addEventListener("htmx:afterSwap", scan);
     document.body.addEventListener("htmx:afterSettle", scan);

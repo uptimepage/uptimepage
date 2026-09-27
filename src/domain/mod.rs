@@ -46,7 +46,7 @@ pub use credential::{CredentialAction, CredentialOrigin, LinkedIdentity, OauthPr
 pub use escalation_policy::{
     EscalationDecision, EscalationPolicy, EscalationPolicySummary, EscalationStep,
     EscalationTarget, EscalationTargetType, NewEscalationPolicy, NewEscalationStep,
-    NewEscalationTarget, next_step,
+    NewEscalationTarget, next_step, wait_after,
 };
 pub use heartbeat::{CadenceAdvice, HeartbeatPingRecord, ObservedCadence, Ping, PingSignal};
 pub use incident::{
@@ -76,8 +76,8 @@ pub use notification_channel::{
 pub use on_call::{
     FIRST_YEAR, LAST_YEAR, NewOnCallLayer, NewOnCallOverride, NewOnCallParticipant,
     NewOnCallSchedule, OnCallLayer, OnCallOverride, OnCallParticipant, OnCallSchedule,
-    OnCallScheduleDetail, OnCallScheduleSummary, OnCallShift, RotationType, local_to_utc,
-    on_call_shifts, resolve_on_call, shifts_held_by,
+    OnCallScheduleDetail, OnCallScheduleSummary, OnCallShift, OnCallWindow, RotationType, Shadowed,
+    Weekday, local_to_utc, never_pages, on_call_shifts, resolve_on_call, shifts_held_by,
 };
 pub use org::{
     AccountId, BrandingError, OrgId, Organization, PublicOrgBranding, PublicStyle, SlugError,

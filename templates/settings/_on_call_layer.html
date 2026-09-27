@@ -1,65 +1,110 @@
+{% import "_register.html" as reg %}
 {# One rotation layer in the schedule builder, shared by the rendered rows and
    the clone <template> for a new one. #}
 {% macro layer(layer, members, num) %}
-<div data-layer-row class="sticker-card space-y-4 p-4">
-  <div class="flex items-center justify-between">
-    <h3 class="text-sm font-medium">layer <span data-layer-num>{{ num }}</span></h3>
-    <button type="button" data-remove-layer class="row-link row-link--danger text-xs">remove</button>
-  </div>
-  <label class="field-outline max-w-xs">
-    <span class="field-outline__label">Label <span class="text-quiet">(optional)</span></span>
-    <input type="text" data-layer-name maxlength="100" value="{{ layer.name }}" class="w-full field">
-  </label>
-  <div class="flex flex-wrap gap-4">
-    <label class="field-outline">
-      <span class="field-outline__label">Rotation</span>
-      <select data-rotation-type class="field">
-        <option value="daily"{% if layer.rotation_type == "daily" %} selected{% endif %}>Daily</option>
-        <option value="weekly"{% if layer.rotation_type == "weekly" %} selected{% endif %}>Weekly</option>
-        <option value="custom"{% if layer.rotation_type == "custom" %} selected{% endif %}>Custom</option>
-      </select>
-    </label>
-    <label class="field-outline">
-      <span class="field-outline__label">Every</span>
-      <span class="flex items-center gap-2">
-        <input type="text" data-rotation-length value="{{ layer.rotation_length }}" autocomplete="off" spellcheck="false" class="w-24 field">
-        <span data-rotation-unit class="text-sm text-muted"></span>
+<fieldset data-layer-row class="sticker-card form-card min-w-0 scroll-mt-6">
+  <legend>
+    <span class="flex items-center gap-2">
+      <span data-layer-drag draggable="true" aria-hidden="true" title="drag to reorder"
+            class="-ml-1 cursor-grab select-none text-sm leading-none text-quiet hover:text-body active:cursor-grabbing">⠿</span>
+      <span class="flex-1">layer <span data-layer-num>{{ num }}</span></span>
+      <span class="flex items-center gap-3 font-normal normal-case tracking-normal">
+        <button type="button" data-move-layer="-1" class="row-link text-xs" aria-label="Move layer {{ num }} earlier">up</button>
+        <button type="button" data-move-layer="1" class="row-link text-xs" aria-label="Move layer {{ num }} later">down</button>
+        <button type="button" data-remove-layer class="row-link row-link--danger text-xs">remove</button>
       </span>
+    </span>
+  </legend>
+  <div class="clear-both space-y-5 p-5">
+    <p data-never-pages role="status" hidden class="flash-text flash-text--warn font-mono text-xs"></p>
+    <label class="field-outline max-w-xs">
+      <span class="field-outline__label">Label (optional)</span>
+      <input type="text" data-layer-name maxlength="100" value="{{ layer.name }}"
+             placeholder="weekdays" autocomplete="off" class="w-full field">
     </label>
-    <label class="field-outline">
-      <span class="field-outline__label">First handoff <span data-handoff-zone class="font-mono text-quiet"></span></span>
-      <input type="datetime-local" data-handoff value="{{ layer.handoff_local }}" data-iso="{{ layer.handoff_at }}" class="field">
-    </label>
-  </div>
-  <div class="space-y-2">
-    <span class="block text-xs uppercase text-muted">Participants, in rotation order</span>
-    <ol data-participant-list class="space-y-1">
-      {% for p in layer.participants %}
-      {% call participant(p.id, p.email, p.reachable) %}{% endcall %}
-      {% endfor %}
-    </ol>
-    <div class="flex flex-wrap items-center gap-2">
-      <select data-add-participant class="field max-w-xs" aria-label="Member to add">
-        <option value="">choose a member…</option>
+
+    <div>
+      <span class="mb-1.5 block text-xs text-muted">Rotation</span>
+      <div class="flex flex-wrap items-start gap-3">
+        <div class="sm-rail sm-rail--fill" role="radiogroup" aria-label="Rotation">
+          {% for kind in ["daily", "weekly", "custom"] %}
+          <label class="sm-rail__seg">
+            <input type="radio" data-rotation-type value="{{ kind }}" class="sr-only"{% if layer.rotation_type == *kind %} checked{% endif %}>{{ kind }}
+          </label>
+          {% endfor %}
+        </div>
+        <label class="field-outline w-32">
+          <span class="field-outline__label">Every</span>
+          <input type="text" data-rotation-length value="{{ layer.rotation_length }}"
+                 autocomplete="off" spellcheck="false" class="w-full field pr-14 font-mono">
+          <span data-rotation-unit class="field-outline__unit" aria-hidden="true"></span>
+        </label>
+        <label class="field-outline">
+          <span class="field-outline__label">First handoff</span>
+          <input type="datetime-local" data-handoff value="{{ layer.handoff_local }}" data-iso="{{ layer.handoff_at }}" class="field font-mono">
+          <span data-handoff-zone class="mt-1 block font-mono text-xs text-quiet"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="space-y-2">
+      <span class="block text-xs text-muted">On call</span>
+      <p data-windows-none class="font-mono text-xs text-quiet"{% if !layer.windows.is_empty() %} hidden{% endif %}># at all hours</p>
+      <ul data-window-list class="space-y-2">
+        {% for w in layer.windows %}
+        {% call window(w) %}{% endcall %}
+        {% endfor %}
+      </ul>
+      <button type="button" data-add-window class="scope-token">+ add hours</button>
+    </div>
+
+    <div class="space-y-2">
+      <span class="block text-xs text-muted">Participants, in rotation order</span>
+      <ol data-participant-list class="space-y-1.5">
+        {% for p in layer.participants %}
+        {% call participant(p.id, p.email, p.reachable) %}{% endcall %}
+        {% endfor %}
+      </ol>
+      <select data-add-participant data-sm-combobox class="field max-w-xs" aria-label="Add a participant">
+        <option value="">add a participant…</option>
         {% for m in members %}
         <option value="{{ m.id }}" data-email="{{ m.email }}"{% if !m.reachable %} data-unreachable{% endif %}>{{ m.email }}{% if !m.reachable %} (no paging channels){% endif %}</option>
         {% endfor %}
       </select>
-      <button type="button" data-add-participant-go class="sticker-btn px-3 py-1 text-sm">add</button>
     </div>
   </div>
-</div>
+</fieldset>
+{% endmacro %}
+
+{# One stretch of the week a layer is on call, read in the schedule's zone. #}
+{% macro window(w) %}
+<li data-window class="flex flex-wrap items-center gap-x-3 gap-y-2">
+  <span class="flex flex-wrap gap-1" role="group" aria-label="Days">
+    {% for d in w.days %}
+    <label class="scope-token">
+      <input type="checkbox" data-window-day value="{{ d.value }}" class="sr-only"{% if d.on %} checked{% endif %}>
+      {{ d.label }}
+    </label>
+    {% endfor %}
+  </span>
+  <span class="flex items-center gap-2">
+    <input type="time" data-window-from value="{{ w.from }}" aria-label="From" class="field font-mono">
+    <span class="font-mono text-xs text-quiet">to</span>
+    <input type="time" data-window-to value="{{ w.to }}" aria-label="To" class="field font-mono">
+  </span>
+  {% call reg::row_remove("data-remove-window", "Remove these hours") %}{% endcall %}
+</li>
 {% endmacro %}
 
 {% macro participant(id, email, reachable) %}
-<li data-participant="{{ id }}" class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+<li data-participant="{{ id }}" class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-sm border border-[color:var(--theme-line)] py-1 pl-2 pr-1 text-sm">
   <span data-participant-pos class="w-5 text-right font-mono text-xs text-quiet"></span>
   <span data-participant-email class="min-w-0 truncate">{{ email }}</span>
   <span data-participant-unreachable class="flash-text flash-text--warn text-xs"{% if reachable %} hidden{% endif %}>no paging channels</span>
-  <span class="ml-auto flex items-center gap-2">
+  <span class="ml-auto flex items-center gap-3">
     <button type="button" data-move="-1" class="row-link text-xs" aria-label="Move {{ email }} earlier">up</button>
     <button type="button" data-move="1" class="row-link text-xs" aria-label="Move {{ email }} later">down</button>
-    <button type="button" data-remove-participant class="row-link row-link--danger text-xs" aria-label="Remove {{ email }}">remove</button>
+    {% call reg::row_remove("data-remove-participant", "Remove {}"|format(email)) %}{% endcall %}
   </span>
 </li>
 {% endmacro %}

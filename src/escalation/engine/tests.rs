@@ -540,7 +540,7 @@ async fn unverified_email_channel_records_failure_without_sending() {
 }
 
 #[tokio::test]
-async fn policy_pages_first_level_and_arms_the_timer() {
+async fn a_single_walk_ends_right_after_its_last_page() {
     let channels = Arc::new(InMemoryNotificationChannelStore::new());
     let c1 = failing_channel(&channels).await;
     let target = bare_target();
@@ -577,8 +577,9 @@ async fn policy_pages_first_level_and_arms_the_timer() {
     assert_eq!(inc.escalation_level, 1);
     assert_eq!(inc.escalation_policy_id, Some(p.id));
     assert!(
-        inc.next_escalation_at.is_some(),
-        "timer is armed for level 2"
+        inc.next_escalation_at
+            .is_some_and(|at| at <= chrono::Utc::now()),
+        "a single walk's only level leaves nothing to wait out"
     );
 }
 
@@ -1142,6 +1143,7 @@ async fn schedule_target_pages_the_on_call_responders_contact_channel() {
                     rotation_length_secs: 86_400,
                     handoff_at: "2020-01-01T00:00:00Z".parse().unwrap(),
                     layer_order: 0,
+                    windows: vec![],
                     participants: vec![NewOnCallParticipant { user_id: responder }],
                 }],
             },

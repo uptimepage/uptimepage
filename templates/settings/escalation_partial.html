@@ -1,68 +1,66 @@
-<div class="sticker-card space-y-3 p-5">
-  <div class="space-y-1">
-    <h2 class="panel-label">org default</h2>
+<div class="sticker-card overflow-hidden" data-default-box>
+  <h2 class="card-band panel-label">org default</h2>
+  <div class="space-y-3 p-5">
     <p class="text-xs text-muted">
       Pages this policy for any monitor that has no policy of its own. With
       <em>no default</em>, such a monitor pages its own channels, without a
       ladder.
     </p>
-  </div>
-  <div class="flex flex-wrap items-center gap-3">
-    <select data-default-select aria-label="Org default escalation policy" class="field max-w-xs">
-      <option value=""{% if !has_default %} selected{% endif %}>— no default —</option>
-      {% for c in default_choices %}
-      <option value="{{ c.id }}"{% if c.selected %} selected{% endif %}>{{ c.name }}</option>
-      {% endfor %}
-    </select>
-    <span data-default-result role="status" aria-live="polite" class="flash-text text-xs"></span>
+    <div class="flex flex-wrap items-center gap-3">
+      <span class="w-full max-w-xs">
+        <select data-default-select data-sm-combobox aria-label="Org default escalation policy" class="w-full field">
+          <option value=""{% if !has_default %} selected{% endif %}>no default</option>
+          {% for c in default_choices %}
+          <option value="{{ c.id }}"{% if c.selected %} selected{% endif %}>{{ c.name }}</option>
+          {% endfor %}
+        </select>
+      </span>
+      <span data-default-result role="status" aria-live="polite" class="flash-text text-xs"></span>
+    </div>
   </div>
 </div>
 
-{% if policies.is_empty() %}
-<div class="sticker-card flex items-center gap-3 px-4 py-6 text-sm text-muted">
-  <span aria-hidden="true" class="text-base text-quiet">↘</span>
-  <span>{% if locked %}No escalation policies. New ones need the Team plan.{% else %}No escalation policies yet — add one above to start paging on-call through a ladder.{% endif %}</span>
-</div>
-{% else %}
 <div class="sticker-card overflow-hidden">
-  <table class="w-full text-left text-sm">
-    <thead class="bg-[color:var(--theme-surface-sunk)] text-xs uppercase text-muted">
-      <tr>
-        <th class="px-4 py-2">Name</th>
-        <th class="px-4 py-2">Levels</th>
-        <th class="px-4 py-2">Repeat</th>
-        <th class="px-4 py-2">Created</th>
-        <th class="px-4 py-2"></th>
-      </tr>
-    </thead>
-    <tbody class="divide-y divide-[color:var(--theme-line)]">
-      {% for p in policies %}
-      <tr>
-        <td class="px-4 py-2 align-top text-body">
-          <div class="font-medium">{{ p.name }}</div>
-          {% if let Some(d) = p.description %}<div class="text-xs text-muted">{{ d }}</div>{% endif %}
-        </td>
-        <td class="px-4 py-2 align-top tabular-nums">{{ p.step_count }}</td>
-        <td class="px-4 py-2 align-top tabular-nums">{% if p.repeat_count > 0 %}×{{ p.repeat_count }}{% else %}—{% endif %}</td>
-        <td class="px-4 py-2 align-top text-body tabular-nums"><time datetime="{{ p.created|iso_ts }}" data-tz="exact">{{ p.created|human_ts }}</time></td>
-        <td class="px-4 py-2">
-          <div class="flex items-center justify-end gap-3">
-            <a href="/settings/escalation/{{ p.id }}/edit" class="row-link">Edit</a>
-            <button type="button"
-                    hx-delete="/api/v1/escalation-policies/{{ p.id }}"
-                    hx-headers='{"X-Requested-With":"uptimepage"}'
-                    data-on-ok-trigger="escalation:refresh"
-                    data-confirm-modal
-                    data-confirm-title="Delete escalation policy?"
-                    data-confirm-body="Monitors bound to {{ p.name }} stop escalating through it and fall back to the org default (if any)."
-                    data-confirm-label="Delete policy"
-                    data-confirm-danger
-                    class="row-link row-link--danger">Delete</button>
-          </div>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
+{% if policies.is_empty() %}
+<p class="px-4 py-6 font-mono text-xs text-quiet">{% if locked %}# no escalation policies — new ones need the Team plan{% else %}# no escalation policies yet — add one above to page on-call through a ladder{% endif %}</p>
+{% else %}
+<table class="w-full text-left text-sm">
+  <thead class="table-head bg-[color:var(--theme-surface-sunk)]">
+    <tr>
+      <th class="px-4 py-2">Name</th>
+      <th class="px-4 py-2">Levels</th>
+      <th class="px-4 py-2">Walks</th>
+      <th class="px-4 py-2">Created</th>
+      <th class="px-4 py-2"></th>
+    </tr>
+  </thead>
+  <tbody class="divide-y divide-[color:var(--theme-line)]">
+    {% for p in policies %}
+    <tr>
+      <td class="px-4 py-2 align-top text-body">
+        <a href="/settings/escalation/{{ p.id }}/edit" class="font-medium hover:underline decoration-dotted underline-offset-2">{{ p.name }}</a>
+        {% if let Some(d) = p.description %}<p class="text-xs text-muted">{{ d }}</p>{% endif %}
+      </td>
+      <td class="px-4 py-2 align-top font-mono tabular-nums">{{ p.step_count }}</td>
+      <td class="px-4 py-2 align-top font-mono tabular-nums">{% if p.repeat_count > 0 %}{{ p.repeat_count + 1 }}×{% else %}once{% endif %}</td>
+      <td class="px-4 py-2 align-top text-body tabular-nums"><time datetime="{{ p.created|iso_ts }}" data-tz="exact">{{ p.created|human_ts }}</time></td>
+      <td class="px-4 py-2">
+        <div class="flex items-center justify-end gap-3">
+          <button type="button"
+                  hx-delete="/api/v1/escalation-policies/{{ p.id }}"
+                  hx-headers='{"X-Requested-With":"uptimepage"}'
+                  data-on-ok-trigger="escalation:refresh"
+                  data-confirm-modal
+                  data-confirm-title="Delete escalation policy?"
+                  data-confirm-body="Monitors bound to {{ p.name }} stop escalating through it and fall back to the org default (if any)."
+                  data-confirm-label="delete policy"
+                  data-confirm-danger
+                  class="row-link row-link--danger">delete</button>
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
 {% endif %}
+</div>

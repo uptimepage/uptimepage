@@ -9,8 +9,11 @@
 // opts.minWidth — if true, sets panel.minWidth = trigger width (combobox)
 
 (function () {
+    // A field inside the panel still takes the pointer.
     window.smPreventPanelBlur = function (panel) {
-        panel.addEventListener("mousedown", e => { e.preventDefault(); });
+        panel.addEventListener("mousedown", e => {
+            if (!e.target.closest("input")) e.preventDefault();
+        });
     };
 
     window.smPositionFloating = function (trigger, panel, opts) {

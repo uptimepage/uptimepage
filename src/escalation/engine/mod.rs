@@ -125,10 +125,12 @@ struct Worker {
     /// Sharded per-incident locks; `page()` holds one for the incident it
     /// touches so concurrent signal + sweep tasks serialise per incident.
     page_locks: Vec<Mutex<()>>,
-    /// Short-TTL cache of resolved on-call rosters, keyed by schedule. Who is
-    /// on call only changes at a handoff (>= daily), so a correlated outage
-    /// paging many incidents off one schedule resolves it once per window
-    /// instead of running the multi-query load per incident every tick.
+    /// Short-TTL cache of resolved on-call rosters, keyed by schedule, so a
+    /// correlated outage paging many incidents off one schedule resolves it
+    /// once per TTL instead of running the multi-query load per incident
+    /// every tick. Who is on call changes only at a handoff, a layer's hours
+    /// or an override's edge, so a page within the TTL after one may still
+    /// reach whoever held it before.
     on_call_cache: Cache<(OrgId, Uuid), Arc<Vec<UserId>>>,
 }
 

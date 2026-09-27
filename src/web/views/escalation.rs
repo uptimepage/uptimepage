@@ -69,6 +69,9 @@ pub struct EscalationPartial {
     pub locked: bool,
 }
 
+/// The waits offered as one click; any other is typed under custom.
+const DELAY_PRESETS: [&str; 6] = ["1m", "5m", "10m", "15m", "30m", "1h"];
+
 /// One level row in the builder, with every channel offered as a checkbox.
 /// The rung number is rendered from the row's position (`loop.index`) — the JS
 /// renumbers on add/remove — so the level value itself is not carried here.
@@ -81,6 +84,20 @@ pub struct LevelModel {
     /// People this level pages directly, set through the API. The form shows
     /// them, flags any no page can reach, and sends back the ones kept.
     pub people: Vec<MemberChoice>,
+}
+
+impl LevelModel {
+    pub fn delay_presets(&self) -> &'static [&'static str] {
+        &DELAY_PRESETS
+    }
+
+    pub fn delays_after(&self, preset: &str) -> bool {
+        self.delay == preset
+    }
+
+    pub fn custom_delay(&self) -> bool {
+        !DELAY_PRESETS.contains(&self.delay.as_str())
+    }
 }
 
 pub struct PolicyFormModel {
@@ -434,7 +451,7 @@ mod tests {
         }
         .render()
         .unwrap();
-        assert!(html.contains("No escalation policies yet"));
+        assert!(html.contains("# no escalation policies yet"));
         assert!(html.contains("add one above"));
     }
 
@@ -528,6 +545,20 @@ mod tests {
     }
 
     #[test]
+    fn a_wait_off_the_presets_is_typed_under_custom() {
+        let at = |delay: &str| LevelModel {
+            delay: delay.into(),
+            channels: vec![],
+            schedules: vec![],
+            people: vec![],
+        };
+        assert!(at("5m").delays_after("5m"));
+        assert!(!at("5m").custom_delay());
+        assert!(at("45m").custom_delay());
+        assert!(at("0s").custom_delay());
+    }
+
+    #[test]
     fn a_level_keeps_the_people_it_pages() {
         let level = |people: Vec<MemberChoice>| LevelModel {
             delay: "0s".into(),
@@ -564,7 +595,8 @@ mod tests {
         .unwrap();
         assert!(html.contains(&format!(r#"data-person="{}""#, Uuid::from_u128(1))));
         assert!(html.contains("olena@example.com"));
-        assert!(html.contains("taras@example.com (no paging channels)"));
+        let taras = html.find("taras@example.com").unwrap();
+        assert!(html[taras..].contains("no paging channels"));
         assert!(html.contains("data-remove-person"));
         assert!(html.contains(r#"value="0s""#));
     }

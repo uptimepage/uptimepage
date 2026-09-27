@@ -18,8 +18,8 @@ use uuid::Uuid;
 
 use crate::domain::{
     NewOnCallLayer, NewOnCallOverride, NewOnCallSchedule, OnCallLayer, OnCallOverride,
-    OnCallParticipant, OnCallSchedule, OnCallScheduleDetail, OnCallScheduleSummary, OrgId,
-    RotationType, UserId, resolve_on_call,
+    OnCallParticipant, OnCallSchedule, OnCallScheduleDetail, OnCallScheduleSummary, OnCallWindow,
+    OrgId, RotationType, UserId, resolve_on_call,
 };
 use crate::error::codes;
 use crate::error::{AppError, Result};
@@ -159,6 +159,7 @@ struct LayerRow {
     rotation_length_secs: i32,
     handoff_at: DateTime<Utc>,
     layer_order: i32,
+    windows: sqlx::types::Json<Vec<OnCallWindow>>,
     created_at: DateTime<Utc>,
 }
 
@@ -218,8 +219,8 @@ async fn insert_layers_tx(
         let layer_id: Uuid = sqlx::query_scalar(
             r#"INSERT INTO on_call_layers
                    (org_id, schedule_id, name, rotation_type, rotation_length_secs,
-                    handoff_at, layer_order)
-               VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id"#,
+                    handoff_at, layer_order, windows)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id"#,
         )
         .bind(org.0)
         .bind(schedule_id)
@@ -228,6 +229,7 @@ async fn insert_layers_tx(
         .bind(layer.rotation_length_secs)
         .bind(layer.handoff_at)
         .bind(layer.layer_order)
+        .bind(sqlx::types::Json(&layer.windows))
         .fetch_one(&mut **tx)
         .await
         .map_err(
@@ -272,6 +274,7 @@ fn assemble(
             rotation_length_secs: l.rotation_length_secs,
             handoff_at: l.handoff_at,
             layer_order: l.layer_order,
+            windows: l.windows.0.clone(),
             created_at: l.created_at,
             participants: participants
                 .get(&l.id)
@@ -344,7 +347,7 @@ impl PgOnCallStore {
         let ids: Vec<Uuid> = schedules.iter().map(|s| s.id).collect();
         let layers: Vec<LayerRow> = sqlx::query_as(
             "SELECT id, schedule_id, name, rotation_type, rotation_length_secs, handoff_at, \
-                layer_order, created_at \
+                layer_order, windows, created_at \
              FROM on_call_layers WHERE org_id = $1 AND schedule_id = ANY($2) \
              ORDER BY layer_order, created_at, id",
         )
@@ -715,6 +718,7 @@ fn materialise(id: Uuid, new: &NewOnCallSchedule, now: DateTime<Utc>) -> OnCallS
                 rotation_length_secs: l.rotation_length_secs,
                 handoff_at: l.handoff_at,
                 layer_order: l.layer_order,
+                windows: l.windows.clone(),
                 created_at: now,
                 participants: l
                     .participants
@@ -972,6 +976,7 @@ mod tests {
                 rotation_length_secs: 86_400,
                 handoff_at: "2026-06-01T00:00:00Z".parse().unwrap(),
                 layer_order: 0,
+                windows: vec![],
                 participants: participants
                     .into_iter()
                     .map(|u| NewOnCallParticipant { user_id: u })

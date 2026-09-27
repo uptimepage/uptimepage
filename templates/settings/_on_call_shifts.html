@@ -1,22 +1,25 @@
-<div class="sticker-card space-y-4 p-5">
-  {% if shifts.is_empty() %}
-  <p class="text-sm text-muted">No shifts for you in the next 90 days.</p>
-  {% else %}
-  <ul class="space-y-1.5 text-sm">
-    {% for s in shifts %}
-    <li>
-      <span class="font-medium">{{ s.schedule }}</span>
-      <span class="text-muted">
-        {% if s.now %}now{% else %}<time data-tz="at" datetime="{{ s.starts_at|iso_ts }}">{{ s.starts_at|human_ts }}</time>{% endif %}
-        {% if let Some(end) = s.ends_at %}until <time data-tz="at" datetime="{{ end|iso_ts }}">{{ end|human_ts }}</time>{% else %}with no handoff in the next 90 days{% endif %}
-      </span>
-    </li>
-    {% endfor %}
-  </ul>
-  {% endif %}
+<div class="space-y-4 p-5">
+  <div class="space-y-2">
+    <h3 class="panel-label">your shifts</h3>
+    {% if shifts.is_empty() %}
+    <p class="font-mono text-xs text-quiet"># no shifts for you in the next 90 days</p>
+    {% else %}
+    <ul class="space-y-1.5 text-sm">
+      {% for s in shifts %}
+      <li>
+        <span class="font-medium">{{ s.schedule }}</span>
+        <span class="text-muted">
+          {% if s.now %}now{% else %}<time data-tz="at" datetime="{{ s.starts_at|iso_ts }}">{{ s.starts_at|human_ts }}</time>{% endif %}
+          {% if let Some(end) = s.ends_at %}until <time data-tz="at" datetime="{{ end|iso_ts }}">{{ end|human_ts }}</time>{% else %}with no handoff in the next 90 days{% endif %}
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
 
-  <div class="space-y-2 border-t border-[color:var(--theme-line)] pt-3">
-    <p class="panel-label">calendar feed</p>
+  <div class="space-y-2">
+    <h3 class="panel-label">calendar feed</h3>
     {% if let Some(url) = feed_url %}
     <div class="flex flex-wrap items-center gap-2">
       <code id="on-call-feed-url"

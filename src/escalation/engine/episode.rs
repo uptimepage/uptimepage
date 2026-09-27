@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::domain::{
     ChannelConfig, EscalationDecision, IncidentEventKind, NotificationReason, OpsIncident, OrgId,
-    Target, next_step,
+    Target, next_step, wait_after,
 };
 use crate::error::Result;
 use crate::notifier::pushover::PushoverReceipts;
@@ -346,8 +346,9 @@ impl Worker {
                         let paged = self
                             .page_channels(org, incident.id, &notice, reason, level, &targets)
                             .await?;
-                        let next_at =
-                            Some(Utc::now() + chrono::Duration::seconds(delay_secs.into()));
+                        let wait =
+                            wait_after(&policy.steps, policy.repeat_count, level, 0, delay_secs);
+                        let next_at = Some(Utc::now() + chrono::Duration::seconds(wait.into()));
                         self.ops
                             .begin_escalation(org, incident.id, policy_id, level, next_at)
                             .await?;

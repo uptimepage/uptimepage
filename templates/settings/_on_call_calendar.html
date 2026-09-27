@@ -17,30 +17,34 @@
             hx-target="#on-call-calendar" hx-swap="innerHTML">next <span aria-hidden="true">→</span></button>
     {% else %}<span></span>{% endif %}
   </div>
-  <div data-cal-grid class="grid grid-cols-7 gap-px overflow-hidden rounded bg-[color:var(--theme-line)] text-xs">
+  {#- Seven columns from sm up; below that a list of the days. #}
+  <div data-cal-grid class="grid grid-cols-1 gap-px overflow-hidden rounded bg-[color:var(--theme-line)] text-xs sm:grid-cols-7">
     {% for h in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] %}
-    <div class="bg-[color:var(--theme-surface-sunk)] px-1 py-1 text-center text-quiet">{{ h }}</div>
+    <div class="hidden bg-[color:var(--theme-surface-sunk)] px-1 py-1 text-center text-quiet sm:block">{{ h }}</div>
     {% endfor %}
     {% for d in cal.days %}
     <div data-day{% if d.past %} data-past{% else %} tabindex="0" role="button"{% endif %} data-start="{{ d.starts_at|iso_ts }}" data-end="{{ d.ends_at|iso_ts }}" data-label="{{ d.label }}"
-         class="min-h-20 min-w-0 select-none space-y-0.5 bg-[color:var(--theme-surface)] p-1{% if !d.past %} cursor-pointer{% endif %}{% if !d.in_month %} opacity-50{% endif %}">
-      <div class="text-right">
+         class="flex min-w-0 select-none gap-3 bg-[color:var(--theme-surface)] p-2 sm:block sm:min-h-20 sm:space-y-0.5 sm:p-1{% if !d.in_month %} opacity-50{% endif %}{% if !d.past %} cursor-pointer{% endif %}">
+      <div class="w-14 shrink-0 sm:w-auto sm:text-right">
+        <span class="text-quiet sm:hidden">{{ d.weekday }}</span>
         {% if d.today %}<span class="rounded bg-[color:var(--theme-ink)] px-1 font-medium text-[color:var(--theme-surface)]"><span class="sr-only">today, </span>{{ d.day }}</span>{% else %}<span class="text-quiet">{{ d.day }}</span>{% endif %}
       </div>
-      {% for l in d.lines %}
-      <div class="truncate{% if l.overridden %} rounded bg-[color:var(--theme-accent-soft)] px-1 text-[color:var(--theme-accent)]{% else if l.who.is_empty() %} flash-text--warn{% endif %}"
-           title="{% if l.overridden %}override: {% endif %}{% if l.title.is_empty() %}no one on call{% else %}{{ l.title }}{% endif %}">
-        {%- if let Some(from) = l.from %}<span class="font-mono{% if !l.overridden %} text-quiet{% endif %}">{{ from }}</span> {% endif -%}
-        {%- if l.unreachable %}<span class="flash-text--warn" aria-hidden="true">!</span>{% endif -%}
-        {%- if l.who.is_empty() %}no one{% else %}{{ l.who }}{% endif -%}
+      <div class="min-w-0 flex-1 space-y-0.5">
+        {% for l in d.lines %}
+        <div class="truncate{% if l.overridden %} rounded bg-[color:var(--theme-accent-soft)] px-1 text-[color:var(--theme-accent)]{% else if l.who.is_empty() %} flash-text--warn{% endif %}"
+             title="{% if l.overridden %}override: {% endif %}{% if l.title.is_empty() %}no one on call{% else %}{{ l.title }}{% endif %}">
+          {%- if let Some(from) = l.from %}<span class="font-mono{% if !l.overridden %} text-quiet{% endif %}">{{ from }}</span> {% endif -%}
+          {%- if l.unreachable %}<span class="flash-text--warn" aria-hidden="true">!</span>{% endif -%}
+          {%- if l.who.is_empty() %}no one{% else %}{{ l.who }}{% endif -%}
+        </div>
+        {% endfor %}
+        {% if d.more > 0 %}<div class="text-quiet">+{{ d.more }} more</div>{% endif %}
       </div>
-      {% endfor %}
-      {% if d.more > 0 %}<div class="text-quiet">+{{ d.more }} more</div>{% endif %}
     </div>
     {% endfor %}
   </div>
   <div class="space-y-1">
-    <h3 class="text-xs uppercase text-muted">upcoming overrides</h3>
+    <h3 class="panel-label">upcoming overrides</h3>
     {% if cal.overrides.is_empty() %}
     <p class="font-mono text-xs text-quiet"># none</p>
     {% else %}

@@ -47,6 +47,8 @@ pub struct CalendarModel {
 
 pub struct DayCell {
     pub day: u32,
+    /// `Mon`, naming the day where the list stands in for the grid.
+    pub weekday: String,
     /// `Sep 27`, naming the day in the override picker.
     pub label: String,
     pub in_month: bool,
@@ -212,6 +214,7 @@ pub fn calendar(
                 .collect();
             DayCell {
                 day: date.day(),
+                weekday: date.format("%a").to_string(),
                 label: date.format("%b %-d").to_string(),
                 in_month: date.month() == first.month(),
                 today: *date == today,
@@ -360,6 +363,7 @@ mod tests {
                 rotation_length_secs: 604_800,
                 handoff_at: t("2026-09-07T06:00:00Z"), // Monday 09:00 in Kyiv
                 layer_order: 0,
+                windows: vec![],
                 created_at: t("2026-01-01T00:00:00Z"),
                 participants: vec![
                     OnCallParticipant {

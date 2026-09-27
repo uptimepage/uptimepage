@@ -15,27 +15,27 @@
     </div>
     {% if lock.is_none() %}
     <a href="/settings/on-call/new"
-       class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">
-      add schedule
-    </a>
+       class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">+ schedule</a>
     {% endif %}
   </header>
 
   {% if let Some(lock) = lock %}
   {% if lock.teaser %}
-  <div class="sticker-card space-y-4 p-5">
-    <h2 class="panel-label">on the Team plan</h2>
+  <div class="sticker-card overflow-hidden">
+    <h2 class="card-band panel-label">on the Team plan</h2>
+    <div class="space-y-4 p-5">
     <ul class="list-inside list-disc space-y-1 text-sm">
       <li>Rotations hand off daily or weekly at the same local time in the team's timezone, or on an interval you set.</li>
       <li>A calendar shows who is on call each day, and overrides on it cover a swap or a sick day without touching the rotation.</li>
       <li>Each responder picks the channels that page them.</li>
     </ul>
     {% include "settings/_team_cta.html" %}
+    </div>
   </div>
 
   <div class="sticker-card overflow-hidden opacity-50" aria-hidden="true" inert>
     <table class="w-full text-left text-sm">
-      <thead class="bg-[color:var(--theme-surface-sunk)] text-xs uppercase text-muted">
+      <thead class="table-head bg-[color:var(--theme-surface-sunk)]">
         <tr>
           <th class="px-4 py-2">Name</th>
           <th class="px-4 py-2">On call now</th>
@@ -73,49 +73,48 @@
        hx-trigger="load, every 60s, oncall:refresh from:body, sm:poll-resume from:body"
        data-poll-pause
        hx-swap="innerHTML"
-       class="space-y-4">
-    {% call reg::loading("loading…", "sticker-card") %}{% endcall %}
+       class="sticker-card overflow-hidden">
+    {% call reg::loading("loading…", "") %}{% endcall %}
   </div>
 
-  <section class="space-y-3" aria-labelledby="shifts-heading">
-    <h2 id="shifts-heading" class="panel-label">your shifts</h2>
-    <div data-hx-loader
-         hx-get="/web/partials/settings/on-call/mine"
-         hx-trigger="load, every 60s, oncall:feed from:body, oncall:refresh from:body, sm:poll-resume from:body"
-         data-poll-pause
-         hx-swap="innerHTML">
-      {% call reg::loading("loading…", "sticker-card") %}{% endcall %}
-    </div>
-  </section>
-
-  <section class="space-y-3" aria-labelledby="contacts-heading">
-    <h2 id="contacts-heading" class="panel-label">channels that page you</h2>
-    <p class="text-xs text-muted">
-      When an escalation policy pages a schedule you are on, you are reached
-      through the channels you pick here. Saved as you toggle.
-    </p>
-    {% if on_duty %}
-    <div data-unpageable class="alert-card alert-card--warn text-sm"{% if !unpageable %} hidden{% endif %}>
-      You are on an on-call schedule, but none of the channels you picked can deliver a page, so a page on your shift reaches no one.
-    </div>
-    {% endif %}
-    <div class="sticker-card space-y-3 p-5" data-contacts>
-      {% if no_channels %}
-      <p class="text-sm text-muted">
-        No notification channels yet — <a href="/settings/notifications/new" class="underline">add one</a> to be reachable.
-      </p>
-      {% else %}
-      <div class="flex flex-wrap gap-x-6 gap-y-2">
-        {% for c in contacts %}
-        <label class="inline-flex items-center gap-2">
-          <input type="checkbox" data-contact value="{{ c.id }}"{% if c.blocked.is_none() %} data-delivers{% endif %}{% if c.checked %} checked{% endif %}>
-          <span class="text-sm">{{ c.name }}</span>
-          {% if let Some(why) = c.blocked %}<span class="text-xs text-quiet">{{ why }}</span>{% endif %}
-        </label>
-        {% endfor %}
+  <section class="sticker-card overflow-hidden" aria-labelledby="you-heading">
+    <h2 id="you-heading" class="card-band panel-label">your on-call</h2>
+    <div class="divide-y divide-[color:var(--theme-line)]">
+      <div data-hx-loader
+           hx-get="/web/partials/settings/on-call/mine"
+           hx-trigger="load, every 60s, oncall:feed from:body, oncall:refresh from:body, sm:poll-resume from:body"
+           data-poll-pause
+           hx-swap="innerHTML">
+        {% call reg::loading("loading…", "") %}{% endcall %}
       </div>
-      <span data-contacts-result role="status" aria-live="polite" class="flash-text text-xs"></span>
-      {% endif %}
+
+      <div class="space-y-3 p-5" data-contacts>
+        <h3 class="panel-label">channels that page you</h3>
+        <p class="text-xs text-muted">
+          When an escalation policy pages a schedule you are on, you are reached
+          through the channels you pick here. Saved as you toggle.
+        </p>
+        {% if on_duty %}
+        <div data-unpageable class="alert-card alert-card--warn text-sm"{% if !unpageable %} hidden{% endif %}>
+          You are on an on-call schedule, but none of the channels you picked can deliver a page, so a page on your shift reaches no one.
+        </div>
+        {% endif %}
+        {% if no_channels %}
+        <p class="font-mono text-xs text-quiet">
+          # no notification channels yet — <a href="/settings/notifications/new" class="underline decoration-dotted hover:text-body">add one</a> to be reachable
+        </p>
+        {% else %}
+        <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Channels that page you">
+          {% for c in contacts %}
+          <label class="scope-token"{% if let Some(why) = c.blocked %} title="{{ why }}"{% endif %}>
+            <input type="checkbox" class="sr-only" data-contact value="{{ c.id }}"{% if c.blocked.is_none() %} data-delivers{% endif %}{% if c.checked %} checked{% endif %}>
+            {{ c.name }}{% if let Some(why) = c.blocked %} <span class="text-quiet">· {{ why }}</span>{% endif %}
+          </label>
+          {% endfor %}
+        </div>
+        <span data-contacts-result role="status" aria-live="polite" class="flash-text text-xs"></span>
+        {% endif %}
+      </div>
     </div>
   </section>
   {% endif %}

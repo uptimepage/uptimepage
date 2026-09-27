@@ -1,8 +1,9 @@
 //! On-call schedules + the pure who-is-on-call resolver.
 //!
-//! A schedule is a stack of rotation layers; the highest-order layer that has
-//! participants determines the on-call user, and a one-off override beats the
-//! computed rotation for its window. Who-is-on-call is never stored — the
+//! A schedule is an ordered list of rotation layers, each on call at all
+//! hours or only in its weekly windows; the first layer on call at an instant
+//! determines the on-call user, and a one-off override beats the computed
+//! rotation for its window. Who-is-on-call is never stored — the
 //! escalation engine calls [`resolve_on_call`] at page time, and the calendar
 //! walks [`on_call_shifts`] over the same rules. Both are referentially
 //! transparent (no I/O) so rotation/DST/override math is exhaustively
@@ -13,7 +14,8 @@ use std::ops::Range;
 use std::str::FromStr;
 
 use chrono::{
-    DateTime, Days, Duration as ChronoDuration, LocalResult, NaiveDateTime, Offset, TimeZone, Utc,
+    DateTime, Datelike, Days, Duration as ChronoDuration, LocalResult, NaiveDate, NaiveDateTime,
+    NaiveTime, Offset, TimeZone, Timelike, Utc,
 };
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
@@ -60,6 +62,165 @@ pub struct OnCallParticipant {
     pub position: i32,
 }
 
+/// A day of the week, as a window names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Weekday {
+    Mon,
+    Tue,
+    Wed,
+    Thu,
+    Fri,
+    Sat,
+    Sun,
+}
+
+impl Weekday {
+    pub const ALL: [Self; 7] = [
+        Self::Mon,
+        Self::Tue,
+        Self::Wed,
+        Self::Thu,
+        Self::Fri,
+        Self::Sat,
+        Self::Sun,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Mon => "mon",
+            Self::Tue => "tue",
+            Self::Wed => "wed",
+            Self::Thu => "thu",
+            Self::Fri => "fri",
+            Self::Sat => "sat",
+            Self::Sun => "sun",
+        }
+    }
+
+    fn of(date: NaiveDate) -> Self {
+        Self::ALL[date.weekday().num_days_from_monday() as usize]
+    }
+}
+
+/// When a layer is on call: from `from` on each of `days` until `to`, in the
+/// schedule's timezone. A `to` at or before `from` runs into the next day, so
+/// the same time at both ends covers a whole day.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OnCallWindow {
+    /// One or more days, each named once.
+    pub days: Vec<Weekday>,
+    #[serde(with = "clock")]
+    #[schema(value_type = String, example = "09:00")]
+    pub from: NaiveTime,
+    #[serde(with = "clock")]
+    #[schema(value_type = String, example = "17:00")]
+    pub to: NaiveTime,
+}
+
+impl OnCallWindow {
+    /// How long it stays open on the wall clock: up to `to`, past midnight
+    /// when that comes first, and a whole day when the two meet.
+    fn length(&self) -> ChronoDuration {
+        let len = self.to - self.from;
+        if len > ChronoDuration::zero() {
+            len
+        } else {
+            len + ChronoDuration::days(1)
+        }
+    }
+
+    /// The stretch it opens on `date`, as instants. `None` when `date` is not
+    /// one of its days, or a daylight-saving jump leaves nothing of it.
+    fn on(&self, tz: Tz, date: NaiveDate) -> Option<Range<DateTime<Utc>>> {
+        if !self.days.contains(&Weekday::of(date)) {
+            return None;
+        }
+        let opens = date.and_time(self.from);
+        let open = local_to_utc(tz, opens);
+        let close = local_to_utc(tz, opens.checked_add_signed(self.length())?);
+        (open < close).then_some(open..close)
+    }
+}
+
+const WEEK_MINUTES: usize = 7 * 24 * 60;
+
+/// The minutes of the week, Monday 00:00 first, that `windows` keep a layer
+/// on call on the wall clock; no windows means every one.
+fn week_minutes(windows: &[OnCallWindow]) -> Vec<bool> {
+    if windows.is_empty() {
+        return vec![true; WEEK_MINUTES];
+    }
+    let mut on = vec![false; WEEK_MINUTES];
+    for w in windows {
+        let from = (w.from.hour() * 60 + w.from.minute()) as usize;
+        let len = w.length().num_minutes() as usize;
+        for d in &w.days {
+            let start = *d as usize * 24 * 60 + from;
+            for m in start..start + len {
+                on[m % WEEK_MINUTES] = true;
+            }
+        }
+    }
+    on
+}
+
+/// A layer that never pages, by its place in the order layers are asked.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Shadowed {
+    pub layer: usize,
+    /// An earlier layer with no hours, so on call at all of them, when giving
+    /// it hours could let this one page: the layers with hours before it do
+    /// not already cover this one.
+    pub behind: Option<usize>,
+    /// The layers before it cover the whole week, so no hours of its own
+    /// would let it page.
+    pub whole_week: bool,
+}
+
+/// The first layer in `stack`, each layer's windows in the order layers are
+/// asked, whose hours the layers before it already cover, so it never pages.
+pub fn never_pages(stack: &[&[OnCallWindow]]) -> Option<Shadowed> {
+    let mut covered = vec![false; WEEK_MINUTES];
+    let mut by_hours = vec![false; WEEK_MINUTES];
+    let mut all_hours = None;
+    let within = |mine: &[bool], cover: &[bool]| mine.iter().zip(cover).all(|(m, c)| !m || *c);
+    for (i, windows) in stack.iter().enumerate() {
+        let mine = week_minutes(windows);
+        if within(&mine, &covered) {
+            return Some(Shadowed {
+                layer: i,
+                behind: all_hours.filter(|_| !within(&mine, &by_hours)),
+                whole_week: covered.iter().all(|c| *c),
+            });
+        }
+        if windows.is_empty() {
+            all_hours = Some(i);
+        } else {
+            by_hours.iter_mut().zip(&mine).for_each(|(c, m)| *c |= *m);
+        }
+        covered.iter_mut().zip(mine).for_each(|(c, m)| *c |= m);
+    }
+    None
+}
+
+/// `09:00`: a time of day to the minute.
+mod clock {
+    use chrono::NaiveTime;
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+
+    pub fn serialize<S: Serializer>(at: &NaiveTime, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(&at.format("%H:%M"))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<NaiveTime, D::Error> {
+        let raw = String::deserialize(d)?;
+        NaiveTime::parse_from_str(&raw, "%H:%M")
+            .map_err(|_| D::Error::custom(format!("expected a time like 09:00, got {raw:?}")))
+    }
+}
+
 /// One rotation within a schedule. The on-call user is the participant whose
 /// rotation slot contains the query instant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -72,10 +233,46 @@ pub struct OnCallLayer {
     /// of days; the boundary time-of-day is taken from `handoff_at`.
     pub rotation_length_secs: i32,
     pub handoff_at: DateTime<Utc>,
-    /// Higher wins when layers are stacked; unique within the schedule.
+    /// Its place in the schedule, unique within it; lower is asked first.
     pub layer_order: i32,
+    /// When it is on call; empty means at all hours. Its rotation keeps
+    /// counting outside them.
+    pub windows: Vec<OnCallWindow>,
     pub created_at: DateTime<Utc>,
     pub participants: Vec<OnCallParticipant>,
+}
+
+impl OnCallLayer {
+    /// When it is on call over `[from, to]`, merged and in order; `None` at
+    /// all hours. A daylight-saving jump only ever pushes a window later, so
+    /// one opened two days before `from` is the oldest that can still be open.
+    fn hours(
+        &self,
+        tz: Tz,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Option<Vec<Range<DateTime<Utc>>>> {
+        if self.windows.is_empty() {
+            return None;
+        }
+        let first = from.with_timezone(&tz).date_naive();
+        let first = first.checked_sub_days(Days::new(2)).unwrap_or(first);
+        let last = to.with_timezone(&tz).date_naive();
+        let mut spans: Vec<Range<DateTime<Utc>>> = first
+            .iter_days()
+            .take_while(|d| *d <= last)
+            .flat_map(|d| self.windows.iter().filter_map(move |w| w.on(tz, d)))
+            .collect();
+        spans.sort_unstable_by_key(|r| r.start);
+        let mut merged: Vec<Range<DateTime<Utc>>> = Vec::with_capacity(spans.len());
+        for r in spans {
+            match merged.last_mut() {
+                Some(prev) if r.start <= prev.end => prev.end = prev.end.max(r.end),
+                _ => merged.push(r),
+            }
+        }
+        Some(merged)
+    }
 }
 
 /// A one-off coverage swap: this user is on call for `[starts_at, ends_at)`,
@@ -123,24 +320,14 @@ pub struct OnCallScheduleDetail {
 
 impl OnCallScheduleDetail {
     /// Everyone the schedule can put on call, given the overrides it holds:
-    /// the paging layer's participants and whoever covers an override. May
-    /// repeat a person.
+    /// every layer's participants and whoever covers an override. May repeat
+    /// a person.
     pub fn responders(&self) -> impl Iterator<Item = UserId> + '_ {
-        paging_layer(&self.layers)
-            .into_iter()
+        self.layers
+            .iter()
             .flat_map(|l| l.participants.iter().map(|p| p.user_id))
             .chain(self.overrides.iter().map(|o| o.user_id))
     }
-}
-
-/// The layer that staffs a schedule outside overrides: the highest-order one
-/// with participants. Every layer covers every instant, so the layers below
-/// it never answer.
-fn paging_layer(layers: &[OnCallLayer]) -> Option<&OnCallLayer> {
-    layers
-        .iter()
-        .filter(|l| !l.participants.is_empty())
-        .max_by_key(|l| l.layer_order)
 }
 
 /// Lightweight list row (no layers loaded) for the schedule index.
@@ -172,9 +359,15 @@ pub struct NewOnCallLayer {
     pub rotation_type: RotationType,
     pub rotation_length_secs: i32,
     pub handoff_at: DateTime<Utc>,
-    /// Higher wins when layers are stacked; no two layers may share one.
+    /// Its place in the schedule; lower is asked first, and no two layers
+    /// may share one.
     #[serde(default)]
     pub layer_order: i32,
+    /// When it is on call, up to 14 windows; empty or left out means at all
+    /// hours. A layer whose hours the layers before it already cover is
+    /// refused, since it would never page.
+    #[serde(default)]
+    pub windows: Vec<OnCallWindow>,
     /// Ordered participants; their list position is the rotation order.
     pub participants: Vec<NewOnCallParticipant>,
 }
@@ -213,9 +406,9 @@ pub const LAST_YEAR: i32 = 9999;
 // ── The pure resolver ────────────────────────────────────────────────────
 
 /// Who is on call for `schedule` at `at`. Overrides covering the instant win
-/// (their users, deduped, soonest start first); otherwise the highest-order
-/// layer with participants supplies its current rotation slot. Empty when
-/// nothing covers the instant.
+/// (their users, deduped, soonest start first); otherwise the first layer,
+/// by `layer_order`, that has participants and is on call at the instant
+/// supplies its current rotation slot. Empty when nothing covers the instant.
 ///
 /// Pure: no I/O. `layers`/`overrides` need not be pre-sorted — the resolver
 /// orders them itself so callers can hand over rows in any order.
@@ -225,7 +418,7 @@ pub fn resolve_on_call(
     overrides: &[OnCallOverride],
     at: DateTime<Utc>,
 ) -> Vec<UserId> {
-    Rota::new(schedule, layers, overrides, at).at(at).0
+    Rota::new(schedule, layers, overrides, at, at).at(at).0
 }
 
 /// A stretch of time over which [`resolve_on_call`] gives one answer.
@@ -260,7 +453,7 @@ pub fn on_call_shifts<'a>(
     from: DateTime<Utc>,
     to: DateTime<Utc>,
 ) -> impl Iterator<Item = OnCallShift> + 'a {
-    let rota = Rota::new(schedule, layers, overrides, from);
+    let rota = Rota::new(schedule, layers, overrides, from, to);
     let edges = rota.edges();
     let mut t = from;
     // The answer at `t` when the previous shift already resolved it.
@@ -315,39 +508,82 @@ pub fn shifts_held_by<'a>(
     })
 }
 
-/// A schedule made ready to resolve: its overrides, and the one layer that
-/// staffs it outside them.
+/// A layer with participants, ready to answer.
+struct Staffed<'a> {
+    layer: &'a OnCallLayer,
+    /// Its participants in rotation order.
+    people: Vec<UserId>,
+    /// [`OnCallLayer::hours`] over the stretch asked about.
+    hours: Option<Vec<Range<DateTime<Utc>>>>,
+}
+
+impl Staffed<'_> {
+    fn on_call_at(&self, at: DateTime<Utc>) -> bool {
+        self.hours.as_ref().is_none_or(|h| {
+            h.get(h.partition_point(|r| r.end <= at))
+                .is_some_and(|r| r.start <= at)
+        })
+    }
+
+    /// The next instant after `after` at which it comes on or goes off;
+    /// `None` when it does not within the stretch asked about.
+    fn next_window_edge(&self, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        let h = self.hours.as_ref()?;
+        let r = h.get(h.partition_point(|r| r.end <= after))?;
+        Some(if r.start > after { r.start } else { r.end })
+    }
+}
+
+/// A schedule made ready to resolve: its overrides, and the layers that
+/// staff it outside them.
 struct Rota<'a> {
     tz: Tz,
-    /// The paging layer, and its participants in rotation order.
-    top: Option<(&'a OnCallLayer, Vec<UserId>)>,
+    /// Layers with participants, first asked first.
+    layers: Vec<Staffed<'a>>,
     /// Those not over by the first instant asked about, soonest start first:
     /// the order their people are paged in.
     overrides: Vec<&'a OnCallOverride>,
 }
 
 impl<'a> Rota<'a> {
-    /// Ready to answer for `from` on.
+    /// Ready to answer for `[from, to]`.
     fn new(
         schedule: &OnCallSchedule,
         layers: &'a [OnCallLayer],
         overrides: &'a [OnCallOverride],
         from: DateTime<Utc>,
+        to: DateTime<Utc>,
     ) -> Self {
         let tz = schedule.tz();
-        let top = paging_layer(layers).map(|l| {
-            let mut ps: Vec<&OnCallParticipant> = l.participants.iter().collect();
-            ps.sort_by_key(|p| p.position);
-            (l, ps.into_iter().map(|p| p.user_id).collect())
-        });
+        let mut staffed: Vec<&OnCallLayer> = layers
+            .iter()
+            .filter(|l| !l.participants.is_empty())
+            .collect();
+        staffed.sort_by_key(|l| (l.layer_order, l.id));
+        let layers = staffed
+            .into_iter()
+            .map(|layer| {
+                let mut ps: Vec<&OnCallParticipant> = layer.participants.iter().collect();
+                ps.sort_by_key(|p| p.position);
+                Staffed {
+                    layer,
+                    people: ps.into_iter().map(|p| p.user_id).collect(),
+                    hours: layer.hours(tz, from, to),
+                }
+            })
+            .collect();
         let mut overrides: Vec<&OnCallOverride> =
             overrides.iter().filter(|o| o.ends_at > from).collect();
         overrides.sort_by_key(|o| (o.starts_at, o.created_at, o.id));
-        Self { tz, top, overrides }
+        Self {
+            tz,
+            layers,
+            overrides,
+        }
     }
 
     /// Every override start and end, sorted and deduped: where a walk may
-    /// change hands besides a handoff.
+    /// change hands besides a handoff or a window.
     fn edges(&self) -> Vec<DateTime<Utc>> {
         let mut edges: Vec<DateTime<Utc>> = self
             .overrides
@@ -367,6 +603,11 @@ impl<'a> Rota<'a> {
             .filter(move |o| at < o.ends_at)
     }
 
+    /// Where in [`Self::layers`] the layer on call at `at` sits.
+    fn answering(&self, at: DateTime<Utc>) -> Option<usize> {
+        self.layers.iter().position(|l| l.on_call_at(at))
+    }
+
     /// Who is on call at `at`, and whether overrides put them there.
     fn at(&self, at: DateTime<Utc>) -> (Vec<UserId>, bool) {
         let mut out: Vec<UserId> = Vec::new();
@@ -378,9 +619,10 @@ impl<'a> Rota<'a> {
         if !out.is_empty() {
             return (out, true);
         }
-        let rotation = self.top.as_ref().map(|(layer, ps)| {
-            let slot = rotation_index(layer, self.tz, at).rem_euclid(ps.len() as i64) as usize;
-            vec![ps[slot]]
+        let rotation = self.answering(at).map(|i| {
+            let Staffed { layer, people, .. } = &self.layers[i];
+            let slot = rotation_index(layer, self.tz, at).rem_euclid(people.len() as i64) as usize;
+            vec![people[slot]]
         });
         (rotation.unwrap_or_default(), false)
     }
@@ -388,16 +630,28 @@ impl<'a> Rota<'a> {
     /// The first instant after `after` at which [`Self::at`] may answer
     /// differently, given [`Self::edges`]; `None` when it never will.
     fn next_change(&self, edges: &[DateTime<Utc>], after: DateTime<Utc>) -> Option<DateTime<Utc>> {
-        // A rotation of one person, however often listed, never hands off,
-        // and one hidden under an override changes nothing until it ends.
-        let handoff = self
-            .top
-            .as_ref()
-            .filter(|(_, ps)| ps.iter().any(|u| *u != ps[0]))
-            .filter(|_| self.covering(after).next().is_none())
-            .and_then(|(layer, _)| next_handoff(layer, self.tz, after));
         let edge = edges.get(edges.partition_point(|e| *e <= after)).copied();
-        edge.into_iter().chain(handoff).filter(|t| *t > after).min()
+        // Layers hidden under an override change nothing until it ends.
+        if self.covering(after).next().is_some() {
+            return edge;
+        }
+        // Only the answering layer's windows and those of the layers asked
+        // before it can hand the instant to another; a rotation of one
+        // person, however often listed, never hands off.
+        let answering = self.answering(after);
+        let asked = answering.map_or(self.layers.len(), |i| i + 1);
+        let windows = self.layers[..asked]
+            .iter()
+            .filter_map(|l| l.next_window_edge(after));
+        let handoff = answering
+            .map(|i| &self.layers[i])
+            .filter(|l| l.people.iter().any(|u| *u != l.people[0]))
+            .and_then(|l| next_handoff(l.layer, self.tz, after));
+        edge.into_iter()
+            .chain(windows)
+            .chain(handoff)
+            .filter(|t| *t > after)
+            .min()
     }
 }
 
@@ -530,10 +784,28 @@ mod tests {
             rotation_length_secs: len_secs,
             handoff_at: t(handoff),
             layer_order: order,
+            windows: vec![],
             created_at: t("2026-01-01T00:00:00Z"),
             participants,
         }
     }
+
+    fn window(days: &[Weekday], from: &str, to: &str) -> OnCallWindow {
+        let at = |s: &str| NaiveTime::parse_from_str(s, "%H:%M").unwrap();
+        OnCallWindow {
+            days: days.to_vec(),
+            from: at(from),
+            to: at(to),
+        }
+    }
+
+    const WEEKDAYS: [Weekday; 5] = [
+        Weekday::Mon,
+        Weekday::Tue,
+        Weekday::Wed,
+        Weekday::Thu,
+        Weekday::Fri,
+    ];
 
     #[test]
     fn empty_schedule_resolves_to_no_one() {
@@ -745,35 +1017,197 @@ mod tests {
     }
 
     #[test]
-    fn higher_layer_order_wins_when_stacked() {
+    fn the_first_layer_on_call_wins() {
         let s = schedule("UTC");
-        let base = layer(
+        let first = layer(
             0,
             RotationType::Custom,
             3_600,
             "2026-06-01T00:00:00Z",
             vec![participant(uid(1), 0)],
         );
-        let top = layer(
+        let second = layer(
             5,
             RotationType::Custom,
             3_600,
             "2026-06-01T00:00:00Z",
             vec![participant(uid(2), 0)],
         );
-        // Order of the slice should not matter — the top layer wins.
+        // Order of the slice should not matter, only layer_order.
         assert_eq!(
             resolve_on_call(
                 &s,
-                &[base.clone(), top.clone()],
+                &[first.clone(), second.clone()],
                 &[],
                 t("2026-06-01T00:30:00Z")
             ),
-            vec![uid(2)]
+            vec![uid(1)]
         );
         assert_eq!(
-            resolve_on_call(&s, &[top, base], &[], t("2026-06-01T00:30:00Z")),
-            vec![uid(2)]
+            resolve_on_call(&s, &[second, first], &[], t("2026-06-01T00:30:00Z")),
+            vec![uid(1)]
+        );
+    }
+
+    /// Weekday working hours on the first layer, everyone else's time on the
+    /// second.
+    fn days_and_nights() -> Vec<OnCallLayer> {
+        let mut days = layer(
+            0,
+            RotationType::Weekly,
+            7 * 86_400,
+            "2026-06-01T09:00:00+03:00",
+            vec![participant(uid(1), 0), participant(uid(2), 1)],
+        );
+        days.windows = vec![window(&WEEKDAYS, "09:00", "17:00")];
+        let rest = layer(
+            1,
+            RotationType::Daily,
+            86_400,
+            "2026-06-01T17:00:00+03:00",
+            vec![participant(uid(3), 0), participant(uid(4), 1)],
+        );
+        vec![rest, days]
+    }
+
+    #[test]
+    fn a_layer_steps_aside_outside_its_windows() {
+        let s = schedule("Europe/Kyiv");
+        let layers = days_and_nights();
+        let at = |i: &str| resolve_on_call(&s, &layers, &[], t(i));
+        // Mon 2026-06-01 10:00 local: the working-hours layer.
+        assert_eq!(at("2026-06-01T07:00:00Z"), vec![uid(1)]);
+        // Its window ends at 17:00 local, exclusive.
+        assert_eq!(at("2026-06-01T13:59:59Z"), vec![uid(1)]);
+        assert_eq!(at("2026-06-01T14:00:00Z"), vec![uid(3)]);
+        // Before 09:00 local on Tuesday: still the evening's person.
+        assert_eq!(at("2026-06-02T05:59:00Z"), vec![uid(3)]);
+        // Saturday evening falls through, the rest layer's rotation having
+        // kept counting.
+        assert_eq!(at("2026-06-06T15:00:00Z"), vec![uid(4)]);
+        // The next week the working-hours rotation has moved on.
+        assert_eq!(at("2026-06-08T07:00:00Z"), vec![uid(2)]);
+    }
+
+    #[test]
+    fn hours_no_layer_covers_are_no_one_s() {
+        let s = schedule("UTC");
+        let mut only = layer(
+            0,
+            RotationType::Daily,
+            86_400,
+            "2026-06-01T00:00:00Z",
+            vec![participant(uid(1), 0)],
+        );
+        only.windows = vec![window(&[Weekday::Sat, Weekday::Sun], "00:00", "00:00")];
+        let got = shifts(
+            &s,
+            &[only],
+            &[],
+            "2026-06-05T00:00:00Z",
+            "2026-06-09T00:00:00Z",
+        );
+        let brief: Vec<_> = got
+            .iter()
+            .map(|x| (x.starts_at, x.user_ids.clone()))
+            .collect();
+        assert_eq!(
+            brief,
+            vec![
+                (t("2026-06-05T00:00:00Z"), vec![]),
+                (t("2026-06-06T00:00:00Z"), vec![uid(1)]),
+                (t("2026-06-08T00:00:00Z"), vec![]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_window_ending_before_it_starts_runs_overnight() {
+        let s = schedule("UTC");
+        let mut nights = layer(
+            0,
+            RotationType::Daily,
+            86_400,
+            "2026-06-01T00:00:00Z",
+            vec![participant(uid(1), 0)],
+        );
+        nights.windows = vec![window(&[Weekday::Fri], "22:00", "06:00")];
+        let at = |i: &str| resolve_on_call(&s, std::slice::from_ref(&nights), &[], t(i));
+        assert!(at("2026-06-05T21:59:00Z").is_empty());
+        assert_eq!(at("2026-06-05T22:00:00Z"), vec![uid(1)]);
+        // Saturday morning belongs to Friday's window.
+        assert_eq!(at("2026-06-06T05:59:00Z"), vec![uid(1)]);
+        assert!(at("2026-06-06T06:00:00Z").is_empty());
+    }
+
+    #[test]
+    fn a_layer_whose_hours_earlier_layers_cover_never_pages() {
+        let all: &[OnCallWindow] = &[];
+        let days: &[OnCallWindow] = &[window(&WEEKDAYS, "09:00", "17:00")];
+        let nights: &[OnCallWindow] = &[window(&Weekday::ALL, "17:00", "09:00")];
+        let weekends: &[OnCallWindow] = &[window(&[Weekday::Sat, Weekday::Sun], "00:00", "00:00")];
+        let shadowed = |layer, behind| {
+            Some(Shadowed {
+                layer,
+                behind,
+                whole_week: true,
+            })
+        };
+        assert_eq!(never_pages(&[days, all]), None);
+        assert_eq!(never_pages(&[all, days]), shadowed(1, Some(0)));
+        assert_eq!(
+            never_pages(&[days, days]),
+            Some(Shadowed {
+                layer: 1,
+                behind: None,
+                whole_week: false,
+            })
+        );
+        // Sunday night runs past the end of the week into Monday morning.
+        assert_eq!(
+            never_pages(&[days, nights, weekends, all]),
+            shadowed(3, None)
+        );
+        assert_eq!(never_pages(&[days, nights, all]), None);
+        let almost: &[OnCallWindow] = &[window(&Weekday::ALL, "17:01", "09:00")];
+        assert_eq!(never_pages(&[days, almost, weekends, all]), None);
+        // Every day from a time back to itself is the whole week, but more
+        // hours on it would not help.
+        let whole: &[OnCallWindow] = &[window(&Weekday::ALL, "09:00", "09:00")];
+        assert_eq!(never_pages(&[days, whole, days]), shadowed(2, None));
+        // Layer 1 alone covers the last one, so hours on layer 2 cannot help.
+        assert_eq!(never_pages(&[days, all, days]), shadowed(2, None));
+        assert_eq!(never_pages(&[days, all, nights]), shadowed(2, Some(1)));
+    }
+
+    #[test]
+    fn day_names_are_the_ones_the_api_takes() {
+        for d in Weekday::ALL {
+            assert_eq!(
+                serde_json::to_string(&d).unwrap(),
+                format!("\"{}\"", d.as_str())
+            );
+        }
+    }
+
+    #[test]
+    fn windows_read_as_times_to_the_minute() {
+        let w: OnCallWindow =
+            serde_json::from_str(r#"{"days":["mon","fri"],"from":"09:00","to":"17:30"}"#).unwrap();
+        assert_eq!(w, window(&[Weekday::Mon, Weekday::Fri], "09:00", "17:30"));
+        assert_eq!(
+            serde_json::to_string(&w).unwrap(),
+            r#"{"days":["mon","fri"],"from":"09:00","to":"17:30"}"#
+        );
+        for bad in ["9", "09:00:00", "24:00", "noon"] {
+            let raw = format!(r#"{{"days":["mon"],"from":"{bad}","to":"17:00"}}"#);
+            assert!(serde_json::from_str::<OnCallWindow>(&raw).is_err(), "{bad}");
+        }
+        assert!(
+            serde_json::from_str::<OnCallWindow>(
+                r#"{"days":["Monday"],"from":"09:00","to":"17:00"}"#
+            )
+            .is_err()
         );
     }
 
@@ -890,7 +1324,13 @@ mod tests {
             "2026-12-01T00:00:00Z",
         )];
         let from = t("2026-06-01T00:30:00Z");
-        let rota = Rota::new(&s, std::slice::from_ref(&l), &ov, from);
+        let rota = Rota::new(
+            &s,
+            std::slice::from_ref(&l),
+            &ov,
+            from,
+            t("2027-01-01T00:00:00Z"),
+        );
         assert_eq!(
             rota.next_change(&rota.edges(), from),
             Some(t("2026-12-01T00:00:00Z"))
@@ -1182,6 +1622,39 @@ mod tests {
                 )],
                 vec![],
             ),
+            ("Europe/Kyiv", days_and_nights(), vec![]),
+            (
+                "America/New_York",
+                {
+                    // Windows opening and closing inside both of the
+                    // season's clock changes, with no layer at all hours.
+                    let mut early = layer(
+                        0,
+                        RotationType::Custom,
+                        5 * 3_600,
+                        "2026-10-30T00:00:00Z",
+                        vec![participant(uid(1), 0), participant(uid(2), 1)],
+                    );
+                    early.windows = vec![
+                        window(&Weekday::ALL, "01:30", "02:30"),
+                        window(&[Weekday::Sat, Weekday::Sun], "23:00", "01:15"),
+                    ];
+                    let mut late = layer(
+                        1,
+                        RotationType::Daily,
+                        86_400,
+                        "2026-10-30T01:45:00-04:00",
+                        vec![participant(uid(3), 0), participant(uid(4), 1)],
+                    );
+                    late.windows = vec![window(&Weekday::ALL, "01:00", "12:00")];
+                    vec![early, late]
+                },
+                vec![cover(
+                    uid(9),
+                    "2026-11-01T05:10:00Z",
+                    "2026-11-01T06:20:00Z",
+                )],
+            ),
         ];
         let from = t("2026-09-28T00:00:00Z");
         let to = t("2026-11-10T00:00:00Z");
@@ -1204,6 +1677,44 @@ mod tests {
         assert_shifts_agree(
             "America/Nuuk",
             &[l],
+            &[],
+            t("2026-03-27T00:00:00Z"),
+            t("2026-03-31T00:00:00Z"),
+        );
+    }
+
+    #[test]
+    fn a_window_closing_in_a_gap_runs_into_the_next_day() {
+        // Saturday's 23:30 close falls in Nuuk's skipped hour, so it lands
+        // at 00:30 on Sunday.
+        let mut late = layer(
+            0,
+            RotationType::Daily,
+            86_400,
+            "2026-03-20T00:00:00Z",
+            vec![participant(uid(1), 0)],
+        );
+        late.windows = vec![window(&[Weekday::Sat], "22:00", "23:30")];
+        let rest = layer(
+            1,
+            RotationType::Daily,
+            86_400,
+            "2026-03-20T00:00:00Z",
+            vec![participant(uid(2), 0)],
+        );
+        let s = schedule("America/Nuuk");
+        let layers = [late, rest];
+        assert_eq!(
+            resolve_on_call(&s, &layers, &[], t("2026-03-29T01:15:00Z")),
+            vec![uid(1)]
+        );
+        assert_eq!(
+            resolve_on_call(&s, &layers, &[], t("2026-03-29T01:30:00Z")),
+            vec![uid(2)]
+        );
+        assert_shifts_agree(
+            "America/Nuuk",
+            &layers,
             &[],
             t("2026-03-27T00:00:00Z"),
             t("2026-03-31T00:00:00Z"),

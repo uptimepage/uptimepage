@@ -1,12 +1,9 @@
 {% if schedules.is_empty() %}
-<div class="sticker-card flex items-center gap-3 px-4 py-6 text-sm text-muted">
-  <span aria-hidden="true" class="text-base text-quiet">↘</span>
-  <span>{% if locked %}No on-call schedules. New ones need the Team plan.{% else %}No on-call schedules yet — add one above, then page it from an escalation policy.{% endif %}</span>
-</div>
+<p class="px-4 py-6 font-mono text-xs text-quiet">{% if locked %}# no on-call schedules — new ones need the Team plan{% else %}# no on-call schedules yet — add one above, then page it from an escalation policy{% endif %}</p>
 {% else %}
-<div class="sticker-card overflow-hidden">
+<div>
   <table class="w-full text-left text-sm">
-    <thead class="bg-[color:var(--theme-surface-sunk)] text-xs uppercase text-muted">
+    <thead class="table-head bg-[color:var(--theme-surface-sunk)]">
       <tr>
         <th class="px-4 py-2">Name</th>
         <th class="px-4 py-2">On call now</th>
@@ -19,7 +16,7 @@
       {% for s in schedules %}
       <tr>
         <td class="px-4 py-2 align-top text-body">
-          <div class="font-medium">{{ s.name }}</div>
+          <a href="/settings/on-call/{{ s.id }}/edit" class="font-medium hover:underline decoration-dotted underline-offset-2">{{ s.name }}</a>
           {% if !s.unreachable.is_empty() %}
           <div class="flash-text flash-text--warn text-xs">no paging channels: {{ s.unreachable|join(", ") }}</div>
           {% endif %}
@@ -30,7 +27,7 @@
         <td class="px-4 py-2 align-top text-body">
           <div>
             {% if s.coverage.now.is_empty() %}<span class="flash-text--warn">no one</span>{% else %}{{ s.coverage.now|join(", ") }}{% endif %}
-            {% if s.coverage.overridden %}<span class="text-xs text-quiet">override</span>{% endif %}
+            {% if s.coverage.overridden %}<span class="cli-brackets text-xs">override</span>{% endif %}
           </div>
           {% if let Some(until) = s.coverage.until %}
           <div class="text-xs text-muted">
@@ -40,10 +37,9 @@
           {% endif %}
         </td>
         <td class="px-4 py-2 align-top font-mono text-xs text-muted">{{ s.timezone }}</td>
-        <td class="px-4 py-2 align-top tabular-nums">{{ s.layer_count }}</td>
+        <td class="px-4 py-2 align-top font-mono tabular-nums">{{ s.layer_count }}</td>
         <td class="px-4 py-2">
           <div class="flex items-center justify-end gap-3">
-            <a href="/settings/on-call/{{ s.id }}/edit" class="row-link">Edit</a>
             <button type="button"
                     hx-delete="/api/v1/on-call/schedules/{{ s.id }}"
                     hx-headers='{"X-Requested-With":"uptimepage"}'
@@ -51,9 +47,9 @@
                     data-confirm-modal
                     data-confirm-title="Delete on-call schedule?"
                     data-confirm-body="{% if s.paged_by.is_empty() %}No escalation policy pages {{ s.name }}.{% else %}{{ s.paged_by|join(", ") }} page{% if s.paged_by.len() == 1 %}s{% endif %} {{ s.name }} and will reach no one through it until repointed.{% endif %}"
-                    data-confirm-label="Delete schedule"
+                    data-confirm-label="delete schedule"
                     data-confirm-danger
-                    class="row-link row-link--danger">Delete</button>
+                    class="row-link row-link--danger">delete</button>
           </div>
         </td>
       </tr>

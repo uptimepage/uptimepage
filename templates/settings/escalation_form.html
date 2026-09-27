@@ -3,73 +3,104 @@
 {% block title %}{% if form.mode == "create" %}New escalation policy{% else %}Edit escalation policy{% endif %} · Uptimepage{% endblock %}
 {% block content %}
 <section class="space-y-6">
-  <header class="space-y-1">
-    <a href="/settings/escalation" class="inline-block text-sm text-muted hover:text-body">← escalation policies</a>
-    <h1 class="page-title truncate">
-      <span class="page-title__prefix" aria-hidden="true">$</span>{% if form.mode == "create" %}new escalation policy{% else %}edit {{ form.name }}{% endif %}
-    </h1>
-    <p class="text-sm text-muted">
-      Submits JSON to <code class="font-mono">{{ form.submit_method }} {{ form.action }}</code>. Validation runs on the API.
-    </p>
-  </header>
-
-  {% if form.no_channels %}
-  <div class="alert-card alert-card--warn text-sm">
-    No notification channels yet — a policy pages channels, so
-    <a href="/settings/notifications/new" class="underline">add a channel</a> first.
-  </div>
-  {% endif %}
-
   <form id="escalation-form"
         data-action="{{ form.action }}"
         data-method="{{ form.submit_method }}"
         data-mode="{{ form.mode }}"
         novalidate
-        class="space-y-6">
+        class="mx-auto w-full max-w-7xl">
+
+    <div class="form-grid grid grid-cols-1 gap-6 lg:grid-cols-[17rem_1fr] lg:items-start lg:gap-8 xl:grid-cols-[17rem_1fr_15rem]">
+
+    <aside class="type-rail lg:sticky lg:top-6">
+      <span class="form-legend">ladder</span>
+      <div data-level-rail class="check-type-cards check-type-cards--rail mt-3" aria-label="Levels in the order they page"></div>
+      <p class="mt-2 font-mono text-xs text-quiet"># an open incident walks down it until someone acknowledges</p>
+    </aside>
+
+    <div class="space-y-6">
+
+    <header class="space-y-1">
+      <a href="/settings/escalation" class="inline-block text-sm text-muted hover:text-body">← escalation policies</a>
+      <h1 class="page-title">
+        <span class="page-title__prefix" aria-hidden="true">$</span><input
+          name="name" type="text" required maxlength="100" value="{{ form.name }}"
+          autocomplete="off" spellcheck="false" placeholder="new escalation policy"
+          aria-label="Policy name" class="page-title__input">
+      </h1>
+      <p class="text-sm text-muted">Bind it to a monitor from the monitor's page, or make it the org default.</p>
+    </header>
+
+    {% if form.no_channels %}
+    <div class="alert-card alert-card--warn text-sm">
+      No notification channels yet — a policy pages channels, so
+      <a href="/settings/notifications/new" class="underline">add a channel</a> first.
+    </div>
+    {% endif %}
 
     <div id="form-errors" role="alert" aria-live="polite"
          class="hidden alert-card alert-card--error"></div>
 
-    <fieldset class="sticker-card space-y-5 p-5">
-      <legend class="px-1 text-sm font-medium">Basic</legend>
-      <label class="field-outline">
-        <span class="field-outline__label">Name</span>
-        <input name="name" type="text" required maxlength="100" value="{{ form.name }}"
-               autocomplete="off" class="w-full field">
-      </label>
-      <label class="field-outline">
-        <span class="field-outline__label">Description <span class="text-quiet">(optional)</span></span>
-        <input name="description" type="text" maxlength="2000" value="{{ form.description }}"
-               autocomplete="off" class="w-full field">
-      </label>
-      <label class="field-outline max-w-xs">
-        <span class="field-outline__label">Repeat the whole ladder</span>
-        <input name="repeat_count" type="number" min="0" max="10" value="{{ form.repeat_count }}"
-               class="w-full field">
-        <span class="mt-1 text-xs text-muted">Extra times to re-walk all levels if still unacknowledged. 0 = walk once.</span>
-      </label>
-    </fieldset>
-
-    <fieldset class="space-y-4">
-      <legend class="px-1 text-sm font-medium">Levels</legend>
-      <p class="text-xs text-muted">Each level pages its channels, then waits the delay before the next level.</p>
-
-      <div id="levels" class="space-y-4">
-        {% for level in form.levels %}
-        {% call esc::level(level, loop.index) %}{% endcall %}
-        {% endfor %}
+    <fieldset>
+      <legend class="float-left mb-3 w-full"><span class="form-legend">about</span></legend>
+      <div class="clear-both space-y-5">
+        <label class="field-outline">
+          <span class="field-outline__label">Description (optional)</span>
+          <input name="description" type="text" maxlength="2000" value="{{ form.description }}"
+                 autocomplete="off" class="w-full field">
+        </label>
+        <div>
+          <span id="walks-label" class="mb-1.5 block text-xs text-muted">Walk the ladder</span>
+          <div class="sm-rail sm-rail--fill" role="radiogroup" aria-labelledby="walks-label">
+            {% for extra in [0, 1, 2, 3] %}
+            <label class="sm-rail__seg">
+              <input type="radio" name="repeat_count" value="{{ extra }}" class="sr-only"{% if form.repeat_count == *extra %} checked{% endif %}>{% if *extra == 0 %}once{% else %}{{ extra + 1 }}×{% endif %}
+            </label>
+            {% endfor %}
+            {% if form.repeat_count > 3 %}
+            <label class="sm-rail__seg">
+              <input type="radio" name="repeat_count" value="{{ form.repeat_count }}" class="sr-only" checked>{{ form.repeat_count + 1 }}×
+            </label>
+            {% endif %}
+          </div>
+          <span class="mt-1 block text-xs text-muted">At most this many times, from level 1; it stops as soon as someone acknowledges.</span>
+        </div>
       </div>
-
-      <button type="button" id="add-level"
-              class="sticker-btn px-3 py-1.5 text-sm font-medium">add level</button>
     </fieldset>
 
-    <div class="flex gap-3">
-      <button type="submit"
-              class="sticker-btn sticker-btn--primary px-4 py-2 text-sm font-medium">
-        {% if form.mode == "create" %}Create{% else %}Save changes{% endif %}
-      </button>
-      <a href="/settings/escalation" class="btn-ghost px-4 py-2 text-sm">Cancel</a>
+    <fieldset>
+      <legend class="float-left mb-3 w-full"><span class="form-legend">levels</span></legend>
+      <div class="clear-both space-y-4">
+        <p class="text-xs text-muted">Each level pages its channels and schedules, then waits before the next level.</p>
+        <div id="levels" class="space-y-4">
+          {% for level in form.levels %}
+          {% call esc::level(level, loop.index) %}{% endcall %}
+          {% endfor %}
+        </div>
+        <button type="button" id="add-level" class="check-type-card check-type-card--add w-full">
+          <span class="check-type-card__plus" aria-hidden="true">+</span>
+          <span class="check-type-card__desc">add level</span>
+        </button>
+      </div>
+    </fieldset>
+
+    </div>
+
+    <aside class="action-rail lg:col-span-2 xl:col-span-1 xl:sticky xl:top-6">
+      <div class="flex flex-wrap items-center gap-3 xl:flex-col xl:items-stretch">
+        <button type="submit"
+                class="sticker-btn sticker-btn--primary min-h-10 px-4 py-2 text-sm font-medium motion-safe:hover:-translate-y-0.5">
+          {% if form.mode == "create" %}create{% else %}save changes{% endif %}
+        </button>
+        <a href="/settings/escalation"
+           class="btn-ghost inline-flex min-h-10 items-center justify-center px-4 py-2 text-center text-sm">cancel</a>
+        <span class="text-xs text-quiet xl:text-center">
+          tip: <kbd class="rounded border px-1.5 py-0.5">⌘/Ctrl</kbd> +
+               <kbd class="rounded border px-1.5 py-0.5">Enter</kbd> to save
+        </span>
+      </div>
+    </aside>
+
     </div>
   </form>
 

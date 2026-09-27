@@ -3451,7 +3451,7 @@
         cursor: pointer;
         transition: background-color 120ms ease, color 120ms ease;
     }
-    .sm-rail__seg:not(.sm-rail__seg--active):not(:has(input:checked)):hover {
+    .sm-rail__seg:not(.sm-rail__seg--active):not(:has(input:checked)):not(:has(input:disabled)):hover {
         background: var(--theme-surface-sunk);
         color: var(--theme-accent);
     }
@@ -3473,6 +3473,10 @@
     .sm-rail__seg:has(input:focus-visible) {
         outline: 1px dotted currentColor;
         outline-offset: -3px;
+    }
+    .sm-rail__seg:has(input:disabled) {
+        cursor: not-allowed;
+        opacity: 0.5;
     }
     /* Stretch the rail across its row; segments share the width equally but
        keep the segmented pill look. */

@@ -203,6 +203,7 @@ mod tests {
                 rotation_length_secs: 86_400,
                 handoff_at: t("2026-09-01T09:00:00Z"),
                 layer_order: 0,
+                windows: vec![],
                 created_at: t("2026-01-01T00:00:00Z"),
                 participants: people
                     .iter()
@@ -311,7 +312,7 @@ mod tests {
         }
         .render()
         .unwrap();
-        assert!(html.contains("No shifts for you in the next 90 days."));
+        assert!(html.contains("# no shifts for you in the next 90 days"));
         assert!(html.contains("make calendar link"));
         assert!(!html.contains("data-copy"));
     }
@@ -339,7 +340,7 @@ mod tests {
         .unwrap();
         assert!(html.contains(
             r#"now
-        until <time data-tz="at" datetime="2026-09-27T09:00:00Z">"#
+          until <time data-tz="at" datetime="2026-09-27T09:00:00Z">"#
         ));
         assert!(html.contains(r#"<time data-tz="at" datetime="2026-10-01T09:00:00Z">"#));
         assert!(html.contains("with no handoff in the next 90 days"));

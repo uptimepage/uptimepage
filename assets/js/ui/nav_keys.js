@@ -60,7 +60,7 @@
     }
 
     document.addEventListener("keydown", (e) => {
-        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
         if (typing() || document.querySelector("dialog[open]")) {
             disarm();
             return;

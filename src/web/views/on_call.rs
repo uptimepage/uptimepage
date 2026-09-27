@@ -22,7 +22,9 @@ use uuid::Uuid;
 use crate::app::AppState;
 use std::collections::{HashMap, HashSet};
 
-use crate::domain::{OnCallScheduleDetail, OrgId, RotationType, UserId, on_call_shifts};
+use crate::domain::{
+    OnCallScheduleDetail, OnCallWindow, OrgId, RotationType, UserId, Weekday, on_call_shifts,
+};
 use crate::error::{AppError, codes};
 use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser};
 use crate::templates::filters;
@@ -198,6 +200,54 @@ pub struct OnCallPartial {
     pub locked: bool,
 }
 
+/// One weekday toggle on a window row.
+pub struct DayToggle {
+    pub value: &'static str,
+    pub label: String,
+    pub on: bool,
+}
+
+/// One window prefilled in the builder, as its inputs take it.
+pub struct WindowModel {
+    /// Monday first.
+    pub days: Vec<DayToggle>,
+    pub from: String,
+    pub to: String,
+}
+
+impl WindowModel {
+    fn new(days: &[Weekday], from: String, to: String) -> Self {
+        Self {
+            days: Weekday::ALL
+                .iter()
+                .map(|d| {
+                    let value = d.as_str();
+                    DayToggle {
+                        value,
+                        label: value[..1].to_uppercase() + &value[1..],
+                        on: days.contains(d),
+                    }
+                })
+                .collect(),
+            from,
+            to,
+        }
+    }
+
+    fn from_window(w: &OnCallWindow) -> Self {
+        Self::new(
+            &w.days,
+            w.from.format("%H:%M").to_string(),
+            w.to.format("%H:%M").to_string(),
+        )
+    }
+
+    /// What "add hours" starts from: weekday working hours.
+    fn working_hours() -> Self {
+        Self::new(&Weekday::ALL[..5], "09:00".into(), "17:00".into())
+    }
+}
+
 /// One layer prefilled in the builder. The JS serialises participants in the
 /// order they are listed, which is the rotation order.
 pub struct LayerModel {
@@ -211,7 +261,15 @@ pub struct LayerModel {
     /// The stored instant, sent back unchanged when neither the handoff nor
     /// the timezone was edited, so a save never re-resolves it.
     pub handoff_at: String,
+    /// Empty when it is on call at all hours.
+    pub windows: Vec<WindowModel>,
     pub participants: Vec<MemberChoice>,
+}
+
+/// A zone in the picker, labelled with its offset from UTC right now.
+pub struct ZoneChoice {
+    pub name: String,
+    pub label: String,
 }
 
 pub struct ScheduleFormModel {
@@ -221,12 +279,13 @@ pub struct ScheduleFormModel {
     pub schedule_id: String,
     pub name: String,
     pub timezone: String,
-    /// Zone names offered as the timezone field's suggestions.
-    pub timezones: Vec<&'static str>,
+    pub timezones: Vec<ZoneChoice>,
     pub members: Vec<MemberChoice>,
     pub layers: Vec<LayerModel>,
     /// What "add layer" clones.
     pub blank_layer: LayerModel,
+    /// What "add hours" clones.
+    pub blank_window: WindowModel,
     /// The saved schedule's month; `None` while creating one.
     pub calendar: Option<CalendarModel>,
     /// True when the org has no members to staff a rotation (cannot happen for
@@ -388,6 +447,7 @@ fn empty_layer() -> LayerModel {
         rotation_length: "1".into(),
         handoff_local: String::new(),
         handoff_at: String::new(),
+        windows: Vec::new(),
         participants: Vec::new(),
     }
 }
@@ -412,10 +472,11 @@ pub async fn new_form(
         submit_method: "POST",
         schedule_id: String::new(),
         name: String::new(),
+        timezones: zone_choices("UTC", Utc::now()),
         timezone: "UTC".into(),
-        timezones: timezone_names(),
         layers: vec![empty_layer()],
         blank_layer: empty_layer(),
+        blank_window: WindowModel::working_hours(),
         no_members: members.is_empty(),
         members,
         calendar: None,
@@ -436,6 +497,30 @@ fn length_in_unit(rotation: RotationType, secs: i32) -> String {
         RotationType::Weekly => (secs / 604_800).to_string(),
         RotationType::Custom => exact_duration(secs.unsigned_abs()),
     }
+}
+
+/// The picker's zones: `current` first when the list leaves it out, since the
+/// API takes any IANA name, then [`timezone_names`], each with its offset at
+/// `now`.
+fn zone_choices(current: &str, now: DateTime<Utc>) -> Vec<ZoneChoice> {
+    let names = timezone_names();
+    let stored = (!names.contains(&current)).then_some(current);
+    stored
+        .into_iter()
+        .chain(names)
+        .map(|name| {
+            let tz: chrono_tz::Tz = name.parse().unwrap_or(chrono_tz::UTC);
+            let offset = now.with_timezone(&tz).format("%:z").to_string();
+            ZoneChoice {
+                label: if name == "UTC" {
+                    name.to_owned()
+                } else {
+                    format!("{name} (UTC{offset})")
+                },
+                name: name.to_owned(),
+            }
+        })
+        .collect()
 }
 
 /// Region-named zones and UTC, the ones a person picks from. Leaves out
@@ -511,6 +596,7 @@ pub async fn edit_form(
                 rotation_length: length_in_unit(l.rotation_type, l.rotation_length_secs),
                 handoff_local: local_input(l.handoff_at, detail.schedule.tz()),
                 handoff_at: l.handoff_at.to_rfc3339(),
+                windows: l.windows.iter().map(WindowModel::from_window).collect(),
                 participants: participants
                     .iter()
                     .filter_map(|p| roster.get(&p.user_id).cloned())
@@ -528,12 +614,13 @@ pub async fn edit_form(
         submit_method: "PATCH",
         schedule_id: detail.schedule.id.to_string(),
         name: detail.schedule.name,
+        timezones: zone_choices(&detail.schedule.timezone, now),
         timezone: detail.schedule.timezone,
-        timezones: timezone_names(),
         no_members: members.is_empty(),
         members,
         layers,
         blank_layer: empty_layer(),
+        blank_window: WindowModel::working_hours(),
         calendar: Some(calendar),
     };
     Ok(ScheduleFormPage {
@@ -611,6 +698,7 @@ mod tests {
                 rotation_length_secs: 86_400,
                 handoff_at: t("2026-09-01T09:00:00Z"),
                 layer_order: 0,
+                windows: vec![],
                 created_at: t("2026-01-01T00:00:00Z"),
                 participants: vec![participant(1, 0), participant(2, 1)],
             }],
@@ -643,14 +731,25 @@ mod tests {
             created_at: t("2026-09-25T00:00:00Z"),
         };
         let mut d = rotation(vec![cover(3), cover(2), cover(1)]);
-        // A layer below the paging one never puts anyone on call.
-        let mut below = d.layers[0].clone();
-        below.layer_order = -1;
-        below.participants[0].user_id = uid(4);
-        d.layers.push(below);
+        // A later layer pages in the hours the first one leaves.
+        d.layers[0].windows = vec![
+            serde_json::from_str(
+                r#"{"days":["mon","tue","wed","thu","fri"],"from":"09:00","to":"17:00"}"#,
+            )
+            .unwrap(),
+        ];
+        let mut later = d.layers[0].clone();
+        later.layer_order = 1;
+        later.windows.clear();
+        later.participants[0].user_id = uid(4);
+        d.layers.push(later);
         assert_eq!(
             unreachable(&d, &Roster::new(&members)),
-            vec!["iryna@example.com", "taras@example.com"]
+            vec![
+                "iryna@example.com",
+                "petro@example.com",
+                "taras@example.com"
+            ]
         );
     }
 
@@ -806,7 +905,7 @@ mod tests {
         }
         .render()
         .unwrap();
-        assert!(html.contains("No on-call schedules yet"));
+        assert!(html.contains("# no on-call schedules yet"));
         assert!(html.contains("add one above"));
     }
 
@@ -887,7 +986,7 @@ mod tests {
         assert!(html.contains("Ask the account owner"));
         assert!(!html.contains(r#"href="/settings/on-call/new""#));
         assert!(!html.contains("hx-get=\"/web/partials/settings/on-call\""));
-        assert!(!html.contains("your shifts"));
+        assert!(!html.contains("your on-call"));
         assert!(!html.contains("channels that page you"));
     }
 
@@ -908,7 +1007,10 @@ mod tests {
             schedule_id: "sid".into(),
             name: "Primary".into(),
             timezone: "UTC".into(),
-            timezones: vec!["UTC", "Europe/Kyiv"],
+            timezones: zone_choices("UTC", t("2026-09-26T12:00:00Z"))
+                .into_iter()
+                .filter(|z| z.name == "UTC" || z.name == "Europe/Kyiv")
+                .collect(),
             members: vec![
                 member(uid(1), "a@b.c", true),
                 member(uid(2), "taras@example.com", false),
@@ -919,12 +1021,14 @@ mod tests {
                 rotation_length: "1".into(),
                 handoff_local: "2026-09-28T09:00".into(),
                 handoff_at: "2026-09-28T06:00:00+00:00".into(),
+                windows: vec![],
                 participants: vec![
                     member(uid(2), "taras@example.com", false),
                     member(uid(1), "a@b.c", true),
                 ],
             }],
             blank_layer: empty_layer(),
+            blank_window: WindowModel::working_hours(),
             calendar: None,
             no_members: false,
         }
@@ -961,7 +1065,7 @@ mod tests {
             .unwrap();
         assert!(first < second, "stored position order is kept");
         assert!(html.contains(r#"value="2026-09-28T09:00" data-iso="2026-09-28T06:00:00+00:00""#));
-        assert!(html.contains(r#"<option value="Europe/Kyiv">"#));
+        assert!(html.contains(r#"<option value="Europe/Kyiv">Europe/Kyiv (UTC+03:00)</option>"#));
         assert!(html.contains(&format!(
             r#"value="{}" data-email="taras@example.com" data-unreachable"#,
             uid(2)
@@ -974,6 +1078,16 @@ mod tests {
         assert_eq!(length_in_unit(RotationType::Weekly, 1_209_600), "2");
         assert_eq!(length_in_unit(RotationType::Custom, 43_200), "12h");
         assert_eq!(length_in_unit(RotationType::Custom, 5_400), "90m");
+    }
+
+    #[test]
+    fn a_stored_zone_the_list_leaves_out_is_still_offered() {
+        let now = t("2026-01-15T12:00:00Z");
+        let zones = zone_choices("US/Eastern", now);
+        assert_eq!(zones[0].name, "US/Eastern");
+        assert_eq!(zones[0].label, "US/Eastern (UTC-05:00)");
+        assert_eq!(zones[1].label, "UTC");
+        assert_eq!(zone_choices("UTC", now)[0].name, "UTC");
     }
 
     #[test]

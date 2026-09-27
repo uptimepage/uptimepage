@@ -12,9 +12,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-/// What a step pages. `channel` routes to a notification channel today;
-/// `user` and `schedule` are accepted by the schema but only become routable
-/// once on-call resolution (a later phase) lands — the engine skips them.
+/// What a step pages: a notification channel, a member through the channels
+/// they chose to be paged on, or whoever an on-call schedule has on call at
+/// the time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum EscalationTargetType {
@@ -131,7 +131,9 @@ pub struct NewEscalationPolicy {
     #[serde(default)]
     #[schema(nullable = true)]
     pub description: Option<String>,
+    /// Extra walks of the whole ladder after the first.
     #[serde(default)]
+    #[schema(minimum = 0, maximum = 10)]
     pub repeat_count: i32,
     #[serde(default)]
     pub steps: Vec<NewEscalationStep>,
@@ -181,9 +183,35 @@ pub fn next_step(
     }
 }
 
+/// How long the walk waits after paging `level` in `round`: that level's
+/// `delay_secs`, or nothing when it was the policy's final page, so the walk
+/// ends and the monitor's outage reminders take over at once.
+pub fn wait_after(
+    steps: &[EscalationStep],
+    repeat_count: i32,
+    level: i32,
+    round: i32,
+    delay_secs: i32,
+) -> i32 {
+    match next_step(steps, repeat_count, level, round) {
+        EscalationDecision::Exhausted => 0,
+        EscalationDecision::Page { .. } => delay_secs,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_final_page_waits_for_nothing() {
+        let steps = [step(1, 300), step(2, 600)];
+        assert_eq!(wait_after(&steps, 0, 1, 0, 300), 300);
+        assert_eq!(wait_after(&steps, 0, 2, 0, 600), 0);
+        // Another walk still waits out the last level before starting over.
+        assert_eq!(wait_after(&steps, 1, 2, 0, 600), 600);
+        assert_eq!(wait_after(&steps, 1, 2, 1, 600), 0);
+    }
 
     fn step(level: i32, delay_secs: i32) -> EscalationStep {
         EscalationStep {

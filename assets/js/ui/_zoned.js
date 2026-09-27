@@ -26,11 +26,17 @@ function formatter(tz) {
     return f;
 }
 
-// Offset of `tz` from UTC at instant `ms`, in milliseconds.
-function offsetAt(ms, tz) {
+// The wall clock in `tz` at instant `ms`, part by part (month 1-based).
+function wallAt(ms, tz) {
     const parts = formatter(tz).formatToParts(new Date(ms));
     const n = (type) => Number(parts.find((p) => p.type === type).value);
-    const asUtc = Date.UTC(n("year"), n("month") - 1, n("day"), n("hour"), n("minute"), n("second"));
+    return { year: n("year"), month: n("month"), day: n("day"), hour: n("hour"), minute: n("minute"), second: n("second") };
+}
+
+// Offset of `tz` from UTC at instant `ms`, in milliseconds.
+function offsetAt(ms, tz) {
+    const w = wallAt(ms, tz);
+    const asUtc = Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute, w.second);
     return asUtc - Math.floor(ms / 1000) * 1000;
 }
 
@@ -54,4 +60,10 @@ function earliestAt(wall, tz) {
 export function parseZoned(local, tz) {
     const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(local);
     return m ? zonedInstant(tz, +m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : null;
+}
+
+// Today's date in `tz`, as [year, month (0-based), day].
+export function todayIn(tz) {
+    const w = wallAt(Date.now(), tz);
+    return [w.year, w.month - 1, w.day];
 }

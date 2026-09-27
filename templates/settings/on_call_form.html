@@ -3,103 +3,134 @@
 {% block title %}{% if form.mode == "create" %}New on-call schedule{% else %}Edit on-call schedule{% endif %} · Uptimepage{% endblock %}
 {% block content %}
 <section class="space-y-6">
-  <header class="space-y-1">
-    <a href="/settings/on-call" class="inline-block text-sm text-muted hover:text-body">← on-call schedules</a>
-    <h1 class="page-title truncate">
-      <span class="page-title__prefix" aria-hidden="true">$</span>{% if form.mode == "create" %}new on-call schedule{% else %}edit {{ form.name }}{% endif %}
-    </h1>
-    <p class="text-sm text-muted">
-      Submits JSON to <code class="font-mono">{{ form.submit_method }} {{ form.action }}</code>. Validation runs on the API.
-    </p>
-  </header>
-
-  {% if form.no_members %}
-  <div class="alert-card alert-card--warn text-sm">
-    No members to staff a rotation — invite teammates first.
-  </div>
-  {% endif %}
-
   <form id="schedule-form"
         data-action="{{ form.action }}"
         data-method="{{ form.submit_method }}"
         data-mode="{{ form.mode }}"
         novalidate
-        class="space-y-6">
+        class="mx-auto w-full max-w-7xl">
+
+    <div class="form-grid grid grid-cols-1 gap-6 lg:grid-cols-[17rem_1fr] lg:items-start lg:gap-8 xl:grid-cols-[17rem_1fr_15rem]">
+
+    <aside class="type-rail lg:sticky lg:top-6">
+      <span class="form-legend">ask order</span>
+      <div data-layer-rail class="check-type-cards check-type-cards--rail mt-3" aria-label="Layers in the order they are asked"></div>
+      <p class="mt-2 font-mono text-xs text-quiet"># the first layer on call at a moment pages</p>
+    </aside>
+
+    <div class="space-y-6">
+
+    <header class="space-y-1">
+      <a href="/settings/on-call" class="inline-block text-sm text-muted hover:text-body">← on-call schedules</a>
+      <h1 class="page-title">
+        <span class="page-title__prefix" aria-hidden="true">$</span><input
+          name="name" type="text" required maxlength="100" value="{{ form.name }}"
+          autocomplete="off" spellcheck="false" placeholder="new on-call schedule"
+          aria-label="Schedule name" class="page-title__input">
+      </h1>
+      <p class="text-sm text-muted">Whoever it puts on call is paged when an escalation policy pages this schedule.</p>
+    </header>
+
+    {% if form.no_members %}
+    <div class="alert-card alert-card--warn text-sm">
+      No members to staff a rotation — invite teammates first.
+    </div>
+    {% endif %}
 
     <div id="form-errors" role="alert" aria-live="polite"
          class="hidden alert-card alert-card--error"></div>
 
-    <fieldset class="sticker-card space-y-5 p-5">
-      <legend class="px-1 text-sm font-medium">Basic</legend>
-      <label class="field-outline">
-        <span class="field-outline__label">Name</span>
-        <input name="name" type="text" required maxlength="100" value="{{ form.name }}"
-               autocomplete="off" class="w-full field">
-      </label>
-      <label class="field-outline max-w-xs">
-        <span class="field-outline__label">Timezone</span>
-        <input name="timezone" type="text" required value="{{ form.timezone }}" list="tz-list"
-               autocomplete="off" class="w-full field font-mono">
-        <span class="mt-1 text-xs text-muted">IANA name. Handoff times below are read in this zone, and daily or weekly handoffs keep the same local time across daylight saving.</span>
-      </label>
-      <datalist id="tz-list">
-        {% for tz in form.timezones %}<option value="{{ tz }}"></option>{% endfor %}
-      </datalist>
-    </fieldset>
-
-    <fieldset class="space-y-4">
-      <legend class="px-1 text-sm font-medium">Layers</legend>
-      <p class="text-xs text-muted">Higher layers win when stacked. Participants rotate in the order listed, handing off each period.</p>
-
-      <div id="layers" class="space-y-4">
-        {% for layer in form.layers %}
-        {% call oc::layer(layer, form.members, loop.index) %}{% endcall %}
-        {% endfor %}
+    {% if let Some(cal) = form.calendar %}
+    <section class="space-y-3" aria-labelledby="calendar-heading"
+             data-overrides
+             data-schedule-id="{{ form.schedule_id }}">
+      <h2 id="calendar-heading" class="form-legend">calendar</h2>
+      <p class="text-xs text-muted">
+        Who is on call each day of the saved schedule, with days and handoff
+        times in the zone named above the grid. Overrides are highlighted and
+        beat the rotation for their window. To add one, click a start day and an
+        end day, then pick who covers.
+      </p>
+      <div class="sticker-card space-y-3 p-4">
+        <div id="on-call-calendar" hx-sync="this:replace">{% include "settings/_on_call_calendar.html" %}</div>
+        <p data-cal-hint aria-live="polite" class="font-mono text-xs text-quiet"># click a start day, then an end day, then choose who covers</p>
+        <div data-cal-picker hidden class="flex flex-wrap items-center gap-2"></div>
+        <p data-cal-result role="status" aria-live="polite" class="flash-text text-xs"></p>
       </div>
+      <select data-override-members class="hidden">
+        {% for m in form.members %}
+        <option value="{{ m.id }}">{{ m.email }}{% if !m.reachable %} (no paging channels){% endif %}</option>
+        {% endfor %}
+      </select>
+    </section>
+    {% endif %}
 
-      <button type="button" id="add-layer"
-              class="sticker-btn px-3 py-1.5 text-sm font-medium">add layer</button>
+    <fieldset>
+      <legend class="float-left mb-3 w-full"><span class="form-legend">where it runs</span></legend>
+      <div class="clear-both space-y-1">
+        <div class="field-outline max-w-sm">
+          <span class="field-outline__label">Timezone</span>
+          <select name="timezone" data-sm-combobox data-sm-combobox-search aria-label="Timezone" class="w-full field font-mono">
+            {% for tz in form.timezones %}
+            <option value="{{ tz.name }}"{% if tz.name == form.timezone %} selected{% endif %}>{{ tz.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <p class="text-xs text-muted">Handoffs and hours below are read in this zone, and daily or weekly handoffs keep the same local time across daylight saving.</p>
+      </div>
     </fieldset>
 
-    <div class="flex gap-3">
-      <button type="submit"
-              class="sticker-btn sticker-btn--primary px-4 py-2 text-sm font-medium">
-        {% if form.mode == "create" %}Create{% else %}Save changes{% endif %}
-      </button>
-      <a href="/settings/on-call" class="btn-ghost px-4 py-2 text-sm">Cancel</a>
+    <fieldset>
+      <legend class="float-left mb-3 w-full"><span class="form-legend">layers</span></legend>
+      <div class="clear-both space-y-4">
+        <p class="text-xs text-muted">
+          The first layer on call at a given moment pages, and later layers fill
+          the hours earlier ones leave, so a layer on call at all hours goes
+          last; drag a layer by its handle, or move it up or down, to reorder.
+          An end at or before the start runs into the next day. Participants
+          rotate in the order listed, and a rotation keeps counting outside its
+          layer's hours.
+        </p>
+        <div id="layers" class="space-y-4">
+          {% for layer in form.layers %}
+          {% call oc::layer(layer, form.members, loop.index) %}{% endcall %}
+          {% endfor %}
+        </div>
+        <button type="button" id="add-layer" class="check-type-card check-type-card--add w-full">
+          <span class="check-type-card__plus" aria-hidden="true">+</span>
+          <span class="check-type-card__desc">add layer</span>
+        </button>
+      </div>
+    </fieldset>
+
+    </div>
+
+    <aside class="action-rail lg:col-span-2 xl:col-span-1 xl:sticky xl:top-6">
+      <div class="flex flex-wrap items-center gap-3 xl:flex-col xl:items-stretch">
+        <button type="submit"
+                class="sticker-btn sticker-btn--primary min-h-10 px-4 py-2 text-sm font-medium motion-safe:hover:-translate-y-0.5">
+          {% if form.mode == "create" %}create{% else %}save changes{% endif %}
+        </button>
+        <a href="/settings/on-call"
+           class="btn-ghost inline-flex min-h-10 items-center justify-center px-4 py-2 text-center text-sm">cancel</a>
+        <span class="text-xs text-quiet xl:text-center">
+          tip: <kbd class="rounded border px-1.5 py-0.5">⌘/Ctrl</kbd> +
+               <kbd class="rounded border px-1.5 py-0.5">Enter</kbd> to save
+        </span>
+      </div>
+    </aside>
+
     </div>
   </form>
-
-  {% if let Some(cal) = form.calendar %}
-  <section class="space-y-3" aria-labelledby="calendar-heading"
-           data-overrides
-           data-schedule-id="{{ form.schedule_id }}">
-    <h2 id="calendar-heading" class="panel-label">calendar</h2>
-    <p class="text-xs text-muted">
-      Who is on call each day of the saved schedule, with days and handoff
-      times in the zone named above the grid. Overrides are highlighted and
-      beat the rotation for their window. To add one, click a start day and an
-      end day, then pick who covers.
-    </p>
-    <div class="sticker-card space-y-3 p-4">
-      <div id="on-call-calendar" hx-sync="this:replace">{% include "settings/_on_call_calendar.html" %}</div>
-      <p data-cal-hint aria-live="polite" class="text-xs text-muted">Click a start day, then an end day, then choose who covers.</p>
-      <div data-cal-picker hidden class="flex flex-wrap items-center gap-2"></div>
-      <p data-cal-result role="status" aria-live="polite" class="flash-text text-xs"></p>
-    </div>
-    <select data-override-members class="hidden">
-      {% for m in form.members %}
-      <option value="{{ m.id }}">{{ m.email }}{% if !m.reachable %} (no paging channels){% endif %}</option>
-      {% endfor %}
-    </select>
-  </section>
-  {% endif %}
 
   <template id="layer-template">
     {% call oc::layer(form.blank_layer, form.members, 1) %}{% endcall %}
   </template>
   <template id="participant-template">
     {% call oc::participant("", "", true) %}{% endcall %}
+  </template>
+  <template id="window-template">
+    {% call oc::window(form.blank_window) %}{% endcall %}
   </template>
 </section>
 

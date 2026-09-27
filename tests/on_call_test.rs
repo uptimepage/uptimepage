@@ -69,6 +69,7 @@ fn schedule(name: &str, tz: &str, participants: Vec<UserId>) -> NewOnCallSchedul
             rotation_length_secs: 86_400,
             handoff_at: "2026-06-01T00:00:00Z".parse().unwrap(),
             layer_order: 0,
+            windows: vec![],
             participants: participants
                 .into_iter()
                 .map(|u| NewOnCallParticipant { user_id: u })
@@ -972,6 +973,66 @@ async fn two_layers_of_one_schedule_cannot_share_an_order_pg() {
     let saved = store.replace(org, id, tied).await.unwrap().unwrap();
     let orders: Vec<i32> = saved.layers.iter().map(|l| l.layer_order).collect();
     assert_eq!(orders, [0, 1]);
+}
+
+#[tokio::test]
+#[ignore]
+async fn layer_hours_are_stored_and_resolve_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, owner) = seed_org(&pool, "ochours").await;
+    let other = add_member(&pool, org, "ochours2").await;
+    let store = PgOnCallStore::new(pool.clone());
+    let mut new = schedule("hours", "UTC", vec![owner]);
+    let mut rest = new.layers[0].clone();
+    rest.layer_order = 1;
+    rest.participants = vec![NewOnCallParticipant { user_id: other }];
+    new.layers[0].windows = vec![
+        serde_json::from_str(
+            r#"{"days":["mon","tue","wed","thu","fri"],"from":"09:00","to":"17:00"}"#,
+        )
+        .unwrap(),
+    ];
+    new.layers.push(rest);
+    let id = store
+        .create(org, new.clone(), 10)
+        .await
+        .unwrap()
+        .schedule
+        .id;
+
+    let saved = store.get(org, id).await.unwrap().unwrap();
+    assert_eq!(saved.layers[0].windows, new.layers[0].windows);
+    assert!(saved.layers[1].windows.is_empty());
+    // Monday 2026-06-01 noon, then Saturday noon.
+    let at = |s: &str| s.parse::<chrono::DateTime<chrono::Utc>>().unwrap();
+    assert_eq!(
+        store
+            .resolve_now(org, id, at("2026-06-01T12:00:00Z"))
+            .await
+            .unwrap(),
+        Some(vec![owner])
+    );
+    assert_eq!(
+        store
+            .resolve_now(org, id, at("2026-06-06T12:00:00Z"))
+            .await
+            .unwrap(),
+        Some(vec![other])
+    );
+
+    let err = sqlx::query("UPDATE on_call_layers SET windows = '{}' WHERE schedule_id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap_err();
+    assert!(
+        err.as_database_error()
+            .and_then(|e| e.constraint())
+            .is_some_and(|c| c == "ck_on_call_layers_windows"),
+        "{err}"
+    );
 }
 
 /// GET `uri`: status, content type and body.

@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::domain::{
     EscalationDecision, IncidentEventKind, IncidentState, NewIncidentNotification,
     NotificationChannel, NotificationOutcome, NotificationReason, NotificationStatus, OrgId,
-    failure_run_reached, next_step,
+    failure_run_reached, next_step, wait_after,
 };
 use crate::error::Result;
 use crate::notifier::event::IncidentNotice;
@@ -315,7 +315,8 @@ impl Worker {
                         &targets,
                     )
                     .await?;
-                let next_at = Some(Utc::now() + chrono::Duration::seconds(delay_secs.into()));
+                let wait = wait_after(&policy.steps, policy.repeat_count, level, round, delay_secs);
+                let next_at = Some(Utc::now() + chrono::Duration::seconds(wait.into()));
                 self.ops
                     .record_escalation(d.org, d.id, level, round, next_at)
                     .await?;

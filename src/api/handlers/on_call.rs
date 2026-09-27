@@ -18,7 +18,8 @@ use crate::app::AppState;
 use crate::domain::preferences::validate_timezone;
 use crate::domain::{
     FIRST_YEAR, LAST_YEAR, NewOnCallOverride, NewOnCallSchedule, OnCallOverride,
-    OnCallScheduleDetail, OnCallScheduleSummary, RotationType, UserId,
+    OnCallScheduleDetail, OnCallScheduleSummary, OnCallWindow, RotationType, Shadowed, UserId,
+    never_pages,
 };
 use crate::error::ApiError;
 use crate::error::codes;
@@ -29,6 +30,7 @@ use crate::storage::on_call_feeds;
 const MAX_NAME: usize = 100;
 const MAX_LAYERS: usize = 10;
 const MAX_PARTICIPANTS: usize = 50;
+const MAX_WINDOWS: usize = 14;
 const HOUR_SECS: i32 = 3_600;
 const DAY_SECS: i32 = 86_400;
 const WEEK_SECS: i32 = 7 * DAY_SECS;
@@ -63,6 +65,17 @@ fn validate(new: &NewOnCallSchedule) -> Result<()> {
         return Err(invalid("each layer needs its own layer_order"));
     }
     for layer in &new.layers {
+        if layer.windows.len() > MAX_WINDOWS {
+            return Err(invalid("too many windows in one layer"));
+        }
+        for w in &layer.windows {
+            let mut seen = std::collections::HashSet::new();
+            if w.days.is_empty() || !w.days.iter().all(|d| seen.insert(*d)) {
+                return Err(invalid(
+                    "each window needs one or more days, each named once",
+                ));
+            }
+        }
         if layer.rotation_length_secs <= 0 {
             return Err(invalid("rotation length must be positive"));
         }
@@ -93,6 +106,38 @@ fn validate(new: &NewOnCallSchedule) -> Result<()> {
         if layer.participants.len() > MAX_PARTICIPANTS {
             return Err(invalid("too many participants in one layer"));
         }
+    }
+    // Layers are numbered as sent, which is how the builder lists them.
+    let mut asked: Vec<usize> = (0..new.layers.len()).collect();
+    asked.sort_by_key(|&i| new.layers[i].layer_order);
+    let stack: Vec<&[OnCallWindow]> = asked
+        .iter()
+        .map(|&i| new.layers[i].windows.as_slice())
+        .collect();
+    if let Some(Shadowed {
+        layer,
+        behind,
+        whole_week,
+    }) = never_pages(&stack)
+    {
+        let layer = asked[layer] + 1;
+        return Err(invalid(match (behind, whole_week) {
+            (Some(before), _) => {
+                let before = asked[before] + 1;
+                format!(
+                    "layer {layer} would never page: layer {before} is on call at all hours; \
+                     add hours to layer {before}, or remove layer {layer}"
+                )
+            }
+            (None, true) => format!(
+                "layer {layer} would never page: the layers before it are on call at all \
+                 hours; remove it"
+            ),
+            (None, false) => format!(
+                "layer {layer} would never page: the layers before it are on call at all its \
+                 hours; change its hours, or remove it"
+            ),
+        }));
     }
     Ok(())
 }
@@ -430,6 +475,7 @@ mod tests {
             rotation_length_secs: len,
             handoff_at: "2026-06-01T00:00:00Z".parse().unwrap(),
             layer_order: 0,
+            windows: vec![],
             participants: vec![NewOnCallParticipant {
                 user_id: UserId(Uuid::now_v7()),
             }],
@@ -493,13 +539,71 @@ mod tests {
 
     #[test]
     fn rejects_layers_sharing_an_order() {
-        let base = layer(RotationType::Daily, DAY_SECS);
-        let top = NewOnCallLayer {
-            layer_order: 1,
-            ..base.clone()
-        };
-        assert!(validate(&schedule("UTC", vec![base.clone(), base.clone()])).is_err());
-        assert!(validate(&schedule("UTC", vec![base, top])).is_ok());
+        let first = in_order(0, vec![weekdays()]);
+        assert!(validate(&schedule("UTC", vec![first.clone(), first.clone()])).is_err());
+        assert!(validate(&schedule("UTC", vec![first, in_order(1, vec![])])).is_ok());
+    }
+
+    fn in_order(n: i32, windows: Vec<OnCallWindow>) -> NewOnCallLayer {
+        NewOnCallLayer {
+            layer_order: n,
+            windows,
+            ..layer(RotationType::Daily, DAY_SECS)
+        }
+    }
+
+    fn weekdays() -> OnCallWindow {
+        serde_json::from_str(
+            r#"{"days":["mon","tue","wed","thu","fri"],"from":"09:00","to":"17:00"}"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_layer_that_would_never_page_is_refused() {
+        let err = validate(&schedule(
+            "UTC",
+            vec![in_order(1, vec![weekdays()]), in_order(0, vec![])],
+        ))
+        .unwrap_err();
+        assert!(
+            err.to_string().contains(
+                "layer 1 would never page: layer 2 is on call at all hours; \
+                 add hours to layer 2, or remove layer 1"
+            ),
+            "{err}"
+        );
+        assert!(
+            validate(&schedule(
+                "UTC",
+                vec![in_order(0, vec![weekdays()]), in_order(1, vec![])],
+            ))
+            .is_ok()
+        );
+        assert!(
+            validate(&schedule(
+                "UTC",
+                vec![in_order(0, vec![weekdays()]), in_order(1, vec![weekdays()])],
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_window_names_each_of_its_days_once() {
+        let mut none = weekdays();
+        none.days.clear();
+        assert!(validate(&schedule("UTC", vec![in_order(0, vec![none])])).is_err());
+        let mut twice = weekdays();
+        twice.days.push(twice.days[0]);
+        assert!(validate(&schedule("UTC", vec![in_order(0, vec![twice])])).is_err());
+        assert!(
+            validate(&schedule(
+                "UTC",
+                vec![in_order(0, vec![weekdays(); MAX_WINDOWS + 1])]
+            ))
+            .is_err()
+        );
     }
 
     #[test]

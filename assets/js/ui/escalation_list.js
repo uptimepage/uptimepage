@@ -3,14 +3,20 @@
 // survives every refresh. Saves to PUT /api/v1/escalation-policies/default.
 // A refused save puts the saved choice back.
 (function () {
+    // The combobox redraws its label on `change`; `reverting` keeps that
+    // event from saving again.
+    let reverting = false;
     const revert = (sel) => {
         for (const o of sel.options) o.selected = o.defaultSelected;
+        reverting = true;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+        reverting = false;
     };
     let clearTimer;
     document.body.addEventListener("change", async (evt) => {
         const sel = evt.target.closest && evt.target.closest("[data-default-select]");
-        if (!sel) return;
-        const result = sel.parentElement.querySelector("[data-default-result]");
+        if (!sel || reverting) return;
+        const result = sel.closest("[data-default-box]").querySelector("[data-default-result]");
         const show = (msg, ok) => {
             if (!result) return;
             clearTimeout(clearTimer);
@@ -19,6 +25,7 @@
             if (ok) clearTimer = setTimeout(() => { result.textContent = ""; }, 4000);
         };
         const policyId = sel.value || null;
+        const focused = document.activeElement;
         sel.disabled = true;
         try {
             const res = await fetch("/api/v1/escalation-policies/default", {
@@ -43,9 +50,15 @@
                 show("✗ " + msg, false);
             }
         } catch (err) {
+            revert(sel);
             show("✗ network error", false);
         } finally {
             sel.disabled = false;
+            // After the combobox re-enables its button, which it does from a
+            // mutation observer.
+            queueMicrotask(() => {
+                if (document.activeElement === document.body) focused?.focus();
+            });
         }
     });
 })();

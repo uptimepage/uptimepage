@@ -15,43 +15,43 @@
     </div>
     {% if lock.is_none() %}
     <a href="/settings/escalation/new"
-       class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">
-      add policy
-    </a>
+       class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">+ policy</a>
     {% endif %}
   </header>
 
   {% if let Some(lock) = lock %}
   {% if lock.teaser %}
-  <div class="sticker-card space-y-4 p-5">
-    <h2 class="panel-label">on the Team plan</h2>
+  <div class="sticker-card overflow-hidden">
+    <h2 class="card-band panel-label">on the Team plan</h2>
+    <div class="space-y-4 p-5">
     <ul class="list-inside list-disc space-y-1 text-sm">
       <li>Nobody acknowledged in five minutes? The next level pages the next person.</li>
       <li>A level can page a channel or an on-call schedule, so a page follows the rotation.</li>
       <li>One org default covers every monitor; any monitor can take its own policy.</li>
     </ul>
     {% include "settings/_team_cta.html" %}
+    </div>
   </div>
 
   <div class="sticker-card overflow-hidden opacity-50" aria-hidden="true" inert>
     <table class="w-full text-left text-sm">
-      <thead class="bg-[color:var(--theme-surface-sunk)] text-xs uppercase text-muted">
+      <thead class="table-head bg-[color:var(--theme-surface-sunk)]">
         <tr>
           <th class="px-4 py-2">Name</th>
           <th class="px-4 py-2">Levels</th>
-          <th class="px-4 py-2">Repeat</th>
+          <th class="px-4 py-2">Walks</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-[color:var(--theme-line)]">
         <tr>
           <td class="px-4 py-2 font-medium">Production</td>
           <td class="px-4 py-2 tabular-nums">3</td>
-          <td class="px-4 py-2 tabular-nums">×2</td>
+          <td class="px-4 py-2 font-mono tabular-nums">3×</td>
         </tr>
         <tr>
           <td class="px-4 py-2 font-medium">Business hours</td>
           <td class="px-4 py-2 tabular-nums">1</td>
-          <td class="px-4 py-2 tabular-nums">—</td>
+          <td class="px-4 py-2 font-mono tabular-nums">once</td>
         </tr>
       </tbody>
     </table>

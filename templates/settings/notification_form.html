@@ -22,9 +22,6 @@
           autocomplete="off" spellcheck="false" placeholder="new notification channel"
           data-name-input aria-label="Channel name" class="page-title__input">
       </h1>
-      <p class="text-sm text-muted">
-        Submits JSON to <code class="font-mono">{{ form.submit_method }} {{ form.action }}</code>. Validation runs on the API.
-      </p>
       {% if form.mode != "create" %}
       <p class="font-mono text-xs text-quiet">
         <span data-bound-none{% if !form.used_by.is_empty() %} class="hidden"{% endif %}># not bound to any monitor</span>
