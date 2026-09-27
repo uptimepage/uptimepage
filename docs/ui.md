@@ -42,7 +42,7 @@ What responders see here is deliberately separate from what customers see on a s
 | **Sessions** | See every device signed in to your account, revoke a single session, or sign out everywhere. |
 | **API tokens** | Create and revoke personal API tokens for the REST API and Terraform. See [Managing tokens](authentication.md#managing-tokens). |
 
-On-call schedules and escalation policies get their own screens. On the hosted service they come with the Team plan; on another plan the screens say so, and anything an organization built before a downgrade keeps working there. A self-hosted install always has them; there the plan's limits only decide how many of each an organization may keep.
+On-call schedules and escalation policies get their own screens. On the hosted service they come with the Team plan; on another plan the screens say so, and anything an organization built before a downgrade keeps working there. A self-hosted install always has them; there the plan's limits only decide how many of each an organization may keep. The on-call page lists every schedule with who is on call now and who takes over next, plus a card of your own: your next shifts, a link that puts them in your calendar app, and the channels that page you. A saved schedule's page shows its calendar, where overrides are added, above the rotation.
 
 Theme and 12- or 24-hour time format are per-user display preferences, not org settings, and follow you to every screen.
 
