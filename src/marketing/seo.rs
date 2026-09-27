@@ -35,6 +35,7 @@ const STATIC_CACHE_CONTROL: HeaderValue = HeaderValue::from_static("public, max-
 const ORG_SAME_AS: &[&str] = &[
     "https://github.com/uptimepage",
     SOURCE_URL,
+    "https://x.com/uptimepageHQ",
     "https://bsky.app/profile/uptimepage.bsky.social",
     "https://www.saashub.com/uptimepage-dev",
     "https://stackshare.io/uptimepage",
