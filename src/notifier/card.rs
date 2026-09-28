@@ -22,6 +22,11 @@ pub const MAX_NOTE_CHARS: usize = 300;
 /// refuses an over-long payload rather than trimming it.
 pub const MAX_TITLE_CHARS: usize = 200;
 
+/// Discord's cap on a link button's URL, the tightest of the vendors'. A base
+/// URL is operator config, so an acknowledge link past it is dropped rather
+/// than costing the message.
+pub const MAX_ACK_LINK_CHARS: usize = 512;
+
 /// How loud the card should look. Each transport maps this to what it has:
 /// an emoji, a colour bar, a themed text block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +95,9 @@ pub struct AlertCard {
     pub note: Option<String>,
     /// Deep link to the incident, only when it is one a client will accept.
     pub link: Option<String>,
+    /// The page where a signed-in member acknowledges the episode this alert
+    /// is about. Only on an incident still to be taken.
+    pub ack_link: Option<String>,
     /// Whether the event needs a human. Transports that carry a ping apply
     /// their own here; the rest ignore it.
     pub pings: bool,
@@ -118,7 +126,7 @@ impl CardTemplate {
         }
     }
 
-    pub fn card(self, n: &IncidentNotice) -> AlertCard {
+    pub fn card(self, n: &IncidentNotice, ack_link: Option<&str>) -> AlertCard {
         let mut card = AlertCard {
             tone: self.tone(n),
             title: truncate_chars(n.label(), MAX_TITLE_CHARS),
@@ -127,6 +135,7 @@ impl CardTemplate {
             error: None,
             note: n.note.as_deref().map(|s| truncate_chars(s, MAX_NOTE_CHARS)),
             link: n.url.as_deref().filter(|u| is_web_link(u)).map(Into::into),
+            ack_link: acknowledge_link(n, ack_link),
             pings: matches!(
                 n.reason,
                 NotificationReason::Opened
@@ -200,8 +209,8 @@ impl CardTemplate {
 }
 
 impl AlertCard {
-    pub fn for_notice(n: &IncidentNotice) -> Self {
-        CardTemplate::for_reason(n.reason).card(n)
+    pub fn for_notice(n: &IncidentNotice, ack_link: Option<&str>) -> Self {
+        CardTemplate::for_reason(n.reason).card(n, ack_link)
     }
 
     /// Title with its tone in front, the one line every transport leads with.
@@ -216,6 +225,18 @@ impl AlertCard {
     pub fn ping<'a, T: ?Sized>(&self, mention: Option<&'a T>) -> Option<&'a T> {
         mention.filter(|_| self.pings)
     }
+}
+
+/// The acknowledge page a page about `n` may link to. Only an incident still
+/// to be taken has anything to acknowledge, and a link a client would refuse
+/// costs the link rather than the message.
+pub fn acknowledge_link(n: &IncidentNotice, link: Option<&str>) -> Option<String> {
+    link.filter(|u| {
+        n.reason.awaits_acknowledgement()
+            && is_web_link(u)
+            && u.chars().count() <= MAX_ACK_LINK_CHARS
+    })
+    .map(Into::into)
 }
 
 /// A link a client refuses can cost the whole message, so a base URL set
@@ -279,7 +300,7 @@ pub(crate) mod tests {
 
     #[test]
     fn an_open_incident_carries_what_a_responder_needs() {
-        let card = AlertCard::for_notice(&notice(NotificationReason::Opened));
+        let card = AlertCard::for_notice(&notice(NotificationReason::Opened), None);
         assert_eq!(card.heading(), "🔴 api-prod");
         assert_eq!(card.headline, "major incident OPEN");
         assert_eq!(labels(&card), ["Started"]);
@@ -291,7 +312,7 @@ pub(crate) mod tests {
     fn a_resolved_incident_reports_how_long_it_ran() {
         let mut n = notice(NotificationReason::Resolved);
         n.ended_at = Some(n.started_at + chrono::Duration::minutes(95));
-        let card = AlertCard::for_notice(&n);
+        let card = AlertCard::for_notice(&n, None);
         assert_eq!(labels(&card), ["Started", "Resolved", "Duration"]);
         assert!(matches!(&card.fields[2].value, CardValue::Text(v) if v == "1h 35m"));
         assert!(!card.pings, "an all-clear does not wake anybody");
@@ -302,7 +323,7 @@ pub(crate) mod tests {
         let mut n = notice(NotificationReason::Opened);
         n.regions_down = vec!["eu-helsinki".into()];
         n.regions_up = vec!["apac-sg".into()];
-        let card = AlertCard::for_notice(&n);
+        let card = AlertCard::for_notice(&n, None);
         assert!(matches!(
             &card.fields[1].value,
             CardValue::Text(v) if v == "down: eu-helsinki · not confirmed: apac-sg"
@@ -313,7 +334,7 @@ pub(crate) mod tests {
     fn a_single_region_incident_omits_the_breakdown() {
         let mut n = notice(NotificationReason::Opened);
         n.regions_down = vec!["eu-helsinki".into()];
-        assert_eq!(labels(&AlertCard::for_notice(&n)), ["Started"]);
+        assert_eq!(labels(&AlertCard::for_notice(&n, None)), ["Started"]);
     }
 
     /// A declared incident that reads like a detection makes the product look
@@ -322,10 +343,10 @@ pub(crate) mod tests {
     fn a_declared_incident_says_so_instead_of_claiming_a_detection() {
         let mut n = notice(NotificationReason::Opened);
         n.origin = IncidentOrigin::Manual;
-        assert!(labels(&AlertCard::for_notice(&n)).contains(&"Origin"));
+        assert!(labels(&AlertCard::for_notice(&n, None)).contains(&"Origin"));
 
         n.reason = NotificationReason::Resolved;
-        assert!(!labels(&AlertCard::for_notice(&n)).contains(&"Origin"));
+        assert!(!labels(&AlertCard::for_notice(&n, None)).contains(&"Origin"));
     }
 
     /// A base URL set without a scheme is not a link any client accepts, and
@@ -334,15 +355,51 @@ pub(crate) mod tests {
     fn an_unusable_link_is_dropped_before_it_reaches_a_transport() {
         let mut n = notice(NotificationReason::Opened);
         n.url = Some("app.example.test/incidents/7".into());
-        assert!(AlertCard::for_notice(&n).link.is_none());
+        assert!(AlertCard::for_notice(&n, None).link.is_none());
+    }
+
+    const ACK: &str = "https://app.test/incidents/7/acknowledge?org=1&episode=0";
+
+    /// An all-clear or a monitoring gap has nothing to take, and a button on
+    /// one would promise an action the page then refuses.
+    #[test]
+    fn only_an_incident_still_to_be_taken_offers_the_acknowledge_page() {
+        for reason in [
+            NotificationReason::Opened,
+            NotificationReason::Reopened,
+            NotificationReason::Escalated,
+            NotificationReason::Reminder,
+        ] {
+            let card = AlertCard::for_notice(&notice(reason), Some(ACK));
+            assert_eq!(card.ack_link.as_deref(), Some(ACK), "{reason:?}");
+        }
+        for reason in [
+            NotificationReason::Resolved,
+            NotificationReason::NoData,
+            NotificationReason::DataResumed,
+        ] {
+            let card = AlertCard::for_notice(&notice(reason), Some(ACK));
+            assert!(card.ack_link.is_none(), "{reason:?}");
+        }
+    }
+
+    /// Discord refuses the whole message over a link button's URL cap, and a
+    /// base URL without a scheme is no link at all.
+    #[test]
+    fn an_acknowledge_link_a_client_would_refuse_is_dropped() {
+        let n = notice(NotificationReason::Opened);
+        let long = format!("https://app.test/{}", "x".repeat(MAX_ACK_LINK_CHARS));
+        assert!(AlertCard::for_notice(&n, Some(&long)).ack_link.is_none());
+        let bare = "app.test/incidents/7/acknowledge";
+        assert!(AlertCard::for_notice(&n, Some(bare)).ack_link.is_none());
     }
 
     /// Recovery and a monitor that merely started reporting again ask for
     /// different follow-up, so a responder can tell them apart at a glance.
     #[test]
     fn resumed_monitoring_does_not_look_like_a_resolved_outage() {
-        let resolved = AlertCard::for_notice(&notice(NotificationReason::Resolved));
-        let resumed = AlertCard::for_notice(&notice(NotificationReason::DataResumed));
+        let resolved = AlertCard::for_notice(&notice(NotificationReason::Resolved), None);
+        let resumed = AlertCard::for_notice(&notice(NotificationReason::DataResumed), None);
         assert_ne!(resolved.tone.icon(), resumed.tone.icon());
     }
 
@@ -352,7 +409,10 @@ pub(crate) mod tests {
     fn a_heading_stays_on_one_line() {
         let mut n = notice(NotificationReason::Opened);
         n.monitor_name = Some("api-prod\nstaging".into());
-        assert_eq!(AlertCard::for_notice(&n).heading(), "🔴 api-prod staging");
+        assert_eq!(
+            AlertCard::for_notice(&n, None).heading(),
+            "🔴 api-prod staging"
+        );
     }
 
     /// A page of HTML in the error field would push a vendor's payload past its
@@ -361,7 +421,7 @@ pub(crate) mod tests {
     fn a_huge_error_is_capped_once_for_every_transport() {
         let mut n = notice(NotificationReason::Opened);
         n.error_sample = Some("x".repeat(20_000));
-        let card = AlertCard::for_notice(&n);
+        let card = AlertCard::for_notice(&n, None);
         assert_eq!(card.error.unwrap().chars().count(), MAX_ERROR_CHARS);
     }
 }

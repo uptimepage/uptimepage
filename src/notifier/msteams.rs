@@ -21,6 +21,7 @@ use crate::notifier::event::IncidentNotice;
 pub struct MsTeamsNotifier {
     client: OutboundHttpClient,
     webhook_url: Url,
+    ack_link: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -93,7 +94,12 @@ struct Fact {
 #[serde(tag = "type")]
 enum Action {
     #[serde(rename = "Action.OpenUrl")]
-    OpenUrl { title: &'static str, url: String },
+    OpenUrl {
+        title: &'static str,
+        url: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        style: Option<&'static str>,
+    },
 }
 
 impl MsTeamsNotifier {
@@ -101,7 +107,13 @@ impl MsTeamsNotifier {
         Self {
             client,
             webhook_url,
+            ack_link: None,
         }
+    }
+
+    pub fn with_ack_link(mut self, ack_link: Option<String>) -> Self {
+        self.ack_link = ack_link;
+        self
     }
 
     fn message(card: &AlertCard) -> TeamsMessage {
@@ -152,18 +164,27 @@ impl MsTeamsNotifier {
                     kind: "AdaptiveCard",
                     version: "1.4",
                     body,
-                    actions: card
-                        .link
-                        .iter()
-                        .map(|url| Action::OpenUrl {
-                            title: "View incident",
-                            url: url.clone(),
-                        })
-                        .collect(),
+                    actions: actions(card),
                 },
             }],
         }
     }
+}
+
+/// A Workflows card opens URLs and nothing else, so acknowledging happens on
+/// the page the button opens, first and highlighted.
+fn actions(card: &AlertCard) -> Vec<Action> {
+    let acknowledge = card.ack_link.iter().map(|url| Action::OpenUrl {
+        title: "Acknowledge",
+        url: url.clone(),
+        style: Some("positive"),
+    });
+    let view = card.link.iter().map(|url| Action::OpenUrl {
+        title: "View incident",
+        url: url.clone(),
+        style: None,
+    });
+    acknowledge.chain(view).collect()
 }
 
 fn fact(f: &CardField) -> Fact {
@@ -221,7 +242,7 @@ fn defuse_date_functions(s: &str) -> String {
 #[async_trait]
 impl Notifier for MsTeamsNotifier {
     async fn notify_incident(&self, notice: &IncidentNotice) -> Result<()> {
-        let message = Self::message(&AlertCard::for_notice(notice));
+        let message = Self::message(&AlertCard::for_notice(notice, self.ack_link.as_deref()));
         post_json(&self.client, &self.webhook_url, &message).await
     }
 }
@@ -234,7 +255,8 @@ mod tests {
     use serde_json::Value;
 
     fn card(n: &IncidentNotice) -> Value {
-        let v = serde_json::to_value(MsTeamsNotifier::message(&AlertCard::for_notice(n))).unwrap();
+        let v = serde_json::to_value(MsTeamsNotifier::message(&AlertCard::for_notice(n, None)))
+            .unwrap();
         assert_eq!(v["type"], "message");
         assert_eq!(
             v["attachments"][0]["contentType"],
@@ -268,6 +290,24 @@ mod tests {
         assert_eq!(v["body"][0]["text"], "✅ api-prod");
         assert_eq!(v["body"][1]["color"], "Good");
         assert_eq!(v["body"][2]["facts"][2]["value"], "1h 35m");
+    }
+
+    #[test]
+    fn an_open_incident_offers_acknowledge_before_the_incident_link() {
+        let ack = "https://app.test/incidents/7/acknowledge?org=1&episode=0";
+        let n = notice(NotificationReason::Opened);
+        let v = serde_json::to_value(MsTeamsNotifier::message(&AlertCard::for_notice(
+            &n,
+            Some(ack),
+        )))
+        .unwrap();
+        let actions = &v["attachments"][0]["content"]["actions"];
+        assert_eq!(actions[0]["type"], "Action.OpenUrl");
+        assert_eq!(actions[0]["title"], "Acknowledge");
+        assert_eq!(actions[0]["url"], ack);
+        assert_eq!(actions[0]["style"], "positive");
+        assert_eq!(actions[1]["title"], "View incident");
+        assert!(actions[1].get("style").is_none(), "{actions}");
     }
 
     /// An incident with no link at all must still deliver, without an action

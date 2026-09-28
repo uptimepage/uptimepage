@@ -22,9 +22,13 @@ const POST_MAX: usize = 16_383;
 const _: () = assert!(
     FALLBACK_MAX + TITLE_MAX + TEXT_MAX + MAX_FIELDS * (64 + FIELD_VALUE_MAX) + 256 <= POST_MAX
 );
-/// A cut inside the fence would leave it unterminated.
+/// A cut inside the fence would leave it unterminated, and one at the end
+/// would take the acknowledge link.
 const _: () = assert!(
-    crate::notifier::card::MAX_ERROR_CHARS + crate::notifier::card::MAX_NOTE_CHARS + 256
+    crate::notifier::card::MAX_ERROR_CHARS
+        + crate::notifier::card::MAX_NOTE_CHARS
+        + crate::notifier::card::MAX_ACK_LINK_CHARS
+        + 256
         <= TEXT_MAX
 );
 
@@ -32,6 +36,7 @@ pub struct MattermostNotifier {
     client: OutboundHttpClient,
     webhook_url: Url,
     mention: Option<String>,
+    ack_link: Option<String>,
 }
 
 /// No top-level message: it is scanned for mentions. A push notification
@@ -68,11 +73,17 @@ impl MattermostNotifier {
             client,
             webhook_url,
             mention,
+            ack_link: None,
         }
     }
 
+    pub fn with_ack_link(mut self, ack_link: Option<String>) -> Self {
+        self.ack_link = ack_link;
+        self
+    }
+
     fn payload(&self, notice: &IncidentNotice) -> MattermostPayload {
-        let card = AlertCard::for_notice(notice);
+        let card = AlertCard::for_notice(notice, self.ack_link.as_deref());
         let ping = card.ping(self.mention.as_deref());
         MattermostPayload {
             attachments: [Self::attachment(&card, ping, notice)],
@@ -86,6 +97,11 @@ impl MattermostNotifier {
         }
         if let Some(note) = &card.note {
             text.push_str(&format!("\n{note}"));
+        }
+        // An attachment button posts to an integration server-side instead of
+        // opening a browser, so the acknowledge page rides as a link.
+        if let Some(url) = &card.ack_link {
+            text.push_str(&format!("\n[Acknowledge]({url})"));
         }
         Attachment {
             fallback: truncate_chars(&n.summary(), FALLBACK_MAX),
@@ -183,6 +199,18 @@ mod tests {
                 }]
             })
         );
+    }
+
+    #[test]
+    fn an_open_incident_ends_with_the_acknowledge_link() {
+        let ack = "https://app.test/incidents/7/acknowledge?org=1&episode=0";
+        let mut n = notice(NotificationReason::Opened);
+        n.note = Some("N".repeat(60_000));
+        n.error_sample = Some("E".repeat(60_000));
+        let v = serde_json::to_value(notifier(None).with_ack_link(Some(ack.into())).payload(&n))
+            .unwrap();
+        let text = v["attachments"][0]["text"].as_str().unwrap();
+        assert!(text.ends_with(&format!("\n[Acknowledge]({ack})")), "{text}");
     }
 
     #[test]

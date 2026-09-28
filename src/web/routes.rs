@@ -38,6 +38,12 @@ pub fn routes(state: AppState) -> Router {
         .route("/incidents/reports", get(views::incidents::reports))
         .route("/incidents/{id}", get(views::incidents::detail))
         .route("/incidents/{id}/edit", get(views::incidents::edit_form))
+        // An alert's Acknowledge button: GET shows where the incident stands, so
+        // a prefetch takes nothing; the page's own POST acknowledges.
+        .route(
+            "/incidents/{id}/acknowledge",
+            get(views::incidents::acknowledge_page).post(views::incidents::acknowledge),
+        )
         .route(
             "/incidents/{id}/postmortem",
             get(views::incidents::postmortem_form),

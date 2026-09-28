@@ -18,7 +18,7 @@ use crate::web::error::WebResult;
 use crate::web::views::{PageSizeLink, PagerLink};
 
 use super::actors::{AckList, ack_list};
-use super::{OwnerAvatar, OwnerOption, member_avatar, members_map, state_label};
+use super::{OwnerAvatar, OwnerOption, incident_label, member_avatar, members_map, state_label};
 
 pub(super) const STATE_FILTERS: &[&str] = &["all", "triggered", "acknowledged", "resolved"];
 const SEVERITIES: &[&str] = &["minor", "major", "critical"];
@@ -151,11 +151,7 @@ pub(super) fn row_from(
     assignee: Option<OwnerAvatar>,
     assigned_to_me: bool,
 ) -> ConsoleRow {
-    let label = inc
-        .title
-        .clone()
-        .or(monitor_name)
-        .unwrap_or_else(|| "Untitled incident".to_string());
+    let label = incident_label(inc.title.clone(), monitor_name);
     let ongoing = inc.state.is_open();
     // Ongoing: elapsed since start. Resolved: total lifetime.
     let end = inc.ended_at.filter(|_| !ongoing).unwrap_or_else(Utc::now);

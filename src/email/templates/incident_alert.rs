@@ -28,6 +28,8 @@ pub struct IncidentAlert {
     pub regions_down: Vec<String>,
     pub regions_up: Vec<String>,
     pub url: Option<String>,
+    /// The page where a signed-in member takes this episode.
+    pub ack_url: Option<String>,
     pub note: Option<String>,
     pub org_name: Option<String>,
     pub stop_url: Option<String>,
@@ -207,6 +209,9 @@ pub fn render(site_name: &str, alert: &IncidentAlert) -> RenderedEmail {
     if let Some(error) = alert.block_reason() {
         text.push_str(&format!("\n{error}\n"));
     }
+    if let Some(url) = &alert.ack_url {
+        text.push_str(&format!("\nAcknowledge: {url}\n"));
+    }
     if let Some(url) = &alert.url {
         text.push_str(&format!("\n{url}\n"));
     }
@@ -238,6 +243,9 @@ pub fn render(site_name: &str, alert: &IncidentAlert) -> RenderedEmail {
     }
     if let Some(note) = &alert.note {
         body.push_str(&layout::callout(note));
+    }
+    if let Some(url) = &alert.ack_url {
+        body.push_str(&layout::button(url, "Acknowledge", ButtonStyle::Solid));
     }
     if let Some(url) = &alert.url {
         body.push_str(&layout::button(url, "View incident", ButtonStyle::Outline));
@@ -301,6 +309,7 @@ mod tests {
             regions_down: vec!["apac-sg".into(), "eu-helsinki".into()],
             regions_up: vec!["us-east".into()],
             url: Some("https://app.test/incidents/7".into()),
+            ack_url: None,
             note: None,
             org_name: Some("My status".into()),
             stop_url: Some("https://app.test/alert-channel/stop?c=1&t=2".into()),
@@ -339,6 +348,25 @@ mod tests {
         }
         assert!(r.html_body.contains("MAJOR INCIDENT OPEN"));
         assert!(r.html_body.contains("Failing in 2 of 3 regions"));
+    }
+
+    /// Taking the page is what the mail asks for, so it leads, filled, above
+    /// the link that only looks.
+    #[test]
+    fn acknowledge_leads_both_bodies() {
+        let ack = "https://app.test/incidents/7/acknowledge?org=1&episode=0";
+        let mut a = alert(NotificationReason::Opened);
+        a.ack_url = Some(ack.into());
+        let r = render("Uptimepage", &a);
+        assert!(r.text_body.contains(&format!("Acknowledge: {ack}")));
+        let html_ack = r.html_body.find("Acknowledge</a>").expect("button");
+        let html_view = r.html_body.find("View incident</a>").expect("button");
+        assert!(html_ack < html_view);
+        assert!(
+            !render("Uptimepage", &alert(NotificationReason::Opened))
+                .html_body
+                .contains("Acknowledge</a>")
+        );
     }
 
     /// Reading like a detection tells an operator the product fired on a

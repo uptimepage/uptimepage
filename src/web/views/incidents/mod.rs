@@ -2,6 +2,7 @@
 //! operational lifecycle (acknowledge / resolve / reopen / declare / note),
 //! distinct from the per-monitor incident history under `/targets/{id}`.
 
+mod acknowledge;
 mod actors;
 mod console;
 mod detail;
@@ -19,6 +20,7 @@ use crate::domain::{IncidentState, OrgId, UserId};
 use crate::storage::orgs::list_members;
 use crate::web::error::WebResult;
 
+pub use acknowledge::{acknowledge, acknowledge_page};
 pub(crate) use actors::ack_list;
 pub use console::{list, list_partial};
 pub use detail::detail;
@@ -45,6 +47,13 @@ fn member_avatar(u: UserId, members: &HashMap<UserId, String>) -> Option<OwnerAv
         color: crate::web::avatar::avatar_color(u.0),
         label: email.clone(),
     })
+}
+
+/// Title, else the monitor it is about.
+fn incident_label(title: Option<String>, monitor_name: Option<String>) -> String {
+    title
+        .or(monitor_name)
+        .unwrap_or_else(|| "Untitled incident".to_string())
 }
 
 fn state_label(s: IncidentState) -> &'static str {

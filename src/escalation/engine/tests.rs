@@ -2182,3 +2182,56 @@ async fn a_manually_declared_incident_is_never_held() {
         "a declared incident still pages"
     );
 }
+
+/// A mail cannot carry a control that reports back, so its button opens the
+/// page where the signed-in reader takes the episode the alert was about. An
+/// all-clear has nothing left to take.
+#[tokio::test]
+async fn an_alert_mail_links_the_acknowledge_page_for_its_episode() {
+    let channels = Arc::new(InMemoryNotificationChannelStore::new());
+    let cid = channels
+        .create(
+            org(),
+            NewNotificationChannel {
+                name: "oncall-mail".into(),
+                config: ChannelConfig::Email(EmailConfig {
+                    to: "oncall@example.test".into(),
+                }),
+                enabled: true,
+                auto_bind_tags: Vec::new(),
+            },
+            WriteSource::Ui,
+            100,
+            None,
+        )
+        .await
+        .unwrap()
+        .id;
+    let upd = channels.get(org(), cid).await.unwrap().unwrap().updated_at;
+    assert!(channels.set_verified(org(), cid, upd).await.unwrap());
+    let target = target_with_channel(cid);
+    let tid = target.id;
+    let ops = Arc::new(InMemoryIncidentOpsStore::new());
+    let id = seed_incident(&ops, Some(tid));
+    let targets = Arc::new(InMemoryTargetStore::from_vec(vec![target]));
+    let (eng, mail) = engine_mailing(ops.clone(), targets, channels, EscalationConfig::default());
+
+    eng.page(org(), id, NotificationReason::Opened)
+        .await
+        .unwrap();
+    ops.resolve(org(), id, Actor::System, None).await.unwrap();
+    eng.page(org(), id, NotificationReason::Resolved)
+        .await
+        .unwrap();
+
+    let sent = mail.sent();
+    assert_eq!(sent.len(), 2);
+    let opened = sent[0].template.render("Uptimepage").text_body;
+    let page = format!(
+        "https://app.test/incidents/{id}/acknowledge?org={}&episode=0",
+        org().0
+    );
+    assert!(opened.contains(&format!("Acknowledge: {page}")), "{opened}");
+    let resolved = sent[1].template.render("Uptimepage").text_body;
+    assert!(!resolved.contains("/acknowledge"), "{resolved}");
+}

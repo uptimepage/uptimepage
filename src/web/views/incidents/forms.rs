@@ -158,11 +158,7 @@ pub async fn postmortem_form(
         Some(t) => state.target_store.get(org, t).await?.map(|x| x.name),
         None => None,
     };
-    let incident_label = inc
-        .title
-        .clone()
-        .or(monitor_name)
-        .unwrap_or_else(|| "Untitled incident".to_string());
+    let incident_label = super::incident_label(inc.title.clone(), monitor_name);
 
     let pm = state.postmortem_store.get(org, id).await?;
     let members: Vec<MemberChoice> = members_map(&state, org)

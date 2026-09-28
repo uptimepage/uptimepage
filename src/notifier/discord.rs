@@ -37,6 +37,7 @@ pub struct DiscordNotifier {
     client: OutboundHttpClient,
     webhook_url: Url,
     ping: Option<Ping>,
+    ack_link: Option<String>,
 }
 
 struct Ping {
@@ -53,6 +54,40 @@ struct DiscordPayload<'a> {
     /// Sent even when empty: without it Discord resolves whatever looks like a
     /// mention anywhere in the message, monitor names included.
     allowed_mentions: &'a AllowedMentions,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    components: Vec<ActionRow>,
+}
+
+/// A row of link buttons: the one kind a webhook we do not own may send, and
+/// the press opens a browser rather than reaching any app.
+#[derive(Serialize)]
+struct ActionRow {
+    #[serde(rename = "type")]
+    kind: u8,
+    components: [LinkButton; 1],
+}
+
+#[derive(Serialize)]
+struct LinkButton {
+    #[serde(rename = "type")]
+    kind: u8,
+    style: u8,
+    label: &'static str,
+    url: String,
+}
+
+impl ActionRow {
+    fn acknowledge(url: &str) -> Self {
+        Self {
+            kind: 1,
+            components: [LinkButton {
+                kind: 2,
+                style: 5,
+                label: "Acknowledge",
+                url: url.to_string(),
+            }],
+        }
+    }
 }
 
 static SILENT: AllowedMentions = AllowedMentions {
@@ -93,19 +128,21 @@ impl DiscordNotifier {
         mention: Option<DiscordMention>,
     ) -> Self {
         // Without `wait=true` Discord answers 204 before delivering, hiding
-        // failures from the retry loop. Replaced, not appended: a pasted URL
-        // already carrying `wait` would leave two, and which one Discord
-        // honours is not specified.
+        // failures from the retry loop, and without `with_components=true` a
+        // webhook we do not own drops the buttons. Replaced, not appended: a
+        // pasted URL already carrying either would leave two, and which one
+        // Discord honours is not specified.
         let kept: Vec<(String, String)> = webhook_url
             .query_pairs()
-            .filter(|(k, _)| k != "wait")
+            .filter(|(k, _)| k != "wait" && k != "with_components")
             .map(|(k, v)| (k.into_owned(), v.into_owned()))
             .collect();
         webhook_url
             .query_pairs_mut()
             .clear()
             .extend_pairs(kept)
-            .append_pair("wait", "true");
+            .append_pair("wait", "true")
+            .append_pair("with_components", "true");
         Self {
             client,
             webhook_url,
@@ -113,7 +150,13 @@ impl DiscordNotifier {
                 content: m.markup.clone(),
                 allowed: allowed(&m),
             }),
+            ack_link: None,
         }
+    }
+
+    pub fn with_ack_link(mut self, ack_link: Option<String>) -> Self {
+        self.ack_link = ack_link;
+        self
     }
 
     fn payload(&self, card: &AlertCard) -> DiscordPayload<'_> {
@@ -122,6 +165,13 @@ impl DiscordNotifier {
             content: ping.map(|p| p.content.as_str()),
             embeds: [Self::embed(card)],
             allowed_mentions: ping.map_or(&SILENT, |p| &p.allowed),
+            // The embed title already opens the incident.
+            components: card
+                .ack_link
+                .as_deref()
+                .map(ActionRow::acknowledge)
+                .into_iter()
+                .collect(),
         }
     }
 
@@ -198,7 +248,7 @@ fn allowed(mention: &DiscordMention) -> AllowedMentions {
 #[async_trait]
 impl Notifier for DiscordNotifier {
     async fn notify_incident(&self, notice: &IncidentNotice) -> Result<()> {
-        let payload = self.payload(&AlertCard::for_notice(notice));
+        let payload = self.payload(&AlertCard::for_notice(notice, self.ack_link.as_deref()));
         post_json(&self.client, &self.webhook_url, &payload).await
     }
 }
@@ -231,13 +281,15 @@ mod tests {
             "https://discord.com/api/webhooks/123/tok".parse().unwrap(),
             cfg.mention_targets(),
         );
-        serde_json::to_value(sender.payload(&AlertCard::for_notice(n))).unwrap()
+        serde_json::to_value(sender.payload(&AlertCard::for_notice(n, None))).unwrap()
     }
 
     /// A second `wait` pair leaves the retry loop blind to a failed send.
     #[test]
     fn an_existing_wait_pair_is_replaced_not_doubled() {
-        let sender = notifier("https://discord.com/api/webhooks/1/tok?wait=false&thread_id=7");
+        let sender = notifier(
+            "https://discord.com/api/webhooks/1/tok?wait=false&thread_id=7&with_components=false",
+        );
         let pairs: Vec<(String, String)> = sender
             .webhook_url
             .query_pairs()
@@ -247,13 +299,14 @@ mod tests {
             pairs,
             [
                 ("thread_id".to_string(), "7".to_string()),
-                ("wait".to_string(), "true".to_string())
+                ("wait".to_string(), "true".to_string()),
+                ("with_components".to_string(), "true".to_string())
             ]
         );
     }
 
     fn embed(n: &IncidentNotice) -> serde_json::Value {
-        serde_json::to_value(DiscordNotifier::embed(&AlertCard::for_notice(n))).unwrap()
+        serde_json::to_value(DiscordNotifier::embed(&AlertCard::for_notice(n, None))).unwrap()
     }
 
     #[test]
@@ -261,12 +314,12 @@ mod tests {
         let n = notifier("https://discord.com/api/webhooks/123/tok");
         assert_eq!(
             n.webhook_url.as_str(),
-            "https://discord.com/api/webhooks/123/tok?wait=true"
+            "https://discord.com/api/webhooks/123/tok?wait=true&with_components=true"
         );
         let threaded = notifier("https://discord.com/api/webhooks/123/tok?thread_id=42");
         assert_eq!(
             threaded.webhook_url.as_str(),
-            "https://discord.com/api/webhooks/123/tok?thread_id=42&wait=true"
+            "https://discord.com/api/webhooks/123/tok?thread_id=42&wait=true&with_components=true"
         );
     }
 
@@ -351,6 +404,29 @@ mod tests {
                 .unwrap()
                 .contains("everyone"),
             "the name is still reported: {v}"
+        );
+    }
+
+    /// A pasted webhook is not ours, so only a link button survives it, and
+    /// Discord wants that one without a `custom_id`.
+    #[test]
+    fn an_open_incident_carries_an_acknowledge_link_button() {
+        let ack = "https://app.test/incidents/7/acknowledge?org=1&episode=0";
+        let card = AlertCard::for_notice(&notice(NotificationReason::Opened), Some(ack));
+        let v =
+            serde_json::to_value(notifier("https://discord.com/api/webhooks/1/tok").payload(&card))
+                .unwrap();
+        assert_eq!(
+            v["components"],
+            serde_json::json!([{
+                "type": 1,
+                "components": [{"type": 2, "style": 5, "label": "Acknowledge", "url": ack}]
+            }])
+        );
+        assert!(
+            payload(None, &notice(NotificationReason::Resolved))
+                .get("components")
+                .is_none()
         );
     }
 

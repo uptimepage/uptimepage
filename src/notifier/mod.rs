@@ -18,8 +18,9 @@ pub mod whatsapp;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use uuid::Uuid;
 
-use crate::domain::ChannelConfig;
+use crate::domain::{ChannelConfig, OrgId};
 use crate::error::Result;
 use crate::http_outbound::OutboundHttpClient;
 use crate::notifier::discord::DiscordNotifier;
@@ -49,21 +50,41 @@ pub enum AckControl {
     /// A button on a central-bot Telegram page. The press reaches the bot,
     /// which learns from Telegram who pressed it.
     TelegramButton(String),
+    /// The incident's acknowledge page, for a transport whose buttons can only
+    /// open a URL. Whoever presses signs in, so the ack names them.
+    Page(String),
 }
 
 impl AckControl {
     fn link(self) -> Option<PushAck> {
         match self {
             Self::Link(ack) => Some(ack),
-            Self::TelegramButton(_) => None,
+            Self::TelegramButton(_) | Self::Page(_) => None,
         }
     }
 
     fn telegram_button(self) -> Option<String> {
         match self {
             Self::TelegramButton(data) => Some(data),
-            Self::Link(_) => None,
+            Self::Link(_) | Self::Page(_) => None,
         }
+    }
+
+    fn page(self) -> Option<String> {
+        match self {
+            Self::Page(url) => Some(url),
+            Self::Link(_) | Self::TelegramButton(_) => None,
+        }
+    }
+
+    /// Where [`Self::Page`] points, relative to the app. The org rides along
+    /// so a member of several lands in the one the alert is about, and the
+    /// episode so an alert kept through a reopen takes nothing after it.
+    pub fn page_path(org: OrgId, incident_id: Uuid, episode: i64) -> String {
+        format!(
+            "/incidents/{incident_id}/acknowledge?org={}&episode={episode}",
+            org.0
+        )
     }
 }
 
@@ -194,6 +215,7 @@ pub fn build_notifier(
     email_alert: Option<EmailAlert>,
     ack: Option<AckControl>,
 ) -> Result<Arc<dyn Notifier>> {
+    let page = ack.clone().and_then(AckControl::page);
     let parse = |s: &str| -> Result<url::Url> {
         s.parse::<url::Url>().map_err(|e| {
             crate::error::AppError::bad_request(
@@ -209,11 +231,10 @@ pub fn build_notifier(
             c.headers.clone(),
             c.secret.clone(),
         )) as Arc<dyn Notifier>,
-        ChannelConfig::Slack(c) => Arc::new(SlackNotifier::new(
-            http.clone(),
-            parse(&c.webhook_url)?,
-            c.mention_markup(),
-        )) as Arc<dyn Notifier>,
+        ChannelConfig::Slack(c) => Arc::new(
+            SlackNotifier::new(http.clone(), parse(&c.webhook_url)?, c.mention_markup())
+                .with_ack_link(page),
+        ) as Arc<dyn Notifier>,
         ChannelConfig::Telegram(c) => Arc::new(TelegramNotifier::new(
             http.clone(),
             &c.bot_token,
@@ -256,19 +277,17 @@ pub fn build_notifier(
             };
             Arc::new(WhatsAppNotifier::new(http.clone(), &synthesized)?) as Arc<dyn Notifier>
         }
-        ChannelConfig::Discord(c) => Arc::new(DiscordNotifier::new(
-            http.clone(),
-            parse(&c.webhook_url)?,
-            c.mention_targets(),
-        )) as Arc<dyn Notifier>,
+        ChannelConfig::Discord(c) => Arc::new(
+            DiscordNotifier::new(http.clone(), parse(&c.webhook_url)?, c.mention_targets())
+                .with_ack_link(page),
+        ) as Arc<dyn Notifier>,
         ChannelConfig::MsTeams(c) => {
-            Arc::new(MsTeamsNotifier::new(http.clone(), parse(&c.webhook_url)?))
+            Arc::new(MsTeamsNotifier::new(http.clone(), parse(&c.webhook_url)?).with_ack_link(page))
                 as Arc<dyn Notifier>
         }
-        ChannelConfig::GoogleChat(c) => Arc::new(GoogleChatNotifier::new(
-            http.clone(),
-            parse(&c.webhook_url)?,
-        )) as Arc<dyn Notifier>,
+        ChannelConfig::GoogleChat(c) => Arc::new(
+            GoogleChatNotifier::new(http.clone(), parse(&c.webhook_url)?).with_ack_link(page),
+        ) as Arc<dyn Notifier>,
         ChannelConfig::Email(c) => {
             let email = email.ok_or_else(|| {
                 crate::error::AppError::bad_request(
@@ -276,11 +295,10 @@ pub fn build_notifier(
                     "email delivery is not configured on this deployment",
                 )
             })?;
-            Arc::new(EmailNotifier::new(
-                email,
-                &c.to,
-                email_alert.unwrap_or_default(),
-            )) as Arc<dyn Notifier>
+            Arc::new(
+                EmailNotifier::new(email, &c.to, email_alert.unwrap_or_default())
+                    .with_ack_link(page),
+            ) as Arc<dyn Notifier>
         }
         ChannelConfig::PagerDuty(c) => {
             Arc::new(PagerDutyNotifier::new(http.clone(), c.routing_key.clone()))
@@ -306,11 +324,10 @@ pub fn build_notifier(
             c.emergency,
         )) as Arc<dyn Notifier>,
         ChannelConfig::Sms(c) => Arc::new(SmsNotifier::new(http.clone(), c)?) as Arc<dyn Notifier>,
-        ChannelConfig::Mattermost(c) => Arc::new(MattermostNotifier::new(
-            http.clone(),
-            parse(&c.webhook_url)?,
-            c.mention_markup(),
-        )) as Arc<dyn Notifier>,
+        ChannelConfig::Mattermost(c) => Arc::new(
+            MattermostNotifier::new(http.clone(), parse(&c.webhook_url)?, c.mention_markup())
+                .with_ack_link(page),
+        ) as Arc<dyn Notifier>,
     })
 }
 

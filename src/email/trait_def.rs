@@ -543,6 +543,7 @@ mod tests {
             regions_down: Vec::new(),
             regions_up: Vec::new(),
             url: None,
+            ack_url: None,
             note: None,
             org_name: Some("Acme".into()),
             stop_url: stop_url.map(str::to_string),

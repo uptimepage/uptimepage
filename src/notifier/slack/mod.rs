@@ -19,6 +19,7 @@ pub struct SlackNotifier {
     webhook_url: Url,
     /// Already rendered to markup; the raw token would post as plain text.
     mention: Option<String>,
+    ack_link: Option<String>,
 }
 
 /// `text` is what a push notification and a client that cannot render blocks
@@ -35,13 +36,23 @@ impl SlackNotifier {
             client,
             webhook_url,
             mention,
+            ack_link: None,
         }
+    }
+
+    pub fn with_ack_link(mut self, ack_link: Option<String>) -> Self {
+        self.ack_link = ack_link;
+        self
     }
 
     /// Both halves of the message, from one card: the blocks Slack renders and
     /// the line a push notification shows.
-    fn compose(mention: Option<&str>, n: &IncidentNotice) -> (String, Vec<Block>) {
-        let card = AlertCard::for_notice(n);
+    fn compose(
+        mention: Option<&str>,
+        ack_link: Option<&str>,
+        n: &IncidentNotice,
+    ) -> (String, Vec<Block>) {
+        let card = AlertCard::for_notice(n, ack_link);
         let text = Self::render_incident(card.ping(mention), &card, n);
         (text, render(&card, mention))
     }
@@ -113,7 +124,8 @@ fn region_line(n: &IncidentNotice) -> String {
 #[async_trait]
 impl Notifier for SlackNotifier {
     async fn notify_incident(&self, notice: &IncidentNotice) -> Result<()> {
-        let (text, blocks) = Self::compose(self.mention.as_deref(), notice);
+        let (text, blocks) =
+            Self::compose(self.mention.as_deref(), self.ack_link.as_deref(), notice);
         post_json(
             &self.client,
             &self.webhook_url,
@@ -138,7 +150,7 @@ mod tests {
         let mut n = notice(NotificationReason::Opened);
         n.monitor_name = Some("A".repeat(60_000));
         n.note = Some("N".repeat(60_000));
-        let (text, _) = SlackNotifier::compose(None, &n);
+        let (text, _) = SlackNotifier::compose(None, None, &n);
         assert!(
             text.chars().count() < 2_000,
             "fallback text ran to {} chars",
@@ -156,7 +168,7 @@ mod tests {
     fn a_note_reaches_slack_even_though_it_renders_its_own_body() {
         let mut n = notice(NotificationReason::Opened);
         n.note = Some("Flapping: alerts held".into());
-        let (text, _) = SlackNotifier::compose(None, &n);
+        let (text, _) = SlackNotifier::compose(None, None, &n);
         assert!(text.contains("Flapping: alerts held"), "{text}");
     }
 
@@ -173,7 +185,7 @@ mod tests {
             NotificationReason::DataResumed,
             NotificationReason::Reminder,
         ] {
-            let (text, blocks) = SlackNotifier::compose(Some("<!here>"), &notice(reason));
+            let (text, blocks) = SlackNotifier::compose(Some("<!here>"), None, &notice(reason));
             let card = serde_json::to_string(&blocks).unwrap();
             assert_eq!(
                 text.contains("<!here>"),
@@ -186,10 +198,10 @@ mod tests {
     #[test]
     fn a_mention_leads_the_alert_but_stays_off_the_all_clear() {
         let (opened, _) =
-            SlackNotifier::compose(Some("<!here>"), &notice(NotificationReason::Opened));
+            SlackNotifier::compose(Some("<!here>"), None, &notice(NotificationReason::Opened));
         assert!(opened.starts_with("<!here> *api-prod*"), "{opened}");
         let (resolved, _) =
-            SlackNotifier::compose(Some("<!here>"), &notice(NotificationReason::Resolved));
+            SlackNotifier::compose(Some("<!here>"), None, &notice(NotificationReason::Resolved));
         assert!(!resolved.contains("<!here>"), "{resolved}");
     }
 }

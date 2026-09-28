@@ -37,9 +37,7 @@ pub fn render(card: &AlertCard, mention: Option<&str>) -> Vec<Block> {
     if let Some(note) = &card.note {
         blocks.push(Block::context(escape(note)));
     }
-    if let Some(link) = &card.link {
-        blocks.push(Block::link_button("View incident", link));
-    }
+    blocks.extend(Block::links(card));
     blocks
 }
 
@@ -131,13 +129,24 @@ impl Block {
         }
     }
 
-    fn link_button(label: &str, url: &str) -> Self {
-        Self::Actions {
-            elements: vec![Element::Button {
-                text: Text::plain(label),
-                url: url.to_string(),
-            }],
-        }
+    /// Acknowledge first and highlighted, as the one thing the page asks for.
+    /// `None` when there is nothing to open, because an empty actions block is
+    /// refused.
+    fn links(card: &AlertCard) -> Option<Self> {
+        let acknowledge = card.ack_link.as_deref().map(|url| Element::Button {
+            text: Text::plain("Acknowledge"),
+            action_id: "acknowledge",
+            url: url.to_string(),
+            style: Some("primary"),
+        });
+        let view = card.link.as_deref().map(|url| Element::Button {
+            text: Text::plain("View incident"),
+            action_id: "view_incident",
+            url: url.to_string(),
+            style: None,
+        });
+        let elements: Vec<Element> = acknowledge.into_iter().chain(view).collect();
+        (!elements.is_empty()).then_some(Self::Actions { elements })
     }
 }
 
@@ -170,7 +179,14 @@ impl Text {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Element {
-    Button { text: Text, url: String },
+    Button {
+        text: Text,
+        /// Slack wants these unique within a block.
+        action_id: &'static str,
+        url: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        style: Option<&'static str>,
+    },
 }
 
 #[cfg(test)]
@@ -181,7 +197,7 @@ mod tests {
     use serde_json::Value;
 
     fn json(reason: NotificationReason, mention: Option<&str>) -> String {
-        let card = AlertCard::for_notice(&notice(reason));
+        let card = AlertCard::for_notice(&notice(reason), None);
         serde_json::to_string(&render(&card, mention)).unwrap()
     }
 
@@ -231,7 +247,8 @@ mod tests {
         let mut n = notice(NotificationReason::Opened);
         n.monitor_name = Some("<!channel> api".into());
         n.error_sample = Some("<!here> fix me".into());
-        let blocks = serde_json::to_string(&render(&AlertCard::for_notice(&n), None)).unwrap();
+        let blocks =
+            serde_json::to_string(&render(&AlertCard::for_notice(&n, None), None)).unwrap();
         assert!(!blocks.contains("<!channel>"), "{blocks}");
         assert!(!blocks.contains("<!here>"), "{blocks}");
     }
@@ -242,7 +259,8 @@ mod tests {
     fn an_error_cannot_break_out_of_its_code_fence() {
         let mut n = notice(NotificationReason::Opened);
         n.error_sample = Some("``` *not bold* ```".into());
-        let blocks = serde_json::to_string(&render(&AlertCard::for_notice(&n), None)).unwrap();
+        let blocks =
+            serde_json::to_string(&render(&AlertCard::for_notice(&n, None), None)).unwrap();
         assert_eq!(blocks.matches("```").count(), 2, "{blocks}");
     }
 
@@ -253,7 +271,7 @@ mod tests {
         let mut n = notice(NotificationReason::Opened);
         n.monitor_name = Some("search & index <!channel>".into());
         let v: Value = serde_json::from_str(
-            &serde_json::to_string(&render(&AlertCard::for_notice(&n), None)).unwrap(),
+            &serde_json::to_string(&render(&AlertCard::for_notice(&n, None), None)).unwrap(),
         )
         .unwrap();
         assert_eq!(v[0]["text"]["text"], "🔴 search & index !channel");
@@ -265,7 +283,7 @@ mod tests {
     #[test]
     fn blocks_serialize_to_slacks_wire_names() {
         let v = serde_json::to_value(render(
-            &AlertCard::for_notice(&notice(NotificationReason::Opened)),
+            &AlertCard::for_notice(&notice(NotificationReason::Opened), None),
             None,
         ))
         .unwrap();
@@ -281,13 +299,30 @@ mod tests {
         assert_eq!(v[4]["elements"][0]["text"]["type"], "plain_text");
     }
 
+    /// The press opens the page in the reader's browser, where they sign in,
+    /// so the button is a plain link even on an incoming webhook.
+    #[test]
+    fn an_open_incident_offers_acknowledge_before_the_incident_link() {
+        let ack = "https://app.test/incidents/7/acknowledge?org=1&episode=0";
+        let card = AlertCard::for_notice(&notice(NotificationReason::Opened), Some(ack));
+        let v = serde_json::to_value(render(&card, None)).unwrap();
+        let buttons = &v[4]["elements"];
+        assert_eq!(buttons[0]["text"]["text"], "Acknowledge");
+        assert_eq!(buttons[0]["url"], ack);
+        assert_eq!(buttons[0]["style"], "primary");
+        assert_eq!(buttons[1]["text"]["text"], "View incident");
+        assert!(buttons[1].get("style").is_none(), "{v}");
+        assert_ne!(buttons[0]["action_id"], buttons[1]["action_id"]);
+    }
+
     /// A base URL set without a scheme is not a link Slack accepts, and Slack
     /// refuses the message rather than the button.
     #[test]
     fn an_unusable_link_costs_the_button_not_the_alert() {
         let mut n = notice(NotificationReason::Opened);
         n.url = Some("app.example.test/incidents/7".into());
-        let blocks = serde_json::to_string(&render(&AlertCard::for_notice(&n), None)).unwrap();
+        let blocks =
+            serde_json::to_string(&render(&AlertCard::for_notice(&n, None), None)).unwrap();
         assert!(!blocks.contains("actions"), "{blocks}");
         assert!(blocks.contains("major incident OPEN"), "{blocks}");
     }
@@ -298,7 +333,8 @@ mod tests {
     fn no_block_can_exceed_slacks_cap() {
         let mut n = notice(NotificationReason::Opened);
         n.error_sample = Some("&".repeat(20_000));
-        let v: Value = serde_json::to_value(render(&AlertCard::for_notice(&n), None)).unwrap();
+        let v: Value =
+            serde_json::to_value(render(&AlertCard::for_notice(&n, None), None)).unwrap();
 
         fn worst(v: &Value, out: &mut usize) {
             match v {

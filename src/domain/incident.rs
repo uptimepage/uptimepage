@@ -572,6 +572,16 @@ impl NotificationReason {
             Self::Reminder => "reminder",
         }
     }
+    /// An incident still running that nobody has been told to stop chasing,
+    /// so a page about it can offer to take it. An all-clear or a monitoring
+    /// gap has nothing to take.
+    pub fn awaits_acknowledgement(self) -> bool {
+        matches!(
+            self,
+            Self::Opened | Self::Escalated | Self::Reopened | Self::Reminder
+        )
+    }
+
     pub fn from_db_str(s: &str) -> Self {
         match s {
             "escalated" => Self::Escalated,

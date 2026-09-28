@@ -236,17 +236,22 @@ impl Worker {
     ) -> Option<crate::notifier::AckControl> {
         use crate::domain::ChannelKind;
         use crate::notifier::{AckControl, PushAck};
+        let signed = !self.incident_ack_secret.is_empty();
         // Checked before the episode lookup, a query on the paging path: only
-        // these two render a control, and only when they can deliver it.
+        // these render a control, and only when they can deliver it.
         let renders = match channel.kind {
-            ChannelKind::Ntfy => !self.base_url.is_empty(),
-            ChannelKind::TelegramApp => self.central_bot.is_some(),
+            ChannelKind::Ntfy => signed && !self.base_url.is_empty(),
+            ChannelKind::TelegramApp => signed && self.central_bot.is_some(),
+            // Their buttons can only open a URL.
+            ChannelKind::Slack
+            | ChannelKind::Discord
+            | ChannelKind::MsTeams
+            | ChannelKind::GoogleChat
+            | ChannelKind::Mattermost => !self.base_url.is_empty(),
+            ChannelKind::Email => !self.base_url.is_empty() && self.email.is_some(),
             _ => false,
         };
-        if !renders
-            || notice.reason == NotificationReason::Resolved
-            || self.incident_ack_secret.is_empty()
-        {
+        if !renders || !notice.reason.awaits_acknowledgement() {
             return None;
         }
         let generation = match self.ops.generation(org, notice.incident_id).await {
@@ -259,26 +264,31 @@ impl Worker {
                 return None;
             }
         };
-        if channel.kind == ChannelKind::TelegramApp {
-            return crate::security::incident_ack::button_data(
+        match channel.kind {
+            ChannelKind::TelegramApp => crate::security::incident_ack::button_data(
                 &self.incident_ack_secret,
                 org,
                 notice.incident_id,
                 channel.id,
                 generation,
             )
-            .map(AckControl::TelegramButton);
+            .map(AckControl::TelegramButton),
+            ChannelKind::Ntfy => crate::security::incident_ack::link_url(
+                &self.base_url,
+                &self.incident_ack_secret,
+                org,
+                notice.incident_id,
+                channel.id,
+                generation,
+                chrono::Utc::now(),
+            )
+            .map(|url| AckControl::Link(PushAck { url })),
+            _ => Some(AckControl::Page(format!(
+                "{}{}",
+                self.base_url.trim_end_matches('/'),
+                AckControl::page_path(org, notice.incident_id, generation)
+            ))),
         }
-        crate::security::incident_ack::link_url(
-            &self.base_url,
-            &self.incident_ack_secret,
-            org,
-            notice.incident_id,
-            channel.id,
-            generation,
-            chrono::Utc::now(),
-        )
-        .map(|url| AckControl::Link(PushAck { url }))
     }
 
     async fn email_alert(

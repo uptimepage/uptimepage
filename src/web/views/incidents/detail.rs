@@ -22,8 +22,8 @@ use crate::web::error::WebResult;
 
 use super::actors::{AckList, ack_list, actor_label, author_label};
 use super::{
-    OwnerAvatar, OwnerOption, PageChoice, fmt_secs, member_avatar, members_map, page_choices,
-    state_label,
+    OwnerAvatar, OwnerOption, PageChoice, fmt_secs, incident_label, member_avatar, members_map,
+    page_choices, state_label,
 };
 
 /// Long enough to catch a slow interval's last check, short enough that a
@@ -289,11 +289,7 @@ pub async fn detail(
     } else {
         Vec::new()
     };
-    let label = inc
-        .title
-        .clone()
-        .or_else(|| monitor_name.clone())
-        .unwrap_or_else(|| "Untitled incident".to_string());
+    let label = incident_label(inc.title.clone(), monitor_name.clone());
     let mut page = make_detail_page(
         inc,
         monitor_name,

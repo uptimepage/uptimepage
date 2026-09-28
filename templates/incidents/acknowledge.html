@@ -1,0 +1,67 @@
+{% extends "chromeless_base.html" %}
+{% block title %}{% match phase %}{% when Phase::Confirm %}Acknowledge incident{% when Phase::Taken %}Incident acknowledged{% when Phase::Resolved %}Already resolved{% when Phase::Stale %}Alert out of date{% when Phase::Missing %}Incident not found{% endmatch %}{% endblock %}
+{% block head_scripts %}
+    {% if phase == Phase::Confirm || switch_org.is_some() %}<script defer src="{{ "js/ui/incident_acknowledge.js"|asset }}"></script>{% endif %}
+{% endblock %}
+{% block main %}
+    <main class="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-4 px-6 text-center">
+        {% if phase == Phase::Missing %}
+        <h1 class="page-title justify-center"><span class="page-title__prefix" aria-hidden="true">$</span>not found</h1>
+        <p class="text-sm text-muted">
+            This incident does not exist, or it belongs to an organization you
+            are not a member of.
+        </p>
+        {% else %}
+        <h1 class="page-title justify-center"><span class="page-title__prefix" aria-hidden="true">$</span>{% match phase %}{% when Phase::Taken %}acknowledged{% when Phase::Resolved %}already resolved{% when Phase::Stale %}alert out of date{% when _ %}acknowledge{% endmatch %}</h1>
+        <div class="space-y-1">
+            <p class="font-mono text-body break-words">{{ label }}</p>
+            <p class="text-xs text-muted">
+                <span class="cli-brackets">{{ severity }}</span>
+                <span class="cli-brackets">{{ state_label }}</span>
+                {% if let Some(d) = open_for %}open for {{ d }}{% endif %}
+            </p>
+            {% for a in acks.ackers %}
+            <p class="text-xs text-muted">acknowledged {{ a.phrase }}</p>
+            {% endfor %}
+        </div>
+        {% match phase %}
+        {% when Phase::Confirm %}
+        <p class="text-sm text-muted">
+            {% if acks.ackers.is_empty() %}
+            Take this incident? Reminders stop and the escalation ladder halts.
+            The incident stays open until someone resolves it.
+            {% else %}
+            Someone already took this, so reminders have stopped. Acknowledge to
+            add yourself to the list.
+            {% endif %}
+        </p>
+        <div data-incident-acknowledge data-action="{{ action }}">
+            <button type="button" class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">acknowledge</button>
+        </div>
+        {% when Phase::Taken %}
+        <p class="text-sm text-muted">
+            You acknowledged this. Reminders have stopped.
+            {% if monitored %}Resolve it from the console when the monitor recovers,
+            or leave it to close itself.{% else %}It stays open until someone
+            resolves it from the console.{% endif %}
+        </p>
+        {% when Phase::Resolved %}
+        <p class="text-sm text-muted">
+            {% if acks.mine %}You acknowledged this, and it has since been
+            resolved.{% else %}This incident closed before you got here. Nothing
+            to acknowledge.{% endif %}
+        </p>
+        {% when Phase::Stale %}
+        <p class="text-sm text-muted">
+            This alert is from an earlier outage. The incident closed and then
+            came back, so this alert takes nothing; what is shown above is the
+            outage running now. Open it to take that one.
+        </p>
+        {% when Phase::Missing %}
+        {% endmatch %}
+        <a href="/incidents/{{ id }}"{% if let Some(o) = switch_org %} data-switch-org="{{ o }}"{% endif %}
+           class="text-sm text-muted underline decoration-dotted hover:text-body">view incident →</a>
+        <p data-acknowledge-result role="status" aria-live="polite" class="flash-text text-sm"></p>
+        {% endif %}
+    </main>
+{% endblock %}
