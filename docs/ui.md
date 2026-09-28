@@ -38,7 +38,7 @@ What responders see here is deliberately separate from what customers see on a s
 | **Variables** | Org-scoped values and write-only secrets that monitors reference as `{{key}}`. See [Variables and secrets](variables.md). |
 | **Team** | Invite people by email, set roles, resend or revoke pending invitations, and remove members. See [Team](team.md). |
 | **Usage** | Current versus limit for every quota on your plan, as progress bars. The numbers here are the numbers you are enforced at. See [Plans and limits](hosted/plans-and-limits.md). |
-| **Account** | The sign-in methods that open your account — add one, or remove one that is no longer yours. Also export your data as JSON, or delete your account. Deletion is reversible for 30 days: sign back in and confirm the restore on the page that appears. Signing in on its own does not cancel it. |
+| **Account** | The sign-in methods that open your account — add one, or remove one that is no longer yours. The Telegram and Pushover accounts that put your name on incidents you acknowledge from them, under linked apps. Also export your data as JSON, or delete your account. Deletion is reversible for 30 days: sign back in and confirm the restore on the page that appears. Signing in on its own does not cancel it. |
 | **Sessions** | See every device signed in to your account, revoke a single session, or sign out everywhere. |
 | **API tokens** | Create and revoke personal API tokens for the REST API and Terraform. See [Managing tokens](authentication.md#managing-tokens). |
 

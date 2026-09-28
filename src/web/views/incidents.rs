@@ -98,10 +98,10 @@ fn member_avatar(u: UserId, members: &HashMap<UserId, String>) -> Option<OwnerAv
 /// Someone who acknowledged, named the same way on every incident view.
 #[derive(Clone)]
 pub struct AckerView {
-    /// "alice@example.com", "notification" or "former member".
+    /// "alice@example.com", "notification", "Telegram" or "former member".
     pub name: String,
-    /// "by alice@example.com", "by alice@example.com via MCP",
-    /// "via notification" or "by former member".
+    /// "by alice@example.com", "by alice@example.com via Telegram",
+    /// "via notification", "via Telegram" or "by former member".
     pub phrase: String,
     pub avatar: Option<OwnerAvatar>,
     pub at: DateTime<Utc>,
@@ -113,11 +113,17 @@ fn acker_views(
 ) -> Vec<AckerView> {
     acks.iter()
         .map(|a| {
-            let name = actor_name(a.actor_type, a.actor_id, members);
-            let phrase = match a.actor_type {
-                ActorType::Link => format!("via {name}"),
-                ActorType::Mcp => format!("by {name} via MCP"),
-                _ => format!("by {name}"),
+            let (name, phrase) = if a.anonymous {
+                let name = unnamed_actor(a.actor_type);
+                let phrase = format!("via {name}");
+                (name, phrase)
+            } else {
+                let name = member_name(a.actor_id, members);
+                let phrase = match a.actor_type.via() {
+                    Some(via) => format!("by {name} via {via}"),
+                    None => format!("by {name}"),
+                };
+                (name, phrase)
             };
             AckerView {
                 avatar: a.actor_id.and_then(|u| member_avatar(u, members)),
@@ -660,8 +666,9 @@ pub struct TimelineRow {
     /// Who acted: a member's email, `system` for automated transitions, or
     /// `former member` when the actor has since left the org.
     pub who: String,
-    /// The actor drove this through the MCP server rather than the console.
-    pub via_mcp: bool,
+    /// Where a named member acted when it was not the console: "MCP",
+    /// "Telegram" or "Pushover".
+    pub via: Option<&'static str>,
     pub occurred_at: DateTime<Utc>,
     pub message: Option<String>,
 }
@@ -722,28 +729,39 @@ async fn public_update_rows(
         .collect())
 }
 
-/// Resolve an event's actor to a human label + whether it came via MCP.
-fn actor_label(e: &IncidentEvent, members: &HashMap<UserId, String>) -> (String, bool) {
-    (
-        actor_name(e.actor_type, e.actor_id, members),
-        e.actor_type == ActorType::Mcp,
-    )
+/// Resolve an event's actor to a human label, plus where a named member acted
+/// when it was not the console. The timeline keeps no anonymous flag, so an
+/// app actor without an id reads as unlinked even when a member since deleted
+/// was behind it.
+fn actor_label(
+    e: &IncidentEvent,
+    members: &HashMap<UserId, String>,
+) -> (String, Option<&'static str>) {
+    match e.actor_type {
+        ActorType::User | ActorType::Mcp => (member_name(e.actor_id, members), e.actor_type.via()),
+        ActorType::Telegram | ActorType::Pushover if e.actor_id.is_some() => {
+            (member_name(e.actor_id, members), e.actor_type.via())
+        }
+        other => (unnamed_actor(other), None),
+    }
 }
 
-/// How the incident views name whoever acted. A member's account deleted since
-/// leaves no id behind, so it reads as a former member too.
-fn actor_name(
-    actor_type: ActorType,
-    actor_id: Option<UserId>,
-    members: &HashMap<UserId, String>,
-) -> String {
+/// A member by email. An account deleted since leaves no id behind, and one
+/// that left the org no email, so both read as a former member.
+fn member_name(actor_id: Option<UserId>, members: &HashMap<UserId, String>) -> String {
+    actor_id
+        .and_then(|u| members.get(&u).cloned())
+        .unwrap_or_else(|| "former member".to_string())
+}
+
+/// What acted when no member is named: the system, a notification link, or
+/// an app account nobody linked.
+fn unnamed_actor(actor_type: ActorType) -> String {
     match actor_type {
         ActorType::System => "system".to_string(),
         // Whoever held the notification; the event message says which one.
         ActorType::Link => "notification".to_string(),
-        ActorType::User | ActorType::Mcp => actor_id
-            .and_then(|u| members.get(&u).cloned())
-            .unwrap_or_else(|| "former member".to_string()),
+        app => app.via().unwrap_or("notification").to_string(),
     }
 }
 
@@ -894,11 +912,11 @@ pub async fn detail(
     let timeline = events
         .iter()
         .map(|e| {
-            let (who, via_mcp) = actor_label(e, &members);
+            let (who, via) = actor_label(e, &members);
             TimelineRow {
                 kind: event_kind_label(e),
                 who,
-                via_mcp,
+                via,
                 occurred_at: e.occurred_at,
                 message: e.message.clone(),
             }
@@ -1627,11 +1645,16 @@ mod tests {
     fn ackers_are_named_the_same_everywhere() {
         let alice = UserId(Uuid::now_v7());
         let members = HashMap::from([(alice, "alice@example.com".to_string())]);
-        let ack = |actor_type, actor_id| IncidentAcknowledgement {
+        let ack = |actor_type, actor_id: Option<UserId>| IncidentAcknowledgement {
             incident_id: Uuid::nil(),
             actor_type,
             actor_id,
+            anonymous: actor_id.is_none(),
             at: Utc::now(),
+        };
+        let deleted = |actor_type| IncidentAcknowledgement {
+            anonymous: false,
+            ..ack(actor_type, None)
         };
         let views = acker_views(
             &[
@@ -1639,7 +1662,11 @@ mod tests {
                 ack(ActorType::Mcp, Some(alice)),
                 ack(ActorType::Link, None),
                 ack(ActorType::User, Some(UserId(Uuid::now_v7()))),
-                ack(ActorType::User, None),
+                deleted(ActorType::User),
+                ack(ActorType::Telegram, Some(alice)),
+                ack(ActorType::Telegram, None),
+                ack(ActorType::Pushover, None),
+                deleted(ActorType::Pushover),
             ],
             &members,
         );
@@ -1652,11 +1679,20 @@ mod tests {
                 "via notification",
                 "by former member",
                 "by former member",
+                "by alice@example.com via Telegram",
+                "via Telegram",
+                "via Pushover",
+                "by former member via Pushover",
             ]
         );
         assert!(views[0].avatar.is_some());
         assert!(views[2].avatar.is_none());
         assert_eq!(views[2].name, "notification");
+        assert_eq!(views[6].name, "Telegram");
+        assert!(
+            views[5].avatar.is_some(),
+            "a linked Telegram account is alice"
+        );
         let acks = [ack(ActorType::Mcp, Some(alice)), ack(ActorType::Link, None)];
         assert!(viewer_acknowledged(&acks, alice), "MCP is still alice");
         assert!(!viewer_acknowledged(&acks[1..], alice));
@@ -1765,13 +1801,22 @@ mod tests {
         inc.target_id = None;
         inc.origin = crate::domain::IncidentOrigin::Manual;
         inc.acknowledged_at = Some(Utc::now());
-        let timeline = vec![TimelineRow {
-            kind: "Triggered",
-            who: "alice@example.com".to_string(),
-            via_mcp: false,
-            occurred_at: Utc::now(),
-            message: None,
-        }];
+        let timeline = vec![
+            TimelineRow {
+                kind: "Triggered",
+                who: "alice@example.com".to_string(),
+                via: None,
+                occurred_at: Utc::now(),
+                message: None,
+            },
+            TimelineRow {
+                kind: "Acknowledged",
+                who: "alice@example.com".to_string(),
+                via: Some("Telegram"),
+                occurred_at: Utc::now(),
+                message: None,
+            },
+        ];
         let updates = vec![PublicUpdateRow {
             phase: "identified",
             message: "Root cause found.".into(),
@@ -1792,6 +1837,7 @@ mod tests {
         assert!(html.contains(r#"data-incident-note"#));
         assert!(html.contains("activity"));
         assert!(html.contains("alice@example.com"));
+        assert!(html.contains(r#"title="Performed through Telegram">telegram</span>"#));
         // Public-update timeline + post form both present, with the author.
         assert!(html.contains(r#"data-incident-update-form"#));
         assert!(html.contains("status updates"));
@@ -2038,35 +2084,44 @@ mod tests {
         };
         assert_eq!(
             actor_label(&ev(ActorType::System, None), &members),
-            ("system".into(), false)
+            ("system".into(), None)
         );
         assert_eq!(
             actor_label(&ev(ActorType::User, Some(u)), &members),
-            ("alice@example.com".into(), false)
+            ("alice@example.com".into(), None)
         );
         assert_eq!(
             actor_label(&ev(ActorType::Mcp, Some(u)), &members),
-            ("alice@example.com".into(), true)
+            ("alice@example.com".into(), Some("MCP"))
         );
         // Names nobody, and must not borrow one from a stray actor_id.
         assert_eq!(
             actor_label(&ev(ActorType::Link, None), &members),
-            ("notification".into(), false)
+            ("notification".into(), None)
         );
         assert_eq!(
             actor_label(&ev(ActorType::Link, Some(u)), &members),
-            ("notification".into(), false)
+            ("notification".into(), None)
+        );
+        // An app names a member only through an account they linked.
+        assert_eq!(
+            actor_label(&ev(ActorType::Telegram, Some(u)), &members),
+            ("alice@example.com".into(), Some("Telegram"))
+        );
+        assert_eq!(
+            actor_label(&ev(ActorType::Pushover, None), &members),
+            ("Pushover".into(), None)
         );
         // An actor who has left the org no longer resolves to an email.
         let gone = UserId(Uuid::now_v7());
         assert_eq!(
             actor_label(&ev(ActorType::User, Some(gone)), &members),
-            ("former member".into(), false)
+            ("former member".into(), None)
         );
         // A deleted account's id is nulled out; it was still a member.
         assert_eq!(
             actor_label(&ev(ActorType::User, None), &members),
-            ("former member".into(), false)
+            ("former member".into(), None)
         );
     }
 

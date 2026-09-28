@@ -12,12 +12,12 @@ mod common;
 use common::{make_user, unique_slug};
 use sqlx::PgPool;
 use uptimepage::domain::{
-    ActorType, IncidentEventKind, IncidentState, NewIncidentNotification, NewManualIncident,
-    NotificationOutcome, NotificationReason, NotificationStatus, OrgId,
+    ActorType, IncidentEventKind, IncidentState, LinkedApp, NewIncidentNotification,
+    NewManualIncident, NotificationOutcome, NotificationReason, NotificationStatus, OrgId,
 };
 use uptimepage::storage::{
-    Actor, InMemoryIncidentOpsStore, IncidentOpsStore, LifecycleOutcome, PgIncidentOpsStore,
-    QUEUED_TAKEOVER_SECS, create_org_with_owner,
+    Actor, AppPress, InMemoryIncidentOpsStore, IncidentOpsStore, LifecycleOutcome,
+    PgIncidentOpsStore, QUEUED_TAKEOVER_SECS, create_org_with_owner,
 };
 use uuid::Uuid;
 
@@ -297,7 +297,8 @@ async fn acknowledge_then_manual_resolve_pg() {
         store
             .acknowledge(org, id, Actor::User(user), Some("on it".into()), None)
             .await
-            .unwrap(),
+            .unwrap()
+            .outcome,
     );
     assert_eq!(acked.state, IncidentState::Acknowledged);
     assert_eq!(acked.acknowledged_by, Some(user));
@@ -383,7 +384,8 @@ async fn illegal_transition_is_reported_pg() {
     let out = store
         .acknowledge(org, id, Actor::User(user), None, None)
         .await
-        .unwrap();
+        .unwrap()
+        .outcome;
     assert!(matches!(out, LifecycleOutcome::IllegalTransition(_)));
 }
 
@@ -461,7 +463,8 @@ async fn cross_org_cannot_touch_incident_pg() {
     let out = store
         .acknowledge(other_org.id, id, Actor::User(other_user), None, None)
         .await
-        .unwrap();
+        .unwrap()
+        .outcome;
     assert!(matches!(out, LifecycleOutcome::NotFound));
     // The legitimate owner's add_note works; the other org's is a no-op.
     assert!(
@@ -1704,11 +1707,12 @@ async fn an_unattributed_ack_keeps_its_credit_but_still_logs_the_next_one_pg() {
                 org,
                 id,
                 Actor::Link,
-                Some("Acknowledged in Pushover".into()),
+                Some("Acknowledged from a notification link".into()),
                 None,
             )
             .await
-            .unwrap(),
+            .unwrap()
+            .outcome,
     );
     assert_eq!(first.state, IncidentState::Acknowledged);
     assert_eq!(first.acknowledged_by, None);
@@ -1719,7 +1723,8 @@ async fn an_unattributed_ack_keeps_its_credit_but_still_logs_the_next_one_pg() {
         store
             .acknowledge(org, id, Actor::User(user), Some("me too".into()), None)
             .await
-            .unwrap(),
+            .unwrap()
+            .outcome,
     );
     assert_eq!(again.acknowledged_by, None, "credit stays with the first");
     assert_eq!(again.acknowledged_at, Some(acked_at));
@@ -1736,7 +1741,10 @@ async fn an_unattributed_ack_keeps_its_credit_but_still_logs_the_next_one_pg() {
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].0, "link");
     assert_eq!(events[0].1, None);
-    assert_eq!(events[0].2.as_deref(), Some("Acknowledged in Pushover"));
+    assert_eq!(
+        events[0].2.as_deref(),
+        Some("Acknowledged from a notification link")
+    );
     assert_eq!(events[1].0, "user");
     assert_eq!(events[1].1, Some(user.0));
 
@@ -1794,7 +1802,8 @@ async fn a_repeat_ack_by_the_same_responder_writes_nothing_pg() {
             store
                 .acknowledge(org, id, actor, Some("on it".into()), None)
                 .await
-                .unwrap(),
+                .unwrap()
+                .outcome,
         );
         assert_eq!(inc.acknowledged_by, Some(user));
     }
@@ -1813,15 +1822,19 @@ async fn a_repeat_ack_by_the_same_responder_writes_nothing_pg() {
         "a note brought by a repeat is kept as a note"
     );
 
-    for note in [
-        "Acknowledged from a notification link",
-        "Acknowledged in Pushover",
-    ] {
+    for _ in 0..2 {
         updated(
             store
-                .acknowledge(org, id, Actor::Link, Some(note.into()), None)
+                .acknowledge(
+                    org,
+                    id,
+                    Actor::Link,
+                    Some("Acknowledged from a notification link".into()),
+                    None,
+                )
                 .await
-                .unwrap(),
+                .unwrap()
+                .outcome,
         );
     }
     assert_eq!(ack_trail(&pool, org, id).await, (2, 2));
@@ -1846,7 +1859,8 @@ async fn a_repeat_ack_by_the_same_responder_writes_nothing_pg() {
         store
             .acknowledge(org, id, Actor::User(user), None, None)
             .await
-            .unwrap(),
+            .unwrap()
+            .outcome,
     );
     assert_eq!(ack_trail(&pool, org, id).await, (3, 3));
     let list = store
@@ -1885,7 +1899,13 @@ async fn every_member_who_acknowledges_is_listed_once_pg() {
         Actor::Mcp(dev),
         Actor::User(manager),
     ] {
-        updated(store.acknowledge(org, id, actor, None, None).await.unwrap());
+        updated(
+            store
+                .acknowledge(org, id, actor, None, None)
+                .await
+                .unwrap()
+                .outcome,
+        );
     }
     let credited = store.get(org, id).await.unwrap().expect("incident");
     assert_eq!(credited.acknowledged_by, Some(dev));
@@ -1912,6 +1932,102 @@ async fn every_member_who_acknowledges_is_listed_once_pg() {
         ]
     );
     assert!(list[0].at <= list[1].at && list[1].at <= list[2].at);
+}
+
+/// An app names a member only through an account they linked. A press nobody
+/// linked counts once per person the app reports, and a named member's row
+/// outlives their account without colliding with those anonymous ones.
+#[tokio::test]
+#[ignore]
+async fn an_app_acknowledgement_names_only_a_linked_member_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, _, id) = seed(&pool, "incackapp").await;
+    let olena = make_user(&pool, "incackappmember").await;
+    sqlx::query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'member')")
+        .bind(olena.0)
+        .bind(org.0)
+        .execute(&pool)
+        .await
+        .expect("add olena to the org");
+    let store = PgIncidentOpsStore::new(pool.clone());
+    let listed = |actor| {
+        let store = &store;
+        async move {
+            store
+                .acknowledge(org, id, actor, None, None)
+                .await
+                .expect("acknowledge")
+                .listed
+        }
+    };
+
+    let press = |app, who: &str, member| {
+        Actor::App(AppPress {
+            app,
+            sender: uptimepage::security::app_link::external_id("s3cret", who),
+            member,
+        })
+    };
+    assert!(listed(press(LinkedApp::Telegram, "taras", None)).await);
+    assert!(
+        !listed(press(LinkedApp::Telegram, "taras", None)).await,
+        "the same unlinked person pressing again"
+    );
+    assert!(
+        listed(press(LinkedApp::Telegram, "mykola", None)).await,
+        "someone else nobody linked"
+    );
+    assert!(listed(press(LinkedApp::Pushover, "taras", None)).await);
+    assert!(listed(press(LinkedApp::Telegram, "olena", Some(olena))).await);
+    assert!(
+        !listed(Actor::User(olena)).await,
+        "olena on the web is the olena who pressed in Telegram"
+    );
+
+    let kinds: Vec<String> = sqlx::query_scalar(
+        "SELECT actor_type FROM incident_events \
+         WHERE incident_id = $1 AND kind = 'acknowledged' ORDER BY occurred_at, id",
+    )
+    .bind(id)
+    .fetch_all(&pool)
+    .await
+    .expect("acknowledged events");
+    assert_eq!(kinds, ["telegram", "telegram", "pushover", "telegram"]);
+    let named_senders: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM incident_acknowledgements \
+         WHERE incident_id = $1 AND NOT anonymous AND sender IS NOT NULL",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .expect("count named senders");
+    assert_eq!(named_senders, 0, "a named acknowledgement keeps no sender");
+
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(olena.0)
+        .execute(&pool)
+        .await
+        .expect("delete olena's account beside an anonymous Telegram row");
+    let who: Vec<(ActorType, Option<uptimepage::domain::UserId>, bool)> = store
+        .acknowledgements(org, &[id])
+        .await
+        .expect("list")
+        .remove(&id)
+        .expect("acknowledged")
+        .iter()
+        .map(|a| (a.actor_type, a.actor_id, a.anonymous))
+        .collect();
+    assert_eq!(
+        who,
+        [
+            (ActorType::Telegram, None, true),
+            (ActorType::Telegram, None, true),
+            (ActorType::Pushover, None, true),
+            (ActorType::Telegram, None, false),
+        ]
+    );
 }
 
 /// A resolve that lands twice writes the second to the internal timeline, but
@@ -1996,7 +2112,8 @@ async fn an_ack_pinned_to_a_finished_episode_is_refused_pg() {
             Some(0),
         )
         .await
-        .expect("acknowledge");
+        .expect("acknowledge")
+        .outcome;
     assert!(
         matches!(outcome, LifecycleOutcome::Stale),
         "expected Stale, got {outcome:?}"
@@ -2025,7 +2142,8 @@ async fn an_ack_pinned_to_a_finished_episode_is_refused_pg() {
             Some(1),
         )
         .await
-        .expect("acknowledge");
+        .expect("acknowledge")
+        .outcome;
     assert_eq!(
         updated(outcome).state,
         IncidentState::Acknowledged,
@@ -2121,7 +2239,8 @@ async fn an_emergency_receipt_remembers_the_outage_it_paged_for_pg() {
         store
             .acknowledge(org, id, Actor::Link, None, Some(gen_of(first)))
             .await
-            .expect("acknowledge"),
+            .expect("acknowledge")
+            .outcome,
         LifecycleOutcome::Stale
     ));
     assert_eq!(
@@ -2134,6 +2253,7 @@ async fn an_emergency_receipt_remembers_the_outage_it_paged_for_pg() {
                 .acknowledge(org, id, Actor::Link, None, Some(gen_of(second)))
                 .await
                 .expect("acknowledge")
+                .outcome
         )
         .state,
         IncidentState::Acknowledged

@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated:** 2026-09-23
+**Last updated:** 2026-09-28
 
 This Privacy Policy explains how the uptimepage service ("we", "us") collects and processes personal data. It is intended to satisfy our obligations under the EU General Data Protection Regulation (GDPR) and similar laws.
 
@@ -27,6 +27,7 @@ We collect data in three ways:
 - Organisation names, slugs, branding (display name, about text, logo)
 - Target configurations (URLs, intervals, headers, optional credentials)
 - Status-page customisation (incident narration, maintenance windows)
+- Telegram or Pushover accounts you link so that incidents you acknowledge from them carry your name: a one-way code derived from that app's id for you with a secret key, which cannot be turned back into the id, and the handle or device name the app showed when you linked
 
 **If you buy a paid plan:** Paddle collects your payment details, billing address and tax details directly in its checkout. We never see or store your card number. From Paddle we receive a customer ID, a subscription ID, the plan and billing interval you chose, the subscription status, and the dates of the current period and of payments.
 
@@ -38,6 +39,7 @@ We collect data in three ways:
 - Sign-in method changes (which provider was added or removed, whether you asked for it or it was matched on your verified address, hashed IP, hashed user agent)
 - Audit events (organisation membership changes, target changes)
 - MCP write actions (which tool ran, what it acted on, and whether it succeeded or was refused)
+- For an incident acknowledged from Telegram or Pushover by someone who linked no account: the same kind of one-way code for that person, so two people are counted as two. It names nobody
 
 **We collect via your browser:**
 - Session cookie (`_sm_session`) — necessary for authentication
@@ -65,6 +67,7 @@ We do **not** use third-party analytics services that export your data (no Googl
 | Sign-in method changes | Let you see, and challenge, every credential that opens your account | Legitimate interest |
 | Audit log | Compliance and accountability | Legitimate interest |
 | MCP write actions | Account for changes an AI assistant made on your behalf | Legitimate interest |
+| Linked Telegram and Pushover accounts, and the one-way code for who acknowledged from those apps | Show who acknowledged an incident, and count each person once | Contract |
 | Aggregate analytics (marketing and sign-in pages) | Understand site usage and improve content and sign-in | Legitimate interest |
 
 **Browser flow monitors:** when a flow monitor you configured fails, we keep what the page showed at that moment — the URL the browser ended on, the page title, its visible text, and anything the page logged to the browser console. Because the flow signs in, that text can come from a page behind your own login. It is stored to explain the failure and for nothing else, it is never put into an alert or notification, and any value the flow typed from a secret variable is removed before it is stored. It is deleted on a shorter clock than the run itself.
@@ -95,6 +98,9 @@ We do not engage in automated decision-making with significant effects on you (n
 | Audit log | 2 years |
 | MCP write actions (tool, what it acted on, outcome, and the person and token behind it) | 2 years |
 | Quota events | 90 days |
+| Linked Telegram and Pushover accounts | Until you unlink them or delete your account |
+| One-way code for someone who acknowledged from Telegram or Pushover without a linked account | As long as the incident it acknowledged |
+| One-time codes for linking an account, and Pushover link offers | 8 days |
 | Status page subscriptions (email address or webhook URL) | Until you unsubscribe, your address bounces, or the page owner removes you or deletes the page. Unconfirmed ones are deleted once the confirmation link expires |
 | Status page notification records | 30 days |
 | Subscription records and billing history (plan changes and why) | Until account deletion |

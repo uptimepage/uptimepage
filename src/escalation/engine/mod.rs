@@ -32,8 +32,8 @@ use crate::domain::{NotificationReason, OrgId, UserId};
 use crate::http_outbound::OutboundHttpClient;
 use crate::storage::orgs::OrgDirectory;
 use crate::storage::{
-    ContactStore, EscalationPolicyStore, IncidentOpsStore, NotificationChannelStore, OnCallStore,
-    TargetStore,
+    ContactStore, EscalationPolicyStore, IncidentOpsStore, LinkedAppStore,
+    NotificationChannelStore, OnCallStore, TargetStore,
 };
 
 use rules::{retry_after_hint, retry_delay_secs};
@@ -80,6 +80,7 @@ pub struct EngineDeps {
     pub policies: Arc<dyn EscalationPolicyStore>,
     pub on_call: Arc<dyn OnCallStore>,
     pub contacts: Arc<dyn ContactStore>,
+    pub linked_apps: Arc<dyn LinkedAppStore>,
     pub targets: Arc<dyn TargetStore>,
     pub channels: Arc<dyn NotificationChannelStore>,
     pub maintenance: Arc<dyn crate::storage::MaintenanceStore>,
@@ -92,6 +93,8 @@ pub struct EngineDeps {
     pub alert_channel_stop_secret: String,
     /// Keys the acknowledge link pushed to phones; empty omits the link.
     pub incident_ack_secret: String,
+    /// Keys the hash an app account that acknowledged is matched by.
+    pub app_link_secret: String,
     /// Operator token + shared send budget for `telegram_app` delivery.
     pub central_bot: Option<crate::notifier::CentralBotDelivery>,
     /// Operator Cloud API credentials for `whatsapp_app` delivery.
@@ -107,6 +110,7 @@ struct Worker {
     policies: Arc<dyn EscalationPolicyStore>,
     on_call: Arc<dyn OnCallStore>,
     contacts: Arc<dyn ContactStore>,
+    linked_apps: Arc<dyn LinkedAppStore>,
     targets: Arc<dyn TargetStore>,
     channels: Arc<dyn NotificationChannelStore>,
     maintenance: Arc<dyn crate::storage::MaintenanceStore>,
@@ -116,6 +120,7 @@ struct Worker {
     base_url: String,
     alert_channel_stop_secret: String,
     incident_ack_secret: String,
+    app_link_secret: String,
     central_bot: Option<crate::notifier::CentralBotDelivery>,
     central_whatsapp: Option<crate::config::WhatsAppAppBotConfig>,
     email: Option<crate::notifier::EmailDelivery>,
@@ -141,6 +146,7 @@ impl EscalationEngine {
             policies,
             on_call,
             contacts,
+            linked_apps,
             targets,
             channels,
             maintenance,
@@ -150,6 +156,7 @@ impl EscalationEngine {
             base_url,
             alert_channel_stop_secret,
             incident_ack_secret,
+            app_link_secret,
             central_bot,
             central_whatsapp,
             email,
@@ -161,6 +168,7 @@ impl EscalationEngine {
                 policies,
                 on_call,
                 contacts,
+                linked_apps,
                 targets,
                 channels,
                 maintenance,
@@ -170,6 +178,7 @@ impl EscalationEngine {
                 base_url,
                 alert_channel_stop_secret,
                 incident_ack_secret,
+                app_link_secret,
                 central_bot,
                 central_whatsapp,
                 email,

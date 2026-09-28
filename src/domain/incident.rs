@@ -369,20 +369,33 @@ pub enum ActorType {
     System,
     User,
     Mcp,
-    /// A person acting through a signed link or a push app's own
-    /// acknowledgement. Possession of the notification is the whole proof, so
-    /// there is no user to name.
+    /// A person acting through a signed link. Possession of the notification
+    /// is the whole proof, so there is no user to name.
     Link,
+    /// Pressed in Telegram. Names the member who linked that Telegram account,
+    /// and nobody when it is not linked.
+    Telegram,
+    /// Acknowledged in Pushover, named the same way as [`Self::Telegram`].
+    Pushover,
 }
 
 impl ActorType {
-    pub const ALL: &'static [Self] = &[Self::System, Self::User, Self::Mcp, Self::Link];
+    pub const ALL: &'static [Self] = &[
+        Self::System,
+        Self::User,
+        Self::Mcp,
+        Self::Link,
+        Self::Telegram,
+        Self::Pushover,
+    ];
     pub fn as_db_str(self) -> &'static str {
         match self {
             Self::System => "system",
             Self::User => "user",
             Self::Mcp => "mcp",
             Self::Link => "link",
+            Self::Telegram => "telegram",
+            Self::Pushover => "pushover",
         }
     }
     pub fn from_db_str(s: &str) -> Self {
@@ -390,7 +403,18 @@ impl ActorType {
             "user" => Self::User,
             "mcp" => Self::Mcp,
             "link" => Self::Link,
+            "telegram" => Self::Telegram,
+            "pushover" => Self::Pushover,
             _ => Self::System,
+        }
+    }
+    /// Where a member acted when it was not the web app itself.
+    pub fn via(self) -> Option<&'static str> {
+        match self {
+            Self::Mcp => Some("MCP"),
+            Self::Telegram => Some(super::LinkedApp::Telegram.label()),
+            Self::Pushover => Some(super::LinkedApp::Pushover.label()),
+            Self::System | Self::User | Self::Link => None,
         }
     }
 }
@@ -668,8 +692,10 @@ pub struct IncidentEvent {
 pub struct IncidentAcknowledgement {
     pub incident_id: Uuid,
     pub actor_type: ActorType,
-    /// `None` for a notification, or a member whose account is gone.
+    /// `None` when it named nobody, or for a member whose account is gone.
     pub actor_id: Option<UserId>,
+    /// Named nobody when it landed, as opposed to a member since deleted.
+    pub anonymous: bool,
     pub at: DateTime<Utc>,
 }
 

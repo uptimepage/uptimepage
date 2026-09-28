@@ -40,6 +40,7 @@ pub struct UserDataExport {
     pub user: UserExport,
     pub oauth_identities: Vec<OAuthIdentityExport>,
     pub passkeys: Vec<PasskeyExport>,
+    pub linked_apps: Vec<LinkedAppExport>,
     pub sessions: Vec<SessionMetadata>,
     pub api_tokens: Vec<ApiTokenMetadata>,
     pub owned_orgs: Vec<OwnedOrgExport>,
@@ -57,6 +58,15 @@ pub struct PasskeyExport {
     pub rp_id: String,
     pub created_at: DateTime<Utc>,
     pub last_used_at: DateTime<Utc>,
+}
+
+/// The app's id for the person is kept only as a hash, so it has nothing to
+/// give back.
+#[derive(Debug, Serialize, ToSchema, sqlx::FromRow)]
+pub struct LinkedAppExport {
+    pub app: String,
+    pub label: Option<String>,
+    pub linked_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, ToSchema, sqlx::FromRow)]
@@ -247,7 +257,8 @@ pub struct McpAuditExport {
     tag = "account",
     summary = "Export all personal data associated with the calling user",
     description = "Returns a JSON document containing all data linked to the \
-                   authenticated user: account info, OAuth identities, session \
+                   authenticated user: account info, OAuth identities, linked \
+                   app accounts, session \
                    and API-token metadata (never raw values), owned orgs with \
                    their targets (credentials redacted), incidents, \
                    maintenance, status pages and their curated components, \
@@ -388,6 +399,15 @@ async fn build_export(pool: &sqlx::PgPool, user_id: UserId) -> Result<UserDataEx
     .await
     .map_err(db_err("passkeys"))?;
 
+    let linked_apps: Vec<LinkedAppExport> = sqlx::query_as(
+        "SELECT app, label, linked_at FROM linked_app_accounts \
+         WHERE user_id = $1 ORDER BY linked_at",
+    )
+    .bind(user_id.0)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err("linked_apps"))?;
+
     let login_history: Vec<LoginAttemptExport> = sqlx::query_as(&format!(
         "SELECT method, success, ip_hash, user_agent_hash, failure_reason, occurred_at \
          FROM login_attempts \
@@ -437,6 +457,7 @@ async fn build_export(pool: &sqlx::PgPool, user_id: UserId) -> Result<UserDataEx
         user,
         oauth_identities,
         passkeys,
+        linked_apps,
         sessions,
         api_tokens,
         owned_orgs,

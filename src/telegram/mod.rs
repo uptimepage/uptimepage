@@ -2,13 +2,14 @@
 //! a deep link. The bring-your-own `telegram` channel transport is separate
 //! and unaffected.
 
+pub mod ack;
 mod budget;
 mod client;
 mod update;
 
 pub use budget::{RateDeferred, TelegramSendBudget};
 pub use client::{BotIdentity, TelegramClient};
-pub use update::{ChatRef, Update, WebhookAction, classify_update};
+pub use update::{ChatRef, Person, Press, Update, WebhookAction, classify_update};
 
 use subtle::ConstantTimeEq;
 
@@ -18,13 +19,30 @@ use crate::http_outbound::OutboundHttpClient;
 /// Path the bot delivers updates to, appended to `auth.public_base_url`.
 pub const WEBHOOK_PATH: &str = "/hooks/telegram";
 
-/// Updates we ask Telegram to deliver — link messages and add/remove events.
-const ALLOWED_UPDATES: &[&str] = &["message", "my_chat_member"];
+/// Updates we ask Telegram to deliver: link messages, add/remove events and
+/// button presses.
+const ALLOWED_UPDATES: &[&str] = &["message", "my_chat_member", "callback_query"];
 
 /// Constant-time match of the `X-Telegram-Bot-Api-Secret-Token` header against
 /// the configured secret. The only thing authenticating the receiver.
 pub fn webhook_secret_matches(provided: &str, expected: &str) -> bool {
     provided.as_bytes().ct_eq(expected.as_bytes()).into()
+}
+
+/// Opens a private chat with the bot and sends it `/start <payload>`.
+pub fn start_link(bot_username: &str, payload: &str) -> String {
+    format!(
+        "https://t.me/{}?start={payload}",
+        bot_username.trim_start_matches('@')
+    )
+}
+
+/// Adds the bot to a group and sends it `/start <payload>` there.
+pub fn start_group_link(bot_username: &str, payload: &str) -> String {
+    format!(
+        "https://t.me/{}?startgroup={payload}",
+        bot_username.trim_start_matches('@')
+    )
 }
 
 fn normalize_username(name: &str) -> String {

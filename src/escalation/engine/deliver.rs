@@ -104,7 +104,7 @@ impl Worker {
     ) -> (NotificationStatus, Option<String>, Option<String>) {
         let central = self.central_bot.as_ref().map(|c| c.as_central());
         let email_alert = self.email_alert(org, channel).await;
-        let push_ack = self.push_ack(org, channel, notice).await;
+        let ack = self.ack_control(org, channel, notice).await;
         let transport = channel.kind.as_db_str();
         let (error, sent_at) = match build_notifier(
             &channel.config,
@@ -113,7 +113,7 @@ impl Worker {
             self.central_whatsapp.as_ref(),
             self.email.as_ref(),
             email_alert,
-            push_ack,
+            ack,
         ) {
             Ok(n) => {
                 let started = Instant::now();
@@ -225,33 +225,50 @@ impl Worker {
         (!base.is_empty()).then(|| format!("{base}/incidents/{id}"))
     }
 
-    /// Acknowledge link for one page, pinned to the incident's current episode
-    /// so a page kept on a phone through a reopen cannot silence what followed.
-    async fn push_ack(
+    /// Acknowledge control for one page, pinned to the incident's current
+    /// episode so a page kept on a phone through a reopen cannot silence what
+    /// followed.
+    async fn ack_control(
         &self,
         org: OrgId,
         channel: &crate::domain::NotificationChannel,
         notice: &IncidentNotice,
-    ) -> Option<crate::notifier::PushAck> {
-        // Kind first, like `email_alert_for`: the episode lookup is a query on
-        // the paging path, and only ntfy renders the button.
-        if channel.kind != crate::domain::ChannelKind::Ntfy
+    ) -> Option<crate::notifier::AckControl> {
+        use crate::domain::ChannelKind;
+        use crate::notifier::{AckControl, PushAck};
+        // Checked before the episode lookup, a query on the paging path: only
+        // these two render a control, and only when they can deliver it.
+        let renders = match channel.kind {
+            ChannelKind::Ntfy => !self.base_url.is_empty(),
+            ChannelKind::TelegramApp => self.central_bot.is_some(),
+            _ => false,
+        };
+        if !renders
             || notice.reason == NotificationReason::Resolved
-            || self.base_url.is_empty()
             || self.incident_ack_secret.is_empty()
         {
             return None;
         }
         let generation = match self.ops.generation(org, notice.incident_id).await {
             Ok(Some(g)) => g,
-            // Page without the button rather than mint one for the wrong
+            // Page without the control rather than mint one for the wrong
             // episode.
             Ok(None) => return None,
             Err(err) => {
-                tracing::warn!(error = %err, "acknowledge link generation lookup failed");
+                tracing::warn!(error = %err, "acknowledge control generation lookup failed");
                 return None;
             }
         };
+        if channel.kind == ChannelKind::TelegramApp {
+            return crate::telegram::ack::callback_data(
+                &self.incident_ack_secret,
+                org,
+                notice.incident_id,
+                channel.id,
+                generation,
+            )
+            .map(AckControl::TelegramButton);
+        }
         crate::storage::incident_ops::incident_ack_url(
             &self.base_url,
             &self.incident_ack_secret,
@@ -261,7 +278,7 @@ impl Worker {
             generation,
             chrono::Utc::now(),
         )
-        .map(|url| crate::notifier::PushAck { url })
+        .map(|url| AckControl::Link(PushAck { url }))
     }
 
     async fn email_alert(

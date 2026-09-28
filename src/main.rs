@@ -491,6 +491,9 @@ async fn main() -> Result<()> {
     let contact_store: Arc<dyn uptimepage::storage::ContactStore> = Arc::new(
         uptimepage::storage::PgContactStore::new(pg_pool_for_stores.clone()),
     );
+    let linked_app_store: Arc<dyn uptimepage::storage::LinkedAppStore> = Arc::new(
+        uptimepage::storage::PgLinkedAppStore::new(pg_pool_for_stores.clone()),
+    );
     // One process-wide central-bot send budget, shared by the engine and the
     // web side (test-now, webhook replies) via AppState.
     let telegram_send_budget = std::sync::Arc::new(uptimepage::telegram::TelegramSendBudget::new());
@@ -511,6 +514,13 @@ async fn main() -> Result<()> {
     )
     .await
     .map_err(|e| AppError::Other(anyhow::anyhow!("incident ack secret: {e}")))?;
+    let app_link_secret = uptimepage::storage::app_secrets::ensure_secret(
+        &pg_pool_for_stores,
+        cipher.as_deref(),
+        "app_link",
+    )
+    .await
+    .map_err(|e| AppError::Other(anyhow::anyhow!("app link secret: {e}")))?;
     let org_directory: Arc<dyn uptimepage::storage::orgs::OrgDirectory> = Arc::new(
         uptimepage::storage::orgs::PgOrgDirectory::new(pg_pool_for_stores.clone()),
     );
@@ -526,6 +536,7 @@ async fn main() -> Result<()> {
                 policies: escalation_policy_store.clone(),
                 on_call: on_call_store.clone(),
                 contacts: contact_store.clone(),
+                linked_apps: linked_app_store.clone(),
                 targets: target_store.clone(),
                 channels: notification_channel_store.clone(),
                 maintenance: maintenance_store.clone(),
@@ -535,6 +546,7 @@ async fn main() -> Result<()> {
                 base_url: cfg.auth.public_base_url.clone(),
                 alert_channel_stop_secret: alert_channel_stop_secret.clone(),
                 incident_ack_secret: incident_ack_secret.clone(),
+                app_link_secret: app_link_secret.clone(),
                 central_bot: cfg.telegram.enabled().then(|| {
                     uptimepage::notifier::CentralBotDelivery {
                         token: cfg.telegram.bot_token.clone(),
@@ -814,6 +826,7 @@ async fn main() -> Result<()> {
         .with_subscription_unsubscribe_secret(unsubscribe_secret)
         .with_alert_channel_stop_secret(alert_channel_stop_secret)
         .with_incident_ack_secret(incident_ack_secret)
+        .with_app_link_secret(app_link_secret)
         .with_billing_checkout_secret(billing_checkout_secret)
         .with_shutdown(root.clone());
     let billing_for_drain = state.billing.clone();

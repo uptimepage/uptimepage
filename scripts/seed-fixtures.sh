@@ -611,8 +611,9 @@ echo "==> Postgres: who acknowledged each acknowledged incident"
 # The owner took every acknowledged fixture incident; list them the way the
 # acknowledge action does. No fixture incident was reopened, so episode 0.
 pg <<SQL
-INSERT INTO incident_acknowledgements (org_id, incident_id, episode, actor_type, actor_id, acknowledged_at)
-SELECT org_id, id, 0, 'user', acknowledged_by, acknowledged_at
+INSERT INTO incident_acknowledgements
+  (org_id, incident_id, episode, actor_type, actor_id, anonymous, acknowledged_at)
+SELECT org_id, id, 0, 'user', acknowledged_by, false, acknowledged_at
 FROM incidents
 WHERE org_id = '${ORG}'::uuid AND acknowledged_at IS NOT NULL AND acknowledged_by IS NOT NULL
 ON CONFLICT DO NOTHING;

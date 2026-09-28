@@ -133,6 +133,14 @@ pub trait NotificationChannelStore: Send + Sync {
     ) -> Result<u64>;
     /// Channels of `kind` (any org) still carrying `external_ref`.
     async fn count_by_external_ref(&self, kind: ChannelKind, external_ref: &str) -> Result<i64>;
+    /// Every enabled `(org, channel)` of `kind` pointed at `external_ref`.
+    /// Cross-org: several orgs can link one chat, and a press in it names none
+    /// of them. A disabled one is a chat its org cut loose.
+    async fn find_by_external_ref(
+        &self,
+        kind: ChannelKind,
+        external_ref: &str,
+    ) -> Result<Vec<(OrgId, Uuid)>>;
     /// Compare-and-swap on `from`. Verification, failure run and
     /// `write_source` are left alone: the operator changed nothing.
     async fn follow_chat_migration(
@@ -682,6 +690,23 @@ impl NotificationChannelStore for PgNotificationChannelStore {
         Ok(n)
     }
 
+    async fn find_by_external_ref(
+        &self,
+        kind: ChannelKind,
+        external_ref: &str,
+    ) -> Result<Vec<(OrgId, Uuid)>> {
+        let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
+            r#"SELECT org_id, id FROM notification_channels /* SAFE: a press in a linked chat carries no org; each candidate is then proven by the button's MAC, which binds its org and channel */
+               WHERE kind = $1 AND external_ref = $2 AND enabled"#,
+        )
+        .bind(kind.as_db_str())
+        .bind(external_ref)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Other(anyhow!("find by external ref: {e}")))?;
+        Ok(rows.into_iter().map(|(o, id)| (OrgId(o), id)).collect())
+    }
+
     async fn follow_chat_migration(
         &self,
         org: OrgId,
@@ -1132,6 +1157,22 @@ impl NotificationChannelStore for InMemoryNotificationChannelStore {
             .iter()
             .filter(|e| e.ch.kind == kind && e.external_ref.as_deref() == Some(external_ref))
             .count() as i64)
+    }
+
+    async fn find_by_external_ref(
+        &self,
+        kind: ChannelKind,
+        external_ref: &str,
+    ) -> Result<Vec<(OrgId, Uuid)>> {
+        Ok(self
+            .inner
+            .lock()
+            .iter()
+            .filter(|e| {
+                e.ch.kind == kind && e.ch.enabled && e.external_ref.as_deref() == Some(external_ref)
+            })
+            .map(|e| (e.org, e.ch.id))
+            .collect())
     }
 
     async fn follow_chat_migration(

@@ -188,6 +188,11 @@ pub const EMAIL_NOT_VERIFIED: &str = "EMAIL_NOT_VERIFIED";
 pub const TOKEN_LIMIT: &str = "TOKEN_LIMIT";
 pub const TOKEN_NAME_INVALID: &str = "TOKEN_NAME_INVALID";
 pub const TOKEN_NOT_FOUND: &str = "TOKEN_NOT_FOUND";
+pub const LINKED_APP_NOT_FOUND: &str = "LINKED_APP_NOT_FOUND";
+/// A link code for an app account that is unknown, spent or lapsed.
+pub const APP_LINK_INVALID: &str = "APP_LINK_INVALID";
+/// The app account is linked to someone else, who has to unlink it first.
+pub const APP_ACCOUNT_TAKEN: &str = "APP_ACCOUNT_TAKEN";
 pub const INVALID_SCOPES: &str = "INVALID_SCOPES";
 pub const INVALID_EXPIRY: &str = "INVALID_EXPIRY";
 // Invitations.

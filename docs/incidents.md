@@ -48,7 +48,7 @@ The action bar drives the lifecycle:
 
 | Action | Effect |
 |---|---|
-| **Acknowledge** | `state = acknowledged`, stops escalation. Any member can acknowledge, a manager as well as whoever is on call, and each one is listed once, in order, on the dashboard banner, the console and the incident page. The first keeps the credit: they are the acker on record and their time is what MTTA measures. Your own button goes once you have acknowledged; pressing again from elsewhere adds nothing, except that a note sent with it is kept as a note. A notification carries no login, so every acknowledgement from one counts as the same responder. A reopen starts a new list. |
+| **Acknowledge** | `state = acknowledged`, stops escalation. Any member can acknowledge, a manager as well as whoever is on call, and each one is listed once, in order, on the dashboard banner, the console and the incident page. The first keeps the credit: they are the acker on record and their time is what MTTA measures. Your own button goes once you have acknowledged; pressing again from elsewhere adds nothing, except that a note sent with it is kept as a note. An ntfy link carries no login, so every acknowledgement from one counts as the same responder. Telegram and Pushover report who pressed: someone who linked that account under **Account → linked apps** is named, and presses nobody linked count once per person the app reports. A reopen starts a new list. |
 | **Resolve** | `state = resolved`, records the resolver. (A sustained recovery auto-resolves with no resolver.) |
 | **Reopen** | A resolved incident returns to `triggered` and re-arms escalation. |
 | **Assign / unassign** | Set or clear the owning responder. |

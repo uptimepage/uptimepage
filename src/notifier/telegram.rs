@@ -19,6 +19,9 @@ pub struct TelegramNotifier {
     send_url: Url,
     chat_id: String,
     budget: Option<Arc<TelegramSendBudget>>,
+    /// Callback data for an Acknowledge button. Central bot only: a press on a
+    /// customer's own bot goes to that bot, not to us.
+    ack_button: Option<String>,
     /// Set whether or not the second send lands: the old id is dead either way.
     moved_to: parking_lot::Mutex<Option<String>>,
 }
@@ -31,6 +34,30 @@ fn migrated_chat_id(error: &str) -> Option<i64> {
 struct SendMessage<'a> {
     chat_id: &'a str,
     text: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reply_markup: Option<InlineKeyboard<'a>>,
+}
+
+#[derive(Serialize)]
+struct InlineKeyboard<'a> {
+    inline_keyboard: [[Button<'a>; 1]; 1],
+}
+
+#[derive(Serialize)]
+struct Button<'a> {
+    text: &'static str,
+    callback_data: &'a str,
+}
+
+impl<'a> InlineKeyboard<'a> {
+    fn acknowledge(callback_data: &'a str) -> Self {
+        Self {
+            inline_keyboard: [[Button {
+                text: "Acknowledge",
+                callback_data,
+            }]],
+        }
+    }
 }
 
 impl TelegramNotifier {
@@ -55,12 +82,18 @@ impl TelegramNotifier {
             send_url,
             chat_id,
             budget: None,
+            ack_button: None,
             moved_to: parking_lot::Mutex::new(None),
         }
     }
 
     pub fn with_budget(mut self, budget: Arc<TelegramSendBudget>) -> Self {
         self.budget = Some(budget);
+        self
+    }
+
+    pub fn with_ack_button(mut self, callback_data: Option<String>) -> Self {
+        self.ack_button = callback_data;
         self
     }
 }
@@ -79,7 +112,12 @@ impl TelegramNotifier {
                 ))
             })?;
         }
-        post_json(&self.client, &self.send_url, &SendMessage { chat_id, text }).await
+        let message = SendMessage {
+            chat_id,
+            text,
+            reply_markup: self.ack_button.as_deref().map(InlineKeyboard::acknowledge),
+        };
+        post_json(&self.client, &self.send_url, &message).await
     }
 }
 
@@ -208,6 +246,32 @@ mod tests {
             })
         );
         assert_eq!(notifier.taken_chat_migration(), None, "taken once");
+    }
+
+    #[test]
+    fn the_acknowledge_button_rides_the_message_only_when_given() {
+        let with = SendMessage {
+            chat_id: "-5",
+            text: "down",
+            reply_markup: Some(InlineKeyboard::acknowledge("aXYZ")),
+        };
+        assert_eq!(
+            serde_json::to_value(&with).unwrap()["reply_markup"],
+            serde_json::json!({
+                "inline_keyboard": [[{ "text": "Acknowledge", "callback_data": "aXYZ" }]]
+            })
+        );
+        let without = SendMessage {
+            chat_id: "-5",
+            text: "down",
+            reply_markup: None,
+        };
+        assert!(
+            serde_json::to_value(&without)
+                .unwrap()
+                .get("reply_markup")
+                .is_none()
+        );
     }
 
     #[test]

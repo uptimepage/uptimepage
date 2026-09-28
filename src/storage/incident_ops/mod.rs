@@ -20,10 +20,10 @@ use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use crate::domain::{
-    ActorType, IncidentAcknowledgement, IncidentEvent, IncidentEventKind, IncidentMetrics,
-    IncidentNotification, IncidentSeverity, IncidentState, NewIncidentNotification,
-    NewManualIncident, NotificationOutcome, NotificationReason, OpsIncident, OrgId,
-    TransitionError, UserId,
+    ActorType, ExternalId, IncidentAcknowledgement, IncidentEvent, IncidentEventKind,
+    IncidentMetrics, IncidentNotification, IncidentSeverity, IncidentState, LinkedApp,
+    NewIncidentNotification, NewManualIncident, NotificationOutcome, NotificationReason,
+    OpsIncident, OrgId, TransitionError, UserId,
 };
 use crate::error::Result;
 
@@ -109,10 +109,23 @@ pub enum Actor {
     System,
     User(UserId),
     Mcp(UserId),
-    /// A signed acknowledge link, or a push app that acknowledged on its own
-    /// side. Carries no user: possession is the proof, and naming a person
-    /// would be a guess.
+    /// A signed acknowledge link. Carries no user: possession is the proof,
+    /// and naming a person would be a guess.
     Link,
+    /// Pressed in an app that reports who pressed. Names a member only through
+    /// an account they linked, never from where the page was sent.
+    App(AppPress),
+}
+
+/// A press in an app that reports who pressed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AppPress {
+    pub app: LinkedApp,
+    /// Who pressed, as the app knows them, so two people nobody linked are
+    /// still two acknowledgements.
+    pub sender: ExternalId,
+    /// The member who linked that account, when one of this org did.
+    pub member: Option<UserId>,
 }
 
 impl Actor {
@@ -122,14 +135,33 @@ impl Actor {
             Self::User(_) => ActorType::User,
             Self::Mcp(_) => ActorType::Mcp,
             Self::Link => ActorType::Link,
+            Self::App(press) => press.app.actor_type(),
         }
     }
     pub fn user_id(self) -> Option<UserId> {
         match self {
             Self::System | Self::Link => None,
             Self::User(u) | Self::Mcp(u) => Some(u),
+            Self::App(press) => press.member,
         }
     }
+    pub fn sender(self) -> Option<ExternalId> {
+        match self {
+            Self::App(press) => Some(press.sender),
+            Self::System | Self::User(_) | Self::Mcp(_) | Self::Link => None,
+        }
+    }
+    /// Whether a note arriving with the action is someone's own words rather
+    /// than a label the channel attached.
+    pub fn writes_notes(self) -> bool {
+        matches!(self, Self::User(_) | Self::Mcp(_))
+    }
+}
+
+/// Who pressed, kept only on an acknowledgement that names nobody: there it is
+/// what tells two people apart, while a named one is told apart by its member.
+pub(crate) fn unnamed_sender(actor: Actor) -> Option<ExternalId> {
+    actor.sender().filter(|_| actor.user_id().is_none())
 }
 
 /// Result of a lifecycle mutation: distinguishes a missing incident from an
@@ -142,6 +174,14 @@ pub enum LifecycleOutcome {
     /// Aimed at an episode the incident has already left: a page from before a
     /// resolve/reopen must not silence the outage that followed.
     Stale,
+}
+
+/// What an acknowledgement did. `listed` is false when the actor had already
+/// acknowledged this episode, or the transition never ran.
+#[derive(Debug, Clone)]
+pub struct Acknowledged {
+    pub outcome: LifecycleOutcome,
+    pub listed: bool,
 }
 
 /// Filter for the operator incident console.
@@ -337,7 +377,7 @@ pub trait IncidentOpsStore: Send + Sync {
         actor: Actor,
         note: Option<String>,
         expect_generation: Option<i64>,
-    ) -> Result<LifecycleOutcome>;
+    ) -> Result<Acknowledged>;
 
     /// How many times the incident has reopened — its episode number. `None`
     /// when the incident is gone.

@@ -10,7 +10,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::domain::{
-    IncidentAcknowledgement, IncidentEvent, IncidentEventKind, IncidentMetrics,
+    ExternalId, IncidentAcknowledgement, IncidentEvent, IncidentEventKind, IncidentMetrics,
     IncidentNotification, IncidentOrigin, IncidentSeverity, IncidentState, IncidentTransition,
     IncidentVisibility, MetricBucket, MonitorIncidentCount, NewIncidentNotification,
     NewManualIncident, NotificationOutcome, NotificationStatus, OpsIncident, OrgId, UserId,
@@ -19,9 +19,9 @@ use crate::domain::{
 use crate::error::Result;
 
 use super::{
-    Actor, DueIncident, EmergencyAck, INCIDENT_DETAIL_ROW_CAP, IncidentOpsFilter, IncidentOpsStore,
-    IncidentSort, IncidentStateCounts, LifecycleOutcome, PendingNotification, QUEUED_TAKEOVER_SECS,
-    pages_with_monitor, status_page_required,
+    Acknowledged, Actor, DueIncident, EmergencyAck, INCIDENT_DETAIL_ROW_CAP, IncidentOpsFilter,
+    IncidentOpsStore, IncidentSort, IncidentStateCounts, LifecycleOutcome, PendingNotification,
+    QUEUED_TAKEOVER_SECS, pages_with_monitor, status_page_required,
 };
 
 #[derive(Default)]
@@ -34,7 +34,7 @@ struct MemState {
     incidents: Vec<OpsIncident>,
     events: Vec<IncidentEvent>,
     /// Each with the episode it was made in.
-    acknowledgements: Vec<(i64, IncidentAcknowledgement)>,
+    acknowledgements: Vec<(i64, IncidentAcknowledgement, Option<ExternalId>)>,
     notifications: Vec<(OrgId, IncidentNotification)>,
     renotify_counts: std::collections::HashMap<Uuid, u32>,
     status_pages: std::collections::HashMap<Uuid, Vec<Uuid>>,
@@ -61,14 +61,15 @@ fn reopens_before(state: &MemState, incident_id: Uuid, at: DateTime<Utc>) -> i64
 /// Add `actor` to the people who acknowledged `episode`; false when they
 /// already are. Mirrors the Postgres unique indexes.
 fn record_acknowledgement(state: &mut MemState, id: Uuid, actor: Actor, episode: i64) -> bool {
-    let same = |a: &IncidentAcknowledgement| match actor.user_id() {
+    let sender = super::unnamed_sender(actor);
+    let same = |a: &IncidentAcknowledgement, s: &Option<ExternalId>| match actor.user_id() {
         Some(u) => a.actor_id == Some(u),
-        None => a.actor_id.is_none() && a.actor_type == actor.actor_type(),
+        None => a.anonymous && a.actor_type == actor.actor_type() && *s == sender,
     };
     if state
         .acknowledgements
         .iter()
-        .any(|(e, a)| *e == episode && a.incident_id == id && same(a))
+        .any(|(e, a, s)| *e == episode && a.incident_id == id && same(a, s))
     {
         return false;
     }
@@ -78,8 +79,10 @@ fn record_acknowledgement(state: &mut MemState, id: Uuid, actor: Actor, episode:
             incident_id: id,
             actor_type: actor.actor_type(),
             actor_id: actor.user_id(),
+            anonymous: actor.user_id().is_none(),
             at: Utc::now(),
         },
+        sender,
     ));
     true
 }
@@ -169,19 +172,23 @@ impl InMemoryIncidentOpsStore {
         note: Option<String>,
         expect_generation: Option<i64>,
         mutate: impl FnOnce(&mut OpsIncident),
-    ) -> LifecycleOutcome {
+    ) -> Acknowledged {
+        let unlisted = |outcome| Acknowledged {
+            outcome,
+            listed: false,
+        };
         let mut g = self.inner.lock();
         let Some(idx) = g.incidents.iter().position(|i| i.id == id) else {
-            return LifecycleOutcome::NotFound;
+            return unlisted(LifecycleOutcome::NotFound);
         };
         let episode = reopen_count(&g, id);
         if expect_generation.is_some_and(|expected| expected != episode) {
-            return LifecycleOutcome::Stale;
+            return unlisted(LifecycleOutcome::Stale);
         }
         let from = g.incidents[idx].state;
         let to = match next_state(from, transition) {
             Ok(to) => to,
-            Err(err) => return LifecycleOutcome::IllegalTransition(err),
+            Err(err) => return unlisted(LifecycleOutcome::IllegalTransition(err)),
         };
         // Mirrors the Postgres store: a transition that moves nothing leaves
         // the row alone but still records that somebody acted, unless they
@@ -194,13 +201,16 @@ impl InMemoryIncidentOpsStore {
         let acknowledging = transition == IncidentTransition::Acknowledge;
         let newly_listed = acknowledging && record_acknowledgement(&mut g, id, actor, episode);
         if acknowledging && from == to && !newly_listed {
-            if actor.user_id().is_some() && note.is_some() {
+            if actor.writes_notes() && note.is_some() {
                 Self::push_event(&mut g, id, IncidentEventKind::Note, actor, note);
             }
         } else {
             Self::push_event(&mut g, id, kind, actor, note);
         }
-        LifecycleOutcome::Updated(Box::new(updated))
+        Acknowledged {
+            outcome: LifecycleOutcome::Updated(Box::new(updated)),
+            listed: newly_listed,
+        }
     }
 }
 
@@ -427,7 +437,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         actor: Actor,
         note: Option<String>,
         expect_generation: Option<i64>,
-    ) -> Result<LifecycleOutcome> {
+    ) -> Result<Acknowledged> {
         Ok(self.apply(
             id,
             IncidentTransition::Acknowledge,
@@ -453,20 +463,22 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         actor: Actor,
         note: Option<String>,
     ) -> Result<LifecycleOutcome> {
-        Ok(self.apply(
-            id,
-            IncidentTransition::Resolve,
-            IncidentEventKind::Resolved,
-            actor,
-            note,
-            None,
-            |i| {
-                i.state = IncidentState::Resolved;
-                i.ended_at.get_or_insert_with(Utc::now);
-                i.resolved_by = actor.user_id();
-                i.next_escalation_at = None;
-            },
-        ))
+        Ok(self
+            .apply(
+                id,
+                IncidentTransition::Resolve,
+                IncidentEventKind::Resolved,
+                actor,
+                note,
+                None,
+                |i| {
+                    i.state = IncidentState::Resolved;
+                    i.ended_at.get_or_insert_with(Utc::now);
+                    i.resolved_by = actor.user_id();
+                    i.next_escalation_at = None;
+                },
+            )
+            .outcome)
     }
 
     async fn generation(&self, _org: OrgId, id: Uuid) -> Result<Option<i64>> {
@@ -474,20 +486,22 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
     }
 
     async fn auto_resolve(&self, _org: OrgId, id: Uuid) -> Result<LifecycleOutcome> {
-        Ok(self.apply(
-            id,
-            IncidentTransition::AutoResolve,
-            IncidentEventKind::Resolved,
-            Actor::System,
-            None,
-            None,
-            |i| {
-                i.state = IncidentState::Resolved;
-                i.ended_at.get_or_insert_with(Utc::now);
-                i.resolved_by = None;
-                i.next_escalation_at = None;
-            },
-        ))
+        Ok(self
+            .apply(
+                id,
+                IncidentTransition::AutoResolve,
+                IncidentEventKind::Resolved,
+                Actor::System,
+                None,
+                None,
+                |i| {
+                    i.state = IncidentState::Resolved;
+                    i.ended_at.get_or_insert_with(Utc::now);
+                    i.resolved_by = None;
+                    i.next_escalation_at = None;
+                },
+            )
+            .outcome)
     }
 
     async fn reopen(
@@ -497,23 +511,25 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         actor: Actor,
         note: Option<String>,
     ) -> Result<LifecycleOutcome> {
-        Ok(self.apply(
-            id,
-            IncidentTransition::Reopen,
-            IncidentEventKind::Reopened,
-            actor,
-            note,
-            None,
-            |i| {
-                i.state = IncidentState::Triggered;
-                i.ended_at = None;
-                i.resolved_by = None;
-                i.acknowledged_at = None;
-                i.acknowledged_by = None;
-                i.escalation_level = 0;
-                i.escalation_round = 0;
-            },
-        ))
+        Ok(self
+            .apply(
+                id,
+                IncidentTransition::Reopen,
+                IncidentEventKind::Reopened,
+                actor,
+                note,
+                None,
+                |i| {
+                    i.state = IncidentState::Triggered;
+                    i.ended_at = None;
+                    i.resolved_by = None;
+                    i.acknowledged_at = None;
+                    i.acknowledged_by = None;
+                    i.escalation_level = 0;
+                    i.escalation_round = 0;
+                },
+            )
+            .outcome)
     }
 
     async fn assign(
@@ -627,7 +643,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
     ) -> Result<HashMap<Uuid, Vec<IncidentAcknowledgement>>> {
         let g = self.inner.lock();
         let mut out: HashMap<Uuid, Vec<IncidentAcknowledgement>> = HashMap::new();
-        for (episode, a) in &g.acknowledgements {
+        for (episode, a, _) in &g.acknowledgements {
             if ids.contains(&a.incident_id) && *episode == reopen_count(&g, a.incident_id) {
                 out.entry(a.incident_id).or_default().push(a.clone());
             }

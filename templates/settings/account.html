@@ -230,6 +230,53 @@
   <script defer src="{{ "js/ui/passkey_manage.js"|asset }}"></script>
   {% endif %}
 
+  {% if offers_telegram || offers_pushover || !linked_apps.is_empty() %}
+  <section class="sticker-card overflow-hidden" aria-labelledby="linked-apps-heading" data-linked-apps>
+    <header class="card-band">
+      <h2 id="linked-apps-heading" class="panel-label">linked apps</h2>
+    </header>
+    <div class="divide-y divide-[color:var(--theme-line)]">
+      {% for a in linked_apps %}
+      <div class="flex flex-wrap items-center justify-between gap-3 p-5" data-linked-app data-linked-app-id="{{ a.id }}">
+        <div class="space-y-1">
+          <p class="text-sm font-medium text-body">
+            {{ a.app }}{% if let Some(l) = a.label %} <span class="font-mono text-xs text-muted">{{ l }}</span>{% endif %}
+          </p>
+          <p class="text-xs text-muted">
+            linked <time datetime="{{ a.linked_at|iso_ts }}" data-tz="exact">{{ a.linked_at|human_ts }}</time>
+          </p>
+        </div>
+        <button type="button" data-linked-app-remove
+                class="btn-ghost btn-ghost--danger px-3 py-1.5 text-sm font-medium"
+                data-confirm-modal
+                data-confirm-title="Unlink {{ a.app }}?"
+                data-confirm-body="Incidents you acknowledge in {{ a.app }} will stop carrying your name. The ones already recorded keep it."
+                data-confirm-label="unlink"
+                data-confirm-danger>
+          unlink
+        </button>
+      </div>
+      {% endfor %}
+      <div class="space-y-2 p-5">
+        {% if offers_telegram %}
+        <button type="button" data-link-telegram
+                class="btn-ghost px-3 py-1.5 text-sm font-medium text-body">
+          link Telegram
+        </button>
+        {% endif %}
+        <p class="text-sm text-muted">
+          Acknowledge an incident from one of these apps and it carries your name,
+          the same as pressing the button here.
+          {% if offers_telegram %}Link Telegram opens a chat with our bot; press Start there.{% endif %}
+          {% if offers_pushover %}A Pushover account links itself: acknowledge an emergency
+          page in Pushover and it brings you a link.{% endif %}
+        </p>
+      </div>
+    </div>
+  </section>
+  <script defer src="{{ "js/ui/linked_apps.js"|asset }}"></script>
+  {% endif %}
+
   <section class="sticker-card overflow-hidden" aria-labelledby="privacy-heading">
     <header class="card-band">
       <h2 id="privacy-heading" class="panel-label">privacy</h2>
@@ -239,14 +286,14 @@
         <a href="/api/v1/me/data-export" download rel="nofollow"
            data-confirm-modal
            data-confirm-title="Export your data?"
-           data-confirm-body="Downloads a JSON file with your profile, sign-in identities, owned organisations, targets (credentials redacted), incidents, memberships and recent activity."
+           data-confirm-body="Downloads a JSON file with your profile, sign-in identities, linked apps, owned organisations, targets (credentials redacted), incidents, memberships and recent activity."
            data-confirm-label="download"
            class="btn-ghost inline-block px-3 py-1.5 text-sm font-medium text-body">
           export my data
         </a>
         <p class="text-sm text-muted">
           Download everything associated with your account as a JSON file:
-          profile, sign-in identities, owned organisations, targets (credentials
+          profile, sign-in identities, linked apps, owned organisations, targets (credentials
           redacted), incidents, memberships and recent activity.
         </p>
       </div>

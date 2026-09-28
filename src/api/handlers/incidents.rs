@@ -444,7 +444,8 @@ pub async fn acknowledge_incident(
     let outcome = state
         .incident_ops_store
         .acknowledge(org, id, Actor::User(user), note, None)
-        .await?;
+        .await?
+        .outcome;
     lifecycle_response(outcome)
 }
 

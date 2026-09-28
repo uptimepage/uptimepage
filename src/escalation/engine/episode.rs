@@ -4,16 +4,21 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::domain::{
-    ChannelConfig, EscalationDecision, IncidentEventKind, NotificationReason, OpsIncident, OrgId,
-    Target, next_step, wait_after,
+    ChannelConfig, EscalationDecision, ExternalId, IncidentEventKind, LinkedApp,
+    NotificationReason, OpsIncident, OrgId, Target, next_step, wait_after,
 };
 use crate::error::Result;
 use crate::notifier::pushover::PushoverReceipts;
-use crate::storage::{Actor, DueIncident, EmergencyAck, LifecycleOutcome};
+use crate::security::app_link::external_id;
+use crate::security::sha256_hex;
+use crate::security::token_hash::generate_raw_token;
+use crate::storage::linked_apps::{Linked, identify};
+use crate::storage::{Acknowledged, Actor, DueIncident, EmergencyAck, LifecycleOutcome};
 
 use super::rules::{
     DAMPED_TRANSPORT, Damper, FlapState, MAINTENANCE_TRANSPORT, RELEASED_TRANSPORT,
-    UNREACHABLE_TRANSPORT, channel_targets, flap_state, open_episode_active, resolvable_channels,
+    UNREACHABLE_TRANSPORT, channel_targets, flap_state, offers_pushover_link, open_episode_active,
+    pushover_acknowledger, resolvable_channels,
 };
 use super::{SWEEP_CONCURRENCY, Worker};
 
@@ -709,6 +714,60 @@ impl Worker {
         }
     }
 
+    /// Offer the Pushover account that acknowledged without a name a link to
+    /// whoever holds it, at most once per cooldown. Best effort and off the
+    /// sweep: the acknowledgement already landed, and a slow Pushover must not
+    /// hold a poll slot.
+    async fn offer_pushover_link(
+        &self,
+        client: PushoverReceipts,
+        user_key: String,
+        sender: ExternalId,
+        device: Option<String>,
+    ) {
+        let base = self.base_url.trim_end_matches('/');
+        if base.is_empty() {
+            tracing::info!("pushover link offer skipped: no public base URL to link to");
+            return;
+        }
+        let code = generate_raw_token();
+        let code_hash = sha256_hex(&code);
+        match self
+            .linked_apps
+            .offer(
+                LinkedApp::Pushover,
+                sender,
+                device.as_deref(),
+                &code_hash,
+                Utc::now(),
+            )
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(err) => {
+                tracing::warn!(error = %err, "pushover link offer failed");
+                return;
+            }
+        }
+        let url = format!("{base}/link/pushover?c={code}");
+        let linked_apps = self.linked_apps.clone();
+        tokio::spawn(async move {
+            if let Err(err) = client.offer_link(&user_key, &url).await {
+                tracing::warn!(error = %err, "pushover link offer failed");
+                // Unsent, so the next acknowledgement may try again. A timeout
+                // after Pushover accepted it withdraws a link that still
+                // arrives; the next eligible acknowledgement offers another.
+                if let Err(err) = linked_apps
+                    .withdraw_offer(LinkedApp::Pushover, &code_hash)
+                    .await
+                {
+                    tracing::warn!(error = %err, "pushover link offer withdrawal failed");
+                }
+            }
+        });
+    }
+
     async fn poll_one_ack(&self, ack: EmergencyAck) {
         let client = match self.pushover_receipts(ack.org, ack.channel_id).await {
             // Nothing can cancel or read it — retire the receipt.
@@ -730,6 +789,25 @@ impl Worker {
             }
         };
         if state.acknowledged {
+            let sender = state
+                .acknowledged_by
+                .as_deref()
+                .map(|key| external_id(&self.app_link_secret, key));
+            let linked = match sender {
+                Some(sender) => {
+                    identify(
+                        self.linked_apps.as_ref(),
+                        ack.org,
+                        LinkedApp::Pushover,
+                        sender,
+                    )
+                    .await
+                }
+                None => Linked::Unknown,
+            };
+            let actor = pushover_acknowledger(sender, linked);
+            // Only a receipt with nobody to name needs to say where it came from.
+            let note = matches!(actor, Actor::Link).then(|| "Acknowledged in Pushover".to_string());
             // Pushover stops its own retries on an ack, but until this landed
             // nothing here knew the page was taken, so renotify kept paging.
             match self
@@ -737,8 +815,8 @@ impl Worker {
                 .acknowledge(
                     ack.org,
                     ack.incident_id,
-                    Actor::Link,
-                    Some("Acknowledged in Pushover".to_string()),
+                    actor,
+                    note,
                     // A reopen tries to cancel this receipt, but the signal
                     // can be dropped under load and the cancel can fail, so
                     // the episode is pinned rather than assumed.
@@ -746,17 +824,28 @@ impl Worker {
                 )
                 .await
             {
-                Ok(LifecycleOutcome::Updated(_)) => {
+                Ok(Acknowledged {
+                    outcome: LifecycleOutcome::Updated(_),
+                    listed,
+                }) => {
                     // Marked first, so the sweep below skips this row.
                     let _ = self.ops.mark_acked(ack.org, ack.id, Utc::now()).await;
                     self.cancel_emergency(ack.org, ack.incident_id).await;
+                    if offers_pushover_link(listed, linked)
+                        && let (Some(key), Some(sender)) = (state.acknowledged_by, sender)
+                    {
+                        self.offer_pushover_link(client, key, sender, state.acknowledged_by_device)
+                            .await;
+                    }
                 }
                 // Terminal: no later poll does better.
-                Ok(
-                    LifecycleOutcome::NotFound
-                    | LifecycleOutcome::IllegalTransition(_)
-                    | LifecycleOutcome::Stale,
-                ) => {
+                Ok(Acknowledged {
+                    outcome:
+                        LifecycleOutcome::NotFound
+                        | LifecycleOutcome::IllegalTransition(_)
+                        | LifecycleOutcome::Stale,
+                    ..
+                }) => {
                     let _ = self.ops.mark_acked(ack.org, ack.id, Utc::now()).await;
                 }
                 // Unmarked, so the next sweep retries; marking it here would

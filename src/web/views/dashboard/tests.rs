@@ -900,6 +900,7 @@ fn ack(
         incident_id: Uuid::nil(),
         actor_type,
         actor_id,
+        anonymous: actor_id.is_none(),
         at,
     }
 }

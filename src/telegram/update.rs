@@ -10,13 +10,19 @@ pub struct Update {
     pub message: Option<Message>,
     #[serde(default)]
     pub my_chat_member: Option<ChatMemberUpdated>,
+    #[serde(default)]
+    pub callback_query: Option<CallbackQuery>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Message {
     #[serde(default)]
+    pub message_id: i64,
+    #[serde(default)]
     pub text: Option<String>,
     pub chat: Chat,
+    #[serde(default)]
+    pub from: Option<User>,
     #[serde(default)]
     pub migrate_to_chat_id: Option<i64>,
     #[serde(default)]
@@ -51,6 +57,34 @@ impl Chat {
     }
 }
 
+/// A Telegram account. Telegram fills it in itself, so unlike callback data a
+/// client cannot claim to be someone else.
+#[derive(Debug, Clone, Deserialize)]
+pub struct User {
+    pub id: i64,
+    #[serde(default)]
+    pub first_name: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CallbackQuery {
+    pub id: String,
+    pub from: User,
+    /// Absent when the message is too old for Telegram to send along.
+    #[serde(default)]
+    pub message: Option<CallbackMessage>,
+    #[serde(default)]
+    pub data: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CallbackMessage {
+    pub message_id: i64,
+    pub chat: Chat,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChatMemberUpdated {
     pub chat: Chat,
@@ -78,6 +112,54 @@ impl ChatRef {
     }
 }
 
+/// A press on a button. The data is whatever the client sent; the person and
+/// the chat are Telegram's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Press {
+    pub query_id: String,
+    pub person: Person,
+    pub chat_id: i64,
+    /// Other people read the chat, as opposed to a private one with the bot.
+    pub group: bool,
+    pub message_id: i64,
+    pub data: String,
+}
+
+/// Whoever pressed a button or sent a command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Person {
+    pub id: i64,
+    /// First name, which is what a chat shows for them.
+    pub name: Option<String>,
+    pub username: Option<String>,
+}
+
+impl Person {
+    fn from(user: &User) -> Self {
+        Self {
+            id: user.id,
+            name: user.first_name.clone(),
+            username: user.username.clone(),
+        }
+    }
+
+    /// How to refer to them where the chat can read it.
+    pub fn display(&self) -> Option<String> {
+        self.name
+            .clone()
+            .or_else(|| self.username.as_ref().map(|u| format!("@{u}")))
+    }
+
+    /// How to label the account on their settings page, where the handle is
+    /// what tells two accounts apart.
+    pub fn label(&self) -> Option<String> {
+        self.username
+            .as_ref()
+            .map(|u| format!("@{u}"))
+            .or_else(|| self.name.clone())
+    }
+}
+
 /// What the receiver should do with an update. Identity (org, channel) is
 /// never taken from here — only the link code and the chat it resolves to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,6 +173,27 @@ pub enum WebhookAction {
     LinkGroup {
         code: String,
         chat: ChatRef,
+    },
+    /// `/start me-<code>` in a private chat: a code that links the sender's
+    /// Telegram account to a person rather than a chat to an org.
+    LinkAccount {
+        code: String,
+        person: Person,
+        chat_id: i64,
+    },
+    /// `/unlink` in a private chat: free the sender's Telegram account from
+    /// whoever it is linked to. Telegram vouches for the sender, so only the
+    /// account itself can do this.
+    UnlinkAccount {
+        person: Person,
+        chat_id: i64,
+    },
+    /// A button on one of the bot's messages.
+    Pressed(Press),
+    /// A button press with nothing to act on. Still answered, or the button
+    /// spins until Telegram gives up.
+    Unanswerable {
+        query_id: String,
     },
     /// `/stop` — the chat asked for alerts to end. Unlike [`Self::Removed`]
     /// the bot can still reply with a confirmation.
@@ -124,6 +227,21 @@ fn parse_command(text: &str) -> Option<(&str, &str)> {
 }
 
 pub fn classify_update(update: &Update) -> WebhookAction {
+    if let Some(q) = &update.callback_query {
+        return match (&q.message, &q.data) {
+            (Some(msg), Some(data)) => WebhookAction::Pressed(Press {
+                query_id: q.id.clone(),
+                person: Person::from(&q.from),
+                chat_id: msg.chat.id,
+                group: msg.chat.is_group(),
+                message_id: msg.message_id,
+                data: data.clone(),
+            }),
+            _ => WebhookAction::Unanswerable {
+                query_id: q.id.clone(),
+            },
+        };
+    }
     // Announced once in each chat; following it is idempotent.
     if let Some(msg) = &update.message {
         if let Some(to) = msg.migrate_to_chat_id {
@@ -145,6 +263,26 @@ pub fn classify_update(update: &Update) -> WebhookAction {
     {
         if cmd == "/stop" {
             return WebhookAction::Stop {
+                chat_id: msg.chat.id,
+            };
+        }
+        if cmd == "/unlink"
+            && !msg.chat.is_group()
+            && let Some(from) = &msg.from
+        {
+            return WebhookAction::UnlinkAccount {
+                person: Person::from(from),
+                chat_id: msg.chat.id,
+            };
+        }
+        if cmd == "/start"
+            && !msg.chat.is_group()
+            && let Some(code) = crate::security::app_link::telegram_start_code(code)
+            && let Some(from) = &msg.from
+        {
+            return WebhookAction::LinkAccount {
+                code: code.to_string(),
+                person: Person::from(from),
                 chat_id: msg.chat.id,
             };
         }
@@ -324,6 +462,116 @@ mod tests {
         };
         assert_eq!(from_old, expected);
         assert_eq!(from_new, expected);
+    }
+
+    #[test]
+    fn a_button_press_carries_telegrams_person_and_chat() {
+        let action = classify(
+            r#"{"callback_query":{"id":"q1","from":{"id":77,"first_name":"Olena","username":"olena_k"},
+                "message":{"message_id":9,"chat":{"id":-100,"type":"supergroup","title":"Ops"}},
+                "data":"aXYZ"}}"#,
+        );
+        assert_eq!(
+            action,
+            WebhookAction::Pressed(Press {
+                query_id: "q1".into(),
+                person: Person {
+                    id: 77,
+                    name: Some("Olena".into()),
+                    username: Some("olena_k".into()),
+                },
+                chat_id: -100,
+                group: true,
+                message_id: 9,
+                data: "aXYZ".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_press_without_its_message_or_data_is_still_answered() {
+        let unanswerable = WebhookAction::Unanswerable {
+            query_id: "q".into(),
+        };
+        assert_eq!(
+            classify(r#"{"callback_query":{"id":"q","from":{"id":1},"data":"a"}}"#),
+            unanswerable
+        );
+        assert_eq!(
+            classify(
+                r#"{"callback_query":{"id":"q","from":{"id":1},"message":{"message_id":1,"chat":{"id":1}}}}"#
+            ),
+            unanswerable
+        );
+    }
+
+    #[test]
+    fn an_account_code_in_a_private_chat_links_the_sender() {
+        let code = crate::security::token_hash::generate_raw_token();
+        let payload = crate::security::app_link::telegram_start_payload(&code);
+        let json = format!(
+            r#"{{"message":{{"text":"/start {payload}","chat":{{"id":77,"type":"private"}},"from":{{"id":77,"first_name":"Olena"}}}}}}"#
+        );
+        assert_eq!(
+            classify(&json),
+            WebhookAction::LinkAccount {
+                code: code.clone(),
+                person: Person {
+                    id: 77,
+                    name: Some("Olena".into()),
+                    username: None,
+                },
+                chat_id: 77,
+            }
+        );
+
+        let in_group = format!(
+            r#"{{"message":{{"text":"/start {payload}","chat":{{"id":-5,"type":"group","title":"Ops"}},"from":{{"id":77}}}}}}"#
+        );
+        assert!(
+            matches!(classify(&in_group), WebhookAction::LinkGroup { .. }),
+            "a group only ever links a chat"
+        );
+    }
+
+    #[test]
+    fn unlink_frees_only_the_sender_and_only_in_private() {
+        assert_eq!(
+            classify(
+                r#"{"message":{"text":"/unlink","chat":{"id":77,"type":"private"},"from":{"id":77,"first_name":"Olena"}}}"#
+            ),
+            WebhookAction::UnlinkAccount {
+                person: Person {
+                    id: 77,
+                    name: Some("Olena".into()),
+                    username: None,
+                },
+                chat_id: 77,
+            }
+        );
+        assert_eq!(
+            classify(
+                r#"{"message":{"text":"/unlink@uptimepagebot","chat":{"id":-5,"type":"group","title":"Ops"},"from":{"id":77}}}"#
+            ),
+            WebhookAction::Ignore
+        );
+    }
+
+    #[test]
+    fn a_person_reads_as_the_chat_names_them() {
+        let both = Person {
+            id: 1,
+            name: Some("Olena".into()),
+            username: Some("olena_k".into()),
+        };
+        assert_eq!(both.display().as_deref(), Some("Olena"));
+        assert_eq!(both.label().as_deref(), Some("@olena_k"));
+        let handle_only = Person {
+            id: 1,
+            name: None,
+            username: Some("olena_k".into()),
+        };
+        assert_eq!(handle_only.display().as_deref(), Some("@olena_k"));
     }
 
     #[test]

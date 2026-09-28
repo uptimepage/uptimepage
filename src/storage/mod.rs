@@ -15,6 +15,7 @@ pub mod flow_runs;
 pub mod heartbeats;
 pub mod incident_ops;
 pub mod incidents;
+pub mod linked_apps;
 pub mod locks;
 pub mod maintenance;
 pub mod memory;
@@ -64,14 +65,15 @@ pub use heartbeats::{
     HeartbeatMonitor, HeartbeatStore, InMemoryHeartbeatStore, PgHeartbeatStore, PingAccepted,
 };
 pub use incident_ops::{
-    Actor, DueIncident, EmergencyAck, InMemoryIncidentOpsStore, IncidentOpsFilter,
-    IncidentOpsStore, IncidentSort, LifecycleOutcome, PendingNotification, PgIncidentOpsStore,
-    QUEUED_TAKEOVER_SECS,
+    Acknowledged, Actor, AppPress, DueIncident, EmergencyAck, InMemoryIncidentOpsStore,
+    IncidentOpsFilter, IncidentOpsStore, IncidentSort, LifecycleOutcome, PendingNotification,
+    PgIncidentOpsStore, QUEUED_TAKEOVER_SECS,
 };
 pub use incidents::{
     InMemoryIncidentNarrationStore, IncidentBrief, IncidentBriefFilter, IncidentNarrationStore,
     PgIncidentNarrationStore,
 };
+pub use linked_apps::{InMemoryLinkedAppStore, LinkedAppStore, PgLinkedAppStore};
 pub use maintenance::suppressing_window_sql;
 pub use maintenance::{
     InMemoryMaintenanceStore, MaintenanceListQuery, MaintenanceStore, PgMaintenanceStore,

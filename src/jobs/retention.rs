@@ -17,6 +17,7 @@
 //!     constraint; absolute (90d) is the policy ceiling. So an abandoned
 //!     session that is never looked up again still can't outlive the Cookie
 //!     Policy's idle promise at rest.
+//!  4. App link codes nothing reads any more ([`linked_apps::purge_dead_codes`]).
 //!
 //! `check_results` (ClickHouse) is deliberately NOT mutated here. Its
 //! retention is the table's own `TTL` (a background merge). A broad
@@ -36,7 +37,7 @@ use crate::config::{RetentionConfig, SessionConfig};
 use crate::error::Result;
 use crate::jobs::purge_deleted::{self, PurgeStats, QueueDepth};
 use crate::storage::locks::try_job;
-use crate::storage::partitions;
+use crate::storage::{linked_apps, partitions};
 
 const SECONDS_PER_DAY: u64 = 86_400;
 const RUN_HOUR_UTC: u32 = 3;
@@ -52,6 +53,7 @@ pub struct RetentionReport {
     pub mcp_audit: u64,
     pub sessions: u64,
     pub api_tokens: u64,
+    pub app_link_codes: u64,
 }
 
 /// Whole seconds from now until the next 03:00 UTC.
@@ -120,6 +122,8 @@ fn emit_metrics(r: &RetentionReport) {
     metrics::counter!("retention_purged_rows_total", "table" => "sessions").increment(r.sessions);
     metrics::counter!("retention_purged_rows_total", "table" => "api_tokens")
         .increment(r.api_tokens);
+    metrics::counter!("retention_purged_rows_total", "table" => "app_link_challenges")
+        .increment(r.app_link_codes);
     // Gauges, not counters: depth/age describe a *current* backlog. A
     // sustained non-zero pending count (or a climbing oldest-age) is the
     // alert condition for a stuck ClickHouse erasure path.
@@ -209,6 +213,10 @@ pub async fn purge_old_data(
     )
     .await?;
 
+    // Daily, so a code outlives its last reader by a day at most, as the
+    // Privacy Policy states.
+    let app_link_codes = linked_apps::purge_dead_codes(pool).await?;
+
     Ok(RetentionReport {
         purge,
         purge_queue,
@@ -219,6 +227,7 @@ pub async fn purge_old_data(
         mcp_audit,
         sessions,
         api_tokens,
+        app_link_codes,
     })
 }
 

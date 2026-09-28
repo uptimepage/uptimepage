@@ -156,12 +156,38 @@ const RECEIPTS_BASE: &str = "https://api.pushover.net/1/receipts";
 pub struct ReceiptState {
     pub acknowledged: bool,
     pub expired: bool,
+    /// User key of whoever acknowledged, which on a group key is one person
+    /// in the group.
+    pub acknowledged_by: Option<String>,
+    /// Name of the device they acknowledged on.
+    pub acknowledged_by_device: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct ReceiptResponse {
     acknowledged: i32,
     expired: i32,
+    #[serde(default)]
+    acknowledged_by: Option<String>,
+    #[serde(default)]
+    acknowledged_by_device: Option<String>,
+}
+
+fn non_empty(s: Option<String>) -> Option<String> {
+    s.filter(|s| !s.trim().is_empty())
+}
+
+/// Offer to link the Pushover account that just acknowledged. Quiet: they are
+/// holding the phone already.
+#[derive(Serialize)]
+struct LinkOffer<'a> {
+    token: &'a str,
+    user: &'a str,
+    title: &'static str,
+    message: &'static str,
+    url: &'a str,
+    url_title: &'static str,
+    priority: i8,
 }
 
 #[derive(Serialize)]
@@ -172,8 +198,9 @@ struct CancelBody<'a> {
 #[derive(Deserialize)]
 struct CancelResponse {}
 
-/// Poll/cancel the emergency-receipt lifecycle with the channel's application
-/// token. Built per operation from the stored Pushover config.
+/// What the channel's application token does outside a page: poll and cancel
+/// emergency receipts, and offer the account that acknowledged one a link.
+/// Built per operation from the stored Pushover config.
 pub struct PushoverReceipts {
     client: OutboundHttpClient,
     token: String,
@@ -207,6 +234,36 @@ impl PushoverReceipts {
         Ok(ReceiptState {
             acknowledged: r.acknowledged == 1,
             expired: r.expired == 1,
+            acknowledged_by: non_empty(r.acknowledged_by),
+            acknowledged_by_device: non_empty(r.acknowledged_by_device),
+        })
+    }
+
+    /// Send `user`, and only them, the link that ties their Pushover account
+    /// to whoever opens it and signs in.
+    pub async fn offer_link(&self, user: &str, link: &str) -> Result<()> {
+        let url: Url = MESSAGES_URL.parse().expect("static messages URL parses");
+        post_json(
+            &self.client,
+            &url,
+            &LinkOffer {
+                token: &self.token,
+                user,
+                title: "Put your name on it",
+                message: "You acknowledged an incident, but this Pushover account is not \
+                          linked to anyone in Uptimepage, so it went on record without a \
+                          name. Open the link and sign in to link it.",
+                url: link,
+                url_title: "Link this Pushover account",
+                priority: -1,
+            },
+        )
+        .await
+        .map_err(|e| {
+            AppError::Other(anyhow::anyhow!(
+                "pushover link offer: {}",
+                e.to_string().replace(self.token.as_str(), "***")
+            ))
         })
     }
 
@@ -317,5 +374,34 @@ mod tests {
         let reminder = msg(&notice(NotificationReason::Reminder, IncidentUrgency::High));
         assert_eq!(reminder["priority"], 2);
         assert_eq!(reminder["retry"], EMERGENCY_RETRY_SECS);
+    }
+
+    /// Pushover's receipt reply, trimmed to the fields read. An unacknowledged
+    /// receipt carries the acknowledger fields empty rather than absent.
+    #[test]
+    fn a_receipt_names_the_user_key_that_acknowledged() {
+        let acked: ReceiptResponse = serde_json::from_str(
+            r#"{"status":1,"acknowledged":1,"acknowledged_at":1790000000,
+                "acknowledged_by":"uQiRzpo4DXghDmr9QzzfQu27cmVRsG",
+                "acknowledged_by_device":"iphone","expired":0}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            non_empty(acked.acknowledged_by).as_deref(),
+            Some("uQiRzpo4DXghDmr9QzzfQu27cmVRsG")
+        );
+        assert_eq!(
+            non_empty(acked.acknowledged_by_device).as_deref(),
+            Some("iphone")
+        );
+
+        let waiting: ReceiptResponse = serde_json::from_str(
+            r#"{"status":1,"acknowledged":0,"acknowledged_by":"","acknowledged_by_device":"","expired":0}"#,
+        )
+        .unwrap();
+        assert_eq!(non_empty(waiting.acknowledged_by), None);
+        let bare: ReceiptResponse =
+            serde_json::from_str(r#"{"acknowledged":0,"expired":1}"#).unwrap();
+        assert_eq!(non_empty(bare.acknowledged_by), None);
     }
 }

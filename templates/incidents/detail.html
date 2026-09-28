@@ -139,7 +139,7 @@
       <li class="flex flex-wrap items-baseline gap-2 px-5 py-2.5 text-sm">
         <span class="dashboard-chip">{{ ev.kind }}</span>
         <span class="font-mono text-xs text-muted">{{ ev.who }}</span>
-        {% if ev.via_mcp %}<span class="cli-brackets" title="Performed through the MCP server">mcp</span>{% endif %}
+        {% if let Some(via) = ev.via %}<span class="cli-brackets" title="Performed through {{ via }}">{{ via|lower }}</span>{% endif %}
         <time class="ml-auto font-mono text-xs tabular-nums text-quiet" datetime="{{ ev.occurred_at|iso_ts }}" data-tz="exact">{{ ev.occurred_at|human_ts }}</time>
         {% match ev.message %}{% when Some with (m) %}
         <span class="w-full whitespace-pre-line text-body">{{ m }}</span>

@@ -10,6 +10,7 @@ pub mod holds;
 pub mod identities;
 pub mod incidents;
 pub mod invitations;
+pub mod linked_apps;
 pub mod magic_link;
 pub mod maintenance;
 pub mod me;

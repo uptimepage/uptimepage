@@ -56,6 +56,26 @@ pub async fn webhook(State(state): State<AppState>, headers: HeaderMap, body: By
         WebhookAction::Migrated { from, to } => {
             tokio::spawn(async move { handle_migrated(&state, from, to).await });
         }
+        WebhookAction::LinkAccount {
+            code,
+            person,
+            chat_id,
+        } => {
+            tokio::spawn(async move {
+                super::telegram_account::handle_link(&state, &code, &person, chat_id).await
+            });
+        }
+        WebhookAction::UnlinkAccount { person, chat_id } => {
+            tokio::spawn(async move {
+                super::telegram_account::handle_unlink(&state, &person, chat_id).await
+            });
+        }
+        WebhookAction::Pressed(press) => {
+            tokio::spawn(async move { super::telegram_ack::handle_press(&state, press).await });
+        }
+        WebhookAction::Unanswerable { query_id } => {
+            tokio::spawn(async move { super::telegram_ack::answer_gone(&state, &query_id).await });
+        }
         WebhookAction::Ignore => {}
     }
     StatusCode::OK
@@ -96,7 +116,7 @@ async fn handle_stop(state: &AppState, chat_id: i64) {
     } else {
         "Nothing is linked to this chat."
     };
-    spawn_reply(state, chat_id, text.to_string());
+    spawn_send(state, chat_id, None, text.to_string());
 }
 
 /// Kicked/left/blocked: nobody left to reply to.
@@ -126,7 +146,7 @@ async fn handle_link(state: &AppState, code: &str, chat: ChatRef) {
                 .to_string()
         }
     };
-    spawn_reply(state, chat_id, text);
+    spawn_send(state, chat_id, None, text);
 }
 
 async fn link_chat(state: &AppState, code: &str, chat: ChatRef) -> Result<String> {
@@ -238,21 +258,30 @@ async fn link_chat(state: &AppState, code: &str, chat: ChatRef) -> Result<String
     })
 }
 
-fn spawn_reply(state: &AppState, chat_id: i64, text: String) {
-    let client = TelegramClient::new(
+pub(super) fn bot(state: &AppState) -> TelegramClient {
+    TelegramClient::new(
         state.outbound_http.clone(),
         state.cfg.telegram.bot_token.expose_secret(),
-    );
+    )
+}
+
+/// Message a chat, as a reply to `reply_to` when given.
+pub(super) fn spawn_send(state: &AppState, chat_id: i64, reply_to: Option<i64>, text: String) {
+    let client = bot(state);
     let budget = state.telegram_send_budget.clone();
     tokio::spawn(async move {
-        // A reply deferred past the budget's wait ceiling is dropped — a
-        // late link confirmation is noise, and alerts keep their slots.
+        // A reply deferred past the budget's wait ceiling is dropped — a late
+        // confirmation is noise, and alerts keep their slots.
         if let Err(deferred) = budget.acquire(chat_id).await {
             tracing::warn!(chat_id, ?deferred, "telegram reply dropped by send budget");
             return;
         }
-        if let Err(err) = client.send_message(chat_id, &text).await {
-            tracing::warn!(?err, chat_id, "telegram link reply failed");
+        let sent = match reply_to {
+            Some(message_id) => client.send_reply(chat_id, message_id, &text).await,
+            None => client.send_message(chat_id, &text).await,
+        };
+        if let Err(err) = sent {
+            tracing::warn!(?err, chat_id, "telegram reply failed");
         }
     });
 }

@@ -41,6 +41,32 @@ use crate::notifier::whatsapp::WhatsAppNotifier;
 pub use crate::notifier::email::{EmailAlert, EmailDelivery, email_alert_for};
 pub use crate::notifier::ntfy::PushAck;
 
+/// The acknowledge control a page carries, when its transport can take one.
+#[derive(Clone)]
+pub enum AckControl {
+    /// ntfy's HTTP action: a signed link, pressed by whoever holds the page.
+    Link(PushAck),
+    /// A button on a central-bot Telegram page. The press reaches the bot,
+    /// which learns from Telegram who pressed it.
+    TelegramButton(String),
+}
+
+impl AckControl {
+    fn link(self) -> Option<PushAck> {
+        match self {
+            Self::Link(ack) => Some(ack),
+            Self::TelegramButton(_) => None,
+        }
+    }
+
+    fn telegram_button(self) -> Option<String> {
+        match self {
+            Self::TelegramButton(data) => Some(data),
+            Self::Link(_) => None,
+        }
+    }
+}
+
 #[async_trait]
 pub trait Notifier: Send + Sync {
     /// Page an incident lifecycle event (opened/resolved/reopened/escalated).
@@ -166,7 +192,7 @@ pub fn build_notifier(
     whatsapp: Option<&crate::config::WhatsAppAppBotConfig>,
     email: Option<&EmailDelivery>,
     email_alert: Option<EmailAlert>,
-    push_ack: Option<PushAck>,
+    ack: Option<AckControl>,
 ) -> Result<Arc<dyn Notifier>> {
     let parse = |s: &str| -> Result<url::Url> {
         s.parse::<url::Url>().map_err(|e| {
@@ -205,7 +231,8 @@ pub fn build_notifier(
                 })?;
             Arc::new(
                 TelegramNotifier::new(http.clone(), central.bot_token.trim(), c.chat_id.clone())?
-                    .with_budget(central.budget.clone()),
+                    .with_budget(central.budget.clone())
+                    .with_ack_button(ack.and_then(AckControl::telegram_button)),
             ) as Arc<dyn Notifier>
         }
         ChannelConfig::WhatsApp(c) => {
@@ -264,7 +291,7 @@ pub fn build_notifier(
             parse(&c.server_url)?,
             c.topic.clone(),
             c.access_token.clone(),
-            push_ack,
+            ack.and_then(AckControl::link),
         )) as Arc<dyn Notifier>,
         ChannelConfig::Gotify(c) => Arc::new(GotifyNotifier::new(
             http.clone(),

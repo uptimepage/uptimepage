@@ -1,6 +1,8 @@
 use uuid::Uuid;
 
-use crate::domain::{IncidentState, NotificationReason, UserId};
+use crate::domain::{ExternalId, IncidentState, LinkedApp, NotificationReason, UserId};
+use crate::storage::linked_apps::Linked;
+use crate::storage::{Actor, AppPress};
 
 use super::PageTarget;
 
@@ -243,9 +245,66 @@ pub(super) fn reason_is_stale(reason: NotificationReason, state: IncidentState) 
     }
 }
 
+/// Who a Pushover acknowledgement is recorded as. A failed lookup names
+/// nobody: taking the page matters more than naming who took it.
+pub(super) fn pushover_acknowledger(sender: Option<ExternalId>, linked: Linked) -> Actor {
+    match sender {
+        Some(sender) => Actor::App(AppPress {
+            app: LinkedApp::Pushover,
+            sender,
+            member: linked.member(),
+        }),
+        // Pushover names whoever acknowledged; a receipt without it has no one
+        // to tell apart, so it counts like a signed link.
+        None => Actor::Link,
+    }
+}
+
+/// A Pushover acknowledgement earns its account a link offer only when it
+/// joined the list and nobody linked that account: not on a repeat, not when
+/// it named a member, and not when the lookup could not tell.
+pub(super) fn offers_pushover_link(listed: bool, linked: Linked) -> bool {
+    listed && linked.invites_link()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pushover_acknowledgement_names_only_a_linked_member_and_never_waits() {
+        let sender = crate::security::app_link::external_id("s3cret", "ukey");
+        let olena = UserId(Uuid::now_v7());
+        let press = |member| {
+            Actor::App(AppPress {
+                app: LinkedApp::Pushover,
+                sender,
+                member,
+            })
+        };
+        assert_eq!(
+            pushover_acknowledger(Some(sender), Linked::Member(olena)),
+            press(Some(olena))
+        );
+        for nobody in [Linked::Unlinked, Linked::Outsider, Linked::Unknown] {
+            assert_eq!(
+                pushover_acknowledger(Some(sender), nobody),
+                press(None),
+                "{nobody:?}"
+            );
+        }
+        assert_eq!(pushover_acknowledger(None, Linked::Unknown), Actor::Link);
+    }
+
+    #[test]
+    fn only_a_new_acknowledgement_from_an_unlinked_pushover_account_is_offered_a_link() {
+        assert!(offers_pushover_link(true, Linked::Unlinked));
+        assert!(!offers_pushover_link(false, Linked::Unlinked), "a repeat");
+        let olena = Linked::Member(UserId(Uuid::now_v7()));
+        for linked in [olena, Linked::Outsider, Linked::Unknown] {
+            assert!(!offers_pushover_link(true, linked), "{linked:?}");
+        }
+    }
 
     #[test]
     fn a_queued_reminder_is_dropped_once_someone_acknowledges() {

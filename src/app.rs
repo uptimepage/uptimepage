@@ -234,6 +234,9 @@ pub struct AppState {
     pub on_call_store: Arc<dyn crate::storage::OnCallStore>,
     /// Per-member contact channels paged when a user/schedule target resolves.
     pub contact_store: Arc<dyn crate::storage::ContactStore>,
+    /// App accounts members linked, so an acknowledgement pressed there names
+    /// them.
+    pub linked_app_store: Arc<dyn crate::storage::LinkedAppStore>,
     /// Per-incident retrospective documents (one per incident).
     pub postmortem_store: Arc<dyn crate::storage::PostmortemStore>,
     pub silence_store: Arc<dyn crate::storage::SilenceStore>,
@@ -298,6 +301,9 @@ pub struct AppState {
     /// Keys the acknowledge link pushed to phones. Its own authority: that
     /// link silences an incident, the stop link retires a channel.
     pub incident_ack_secret: String,
+    /// Keys the hash app accounts are stored and matched by, so a leaked row
+    /// names no Telegram or Pushover account.
+    pub app_link_secret: String,
     /// The paid lifecycle behind its provider. `None` until
     /// [`Self::with_billing_checkout_secret`] builds it, and for good when no
     /// provider is configured, which leaves every billing surface absent.
@@ -457,6 +463,10 @@ impl AppState {
             Some(pool) => Arc::new(crate::storage::PgContactStore::new(pool)),
             None => Arc::new(crate::storage::InMemoryContactStore::new()),
         };
+        let linked_app_store: Arc<dyn crate::storage::LinkedAppStore> = match db.clone() {
+            Some(pool) => Arc::new(crate::storage::PgLinkedAppStore::new(pool)),
+            None => Arc::new(crate::storage::InMemoryLinkedAppStore::new()),
+        };
         let postmortem_store: Arc<dyn crate::storage::PostmortemStore> = match db.clone() {
             Some(pool) => Arc::new(crate::storage::PgPostmortemStore::new(pool)),
             None => Arc::new(crate::storage::InMemoryPostmortemStore::new()),
@@ -505,6 +515,7 @@ impl AppState {
             escalation_policy_store,
             on_call_store,
             contact_store,
+            linked_app_store,
             postmortem_store,
             silence_store,
             session_debounce: Arc::new(build_debounce_cache()),
@@ -528,6 +539,7 @@ impl AppState {
             subscription_unsubscribe_secret: String::new(),
             alert_channel_stop_secret: String::new(),
             incident_ack_secret: String::new(),
+            app_link_secret: String::new(),
             billing: None,
         }
     }
@@ -575,6 +587,12 @@ impl AppState {
     /// Set the persisted secret that keys incident acknowledge links.
     pub fn with_incident_ack_secret(mut self, secret: String) -> Self {
         self.incident_ack_secret = secret;
+        self
+    }
+
+    /// Set the persisted secret that keys app account hashes.
+    pub fn with_app_link_secret(mut self, secret: String) -> Self {
+        self.app_link_secret = secret;
         self
     }
 

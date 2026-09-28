@@ -10,6 +10,7 @@ mod common;
 use common::make_user;
 use uptimepage::config::{RetentionConfig, SessionConfig, TenancyConfig};
 use uptimepage::jobs::retention::purge_old_data;
+use uptimepage::security::app_link::PUSHOVER_OFFER_COOLDOWN;
 use uptimepage::storage::create_org_with_owner;
 use uuid::Uuid;
 
@@ -126,6 +127,37 @@ async fn purges_past_window_and_keeps_fresh_rows() {
     .await
     .expect("insert fresh session");
 
+    // A Telegram code is dead once it expires; a Pushover offer only once the
+    // cooldown stops counting it too.
+    let cooldown = PUSHOVER_OFFER_COOLDOWN.num_days();
+    for (label, app, created_days_ago, expires_days_ago) in [
+        ("offer-past", "pushover", cooldown + 1, cooldown),
+        ("offer-cooling", "pushover", cooldown - 1, cooldown - 2),
+        ("offer-unexpired", "pushover", cooldown + 1, -1),
+        ("offer-live", "pushover", 0, -1),
+        ("tg-expired", "telegram", 1, 1),
+        ("tg-live", "telegram", 0, -1),
+    ] {
+        let telegram = app == "telegram";
+        sqlx::query(
+            "INSERT INTO app_link_challenges \
+                 (code_hash, app, user_id, external_hash, created_at, expires_at) \
+             VALUES ($1 || $2, $3, $4, $5, \
+                     now() - ($6::int * INTERVAL '1 day'), \
+                     now() - ($7::int * INTERVAL '1 day'))",
+        )
+        .bind(&marker)
+        .bind(label)
+        .bind(app)
+        .bind(telegram.then_some(user.0))
+        .bind((!telegram).then_some(&marker))
+        .bind(created_days_ago)
+        .bind(expires_days_ago)
+        .execute(&pool)
+        .await
+        .expect("insert link code");
+    }
+
     // Every window distinct, so binding the wrong config field to a query
     // fails here instead of passing on a coincidence of equal defaults.
     let retention = RetentionConfig {
@@ -201,7 +233,25 @@ async fn purges_past_window_and_keeps_fresh_rows() {
         "only the fresh session should remain (absolute + idle both reaped)"
     );
 
+    let codes: Vec<String> = sqlx::query_scalar(
+        "SELECT substr(code_hash, length($1) + 1) FROM app_link_challenges \
+         WHERE code_hash LIKE $1 || '%' ORDER BY code_hash",
+    )
+    .bind(&marker)
+    .fetch_all(&pool)
+    .await
+    .expect("read link codes");
+    assert_eq!(
+        codes,
+        ["offer-cooling", "offer-live", "offer-unexpired", "tg-live"]
+    );
+    assert!(report.app_link_codes >= 2);
+
     // Cleanup our own rows.
+    let _ = sqlx::query("DELETE FROM app_link_challenges WHERE code_hash LIKE $1 || '%'")
+        .bind(&marker)
+        .execute(&pool)
+        .await;
     let _ = sqlx::query("DELETE FROM login_attempts WHERE ip_hash = $1")
         .bind(&marker)
         .execute(&pool)
@@ -258,6 +308,11 @@ fn windows_match_privacy_policy_and_clickhouse_ttl() {
         format!("| Login attempts | {} days", r.login_attempts_days),
         format!("| Quota events | {} days", r.quota_events_days),
         format!("| Sessions | {} days maximum", s.absolute_timeout_days),
+        // The daily tick keeps a code up to a day past the cooldown.
+        format!(
+            "| One-time codes for linking an account, and Pushover link offers | {} days |",
+            PUSHOVER_OFFER_COOLDOWN.num_days() + 1
+        ),
         format!("recoverable for {grace} days"),
     ];
     for w in &want {

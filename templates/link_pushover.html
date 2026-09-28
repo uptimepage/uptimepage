@@ -1,0 +1,28 @@
+{% extends "chromeless_base.html" %}
+{% block title %}{% if live %}Link Pushover{% else %}Link invalid{% endif %}{% endblock %}
+{% block head_scripts %}
+    {% if live %}<script defer src="{{ "js/ui/linked_apps.js"|asset }}"></script>{% endif %}
+{% endblock %}
+{% block main %}
+    <main class="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-4 px-6 text-center">
+        {% if live %}
+        <h1 class="page-title justify-center"><span class="page-title__prefix" aria-hidden="true">$</span>link pushover</h1>
+        <p class="text-sm text-muted">
+            Link this Pushover account{% if let Some(d) = device %} (<span class="font-mono">{{ d }}</span>){% endif %}
+            to <span class="font-medium text-body">{{ email }}</span>? Emergency pages you
+            acknowledge in Pushover will then carry your name, in every organization you
+            belong to.
+        </p>
+        <div data-link-pushover data-code="{{ code }}">
+            <button type="button" class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">link it</button>
+        </div>
+        <p data-link-result role="status" aria-live="polite" class="flash-text text-sm"></p>
+        {% else %}
+        <h1 class="page-title justify-center"><span class="page-title__prefix" aria-hidden="true">$</span>link invalid</h1>
+        <p class="text-sm text-muted">
+            This link is invalid, was already used, or has expired. Acknowledge an
+            emergency page from Pushover and a fresh one follows, at most once a week.
+        </p>
+        {% endif %}
+    </main>
+{% endblock %}

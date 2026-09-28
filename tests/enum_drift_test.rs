@@ -378,6 +378,32 @@ async fn incident_acknowledgements_actor_type_check_matches_rust_enum() {
 
 #[tokio::test]
 #[ignore]
+async fn app_link_challenges_app_check_matches_rust_enum() {
+    assert_check_matches(
+        "app_link_challenges_app_check",
+        db_strs(
+            uptimepage::domain::LinkedApp::ALL,
+            uptimepage::domain::LinkedApp::as_db_str,
+        ),
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn linked_app_accounts_app_check_matches_rust_enum() {
+    assert_check_matches(
+        "linked_app_accounts_app_check",
+        db_strs(
+            uptimepage::domain::LinkedApp::ALL,
+            uptimepage::domain::LinkedApp::as_db_str,
+        ),
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore]
 async fn incident_notifications_status_check_matches_rust_enum() {
     assert_check_matches(
         "incident_notifications_status_check",

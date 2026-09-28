@@ -90,6 +90,9 @@ pub fn routes(state: AppState) -> Router {
             "/incident/ack",
             get(views::incident_ack::confirm).post(views::incident_ack::ack),
         )
+        // Only the Pushover account the offer was sent to holds it; signing in
+        // names who it belongs to. Linking itself is a CSRF-guarded API call.
+        .route("/link/pushover", get(views::link_pushover::confirm))
         // Public status-page subscriptions: confirm/unsubscribe carry their own
         // token/HMAC proof, so they're always mounted like the verify link.
         .route("/subscribe", post(views::subscribe::subscribe))

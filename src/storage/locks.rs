@@ -109,6 +109,18 @@ pub fn job_lock_key(job: &'static str) -> String {
     format!("job:{job}")
 }
 
+/// Lock key for one app account's link offers, so two acknowledgements landing
+/// together cannot both slip under the offer cooldown.
+pub fn app_account_lock_key(app: &str, account_hex: &str) -> String {
+    format!("app_account:{app}:{account_hex}")
+}
+
+/// Lock key for replacing one person's Telegram link code, so two requests
+/// landing together cannot both leave a live code behind.
+pub fn app_link_user_lock_key(user: UserId) -> String {
+    format!("app_link_user:{}", user.0)
+}
+
 /// Lock key for an incident's lifecycle critical section. Concurrent
 /// acknowledge / assign / resolve / escalate must serialise on the same
 /// incident so the state machine cannot be raced (e.g. an auto-resolve

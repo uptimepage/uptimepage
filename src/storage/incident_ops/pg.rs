@@ -21,10 +21,10 @@ use crate::error::Result;
 use crate::storage::locks::{advisory_xact_lock, incident_lock_key};
 
 use super::{
-    AUTO_RESOLVED_MESSAGE, Actor, DueIncident, EmergencyAck, INCIDENT_DETAIL_ROW_CAP,
+    AUTO_RESOLVED_MESSAGE, Acknowledged, Actor, DueIncident, EmergencyAck, INCIDENT_DETAIL_ROW_CAP,
     IncidentOpsFilter, IncidentOpsStore, IncidentStateCounts, LifecycleOutcome,
     PendingNotification, QUEUED_TAKEOVER_SECS, opening_update_message, pages_with_monitor,
-    status_page_required,
+    status_page_required, unnamed_sender,
 };
 
 pub struct PgIncidentOpsStore {
@@ -332,14 +332,17 @@ async fn record_acknowledgement_tx(
     episode: i64,
 ) -> Result<bool> {
     let row: Option<(Uuid,)> = sqlx::query_as(
-        "INSERT INTO incident_acknowledgements (org_id, incident_id, episode, actor_type, actor_id) \
-         VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING RETURNING id",
+        "INSERT INTO incident_acknowledgements \
+             (org_id, incident_id, episode, actor_type, actor_id, anonymous, sender) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING RETURNING id",
     )
     .bind(org.0)
     .bind(id)
     .bind(episode)
     .bind(actor.actor_type().as_db_str())
     .bind(actor.user_id())
+    .bind(actor.user_id().is_none())
+    .bind(unnamed_sender(actor).map(|s| s.hex()))
     .fetch_optional(&mut **tx)
     .await
     .map_err(|e| anyhow::anyhow!("record acknowledgement: {e}"))?;
@@ -379,7 +382,13 @@ impl PgIncidentOpsStore {
         update_sql: &str,
         public_resolution: Option<String>,
         expect_generation: Option<i64>,
-    ) -> Result<LifecycleOutcome> {
+    ) -> Result<Acknowledged> {
+        let unlisted = |outcome| {
+            Ok(Acknowledged {
+                outcome,
+                listed: false,
+            })
+        };
         let mut tx = self
             .pool
             .begin()
@@ -397,19 +406,19 @@ impl PgIncidentOpsStore {
                 .await
                 .map_err(|e| anyhow::anyhow!("load incident state: {e}"))?;
         let Some((state_str,)) = current else {
-            return Ok(LifecycleOutcome::NotFound);
+            return unlisted(LifecycleOutcome::NotFound);
         };
         // Under the transition's own locks, so a reopen cannot slip between
         // this check and the update.
         let episode = reopen_count_tx(&mut tx, org, id).await?;
         if expect_generation.is_some_and(|expected| expected != episode) {
-            return Ok(LifecycleOutcome::Stale);
+            return unlisted(LifecycleOutcome::Stale);
         }
 
         let from = IncidentState::from_db_str(&state_str);
         let to = match next_state(from, transition) {
             Ok(to) => to,
-            Err(err) => return Ok(LifecycleOutcome::IllegalTransition(err)),
+            Err(err) => return unlisted(LifecycleOutcome::IllegalTransition(err)),
         };
         // A transition that moves nothing leaves the row alone, so the first
         // acknowledger keeps the credit an unknown one included, which the
@@ -461,8 +470,8 @@ impl PgIncidentOpsStore {
         };
         let repeat = acknowledging && unchanged && !newly_listed;
         if repeat {
-            // A note someone wrote is kept; a notification's is a fixed label.
-            if let Some(note) = note.as_deref().filter(|_| actor.user_id().is_some()) {
+            // A note someone wrote is kept; a channel's is a fixed label.
+            if let Some(note) = note.as_deref().filter(|_| actor.writes_notes()) {
                 insert_event_tx(&mut tx, org, id, IncidentEventKind::Note, actor, Some(note))
                     .await?;
             }
@@ -503,7 +512,10 @@ impl PgIncidentOpsStore {
         tx.commit()
             .await
             .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
-        Ok(LifecycleOutcome::Updated(Box::new(row_to_ops(row))))
+        Ok(Acknowledged {
+            outcome: LifecycleOutcome::Updated(Box::new(row_to_ops(row))),
+            listed: newly_listed,
+        })
     }
 }
 
@@ -789,7 +801,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         actor: Actor,
         note: Option<String>,
         expect_generation: Option<i64>,
-    ) -> Result<LifecycleOutcome> {
+    ) -> Result<Acknowledged> {
         // COALESCE preserves the first acker + ack time on a re-ack (the state
         // machine treats Acknowledged→Acknowledged as idempotent), so MTTA and
         // on-call attribution reflect who actually took the page first.
@@ -858,6 +870,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             None,
         )
         .await
+        .map(|a| a.outcome)
     }
 
     async fn auto_resolve(&self, org: OrgId, id: Uuid) -> Result<LifecycleOutcome> {
@@ -882,6 +895,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             None,
         )
         .await
+        .map(|a| a.outcome)
     }
 
     async fn reopen(
@@ -915,6 +929,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             None,
         )
         .await
+        .map(|a| a.outcome)
     }
 
     async fn assign(
@@ -1189,13 +1204,13 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         }
         // Rows are stamped at insert, under the incident lock, so their order
         // is the order the acknowledgements landed and the credited one leads.
-        let rows: Vec<(Uuid, String, Option<Uuid>, DateTime<Utc>)> = sqlx::query_as(
+        let rows: Vec<(Uuid, String, Option<Uuid>, bool, DateTime<Utc>)> = sqlx::query_as(
             "WITH current AS ( \
                  SELECT i.id, (SELECT count(*) FROM incident_events r \
                                WHERE r.incident_id = i.id AND r.org_id = i.org_id \
                                  AND r.kind = 'reopened') AS episode \
                  FROM incidents i WHERE i.org_id = $1 AND i.id = ANY($2)) \
-             SELECT a.incident_id, a.actor_type, a.actor_id, a.acknowledged_at \
+             SELECT a.incident_id, a.actor_type, a.actor_id, a.anonymous, a.acknowledged_at \
              FROM incident_acknowledgements a \
              JOIN current c ON c.id = a.incident_id AND c.episode = a.episode \
              WHERE a.org_id = $1 \
@@ -1207,13 +1222,14 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         .await
         .map_err(|e| anyhow::anyhow!("list acknowledgements: {e}"))?;
         let mut out: HashMap<Uuid, Vec<IncidentAcknowledgement>> = HashMap::new();
-        for (incident_id, actor_type, actor_id, at) in rows {
+        for (incident_id, actor_type, actor_id, anonymous, at) in rows {
             out.entry(incident_id)
                 .or_default()
                 .push(IncidentAcknowledgement {
                     incident_id,
                     actor_type: ActorType::from_db_str(&actor_type),
                     actor_id: actor_id.map(UserId),
+                    anonymous,
                     at,
                 });
         }

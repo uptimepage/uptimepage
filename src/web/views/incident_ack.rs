@@ -140,7 +140,8 @@ pub async fn ack(State(state): State<AppState>, Query(q): Query<AckQuery>) -> We
             Some(ACK_NOTE.to_string()),
             Some(link.generation),
         )
-        .await?;
+        .await?
+        .outcome;
     Ok(match outcome {
         LifecycleOutcome::Updated(_) => {
             tracing::info!(

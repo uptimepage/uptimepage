@@ -8,6 +8,7 @@ pub mod escalation_policy;
 pub mod heartbeat;
 pub mod incident;
 pub mod interpolate;
+pub mod linked_app;
 pub mod mailbox;
 pub mod maintenance;
 pub mod membership;
@@ -58,6 +59,7 @@ pub use incident::{
     PostmortemUpsert, TransitionError, coalesce_incidents, confirmed_downtime_secs, elapsed_at,
     next_state, uptime_pct_from_downtime,
 };
+pub use linked_app::{ExternalId, LinkedApp, LinkedAppAccount};
 pub use maintenance::{
     MaintenanceFilter, MaintenanceWindow, MaintenanceWindowUpdate, NewMaintenanceWindow,
 };

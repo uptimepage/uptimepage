@@ -396,6 +396,18 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
             "/me/passkeys/{id}",
             axum::routing::delete(handlers::passkeys::remove),
         )
+        .route(
+            "/me/linked-apps/telegram",
+            post(handlers::linked_apps::start_telegram),
+        )
+        .route(
+            "/me/linked-apps/pushover",
+            post(handlers::linked_apps::link_pushover),
+        )
+        .route(
+            "/me/linked-apps/{id}",
+            axum::routing::delete(handlers::linked_apps::unlink),
+        )
         .route("/me/usage", get(handlers::usage::get_me_usage))
         .route(
             "/me/theme",

@@ -10,21 +10,24 @@ CREATE TABLE incident_acknowledgements (
     actor_type      TEXT NOT NULL CONSTRAINT incident_acknowledgements_actor_type_check
                         CHECK (actor_type IN ('system','user','mcp','link')),
     actor_id        UUID REFERENCES users(id) ON DELETE SET NULL,
+    -- Named nobody when it landed. Fixed at insert: a deleted account nulls
+    -- actor_id later, and its row must not turn into an anonymous one.
+    anonymous       BOOLEAN NOT NULL CHECK (NOT anonymous OR actor_id IS NULL),
     -- Taken at insert, under the incident lock, so times run in the order
     -- the acknowledgements landed rather than when each transaction began.
     acknowledged_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
 -- One row per member per episode, whether they acted on the web or through
--- MCP. An actor with no login counts once per kind. A deleted account's row
--- loses its id but keeps a member kind, so it falls outside both and the
+-- MCP. One that named nobody counts once per kind. A deleted account's row
+-- loses its id but was never anonymous, so it falls outside both and the
 -- deletion never collides with anything.
 CREATE UNIQUE INDEX uq_incident_acknowledgements_member
     ON incident_acknowledgements (incident_id, episode, actor_id)
     WHERE actor_id IS NOT NULL;
 CREATE UNIQUE INDEX uq_incident_acknowledgements_anonymous
     ON incident_acknowledgements (incident_id, episode, actor_type)
-    WHERE actor_id IS NULL AND actor_type NOT IN ('user', 'mcp');
+    WHERE anonymous;
 
 -- Serves the per-episode reads and the cascade from a deleted incident.
 CREATE INDEX idx_incident_acknowledgements_incident

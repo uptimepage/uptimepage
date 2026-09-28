@@ -590,13 +590,13 @@ pub async fn telegram_link_mint(
             ));
         }
     };
-    let bot = state.cfg.telegram.bot_username.trim_start_matches('@');
+    let bot = &state.cfg.telegram.bot_username;
     Ok((
         StatusCode::CREATED,
         Json(TelegramLinkResponse {
             id: minted.id,
-            deep_link: format!("https://t.me/{bot}?start={code}"),
-            group_deep_link: format!("https://t.me/{bot}?startgroup={code}"),
+            deep_link: crate::telegram::start_link(bot, &code),
+            group_deep_link: crate::telegram::start_group_link(bot, &code),
             code,
             expires_at: minted.expires_at,
         }),

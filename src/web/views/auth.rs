@@ -368,6 +368,14 @@ pub mod settings {
         pub usable: bool,
     }
 
+    /// An app account whose acknowledgements carry this person's name.
+    pub struct LinkedAppRow {
+        pub id: String,
+        pub app: &'static str,
+        pub label: Option<String>,
+        pub linked_at: chrono::DateTime<chrono::Utc>,
+    }
+
     /// A provider this deployment offers that the account has not linked yet.
     pub struct LinkOption {
         pub label: &'static str,
@@ -390,6 +398,11 @@ pub mod settings {
         pub already_linked: bool,
         /// The provider could not be reached, so nothing changed.
         pub link_failed: bool,
+        pub linked_apps: Vec<LinkedAppRow>,
+        /// This deployment runs the Telegram bot a link goes through.
+        pub offers_telegram: bool,
+        /// A Pushover offer has somewhere to send its link.
+        pub offers_pushover: bool,
         pub joined: Option<chrono::DateTime<chrono::Utc>>,
         pub last_seen: Option<chrono::DateTime<chrono::Utc>>,
         pub theme: String,
@@ -411,11 +424,12 @@ pub mod settings {
         };
         let pool = state.require_db()?;
         // No data dependency between the three, so they go together.
-        let (facts, linked, prefs, stored_passkeys) = tokio::try_join!(
+        let (facts, linked, prefs, stored_passkeys, apps) = tokio::try_join!(
             account::account_facts(pool, user.id),
             crate::storage::oauth_identities::list_for_user(pool, user.id),
             crate::storage::users::get_display_prefs(pool, user.id),
             crate::storage::passkeys::list_for_user(pool, user.id),
+            state.linked_app_store.for_user(user.id),
         )?;
         let (joined, last_seen) = match facts {
             Some(f) => (Some(f.created_at), f.last_seen_at),
@@ -476,6 +490,15 @@ pub mod settings {
             })
             .collect();
         let linkable = link_options(&state, &identities);
+        let linked_apps = apps
+            .into_iter()
+            .map(|a| LinkedAppRow {
+                id: a.id.to_string(),
+                app: a.app.label(),
+                label: a.label,
+                linked_at: a.linked_at,
+            })
+            .collect();
         let flash = take_link_flash(&cookies, &state);
         Ok(AccountPage {
             active_tab: TAB_ACCOUNT,
@@ -488,6 +511,9 @@ pub mod settings {
             taken: flash.identity_taken,
             already_linked: flash.identity_already_linked,
             link_failed: flash.link_failed,
+            linked_apps,
+            offers_telegram: state.cfg.telegram.enabled(),
+            offers_pushover: !state.cfg.auth.public_base_url.trim().is_empty(),
             joined,
             last_seen,
             theme: prefs.theme.as_str().to_string(),
@@ -1182,6 +1208,9 @@ pub mod settings {
                 taken: false,
                 already_linked: false,
                 link_failed: false,
+                linked_apps: Vec::new(),
+                offers_telegram: false,
+                offers_pushover: true,
                 joined: Some("2026-02-14T09:00:00Z".parse().unwrap()),
                 last_seen: Some("2026-05-16T12:00:00Z".parse().unwrap()),
                 theme: "default".into(),

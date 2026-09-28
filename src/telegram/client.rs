@@ -1,5 +1,5 @@
-//! Thin Bot API client over the shared outbound HTTP path. Only the calls the
-//! central bot needs at boot. The bot token lives in the request path, so
+//! Thin Bot API client over the shared outbound HTTP path, for the central
+//! bot's own calls outside paging. The bot token lives in the request path, so
 //! every error is scrubbed of the token-bearing URL before it propagates.
 
 use serde::Deserialize;
@@ -80,6 +80,38 @@ impl TelegramClient {
             &self.http,
             &url,
             &json!({ "chat_id": chat_id, "text": text }),
+        )
+        .await
+        .map_err(|e| self.scrub(e))
+    }
+
+    /// Reply to one message, landing as a plain message if it is gone.
+    pub async fn send_reply(&self, chat_id: i64, message_id: i64, text: &str) -> Result<()> {
+        let url = self.endpoint("sendMessage")?;
+        post_json(
+            &self.http,
+            &url,
+            &json!({
+                "chat_id": chat_id,
+                "text": text,
+                "reply_parameters": {
+                    "message_id": message_id,
+                    "allow_sending_without_reply": true,
+                },
+            }),
+        )
+        .await
+        .map_err(|e| self.scrub(e))
+    }
+
+    /// Stop the button's spinner and show the presser a short notice that
+    /// only they see.
+    pub async fn answer_callback_query(&self, query_id: &str, text: &str) -> Result<()> {
+        let url = self.endpoint("answerCallbackQuery")?;
+        post_json(
+            &self.http,
+            &url,
+            &json!({ "callback_query_id": query_id, "text": text }),
         )
         .await
         .map_err(|e| self.scrub(e))

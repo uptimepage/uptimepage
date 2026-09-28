@@ -85,7 +85,8 @@ async fn acknowledge_sets_owner_and_stops_escalation() {
         store
             .acknowledge(org(), id, Actor::User(u), Some("on it".into()), None)
             .await
-            .unwrap(),
+            .unwrap()
+            .outcome,
     );
     assert_eq!(inc.state, IncidentState::Acknowledged);
     assert_eq!(inc.acknowledged_by, Some(u));
@@ -104,7 +105,8 @@ async fn re_acknowledge_keeps_first_acker() {
         store
             .acknowledge(org(), id, Actor::User(first), None, None)
             .await
-            .unwrap(),
+            .unwrap()
+            .outcome,
     );
     let first_at = acked.acknowledged_at;
     // A second responder re-acks; ownership + time must not be overwritten.
@@ -112,7 +114,8 @@ async fn re_acknowledge_keeps_first_acker() {
         store
             .acknowledge(org(), id, Actor::User(user()), None, None)
             .await
-            .unwrap(),
+            .unwrap()
+            .outcome,
     );
     assert_eq!(again.acknowledged_by, Some(first));
     assert_eq!(again.acknowledged_at, first_at);
@@ -143,7 +146,8 @@ async fn repeat_acknowledgement_logs_once_per_responder_per_episode() {
         let out = store
             .acknowledge(org(), id, actor, None, None)
             .await
-            .unwrap();
+            .unwrap()
+            .outcome;
         assert!(matches!(out, LifecycleOutcome::Updated(_)));
     }
     assert_eq!(
@@ -235,7 +239,8 @@ async fn cannot_acknowledge_resolved() {
     let out = store
         .acknowledge(org(), id, Actor::User(user()), None, None)
         .await
-        .unwrap();
+        .unwrap()
+        .outcome;
     assert!(matches!(out, LifecycleOutcome::IllegalTransition(_)));
 }
 

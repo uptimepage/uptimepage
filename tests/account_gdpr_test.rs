@@ -421,6 +421,17 @@ async fn data_export_redacts_credentials_and_excludes_other_emails() {
     .await
     .unwrap();
 
+    // A linked app account is exported by its label; the id it was linked by
+    // is kept only as a hash and must not come back as one.
+    sqlx::query(
+        "INSERT INTO linked_app_accounts (user_id, app, external_hash, label) \
+         VALUES ($1, 'telegram', 'hash-of-the-telegram-id', '@exporter')",
+    )
+    .bind(owner)
+    .execute(&pool)
+    .await
+    .unwrap();
+
     let (router, _) = build_test_app_with_pg(pool.clone(), |_cfg| {}).await;
     let router = with_session(router, uptimepage::domain::UserId(owner), None, None);
 
@@ -434,6 +445,9 @@ async fn data_export_redacts_credentials_and_excludes_other_emails() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
+
+    assert_eq!(body["linked_apps"][0]["app"], "telegram");
+    assert_eq!(body["linked_apps"][0]["label"], "@exporter");
 
     let owned = &body["owned_orgs"];
     assert_eq!(owned.as_array().unwrap().len(), 1);
@@ -452,6 +466,7 @@ async fn data_export_redacts_credentials_and_excludes_other_emails() {
     // the serialized export.
     let dump = serde_json::to_string(&body).unwrap();
     assert!(!dump.contains("hunter2"), "basic_auth secret leaked");
+    assert!(!dump.contains("hash-of-the-telegram-id"));
     assert!(!dump.contains("super-secret-token"), "bearer token leaked");
     assert!(
         !dump.contains("coworker-secret@example.test"),

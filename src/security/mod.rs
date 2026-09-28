@@ -1,6 +1,7 @@
 pub mod abuse;
 pub mod abuse_reload;
 pub mod agent_token;
+pub mod app_link;
 pub mod cert_probe;
 pub mod crypto;
 pub mod disclosure;
