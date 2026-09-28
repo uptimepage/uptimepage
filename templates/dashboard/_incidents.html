@@ -9,8 +9,6 @@
       first opened <span class="dashboard-subhead__mono">{{ first.age_label }}</span> ago
     </span>
     <span class="dashboard-incident-banner__actions">
-      <button type="button" data-incident-action="acknowledge" data-incident-id="{{ first.id }}"
-              class="sticker-btn px-3 py-1.5 text-xs">acknowledge</button>
       <a href="/incidents" class="sticker-btn sticker-btn--primary px-3 py-1.5 text-xs">open console →</a>
     </span>
   </header>
@@ -23,7 +21,25 @@
         <div class="dashboard-incident-banner__row">
           <a href="/targets/{{ inc.target_id }}" class="dashboard-incident-banner__name">{{ inc.title }}</a>
           <span class="dashboard-incident-banner__age">{{ inc.age_label }}</span>
+          <span class="dashboard-incident-banner__actions">
+            {% if inc.can_acknowledge %}
+            <button type="button" data-incident-action="acknowledge" data-incident-id="{{ inc.id }}"
+                    aria-label="acknowledge {{ inc.title }}"
+                    class="sticker-btn px-2 py-1 text-xs">acknowledge</button>
+            {% endif %}
+            <button type="button" data-incident-action="resolve" data-incident-id="{{ inc.id }}"
+                    aria-label="resolve {{ inc.title }}"
+                    class="sticker-btn px-2 py-1 text-xs">resolve</button>
+          </span>
         </div>
+        {% if !inc.acknowledged.is_empty() %}
+        <div class="dashboard-incident-banner__update">
+          <span class="dashboard-incident-banner__phase">acknowledged</span>
+          {% for a in inc.acknowledged %}
+          <span>{{ a.phrase }} · {{ a.age_label }} ago{% if !loop.last %},{% endif %}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
         {% if let Some(u) = inc.latest_update %}
         <div class="dashboard-incident-banner__update">
           <time class="dashboard-subhead__mono" datetime="{{ u.posted_at|iso_ts }}" data-tz>{{ u.posted_at|human_ts }}</time>

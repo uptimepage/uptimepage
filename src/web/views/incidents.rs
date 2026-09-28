@@ -13,8 +13,8 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::{
-    CheckResult, CheckStatus, IncidentEvent, IncidentOrigin, IncidentSeverity, IncidentState,
-    IncidentStatusPhase, OpsIncident, OrgId, UserId,
+    ActorType, CheckResult, CheckStatus, IncidentAcknowledgement, IncidentEvent, IncidentOrigin,
+    IncidentSeverity, IncidentState, IncidentStatusPhase, OpsIncident, OrgId, UserId,
 };
 use crate::error::AppError;
 use crate::error::codes;
@@ -80,10 +80,79 @@ pub struct SeverityChip {
 }
 
 /// An incident owner rendered as a deterministic initials avatar.
+#[derive(Clone)]
 pub struct OwnerAvatar {
     pub initials: String,
     pub color: String,
     pub label: String,
+}
+
+fn member_avatar(u: UserId, members: &HashMap<UserId, String>) -> Option<OwnerAvatar> {
+    members.get(&u).map(|email| OwnerAvatar {
+        initials: crate::web::avatar::initials_from(email),
+        color: crate::web::avatar::avatar_color(u.0),
+        label: email.clone(),
+    })
+}
+
+/// Someone who acknowledged, named the same way on every incident view.
+#[derive(Clone)]
+pub struct AckerView {
+    /// "alice@example.com", "notification" or "former member".
+    pub name: String,
+    /// "by alice@example.com", "by alice@example.com via MCP",
+    /// "via notification" or "by former member".
+    pub phrase: String,
+    pub avatar: Option<OwnerAvatar>,
+    pub at: DateTime<Utc>,
+}
+
+fn acker_views(
+    acks: &[IncidentAcknowledgement],
+    members: &HashMap<UserId, String>,
+) -> Vec<AckerView> {
+    acks.iter()
+        .map(|a| {
+            let name = actor_name(a.actor_type, a.actor_id, members);
+            let phrase = match a.actor_type {
+                ActorType::Link => format!("via {name}"),
+                ActorType::Mcp => format!("by {name} via MCP"),
+                _ => format!("by {name}"),
+            };
+            AckerView {
+                avatar: a.actor_id.and_then(|u| member_avatar(u, members)),
+                name,
+                phrase,
+                at: a.at,
+            }
+        })
+        .collect()
+}
+
+/// Whether `viewer` is already among those who acknowledged, on the web or
+/// through MCP, so their own acknowledge button can go.
+fn viewer_acknowledged(acks: &[IncidentAcknowledgement], viewer: UserId) -> bool {
+    acks.iter().any(|a| a.actor_id == Some(viewer))
+}
+
+/// Everyone who acknowledged an incident's current episode, first (credited)
+/// first, and whether the viewer is one of them. Built together so a view
+/// cannot show the list without deciding the viewer's button.
+#[derive(Clone, Default)]
+pub struct AckList {
+    pub ackers: Vec<AckerView>,
+    pub mine: bool,
+}
+
+pub(crate) fn ack_list(
+    acks: &[IncidentAcknowledgement],
+    viewer: UserId,
+    members: &HashMap<UserId, String>,
+) -> AckList {
+    AckList {
+        ackers: acker_views(acks, members),
+        mine: viewer_acknowledged(acks, viewer),
+    }
 }
 
 pub struct ConsoleRow {
@@ -98,7 +167,7 @@ pub struct ConsoleRow {
     pub urgency: &'static str,
     pub origin: &'static str,
     pub visibility: &'static str,
-    pub acked_by: Option<OwnerAvatar>,
+    pub acks: AckList,
     /// Manual resolver; `None` on a resolved incident = writer auto-close.
     pub resolved_by: Option<OwnerAvatar>,
     pub assignee: Option<OwnerAvatar>,
@@ -178,7 +247,7 @@ fn fmt_age(secs: i64) -> String {
 fn row_from(
     inc: OpsIncident,
     monitor_name: Option<String>,
-    acked_by: Option<OwnerAvatar>,
+    acks: AckList,
     resolved_by: Option<OwnerAvatar>,
     assignee: Option<OwnerAvatar>,
     assigned_to_me: bool,
@@ -203,7 +272,7 @@ fn row_from(
         urgency: inc.urgency.as_db_str(),
         origin: inc.origin.as_db_str(),
         visibility: inc.visibility.as_db_str(),
-        acked_by,
+        acks,
         resolved_by,
         assignee,
         assigned_to_me,
@@ -242,7 +311,10 @@ fn kind_label(kind: &str) -> &'static str {
 }
 
 /// User id → email label for the org, for rendering "acknowledged by …".
-async fn members_map(state: &AppState, org: OrgId) -> WebResult<HashMap<UserId, String>> {
+pub(crate) async fn members_map(
+    state: &AppState,
+    org: OrgId,
+) -> WebResult<HashMap<UserId, String>> {
     let Some(pool) = &state.db else {
         return Ok(HashMap::new());
     };
@@ -401,29 +473,28 @@ async fn console_data(
             },
         )
         .await?;
+    let ids: Vec<Uuid> = incidents.iter().map(|i| i.id).collect();
     // One lean projection (id, name, check kind) — no full target decode.
-    let targets = state.target_store.names_and_kinds(org).await?;
+    let (targets, mut acks) = tokio::try_join!(
+        state.target_store.names_and_kinds(org),
+        state.incident_ops_store.acknowledgements(org, &ids),
+    )?;
     let rows: Vec<ConsoleRow> = incidents
         .into_iter()
         .map(|i| {
-            let avatar_of = |u: UserId| {
-                members.get(&u).map(|email| OwnerAvatar {
-                    initials: crate::web::avatar::initials_from(email),
-                    color: crate::web::avatar::avatar_color(u.0),
-                    label: email.clone(),
-                })
-            };
+            let avatar_of = |u: UserId| member_avatar(u, members);
             let name = i
                 .target_id
                 .and_then(|t| targets.get(&t).map(|(n, _)| n.clone()));
             let kind = i
                 .target_id
                 .and_then(|t| targets.get(&t).map(|(_, k)| kind_label(k)));
-            let acked = i.acknowledged_by.and_then(avatar_of);
+            let incident_acks = acks.remove(&i.id).unwrap_or_default();
             let resolved = i.resolved_by.and_then(avatar_of);
             let assignee = i.assigned_to.and_then(avatar_of);
             let mine_row = i.assigned_to == Some(uid);
-            let mut row = row_from(i, name, acked, resolved, assignee, mine_row);
+            let acks = ack_list(&incident_acks, uid, members);
+            let mut row = row_from(i, name, acks, resolved, assignee, mine_row);
             row.kind = kind;
             row
         })
@@ -653,21 +724,26 @@ async fn public_update_rows(
 
 /// Resolve an event's actor to a human label + whether it came via MCP.
 fn actor_label(e: &IncidentEvent, members: &HashMap<UserId, String>) -> (String, bool) {
-    use crate::domain::ActorType;
-    match e.actor_type {
-        ActorType::System => ("system".to_string(), false),
+    (
+        actor_name(e.actor_type, e.actor_id, members),
+        e.actor_type == ActorType::Mcp,
+    )
+}
+
+/// How the incident views name whoever acted. A member's account deleted since
+/// leaves no id behind, so it reads as a former member too.
+fn actor_name(
+    actor_type: ActorType,
+    actor_id: Option<UserId>,
+    members: &HashMap<UserId, String>,
+) -> String {
+    match actor_type {
+        ActorType::System => "system".to_string(),
         // Whoever held the notification; the event message says which one.
-        ActorType::Link => ("notification".to_string(), false),
-        ActorType::User | ActorType::Mcp => {
-            let who = match e.actor_id {
-                Some(u) => members
-                    .get(&u)
-                    .cloned()
-                    .unwrap_or_else(|| "former member".to_string()),
-                None => "unknown".to_string(),
-            };
-            (who, e.actor_type == ActorType::Mcp)
-        }
+        ActorType::Link => "notification".to_string(),
+        ActorType::User | ActorType::Mcp => actor_id
+            .and_then(|u| members.get(&u).cloned())
+            .unwrap_or_else(|| "former member".to_string()),
     }
 }
 
@@ -687,8 +763,7 @@ pub struct IncidentDetailPage {
     pub visibility: &'static str,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
-    pub acknowledged_at: Option<DateTime<Utc>>,
-    pub acknowledged_by: Option<String>,
+    pub acks: AckList,
     pub error_sample: Option<String>,
     pub ongoing: bool,
     pub timeline: Vec<TimelineRow>,
@@ -792,6 +867,7 @@ fn event_kind_label(e: &IncidentEvent) -> &'static str {
 pub async fn detail(
     _auth: AuthedBrowser,
     CurrentOrg(org): CurrentOrg,
+    CurrentUser(uid): CurrentUser,
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> WebResult<IncidentDetailPage> {
@@ -804,9 +880,17 @@ pub async fn detail(
         Some(t) => state.target_store.get(org, t).await?.map(|x| x.name),
         None => None,
     };
-    let members = members_map(&state, org).await?;
-    let acknowledged_by = inc.acknowledged_by.and_then(|u| members.get(&u).cloned());
-    let events = state.incident_ops_store.timeline(org, id).await?;
+    let (members, mut acks, events) = tokio::try_join!(
+        members_map(&state, org),
+        async {
+            Ok(state
+                .incident_ops_store
+                .acknowledgements(org, &[id])
+                .await?)
+        },
+        async { Ok(state.incident_ops_store.timeline(org, id).await?) },
+    )?;
+    let acks = acks.remove(&id).unwrap_or_default();
     let timeline = events
         .iter()
         .map(|e| {
@@ -844,13 +928,8 @@ pub async fn detail(
         .collect();
 
     let assigned_to = inc.assigned_to;
-    let owner = assigned_to.and_then(|u| {
-        members.get(&u).map(|email| OwnerAvatar {
-            initials: crate::web::avatar::initials_from(email),
-            color: crate::web::avatar::avatar_color(u.0),
-            label: email.clone(),
-        })
-    });
+    let owner = assigned_to.and_then(|u| member_avatar(u, &members));
+    let acks = ack_list(&acks, uid, &members);
     let mut sorted: Vec<(UserId, String)> = members.into_iter().collect();
     sorted.sort_by(|a, b| a.1.cmp(&b.1));
     let mut owner_options = vec![OwnerOption {
@@ -879,7 +958,7 @@ pub async fn detail(
     let mut page = make_detail_page(
         inc,
         monitor_name,
-        acknowledged_by,
+        acks,
         label,
         timeline,
         public_updates,
@@ -896,7 +975,7 @@ pub async fn detail(
 fn make_detail_page(
     inc: OpsIncident,
     monitor_name: Option<String>,
-    acknowledged_by: Option<String>,
+    acks: AckList,
     label: String,
     timeline: Vec<TimelineRow>,
     public_updates: Vec<PublicUpdateRow>,
@@ -923,8 +1002,7 @@ fn make_detail_page(
         visibility: inc.visibility.as_db_str(),
         started_at: inc.started_at,
         ended_at: inc.ended_at,
-        acknowledged_at: inc.acknowledged_at,
-        acknowledged_by,
+        acks,
         error_sample: inc.error_sample.clone(),
         ongoing: inc.state.is_open(),
         timeline,
@@ -1452,7 +1530,7 @@ mod tests {
         let row = row_from(
             ops(IncidentState::Triggered),
             Some("api-gateway".into()),
-            None,
+            AckList::default(),
             None,
             None,
             false,
@@ -1468,22 +1546,40 @@ mod tests {
     fn console_resolved_row_shows_reopen_only() {
         let mut inc = ops(IncidentState::Resolved);
         inc.ended_at = Some(Utc::now());
-        let row = row_from(inc, Some("api".into()), None, None, None, false);
+        let row = row_from(
+            inc,
+            Some("api".into()),
+            AckList::default(),
+            None,
+            None,
+            false,
+        );
         let html = page(vec![row]).render().unwrap();
         assert!(html.contains(r#"data-incident-action="reopen""#));
         assert!(!html.contains(r#"data-incident-action="acknowledge""#));
+    }
+
+    fn alice_acker() -> AckList {
+        AckList {
+            ackers: vec![AckerView {
+                name: "alice@example.com".into(),
+                phrase: "by alice@example.com".into(),
+                avatar: Some(OwnerAvatar {
+                    initials: "AL".into(),
+                    color: "oklch(0.62 0.12 200)".into(),
+                    label: "alice@example.com".into(),
+                }),
+                at: Utc::now(),
+            }],
+            mine: false,
+        }
     }
 
     #[test]
     fn console_shows_acked_by() {
         let mut inc = ops(IncidentState::Acknowledged);
         inc.acknowledged_at = Some(Utc::now());
-        let acker = OwnerAvatar {
-            initials: "AL".into(),
-            color: "oklch(0.62 0.12 200)".into(),
-            label: "alice@example.com".into(),
-        };
-        let row = row_from(inc, Some("api".into()), Some(acker), None, None, false);
+        let row = row_from(inc, Some("api".into()), alice_acker(), None, None, false);
         let mut p = page(vec![row]);
         p.data.total = 1;
         p.data.range_lo = 1;
@@ -1495,11 +1591,83 @@ mod tests {
     }
 
     #[test]
+    fn acknowledge_stays_on_offer_to_whoever_has_not_yet() {
+        let mut inc = ops(IncidentState::Acknowledged);
+        inc.acknowledged_at = Some(Utc::now());
+        let render = |acked_by_me: bool| {
+            let acks = AckList {
+                mine: acked_by_me,
+                ..alice_acker()
+            };
+            let row = row_from(inc.clone(), Some("api".into()), acks, None, None, false);
+            page(vec![row]).render().unwrap()
+        };
+        let ack = r#"data-incident-action="acknowledge""#;
+        assert!(
+            render(false).contains(ack),
+            "a manager who has not pressed it yet"
+        );
+        assert!(!render(true).contains(ack), "alice already did");
+        assert!(render(true).contains(r#"data-incident-action="resolve""#));
+
+        let detail = |acked_by_me: bool| {
+            let acks = AckList {
+                mine: acked_by_me,
+                ..alice_acker()
+            };
+            make_detail_page(inc.clone(), None, acks, "api".into(), vec![], vec![], None)
+                .render()
+                .unwrap()
+        };
+        assert!(detail(false).contains(ack));
+        assert!(!detail(true).contains(ack));
+    }
+
+    #[test]
+    fn ackers_are_named_the_same_everywhere() {
+        let alice = UserId(Uuid::now_v7());
+        let members = HashMap::from([(alice, "alice@example.com".to_string())]);
+        let ack = |actor_type, actor_id| IncidentAcknowledgement {
+            incident_id: Uuid::nil(),
+            actor_type,
+            actor_id,
+            at: Utc::now(),
+        };
+        let views = acker_views(
+            &[
+                ack(ActorType::User, Some(alice)),
+                ack(ActorType::Mcp, Some(alice)),
+                ack(ActorType::Link, None),
+                ack(ActorType::User, Some(UserId(Uuid::now_v7()))),
+                ack(ActorType::User, None),
+            ],
+            &members,
+        );
+        let phrases: Vec<&str> = views.iter().map(|v| v.phrase.as_str()).collect();
+        assert_eq!(
+            phrases,
+            [
+                "by alice@example.com",
+                "by alice@example.com via MCP",
+                "via notification",
+                "by former member",
+                "by former member",
+            ]
+        );
+        assert!(views[0].avatar.is_some());
+        assert!(views[2].avatar.is_none());
+        assert_eq!(views[2].name, "notification");
+        let acks = [ack(ActorType::Mcp, Some(alice)), ack(ActorType::Link, None)];
+        assert!(viewer_acknowledged(&acks, alice), "MCP is still alice");
+        assert!(!viewer_acknowledged(&acks[1..], alice));
+    }
+
+    #[test]
     fn console_row_shows_monitor_kind() {
         let mut row = row_from(
             ops(IncidentState::Triggered),
             Some("api".into()),
-            None,
+            AckList::default(),
             None,
             None,
             false,
@@ -1507,7 +1675,14 @@ mod tests {
         row.kind = Some("tls");
         assert!(page(vec![row]).render().unwrap().contains(">tls<"));
 
-        let manual = row_from(ops(IncidentState::Triggered), None, None, None, None, false);
+        let manual = row_from(
+            ops(IncidentState::Triggered),
+            None,
+            AckList::default(),
+            None,
+            None,
+            false,
+        );
         assert!(page(vec![manual]).render().unwrap().contains("—"));
     }
 
@@ -1520,13 +1695,27 @@ mod tests {
             color: "oklch(0.62 0.12 50)".into(),
             label: "carol@example.com".into(),
         };
-        let row = row_from(inc, Some("api".into()), None, Some(resolver), None, false);
+        let row = row_from(
+            inc,
+            Some("api".into()),
+            AckList::default(),
+            Some(resolver),
+            None,
+            false,
+        );
         let html = page(vec![row]).render().unwrap();
         assert!(html.contains("resolved by carol@example.com"));
 
         let mut auto = ops(IncidentState::Resolved);
         auto.ended_at = Some(Utc::now());
-        let arow = row_from(auto, Some("api".into()), None, None, None, false);
+        let arow = row_from(
+            auto,
+            Some("api".into()),
+            AckList::default(),
+            None,
+            None,
+            false,
+        );
         let ahtml = page(vec![arow]).render().unwrap();
         assert!(ahtml.contains(">auto<"));
         assert!(!ahtml.contains("resolved by"));
@@ -1536,7 +1725,14 @@ mod tests {
     fn console_row_shows_assignee_urgency_and_assign_to_me() {
         let mut inc = ops(IncidentState::Triggered);
         inc.urgency = crate::domain::IncidentUrgency::Low;
-        let unassigned = row_from(inc, Some("api".into()), None, None, None, false);
+        let unassigned = row_from(
+            inc,
+            Some("api".into()),
+            AckList::default(),
+            None,
+            None,
+            false,
+        );
         let html = page(vec![unassigned]).render().unwrap();
         // Low urgency surfaces, and an unassigned row offers assign-to-me.
         assert!(html.contains("notify"));
@@ -1545,7 +1741,7 @@ mod tests {
         let assigned = row_from(
             ops(IncidentState::Triggered),
             Some("api".into()),
-            None,
+            AckList::default(),
             None,
             Some(OwnerAvatar {
                 initials: "BO".into(),
@@ -1585,7 +1781,7 @@ mod tests {
         let page = make_detail_page(
             inc,
             None,
-            Some("alice@example.com".into()),
+            alice_acker(),
             "Payments degraded".to_string(),
             timeline,
             updates,
@@ -1684,7 +1880,7 @@ mod tests {
         let mut page = make_detail_page(
             ops(IncidentState::Triggered),
             Some("api".into()),
-            None,
+            AckList::default(),
             "api".to_string(),
             vec![],
             vec![],
@@ -1715,7 +1911,7 @@ mod tests {
         let page = make_detail_page(
             inc,
             Some("api".into()),
-            Some("alice@example.com".into()),
+            alice_acker(),
             "api".to_string(),
             vec![],
             vec![],
@@ -1735,7 +1931,7 @@ mod tests {
         let mut page = make_detail_page(
             ops(IncidentState::Triggered),
             Some("api".into()),
-            None,
+            AckList::default(),
             "api".to_string(),
             vec![],
             vec![],
@@ -1798,7 +1994,7 @@ mod tests {
         let internal = make_detail_page(
             ops(IncidentState::Triggered),
             None,
-            None,
+            AckList::default(),
             "x".into(),
             vec![],
             vec![],
@@ -1810,7 +2006,15 @@ mod tests {
 
         let mut pubinc = ops(IncidentState::Triggered);
         pubinc.visibility = crate::domain::IncidentVisibility::Public;
-        let public = make_detail_page(pubinc, None, None, "x".into(), vec![], vec![], None);
+        let public = make_detail_page(
+            pubinc,
+            None,
+            AckList::default(),
+            "x".into(),
+            vec![],
+            vec![],
+            None,
+        );
         let html = public.render().unwrap();
         assert!(html.contains(r#"data-incident-unpublish"#));
         assert!(!html.contains(r#"data-incident-publish"#));
@@ -1859,6 +2063,11 @@ mod tests {
             actor_label(&ev(ActorType::User, Some(gone)), &members),
             ("former member".into(), false)
         );
+        // A deleted account's id is nulled out; it was still a member.
+        assert_eq!(
+            actor_label(&ev(ActorType::User, None), &members),
+            ("former member".into(), false)
+        );
     }
 
     #[test]
@@ -1866,7 +2075,7 @@ mod tests {
         let none = make_detail_page(
             ops(IncidentState::Resolved),
             None,
-            None,
+            AckList::default(),
             "x".into(),
             vec![],
             vec![],
@@ -1888,7 +2097,7 @@ mod tests {
         let with = make_detail_page(
             ops(IncidentState::Resolved),
             None,
-            None,
+            AckList::default(),
             "x".into(),
             vec![],
             vec![],

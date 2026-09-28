@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use chrono::Duration;
 
-use crate::domain::IncidentSeverity;
 use crate::domain::metrics::{DashboardSparkBucket, FleetRibbonBucket, PriorPeriodSummary};
+use crate::domain::{ActorType, IncidentAcknowledgement, IncidentSeverity, UserId};
 use crate::storage::IncidentBrief;
 
 use super::charts::*;
@@ -424,7 +424,6 @@ fn sample_snapshot(rows: Vec<DashboardRow>) -> DashboardSnapshot {
         kpi_cards: Arc::from(sample_kpi_cards().into_boxed_slice()),
         matches: n,
         truncated: false,
-        active_incidents: Arc::from(Vec::<DashboardActiveIncident>::new().into_boxed_slice()),
         status_counts: StatusCounts::default(),
         type_counts: Arc::from(
             vec![
@@ -868,25 +867,133 @@ fn snap_to_bucket_floors_to_grid() {
 fn dashboard_active_incident_falls_back_to_target_name_then_default() {
     let now = Utc::now();
     let make = |public_title, target_name: &str| IncidentBrief {
-        id: Uuid::nil(),
-        target_id: Uuid::nil(),
-        target_name: target_name.into(),
-        severity: IncidentSeverity::Major,
-        started_at: now - Duration::minutes(5),
-        ended_at: None,
         public_title,
-        latest_update: None,
+        target_name: target_name.into(),
+        ..brief(now)
     };
+    let title =
+        |b| DashboardActiveIncident::build(b, &[], UserId(Uuid::nil()), now, &HashMap::new()).title;
+    assert_eq!(title(make(Some("Outage".into()), "api")), "Outage");
+    assert_eq!(title(make(None, "api")), "api");
+    assert_eq!(title(make(Some("  ".into()), "")), "Active incident");
+}
+
+fn brief(now: DateTime<Utc>) -> IncidentBrief {
+    IncidentBrief {
+        id: Uuid::now_v7(),
+        target_id: Uuid::nil(),
+        target_name: "api".into(),
+        severity: IncidentSeverity::Major,
+        started_at: now - Duration::minutes(10),
+        ended_at: None,
+        public_title: None,
+        latest_update: None,
+    }
+}
+
+fn ack(
+    actor_type: ActorType,
+    actor_id: Option<UserId>,
+    at: DateTime<Utc>,
+) -> IncidentAcknowledgement {
+    IncidentAcknowledgement {
+        incident_id: Uuid::nil(),
+        actor_type,
+        actor_id,
+        at,
+    }
+}
+
+#[test]
+fn banner_lists_everyone_who_acknowledged_and_asks_the_rest() {
+    let now = Utc::now();
+    let (manager, dev) = (UserId(Uuid::now_v7()), UserId(Uuid::now_v7()));
+    let members = HashMap::from([
+        (manager, "anna@example.com".to_string()),
+        (dev, "oleh@example.com".to_string()),
+    ]);
+    let acks = [
+        ack(ActorType::Link, None, now - Duration::minutes(6)),
+        ack(ActorType::User, Some(manager), now - Duration::minutes(4)),
+        ack(ActorType::Mcp, Some(dev), now - Duration::minutes(1)),
+    ];
+    let seen_by = |viewer| DashboardActiveIncident::build(brief(now), &acks, viewer, now, &members);
+    let inc = seen_by(manager);
+    let lines: Vec<(&str, &str)> = inc
+        .acknowledged
+        .iter()
+        .map(|a| (a.phrase.as_str(), a.age_label.as_str()))
+        .collect();
     assert_eq!(
-        DashboardActiveIncident::build(make(Some("Outage".into()), "api"), now).title,
-        "Outage"
+        lines,
+        [
+            ("via notification", "6m"),
+            ("by anna@example.com", "4m"),
+            ("by oleh@example.com via MCP", "1m"),
+        ]
     );
+    assert!(!inc.can_acknowledge, "anna already did");
+    assert!(!seen_by(dev).can_acknowledge, "oleh did, through MCP");
+    let someone_else = seen_by(UserId(Uuid::now_v7()));
+    assert!(
+        someone_else.can_acknowledge,
+        "whoever has not yet still can"
+    );
+
+    let open = DashboardActiveIncident::build(brief(now), &[], manager, now, &members);
+    assert!(open.can_acknowledge);
+    assert!(open.acknowledged.is_empty());
+}
+
+#[test]
+fn banner_offers_acknowledge_only_until_acknowledged() {
+    let now = Utc::now();
+    let viewer = UserId(Uuid::now_v7());
+    let members = HashMap::from([(viewer, "anna@example.com".to_string())]);
+    let triggered = DashboardActiveIncident::build(brief(now), &[], viewer, now, &members);
+    let acked = DashboardActiveIncident::build(
+        brief(now),
+        &[
+            ack(ActorType::Link, None, now - Duration::minutes(2)),
+            ack(ActorType::User, Some(viewer), now - Duration::minutes(1)),
+        ],
+        viewer,
+        now,
+        &members,
+    );
+    let partial = DashboardTablePartial {
+        range: "24h",
+        range_options: build_range_options("24h", &RANGE_KEYS),
+        kpi_cards: Arc::from(sample_kpi_cards().into_boxed_slice()),
+        rows: Arc::from(vec![sample_row("api", "down")].into_boxed_slice()),
+        matches: 1,
+        truncated: false,
+        active_incidents: Arc::from(vec![triggered.clone(), acked.clone()].into_boxed_slice()),
+        status_counts: StatusCounts::default(),
+        type_counts: Arc::from(Vec::<TypeCount>::new().into_boxed_slice()),
+        ribbon: sample_ribbon(),
+        regions: Vec::new(),
+        selected_region: None,
+        status_options: build_range_options(FILTER_ANY, &STATUS_FILTERS),
+        selected_status: None,
+        selected_kind: None,
+        drill: None,
+    };
+    let html = partial.render().unwrap();
+    let ack_button =
+        |id: &str| format!(r#"data-incident-action="acknowledge" data-incident-id="{id}""#);
+    let resolve_button =
+        |id: &str| format!(r#"data-incident-action="resolve" data-incident-id="{id}""#);
+    assert!(html.contains(&ack_button(&triggered.id)));
+    assert!(!html.contains(&ack_button(&acked.id)));
+    assert!(html.contains(&resolve_button(&triggered.id)));
+    assert!(html.contains(&resolve_button(&acked.id)));
+    assert!(html.contains(r#"aria-label="resolve api""#));
     assert_eq!(
-        DashboardActiveIncident::build(make(None, "api"), now).title,
-        "api"
+        html.matches(r#"data-incident-action="acknowledge""#)
+            .count(),
+        1
     );
-    assert_eq!(
-        DashboardActiveIncident::build(make(Some("  ".into()), ""), now).title,
-        "Active incident"
-    );
+    assert!(html.contains("via notification · 2m ago,"));
+    assert!(html.contains("by anna@example.com · 1m ago"));
 }

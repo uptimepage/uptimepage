@@ -12,15 +12,18 @@
 //! Postgres state transitions run under a per-incident advisory lock so
 //! concurrent ack/resolve/escalate cannot race the machine.
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use crate::domain::{
-    ActorType, IncidentEvent, IncidentEventKind, IncidentMetrics, IncidentNotification,
-    IncidentSeverity, IncidentState, NewIncidentNotification, NewManualIncident,
-    NotificationOutcome, NotificationReason, OpsIncident, OrgId, TransitionError, UserId,
+    ActorType, IncidentAcknowledgement, IncidentEvent, IncidentEventKind, IncidentMetrics,
+    IncidentNotification, IncidentSeverity, IncidentState, NewIncidentNotification,
+    NewManualIncident, NotificationOutcome, NotificationReason, OpsIncident, OrgId,
+    TransitionError, UserId,
 };
 use crate::error::Result;
 
@@ -393,6 +396,13 @@ pub trait IncidentOpsStore: Send + Sync {
         message: String,
     ) -> Result<Option<IncidentEvent>>;
     async fn timeline(&self, org: OrgId, id: Uuid) -> Result<Vec<IncidentEvent>>;
+    /// Everyone who acknowledged each incident's current episode, in the order
+    /// they did, keyed by incident. Incidents nobody has acknowledged are absent.
+    async fn acknowledgements(
+        &self,
+        org: OrgId,
+        ids: &[Uuid],
+    ) -> Result<HashMap<Uuid, Vec<IncidentAcknowledgement>>>;
     /// Append one internal timeline entry outside a lifecycle transition (e.g.
     /// the escalation engine logging a `notified`/`escalated` event).
     async fn append_event(

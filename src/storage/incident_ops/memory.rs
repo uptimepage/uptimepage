@@ -1,6 +1,8 @@
 //! Single-tenant in-memory [`IncidentOpsStore`] double for tests: matches on id
 //! alone and keeps the same state machine as the Postgres store.
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
@@ -8,10 +10,11 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::domain::{
-    IncidentEvent, IncidentEventKind, IncidentMetrics, IncidentNotification, IncidentOrigin,
-    IncidentSeverity, IncidentState, IncidentTransition, IncidentVisibility, MetricBucket,
-    MonitorIncidentCount, NewIncidentNotification, NewManualIncident, NotificationOutcome,
-    NotificationStatus, OpsIncident, OrgId, UserId, next_state,
+    IncidentAcknowledgement, IncidentEvent, IncidentEventKind, IncidentMetrics,
+    IncidentNotification, IncidentOrigin, IncidentSeverity, IncidentState, IncidentTransition,
+    IncidentVisibility, MetricBucket, MonitorIncidentCount, NewIncidentNotification,
+    NewManualIncident, NotificationOutcome, NotificationStatus, OpsIncident, OrgId, UserId,
+    next_state,
 };
 use crate::error::Result;
 
@@ -30,6 +33,8 @@ pub struct InMemoryIncidentOpsStore {
 struct MemState {
     incidents: Vec<OpsIncident>,
     events: Vec<IncidentEvent>,
+    /// Each with the episode it was made in.
+    acknowledgements: Vec<(i64, IncidentAcknowledgement)>,
     notifications: Vec<(OrgId, IncidentNotification)>,
     renotify_counts: std::collections::HashMap<Uuid, u32>,
     status_pages: std::collections::HashMap<Uuid, Vec<Uuid>>,
@@ -51,6 +56,32 @@ fn reopens_before(state: &MemState, incident_id: Uuid, at: DateTime<Utc>) -> i64
                 && e.occurred_at <= at
         })
         .count() as i64
+}
+
+/// Add `actor` to the people who acknowledged `episode`; false when they
+/// already are. Mirrors the Postgres unique indexes.
+fn record_acknowledgement(state: &mut MemState, id: Uuid, actor: Actor, episode: i64) -> bool {
+    let same = |a: &IncidentAcknowledgement| match actor.user_id() {
+        Some(u) => a.actor_id == Some(u),
+        None => a.actor_id.is_none() && a.actor_type == actor.actor_type(),
+    };
+    if state
+        .acknowledgements
+        .iter()
+        .any(|(e, a)| *e == episode && a.incident_id == id && same(a))
+    {
+        return false;
+    }
+    state.acknowledgements.push((
+        episode,
+        IncidentAcknowledgement {
+            incident_id: id,
+            actor_type: actor.actor_type(),
+            actor_id: actor.user_id(),
+            at: Utc::now(),
+        },
+    ));
+    true
 }
 
 impl InMemoryIncidentOpsStore {
@@ -143,9 +174,8 @@ impl InMemoryIncidentOpsStore {
         let Some(idx) = g.incidents.iter().position(|i| i.id == id) else {
             return LifecycleOutcome::NotFound;
         };
-        if let Some(expected) = expect_generation
-            && reopen_count(&g, id) != expected
-        {
+        let episode = reopen_count(&g, id);
+        if expect_generation.is_some_and(|expected| expected != episode) {
             return LifecycleOutcome::Stale;
         }
         let from = g.incidents[idx].state;
@@ -154,13 +184,22 @@ impl InMemoryIncidentOpsStore {
             Err(err) => return LifecycleOutcome::IllegalTransition(err),
         };
         // Mirrors the Postgres store: a transition that moves nothing leaves
-        // the row alone but still records that somebody acted.
+        // the row alone but still records that somebody acted, unless they
+        // acknowledge an episode they already acknowledged.
         if from != to {
             mutate(&mut g.incidents[idx]);
             g.incidents[idx].updated_at = Utc::now();
         }
         let updated = g.incidents[idx].clone();
-        Self::push_event(&mut g, id, kind, actor, note);
+        let acknowledging = transition == IncidentTransition::Acknowledge;
+        let newly_listed = acknowledging && record_acknowledgement(&mut g, id, actor, episode);
+        if acknowledging && from == to && !newly_listed {
+            if actor.user_id().is_some() && note.is_some() {
+                Self::push_event(&mut g, id, IncidentEventKind::Note, actor, note);
+            }
+        } else {
+            Self::push_event(&mut g, id, kind, actor, note);
+        }
         LifecycleOutcome::Updated(Box::new(updated))
     }
 }
@@ -578,6 +617,21 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             .collect();
         out.sort_by_key(|e| e.occurred_at);
         out.truncate(INCIDENT_DETAIL_ROW_CAP as usize);
+        Ok(out)
+    }
+
+    async fn acknowledgements(
+        &self,
+        _org: OrgId,
+        ids: &[Uuid],
+    ) -> Result<HashMap<Uuid, Vec<IncidentAcknowledgement>>> {
+        let g = self.inner.lock();
+        let mut out: HashMap<Uuid, Vec<IncidentAcknowledgement>> = HashMap::new();
+        for (episode, a) in &g.acknowledgements {
+            if ids.contains(&a.incident_id) && *episode == reopen_count(&g, a.incident_id) {
+                out.entry(a.incident_id).or_default().push(a.clone());
+            }
+        }
         Ok(out)
     }
 

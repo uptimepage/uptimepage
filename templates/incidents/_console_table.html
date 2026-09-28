@@ -45,11 +45,15 @@
         <td class="px-3 py-2 align-top">
           <div class="flex flex-col items-start gap-1.5">
             <span class="dashboard-chip dashboard-chip--flat">{{ row.state_label }}</span>
-            {% if row.acked_by.is_some() || row.state == "resolved" %}
-            <div class="flex items-center gap-1.5">
-              {% match row.acked_by %}{% when Some with (a) %}
-              <span class="monitors-avatar" title="acknowledged by {{ a.label }}" style="background: {{ a.color }}">{{ a.initials }}</span>
-              {% when None %}{% endmatch %}
+            {% if !row.acks.ackers.is_empty() || row.state == "resolved" %}
+            <div class="flex flex-wrap items-center gap-1.5">
+              {% for a in row.acks.ackers %}
+              {% match a.avatar %}{% when Some with (o) %}
+              <span class="monitors-avatar" title="acknowledged {{ a.phrase }}" style="background: {{ o.color }}">{{ o.initials }}</span>
+              {% when None %}
+              <span class="dashboard-chip dashboard-chip--flat" title="acknowledged {{ a.phrase }}">{{ a.name }}</span>
+              {% endmatch %}
+              {% endfor %}
               {% if row.state == "resolved" %}
               {% match row.resolved_by %}{% when Some with (rv) %}
               <span class="monitors-avatar" title="resolved by {{ rv.label }}" style="background: {{ rv.color }}">{{ rv.initials }}</span>
@@ -81,7 +85,7 @@
         </td>
         <td class="px-3 py-2 align-top text-right whitespace-nowrap">
           <div class="flex items-center justify-end gap-1.5">
-            {% if row.state == "triggered" %}
+            {% if row.ongoing && !row.acks.mine %}
             <button type="button" data-incident-action="acknowledge" data-incident-id="{{ row.id }}"
                     class="sticker-btn px-2 py-1 text-xs">acknowledge</button>
             {% endif %}

@@ -1,5 +1,6 @@
 //! Dashboard view models and the page/partial templates they render into.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use askama::Template;
@@ -9,11 +10,14 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::domain::metrics::DashboardMetrics;
-use crate::domain::{CheckStatus, IncidentSeverity, uptime_pct_from_downtime};
+use crate::domain::{
+    CheckStatus, IncidentAcknowledgement, IncidentSeverity, UserId, uptime_pct_from_downtime,
+};
 use crate::storage::IncidentBrief;
 use crate::templates::filters;
 use crate::templates::format::HumanDur;
 use crate::web::views::RangeOption;
+use crate::web::views::incidents::ack_list;
 use crate::web::views::region_display::LabeledRegion;
 
 use super::*;
@@ -84,7 +88,6 @@ pub struct DashboardSnapshot {
     pub kpi_cards: Arc<[KpiCardSpec]>,
     pub matches: usize,
     pub truncated: bool,
-    pub active_incidents: Arc<[DashboardActiveIncident]>,
     pub status_counts: StatusCounts,
     pub type_counts: Arc<[TypeCount]>,
     pub ribbon: FleetRibbon,
@@ -170,6 +173,16 @@ pub struct DashboardActiveIncident {
     pub severity_label: &'static str,
     pub severity_class: &'static str,
     pub latest_update: Option<DashboardIncidentUpdate>,
+    pub can_acknowledge: bool,
+    /// Everyone who acknowledged it, first (credited) first.
+    pub acknowledged: Vec<DashboardIncidentAck>,
+}
+
+#[derive(Clone)]
+pub struct DashboardIncidentAck {
+    /// "by alice@example.com", "via notification" and the like.
+    pub phrase: String,
+    pub age_label: String,
 }
 
 #[derive(Clone)]
@@ -284,7 +297,13 @@ impl DashboardRow {
 }
 
 impl DashboardActiveIncident {
-    pub(super) fn build(raw: IncidentBrief, now: DateTime<Utc>) -> Self {
+    pub(super) fn build(
+        raw: IncidentBrief,
+        acks: &[IncidentAcknowledgement],
+        viewer: UserId,
+        now: DateTime<Utc>,
+        members: &HashMap<UserId, String>,
+    ) -> Self {
         let IncidentBrief {
             id,
             target_id,
@@ -295,6 +314,7 @@ impl DashboardActiveIncident {
             latest_update,
             ..
         } = raw;
+        let acks = ack_list(acks, viewer, members);
         let title = public_title
             .filter(|t| !t.trim().is_empty())
             .or_else(|| (!target_name.is_empty()).then_some(target_name))
@@ -312,6 +332,15 @@ impl DashboardActiveIncident {
                 phase_label: phase_display(u.phase),
                 message: u.message,
             }),
+            can_acknowledge: !acks.mine,
+            acknowledged: acks
+                .ackers
+                .into_iter()
+                .map(|a| DashboardIncidentAck {
+                    phrase: a.phrase,
+                    age_label: HumanDur((now - a.at).num_seconds().max(0)).to_string(),
+                })
+                .collect(),
         }
     }
 }

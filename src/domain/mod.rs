@@ -50,13 +50,13 @@ pub use escalation_policy::{
 };
 pub use heartbeat::{CadenceAdvice, HeartbeatPingRecord, ObservedCadence, Ping, PingSignal};
 pub use incident::{
-    ActionItem, ActorType, Incident, IncidentEvent, IncidentEventKind, IncidentMetrics,
-    IncidentNarrationUpdate, IncidentNotification, IncidentOrigin, IncidentPostmortem,
-    IncidentState, IncidentTransition, IncidentUrgency, IncidentVisibility, MetricBucket,
-    MonitorIncidentCount, NewIncidentNotification, NewIncidentUpdate, NewManualIncident,
-    NotificationOutcome, NotificationReason, NotificationStatus, OpsIncident, PostmortemUpsert,
-    TransitionError, coalesce_incidents, confirmed_downtime_secs, elapsed_at, next_state,
-    uptime_pct_from_downtime,
+    ActionItem, ActorType, Incident, IncidentAcknowledgement, IncidentEvent, IncidentEventKind,
+    IncidentMetrics, IncidentNarrationUpdate, IncidentNotification, IncidentOrigin,
+    IncidentPostmortem, IncidentState, IncidentTransition, IncidentUrgency, IncidentVisibility,
+    MetricBucket, MonitorIncidentCount, NewIncidentNotification, NewIncidentUpdate,
+    NewManualIncident, NotificationOutcome, NotificationReason, NotificationStatus, OpsIncident,
+    PostmortemUpsert, TransitionError, coalesce_incidents, confirmed_downtime_secs, elapsed_at,
+    next_state, uptime_pct_from_downtime,
 };
 pub use maintenance::{
     MaintenanceFilter, MaintenanceWindow, MaintenanceWindowUpdate, NewMaintenanceWindow,

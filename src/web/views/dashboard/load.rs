@@ -8,10 +8,11 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::metrics::{DashboardMetrics, PriorPeriodSummary};
-use crate::domain::{CheckStatus, OrgId, uptime_pct_from_downtime};
+use crate::domain::{CheckStatus, OrgId, UserId, uptime_pct_from_downtime};
 use crate::storage::{IncidentBriefFilter, TargetFilter, TimeRange};
 use crate::web::error::WebResult;
 use crate::web::views::describe_check;
+use crate::web::views::incidents::members_map;
 
 use super::charts::{
     ACTIVE_INCIDENTS_LIMIT, TYPE_CHIP_ORDER, avg_response_label, build_fleet_ribbon,
@@ -19,6 +20,43 @@ use super::charts::{
     range_span, snap_to_bucket, tally_status,
 };
 use super::*;
+
+/// The banner's open incidents, read fresh on every render: it is where
+/// people act on them, so it must not trail the action behind the snapshot
+/// cache.
+pub(super) async fn active_incidents(
+    state: &AppState,
+    org: OrgId,
+    viewer: UserId,
+) -> WebResult<Arc<[DashboardActiveIncident]>> {
+    let briefs = state
+        .incident_narration_store
+        .list_briefs(
+            org,
+            IncidentBriefFilter {
+                oldest_first: true,
+                limit: ACTIVE_INCIDENTS_LIMIT,
+                ..Default::default()
+            },
+        )
+        .await?;
+    if briefs.is_empty() {
+        return Ok(Arc::from([]));
+    }
+    let ids: Vec<Uuid> = briefs.iter().map(|b| b.id).collect();
+    let (acks, members) = tokio::try_join!(
+        async { Ok(state.incident_ops_store.acknowledgements(org, &ids).await?) },
+        members_map(state, org),
+    )?;
+    let now = Utc::now();
+    Ok(briefs
+        .into_iter()
+        .map(|b| {
+            let incident_acks = acks.get(&b.id).map(Vec::as_slice).unwrap_or_default();
+            DashboardActiveIncident::build(b, incident_acks, viewer, now, &members)
+        })
+        .collect())
+}
 
 /// Cached front door — both `index` and `table_partial` reach the same
 /// `Arc<DashboardSnapshot>` so a tab-spam burst collapses to one CH
@@ -68,7 +106,6 @@ pub(super) async fn build_snapshot(
         rollup,
         spark_rows,
         (checks_total, checks_up, avg_ms_current, incidents),
-        active_raw,
         ribbon_rows,
         prior,
         downtime_by_target,
@@ -81,14 +118,6 @@ pub(super) async fn build_snapshot(
             .results_store
             .dashboard_sparkline(org, spark_from, to, region),
         state.results_store.last_n_summary(org, time_range, region),
-        state.incident_narration_store.list_briefs(
-            org,
-            IncidentBriefFilter {
-                oldest_first: true,
-                limit: ACTIVE_INCIDENTS_LIMIT,
-                ..Default::default()
-            },
-        ),
         state
             .results_store
             .fleet_ribbon(org, ribbon_from, to, RIBBON_BUCKET_SECONDS, region),
@@ -226,12 +255,6 @@ pub(super) async fn build_snapshot(
         &fleet_sparks,
     );
 
-    let now = Utc::now();
-    let active_incidents: Vec<DashboardActiveIncident> = active_raw
-        .into_iter()
-        .map(|i| DashboardActiveIncident::build(i, now))
-        .collect();
-
     let matches = rows.len();
     let ribbon = build_fleet_ribbon(&ribbon_rows, ribbon_from, &target_names);
     Ok(DashboardSnapshot {
@@ -239,7 +262,6 @@ pub(super) async fn build_snapshot(
         kpi_cards: Arc::from(kpi_cards.into_boxed_slice()),
         matches,
         truncated,
-        active_incidents: Arc::from(active_incidents.into_boxed_slice()),
         status_counts,
         type_counts: Arc::from(build_type_counts(type_acc).into_boxed_slice()),
         ribbon,

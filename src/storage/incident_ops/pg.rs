@@ -2,6 +2,8 @@
 //! console read model. Every statement filters `org_id`, and transitions run
 //! under a per-incident advisory lock.
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -9,11 +11,11 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::domain::{
-    ActorType, IncidentEvent, IncidentEventKind, IncidentMetrics, IncidentNotification,
-    IncidentOrigin, IncidentSeverity, IncidentState, IncidentTransition, IncidentUrgency,
-    IncidentVisibility, MetricBucket, MonitorIncidentCount, NewIncidentNotification,
-    NewManualIncident, NotificationOutcome, NotificationReason, NotificationStatus, OpsIncident,
-    OrgId, UserId, next_state,
+    ActorType, IncidentAcknowledgement, IncidentEvent, IncidentEventKind, IncidentMetrics,
+    IncidentNotification, IncidentOrigin, IncidentSeverity, IncidentState, IncidentTransition,
+    IncidentUrgency, IncidentVisibility, MetricBucket, MonitorIncidentCount,
+    NewIncidentNotification, NewManualIncident, NotificationOutcome, NotificationReason,
+    NotificationStatus, OpsIncident, OrgId, UserId, next_state,
 };
 use crate::error::Result;
 use crate::storage::locks::{advisory_xact_lock, incident_lock_key};
@@ -319,6 +321,31 @@ async fn reopen_count_tx(
     .map_err(|e| anyhow::anyhow!("reopen count: {e}").into())
 }
 
+/// Add `actor` to the people who acknowledged episode `episode`; false when
+/// they already are. The unique indexes decide, so two presses racing each
+/// other still land once.
+async fn record_acknowledgement_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+    id: Uuid,
+    actor: Actor,
+    episode: i64,
+) -> Result<bool> {
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "INSERT INTO incident_acknowledgements (org_id, incident_id, episode, actor_type, actor_id) \
+         VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING RETURNING id",
+    )
+    .bind(org.0)
+    .bind(id)
+    .bind(episode)
+    .bind(actor.actor_type().as_db_str())
+    .bind(actor.user_id())
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|e| anyhow::anyhow!("record acknowledgement: {e}"))?;
+    Ok(row.is_some())
+}
+
 async fn incident_was_published(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: OrgId,
@@ -374,9 +401,8 @@ impl PgIncidentOpsStore {
         };
         // Under the transition's own locks, so a reopen cannot slip between
         // this check and the update.
-        if let Some(expected) = expect_generation
-            && reopen_count_tx(&mut tx, org, id).await? != expected
-        {
+        let episode = reopen_count_tx(&mut tx, org, id).await?;
+        if expect_generation.is_some_and(|expected| expected != episode) {
             return Ok(LifecycleOutcome::Stale);
         }
 
@@ -389,8 +415,9 @@ impl PgIncidentOpsStore {
         // acknowledger keeps the credit an unknown one included, which the
         // update's `COALESCE` would otherwise backfill. It is still logged: an
         // engineer taking a page a notification already acknowledged is a real
-        // action. The public update is not repeated, though — subscribers
-        // should not read the same resolution twice.
+        // action. Someone acknowledging an episode they already took is not,
+        // and neither is a repeated public update — subscribers should not
+        // read the same resolution twice.
         let unchanged = from == to;
         let row: OpsIncidentRow = if unchanged {
             let sql = format!("SELECT {OPS_COLS} FROM incidents WHERE id = $1 AND org_id = $2");
@@ -426,15 +453,30 @@ impl PgIncidentOpsStore {
             }
         };
 
-        insert_event_tx(&mut tx, org, id, event_kind, actor, note.as_deref()).await?;
-        record_incident_audit_tx(
-            &mut tx,
-            org,
-            actor,
-            &format!("incident.{}", event_kind.as_db_str()),
-            serde_json::json!({ "incident_id": id, "target_id": row.target_id }),
-        )
-        .await?;
+        let acknowledging = transition == IncidentTransition::Acknowledge;
+        let newly_listed = if acknowledging {
+            record_acknowledgement_tx(&mut tx, org, id, actor, episode).await?
+        } else {
+            false
+        };
+        let repeat = acknowledging && unchanged && !newly_listed;
+        if repeat {
+            // A note someone wrote is kept; a notification's is a fixed label.
+            if let Some(note) = note.as_deref().filter(|_| actor.user_id().is_some()) {
+                insert_event_tx(&mut tx, org, id, IncidentEventKind::Note, actor, Some(note))
+                    .await?;
+            }
+        } else {
+            insert_event_tx(&mut tx, org, id, event_kind, actor, note.as_deref()).await?;
+            record_incident_audit_tx(
+                &mut tx,
+                org,
+                actor,
+                &format!("incident.{}", event_kind.as_db_str()),
+                serde_json::json!({ "incident_id": id, "target_id": row.target_id }),
+            )
+            .await?;
+        }
         // An incident unpublished before it resolves still has subscribers who
         // were told it opened; write the closing update whenever it was ever
         // public, not only while currently public.
@@ -1135,6 +1177,47 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         .await
         .map_err(|e| anyhow::anyhow!("incident timeline: {e}"))?;
         Ok(rows.into_iter().map(row_to_event).collect())
+    }
+
+    async fn acknowledgements(
+        &self,
+        org: OrgId,
+        ids: &[Uuid],
+    ) -> Result<HashMap<Uuid, Vec<IncidentAcknowledgement>>> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        // Rows are stamped at insert, under the incident lock, so their order
+        // is the order the acknowledgements landed and the credited one leads.
+        let rows: Vec<(Uuid, String, Option<Uuid>, DateTime<Utc>)> = sqlx::query_as(
+            "WITH current AS ( \
+                 SELECT i.id, (SELECT count(*) FROM incident_events r \
+                               WHERE r.incident_id = i.id AND r.org_id = i.org_id \
+                                 AND r.kind = 'reopened') AS episode \
+                 FROM incidents i WHERE i.org_id = $1 AND i.id = ANY($2)) \
+             SELECT a.incident_id, a.actor_type, a.actor_id, a.acknowledged_at \
+             FROM incident_acknowledgements a \
+             JOIN current c ON c.id = a.incident_id AND c.episode = a.episode \
+             WHERE a.org_id = $1 \
+             ORDER BY a.acknowledged_at, a.id",
+        )
+        .bind(org.0)
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("list acknowledgements: {e}"))?;
+        let mut out: HashMap<Uuid, Vec<IncidentAcknowledgement>> = HashMap::new();
+        for (incident_id, actor_type, actor_id, at) in rows {
+            out.entry(incident_id)
+                .or_default()
+                .push(IncidentAcknowledgement {
+                    incident_id,
+                    actor_type: ActorType::from_db_str(&actor_type),
+                    actor_id: actor_id.map(UserId),
+                    at,
+                });
+        }
+        Ok(out)
     }
 
     async fn append_event(

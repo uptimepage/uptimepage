@@ -2,8 +2,8 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::domain::{
-    IncidentEventKind, IncidentOrigin, IncidentSeverity, IncidentState, IncidentUrgency,
-    IncidentVisibility, OpsIncident, OrgId, UserId,
+    ActorType, IncidentAcknowledgement, IncidentEventKind, IncidentOrigin, IncidentSeverity,
+    IncidentState, IncidentUrgency, IncidentVisibility, OpsIncident, OrgId, UserId,
 };
 
 use super::pg::resolved_public_message;
@@ -116,6 +116,112 @@ async fn re_acknowledge_keeps_first_acker() {
     );
     assert_eq!(again.acknowledged_by, Some(first));
     assert_eq!(again.acknowledged_at, first_at);
+}
+
+#[tokio::test]
+async fn repeat_acknowledgement_logs_once_per_responder_per_episode() {
+    let store = InMemoryIncidentOpsStore::new();
+    let id = seed_triggered(&store);
+    let (alice, bob) = (user(), user());
+    let acks = || async {
+        store
+            .timeline(org(), id)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|e| e.kind == IncidentEventKind::Acknowledged)
+            .count()
+    };
+    for actor in [
+        Actor::Link,
+        Actor::User(alice),
+        Actor::User(alice),
+        Actor::Mcp(alice),
+        Actor::Link,
+        Actor::User(bob),
+    ] {
+        let out = store
+            .acknowledge(org(), id, actor, None, None)
+            .await
+            .unwrap();
+        assert!(matches!(out, LifecycleOutcome::Updated(_)));
+    }
+    assert_eq!(
+        acks().await,
+        3,
+        "the notification, alice and bob, once each"
+    );
+
+    // A repeat that brings a note keeps the note, as a note.
+    store
+        .acknowledge(
+            org(),
+            id,
+            Actor::User(bob),
+            Some("db failover".into()),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(acks().await, 3);
+    let last = store.timeline(org(), id).await.unwrap().pop().unwrap();
+    assert_eq!(last.kind, IncidentEventKind::Note);
+    assert_eq!(last.message.as_deref(), Some("db failover"));
+
+    // A notification's note is its fixed label, not something anyone wrote.
+    let before = store.timeline(org(), id).await.unwrap().len();
+    store
+        .acknowledge(
+            org(),
+            id,
+            Actor::Link,
+            Some("Acknowledged in Pushover".into()),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(store.timeline(org(), id).await.unwrap().len(), before);
+
+    let who = |acks: Vec<IncidentAcknowledgement>| {
+        acks.into_iter()
+            .map(|a| (a.actor_type, a.actor_id))
+            .collect::<Vec<_>>()
+    };
+    let list = store
+        .acknowledgements(org(), &[id])
+        .await
+        .unwrap()
+        .remove(&id)
+        .unwrap();
+    assert_eq!(
+        who(list),
+        [
+            (ActorType::Link, None),
+            (ActorType::User, Some(alice)),
+            (ActorType::User, Some(bob)),
+        ]
+    );
+
+    store
+        .resolve(org(), id, Actor::User(alice), None)
+        .await
+        .unwrap();
+    store
+        .reopen(org(), id, Actor::User(alice), None)
+        .await
+        .unwrap();
+    store
+        .acknowledge(org(), id, Actor::User(alice), None, None)
+        .await
+        .unwrap();
+    assert_eq!(acks().await, 4, "a reopened incident is a new episode");
+    let list = store
+        .acknowledgements(org(), &[id])
+        .await
+        .unwrap()
+        .remove(&id)
+        .unwrap();
+    assert_eq!(who(list), [(ActorType::User, Some(alice))]);
 }
 
 #[tokio::test]

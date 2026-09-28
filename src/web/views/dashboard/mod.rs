@@ -41,12 +41,12 @@ pub(crate) use charts::{
     uptime_pp_delta,
 };
 pub use rows::{
-    DashboardActiveIncident, DashboardIncidentUpdate, DashboardKpis, DashboardPage,
-    DashboardParams, DashboardRow, DashboardSnapshot, DashboardTablePartial, FleetRibbon,
-    FleetRibbonSeg, KpiCardSpec, KpiDelta, StatusCounts, TypeCount,
+    DashboardActiveIncident, DashboardIncidentAck, DashboardIncidentUpdate, DashboardKpis,
+    DashboardPage, DashboardParams, DashboardRow, DashboardSnapshot, DashboardTablePartial,
+    FleetRibbon, FleetRibbonSeg, KpiCardSpec, KpiDelta, StatusCounts, TypeCount,
 };
 
-use load::{build_snapshot, load_snapshot};
+use load::{active_incidents, build_snapshot, load_snapshot};
 
 pub(crate) const RANGE_KEYS: [&str; 4] = ["24h", "7d", "30d", "90d"];
 pub(crate) const DEFAULT_RANGE: &str = "24h";
@@ -131,7 +131,7 @@ pub async fn index(
     _auth: AuthedBrowser,
     State(state): State<AppState>,
     org: CurrentOrg,
-    _user: CurrentUser,
+    CurrentUser(viewer): CurrentUser,
     cookies: Cookies,
     Query(params): Query<DashboardParams>,
 ) -> WebResult<DashboardPage> {
@@ -145,7 +145,10 @@ pub async fn index(
     let selected_kind = (kind != FILTER_ANY).then_some(kind);
     let region_ids = state.regions_for_org(org.0).await?;
     let selected_region = resolve_region(params.region, &region_ids);
-    let snapshot = snapshot_for(&state, org.0, range, selected_region.as_deref()).await?;
+    let (snapshot, active_incidents) = tokio::try_join!(
+        snapshot_for(&state, org.0, range, selected_region.as_deref()),
+        active_incidents(&state, org.0, viewer),
+    )?;
     let catalog = state.regions_detailed().await?;
     let regions = labeled_regions(&catalog, region_ids);
     let onboarding = snapshot.matches == 0;
@@ -172,7 +175,7 @@ pub async fn index(
         matches,
         truncated: snapshot.truncated,
         onboarding,
-        active_incidents: Arc::clone(&snapshot.active_incidents),
+        active_incidents,
         status_counts: snapshot.status_counts,
         type_counts: type_chips(&snapshot, selected_status, selected_kind),
         ribbon: snapshot.ribbon.clone(),
@@ -318,6 +321,7 @@ pub async fn table_partial(
     _auth: AuthedBrowser,
     State(state): State<AppState>,
     org: CurrentOrg,
+    CurrentUser(viewer): CurrentUser,
     Query(params): Query<DashboardParams>,
 ) -> WebResult<Response> {
     let range = resolve_range_key(params.range.as_deref(), &RANGE_KEYS, DEFAULT_RANGE);
@@ -327,7 +331,10 @@ pub async fn table_partial(
     let selected_kind = (kind != FILTER_ANY).then_some(kind);
     let region_ids = state.regions_for_org(org.0).await?;
     let selected_region = resolve_region(params.region, &region_ids);
-    let snapshot = snapshot_for(&state, org.0, range, selected_region.as_deref()).await?;
+    let (snapshot, active_incidents) = tokio::try_join!(
+        snapshot_for(&state, org.0, range, selected_region.as_deref()),
+        active_incidents(&state, org.0, viewer),
+    )?;
     let catalog = state.regions_detailed().await?;
     let regions = labeled_regions(&catalog, region_ids);
     let drill = params.down_at.and_then(|ts| resolve_drill(&snapshot, ts));
@@ -339,7 +346,7 @@ pub async fn table_partial(
         rows,
         matches,
         truncated: snapshot.truncated,
-        active_incidents: Arc::clone(&snapshot.active_incidents),
+        active_incidents,
         status_counts: snapshot.status_counts,
         type_counts: type_chips(&snapshot, selected_status, selected_kind),
         ribbon: snapshot.ribbon.clone(),

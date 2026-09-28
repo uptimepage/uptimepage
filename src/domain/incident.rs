@@ -662,6 +662,17 @@ pub struct IncidentEvent {
     pub message: Option<String>,
 }
 
+/// One responder acknowledging an incident's current episode. The earliest
+/// holds the credit mirrored on the incident's `acknowledged_by`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IncidentAcknowledgement {
+    pub incident_id: Uuid,
+    pub actor_type: ActorType,
+    /// `None` for a notification, or a member whose account is gone.
+    pub actor_id: Option<UserId>,
+    pub at: DateTime<Utc>,
+}
+
 /// One paging delivery-log entry.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct IncidentNotification {

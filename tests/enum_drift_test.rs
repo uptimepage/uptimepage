@@ -368,6 +368,16 @@ async fn incident_events_actor_type_check_matches_rust_enum() {
 
 #[tokio::test]
 #[ignore]
+async fn incident_acknowledgements_actor_type_check_matches_rust_enum() {
+    assert_check_matches(
+        "incident_acknowledgements_actor_type_check",
+        db_strs(ActorType::ALL, ActorType::as_db_str),
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore]
 async fn incident_notifications_status_check_matches_rust_enum() {
     assert_check_matches(
         "incident_notifications_status_check",

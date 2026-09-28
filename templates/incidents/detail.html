@@ -96,13 +96,13 @@
       {% match ended_at %}{% when Some with (ts) %}
       <time class="font-mono tabular-nums text-body" datetime="{{ ts|iso_ts }}" data-tz="exact">{{ ts|human_ts }}</time>
       {% when None %}<span class="font-mono text-state-bad">ongoing</span>{% endmatch %}
-      {% match acknowledged_at %}{% when Some with (ts) %}
+      {% if !acks.ackers.is_empty() %}
       <span class="cli-brackets">acked</span>
-      <time class="font-mono tabular-nums text-body" datetime="{{ ts|iso_ts }}" data-tz="exact">{{ ts|human_ts }}</time>
-      {% match acknowledged_by %}{% when Some with (who) %}
-      <span class="font-mono text-muted">by {{ who }}</span>
-      {% when None %}{% endmatch %}
-      {% when None %}{% endmatch %}
+      {% for a in acks.ackers %}
+      <time class="font-mono tabular-nums text-body" datetime="{{ a.at|iso_ts }}" data-tz="exact">{{ a.at|human_ts }}</time>
+      <span class="font-mono text-muted">{{ a.phrase }}{% if !loop.last %},{% endif %}</span>
+      {% endfor %}
+      {% endif %}
       <span class="ml-auto flex flex-wrap items-center gap-2">
         <span class="cli-brackets">owner</span>
         {% match owner %}{% when Some with (o) %}
@@ -252,7 +252,7 @@
 
   <aside class="action-rail lg:col-span-2 xl:col-span-1 xl:sticky xl:top-6" data-incident-id="{{ id }}">
     <div class="flex flex-wrap items-center gap-3 xl:flex-col xl:items-stretch">
-      {% if state == "triggered" %}
+      {% if ongoing && !acks.mine %}
       <button type="button" data-incident-action="acknowledge" data-incident-id="{{ id }}"
               class="sticker-btn sticker-btn--primary min-h-10 px-4 py-2 text-sm font-medium motion-safe:hover:-translate-y-0.5">
         acknowledge

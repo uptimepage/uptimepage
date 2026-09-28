@@ -12,7 +12,7 @@ mod common;
 use common::{make_user, unique_slug};
 use sqlx::PgPool;
 use uptimepage::domain::{
-    IncidentEventKind, IncidentState, NewIncidentNotification, NewManualIncident,
+    ActorType, IncidentEventKind, IncidentState, NewIncidentNotification, NewManualIncident,
     NotificationOutcome, NotificationReason, NotificationStatus, OrgId,
 };
 use uptimepage::storage::{
@@ -1754,6 +1754,164 @@ async fn an_unattributed_ack_keeps_its_credit_but_still_logs_the_next_one_pg() {
     assert_eq!(audit[0].1["actor_type"], "link");
     assert_eq!(audit[0].1["incident_id"], id.to_string());
     assert_eq!(audit[1].0, Some(user.0));
+}
+
+async fn ack_trail(pool: &PgPool, org: OrgId, id: Uuid) -> (i64, i64) {
+    let events: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM incident_events WHERE incident_id = $1 AND kind = 'acknowledged'",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .expect("count events");
+    let audit: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM org_audit_log \
+         WHERE org_id = $1 AND action = 'incident.acknowledged'",
+    )
+    .bind(org.0)
+    .fetch_one(pool)
+    .await
+    .expect("count audit rows");
+    (events, audit)
+}
+
+/// Pressing acknowledge again is not news: a responder who already took the
+/// episode, through the web or MCP, adds no acknowledgement the second time,
+/// only the note they brought. A notification has no login, so a second one
+/// looks the same as the first. A reopen starts a new episode, whose first
+/// acknowledgement is recorded again.
+#[tokio::test]
+#[ignore]
+async fn a_repeat_ack_by_the_same_responder_writes_nothing_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, user, id) = seed(&pool, "increack").await;
+    let store = PgIncidentOpsStore::new(pool.clone());
+
+    for actor in [Actor::User(user), Actor::User(user), Actor::Mcp(user)] {
+        let inc = updated(
+            store
+                .acknowledge(org, id, actor, Some("on it".into()), None)
+                .await
+                .unwrap(),
+        );
+        assert_eq!(inc.acknowledged_by, Some(user));
+    }
+    assert_eq!(ack_trail(&pool, org, id).await, (1, 1));
+    let notes: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT message FROM incident_events WHERE incident_id = $1 AND kind = 'note' \
+         ORDER BY occurred_at",
+    )
+    .bind(id)
+    .fetch_all(&pool)
+    .await
+    .expect("read notes");
+    assert_eq!(
+        notes,
+        vec![Some("on it".to_string()), Some("on it".to_string())],
+        "a note brought by a repeat is kept as a note"
+    );
+
+    for note in [
+        "Acknowledged from a notification link",
+        "Acknowledged in Pushover",
+    ] {
+        updated(
+            store
+                .acknowledge(org, id, Actor::Link, Some(note.into()), None)
+                .await
+                .unwrap(),
+        );
+    }
+    assert_eq!(ack_trail(&pool, org, id).await, (2, 2));
+    let notes_now: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM incident_events WHERE incident_id = $1 AND kind = 'note'",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .expect("count notes");
+    assert_eq!(notes_now, 2, "a notification's fixed label is not a note");
+
+    store
+        .resolve(org, id, Actor::User(user), None)
+        .await
+        .expect("resolve");
+    store
+        .reopen(org, id, Actor::User(user), None)
+        .await
+        .expect("reopen");
+    updated(
+        store
+            .acknowledge(org, id, Actor::User(user), None, None)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(ack_trail(&pool, org, id).await, (3, 3));
+    let list = store
+        .acknowledgements(org, &[id])
+        .await
+        .expect("list")
+        .remove(&id)
+        .expect("acknowledged");
+    assert_eq!(list.len(), 1, "the reopened episode starts its own list");
+    assert_eq!(list[0].actor_id, Some(user));
+}
+
+/// Everyone in the org can acknowledge, and each is listed once in the order
+/// they did it; the first keeps the credit on the incident. A member whose
+/// account is deleted stays on the list without a name.
+#[tokio::test]
+#[ignore]
+async fn every_member_who_acknowledges_is_listed_once_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, dev, id) = seed(&pool, "incacklist").await;
+    let manager = make_user(&pool, "incacklistmgr").await;
+    sqlx::query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'member')")
+        .bind(manager.0)
+        .bind(org.0)
+        .execute(&pool)
+        .await
+        .expect("add the manager to the org");
+    let store = PgIncidentOpsStore::new(pool.clone());
+
+    for actor in [
+        Actor::User(dev),
+        Actor::Link,
+        Actor::User(manager),
+        Actor::Mcp(dev),
+        Actor::User(manager),
+    ] {
+        updated(store.acknowledge(org, id, actor, None, None).await.unwrap());
+    }
+    let credited = store.get(org, id).await.unwrap().expect("incident");
+    assert_eq!(credited.acknowledged_by, Some(dev));
+
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(manager.0)
+        .execute(&pool)
+        .await
+        .expect("delete account");
+    let list = store
+        .acknowledgements(org, &[id])
+        .await
+        .expect("list")
+        .remove(&id)
+        .expect("acknowledged");
+    let who: Vec<(ActorType, Option<uptimepage::domain::UserId>)> =
+        list.iter().map(|a| (a.actor_type, a.actor_id)).collect();
+    assert_eq!(
+        who,
+        [
+            (ActorType::User, Some(dev)),
+            (ActorType::Link, None),
+            (ActorType::User, None),
+        ]
+    );
+    assert!(list[0].at <= list[1].at && list[1].at <= list[2].at);
 }
 
 /// A resolve that lands twice writes the second to the internal timeline, but
