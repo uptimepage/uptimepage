@@ -2,7 +2,6 @@
 //! a deep link. The bring-your-own `telegram` channel transport is separate
 //! and unaffected.
 
-pub mod ack;
 mod budget;
 mod client;
 mod update;

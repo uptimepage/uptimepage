@@ -23,10 +23,10 @@ use uptimepage::domain::{
     WriteSource,
 };
 use uptimepage::security::app_link::{PUSHOVER_OFFER_COOLDOWN, telegram_start_code};
+use uptimepage::security::incident_ack::button_data;
 use uptimepage::security::sha256_hex;
 use uptimepage::storage::Actor;
 use uptimepage::storage::linked_apps::{Claimant, LinkOutcome, Linked};
-use uptimepage::telegram::ack::callback_data;
 use uuid::Uuid;
 
 const ACK_SECRET: &str = "telegram-button-test-ack-secret";
@@ -99,7 +99,7 @@ async fn rig() -> Rig {
 
 impl Rig {
     fn button(&self, org: OrgId, channel_id: Uuid) -> String {
-        callback_data(ACK_SECRET, org, self.incident_id, channel_id, 0).expect("episode 0 fits")
+        button_data(ACK_SECRET, org, self.incident_id, channel_id, 0).expect("episode 0 fits")
     }
 
     async fn hook(&self, update: Value) -> StatusCode {

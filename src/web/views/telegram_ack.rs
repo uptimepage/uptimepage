@@ -5,10 +5,10 @@
 use crate::app::AppState;
 use crate::domain::{ChannelKind, LinkedApp};
 use crate::security::app_link::external_id;
+use crate::security::incident_ack::Button;
 use crate::storage::linked_apps::{Linked, identify};
 use crate::storage::{Acknowledged, Actor, AppPress, LifecycleOutcome};
 use crate::telegram::Press;
-use crate::telegram::ack::Button;
 
 use super::telegram::{bot, spawn_send};
 

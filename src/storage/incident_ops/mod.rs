@@ -16,7 +16,6 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use crate::domain::{
@@ -35,72 +34,9 @@ mod tests;
 pub use memory::InMemoryIncidentOpsStore;
 pub use pg::PgIncidentOpsStore;
 
-/// Bounds a leaked link: unlike a mailed one this rides in a push payload that
-/// may sit on someone else's server.
-pub const ACK_LINK_TTL_SECS: i64 = 7 * 24 * 60 * 60;
-
 /// A `queued` row is a first attempt still in flight; the retry sweep takes it
 /// over only once it is older than any single delivery can run.
 pub const QUEUED_TAKEOVER_SECS: i64 = 120;
-
-/// Proof for the public acknowledge link, bound to one outage on one incident.
-/// Reproduced at verify time, nothing persisted.
-pub fn incident_ack_token(
-    secret: &str,
-    org: OrgId,
-    incident_id: Uuid,
-    channel_id: Uuid,
-    generation: i64,
-    expires_at: i64,
-) -> String {
-    let gen_exp = format!("{generation}:{expires_at}");
-    crate::security::mac::hmac_sha256_hex(
-        secret.as_bytes(),
-        &[
-            org.0.as_bytes(),
-            incident_id.as_bytes(),
-            channel_id.as_bytes(),
-            gen_exp.as_bytes(),
-        ],
-    )
-}
-
-pub fn verify_incident_ack(
-    secret: &str,
-    org: OrgId,
-    incident_id: Uuid,
-    channel_id: Uuid,
-    generation: i64,
-    expires_at: i64,
-    presented: &str,
-) -> bool {
-    incident_ack_token(secret, org, incident_id, channel_id, generation, expires_at)
-        .as_bytes()
-        .ct_eq(presented.as_bytes())
-        .into()
-}
-
-/// `None` when the base URL or secret is unset, so no dead link reaches a phone.
-pub fn incident_ack_url(
-    base_url: &str,
-    secret: &str,
-    org: OrgId,
-    incident_id: Uuid,
-    channel_id: Uuid,
-    generation: i64,
-    now: DateTime<Utc>,
-) -> Option<String> {
-    let base = base_url.trim_end_matches('/');
-    if base.is_empty() || secret.is_empty() {
-        return None;
-    }
-    let exp = now.timestamp() + ACK_LINK_TTL_SECS;
-    let mac = incident_ack_token(secret, org, incident_id, channel_id, generation, exp);
-    Some(format!(
-        "{base}/incident/ack?o={}&i={incident_id}&c={channel_id}&g={generation}&e={exp}&t={mac}",
-        org.0
-    ))
-}
 
 /// Who is performing an action. Maps onto `incident_events.actor_type` +
 /// `actor_id`.

@@ -9,7 +9,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tokio_util::sync::CancellationToken;
 use uptimepage::domain::{IncidentState, NewManualIncident, OrgId};
-use uptimepage::storage::incident_ops::{ACK_LINK_TTL_SECS, incident_ack_token, incident_ack_url};
+use uptimepage::security::incident_ack::{LINK_TTL_SECS, link_token, link_url};
 use uptimepage::storage::{Actor, IncidentOpsStore};
 use uuid::Uuid;
 
@@ -56,7 +56,7 @@ impl Rig {
             .await
             .unwrap()
             .expect("incident exists");
-        let url = incident_ack_url(
+        let url = link_url(
             BASE,
             SECRET,
             self.org,
@@ -164,7 +164,7 @@ async fn a_link_that_does_not_verify_takes_nothing() {
         rig.org.0,
         rig.incident_id,
         rig.channel_id,
-        incident_ack_token(SECRET, rig.org, rig.incident_id, rig.channel_id, 0, stale),
+        link_token(SECRET, rig.org, rig.incident_id, rig.channel_id, 0, stale),
     ));
 
     // A generation swapped in the query without re-signing.
@@ -198,11 +198,11 @@ async fn a_deployment_without_the_secret_mints_and_honours_nothing() {
     let app = uptimepage::build_app_router(state, CancellationToken::new());
 
     let now = chrono::Utc::now();
-    assert!(incident_ack_url(BASE, "", org, incident.id, Uuid::now_v7(), 0, now).is_none());
+    assert!(link_url(BASE, "", org, incident.id, Uuid::now_v7(), 0, now).is_none());
 
     // A link minted under some other secret is refused, rather than an empty
     // key verifying everything.
-    let path = incident_ack_url(BASE, SECRET, org, incident.id, Uuid::now_v7(), 0, now)
+    let path = link_url(BASE, SECRET, org, incident.id, Uuid::now_v7(), 0, now)
         .unwrap()
         .replace(BASE, "");
     let resp = app
@@ -220,7 +220,7 @@ async fn a_deployment_without_the_secret_mints_and_honours_nothing() {
 
 #[test]
 fn the_link_outlives_a_page_but_not_indefinitely() {
-    assert_eq!(ACK_LINK_TTL_SECS, 7 * 24 * 60 * 60);
+    assert_eq!(LINK_TTL_SECS, 7 * 24 * 60 * 60);
 }
 
 /// The one an expiry alone cannot catch: the incident resolves and comes back

@@ -6,6 +6,7 @@ pub mod cert_probe;
 pub mod crypto;
 pub mod disclosure;
 pub mod email_policy;
+pub mod incident_ack;
 pub mod mac;
 pub mod outbound_connector;
 pub(crate) mod rdap;

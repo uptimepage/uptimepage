@@ -40,6 +40,7 @@ use rules::{retry_after_hint, retry_delay_secs};
 
 mod deliver;
 mod episode;
+mod receipts;
 pub mod rules;
 mod sweep;
 #[cfg(test)]

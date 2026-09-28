@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::OrgId;
-use crate::storage::incident_ops::verify_incident_ack;
+use crate::security::incident_ack::verify_link;
 use crate::storage::{Actor, LifecycleOutcome};
 use crate::templates::filters;
 use crate::web::error::WebResult;
@@ -71,7 +71,7 @@ fn resolve(state: &AppState, q: &AckQuery) -> Option<Link> {
     if expires_at <= Utc::now().timestamp() {
         return None;
     }
-    verify_incident_ack(
+    verify_link(
         &state.incident_ack_secret,
         org,
         incident_id,

@@ -260,7 +260,7 @@ impl Worker {
             }
         };
         if channel.kind == ChannelKind::TelegramApp {
-            return crate::telegram::ack::callback_data(
+            return crate::security::incident_ack::button_data(
                 &self.incident_ack_secret,
                 org,
                 notice.incident_id,
@@ -269,7 +269,7 @@ impl Worker {
             )
             .map(AckControl::TelegramButton);
         }
-        crate::storage::incident_ops::incident_ack_url(
+        crate::security::incident_ack::link_url(
             &self.base_url,
             &self.incident_ack_secret,
             org,
