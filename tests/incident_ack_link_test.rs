@@ -8,9 +8,12 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tokio_util::sync::CancellationToken;
-use uptimepage::domain::{IncidentState, NewManualIncident, OrgId};
+use uptimepage::domain::{
+    ChannelConfig, IncidentState, NewManualIncident, NewNotificationChannel,
+    NotificationChannelUpdate, NtfyConfig, OrgId, WriteSource,
+};
 use uptimepage::security::incident_ack::{LINK_TTL_SECS, link_token, link_url};
-use uptimepage::storage::{Actor, IncidentOpsStore};
+use uptimepage::storage::{Actor, IncidentOpsStore, NotificationChannelStore};
 use uuid::Uuid;
 
 const SECRET: &str = "acknowledge-link-test-secret";
@@ -19,6 +22,7 @@ const BASE: &str = "https://app.example.com";
 struct Rig {
     app: Router,
     ops: std::sync::Arc<dyn IncidentOpsStore>,
+    channels: std::sync::Arc<dyn NotificationChannelStore>,
     org: OrgId,
     incident_id: Uuid,
     channel_id: Uuid,
@@ -39,12 +43,34 @@ async fn rig() -> Rig {
         )
         .await
         .expect("declare incident");
+    let channels = state.notification_channel_store.clone();
+    let channel = channels
+        .create(
+            org,
+            NewNotificationChannel {
+                name: "ops-ntfy".into(),
+                config: ChannelConfig::Ntfy(NtfyConfig {
+                    server_url: "https://ntfy.sh".into(),
+                    topic: "ops-7f3c9a1e".into(),
+                    access_token: None,
+                }),
+                enabled: true,
+                auto_bind_tags: Vec::new(),
+                acknowledge_button: true,
+            },
+            WriteSource::Ui,
+            10,
+            None,
+        )
+        .await
+        .expect("ntfy channel");
     Rig {
         app: uptimepage::build_app_router(state, CancellationToken::new()),
         ops,
+        channels,
         org,
         incident_id: incident.id,
-        channel_id: Uuid::now_v7(),
+        channel_id: channel.id,
     }
 }
 
@@ -216,6 +242,37 @@ async fn a_deployment_without_the_secret_mints_and_honours_nothing() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Switching the button off withdraws the links already out there, for a
+/// topic whose readers should not take incidents; disabling the channel does
+/// the same.
+#[tokio::test]
+async fn a_channel_that_stopped_taking_presses_refuses_its_links() {
+    let rig = rig().await;
+    let link = rig.link().await;
+    for update in [
+        NotificationChannelUpdate {
+            acknowledge_button: Some(false),
+            ..Default::default()
+        },
+        NotificationChannelUpdate {
+            acknowledge_button: Some(true),
+            enabled: Some(false),
+            ..Default::default()
+        },
+    ] {
+        rig.channels
+            .update(rig.org, rig.channel_id, update, WriteSource::Ui, None)
+            .await
+            .unwrap()
+            .expect("channel");
+        let (status, _) = rig.send("GET", &link).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = rig.send("POST", &link).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(rig.state().await, IncidentState::Triggered);
+    }
 }
 
 #[test]

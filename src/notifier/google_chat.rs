@@ -139,9 +139,7 @@ mod tests {
     use super::*;
 
     use crate::domain::NotificationReason;
-    use crate::notifier::card::tests::notice;
-
-    const ACK: &str = "https://app.test/incidents/7/acknowledge?org=1&episode=0";
+    use crate::notifier::card::tests::{ack_page, notice};
 
     fn notifier() -> GoogleChatNotifier {
         GoogleChatNotifier::new(
@@ -152,7 +150,7 @@ mod tests {
                 .parse()
                 .unwrap(),
         )
-        .with_ack_link(Some(ACK.into()))
+        .with_ack_link(Some(ack_page()))
     }
 
     #[test]
@@ -178,7 +176,7 @@ mod tests {
                 "cardId": "acknowledge",
                 "card": {"sections": [{"widgets": [{"buttonList": {"buttons": [{
                     "text": "Acknowledge",
-                    "onClick": {"openLink": {"url": ACK}}
+                    "onClick": {"openLink": {"url": ack_page()}}
                 }]}}]}]}
             }])
         );

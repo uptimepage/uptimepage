@@ -1,6 +1,7 @@
 //! The page an alert's Acknowledge button opens, end to end on the in-memory
 //! app: a GET only shows where the incident stands, the POST takes it in the
-//! signed-in member's name, and an alert from an earlier episode takes nothing.
+//! signed-in member's name, and an alert from an earlier episode, or from a
+//! channel whose button was switched off since, takes nothing.
 
 mod common;
 
@@ -9,17 +10,45 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
-use uptimepage::domain::{IncidentState, NewManualIncident, OrgId, UserId};
+use uptimepage::domain::{
+    ChannelConfig, IncidentState, NewManualIncident, NewNotificationChannel,
+    NotificationChannelUpdate, OrgId, SlackConfig, UserId, WriteSource,
+};
 use uptimepage::notifier::AckControl;
-use uptimepage::storage::{Actor, IncidentOpsStore};
+use uptimepage::storage::{Actor, IncidentOpsStore, NotificationChannelStore};
 use uuid::Uuid;
 
 struct Rig {
     app: Router,
     ops: std::sync::Arc<dyn IncidentOpsStore>,
+    channels: std::sync::Arc<dyn NotificationChannelStore>,
     org: OrgId,
     user: UserId,
     incident_id: Uuid,
+    channel_id: Uuid,
+}
+
+async fn slack_channel(channels: &dyn NotificationChannelStore, org: OrgId) -> Uuid {
+    channels
+        .create(
+            org,
+            NewNotificationChannel {
+                name: "ops-slack".into(),
+                config: ChannelConfig::Slack(SlackConfig {
+                    webhook_url: "https://hooks.slack.com/services/T/B/ack".into(),
+                    mention: None,
+                }),
+                enabled: true,
+                auto_bind_tags: Vec::new(),
+                acknowledge_button: true,
+            },
+            WriteSource::Ui,
+            10,
+            None,
+        )
+        .await
+        .expect("slack channel")
+        .id
 }
 
 async fn rig() -> Rig {
@@ -38,6 +67,8 @@ async fn rig() -> Rig {
         )
         .await
         .expect("declare incident");
+    let channels = state.notification_channel_store.clone();
+    let channel_id = slack_channel(channels.as_ref(), org).await;
     Rig {
         app: common::with_session(
             uptimepage::build_app_router(state, CancellationToken::new()),
@@ -46,15 +77,17 @@ async fn rig() -> Rig {
             None,
         ),
         ops,
+        channels,
         org,
         user,
         incident_id: incident.id,
+        channel_id,
     }
 }
 
 impl Rig {
     fn page(&self, episode: i64) -> String {
-        AckControl::page_path(self.org, self.incident_id, episode)
+        AckControl::page_path(self.org, self.incident_id, self.channel_id, episode)
     }
 
     async fn send(&self, app: &Router, method: &str, path: &str) -> (StatusCode, String) {
@@ -171,27 +204,83 @@ async fn a_resolved_incident_has_nothing_to_take() {
 async fn another_orgs_incident_is_not_found() {
     let rig = rig().await;
     let elsewhere = format!(
-        "/incidents/{}/acknowledge?org={}&episode=0",
+        "/incidents/{}/acknowledge?org={}&channel={}&episode=0",
         rig.incident_id,
-        Uuid::now_v7()
+        Uuid::now_v7(),
+        rig.channel_id
     );
     for path in [
         elsewhere.as_str(),
         &format!(
-            "/incidents/{}/acknowledge?org={}",
-            rig.incident_id, rig.org.0
+            "/incidents/{}/acknowledge?org={}&channel={}",
+            rig.incident_id, rig.org.0, rig.channel_id
         ),
         &format!(
             "/incidents/{}/acknowledge?org={}&episode=0",
-            Uuid::now_v7(),
-            rig.org.0
+            rig.incident_id, rig.org.0
         ),
+        &AckControl::page_path(rig.org, Uuid::now_v7(), rig.channel_id, 0),
     ] {
         let (status, _) = rig.send(&rig.app, "GET", path).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "GET {path}");
         let (status, _) = rig.send(&rig.app, "POST", path).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "POST {path}");
     }
+    assert_eq!(rig.state().await, IncidentState::Triggered);
+}
+
+/// Switching the channel's button off, or disabling the channel, withdraws
+/// the alerts it already sent; the member can still take it from the console.
+#[tokio::test]
+async fn a_channel_that_stopped_offering_the_button_withdraws_its_alerts() {
+    let rig = rig().await;
+    let page = rig.page(0);
+    for update in [
+        NotificationChannelUpdate {
+            acknowledge_button: Some(false),
+            ..Default::default()
+        },
+        NotificationChannelUpdate {
+            acknowledge_button: Some(true),
+            enabled: Some(false),
+            ..Default::default()
+        },
+    ] {
+        rig.channels
+            .update(rig.org, rig.channel_id, update, WriteSource::Ui, None)
+            .await
+            .unwrap()
+            .expect("channel");
+        let (status, body) = rig.send(&rig.app, "GET", &page).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("button withdrawn"), "{body}");
+        assert!(!body.contains("data-incident-acknowledge"), "{body}");
+        let (status, _) = rig.send(&rig.app, "POST", &page).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(rig.state().await, IncidentState::Triggered);
+    }
+    rig.channels
+        .delete(rig.org, rig.channel_id, None)
+        .await
+        .unwrap();
+    let (_, body) = rig.send(&rig.app, "GET", &page).await;
+    assert!(body.contains("button withdrawn"), "{body}");
+    let (status, _) = rig.send(&rig.app, "POST", &page).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(rig.state().await, IncidentState::Triggered);
+}
+
+/// The channel is looked up in the alert's org only, so a channel id from
+/// another org offers nothing here.
+#[tokio::test]
+async fn a_channel_from_another_org_offers_no_button() {
+    let rig = rig().await;
+    let theirs = slack_channel(rig.channels.as_ref(), OrgId(Uuid::now_v7())).await;
+    let page = AckControl::page_path(rig.org, rig.incident_id, theirs, 0);
+    let (_, body) = rig.send(&rig.app, "GET", &page).await;
+    assert!(body.contains("button withdrawn"), "{body}");
+    let (status, _) = rig.send(&rig.app, "POST", &page).await;
+    assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(rig.state().await, IncidentState::Triggered);
 }
 
@@ -209,6 +298,10 @@ async fn a_signed_out_reader_signs_in_and_comes_back_to_the_same_link() {
     assert!(status.is_redirection(), "{status}");
     assert!(location.starts_with("/login?redirect_after="), "{location}");
     assert!(location.contains("episode%3D0"), "{location}");
+    assert!(
+        location.contains(&format!("channel%3D{}", rig.channel_id)),
+        "{location}"
+    );
 }
 
 async fn insert_org(pool: &sqlx::PgPool) -> OrgId {
@@ -275,9 +368,12 @@ async fn an_alert_from_another_of_the_members_orgs_acts_there_pg() {
             .id
         }
     };
+    let channels = state.notification_channel_store.clone();
     let rig = Rig {
         app: app.clone(),
         ops: state.incident_ops_store.clone(),
+        channel_id: slack_channel(channels.as_ref(), alerted).await,
+        channels,
         org: alerted,
         user,
         incident_id: declare(alerted).await,

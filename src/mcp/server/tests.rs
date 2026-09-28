@@ -598,6 +598,7 @@ fn test_channel(id: Uuid, name: &str) -> NotificationChannel {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         auto_bind_tags: Vec::new(),
+        acknowledge_button: true,
     }
 }
 

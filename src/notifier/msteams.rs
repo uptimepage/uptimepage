@@ -294,11 +294,11 @@ mod tests {
 
     #[test]
     fn an_open_incident_offers_acknowledge_before_the_incident_link() {
-        let ack = "https://app.test/incidents/7/acknowledge?org=1&episode=0";
+        let ack = crate::notifier::card::tests::ack_page();
         let n = notice(NotificationReason::Opened);
         let v = serde_json::to_value(MsTeamsNotifier::message(&AlertCard::for_notice(
             &n,
-            Some(ack),
+            Some(&ack),
         )))
         .unwrap();
         let actions = &v["attachments"][0]["content"]["actions"];

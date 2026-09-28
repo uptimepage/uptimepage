@@ -57,9 +57,21 @@ struct Link {
     generation: i64,
 }
 
-/// A bad signature, a malformed id and a lapsed expiry all read the same, so a
-/// prober learns nothing from which one it was.
-fn resolve(state: &AppState, q: &AckQuery) -> Option<Link> {
+/// A bad signature, a malformed id, a lapsed expiry and a channel that no
+/// longer takes presses all read the same, so a prober learns nothing from
+/// which one it was.
+async fn resolve(state: &AppState, q: &AckQuery) -> WebResult<Option<Link>> {
+    let Some((link, channel_id)) = verify(state, q) else {
+        return Ok(None);
+    };
+    let takes = state
+        .notification_channel_store
+        .takes_acknowledgements(link.org, channel_id)
+        .await?;
+    Ok(takes.then_some(link))
+}
+
+fn verify(state: &AppState, q: &AckQuery) -> Option<(Link, Uuid)> {
     if state.incident_ack_secret.is_empty() {
         return None;
     }
@@ -80,11 +92,14 @@ fn resolve(state: &AppState, q: &AckQuery) -> Option<Link> {
         expires_at,
         q.t.trim(),
     )
-    .then_some(Link {
-        org,
-        incident_id,
-        generation,
-    })
+    .then_some((
+        Link {
+            org,
+            incident_id,
+            generation,
+        },
+        channel_id,
+    ))
 }
 
 /// The status carries the outcome as much as the page does: ntfy's one-tap
@@ -112,7 +127,7 @@ pub async fn confirm(
     State(state): State<AppState>,
     Query(q): Query<AckQuery>,
 ) -> WebResult<Response> {
-    if resolve(&state, &q).is_none() {
+    if resolve(&state, &q).await?.is_none() {
         return Ok(page("invalid"));
     }
     Ok(IncidentAckPage {
@@ -128,7 +143,7 @@ pub async fn confirm(
 }
 
 pub async fn ack(State(state): State<AppState>, Query(q): Query<AckQuery>) -> WebResult<Response> {
-    let Some(link) = resolve(&state, &q) else {
+    let Some(link) = resolve(&state, &q).await? else {
         return Ok(page("invalid"));
     };
     let outcome = state

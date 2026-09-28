@@ -641,6 +641,7 @@ impl McpServer {
                     not_delivering: c.is_failing(failure_limit),
                     enabled: c.enabled,
                     auto_bind_tags: c.auto_bind_tags.iter().map(|t| sanitize_data(t)).collect(),
+                    acknowledge_button: c.acknowledge_button && c.kind.offers_acknowledge(),
                 })
                 .collect(),
         }))

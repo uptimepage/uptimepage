@@ -84,9 +84,9 @@
           <span class="text-sm">Replace transport config</span>
         </label>
         <p class="mt-1 text-xs text-muted">
-          Secrets are never shown. Leave unchecked to edit only the name/status
-          and keep the stored secret. Check it to switch the type or re-enter
-          the config.
+          Secrets are never shown. Leave unchecked to keep the stored secret
+          while you edit the rest. Check it to switch the type or re-enter the
+          config.
         </p>
       </div>
       {% endif %}
@@ -805,6 +805,17 @@
         <p class="text-xs text-muted">
           Each alert is one text message to the recipient. Long messages are
           trimmed to keep them to a few segments — carriers bill per segment.
+        </p>
+      </div>
+
+      <div data-acknowledge-toggle data-kinds="{{ form.acknowledge_kinds() }}"{% if !form.offers_acknowledge() %} class="hidden"{% endif %}>
+        <label class="inline-flex items-center gap-2">
+          <input name="acknowledge_button" type="checkbox"{% if form.acknowledge_button %} checked{% endif %}>
+          <span class="text-sm">Acknowledge button</span>
+        </label>
+        <p class="mt-1 text-xs text-muted">
+          Alerts for an open incident carry an Acknowledge button. Turn it off
+          when the people reading this channel should not take incidents from it.
         </p>
       </div>
 

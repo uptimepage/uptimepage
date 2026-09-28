@@ -203,11 +203,11 @@ mod tests {
 
     #[test]
     fn an_open_incident_ends_with_the_acknowledge_link() {
-        let ack = "https://app.test/incidents/7/acknowledge?org=1&episode=0";
+        let ack = crate::notifier::card::tests::ack_page();
         let mut n = notice(NotificationReason::Opened);
         n.note = Some("N".repeat(60_000));
         n.error_sample = Some("E".repeat(60_000));
-        let v = serde_json::to_value(notifier(None).with_ack_link(Some(ack.into())).payload(&n))
+        let v = serde_json::to_value(notifier(None).with_ack_link(Some(ack.clone())).payload(&n))
             .unwrap();
         let text = v["attachments"][0]["text"].as_str().unwrap();
         assert!(text.ends_with(&format!("\n[Acknowledge]({ack})")), "{text}");

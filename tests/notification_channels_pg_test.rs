@@ -37,6 +37,7 @@ fn slack(name: &str, secret: &str) -> NewNotificationChannel {
         }),
         enabled: true,
         auto_bind_tags: Vec::new(),
+        acknowledge_button: true,
     }
 }
 
@@ -745,6 +746,7 @@ async fn telegram_lifecycle_disable_by_external_ref() {
         ),
         enabled: true,
         auto_bind_tags: Vec::new(),
+        acknowledge_button: true,
     };
     // Two orgs share the kicked chat; org A has a second, unrelated link.
     let a = store
@@ -857,6 +859,7 @@ async fn telegram_chat_migration_moves_sealed_config_ref_and_audit_live_pg() {
         }),
         enabled: true,
         auto_bind_tags: Vec::new(),
+        acknowledge_button: true,
     };
     let a = store
         .create(org_a, linked("prod"), WriteSource::Ui, 10, None)
@@ -877,6 +880,7 @@ async fn telegram_chat_migration_moves_sealed_config_ref_and_audit_live_pg() {
                 }),
                 enabled: true,
                 auto_bind_tags: Vec::new(),
+                acknowledge_button: true,
             },
             WriteSource::Api,
             10,
@@ -986,6 +990,7 @@ async fn email_lifecycle_ref_is_derived_and_follows_the_address() {
         config: ChannelConfig::Email(uptimepage::domain::EmailConfig { to: to.into() }),
         enabled: true,
         auto_bind_tags: Vec::new(),
+        acknowledge_button: true,
     };
     let ch = store
         .create(org_a, email("mail", &addr_a), WriteSource::Ui, 10, None)
@@ -1349,6 +1354,7 @@ async fn the_failing_channel_gauge_agrees_with_the_domain_predicate_live_pg() {
                 }),
                 enabled: true,
                 auto_bind_tags: Vec::new(),
+                acknowledge_button: true,
             },
             WriteSource::Ui,
             i64::MAX,
@@ -1424,6 +1430,69 @@ async fn the_failing_channel_gauge_agrees_with_the_domain_predicate_live_pg() {
         failing_now(&pool, LIMIT, "slack").await - slack_before,
         0,
         "a recovered channel stops being counted"
+    );
+
+    cleanup(&pool, &[org_a, org_b], &[user_a, user_b]).await;
+}
+
+/// The switch is stored as sent, kept by a save that leaves it out, and read
+/// back by both the single get the paging path uses and the list.
+#[tokio::test]
+#[ignore = "needs DATABASE_URL"]
+async fn the_acknowledge_button_switch_round_trips_pg() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (org_a, org_b, user_a, user_b) = two_orgs(&pool, "nc-ack").await;
+    let store = PgNotificationChannelStore::new(pool.clone(), None);
+    let mut room = slack("A customer room", "T/B/ackoff");
+    room.acknowledge_button = false;
+    let ch = store
+        .create(org_a, room, WriteSource::Ui, 10, Some(user_a))
+        .await
+        .unwrap();
+    assert!(!ch.acknowledge_button);
+
+    let save = |on| NotificationChannelUpdate {
+        acknowledge_button: on,
+        ..Default::default()
+    };
+    let kept = store
+        .update(org_a, ch.id, save(None), WriteSource::Ui, Some(user_a))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!kept.acknowledge_button);
+    assert!(!store.takes_acknowledgements(org_a, ch.id).await.unwrap());
+    store
+        .update(
+            org_a,
+            ch.id,
+            save(Some(true)),
+            WriteSource::Ui,
+            Some(user_a),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let got = store.get(org_a, ch.id).await.unwrap().unwrap();
+    assert!(got.acknowledge_button);
+    assert!(store.takes_acknowledgements(org_a, ch.id).await.unwrap());
+    // Scoped to the org, and a channel that is gone takes nothing.
+    assert!(!store.takes_acknowledgements(org_b, ch.id).await.unwrap());
+    assert!(
+        !store
+            .takes_acknowledgements(org_a, uuid::Uuid::now_v7())
+            .await
+            .unwrap()
+    );
+    let listed = store.list(org_a).await.unwrap();
+    assert!(
+        listed
+            .iter()
+            .find(|c| c.id == ch.id)
+            .unwrap()
+            .acknowledge_button
     );
 
     cleanup(&pool, &[org_a, org_b], &[user_a, user_b]).await;

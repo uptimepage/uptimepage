@@ -19,8 +19,8 @@ use tower::ServiceExt;
 use uptimepage::app::AppState;
 use uptimepage::domain::{
     ActorType, ChannelConfig, ChannelKind, ExternalId, IncidentAcknowledgement, IncidentState,
-    LinkedApp, NewManualIncident, NewNotificationChannel, OrgId, TelegramAppConfig, UserId,
-    WriteSource,
+    LinkedApp, NewManualIncident, NewNotificationChannel, NotificationChannelUpdate, OrgId,
+    TelegramAppConfig, UserId, WriteSource,
 };
 use uptimepage::security::app_link::{PUSHOVER_OFFER_COOLDOWN, telegram_start_code};
 use uptimepage::security::incident_ack::button_data;
@@ -69,6 +69,7 @@ async fn rig() -> Rig {
                 }),
                 enabled: true,
                 auto_bind_tags: Vec::new(),
+                acknowledge_button: true,
             },
             WriteSource::Ui,
             100,
@@ -332,6 +333,31 @@ async fn a_chat_its_org_cut_loose_acknowledges_nothing() {
         .disable_by_external_ref(ChannelKind::TelegramApp, &CHAT.to_string(), "stopped")
         .await
         .unwrap();
+    rig.press(OLENA, &rig.button(rig.org, rig.channel_id)).await;
+    rig.settle().await;
+    assert!(rig.acks().await.is_empty());
+}
+
+/// Switching the button off withdraws the ones already in the chat, so a room
+/// shared with outsiders stops taking incidents at once.
+#[tokio::test]
+async fn a_chat_with_the_button_switched_off_acknowledges_nothing() {
+    let rig = rig().await;
+    rig.state
+        .notification_channel_store
+        .update(
+            rig.org,
+            rig.channel_id,
+            NotificationChannelUpdate {
+                acknowledge_button: Some(false),
+                ..Default::default()
+            },
+            WriteSource::Ui,
+            None,
+        )
+        .await
+        .unwrap()
+        .expect("channel");
     rig.press(OLENA, &rig.button(rig.org, rig.channel_id)).await;
     rig.settle().await;
     assert!(rig.acks().await.is_empty());

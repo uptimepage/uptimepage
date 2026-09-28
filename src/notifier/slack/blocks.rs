@@ -303,8 +303,8 @@ mod tests {
     /// so the button is a plain link even on an incoming webhook.
     #[test]
     fn an_open_incident_offers_acknowledge_before_the_incident_link() {
-        let ack = "https://app.test/incidents/7/acknowledge?org=1&episode=0";
-        let card = AlertCard::for_notice(&notice(NotificationReason::Opened), Some(ack));
+        let ack = crate::notifier::card::tests::ack_page();
+        let card = AlertCard::for_notice(&notice(NotificationReason::Opened), Some(&ack));
         let v = serde_json::to_value(render(&card, None)).unwrap();
         let buttons = &v[4]["elements"];
         assert_eq!(buttons[0]["text"]["text"], "Acknowledge");

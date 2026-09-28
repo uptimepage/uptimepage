@@ -411,8 +411,8 @@ mod tests {
     /// Discord wants that one without a `custom_id`.
     #[test]
     fn an_open_incident_carries_an_acknowledge_link_button() {
-        let ack = "https://app.test/incidents/7/acknowledge?org=1&episode=0";
-        let card = AlertCard::for_notice(&notice(NotificationReason::Opened), Some(ack));
+        let ack = crate::notifier::card::tests::ack_page();
+        let card = AlertCard::for_notice(&notice(NotificationReason::Opened), Some(&ack));
         let v =
             serde_json::to_value(notifier("https://discord.com/api/webhooks/1/tok").payload(&card))
                 .unwrap();

@@ -45,6 +45,7 @@ fn email_channel(name: &str, to: &str) -> NewNotificationChannel {
         config: ChannelConfig::Email(EmailConfig { to: to.into() }),
         enabled: true,
         auto_bind_tags: Vec::new(),
+        acknowledge_button: true,
     }
 }
 
@@ -205,6 +206,7 @@ async fn mint_cap_and_config_replace_resets_gate() {
                 }),
                 enabled: true,
                 auto_bind_tags: Vec::new(),
+                acknowledge_button: true,
             },
             WriteSource::Ui,
             10,

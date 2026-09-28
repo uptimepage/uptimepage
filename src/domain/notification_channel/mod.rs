@@ -133,6 +133,45 @@ impl ChannelKind {
             Self::Mattermost => "mattermost",
         }
     }
+
+    /// How this kind's alerts carry an Acknowledge button, if they can.
+    /// [`NotificationChannel::acknowledge_button`] then turns it on or off.
+    pub const fn acknowledge_via(self) -> Option<AckVia> {
+        match self {
+            Self::Slack
+            | Self::Discord
+            | Self::MsTeams
+            | Self::GoogleChat
+            | Self::Mattermost
+            | Self::Email => Some(AckVia::Page),
+            Self::Ntfy => Some(AckVia::SignedLink),
+            Self::TelegramApp => Some(AckVia::BotButton),
+            Self::Webhook
+            | Self::Telegram
+            | Self::WhatsApp
+            | Self::WhatsAppApp
+            | Self::PagerDuty
+            | Self::Gotify
+            | Self::Pushover
+            | Self::Sms => None,
+        }
+    }
+
+    pub const fn offers_acknowledge(self) -> bool {
+        self.acknowledge_via().is_some()
+    }
+}
+
+/// The Acknowledge control a kind's alert can hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AckVia {
+    /// A link to the acknowledge page, where the person signs in. All a
+    /// webhook message or a mail can hold.
+    Page,
+    /// A signed link that acknowledges from the notification itself.
+    SignedLink,
+    /// An inline button whose press our own bot receives.
+    BotButton,
 }
 
 /// Transport config, `type`-tagged on the wire (newtype variants flatten the
@@ -310,6 +349,9 @@ pub struct NotificationChannel {
     /// monitor needs no rewrite here.
     #[serde(default)]
     pub auto_bind_tags: Vec<String>,
+    /// Whether alerts for an open incident carry an Acknowledge button. Read
+    /// only by kinds that offer one.
+    pub acknowledge_button: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     /// Where this channel was last changed from (UI, API, or Terraform).
@@ -339,6 +381,13 @@ impl NotificationChannel {
         } else {
             None
         }
+    }
+
+    /// Whether a press on an Acknowledge control this channel already posted
+    /// still counts: switching the button off, disabling the channel or
+    /// turning it into a kind without one withdraws those out there too.
+    pub fn takes_acknowledgements(&self) -> bool {
+        self.enabled && self.acknowledge_button && self.kind.offers_acknowledge()
     }
 
     /// One tag in common is enough: a team owns a set of resources, not an
@@ -400,6 +449,9 @@ pub struct NewNotificationChannel {
     #[serde(default)]
     #[schema(example = json!(["db"]))]
     pub auto_bind_tags: Vec<String>,
+    /// See [`NotificationChannel::acknowledge_button`].
+    #[serde(default = "default_true")]
+    pub acknowledge_button: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
@@ -410,6 +462,7 @@ pub struct NotificationChannelUpdate {
     pub enabled: Option<bool>,
     /// Replaces the whole rule; `[]` clears it.
     pub auto_bind_tags: Option<Vec<String>>,
+    pub acknowledge_button: Option<bool>,
 }
 
 #[cfg(test)]
@@ -830,6 +883,27 @@ mod tests {
         assert!(bad("a+tag@sub.example.co").is_ok());
     }
 
+    #[test]
+    fn a_press_counts_only_on_an_enabled_channel_that_still_offers_the_button() {
+        let ch = sample_channel(false, false);
+        assert!(ch.takes_acknowledgements());
+        let off = NotificationChannel {
+            acknowledge_button: false,
+            ..ch.clone()
+        };
+        assert!(!off.takes_acknowledgements());
+        let disabled = NotificationChannel {
+            enabled: false,
+            ..ch.clone()
+        };
+        assert!(!disabled.takes_acknowledgements());
+        let retyped = NotificationChannel {
+            kind: ChannelKind::Webhook,
+            ..ch
+        };
+        assert!(!retyped.takes_acknowledgements());
+    }
+
     fn sample_channel(kind_email: bool, verified: bool) -> NotificationChannel {
         use chrono::Utc;
         NotificationChannel {
@@ -857,6 +931,7 @@ mod tests {
             failing_since: None,
             last_delivered_at: None,
             auto_bind_tags: Vec::new(),
+            acknowledge_button: true,
             write_source: WriteSource::Ui,
             created_at: Utc::now(),
             updated_at: Utc::now(),

@@ -354,9 +354,9 @@ mod tests {
     /// the link that only looks.
     #[test]
     fn acknowledge_leads_both_bodies() {
-        let ack = "https://app.test/incidents/7/acknowledge?org=1&episode=0";
+        let ack = crate::notifier::card::tests::ack_page();
         let mut a = alert(NotificationReason::Opened);
-        a.ack_url = Some(ack.into());
+        a.ack_url = Some(ack.clone());
         let r = render("Uptimepage", &a);
         assert!(r.text_body.contains(&format!("Acknowledge: {ack}")));
         let html_ack = r.html_body.find("Acknowledge</a>").expect("button");

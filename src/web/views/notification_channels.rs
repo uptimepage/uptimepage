@@ -21,8 +21,8 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::{
-    ChannelConfig, MAX_CHANNEL_NAME_LEN, NewNotificationChannel, NotificationChannel, OrgId,
-    Target, WriteSource,
+    ChannelConfig, ChannelKind, MAX_CHANNEL_NAME_LEN, NewNotificationChannel, NotificationChannel,
+    OrgId, Target, WriteSource,
 };
 use crate::error::AppError;
 use crate::error::codes;
@@ -209,6 +209,7 @@ pub struct ChannelFormModel {
     pub submit_method: &'static str,
     pub name: String,
     pub enabled: bool,
+    pub acknowledge_button: bool,
     /// The channel's tag rule.
     pub auto_bind_tags: Vec<String>,
     /// The org's tags, offered as chips. Carries the rule's own tags even
@@ -245,6 +246,23 @@ impl ChannelFormModel {
     /// WhatsApp number.
     pub fn offers_whatsapp_app(&self) -> bool {
         (self.central_whatsapp && self.mode == "create") || self.kind == "whatsapp_app"
+    }
+
+    /// The kinds the Acknowledge toggle shows for, space-joined for the
+    /// script that follows the type picker.
+    pub fn acknowledge_kinds(&self) -> String {
+        ChannelKind::ALL
+            .iter()
+            .filter(|k| k.offers_acknowledge())
+            .map(|k| k.as_db_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    pub fn offers_acknowledge(&self) -> bool {
+        ChannelKind::ALL
+            .iter()
+            .any(|k| k.offers_acknowledge() && k.as_db_str() == self.kind)
     }
 }
 
@@ -484,6 +502,7 @@ fn empty_create_form() -> ChannelFormModel {
         submit_method: "POST",
         name: String::new(),
         enabled: true,
+        acknowledge_button: true,
         auto_bind_tags: Vec::new(),
         tag_options: Vec::new(),
         disabled_reason: String::new(),
@@ -635,6 +654,7 @@ fn form_from_channel(c: NotificationChannel) -> ChannelFormModel {
         submit_method: "PATCH",
         name: c.name,
         enabled: c.enabled,
+        acknowledge_button: c.acknowledge_button,
         auto_bind_tags: c.auto_bind_tags,
         tag_options: Vec::new(),
         disabled_reason: c.disabled_reason.unwrap_or_default(),
@@ -681,6 +701,7 @@ pub async fn create_channel_deduped(
             enabled: true,
             // A connect flow knows only the destination; rules come later.
             auto_bind_tags: Vec::new(),
+            acknowledge_button: true,
         };
         match store
             .create(org, new, WriteSource::Ui, max_channels, block_log.user)
@@ -895,6 +916,47 @@ mod tests {
         assert!(html.contains(r#"value="web" class="sr-only">"#));
     }
 
+    /// The toggle's wrapper and checkbox, up to the end of its label.
+    fn ack_toggle(html: &str) -> &str {
+        let rest = &html[html.find("data-acknowledge-toggle").unwrap()..];
+        &rest[..rest.find("</label>").unwrap()]
+    }
+
+    fn render_form(form: ChannelFormModel) -> String {
+        ChannelFormPage {
+            active_tab: TAB_NOTIFICATIONS,
+            form,
+        }
+        .render()
+        .unwrap()
+    }
+
+    /// Shown only where alerts can carry the button, on for a new channel,
+    /// and an edit reads back what was saved.
+    #[test]
+    fn the_acknowledge_toggle_follows_the_kind_and_the_saved_switch() {
+        let html = render_form(empty_create_form());
+        let toggle = ack_toggle(&html);
+        assert!(
+            toggle.contains(
+                r#"data-kinds="slack telegram_app discord msteams google_chat email ntfy mattermost""#
+            ),
+            "{toggle}"
+        );
+        assert!(!toggle.contains("hidden"), "{toggle}");
+        assert!(toggle.contains("checked"), "{toggle}");
+
+        let mut off = slack_channel("https://hooks.slack.com/services/T/B/x");
+        off.acknowledge_button = false;
+        let html = render_form(form_from_channel(off));
+        assert!(!ack_toggle(&html).contains("checked"), "{html}");
+
+        let mut webhook = empty_create_form();
+        webhook.kind = "webhook";
+        let html = render_form(webhook);
+        assert!(ack_toggle(&html).contains(r#"class="hidden""#), "{html}");
+    }
+
     #[test]
     fn edit_form_linked_telegram_shows_chat_info_not_inputs() {
         use chrono::Utc;
@@ -916,6 +978,7 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             auto_bind_tags: Vec::new(),
+            acknowledge_button: true,
         };
         let form = form_from_channel(ch);
         assert_eq!(form.kind, "telegram_app");
@@ -984,6 +1047,7 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             auto_bind_tags: Vec::new(),
+            acknowledge_button: true,
         }
     }
 

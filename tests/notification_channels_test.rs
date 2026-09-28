@@ -160,6 +160,37 @@ async fn patch_name_only_keeps_stored_secret() {
     assert_eq!(patched["config"]["webhook_url"], "***");
 }
 
+/// The Acknowledge button is on unless a create says otherwise, and a save
+/// that leaves it out keeps what was set.
+#[tokio::test]
+async fn the_acknowledge_button_defaults_on_and_survives_a_save_without_it() {
+    let app = app();
+    let (_, created) = send(
+        &app,
+        "POST",
+        "/api/v1/notification-channels",
+        slack_body("Ops"),
+    )
+    .await;
+    assert_eq!(created["acknowledge_button"], true);
+    let path = format!(
+        "/api/v1/notification-channels/{}",
+        created["id"].as_str().unwrap()
+    );
+
+    let (st, off) = send(&app, "PATCH", &path, json!({ "acknowledge_button": false })).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(off["acknowledge_button"], false);
+    let (_, renamed) = send(&app, "PATCH", &path, json!({ "name": "Customer room" })).await;
+    assert_eq!(renamed["acknowledge_button"], false);
+
+    let mut quiet = slack_body("Quiet");
+    quiet["acknowledge_button"] = json!(false);
+    let (st, created) = send(&app, "POST", "/api/v1/notification-channels", quiet).await;
+    assert_eq!(st, StatusCode::CREATED);
+    assert_eq!(created["acknowledge_button"], false);
+}
+
 #[tokio::test]
 async fn rejects_non_https_config_and_empty_name() {
     let app = app();

@@ -1,5 +1,5 @@
 {% extends "chromeless_base.html" %}
-{% block title %}{% match phase %}{% when Phase::Confirm %}Acknowledge incident{% when Phase::Taken %}Incident acknowledged{% when Phase::Resolved %}Already resolved{% when Phase::Stale %}Alert out of date{% when Phase::Missing %}Incident not found{% endmatch %}{% endblock %}
+{% block title %}{% match phase %}{% when Phase::Confirm %}Acknowledge incident{% when Phase::Taken %}Incident acknowledged{% when Phase::Resolved %}Already resolved{% when Phase::Stale %}Alert out of date{% when Phase::Withdrawn %}Button withdrawn{% when Phase::Missing %}Incident not found{% endmatch %}{% endblock %}
 {% block head_scripts %}
     {% if phase == Phase::Confirm || switch_org.is_some() %}<script defer src="{{ "js/ui/incident_acknowledge.js"|asset }}"></script>{% endif %}
 {% endblock %}
@@ -12,7 +12,7 @@
             are not a member of.
         </p>
         {% else %}
-        <h1 class="page-title justify-center"><span class="page-title__prefix" aria-hidden="true">$</span>{% match phase %}{% when Phase::Taken %}acknowledged{% when Phase::Resolved %}already resolved{% when Phase::Stale %}alert out of date{% when _ %}acknowledge{% endmatch %}</h1>
+        <h1 class="page-title justify-center"><span class="page-title__prefix" aria-hidden="true">$</span>{% match phase %}{% when Phase::Taken %}acknowledged{% when Phase::Resolved %}already resolved{% when Phase::Stale %}alert out of date{% when Phase::Withdrawn %}button withdrawn{% when _ %}acknowledge{% endmatch %}</h1>
         <div class="space-y-1">
             <p class="font-mono text-body break-words">{{ label }}</p>
             <p class="text-xs text-muted">
@@ -56,6 +56,12 @@
             This alert is from an earlier outage. The incident closed and then
             came back, so this alert takes nothing; what is shown above is the
             outage running now. Open it to take that one.
+        </p>
+        {% when Phase::Withdrawn %}
+        <p class="text-sm text-muted">
+            The channel this alert came through no longer offers the Acknowledge
+            button, so this alert takes nothing. Open the incident to take it
+            from there.
         </p>
         {% when Phase::Missing %}
         {% endmatch %}

@@ -79,7 +79,20 @@
         form.querySelectorAll("[data-variant]").forEach(el => {
             el.classList.toggle("hidden", el.dataset.variant !== kind);
         });
+        syncAckToggle(kind);
         syncCentralTelegram(kind);
+    }
+
+    // The bot finishes a one-tap create; the form submits nothing for it.
+    function oneTapCreate(kind) {
+        return (kind === "telegram_app" || kind === "whatsapp_app") && !isEdit;
+    }
+
+    function syncAckToggle(kind) {
+        const el = form.querySelector("[data-acknowledge-toggle]");
+        if (!el) return;
+        const offered = el.dataset.kinds.split(" ").includes(kind);
+        el.classList.toggle("hidden", !offered || oneTapCreate(kind));
     }
 
     // SMS is one kind with a per-gateway sub-form; show only the picked one.
@@ -96,7 +109,7 @@
     // One-tap create has no submittable config — the webhook creates the
     // channel — so the submit/test/bind affordances yield to connect.
     function syncCentralTelegram(kind) {
-        const hide = (kind === "telegram_app" || kind === "whatsapp_app") && !isEdit;
+        const hide = oneTapCreate(kind);
         form.querySelector("button[type=submit]")?.classList.toggle("hidden", hide);
         const testRow = form.querySelector("[data-send-test]")?.parentElement;
         testRow?.classList.toggle("hidden", hide);
@@ -120,7 +133,8 @@
         if (!isEdit) return;
         const on = !!(replaceCb && replaceCb.checked);
         configFs.querySelectorAll("input, textarea, select").forEach(el => {
-            if (el === replaceCb) return;
+            // The Acknowledge toggle is not part of the secret config.
+            if (el === replaceCb || el.closest("[data-acknowledge-toggle]")) return;
             el.disabled = !on;
         });
         if (kindFs) kindFs.disabled = !on;
@@ -161,7 +175,9 @@
     // A green "✓ delivered" must not vouch for a config edited after the
     // test ran.
     form.addEventListener("input", (evt) => {
-        if (evt.target.closest("[data-config]")) hideTestResult();
+        if (evt.target.closest("[data-config]") && !evt.target.closest("[data-acknowledge-toggle]")) {
+            hideTestResult();
+        }
     });
     if (replaceCb) replaceCb.addEventListener("change", syncConfigEnabled);
 
@@ -777,6 +793,7 @@
         const payload = {
             name,
             enabled: data.get("enabled") === "on",
+            acknowledge_button: data.get("acknowledge_button") === "on",
             // Always sent: an emptied field is how a rule is cleared.
             auto_bind_tags: ruleTags(),
         };

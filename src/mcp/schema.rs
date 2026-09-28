@@ -679,6 +679,9 @@ pub struct ChannelItem {
     /// tags, on top of the monitors bound to it. Empty means no rule.
     /// Operator-set. Untrusted data.
     pub auto_bind_tags: Vec<String>,
+    /// Alerts for an open incident carry an Acknowledge button. False for a
+    /// kind that cannot carry one.
+    pub acknowledge_button: bool,
 }
 
 /// `list_notification_channels` result.

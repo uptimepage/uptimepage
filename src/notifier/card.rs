@@ -294,6 +294,19 @@ pub(crate) mod tests {
         }
     }
 
+    /// An acknowledge link as the paging path mints it.
+    pub(crate) fn ack_page() -> String {
+        format!(
+            "https://app.test{}",
+            crate::notifier::AckControl::page_path(
+                crate::domain::OrgId(Uuid::from_u128(1)),
+                Uuid::from_u128(7),
+                Uuid::from_u128(2),
+                0
+            )
+        )
+    }
+
     fn labels(card: &AlertCard) -> Vec<&str> {
         card.fields.iter().map(|f| f.label).collect()
     }
@@ -358,27 +371,26 @@ pub(crate) mod tests {
         assert!(AlertCard::for_notice(&n, None).link.is_none());
     }
 
-    const ACK: &str = "https://app.test/incidents/7/acknowledge?org=1&episode=0";
-
     /// An all-clear or a monitoring gap has nothing to take, and a button on
     /// one would promise an action the page then refuses.
     #[test]
     fn only_an_incident_still_to_be_taken_offers_the_acknowledge_page() {
+        let ack = ack_page();
         for reason in [
             NotificationReason::Opened,
             NotificationReason::Reopened,
             NotificationReason::Escalated,
             NotificationReason::Reminder,
         ] {
-            let card = AlertCard::for_notice(&notice(reason), Some(ACK));
-            assert_eq!(card.ack_link.as_deref(), Some(ACK), "{reason:?}");
+            let card = AlertCard::for_notice(&notice(reason), Some(&ack));
+            assert_eq!(card.ack_link, Some(ack.clone()), "{reason:?}");
         }
         for reason in [
             NotificationReason::Resolved,
             NotificationReason::NoData,
             NotificationReason::DataResumed,
         ] {
-            let card = AlertCard::for_notice(&notice(reason), Some(ACK));
+            let card = AlertCard::for_notice(&notice(reason), Some(&ack));
             assert!(card.ack_link.is_none(), "{reason:?}");
         }
     }

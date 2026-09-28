@@ -228,30 +228,29 @@ impl Worker {
     /// Acknowledge control for one page, pinned to the incident's current
     /// episode so a page kept on a phone through a reopen cannot silence what
     /// followed.
-    async fn ack_control(
+    pub(super) async fn ack_control(
         &self,
         org: OrgId,
         channel: &crate::domain::NotificationChannel,
         notice: &IncidentNotice,
     ) -> Option<crate::notifier::AckControl> {
-        use crate::domain::ChannelKind;
+        use crate::domain::{AckVia, ChannelKind};
         use crate::notifier::{AckControl, PushAck};
+        let via = channel.kind.acknowledge_via()?;
+        if !channel.acknowledge_button || !notice.reason.awaits_acknowledgement() {
+            return None;
+        }
         let signed = !self.incident_ack_secret.is_empty();
-        // Checked before the episode lookup, a query on the paging path: only
-        // these render a control, and only when they can deliver it.
-        let renders = match channel.kind {
-            ChannelKind::Ntfy => signed && !self.base_url.is_empty(),
-            ChannelKind::TelegramApp => signed && self.central_bot.is_some(),
-            // Their buttons can only open a URL.
-            ChannelKind::Slack
-            | ChannelKind::Discord
-            | ChannelKind::MsTeams
-            | ChannelKind::GoogleChat
-            | ChannelKind::Mattermost => !self.base_url.is_empty(),
-            ChannelKind::Email => !self.base_url.is_empty() && self.email.is_some(),
-            _ => false,
+        // Checked before the episode lookup, a query on the paging path.
+        let deliverable = match via {
+            AckVia::SignedLink => signed && !self.base_url.is_empty(),
+            AckVia::BotButton => signed && self.central_bot.is_some(),
+            AckVia::Page => {
+                !self.base_url.is_empty()
+                    && (channel.kind != ChannelKind::Email || self.email.is_some())
+            }
         };
-        if !renders || !notice.reason.awaits_acknowledgement() {
+        if !deliverable {
             return None;
         }
         let generation = match self.ops.generation(org, notice.incident_id).await {
@@ -264,8 +263,8 @@ impl Worker {
                 return None;
             }
         };
-        match channel.kind {
-            ChannelKind::TelegramApp => crate::security::incident_ack::button_data(
+        match via {
+            AckVia::BotButton => crate::security::incident_ack::button_data(
                 &self.incident_ack_secret,
                 org,
                 notice.incident_id,
@@ -273,7 +272,7 @@ impl Worker {
                 generation,
             )
             .map(AckControl::TelegramButton),
-            ChannelKind::Ntfy => crate::security::incident_ack::link_url(
+            AckVia::SignedLink => crate::security::incident_ack::link_url(
                 &self.base_url,
                 &self.incident_ack_secret,
                 org,
@@ -283,10 +282,10 @@ impl Worker {
                 chrono::Utc::now(),
             )
             .map(|url| AckControl::Link(PushAck { url })),
-            _ => Some(AckControl::Page(format!(
+            AckVia::Page => Some(AckControl::Page(format!(
                 "{}{}",
                 self.base_url.trim_end_matches('/'),
-                AckControl::page_path(org, notice.incident_id, generation)
+                AckControl::page_path(org, notice.incident_id, channel.id, generation)
             ))),
         }
     }

@@ -184,6 +184,7 @@ async fn seed_channel(pool: &PgPool, org: OrgId, name: &str) -> Uuid {
                 }),
                 enabled: true,
                 auto_bind_tags: Vec::new(),
+                acknowledge_button: true,
             },
             WriteSource::Ui,
             i64::MAX,

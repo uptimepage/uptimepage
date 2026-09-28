@@ -484,11 +484,14 @@ never read, mutate, or test another's channels.
   "name": "Ops Slack",
   "enabled": true,
   "config": { "type": "slack", "webhook_url": "https://hooks.slack.com/services/T/B/XXXX" },
-  "auto_bind_tags": ["db"]
+  "auto_bind_tags": ["db"],
+  "acknowledge_button": true
 }
 ```
 
 `auto_bind_tags` is the channel's tag rule: on top of the monitors bound to it, the channel pages any monitor carrying at least one of these tags, resolved when the alert fires. Optional on create, replaced whole on `PATCH`, and `[]` clears it. Tags obey the same rules as monitor tags, except that matching ignores case: a rule reading `DB` covers a monitor tagged `db`, and two spellings of one tag are stored once. Tag *filters* elsewhere in the API stay exact.
+
+`acknowledge_button` says whether alerts for an open incident carry an Acknowledge button. Optional, `true` by default. Only the kinds that can carry one read it: `slack`, `discord`, `msteams`, `google_chat`, `mattermost`, `email`, `ntfy` and `telegram_app`.
 
 `config` is `type`-tagged. Supported transports:
 

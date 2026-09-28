@@ -67,7 +67,7 @@ async fn acknowledge(state: &AppState, press: &Press) -> Outcome {
     };
     let channels = match state
         .notification_channel_store
-        .find_by_external_ref(ChannelKind::TelegramApp, &press.chat_id.to_string())
+        .acknowledging_by_external_ref(ChannelKind::TelegramApp, &press.chat_id.to_string())
         .await
     {
         Ok(channels) => channels,

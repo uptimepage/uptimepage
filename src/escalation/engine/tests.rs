@@ -39,6 +39,7 @@ async fn failing_channel(store: &InMemoryNotificationChannelStore) -> Uuid {
                 }),
                 enabled: true,
                 auto_bind_tags: Vec::new(),
+                acknowledge_button: true,
             },
             WriteSource::Ui,
             100,
@@ -509,6 +510,7 @@ async fn unverified_email_channel_records_failure_without_sending() {
                 }),
                 enabled: true,
                 auto_bind_tags: Vec::new(),
+                acknowledge_button: true,
             },
             WriteSource::Ui,
             100,
@@ -1765,6 +1767,7 @@ async fn an_unverified_email_channel_is_not_flagged_as_failing() {
                 }),
                 enabled: true,
                 auto_bind_tags: Vec::new(),
+                acknowledge_button: true,
             },
             WriteSource::Ui,
             100,
@@ -2189,26 +2192,7 @@ async fn a_manually_declared_incident_is_never_held() {
 #[tokio::test]
 async fn an_alert_mail_links_the_acknowledge_page_for_its_episode() {
     let channels = Arc::new(InMemoryNotificationChannelStore::new());
-    let cid = channels
-        .create(
-            org(),
-            NewNotificationChannel {
-                name: "oncall-mail".into(),
-                config: ChannelConfig::Email(EmailConfig {
-                    to: "oncall@example.test".into(),
-                }),
-                enabled: true,
-                auto_bind_tags: Vec::new(),
-            },
-            WriteSource::Ui,
-            100,
-            None,
-        )
-        .await
-        .unwrap()
-        .id;
-    let upd = channels.get(org(), cid).await.unwrap().unwrap().updated_at;
-    assert!(channels.set_verified(org(), cid, upd).await.unwrap());
+    let cid = verified_mail_channel(&channels, true).await;
     let target = target_with_channel(cid);
     let tid = target.id;
     let ops = Arc::new(InMemoryIncidentOpsStore::new());
@@ -2228,10 +2212,91 @@ async fn an_alert_mail_links_the_acknowledge_page_for_its_episode() {
     assert_eq!(sent.len(), 2);
     let opened = sent[0].template.render("Uptimepage").text_body;
     let page = format!(
-        "https://app.test/incidents/{id}/acknowledge?org={}&episode=0",
+        "https://app.test/incidents/{id}/acknowledge?org={}&channel={cid}&episode=0",
         org().0
     );
     assert!(opened.contains(&format!("Acknowledge: {page}")), "{opened}");
     let resolved = sent[1].template.render("Uptimepage").text_body;
     assert!(!resolved.contains("/acknowledge"), "{resolved}");
+}
+
+async fn verified_mail_channel(
+    channels: &InMemoryNotificationChannelStore,
+    acknowledge_button: bool,
+) -> Uuid {
+    let cid = channels
+        .create(
+            org(),
+            NewNotificationChannel {
+                name: "oncall-mail".into(),
+                config: ChannelConfig::Email(EmailConfig {
+                    to: "oncall@example.test".into(),
+                }),
+                enabled: true,
+                auto_bind_tags: Vec::new(),
+                acknowledge_button,
+            },
+            WriteSource::Ui,
+            100,
+            None,
+        )
+        .await
+        .unwrap()
+        .id;
+    let upd = channels.get(org(), cid).await.unwrap().unwrap().updated_at;
+    assert!(channels.set_verified(org(), cid, upd).await.unwrap());
+    cid
+}
+
+/// A room whose readers should not take incidents still gets the alert, only
+/// without the button.
+#[tokio::test]
+async fn a_channel_with_the_button_off_pages_without_it() {
+    let channels = Arc::new(InMemoryNotificationChannelStore::new());
+    let cid = verified_mail_channel(&channels, false).await;
+    let target = target_with_channel(cid);
+    let ops = Arc::new(InMemoryIncidentOpsStore::new());
+    let id = seed_incident(&ops, Some(target.id));
+    let targets = Arc::new(InMemoryTargetStore::from_vec(vec![target]));
+    let (eng, mail) = engine_mailing(ops, targets, channels, EscalationConfig::default());
+
+    eng.page(org(), id, NotificationReason::Opened)
+        .await
+        .unwrap();
+
+    let sent = mail.sent();
+    assert_eq!(sent.len(), 1);
+    let body = sent[0].template.render("Uptimepage").text_body;
+    assert!(!body.contains("/acknowledge"), "{body}");
+}
+
+/// Every kind that offers a control gets one only while its switch is on,
+/// the bearer ones included: an ntfy link or a bot button lets anyone reading
+/// the room take the incident.
+#[tokio::test]
+async fn the_switch_decides_the_control_for_every_kind_that_offers_one() {
+    let channels = Arc::new(InMemoryNotificationChannelStore::new());
+    let cid = verified_mail_channel(&channels, true).await;
+    let mut channel = channels.get(org(), cid).await.unwrap().unwrap();
+    let ops = Arc::new(InMemoryIncidentOpsStore::new());
+    let mut notice = crate::notifier::card::tests::notice(NotificationReason::Opened);
+    notice.incident_id = seed_incident(&ops, None);
+    let targets = Arc::new(InMemoryTargetStore::from_vec(Vec::new()));
+    let (mut eng, _) = engine_mailing(ops, targets, channels, EscalationConfig::default());
+    let w = Arc::get_mut(&mut eng.w).expect("sole owner");
+    w.incident_ack_secret = "engine-acknowledge-test-secret".into();
+    w.central_bot = Some(crate::notifier::CentralBotDelivery {
+        token: "123:engine-test".into(),
+        budget: Arc::new(crate::telegram::TelegramSendBudget::new()),
+    });
+
+    for kind in crate::domain::ChannelKind::ALL {
+        channel.kind = *kind;
+        channel.acknowledge_button = true;
+        let on = eng.w.ack_control(org(), &channel, &notice).await;
+        assert_eq!(on.is_some(), kind.offers_acknowledge(), "{kind:?}");
+        channel.acknowledge_button = false;
+        let off = eng.w.ack_control(org(), &channel, &notice).await;
+        assert!(off.is_none(), "{kind:?}");
+    }
 }

@@ -21,6 +21,7 @@ fn slack(name: &str) -> NewNotificationChannel {
         }),
         enabled: true,
         auto_bind_tags: Vec::new(),
+        acknowledge_button: true,
     }
 }
 

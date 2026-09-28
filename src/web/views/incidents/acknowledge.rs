@@ -2,7 +2,8 @@
 //! mail alert lands. The person signs in, so the ack names them. GET changes
 //! nothing, so a link scanner, a prefetch or a page that navigates here takes
 //! nothing and moves nobody to another org; the POST acknowledges, pinned to
-//! the episode the alert was about.
+//! the episode the alert was about, while the channel it came through still
+//! offers the button.
 
 use askama::Template;
 use askama_web::WebTemplate;
@@ -29,11 +30,14 @@ pub struct AlertLinkQuery {
     #[serde(default)]
     pub org: String,
     #[serde(default)]
+    pub channel: String,
+    #[serde(default)]
     pub episode: String,
 }
 
 struct AlertLink {
     org: OrgId,
+    channel: Uuid,
     /// The episode the alert was sent for; a reopen since makes it stale.
     episode: i64,
 }
@@ -42,6 +46,7 @@ impl AlertLinkQuery {
     fn link(&self) -> Option<AlertLink> {
         Some(AlertLink {
             org: OrgId(Uuid::parse_str(self.org.trim()).ok()?),
+            channel: Uuid::parse_str(self.channel.trim()).ok()?,
             episode: self.episode.trim().parse().ok()?,
         })
     }
@@ -55,6 +60,9 @@ pub enum Phase {
     Resolved,
     /// The incident reopened since the alert went out.
     Stale,
+    /// The channel the alert came through no longer offers the button:
+    /// switched off, disabled or deleted since.
+    Withdrawn,
     /// No such incident, or not in an org the viewer belongs to. One answer
     /// for both, so the page confirms nothing to an outsider.
     #[default]
@@ -86,14 +94,24 @@ fn missing() -> Response {
 }
 
 /// Stale before resolved, the order the store refuses in: an alert from an
-/// earlier outage is out of date whatever the incident did since.
-fn phase(inc: &OpsIncident, episode: i64, link: &AlertLink, acks: &AckList) -> Phase {
+/// earlier outage is out of date whatever the incident did since. A withdrawn
+/// button only replaces the offer, so the page still says what became of the
+/// incident.
+fn phase(
+    inc: &OpsIncident,
+    episode: i64,
+    link: &AlertLink,
+    acks: &AckList,
+    offered: bool,
+) -> Phase {
     if episode != link.episode {
         Phase::Stale
     } else if !inc.state.is_open() {
         Phase::Resolved
     } else if acks.mine {
         Phase::Taken
+    } else if !offered {
+        Phase::Withdrawn
     } else {
         Phase::Confirm
     }
@@ -113,6 +131,14 @@ async fn is_member(
         return Ok(session.active_org_id == Some(org));
     };
     Ok(crate::storage::orgs::is_active_member(pool, user, org).await?)
+}
+
+/// Whether the channel the alert came through still offers the button.
+async fn still_offered(state: &AppState, link: &AlertLink) -> WebResult<bool> {
+    Ok(state
+        .notification_channel_store
+        .takes_acknowledgements(link.org, link.channel)
+        .await?)
 }
 
 pub async fn acknowledge_page(
@@ -136,7 +162,7 @@ pub async fn acknowledge_page(
     let Some(inc) = state.incident_ops_store.get(org, id).await? else {
         return Ok(missing());
     };
-    let (members, mut acks, episode, monitor_name) = tokio::try_join!(
+    let (members, mut acks, episode, monitor_name, offered) = tokio::try_join!(
         members_map(&state, org),
         async {
             Ok(state
@@ -151,6 +177,7 @@ pub async fn acknowledge_page(
                 None => None,
             })
         },
+        still_offered(&state, &link),
     )?;
     let Some(episode) = episode else {
         return Ok(missing());
@@ -158,7 +185,7 @@ pub async fn acknowledge_page(
     let acks = ack_list(&acks.remove(&id).unwrap_or_default(), user, &members);
     let ongoing = inc.state.is_open();
     Ok(AcknowledgePage {
-        phase: phase(&inc, episode, &link, &acks),
+        phase: phase(&inc, episode, &link, &acks, offered),
         id: id.to_string(),
         label: incident_label(inc.title.clone(), monitor_name),
         severity: inc.severity.as_db_str(),
@@ -172,7 +199,7 @@ pub async fn acknowledge_page(
             .flatten(),
         monitored: inc.target_id.is_some(),
         acks,
-        action: AckControl::page_path(org, id, link.episode),
+        action: AckControl::page_path(org, id, link.channel, link.episode),
         switch_org: (session.active_org_id != Some(org)).then(|| org.0.to_string()),
     }
     .into_response())
@@ -191,8 +218,15 @@ pub async fn acknowledge(
     let Some(link) = q.link() else {
         return Ok(StatusCode::NOT_FOUND);
     };
-    if !is_member(&state, &session, user, link.org).await? {
+    let (member, offered) = tokio::try_join!(
+        is_member(&state, &session, user, link.org),
+        still_offered(&state, &link),
+    )?;
+    if !member {
         return Ok(StatusCode::NOT_FOUND);
+    }
+    if !offered {
+        return Ok(StatusCode::CONFLICT);
     }
     let outcome = state
         .incident_ops_store
@@ -227,6 +261,7 @@ mod tests {
     fn link(episode: i64) -> AlertLink {
         AlertLink {
             org: OrgId(Uuid::nil()),
+            channel: Uuid::nil(),
             episode,
         }
     }
@@ -241,30 +276,53 @@ mod tests {
     #[test]
     fn an_alert_from_an_earlier_outage_takes_nothing_whatever_came_since() {
         for state in [IncidentState::Triggered, IncidentState::Resolved] {
-            let p = phase(&incident(state), 2, &link(1), &mine(false));
+            let p = phase(&incident(state), 2, &link(1), &mine(false), true);
             assert_eq!(p, Phase::Stale, "{state:?}");
         }
+    }
+
+    /// A withdrawn button only takes away the offer: what became of the
+    /// incident still reads as it would.
+    #[test]
+    fn a_withdrawn_button_replaces_only_the_offer() {
+        let open = incident(IncidentState::Triggered);
+        assert_eq!(
+            phase(&open, 1, &link(1), &mine(false), false),
+            Phase::Withdrawn
+        );
+        assert_eq!(phase(&open, 1, &link(1), &mine(true), false), Phase::Taken);
+        let closed = incident(IncidentState::Resolved);
+        assert_eq!(
+            phase(&closed, 1, &link(1), &mine(false), false),
+            Phase::Resolved
+        );
+        assert_eq!(phase(&open, 2, &link(1), &mine(false), false), Phase::Stale);
     }
 
     #[test]
     fn the_current_episode_offers_the_button_until_the_viewer_took_it() {
         let inc = incident(IncidentState::Acknowledged);
-        assert_eq!(phase(&inc, 1, &link(1), &mine(false)), Phase::Confirm);
-        assert_eq!(phase(&inc, 1, &link(1), &mine(true)), Phase::Taken);
+        assert_eq!(phase(&inc, 1, &link(1), &mine(false), true), Phase::Confirm);
+        assert_eq!(phase(&inc, 1, &link(1), &mine(true), true), Phase::Taken);
         let closed = incident(IncidentState::Resolved);
-        assert_eq!(phase(&closed, 1, &link(1), &mine(false)), Phase::Resolved);
+        assert_eq!(
+            phase(&closed, 1, &link(1), &mine(false), true),
+            Phase::Resolved
+        );
     }
 
     #[test]
-    fn a_link_missing_its_org_or_episode_is_no_link() {
-        let q = |org: &str, episode: &str| AlertLinkQuery {
+    fn a_link_missing_its_org_channel_or_episode_is_no_link() {
+        let q = |org: &str, channel: &str, episode: &str| AlertLinkQuery {
             org: org.into(),
+            channel: channel.into(),
             episode: episode.into(),
         };
-        let org = Uuid::now_v7().to_string();
-        assert!(q(&org, "3").link().is_some());
-        assert!(q(&org, "").link().is_none());
-        assert!(q("acme", "3").link().is_none());
+        let id = Uuid::now_v7().to_string();
+        assert!(q(&id, &id, "3").link().is_some());
+        assert!(q(&id, &id, "").link().is_none());
+        assert!(q(&id, "", "3").link().is_none());
+        assert!(q("acme", &id, "3").link().is_none());
     }
 
     fn render(page: AcknowledgePage) -> String {
@@ -281,7 +339,7 @@ mod tests {
             open_for: Some("12m 0s".into()),
             monitored: true,
             acks: mine(false),
-            action: "/incidents/7/acknowledge?org=1&episode=0".into(),
+            action: "/incidents/7/acknowledge?org=1&channel=2&episode=0".into(),
             switch_org: None,
         }
     }
@@ -296,11 +354,18 @@ mod tests {
         let confirm = page(Phase::Confirm);
         assert!(confirm.contains("data-incident-acknowledge"), "{confirm}");
         assert!(
-            confirm.contains(r#"data-action="/incidents/7/acknowledge?org=1&#38;episode=0""#),
+            confirm.contains(
+                r#"data-action="/incidents/7/acknowledge?org=1&#38;channel=2&#38;episode=0""#
+            ),
             "{confirm}"
         );
         assert!(confirm.contains("incident_acknowledge"), "script loaded");
-        for other in [Phase::Taken, Phase::Resolved, Phase::Stale] {
+        for other in [
+            Phase::Taken,
+            Phase::Resolved,
+            Phase::Stale,
+            Phase::Withdrawn,
+        ] {
             let html = page(other);
             assert!(!html.contains("data-incident-acknowledge"), "{other:?}");
             assert!(html.contains(r#"href="/incidents/7""#), "{other:?}");
@@ -310,6 +375,12 @@ mod tests {
     #[test]
     fn a_stale_alert_says_it_is_from_an_earlier_outage() {
         assert!(page(Phase::Stale).contains("earlier outage"));
+    }
+
+    #[test]
+    fn a_withdrawn_alert_says_its_channel_no_longer_offers_the_button() {
+        let html = page(Phase::Withdrawn);
+        assert!(html.contains("no longer offers the Acknowledge"), "{html}");
     }
 
     /// Stopping reminders already happened, so a second responder is told

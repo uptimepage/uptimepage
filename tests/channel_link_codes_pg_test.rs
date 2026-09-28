@@ -190,6 +190,7 @@ async fn status_poll_is_org_scoped_and_transitions() {
                 config: app_config("-100123"),
                 enabled: true,
                 auto_bind_tags: Vec::new(),
+                acknowledge_button: true,
             },
             WriteSource::Ui,
             10,

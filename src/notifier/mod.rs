@@ -78,11 +78,13 @@ impl AckControl {
     }
 
     /// Where [`Self::Page`] points, relative to the app. The org rides along
-    /// so a member of several lands in the one the alert is about, and the
-    /// episode so an alert kept through a reopen takes nothing after it.
-    pub fn page_path(org: OrgId, incident_id: Uuid, episode: i64) -> String {
+    /// so a member of several lands in the one the alert is about, the
+    /// channel so switching its button off withdraws the alerts already sent,
+    /// and the episode so an alert kept through a reopen takes nothing after
+    /// it.
+    pub fn page_path(org: OrgId, incident_id: Uuid, channel_id: Uuid, episode: i64) -> String {
         format!(
-            "/incidents/{incident_id}/acknowledge?org={}&episode={episode}",
+            "/incidents/{incident_id}/acknowledge?org={}&channel={channel_id}&episode={episode}",
             org.0
         )
     }
@@ -374,6 +376,7 @@ mod tests {
                     config,
                     enabled: true,
                     auto_bind_tags: Vec::new(),
+                    acknowledge_button: true,
                 },
                 WriteSource::Ui,
                 10,
