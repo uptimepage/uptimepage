@@ -57,7 +57,7 @@ impl Worker {
             let client = match self.pushover_receipts(org, ack.channel_id).await {
                 // Nothing can cancel it — retire the receipt.
                 Ok(None) => {
-                    let _ = self.ops.clear_receipt(org, ack.id).await;
+                    self.clear_receipt(&ack).await;
                     continue;
                 }
                 Ok(Some(client)) => client,
@@ -72,9 +72,36 @@ impl Worker {
                 tracing::warn!(incident_id = %incident_id, error = %err, "pushover emergency cancel failed");
                 continue;
             }
-            if let Err(err) = self.ops.clear_receipt(org, ack.id).await {
-                tracing::warn!(error = %err, "clearing emergency receipt failed");
-            }
+            self.clear_receipt(&ack).await;
+        }
+    }
+
+    /// Takes a receipt out of the poll set. A failure leaves it there for the
+    /// next sweep to settle.
+    async fn clear_receipt(&self, ack: &EmergencyAck) {
+        if let Err(err) = self.ops.clear_receipt(ack.org, ack.id).await {
+            tracing::warn!(
+                org_id = %ack.org.0,
+                incident_id = %ack.incident_id,
+                notification_id = %ack.id,
+                error = %err,
+                "clearing emergency receipt failed"
+            );
+        }
+    }
+
+    /// Records when the page was taken and takes its receipt out of the poll
+    /// set. A failure leaves it there for the next sweep, unless the cancel
+    /// that follows an acknowledgement retires it first, without the time.
+    async fn mark_acked(&self, ack: &EmergencyAck) {
+        if let Err(err) = self.ops.mark_acked(ack.org, ack.id, Utc::now()).await {
+            tracing::warn!(
+                org_id = %ack.org.0,
+                incident_id = %ack.incident_id,
+                notification_id = %ack.id,
+                error = %err,
+                "marking emergency receipt acknowledged failed"
+            );
         }
     }
 
@@ -191,7 +218,7 @@ impl Worker {
         let client = match self.pushover_receipts(ack.org, ack.channel_id).await {
             // Nothing can cancel or read it — retire the receipt.
             Ok(None) => {
-                let _ = self.ops.clear_receipt(ack.org, ack.id).await;
+                self.clear_receipt(&ack).await;
                 return;
             }
             Ok(Some(client)) => client,
@@ -248,7 +275,7 @@ impl Worker {
                     listed,
                 }) => {
                     // Marked first, so the sweep below skips this row.
-                    let _ = self.ops.mark_acked(ack.org, ack.id, Utc::now()).await;
+                    self.mark_acked(&ack).await;
                     self.cancel_emergency(ack.org, ack.incident_id).await;
                     if offers_pushover_link(listed, linked)
                         && let (Some(key), Some(sender)) = (state.acknowledged_by, sender)
@@ -265,7 +292,7 @@ impl Worker {
                         | LifecycleOutcome::Stale,
                     ..
                 }) => {
-                    let _ = self.ops.mark_acked(ack.org, ack.id, Utc::now()).await;
+                    self.mark_acked(&ack).await;
                 }
                 // Unmarked, so the next sweep retries; marking it here would
                 // lose the acknowledgement for good.
@@ -274,7 +301,7 @@ impl Worker {
                 }
             }
         } else if state.expired {
-            let _ = self.ops.clear_receipt(ack.org, ack.id).await;
+            self.clear_receipt(&ack).await;
         } else if self.page_is_spent(&ack).await {
             // Nothing should still be sounding for it. Retired only once the
             // cancel lands, so a failure comes back on the next sweep.
@@ -282,7 +309,7 @@ impl Worker {
                 tracing::warn!(incident_id = %ack.incident_id, error = %err, "pushover emergency cancel failed");
                 return;
             }
-            let _ = self.ops.clear_receipt(ack.org, ack.id).await;
+            self.clear_receipt(&ack).await;
         }
     }
 }
