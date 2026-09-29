@@ -30,6 +30,7 @@ pub mod request;
 pub mod router;
 pub mod scheduler;
 pub mod security;
+pub mod slack;
 pub mod storage;
 pub mod targets;
 pub mod telegram;

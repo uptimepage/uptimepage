@@ -98,6 +98,8 @@ pub struct EngineDeps {
     pub app_link_secret: String,
     /// Operator token + shared send budget for `telegram_app` delivery.
     pub central_bot: Option<crate::notifier::CentralBotDelivery>,
+    /// Apps whose button presses reach this deployment.
+    pub pressed_apps: Vec<crate::domain::LinkedApp>,
     /// Operator Cloud API credentials for `whatsapp_app` delivery.
     pub central_whatsapp: Option<crate::config::WhatsAppAppBotConfig>,
     /// Transactional sender + From identity for `email` delivery.
@@ -123,6 +125,7 @@ struct Worker {
     incident_ack_secret: String,
     app_link_secret: String,
     central_bot: Option<crate::notifier::CentralBotDelivery>,
+    pressed_apps: Vec<crate::domain::LinkedApp>,
     central_whatsapp: Option<crate::config::WhatsAppAppBotConfig>,
     email: Option<crate::notifier::EmailDelivery>,
     /// True while a sweep task is in flight, so overlapping ticks skip rather
@@ -159,6 +162,7 @@ impl EscalationEngine {
             incident_ack_secret,
             app_link_secret,
             central_bot,
+            pressed_apps,
             central_whatsapp,
             email,
         } = deps;
@@ -181,6 +185,7 @@ impl EscalationEngine {
                 incident_ack_secret,
                 app_link_secret,
                 central_bot,
+                pressed_apps,
                 central_whatsapp,
                 email,
                 sweeping: AtomicBool::new(false),

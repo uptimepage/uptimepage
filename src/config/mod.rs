@@ -12,6 +12,7 @@ use config::{Config, Environment, File};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
+use crate::domain::LinkedApp;
 use crate::error::Result;
 
 mod auth;
@@ -38,8 +39,8 @@ pub use limits::{
     RateLimitJanitorConfig, RateLimitsConfig, SignupPolicy,
 };
 pub use notify::{
-    ConnectOauthConfig, EmailProvider, ResendConfig, TelegramBotConfig, TransactionalEmailConfig,
-    WhatsAppAppBotConfig,
+    ConnectOauthConfig, EmailProvider, ResendConfig, SlackInteractivityConfig, TelegramBotConfig,
+    TransactionalEmailConfig, WhatsAppAppBotConfig,
 };
 pub use observability::{GrafanaConfig, HeartbeatConfig, LogFormat, ObservabilityConfig};
 pub use ops::{AgentConfig, EscalationConfig, FlowConfig, McpConfig, OperatorConfig};
@@ -131,6 +132,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub slack_oauth: ConnectOauthConfig,
     #[serde(default)]
+    pub slack_interactivity: SlackInteractivityConfig,
+    #[serde(default)]
     pub discord_oauth: ConnectOauthConfig,
     #[serde(default)]
     pub bootstrap: BootstrapConfig,
@@ -158,5 +161,15 @@ impl AppConfig {
 
         let cfg = builder.build()?;
         Ok(cfg.try_deserialize()?)
+    }
+
+    /// Whether presses on `app`'s own buttons reach this deployment. Pushover
+    /// reports its acknowledgements on a receipt we poll instead.
+    pub fn receives_presses(&self, app: LinkedApp) -> bool {
+        match app {
+            LinkedApp::Telegram => self.telegram.enabled(),
+            LinkedApp::Slack => self.slack_interactivity.enabled(),
+            LinkedApp::Pushover => false,
+        }
     }
 }

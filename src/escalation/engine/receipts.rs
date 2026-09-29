@@ -11,9 +11,7 @@ use crate::domain::{ChannelConfig, ExternalId, LinkedApp, OrgId};
 use crate::error::Result;
 use crate::notifier::pushover::PushoverReceipts;
 use crate::security::app_link::external_id;
-use crate::security::sha256_hex;
-use crate::security::token_hash::generate_raw_token;
-use crate::storage::linked_apps::{Linked, identify};
+use crate::storage::linked_apps::{LinkOffer, Linked, identify, offer_link};
 use crate::storage::{Acknowledged, Actor, EmergencyAck, LifecycleOutcome};
 
 use super::rules::{offers_pushover_link, pushover_acknowledger};
@@ -171,32 +169,23 @@ impl Worker {
         sender: ExternalId,
         device: Option<String>,
     ) {
-        let base = self.base_url.trim_end_matches('/');
-        if base.is_empty() {
-            tracing::info!("pushover link offer skipped: no public base URL to link to");
-            return;
-        }
-        let code = generate_raw_token();
-        let code_hash = sha256_hex(&code);
-        match self
-            .linked_apps
-            .offer(
-                LinkedApp::Pushover,
-                sender,
-                device.as_deref(),
-                &code_hash,
-                Utc::now(),
-            )
-            .await
-        {
-            Ok(true) => {}
-            Ok(false) => return,
+        let offer = offer_link(
+            self.linked_apps.as_ref(),
+            &self.base_url,
+            LinkedApp::Pushover,
+            sender,
+            device.as_deref(),
+            Utc::now(),
+        )
+        .await;
+        let LinkOffer { url, code_hash } = match offer {
+            Ok(Some(offer)) => offer,
+            Ok(None) => return,
             Err(err) => {
                 tracing::warn!(error = %err, "pushover link offer failed");
                 return;
             }
-        }
-        let url = format!("{base}/link/pushover?c={code}");
+        };
         let linked_apps = self.linked_apps.clone();
         tokio::spawn(async move {
             if let Err(err) = client.offer_link(&user_key, &url).await {

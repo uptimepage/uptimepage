@@ -5,7 +5,7 @@ CREATE TABLE linked_app_accounts (
     id            UUID PRIMARY KEY DEFAULT uuidv7(),
     user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     app           TEXT NOT NULL CONSTRAINT linked_app_accounts_app_check
-                      CHECK (app IN ('telegram','pushover')),
+                      CHECK (app IN ('telegram','pushover','slack')),
     -- Keyed hash of the app's id for the person. Only ever matched, and a
     -- Pushover user key is as good as a phone number.
     external_hash TEXT NOT NULL,
@@ -21,13 +21,13 @@ CREATE INDEX idx_linked_app_accounts_user ON linked_app_accounts (user_id);
 
 -- A single-use offer to link. A Telegram one names the person who asked for it,
 -- and the Telegram account that presses Start with it becomes theirs. A
--- Pushover one names the account it was pushed to, which becomes whoever signs
--- in to open it. Spent in the transaction that writes the link.
+-- Pushover or Slack one names the account it was sent to, which becomes
+-- whoever signs in to open it. Spent in the transaction that writes the link.
 CREATE TABLE app_link_challenges (
     id            UUID PRIMARY KEY DEFAULT uuidv7(),
     code_hash     TEXT NOT NULL UNIQUE,
     app           TEXT NOT NULL CONSTRAINT app_link_challenges_app_check
-                      CHECK (app IN ('telegram','pushover')),
+                      CHECK (app IN ('telegram','pushover','slack')),
     user_id       UUID REFERENCES users(id) ON DELETE CASCADE,
     external_hash TEXT,
     label         TEXT CHECK (char_length(label) <= 128),
@@ -51,16 +51,16 @@ CREATE INDEX idx_app_link_challenges_created ON app_link_challenges (created_at)
 -- account, so it shares the member's row per episode with the web and MCP.
 ALTER TABLE incident_events DROP CONSTRAINT incident_events_actor_type_check;
 ALTER TABLE incident_events ADD CONSTRAINT incident_events_actor_type_check
-    CHECK (actor_type IN ('system','user','mcp','link','telegram','pushover'));
+    CHECK (actor_type IN ('system','user','mcp','link','telegram','pushover','slack'));
 ALTER TABLE incident_acknowledgements DROP CONSTRAINT incident_acknowledgements_actor_type_check;
 ALTER TABLE incident_acknowledgements ADD CONSTRAINT incident_acknowledgements_actor_type_check
-    CHECK (actor_type IN ('system','user','mcp','link','telegram','pushover'));
+    CHECK (actor_type IN ('system','user','mcp','link','telegram','pushover','slack'));
 
 -- Who pressed, as the app knows them, kept only when nobody is named: two
 -- people nobody linked are still two acknowledgements. A signed link knows no
 -- sender, so it keeps counting once.
 ALTER TABLE incident_acknowledgements
-    ADD COLUMN sender TEXT CHECK (sender IS NULL OR (anonymous AND actor_type IN ('telegram','pushover')));
+    ADD COLUMN sender TEXT CHECK (sender IS NULL OR (anonymous AND actor_type IN ('telegram','pushover','slack')));
 DROP INDEX uq_incident_acknowledgements_anonymous;
 CREATE UNIQUE INDEX uq_incident_acknowledgements_anonymous
     ON incident_acknowledgements (incident_id, episode, actor_type, sender) NULLS NOT DISTINCT

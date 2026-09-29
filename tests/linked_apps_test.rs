@@ -519,6 +519,12 @@ async fn the_offer_page_asks_for_a_sign_in_before_it_offers_anything() {
     .await;
     assert!(unknown.contains("link invalid"), "{unknown}");
     assert!(!unknown.contains("link it"));
+
+    // A Telegram link is asked for from the account page, never offered.
+    let telegram = rig
+        .send(get("/link/telegram?c=page-offer"), Some(olena))
+        .await;
+    assert_eq!(telegram.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

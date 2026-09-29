@@ -1,5 +1,6 @@
 //! App accounts on the caller's own account: starting a Telegram link,
-//! spending the Pushover offer an account was sent, and unlinking either.
+//! spending the offer a Pushover or Slack account was sent, and unlinking any
+//! of them.
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -10,7 +11,7 @@ use uuid::Uuid;
 
 use crate::api::json::Json;
 use crate::app::AppState;
-use crate::domain::LinkedApp;
+use crate::domain::{LinkedApp, UserId};
 use crate::error::{AppError, Result, codes};
 use crate::request::{BrowserUser, CurrentUser};
 use crate::security::app_link::{TELEGRAM_LINK_TTL, telegram_start_payload};
@@ -63,11 +64,11 @@ pub async fn start_telegram(
     }))
 }
 
-/// The code from the offer a Pushover account received after it acknowledged
-/// a page without a name.
+/// The code from the offer an app account received after it acknowledged
+/// without a name.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub struct PushoverLinkRequest {
+pub struct LinkOfferRequest {
     pub code: String,
 }
 
@@ -81,7 +82,7 @@ pub struct PushoverLinkRequest {
                    holds that account. Its acknowledgements then name the caller \
                    in every organization they belong to. A code links once; a \
                    Pushover account linked to someone else is refused, not moved.",
-    request_body = PushoverLinkRequest,
+    request_body = LinkOfferRequest,
     responses(
         (status = 204, description = "Linked, or it was the caller's already"),
         (status = 400, body = crate::error::ApiError, description = "Unknown, used or expired code"),
@@ -91,24 +92,57 @@ pub struct PushoverLinkRequest {
 pub async fn link_pushover(
     State(state): State<AppState>,
     BrowserUser(CurrentUser(user_id)): BrowserUser,
-    Json(req): Json<PushoverLinkRequest>,
+    Json(req): Json<LinkOfferRequest>,
+) -> Result<StatusCode> {
+    claim_offer(&state, user_id, LinkedApp::Pushover, &req.code).await
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/me/linked-apps/slack",
+    tag = "account",
+    summary = "Link the Slack account a link offer was sent to",
+    description = "Only the Slack account that pressed Acknowledge sees the offer, \
+                   so presenting its code proves the caller holds that account. \
+                   Its presses then name the caller in every organization they \
+                   belong to. A code links once, within an hour; a Slack account \
+                   linked to someone else is refused, not moved.",
+    request_body = LinkOfferRequest,
+    responses(
+        (status = 204, description = "Linked, or it was the caller's already"),
+        (status = 400, body = crate::error::ApiError, description = "Unknown, used or expired code"),
+        (status = 409, body = crate::error::ApiError, description = "Linked to someone else"),
+    ),
+)]
+pub async fn link_slack(
+    State(state): State<AppState>,
+    BrowserUser(CurrentUser(user_id)): BrowserUser,
+    Json(req): Json<LinkOfferRequest>,
+) -> Result<StatusCode> {
+    claim_offer(&state, user_id, LinkedApp::Slack, &req.code).await
+}
+
+async fn claim_offer(
+    state: &AppState,
+    user_id: UserId,
+    app: LinkedApp,
+    code: &str,
 ) -> Result<StatusCode> {
     let outcome = state
         .linked_app_store
-        .claim(
-            LinkedApp::Pushover,
-            &sha256_hex(req.code.trim()),
-            Claimant::Person(user_id),
-        )
+        .claim(app, &sha256_hex(code.trim()), Claimant::Person(user_id))
         .await?;
     match outcome {
         LinkOutcome::Linked(_) | LinkOutcome::AlreadyYours(_) => {
-            tracing::info!(user_id = %user_id.0, "pushover account linked");
+            tracing::info!(user_id = %user_id.0, app = app.as_db_str(), "app account linked");
             Ok(StatusCode::NO_CONTENT)
         }
         LinkOutcome::Taken => Err(AppError::conflict(
             codes::APP_ACCOUNT_TAKEN,
-            "this Pushover account is linked to another Uptimepage account; unlink it there first",
+            format!(
+                "this {} account is linked to another Uptimepage account; unlink it there first",
+                app.label()
+            ),
         )),
         LinkOutcome::Invalid => Err(AppError::bad_request(
             codes::APP_LINK_INVALID,

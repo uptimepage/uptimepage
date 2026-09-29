@@ -236,7 +236,12 @@ impl Worker {
     ) -> Option<crate::notifier::AckControl> {
         use crate::domain::{AckVia, ChannelKind};
         use crate::notifier::{AckControl, PushAck};
-        let via = channel.kind.acknowledge_via()?;
+        let via = match channel.kind.acknowledge_via()? {
+            // Nothing here would receive the press, so the channel links to the
+            // page like a pasted webhook does.
+            AckVia::Button(app) if !self.pressed_apps.contains(&app) => AckVia::Page,
+            via => via,
+        };
         if !channel.acknowledge_button || !notice.reason.awaits_acknowledgement() {
             return None;
         }
@@ -244,7 +249,7 @@ impl Worker {
         // Checked before the episode lookup, a query on the paging path.
         let deliverable = match via {
             AckVia::SignedLink => signed && !self.base_url.is_empty(),
-            AckVia::BotButton => signed && self.central_bot.is_some(),
+            AckVia::Button(_) => signed,
             AckVia::Page => {
                 !self.base_url.is_empty()
                     && (channel.kind != ChannelKind::Email || self.email.is_some())
@@ -264,14 +269,14 @@ impl Worker {
             }
         };
         match via {
-            AckVia::BotButton => crate::security::incident_ack::button_data(
+            AckVia::Button(_) => crate::security::incident_ack::button_data(
                 &self.incident_ack_secret,
                 org,
                 notice.incident_id,
                 channel.id,
                 generation,
             )
-            .map(AckControl::TelegramButton),
+            .map(AckControl::Button),
             AckVia::SignedLink => crate::security::incident_ack::link_url(
                 &self.base_url,
                 &self.incident_ack_secret,

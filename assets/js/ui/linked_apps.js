@@ -1,6 +1,6 @@
 // App accounts that put a name on acknowledgements: start a Telegram link or
-// unlink one from the account page, or link the Pushover account an offer was
-// sent to.
+// unlink one from the account page, or link the Pushover or Slack account an
+// offer was sent to.
 (function () {
     "use strict";
 
@@ -50,14 +50,14 @@
         });
     });
 
-    const offer = document.querySelector("[data-link-pushover]");
+    const offer = document.querySelector("[data-link-offer]");
     if (!offer) return;
     const result = document.querySelector("[data-link-result]");
     const button = offer.querySelector("button");
     button.addEventListener("click", async function () {
         button.disabled = true;
         try {
-            const r = await fetch("/api/v1/me/linked-apps/pushover", {
+            const r = await fetch("/api/v1/me/linked-apps/" + encodeURIComponent(offer.dataset.app), {
                 method: "POST",
                 headers,
                 body: JSON.stringify({ code: offer.dataset.code }),

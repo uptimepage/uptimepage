@@ -65,10 +65,6 @@ impl TransportConfig for EmailConfig {
         None
     }
 
-    fn operator_managed(&self) -> bool {
-        false
-    }
-
     fn quiet_broadcast_mention(&mut self) {}
 
     /// The address itself: a provider bounce/complaint must find and

@@ -89,7 +89,7 @@ fn button_mac(
     hmac_sha256(
         secret.as_bytes(),
         &[
-            b"telegram-ack",
+            b"ack-button",
             org.0.as_bytes(),
             incident_id.as_bytes(),
             channel_id.as_bytes(),
@@ -98,13 +98,14 @@ fn button_mac(
     )
 }
 
-/// Callback data for the Acknowledge button on a central-bot Telegram page
-/// about `incident_id`'s episode `generation`, sent to `channel_id`. A client
-/// may send any callback data it likes, so the data is signed. It names the
-/// incident and the episode; the MAC also binds the org and channel, which the
-/// receiver recovers from the chat the press came from. Within Telegram's 64
-/// bytes. `None` for an episode past what the data can carry, which pages
-/// without the button.
+/// The value of an Acknowledge button our own app receives, the central
+/// Telegram bot's or our Slack app's, on a page about `incident_id`'s episode
+/// `generation` sent to `channel_id`. A client may send any value it likes, so
+/// it is signed. It names the incident and the episode; the MAC also binds the
+/// org and channel, which the receiver recovers from the chat or channel the
+/// press came from. Within Telegram's 64 bytes, the tighter of the two. `None`
+/// for an episode past what the value can carry, which pages without the
+/// button.
 pub fn button_data(
     secret: &str,
     org: OrgId,

@@ -52,6 +52,9 @@ name: deploy
 #   Provider OAuth connect buttons (each pair all-or-nothing):
 #     SLACK_OAUTH_CLIENT_ID       operator Slack app client id
 #     SLACK_OAUTH_CLIENT_SECRET   operator Slack app client secret (sensitive)
+#     SLACK_SIGNING_SECRET        same app's signing secret; verifies the button
+#                                 presses Slack posts back (sensitive, optional,
+#                                 needs SLACK_OAUTH_CLIENT_ID)
 #     DISCORD_OAUTH_CLIENT_ID     operator Discord app client id
 #     DISCORD_OAUTH_CLIENT_SECRET operator Discord app client secret (sensitive)
 #   Google OAuth login (pair all-or-nothing; the redirect URL is managed
@@ -220,6 +223,7 @@ jobs:
           # Operator OAuth apps — presence enables the connect buttons.
           SLACK_OAUTH_CLIENT_ID: ${{ secrets.SLACK_OAUTH_CLIENT_ID }}
           SLACK_OAUTH_CLIENT_SECRET: ${{ secrets.SLACK_OAUTH_CLIENT_SECRET }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
           DISCORD_OAUTH_CLIENT_ID: ${{ secrets.DISCORD_OAUTH_CLIENT_ID }}
           DISCORD_OAUTH_CLIENT_SECRET: ${{ secrets.DISCORD_OAUTH_CLIENT_SECRET }}
           # Google OAuth login — presence enables the login button.
@@ -299,6 +303,7 @@ jobs:
                TELEGRAM_BOT_USERNAME='${TELEGRAM_BOT_USERNAME}' \
                SLACK_OAUTH_CLIENT_ID='${SLACK_OAUTH_CLIENT_ID}' \
                SLACK_OAUTH_CLIENT_SECRET='${SLACK_OAUTH_CLIENT_SECRET}' \
+               SLACK_SIGNING_SECRET='${SLACK_SIGNING_SECRET}' \
                DISCORD_OAUTH_CLIENT_ID='${DISCORD_OAUTH_CLIENT_ID}' \
                DISCORD_OAUTH_CLIENT_SECRET='${DISCORD_OAUTH_CLIENT_SECRET}' \
                GOOGLE_OAUTH_CLIENT_ID='${GOOGLE_OAUTH_CLIENT_ID}' \
@@ -805,6 +810,36 @@ jobs:
               n=$(grep -cxF "$pair" .env || true)
               [ "$n" = 1 ] || { echo "::error::${pair%%=*} not written exactly once to .env (count=${n})"; exit 1; }
             done
+          fi
+
+          # --- Slack interactivity (optional) --------------------------------
+          # Same write contract as the blocks above. Verifies the button
+          # presses Slack posts back, so it only means something beside the
+          # Slack OAuth app whose messages carry them.
+          if [ -n "${SLACK_SIGNING_SECRET:-}" ]; then
+            if [ -z "${SLACK_OAUTH_CLIENT_ID:-}" ]; then
+              echo "::error::SLACK_SIGNING_SECRET is set but SLACK_OAUTH_CLIENT_ID is empty"
+              exit 1
+            fi
+            cp .env ".env.bak.$(date +%s).slack-signing"
+            before=$(awk 'END { print NR }' .env)
+            awk '
+              BEGIN { m["UPTIMEPAGE_SLACK_INTERACTIVITY_SIGNING_SECRET"] = ENVIRON["SLACK_SIGNING_SECRET"] }
+              {
+                for (k in m) if ($0 ~ ("^" k "=")) { print k "=" m[k]; seen[k] = 1; next }
+                print
+              }
+              END { for (k in m) if (!seen[k]) print k "=" m[k] }
+            ' .env > .env.next
+            mv .env.next .env
+            after=$(awk 'END { print NR }' .env)
+            # 0..+1: appended only if the key was absent before.
+            if [ "$after" -lt "$before" ] || [ "$after" -gt "$((before + 1))" ]; then
+              echo "::error::.env line count out of range after slack signing upsert (${before} -> ${after})"
+              exit 1
+            fi
+            n=$(grep -cxF "UPTIMEPAGE_SLACK_INTERACTIVITY_SIGNING_SECRET=$(printenv SLACK_SIGNING_SECRET)" .env || true)
+            [ "$n" = 1 ] || { echo "::error::UPTIMEPAGE_SLACK_INTERACTIVITY_SIGNING_SECRET not written exactly once to .env (count=${n})"; exit 1; }
           fi
 
           # --- Discord OAuth app (optional) ----------------------------------

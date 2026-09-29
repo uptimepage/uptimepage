@@ -1,19 +1,16 @@
-//! A press on the central bot's Acknowledge button. The org comes from the chat
-//! the press arrived in, confirmed by the button's MAC. The person comes from
-//! Telegram, and is named only through a Telegram account they linked.
+//! A press on the central bot's Acknowledge button, taken through
+//! [`super::app_ack`]. Telegram answers the presser with a toast and the chat
+//! with a reply to the alert.
 
 use crate::app::AppState;
 use crate::domain::{ChannelKind, LinkedApp};
 use crate::security::app_link::external_id;
-use crate::security::incident_ack::Button;
-use crate::storage::linked_apps::{Linked, identify};
-use crate::storage::{Acknowledged, Actor, AppPress, LifecycleOutcome};
+use crate::storage::linked_apps::Linked;
 use crate::telegram::Press;
 
+use super::app_ack::{GONE, Pressed, Taken, acknowledged_notice, take};
 use super::telegram::{bot, spawn_send};
 
-const GONE: &str = "This button no longer works.";
-const FAILED: &str = "Could not acknowledge. Try again, or use the app.";
 const LINK_HINT: &str =
     "Link Telegram in your Uptimepage account settings so your next presses carry your name.";
 
@@ -61,103 +58,25 @@ async fn answer(state: &AppState, query_id: &str, notice: &str) {
 }
 
 async fn acknowledge(state: &AppState, press: &Press) -> Outcome {
-    let secret = state.incident_ack_secret.as_str();
-    let Some(button) = Button::parse(&press.data).filter(|_| !secret.is_empty()) else {
-        return Outcome::quiet(GONE);
+    let place = press.chat_id.to_string();
+    let pressed = Pressed {
+        app: LinkedApp::Telegram,
+        kind: ChannelKind::TelegramApp,
+        place: &place,
+        sender: external_id(&state.app_link_secret, &press.person.id.to_string()),
+        data: &press.data,
     };
-    let channels = match state
-        .notification_channel_store
-        .acknowledging_by_external_ref(ChannelKind::TelegramApp, &press.chat_id.to_string())
-        .await
-    {
-        Ok(channels) => channels,
-        Err(err) => {
-            tracing::warn!(
-                ?err,
-                chat_id = press.chat_id,
-                "telegram press channel lookup failed"
-            );
-            return Outcome::quiet(FAILED);
-        }
-    };
-    let Some((org, _)) = channels
-        .into_iter()
-        .find(|(org, channel)| button.minted_for(secret, *org, *channel))
-    else {
-        return Outcome::quiet(GONE);
-    };
-    let sender = external_id(&state.app_link_secret, &press.person.id.to_string());
-    let linked = identify(
-        state.linked_app_store.as_ref(),
-        org,
-        LinkedApp::Telegram,
-        sender,
-    )
-    .await;
-    let acked = state
-        .incident_ops_store
-        .acknowledge(
-            org,
-            button.incident_id,
-            Actor::App(AppPress {
-                app: LinkedApp::Telegram,
-                sender,
-                member: linked.member(),
-            }),
-            None,
-            Some(button.generation),
-        )
-        .await;
-    match acked {
-        Ok(Acknowledged {
-            outcome: LifecycleOutcome::Updated(_),
-            listed,
-        }) => {
-            tracing::info!(
-                org_id = %org.0,
-                incident_id = %button.incident_id,
-                named = linked.member().is_some(),
-                listed,
-                "incident acknowledged from telegram"
-            );
-            acknowledged(listed, linked, press.group)
-        }
-        // The responder lost a race with the recovery. Not an error.
-        Ok(Acknowledged {
-            outcome: LifecycleOutcome::IllegalTransition(_),
-            ..
-        }) => Outcome::quiet("This incident is already resolved."),
-        Ok(Acknowledged {
-            outcome: LifecycleOutcome::Stale,
-            ..
-        }) => Outcome::quiet("This alert is from an earlier outage, so nothing changed."),
-        Ok(Acknowledged {
-            outcome: LifecycleOutcome::NotFound,
-            ..
-        }) => Outcome::quiet(GONE),
-        Err(err) => {
-            tracing::warn!(org_id = %org.0, ?err, "telegram acknowledge failed");
-            Outcome::quiet(FAILED)
-        }
+    match take(state, pressed).await {
+        Taken::Acknowledged { listed, linked } => acknowledged(listed, linked, press.group),
+        Taken::Refused(notice) => Outcome::quiet(notice),
     }
 }
 
 /// A press that adds someone to the list is news to a group; in a private chat
 /// with the bot the presser is the only reader and already has the notice.
 fn acknowledged(listed: bool, linked: Linked, group: bool) -> Outcome {
-    let hint = if linked.invites_link() {
-        format!(" {LINK_HINT}")
-    } else {
-        String::new()
-    };
-    let notice = match (listed, linked.member().is_some()) {
-        (true, true) => "Acknowledged.".to_string(),
-        (true, false) => format!("Acknowledged.{hint}"),
-        (false, true) => "You already acknowledged this.".to_string(),
-        (false, false) => format!("You already acknowledged this.{hint}"),
-    };
     Outcome {
-        notice,
+        notice: acknowledged_notice(listed, linked, LINK_HINT),
         announce: listed && group,
     }
 }

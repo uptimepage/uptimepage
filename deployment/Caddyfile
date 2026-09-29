@@ -533,6 +533,27 @@ app.{$UPTIMEPAGE_DOMAIN} {
 		import app_upstream
 	}
 
+	# ─── Slack interactions — anonymous, per-IP edge cap ────────────────
+	# Authenticated in-app by Slack's v0 signature (HMAC, constant-time).
+	# A press carries the whole alert it sits on, form-encoded, so its body
+	# runs larger than the other hooks'. Slack does not retry an
+	# interaction and the presser sees the failure, while every workspace's
+	# presses arrive from Slack's own egress, so the cap stays generous.
+	@slack_hook path /hooks/slack/interactions
+	handle @slack_hook {
+		request_body {
+			max_size 256KB
+		}
+		rate_limit {
+			zone slack_hook {
+				key {remote_host}
+				events 300
+				window 1m
+			}
+		}
+		import app_upstream
+	}
+
 	# ─── Operator surface: app-enforced session auth (SaaS) ─────────────
 	# No edge basic_auth. The health/metrics/public handle blocks above
 	# are terminal; every other (operator) request falls through to the

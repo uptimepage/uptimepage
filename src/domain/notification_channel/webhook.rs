@@ -61,9 +61,5 @@ impl TransportConfig for WebhookConfig {
         Some(&self.url)
     }
 
-    fn operator_managed(&self) -> bool {
-        false
-    }
-
     fn quiet_broadcast_mention(&mut self) {}
 }

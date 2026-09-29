@@ -553,6 +553,11 @@ async fn main() -> Result<()> {
                         budget: telegram_send_budget.clone(),
                     }
                 }),
+                pressed_apps: uptimepage::domain::LinkedApp::ALL
+                    .iter()
+                    .copied()
+                    .filter(|app| cfg.receives_presses(*app))
+                    .collect(),
                 central_whatsapp: cfg.whatsapp_app.enabled().then(|| cfg.whatsapp_app.clone()),
                 email: Some(uptimepage::notifier::EmailDelivery {
                     sender: email_sender.clone(),

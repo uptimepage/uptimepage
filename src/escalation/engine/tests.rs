@@ -188,6 +188,7 @@ fn engine_cfg(
             incident_ack_secret: String::new(),
             app_link_secret: String::new(),
             central_bot: None,
+            pressed_apps: Vec::new(),
             central_whatsapp: None,
             email: None,
         },
@@ -241,6 +242,7 @@ fn engine_mailing_owned(
             incident_ack_secret: String::new(),
             app_link_secret: String::new(),
             central_bot: None,
+            pressed_apps: Vec::new(),
             central_whatsapp: None,
             email: Some(crate::notifier::EmailDelivery {
                 sender: Arc::new(sender.clone()),
@@ -298,6 +300,7 @@ fn engine_maint_policies(
             incident_ack_secret: String::new(),
             app_link_secret: String::new(),
             central_bot: None,
+            pressed_apps: Vec::new(),
             central_whatsapp: None,
             email: None,
         },
@@ -334,6 +337,7 @@ fn engine_with(
             incident_ack_secret: String::new(),
             app_link_secret: String::new(),
             central_bot: None,
+            pressed_apps: Vec::new(),
             central_whatsapp: None,
             email: None,
         },
@@ -2285,10 +2289,7 @@ async fn the_switch_decides_the_control_for_every_kind_that_offers_one() {
     let (mut eng, _) = engine_mailing(ops, targets, channels, EscalationConfig::default());
     let w = Arc::get_mut(&mut eng.w).expect("sole owner");
     w.incident_ack_secret = "engine-acknowledge-test-secret".into();
-    w.central_bot = Some(crate::notifier::CentralBotDelivery {
-        token: "123:engine-test".into(),
-        budget: Arc::new(crate::telegram::TelegramSendBudget::new()),
-    });
+    w.pressed_apps = crate::domain::LinkedApp::ALL.to_vec();
 
     for kind in crate::domain::ChannelKind::ALL {
         channel.kind = *kind;
@@ -2298,5 +2299,39 @@ async fn the_switch_decides_the_control_for_every_kind_that_offers_one() {
         channel.acknowledge_button = false;
         let off = eng.w.ack_control(org(), &channel, &notice).await;
         assert!(off.is_none(), "{kind:?}");
+    }
+}
+
+/// A channel connected through one of our apps carries a button only where
+/// this deployment receives that app's presses; elsewhere it links to the
+/// acknowledge page, rather than carry a button nothing answers.
+#[tokio::test]
+async fn an_app_channel_gets_its_button_only_where_presses_arrive() {
+    use crate::domain::{AckVia, ChannelKind};
+    use crate::notifier::AckControl;
+    let channels = Arc::new(InMemoryNotificationChannelStore::new());
+    let cid = verified_mail_channel(&channels, true).await;
+    let mut channel = channels.get(org(), cid).await.unwrap().unwrap();
+    let ops = Arc::new(InMemoryIncidentOpsStore::new());
+    let mut notice = crate::notifier::card::tests::notice(NotificationReason::Opened);
+    notice.incident_id = seed_incident(&ops, None);
+    let targets = Arc::new(InMemoryTargetStore::from_vec(Vec::new()));
+    let (mut eng, _) = engine_mailing(ops, targets, channels, EscalationConfig::default());
+    Arc::get_mut(&mut eng.w)
+        .expect("sole owner")
+        .incident_ack_secret = "engine-acknowledge-test-secret".into();
+
+    for kind in ChannelKind::ALL {
+        let Some(AckVia::Button(app)) = kind.acknowledge_via() else {
+            continue;
+        };
+        channel.kind = *kind;
+        Arc::get_mut(&mut eng.w).expect("sole owner").pressed_apps = Vec::new();
+        let unreceived = eng.w.ack_control(org(), &channel, &notice).await;
+        assert!(matches!(unreceived, Some(AckControl::Page(_))), "{kind:?}");
+
+        Arc::get_mut(&mut eng.w).expect("sole owner").pressed_apps = vec![app];
+        let received = eng.w.ack_control(org(), &channel, &notice).await;
+        assert!(matches!(received, Some(AckControl::Button(_))), "{kind:?}");
     }
 }

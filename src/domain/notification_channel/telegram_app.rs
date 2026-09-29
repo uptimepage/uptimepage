@@ -44,10 +44,6 @@ impl TransportConfig for TelegramAppConfig {
         None
     }
 
-    fn operator_managed(&self) -> bool {
-        true
-    }
-
     fn quiet_broadcast_mention(&mut self) {}
 
     /// The chat id: a kick/stop on the Telegram side severs every org

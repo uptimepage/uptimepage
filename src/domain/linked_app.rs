@@ -12,15 +12,17 @@ use super::{ActorType, UserId};
 pub enum LinkedApp {
     Telegram,
     Pushover,
+    Slack,
 }
 
 impl LinkedApp {
-    pub const ALL: &'static [Self] = &[Self::Telegram, Self::Pushover];
+    pub const ALL: &'static [Self] = &[Self::Telegram, Self::Pushover, Self::Slack];
 
     pub const fn as_db_str(self) -> &'static str {
         match self {
             Self::Telegram => "telegram",
             Self::Pushover => "pushover",
+            Self::Slack => "slack",
         }
     }
 
@@ -32,6 +34,7 @@ impl LinkedApp {
         match self {
             Self::Telegram => "Telegram",
             Self::Pushover => "Pushover",
+            Self::Slack => "Slack",
         }
     }
 
@@ -39,6 +42,7 @@ impl LinkedApp {
         match self {
             Self::Telegram => ActorType::Telegram,
             Self::Pushover => ActorType::Pushover,
+            Self::Slack => ActorType::Slack,
         }
     }
 }
@@ -74,6 +78,6 @@ mod tests {
         for app in LinkedApp::ALL {
             assert_eq!(LinkedApp::from_db_str(app.as_db_str()), Some(*app));
         }
-        assert_eq!(LinkedApp::from_db_str("slack"), None);
+        assert_eq!(LinkedApp::from_db_str("discord"), None);
     }
 }

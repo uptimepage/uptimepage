@@ -96,9 +96,10 @@ pub fn routes(state: AppState) -> Router {
             "/incident/ack",
             get(views::incident_ack::confirm).post(views::incident_ack::ack),
         )
-        // Only the Pushover account the offer was sent to holds it; signing in
-        // names who it belongs to. Linking itself is a CSRF-guarded API call.
-        .route("/link/pushover", get(views::link_pushover::confirm))
+        // Only the Pushover or Slack account the offer was sent to holds it;
+        // signing in names who it belongs to. Linking itself is a CSRF-guarded
+        // API call.
+        .route("/link/{app}", get(views::link_app::confirm))
         // Public status-page subscriptions: confirm/unsubscribe carry their own
         // token/HMAC proof, so they're always mounted like the verify link.
         .route("/subscribe", post(views::subscribe::subscribe))
@@ -286,6 +287,15 @@ pub fn routes(state: AppState) -> Router {
         r = r.route(
             crate::whatsapp::WEBHOOK_PATH,
             get(views::whatsapp::verify).post(views::whatsapp::webhook),
+        );
+    }
+
+    // Our Slack app's Interactivity Request URL. Mounted only when its
+    // signing secret is configured; the signature is the only auth.
+    if cfg.slack_interactivity.enabled() {
+        r = r.route(
+            crate::slack::INTERACTIONS_PATH,
+            post(views::slack::interactions),
         );
     }
 

@@ -405,6 +405,10 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
             post(handlers::linked_apps::link_pushover),
         )
         .route(
+            "/me/linked-apps/slack",
+            post(handlers::linked_apps::link_slack),
+        )
+        .route(
             "/me/linked-apps/{id}",
             axum::routing::delete(handlers::linked_apps::unlink),
         )

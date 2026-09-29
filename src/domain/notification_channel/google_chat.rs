@@ -39,9 +39,5 @@ impl TransportConfig for GoogleChatConfig {
         Some(&self.webhook_url)
     }
 
-    fn operator_managed(&self) -> bool {
-        false
-    }
-
     fn quiet_broadcast_mention(&mut self) {}
 }

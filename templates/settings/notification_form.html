@@ -37,7 +37,11 @@
       <legend class="panel-label">channel type</legend>
       {# Most-popular channels first; the rest sit below a divider. #}
       <div class="check-type-cards">
+        {% if form.kind == "slack_app" %}
+        {% call reg::chooser_card("data-kind-card", "kind", "slack_app", true, "slack", "connected app", icon="slack") %}{% endcall %}
+        {% else %}
         {% call reg::chooser_card("data-kind-card", "kind", "slack", form.kind == "slack", "slack", "incoming webhook", icon="slack") %}{% endcall %}
+        {% endif %}
         {% call reg::chooser_card("data-kind-card", "kind", "discord", form.kind == "discord", "discord", "channel webhook", icon="discord") %}{% endcall %}
         {% call reg::chooser_card("data-kind-card", "kind", "email", form.kind == "email", "email", "verified address", icon="email") %}{% endcall %}
         {% if form.offers_telegram_app() %}
@@ -67,7 +71,7 @@
         {% call reg::chooser_card("data-kind-card", "kind", "sms", form.kind == "sms", "sms", "Twilio · Vonage · Telnyx · Plivo · Sinch", icon="sms") %}{% endcall %}
         {% call reg::chooser_card("data-kind-card", "kind", "webhook", form.kind == "webhook", "webhook", "POST to your endpoint", icon="webhook") %}{% endcall %}
       </div>
-      {% if form.mode != "create" && form.kind != "telegram_app" && form.kind != "whatsapp_app" %}
+      {% if form.mode != "create" && !form.operator_managed() %}
       <p data-kind-locked-hint class="hidden font-mono text-xs text-quiet"># type locked — tick "Replace transport config" below to change it</p>
       {% endif %}
     </fieldset>
@@ -76,8 +80,8 @@
       <legend>transport</legend>
       <div class="clear-both space-y-5 p-5">
 
-      {# Linked telegram channels have no secrets to replace; unlink = delete. #}
-      {% if form.mode != "create" && form.kind != "telegram_app" && form.kind != "whatsapp_app" %}
+      {# Linked channels have no config to replace; unlink = delete. #}
+      {% if form.mode != "create" && !form.operator_managed() %}
       <div>
         <label class="inline-flex items-center gap-2">
           <input type="checkbox" data-replace-config>
@@ -137,7 +141,27 @@
             webhook URL to hand.
           </span>
         </label>
+        {% if form.kind == "slack" && form.slack_app_presses %}
+        <p class="text-xs text-muted">
+          Connect this channel again with <em>add to Slack</em> and its Acknowledge button
+          takes the incident right in Slack, without signing in. Delete this one once
+          the new channel is bound.
+        </p>
+        {% endif %}
       </div>
+
+      {% if form.kind == "slack_app" %}
+      <div data-variant="slack_app" class="space-y-4">
+        <p class="font-mono text-xs text-quiet">
+          # connected with add to Slack to <span class="text-body">{{ form.config.slack_app_channel }}</span>
+        </p>
+        <p class="text-xs text-muted">
+          Alerts are posted by our Slack app, and a press on their Acknowledge button
+          comes straight back here. There is no config to edit. To move it, delete the
+          channel below and connect again from the new Slack channel.
+        </p>
+      </div>
+      {% endif %}
 
       <div data-variant="discord" class="space-y-4{% if form.kind != "discord" %} hidden{% endif %}">
         {% if form.mode == "create" && form.discord_oauth %}

@@ -1,7 +1,9 @@
 //! Slack "Add to Slack" connect dance. The OAuth exchange returns a
 //! ready-made incoming-webhook URL (Slack's consent screen carries the
-//! channel picker); everything else in the token response — including the
-//! access token — is discarded, so no Slack credential is ever stored.
+//! channel picker) and the ids of the channel and workspace it posts to,
+//! which a press on one of its alerts names. Everything else in the token
+//! response, the access token included, is discarded, so no Slack credential
+//! is ever stored.
 
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::Request;
@@ -21,13 +23,26 @@ const SCOPE: &str = "incoming-webhook";
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 const UA: &str = "uptimepage/slack-connect";
 
-/// Webhook minted by the consent screen; the only part of the token
-/// response that survives.
+/// Webhook minted by the consent screen.
 #[derive(Debug, Clone, Deserialize)]
 pub struct IncomingWebhook {
     pub url: String,
     /// Channel the user picked, e.g. `#ops-alerts`.
     pub channel: String,
+    pub channel_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Team {
+    id: String,
+}
+
+/// The parts of the token response that survive.
+#[derive(Debug, Clone)]
+pub struct Installation {
+    pub webhook: IncomingWebhook,
+    /// `None` for an install across an Enterprise Grid org.
+    pub team_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,6 +50,7 @@ struct TokenResponse {
     ok: bool,
     error: Option<String>,
     incoming_webhook: Option<IncomingWebhook>,
+    team: Option<Team>,
 }
 
 /// The state must already be persisted to `oauth_states` before this URL is
@@ -50,13 +66,13 @@ pub fn authorize_url(cfg: &ConnectOauthConfig, redirect_uri: &str, state: &str) 
 }
 
 /// Exchange the callback `code` at `oauth.v2.access` and keep only the
-/// incoming webhook.
+/// incoming webhook and the workspace it belongs to.
 pub async fn exchange_code(
     http: &OutboundHttpClient,
     cfg: &ConnectOauthConfig,
     redirect_uri: &str,
     code: &str,
-) -> Result<IncomingWebhook> {
+) -> Result<Installation> {
     let payload = crate::auth::url::form_body(&[
         ("client_id", &cfg.client_id),
         ("client_secret", cfg.client_secret.expose_secret()),
@@ -104,10 +120,14 @@ pub async fn exchange_code(
             parsed.error.unwrap_or_else(|| "unknown error".into())
         )));
     }
-    parsed.incoming_webhook.ok_or_else(|| {
+    let webhook = parsed.incoming_webhook.ok_or_else(|| {
         AppError::Other(anyhow::anyhow!(
             "slack token endpoint: ok response without incoming_webhook"
         ))
+    })?;
+    Ok(Installation {
+        webhook,
+        team_id: parsed.team.map(|t| t.id),
     })
 }
 
@@ -141,15 +161,18 @@ mod tests {
     #[test]
     fn token_response_keeps_webhook_and_ignores_access_token() {
         let parsed: TokenResponse = serde_json::from_str(
-            r##"{"ok":true,"access_token":"xoxb-secret","incoming_webhook":
+            r##"{"ok":true,"access_token":"xoxb-secret","team":{"id":"T0AB12CD3","name":"Acme"},
+                "incoming_webhook":
                 {"url":"https://hooks.slack.com/services/T0/B0/XX","channel":"#ops",
-                 "channel_id":"C0","configuration_url":"https://x.slack.com/services/B0"}}"##,
+                 "channel_id":"C0AB12CD3","configuration_url":"https://x.slack.com/services/B0"}}"##,
         )
         .unwrap();
         assert!(parsed.ok);
         let wh = parsed.incoming_webhook.unwrap();
         assert_eq!(wh.channel, "#ops");
+        assert_eq!(wh.channel_id, "C0AB12CD3");
         assert!(wh.url.starts_with("https://hooks.slack.com/"));
+        assert_eq!(parsed.team.unwrap().id, "T0AB12CD3");
     }
 
     #[test]

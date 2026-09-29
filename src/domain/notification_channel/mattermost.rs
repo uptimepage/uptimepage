@@ -100,10 +100,6 @@ impl TransportConfig for MattermostConfig {
         Some(&self.webhook_url)
     }
 
-    fn operator_managed(&self) -> bool {
-        false
-    }
-
     fn quiet_broadcast_mention(&mut self) {
         self.mention = without_broadcast(self.mention.as_deref(), is_broadcast);
     }

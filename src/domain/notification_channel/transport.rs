@@ -37,11 +37,6 @@ pub trait TransportConfig {
     /// omission.
     fn abuse_url(&self) -> Option<&str>;
 
-    /// True when only the operator's own flow may produce this config (a
-    /// caller-supplied destination would ride the operator's credentials).
-    /// No default on purpose, like [`Self::abuse_url`].
-    fn operator_managed(&self) -> bool;
-
     /// Clean up what a paste carries in, before [`Self::validate`] judges the
     /// shape. No default on purpose, like [`Self::abuse_url`]: the console
     /// trims in the browser, so a transport that skips this is broken only for

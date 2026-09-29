@@ -377,6 +377,8 @@ pub enum ActorType {
     Telegram,
     /// Acknowledged in Pushover, named the same way as [`Self::Telegram`].
     Pushover,
+    /// Pressed in Slack, named the same way as [`Self::Telegram`].
+    Slack,
 }
 
 impl ActorType {
@@ -387,6 +389,7 @@ impl ActorType {
         Self::Link,
         Self::Telegram,
         Self::Pushover,
+        Self::Slack,
     ];
     pub fn as_db_str(self) -> &'static str {
         match self {
@@ -396,6 +399,7 @@ impl ActorType {
             Self::Link => "link",
             Self::Telegram => "telegram",
             Self::Pushover => "pushover",
+            Self::Slack => "slack",
         }
     }
     pub fn from_db_str(s: &str) -> Self {
@@ -405,6 +409,7 @@ impl ActorType {
             "link" => Self::Link,
             "telegram" => Self::Telegram,
             "pushover" => Self::Pushover,
+            "slack" => Self::Slack,
             _ => Self::System,
         }
     }
@@ -414,6 +419,7 @@ impl ActorType {
             Self::Mcp => Some("MCP"),
             Self::Telegram => Some(super::LinkedApp::Telegram.label()),
             Self::Pushover => Some(super::LinkedApp::Pushover.label()),
+            Self::Slack => Some(super::LinkedApp::Slack.label()),
             Self::System | Self::User | Self::Link => None,
         }
     }

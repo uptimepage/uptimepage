@@ -30,6 +30,7 @@ mod ntfy;
 mod pagerduty;
 mod pushover;
 mod slack;
+mod slack_app;
 mod sms;
 mod telegram;
 mod telegram_app;
@@ -48,6 +49,7 @@ pub use ntfy::NtfyConfig;
 pub use pagerduty::PagerDutyConfig;
 pub use pushover::PushoverConfig;
 pub use slack::SlackConfig;
+pub use slack_app::SlackAppConfig;
 pub use sms::SmsConfig;
 pub use telegram::TelegramConfig;
 pub use telegram_app::TelegramAppConfig;
@@ -56,7 +58,7 @@ pub use webhook::WebhookConfig;
 pub use whatsapp::WhatsAppConfig;
 pub use whatsapp_app::WhatsAppAppConfig;
 
-use super::WriteSource;
+use super::{LinkedApp, WriteSource};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -67,6 +69,8 @@ use uuid::Uuid;
 pub enum ChannelKind {
     Webhook,
     Slack,
+    #[serde(rename = "slack_app")]
+    SlackApp,
     Telegram,
     #[serde(rename = "telegram_app")]
     TelegramApp,
@@ -95,6 +99,7 @@ impl ChannelKind {
     pub const ALL: &'static [Self] = &[
         Self::Webhook,
         Self::Slack,
+        Self::SlackApp,
         Self::Telegram,
         Self::TelegramApp,
         Self::WhatsApp,
@@ -117,6 +122,7 @@ impl ChannelKind {
         match self {
             Self::Webhook => "webhook",
             Self::Slack => "slack",
+            Self::SlackApp => "slack_app",
             Self::Telegram => "telegram",
             Self::TelegramApp => "telegram_app",
             Self::WhatsApp => "whatsapp",
@@ -145,7 +151,8 @@ impl ChannelKind {
             | Self::Mattermost
             | Self::Email => Some(AckVia::Page),
             Self::Ntfy => Some(AckVia::SignedLink),
-            Self::TelegramApp => Some(AckVia::BotButton),
+            Self::TelegramApp => Some(AckVia::Button(LinkedApp::Telegram)),
+            Self::SlackApp => Some(AckVia::Button(LinkedApp::Slack)),
             Self::Webhook
             | Self::Telegram
             | Self::WhatsApp
@@ -160,6 +167,30 @@ impl ChannelKind {
     pub const fn offers_acknowledge(self) -> bool {
         self.acknowledge_via().is_some()
     }
+
+    /// Whether only the operator's own connect flow may write this kind's
+    /// config: a caller-supplied destination would ride the operator's
+    /// credentials, or point our button presses somewhere the alerts never
+    /// go.
+    pub const fn operator_managed(self) -> bool {
+        match self {
+            Self::SlackApp | Self::TelegramApp | Self::WhatsAppApp => true,
+            Self::Webhook
+            | Self::Slack
+            | Self::Telegram
+            | Self::WhatsApp
+            | Self::Discord
+            | Self::MsTeams
+            | Self::GoogleChat
+            | Self::Email
+            | Self::PagerDuty
+            | Self::Ntfy
+            | Self::Gotify
+            | Self::Pushover
+            | Self::Sms
+            | Self::Mattermost => false,
+        }
+    }
 }
 
 /// The Acknowledge control a kind's alert can hold.
@@ -170,8 +201,9 @@ pub enum AckVia {
     Page,
     /// A signed link that acknowledges from the notification itself.
     SignedLink,
-    /// An inline button whose press our own bot receives.
-    BotButton,
+    /// A button whose press our own app receives there, which tells us who
+    /// pressed it.
+    Button(LinkedApp),
 }
 
 /// Transport config, `type`-tagged on the wire (newtype variants flatten the
@@ -182,6 +214,8 @@ pub enum AckVia {
 pub enum ChannelConfig {
     Webhook(WebhookConfig),
     Slack(SlackConfig),
+    #[serde(rename = "slack_app")]
+    SlackApp(SlackAppConfig),
     Telegram(TelegramConfig),
     #[serde(rename = "telegram_app")]
     TelegramApp(TelegramAppConfig),
@@ -210,6 +244,7 @@ macro_rules! with_transport {
         match $self {
             ChannelConfig::Webhook($c) => $body,
             ChannelConfig::Slack($c) => $body,
+            ChannelConfig::SlackApp($c) => $body,
             ChannelConfig::Telegram($c) => $body,
             ChannelConfig::TelegramApp($c) => $body,
             ChannelConfig::WhatsApp($c) => $body,
@@ -262,9 +297,9 @@ impl ChannelConfig {
         with_transport!(self, |c| c.abuse_url())
     }
 
-    /// See [`TransportConfig::operator_managed`].
+    /// See [`ChannelKind::operator_managed`].
     pub fn operator_managed(&self) -> bool {
-        with_transport!(self, |c| c.operator_managed())
+        self.kind().operator_managed()
     }
 
     /// See [`TransportConfig::normalize`].
@@ -563,6 +598,12 @@ mod tests {
                 webhook_url: "https://hooks.slack.com/x".into(),
                 mention: None,
             }),
+            ChannelConfig::SlackApp(SlackAppConfig {
+                webhook_url: "https://hooks.slack.com/x".into(),
+                channel: "#ops".into(),
+                channel_id: "C0AB12CD3".into(),
+                team_id: Some("T0AB12CD3".into()),
+            }),
             ChannelConfig::Telegram(TelegramConfig {
                 bot_token: "t".into(),
                 chat_id: "1".into(),
@@ -631,15 +672,6 @@ mod tests {
                 .unwrap()
                 .to_string();
             assert_eq!(c.kind().as_db_str(), tag);
-            // Only the linked kinds are mintable solely by the operator's flow.
-            assert_eq!(
-                c.operator_managed(),
-                matches!(
-                    c.kind(),
-                    ChannelKind::TelegramApp | ChannelKind::WhatsAppApp
-                ),
-                "operator_managed drifted for {tag}"
-            );
         }
     }
 

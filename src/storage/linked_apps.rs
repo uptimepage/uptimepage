@@ -12,7 +12,9 @@ use uuid::Uuid;
 
 use crate::domain::{ExternalId, LinkedApp, LinkedAppAccount, OrgId, UserId};
 use crate::error::{AppError, Result};
-use crate::security::app_link::{PUSHOVER_LINK_TTL, PUSHOVER_OFFER_COOLDOWN};
+use crate::security::app_link::{OfferTerms, offer_terms};
+use crate::security::sha256_hex;
+use crate::security::token_hash::generate_raw_token;
 use crate::storage::locks::{advisory_xact_lock, app_account_lock_key, app_link_user_lock_key};
 
 /// Who an app account is to one org.
@@ -106,8 +108,9 @@ pub trait LinkedAppStore: Send + Sync {
         code_hash: &str,
         expires_at: DateTime<Utc>,
     ) -> Result<()>;
-    /// Store a code offering `account` to whoever signs in to open it. `false`
-    /// when the account was offered one within the cooldown, so none is.
+    /// Store a code offering `account` to whoever signs in to open it, on the
+    /// app's [`OfferTerms`]. `false` when the account was offered one within
+    /// the cooldown, so none is.
     async fn offer(
         &self,
         app: LinkedApp,
@@ -142,14 +145,74 @@ fn db_err(what: &'static str) -> impl FnOnce(sqlx::Error) -> AppError {
     move |e| AppError::Other(anyhow::anyhow!("{what}: {e}"))
 }
 
-/// Delete the codes nothing reads any more: each one once it expires, except a
-/// Pushover offer, which the offer cooldown keeps counting until it passes.
+fn terms(app: LinkedApp) -> Result<OfferTerms> {
+    offer_terms(app).ok_or_else(|| {
+        AppError::Other(anyhow::anyhow!(
+            "{} accounts are not offered links",
+            app.as_db_str()
+        ))
+    })
+}
+
+/// A link offer stored for an app account and ready to send.
+#[derive(Debug, Clone)]
+pub struct LinkOffer {
+    /// Opens the offer; whoever signs in there gets the account.
+    pub url: String,
+    /// What the store holds, for taking back an offer that never arrived.
+    pub code_hash: String,
+}
+
+/// Offer `account` to whoever opens the link, on the app's [`OfferTerms`].
+/// `None` when there is no public address to link to, or while the account's
+/// last offer is still cooling down.
+pub async fn offer_link(
+    store: &dyn LinkedAppStore,
+    base_url: &str,
+    app: LinkedApp,
+    account: ExternalId,
+    label: Option<&str>,
+    now: DateTime<Utc>,
+) -> Result<Option<LinkOffer>> {
+    let base = base_url.trim_end_matches('/');
+    if base.is_empty() {
+        tracing::info!(
+            app = app.as_db_str(),
+            "link offer skipped: no public base URL to link to"
+        );
+        return Ok(None);
+    }
+    let code = generate_raw_token();
+    let code_hash = sha256_hex(&code);
+    if !store.offer(app, account, label, &code_hash, now).await? {
+        return Ok(None);
+    }
+    Ok(Some(LinkOffer {
+        url: format!("{base}/link/{}?c={code}", app.as_db_str()),
+        code_hash,
+    }))
+}
+
+/// Delete the codes nothing reads any more: each one once it expires, except
+/// an offer from an app with a cooldown, which keeps counting until the
+/// cooldown passes too.
 pub async fn purge_dead_codes(pool: &PgPool) -> Result<u64> {
+    let now = Utc::now();
+    let (apps, cutoffs): (Vec<&str>, Vec<DateTime<Utc>>) = LinkedApp::ALL
+        .iter()
+        .map(|app| {
+            let cooldown = offer_terms(*app).and_then(|t| t.cooldown);
+            (app.as_db_str(), now - cooldown.unwrap_or_default())
+        })
+        .unzip();
     let done = sqlx::query(
-        "DELETE FROM app_link_challenges \
-         WHERE expires_at < now() AND (external_hash IS NULL OR created_at < $1)",
+        "DELETE FROM app_link_challenges c \
+         USING unnest($1::text[], $2::timestamptz[]) AS t(app, cutoff) \
+         WHERE c.app = t.app AND c.expires_at < $3 AND c.created_at < t.cutoff",
     )
-    .bind(Utc::now() - PUSHOVER_OFFER_COOLDOWN)
+    .bind(&apps)
+    .bind(&cutoffs)
+    .bind(now)
     .execute(pool)
     .await
     .map_err(db_err("purge app link codes"))?;
@@ -272,23 +335,26 @@ impl LinkedAppStore for PgLinkedAppStore {
         code_hash: &str,
         now: DateTime<Utc>,
     ) -> Result<bool> {
+        let terms = terms(app)?;
         let account = account.hex();
         let mut tx = self.pool.begin().await.map_err(db_err("begin"))?;
-        advisory_xact_lock(&mut *tx, &app_account_lock_key(app.as_db_str(), &account))
+        if let Some(cooldown) = terms.cooldown {
+            advisory_xact_lock(&mut *tx, &app_account_lock_key(app.as_db_str(), &account))
+                .await
+                .map_err(db_err("app account lock"))?;
+            let recent: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM app_link_challenges \
+                                WHERE app = $1 AND external_hash = $2 AND created_at > $3)",
+            )
+            .bind(app.as_db_str())
+            .bind(&account)
+            .bind(now - cooldown)
+            .fetch_one(&mut *tx)
             .await
-            .map_err(db_err("app account lock"))?;
-        let recent: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM app_link_challenges \
-                            WHERE app = $1 AND external_hash = $2 AND created_at > $3)",
-        )
-        .bind(app.as_db_str())
-        .bind(&account)
-        .bind(now - PUSHOVER_OFFER_COOLDOWN)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(db_err("recent link offer"))?;
-        if recent {
-            return Ok(false);
+            .map_err(db_err("recent link offer"))?;
+            if recent {
+                return Ok(false);
+            }
         }
         sqlx::query(
             "INSERT INTO app_link_challenges \
@@ -300,7 +366,7 @@ impl LinkedAppStore for PgLinkedAppStore {
         .bind(&account)
         .bind(clean_label(label))
         .bind(now)
-        .bind(now + PUSHOVER_LINK_TTL)
+        .bind(now + terms.ttl)
         .execute(&mut *tx)
         .await
         .map_err(db_err("mint link offer"))?;
@@ -491,13 +557,16 @@ impl LinkedAppStore for InMemoryLinkedAppStore {
         code_hash: &str,
         now: DateTime<Utc>,
     ) -> Result<bool> {
+        let terms = terms(app)?;
         let mut g = self.inner.lock();
-        let cutoff = now - PUSHOVER_OFFER_COOLDOWN;
-        if g.codes
-            .iter()
-            .any(|c| c.app == app && c.account == Some(account) && c.created_at > cutoff)
-        {
-            return Ok(false);
+        if let Some(cooldown) = terms.cooldown {
+            let cutoff = now - cooldown;
+            if g.codes
+                .iter()
+                .any(|c| c.app == app && c.account == Some(account) && c.created_at > cutoff)
+            {
+                return Ok(false);
+            }
         }
         g.codes.push(MemCode {
             code_hash: code_hash.to_string(),
@@ -506,7 +575,7 @@ impl LinkedAppStore for InMemoryLinkedAppStore {
             account: Some(account),
             label: clean_label(label),
             created_at: now,
-            expires_at: now + PUSHOVER_LINK_TTL,
+            expires_at: now + terms.ttl,
             spent: false,
         });
         Ok(true)
@@ -584,7 +653,7 @@ impl LinkedAppStore for InMemoryLinkedAppStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::security::app_link::external_id;
+    use crate::security::app_link::{PUSHOVER_OFFER_COOLDOWN, external_id};
 
     fn olena_telegram() -> ExternalId {
         external_id("s3cret", "4242")
@@ -721,6 +790,72 @@ mod tests {
         assert_eq!(
             store.offered(LinkedApp::Pushover, "o1").await.unwrap(),
             None
+        );
+    }
+
+    #[tokio::test]
+    async fn every_unnamed_slack_press_is_offered_a_link_and_telegram_none() {
+        let store = InMemoryLinkedAppStore::new();
+        let presser = external_id("s3cret", "T0AB12CD3:U0AB12CD3");
+        let now = Utc::now();
+        for code in ["s1", "s2"] {
+            assert!(
+                store
+                    .offer(LinkedApp::Slack, presser, Some("olena"), code, now)
+                    .await
+                    .unwrap()
+            );
+        }
+        assert_eq!(
+            store.offered(LinkedApp::Slack, "s2").await.unwrap(),
+            Some(Some("olena".to_string()))
+        );
+        assert!(
+            store
+                .offer(LinkedApp::Telegram, presser, None, "t1", now)
+                .await
+                .is_err(),
+            "a Telegram link is asked for by the person, never offered"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_offer_link_opens_the_apps_own_page_and_needs_a_public_address() {
+        let store = InMemoryLinkedAppStore::new();
+        let presser = external_id("s3cret", "T0AB12CD3:U0AB12CD3");
+        let now = Utc::now();
+        let offer = |base: &'static str, app| offer_link(&store, base, app, presser, None, now);
+
+        assert!(offer("", LinkedApp::Slack).await.unwrap().is_none());
+        let slack = offer("https://app.example.test/", LinkedApp::Slack)
+            .await
+            .unwrap()
+            .expect("a Slack offer");
+        let code = slack
+            .url
+            .strip_prefix("https://app.example.test/link/slack?c=")
+            .expect("the Slack offer page");
+        assert_eq!(slack.code_hash, sha256_hex(code));
+        assert!(
+            store
+                .offered(LinkedApp::Slack, &slack.code_hash)
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        assert!(
+            offer("https://app.example.test", LinkedApp::Pushover)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            offer("https://app.example.test", LinkedApp::Pushover)
+                .await
+                .unwrap()
+                .is_none(),
+            "a Pushover account waits out its cooldown"
         );
     }
 

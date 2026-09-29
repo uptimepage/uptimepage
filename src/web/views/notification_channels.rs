@@ -72,6 +72,7 @@ pub struct ChannelsPartial {
 pub struct ConfigFields {
     pub slack_webhook_url: String,
     pub slack_mention: String,
+    pub slack_app_channel: String,
     pub discord_webhook_url: String,
     pub discord_mention: String,
     pub msteams_webhook_url: String,
@@ -128,6 +129,7 @@ impl Default for ConfigFields {
         Self {
             slack_webhook_url: String::new(),
             slack_mention: String::new(),
+            slack_app_channel: String::new(),
             discord_webhook_url: String::new(),
             discord_mention: String::new(),
             msteams_webhook_url: String::new(),
@@ -229,6 +231,9 @@ pub struct ChannelFormModel {
     pub central_whatsapp: bool,
     /// Gates the "add to Slack" button on the slack panel (create mode).
     pub slack_oauth: bool,
+    /// A pasted Slack channel is worth connecting again through our app,
+    /// whose Acknowledge button takes the incident in Slack (edit mode).
+    pub slack_app_presses: bool,
     /// Gates the "add to Discord" button on the discord panel (create mode).
     pub discord_oauth: bool,
     /// Email channel still awaiting address verification (edit mode).
@@ -257,6 +262,14 @@ impl ChannelFormModel {
             .map(|k| k.as_db_str())
             .collect::<Vec<_>>()
             .join(" ")
+    }
+
+    /// A linked kind: only its own connect flow writes the config, so the
+    /// edit page shows it and offers nothing to replace.
+    pub fn operator_managed(&self) -> bool {
+        ChannelKind::ALL
+            .iter()
+            .any(|k| k.operator_managed() && k.as_db_str() == self.kind)
     }
 
     pub fn offers_acknowledge(&self) -> bool {
@@ -483,6 +496,8 @@ pub async fn edit_form(
     let mut form = form_from_channel(channel);
     form.central_telegram = state.cfg.telegram.enabled();
     form.central_whatsapp = state.cfg.whatsapp_app.enabled();
+    form.slack_app_presses =
+        state.cfg.slack_oauth.enabled() && state.cfg.slack_interactivity.enabled();
     let (options, picked) = rule_tag_options(&state, org, &form.auto_bind_tags).await?;
     form.tag_options = options;
     form.auto_bind_tags = picked;
@@ -513,6 +528,7 @@ fn empty_create_form() -> ChannelFormModel {
         central_telegram: false,
         central_whatsapp: false,
         slack_oauth: false,
+        slack_app_presses: false,
         discord_oauth: false,
         email_unverified: false,
     }
@@ -530,6 +546,8 @@ fn form_from_channel(c: NotificationChannel) -> ChannelFormModel {
             config.slack_webhook_url = c.webhook_url;
             config.slack_mention = c.mention.unwrap_or_default();
         }
+        // Display-only, same contract as telegram_app.
+        ChannelConfig::SlackApp(c) => config.slack_app_channel = c.channel,
         ChannelConfig::Discord(c) => {
             config.discord_webhook_url = c.webhook_url;
             config.discord_mention = c.mention.unwrap_or_default();
@@ -665,6 +683,7 @@ fn form_from_channel(c: NotificationChannel) -> ChannelFormModel {
         central_telegram: false,
         central_whatsapp: false,
         slack_oauth: false,
+        slack_app_presses: false,
         discord_oauth: false,
         email_unverified,
     }
@@ -939,7 +958,7 @@ mod tests {
         let toggle = ack_toggle(&html);
         assert!(
             toggle.contains(
-                r#"data-kinds="slack telegram_app discord msteams google_chat email ntfy mattermost""#
+                r#"data-kinds="slack slack_app telegram_app discord msteams google_chat email ntfy mattermost""#
             ),
             "{toggle}"
         );
@@ -1025,6 +1044,38 @@ mod tests {
         assert!(html.contains("data-picker-search"));
         assert!(html.contains("data-picker-show-disabled"));
         assert!(html.contains("data-picker-pager"));
+    }
+
+    #[test]
+    fn edit_form_for_add_to_slack_shows_the_channel_and_nothing_to_replace() {
+        let mut ch = slack_channel("https://hooks.slack.com/services/T/B/zzUNIQUESECRETzz");
+        ch.kind = crate::domain::ChannelKind::SlackApp;
+        ch.config = ChannelConfig::SlackApp(crate::domain::SlackAppConfig {
+            webhook_url: "https://hooks.slack.com/services/T/B/zzUNIQUESECRETzz".into(),
+            channel: "#ops-alerts".into(),
+            channel_id: "C0AB12CD3".into(),
+            team_id: Some("T0AB12CD3".into()),
+        });
+        let html = render_form(form_from_channel(ch));
+        assert!(html.contains(r#"value="slack_app""#), "{html}");
+        assert!(html.contains("# connected with add to Slack to"), "{html}");
+        assert!(html.contains("#ops-alerts"), "{html}");
+        assert!(
+            !html.contains("zzUNIQUESECRETzz"),
+            "the webhook is a secret"
+        );
+        assert!(!html.contains("data-replace-config"), "{html}");
+        assert!(!html.contains("Connect this channel again"), "{html}");
+    }
+
+    #[test]
+    fn a_pasted_slack_channel_is_told_about_add_to_slack_only_where_presses_arrive() {
+        let pasted = || slack_channel("https://hooks.slack.com/services/T/B/x");
+        let html = render_form(form_from_channel(pasted()));
+        assert!(!html.contains("Connect this channel again"), "{html}");
+        let mut form = form_from_channel(pasted());
+        form.slack_app_presses = true;
+        assert!(render_form(form).contains("Connect this channel again"));
     }
 
     fn slack_channel(webhook_url: &str) -> NotificationChannel {

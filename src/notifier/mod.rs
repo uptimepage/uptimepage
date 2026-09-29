@@ -47,9 +47,9 @@ pub use crate::notifier::ntfy::PushAck;
 pub enum AckControl {
     /// ntfy's HTTP action: a signed link, pressed by whoever holds the page.
     Link(PushAck),
-    /// A button on a central-bot Telegram page. The press reaches the bot,
-    /// which learns from Telegram who pressed it.
-    TelegramButton(String),
+    /// A button whose press reaches our own app, the central Telegram bot or
+    /// our Slack app, which learns from the app who pressed it.
+    Button(String),
     /// The incident's acknowledge page, for a transport whose buttons can only
     /// open a URL. Whoever presses signs in, so the ack names them.
     Page(String),
@@ -59,13 +59,13 @@ impl AckControl {
     fn link(self) -> Option<PushAck> {
         match self {
             Self::Link(ack) => Some(ack),
-            Self::TelegramButton(_) | Self::Page(_) => None,
+            Self::Button(_) | Self::Page(_) => None,
         }
     }
 
-    fn telegram_button(self) -> Option<String> {
+    fn button(self) -> Option<String> {
         match self {
-            Self::TelegramButton(data) => Some(data),
+            Self::Button(data) => Some(data),
             Self::Link(_) | Self::Page(_) => None,
         }
     }
@@ -73,7 +73,7 @@ impl AckControl {
     fn page(self) -> Option<String> {
         match self {
             Self::Page(url) => Some(url),
-            Self::Link(_) | Self::TelegramButton(_) => None,
+            Self::Link(_) | Self::Button(_) => None,
         }
     }
 
@@ -237,6 +237,11 @@ pub fn build_notifier(
             SlackNotifier::new(http.clone(), parse(&c.webhook_url)?, c.mention_markup())
                 .with_ack_link(page),
         ) as Arc<dyn Notifier>,
+        ChannelConfig::SlackApp(c) => Arc::new(
+            SlackNotifier::new(http.clone(), parse(&c.webhook_url)?, None)
+                .with_ack_link(page)
+                .with_ack_press(ack.and_then(AckControl::button)),
+        ) as Arc<dyn Notifier>,
         ChannelConfig::Telegram(c) => Arc::new(TelegramNotifier::new(
             http.clone(),
             &c.bot_token,
@@ -255,7 +260,7 @@ pub fn build_notifier(
             Arc::new(
                 TelegramNotifier::new(http.clone(), central.bot_token.trim(), c.chat_id.clone())?
                     .with_budget(central.budget.clone())
-                    .with_ack_button(ack.and_then(AckControl::telegram_button)),
+                    .with_ack_button(ack.and_then(AckControl::button)),
             ) as Arc<dyn Notifier>
         }
         ChannelConfig::WhatsApp(c) => {

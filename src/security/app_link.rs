@@ -2,11 +2,11 @@
 //! code carrying one side of the link; the other side proves itself where the
 //! code is spent. Telegram vouches for who pressed Start on a code minted for a
 //! signed-in person, and a signed-in session vouches for who opened a Pushover
-//! offer pushed to one account.
+//! or Slack offer sent to one account.
 
 use chrono::Duration;
 
-use crate::domain::ExternalId;
+use crate::domain::{ExternalId, LinkedApp};
 use crate::security::mac::hmac_sha256;
 
 /// Sets an account link apart from a channel link code, which is 43 random
@@ -20,6 +20,34 @@ pub const PUSHOVER_LINK_TTL: Duration = Duration::hours(24);
 /// Someone who acknowledges from Pushover without linking hears about it at
 /// most this often, however many incidents they take.
 pub const PUSHOVER_OFFER_COOLDOWN: Duration = Duration::days(7);
+/// Only the presser sees the offer, and only until Slack reloads; the next
+/// press brings a fresh one.
+pub const SLACK_LINK_TTL: Duration = Duration::hours(1);
+
+/// How long a link offered to an app account stays open, and how long that
+/// account then waits before it is offered another.
+#[derive(Debug, Clone, Copy)]
+pub struct OfferTerms {
+    pub ttl: Duration,
+    pub cooldown: Option<Duration>,
+}
+
+/// `None` for Telegram, whose links the person asks for instead. A Pushover
+/// offer is a push to a phone, so it is rationed; a Slack one is a message
+/// only the presser sees, so every unnamed press brings one.
+pub const fn offer_terms(app: LinkedApp) -> Option<OfferTerms> {
+    match app {
+        LinkedApp::Telegram => None,
+        LinkedApp::Pushover => Some(OfferTerms {
+            ttl: PUSHOVER_LINK_TTL,
+            cooldown: Some(PUSHOVER_OFFER_COOLDOWN),
+        }),
+        LinkedApp::Slack => Some(OfferTerms {
+            ttl: SLACK_LINK_TTL,
+            cooldown: None,
+        }),
+    }
+}
 
 /// Keyed, so a leaked row cannot be walked back to a Telegram id by hashing
 /// every number there is.

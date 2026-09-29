@@ -1,4 +1,5 @@
 pub mod alert_channel_stop;
+mod app_ack;
 pub mod auth;
 pub mod billing;
 pub mod billing_hook;
@@ -14,7 +15,7 @@ pub mod incident_ack;
 pub mod incidents;
 pub mod invitations;
 pub mod legal;
-pub mod link_pushover;
+pub mod link_app;
 pub mod nav;
 pub mod notification_channels;
 pub mod on_call;
@@ -26,6 +27,7 @@ pub mod public_status;
 pub mod region_display;
 pub mod resend_hook;
 pub mod share;
+pub mod slack;
 pub mod slack_connect;
 pub mod subscribe;
 pub mod targets_detail;
@@ -148,6 +150,7 @@ pub(crate) fn channel_kind_label(kind: crate::domain::ChannelKind) -> &'static s
     match kind {
         ChannelKind::Telegram => "telegram bot",
         ChannelKind::TelegramApp => "telegram",
+        ChannelKind::SlackApp => "slack",
         ChannelKind::WhatsApp => "whatsapp api",
         ChannelKind::WhatsAppApp => "whatsapp",
         ChannelKind::MsTeams => "teams",
@@ -160,7 +163,7 @@ pub(crate) fn channel_kind_label(kind: crate::domain::ChannelKind) -> &'static s
 pub(crate) fn channel_kind_icon(kind: crate::domain::ChannelKind) -> &'static str {
     use crate::domain::ChannelKind;
     match kind {
-        ChannelKind::Slack => "slack",
+        ChannelKind::Slack | ChannelKind::SlackApp => "slack",
         ChannelKind::Discord => "discord",
         ChannelKind::Email => "email",
         ChannelKind::Telegram | ChannelKind::TelegramApp => "telegram",

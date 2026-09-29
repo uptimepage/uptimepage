@@ -15,9 +15,9 @@ use std::time::Duration;
 
 use chrono::Utc;
 use uptimepage::domain::{
-    AlertBinding, ChannelConfig, CheckSpec, EmailConfig, ExpectedStatus, NewIncidentNotification,
-    NewNotificationChannel, NewTarget, NotificationChannelUpdate, NotificationReason,
-    NotificationStatus, SlackConfig, TargetAlerts, WriteSource,
+    AlertBinding, ChannelConfig, ChannelKind, CheckSpec, EmailConfig, ExpectedStatus,
+    NewIncidentNotification, NewNotificationChannel, NewTarget, NotificationChannelUpdate,
+    NotificationReason, NotificationStatus, SlackAppConfig, SlackConfig, TargetAlerts, WriteSource,
 };
 use uptimepage::error::AppError;
 use uptimepage::error::codes;
@@ -1494,6 +1494,107 @@ async fn the_acknowledge_button_switch_round_trips_pg() {
             .unwrap()
             .acknowledge_button
     );
+
+    cleanup(&pool, &[org_a, org_b], &[user_a, user_b]).await;
+}
+
+/// A press finds its channel by the Slack channel it came from, across orgs,
+/// and only while that channel still takes acknowledgements: the switch, the
+/// enabled flag and the kind each withdraw it.
+#[tokio::test]
+#[ignore = "needs DATABASE_URL"]
+async fn a_press_finds_only_channels_that_still_take_acknowledgements_pg() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (org_a, org_b, user_a, user_b) = two_orgs(&pool, "nc-press").await;
+    let store = PgNotificationChannelStore::new(pool.clone(), None);
+    let slack_channel = format!(
+        "C{}",
+        &uuid::Uuid::now_v7().simple().to_string()[..10].to_uppercase()
+    );
+    let connected = |name: &str| NewNotificationChannel {
+        name: name.into(),
+        config: ChannelConfig::SlackApp(SlackAppConfig {
+            webhook_url: "https://hooks.slack.com/services/T/B/press".into(),
+            channel: "#ops".into(),
+            channel_id: slack_channel.clone(),
+            team_id: Some("T0AB12CD3".into()),
+        }),
+        enabled: true,
+        auto_bind_tags: Vec::new(),
+        acknowledge_button: true,
+    };
+    let a = store
+        .create(org_a, connected("Ops"), WriteSource::Ui, 10, Some(user_a))
+        .await
+        .unwrap();
+    let b = store
+        .create(org_b, connected("Ops"), WriteSource::Ui, 10, Some(user_b))
+        .await
+        .unwrap();
+    let found = || store.acknowledging_by_external_ref(ChannelKind::SlackApp, &slack_channel);
+    let both = found().await.unwrap();
+    assert_eq!(both.len(), 2, "{both:?}");
+    assert!(both.contains(&(org_a, a.id)) && both.contains(&(org_b, b.id)));
+    assert!(
+        store
+            .acknowledging_by_external_ref(ChannelKind::TelegramApp, &slack_channel)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    store
+        .update(
+            org_a,
+            a.id,
+            NotificationChannelUpdate {
+                acknowledge_button: Some(false),
+                ..Default::default()
+            },
+            WriteSource::Ui,
+            Some(user_a),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .update(
+            org_b,
+            b.id,
+            NotificationChannelUpdate {
+                enabled: Some(false),
+                ..Default::default()
+            },
+            WriteSource::Ui,
+            Some(user_b),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(found().await.unwrap().is_empty());
+
+    // A destination its provider reports dead is dead whatever the button says.
+    store
+        .update(
+            org_b,
+            b.id,
+            NotificationChannelUpdate {
+                enabled: Some(true),
+                ..Default::default()
+            },
+            WriteSource::Ui,
+            Some(user_b),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let disabled = store
+        .disable_by_external_ref(ChannelKind::SlackApp, &slack_channel, "gone")
+        .await
+        .unwrap();
+    assert_eq!(disabled, 2, "the switched-off channel is disabled too");
 
     cleanup(&pool, &[org_a, org_b], &[user_a, user_b]).await;
 }

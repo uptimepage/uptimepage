@@ -1,5 +1,7 @@
 mod blocks;
 
+pub use blocks::{ACKNOWLEDGE_ACTION, escape};
+
 use async_trait::async_trait;
 use serde::Serialize;
 use url::Url;
@@ -12,7 +14,7 @@ use crate::notifier::event::IncidentNotice;
 
 use crate::notifier::card::AlertCard;
 
-use blocks::{Block, escape, render};
+use blocks::{Block, render};
 
 pub struct SlackNotifier {
     client: OutboundHttpClient,
@@ -20,6 +22,10 @@ pub struct SlackNotifier {
     /// Already rendered to markup; the raw token would post as plain text.
     mention: Option<String>,
     ack_link: Option<String>,
+    /// Signed value of an Acknowledge button our own app receives. Only on a
+    /// channel connected through it: a press on a pasted webhook's message
+    /// goes to whichever app owns that webhook.
+    ack_press: Option<String>,
 }
 
 /// `text` is what a push notification and a client that cannot render blocks
@@ -37,6 +43,7 @@ impl SlackNotifier {
             webhook_url,
             mention,
             ack_link: None,
+            ack_press: None,
         }
     }
 
@@ -45,16 +52,23 @@ impl SlackNotifier {
         self
     }
 
+    pub fn with_ack_press(mut self, value: Option<String>) -> Self {
+        self.ack_press = value;
+        self
+    }
+
     /// Both halves of the message, from one card: the blocks Slack renders and
     /// the line a push notification shows.
     fn compose(
         mention: Option<&str>,
         ack_link: Option<&str>,
+        ack_press: Option<&str>,
         n: &IncidentNotice,
     ) -> (String, Vec<Block>) {
         let card = AlertCard::for_notice(n, ack_link);
         let text = Self::render_incident(card.ping(mention), &card, n);
-        (text, render(&card, mention))
+        let ack_press = ack_press.filter(|_| n.reason.awaits_acknowledgement());
+        (text, render(&card, mention, ack_press))
     }
 
     /// From the card's values, not the notice's: they are bounded there, and
@@ -124,8 +138,12 @@ fn region_line(n: &IncidentNotice) -> String {
 #[async_trait]
 impl Notifier for SlackNotifier {
     async fn notify_incident(&self, notice: &IncidentNotice) -> Result<()> {
-        let (text, blocks) =
-            Self::compose(self.mention.as_deref(), self.ack_link.as_deref(), notice);
+        let (text, blocks) = Self::compose(
+            self.mention.as_deref(),
+            self.ack_link.as_deref(),
+            self.ack_press.as_deref(),
+            notice,
+        );
         post_json(
             &self.client,
             &self.webhook_url,
@@ -150,7 +168,7 @@ mod tests {
         let mut n = notice(NotificationReason::Opened);
         n.monitor_name = Some("A".repeat(60_000));
         n.note = Some("N".repeat(60_000));
-        let (text, _) = SlackNotifier::compose(None, None, &n);
+        let (text, _) = SlackNotifier::compose(None, None, None, &n);
         assert!(
             text.chars().count() < 2_000,
             "fallback text ran to {} chars",
@@ -168,7 +186,7 @@ mod tests {
     fn a_note_reaches_slack_even_though_it_renders_its_own_body() {
         let mut n = notice(NotificationReason::Opened);
         n.note = Some("Flapping: alerts held".into());
-        let (text, _) = SlackNotifier::compose(None, None, &n);
+        let (text, _) = SlackNotifier::compose(None, None, None, &n);
         assert!(text.contains("Flapping: alerts held"), "{text}");
     }
 
@@ -185,7 +203,8 @@ mod tests {
             NotificationReason::DataResumed,
             NotificationReason::Reminder,
         ] {
-            let (text, blocks) = SlackNotifier::compose(Some("<!here>"), None, &notice(reason));
+            let (text, blocks) =
+                SlackNotifier::compose(Some("<!here>"), None, None, &notice(reason));
             let card = serde_json::to_string(&blocks).unwrap();
             assert_eq!(
                 text.contains("<!here>"),
@@ -197,11 +216,31 @@ mod tests {
 
     #[test]
     fn a_mention_leads_the_alert_but_stays_off_the_all_clear() {
-        let (opened, _) =
-            SlackNotifier::compose(Some("<!here>"), None, &notice(NotificationReason::Opened));
+        let (opened, _) = SlackNotifier::compose(
+            Some("<!here>"),
+            None,
+            None,
+            &notice(NotificationReason::Opened),
+        );
         assert!(opened.starts_with("<!here> *api-prod*"), "{opened}");
-        let (resolved, _) =
-            SlackNotifier::compose(Some("<!here>"), None, &notice(NotificationReason::Resolved));
+        let (resolved, _) = SlackNotifier::compose(
+            Some("<!here>"),
+            None,
+            None,
+            &notice(NotificationReason::Resolved),
+        );
         assert!(!resolved.contains("<!here>"), "{resolved}");
+    }
+
+    /// A button minted for an incident still to be taken must not ride along
+    /// on the all-clear.
+    #[test]
+    fn only_an_incident_still_to_be_taken_carries_the_press() {
+        let press = |reason| {
+            let (_, blocks) = SlackNotifier::compose(None, None, Some("a-signed"), &notice(reason));
+            serde_json::to_string(&blocks).unwrap().contains("a-signed")
+        };
+        assert!(press(NotificationReason::Opened));
+        assert!(!press(NotificationReason::Resolved));
     }
 }

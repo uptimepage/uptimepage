@@ -403,6 +403,9 @@ pub mod settings {
         pub offers_telegram: bool,
         /// A Pushover offer has somewhere to send its link.
         pub offers_pushover: bool,
+        /// Presses on our Slack app's buttons reach this deployment, and its
+        /// offers have somewhere to send their link.
+        pub offers_slack: bool,
         pub joined: Option<chrono::DateTime<chrono::Utc>>,
         pub last_seen: Option<chrono::DateTime<chrono::Utc>>,
         pub theme: String,
@@ -514,6 +517,8 @@ pub mod settings {
             linked_apps,
             offers_telegram: state.cfg.telegram.enabled(),
             offers_pushover: !state.cfg.auth.public_base_url.trim().is_empty(),
+            offers_slack: state.cfg.slack_interactivity.enabled()
+                && !state.cfg.auth.public_base_url.trim().is_empty(),
             joined,
             last_seen,
             theme: prefs.theme.as_str().to_string(),
@@ -1211,6 +1216,7 @@ pub mod settings {
                 linked_apps: Vec::new(),
                 offers_telegram: false,
                 offers_pushover: true,
+                offers_slack: false,
                 joined: Some("2026-02-14T09:00:00Z".parse().unwrap()),
                 last_seen: Some("2026-05-16T12:00:00Z".parse().unwrap()),
                 theme: "default".into(),

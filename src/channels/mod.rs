@@ -8,7 +8,9 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::auth::url::token_link;
 use crate::config::TransactionalEmailConfig;
-use crate::domain::{ChannelConfig, NotificationChannel, OrgId, UserId, validate_channel_name};
+use crate::domain::{
+    ChannelConfig, ChannelKind, NotificationChannel, OrgId, UserId, validate_channel_name,
+};
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
 use crate::error::codes;
 use crate::error::{AppError, Result};
@@ -158,18 +160,28 @@ pub fn delegate_status_parts(status: LinkCodeStatus) -> (&'static str, Option<Uu
     }
 }
 
-/// A caller-supplied operator-managed config (`telegram_app` chat id) would
-/// let anyone alert-spam an arbitrary destination with our credentials —
-/// only the transport's own flow may mint one.
+/// A caller-supplied operator-managed config (a `telegram_app` chat id, a
+/// `slack_app` channel id) would let anyone alert-spam an arbitrary
+/// destination with our credentials, or point our presses at a channel the
+/// webhook does not post to. Only the transport's own flow may mint one.
 pub fn reject_managed_kind(cfg: &ChannelConfig) -> Result<()> {
-    if cfg.operator_managed() {
-        return Err(AppError::unprocessable(
-            codes::CHANNEL_KIND_MANAGED,
-            "telegram channels are created by linking a chat through the bot; \
-             mint a link code instead of supplying config",
-        ));
+    if !cfg.operator_managed() {
+        return Ok(());
     }
-    Ok(())
+    let how = match cfg.kind() {
+        ChannelKind::SlackApp => {
+            "slack_app channels are created by connecting a channel with Add to Slack"
+        }
+        ChannelKind::WhatsAppApp => {
+            "whatsapp_app channels are created by linking a number through our WhatsApp line; \
+             mint a link code instead of supplying config"
+        }
+        _ => {
+            "telegram channels are created by linking a chat through the bot; \
+             mint a link code instead of supplying config"
+        }
+    };
+    Err(AppError::unprocessable(codes::CHANNEL_KIND_MANAGED, how))
 }
 
 pub fn validate_name(name: &str) -> Result<()> {

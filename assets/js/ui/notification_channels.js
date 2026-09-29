@@ -119,7 +119,7 @@
 
     function syncNamePlaceholder() {
         const kind = currentKind();
-        const slug = { telegram_app: "telegram", whatsapp_app: "whatsapp" }[kind] || kind;
+        const slug = { slack_app: "slack", telegram_app: "telegram", whatsapp_app: "whatsapp" }[kind] || kind;
         if (nameInput) nameInput.placeholder = `ops-${slug}`;
     }
 
@@ -1011,6 +1011,10 @@
             if (device) config.device = device;
             config.emergency = data.get("pushover_emergency") === "on";
             return { config };
+        }
+        if (kind === "slack_app") {
+            // The API rejects this kind in request bodies.
+            return { error: "Channels connected with \"add to Slack\" have no config to submit. Untick \"Replace transport config\" to keep the connection." };
         }
         if (kind === "telegram_app") {
             // The API rejects this kind in request bodies.

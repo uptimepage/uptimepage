@@ -814,6 +814,54 @@ async fn telegram_app_config_is_rejected_from_request_bodies() {
     assert_eq!(body["error"]["code"], "CHANNEL_KIND_MANAGED");
 }
 
+/// A caller-supplied channel id would point our Slack app's presses at a
+/// channel the webhook does not post to.
+#[tokio::test]
+async fn slack_app_config_is_rejected_from_request_bodies() {
+    let app = app();
+    let slack_app = json!({
+        "type": "slack_app",
+        "webhook_url": "https://hooks.slack.com/services/T/B/x",
+        "channel": "#ops",
+        "channel_id": "C0AB12CD3",
+        "team_id": "T0AB12CD3",
+    });
+    let (st, body) = send(
+        &app,
+        "POST",
+        "/api/v1/notification-channels",
+        json!({ "name": "slack", "config": slack_app }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"]["code"], "CHANNEL_KIND_MANAGED");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Add to Slack"),
+        "{body}"
+    );
+
+    let (_, created) = send(
+        &app,
+        "POST",
+        "/api/v1/notification-channels",
+        slack_body("ops"),
+    )
+    .await;
+    let id = created["id"].as_str().unwrap();
+    let (st, body) = send(
+        &app,
+        "PATCH",
+        &format!("/api/v1/notification-channels/{id}"),
+        json!({ "config": slack_app }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"]["code"], "CHANNEL_KIND_MANAGED");
+}
+
 #[tokio::test]
 async fn telegram_link_is_absent_without_bot() {
     let app = app();

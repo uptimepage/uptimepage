@@ -49,18 +49,19 @@ fn unwrap_markup(token: &str) -> &str {
     inner.strip_prefix('@').unwrap_or(inner)
 }
 
+/// Slack ids are uppercase alphanumeric and at least 9 long. The floor is what
+/// separates an id from a shouted handle like `@SRE`, which would otherwise
+/// render as a ping that silently reaches nobody.
+pub(super) fn id_like(s: &str) -> bool {
+    (9..=24).contains(&s.len())
+        && s.chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+}
+
 /// One token as Slack markup; `None` where Slack would render inert text.
 fn token_markup(token: &str) -> Option<String> {
     let t = unwrap_markup(token);
     let t = t.strip_prefix('@').unwrap_or(t);
-    // Slack ids are uppercase alphanumeric and at least 9 long. The floor is
-    // what separates an id from a shouted handle like `@SRE`, which would
-    // otherwise render as a ping that silently reaches nobody.
-    let id_like = |s: &str| {
-        (9..=24).contains(&s.len())
-            && s.chars()
-                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-    };
     if t.eq_ignore_ascii_case("here") {
         Some("<!here>".into())
     } else if t.eq_ignore_ascii_case("channel") {
@@ -110,10 +111,6 @@ impl TransportConfig for SlackConfig {
 
     fn abuse_url(&self) -> Option<&str> {
         Some(&self.webhook_url)
-    }
-
-    fn operator_managed(&self) -> bool {
-        false
     }
 }
 

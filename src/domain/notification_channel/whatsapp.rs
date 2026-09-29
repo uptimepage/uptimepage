@@ -85,9 +85,5 @@ impl TransportConfig for WhatsAppConfig {
         None
     }
 
-    fn operator_managed(&self) -> bool {
-        false
-    }
-
     fn quiet_broadcast_mention(&mut self) {}
 }

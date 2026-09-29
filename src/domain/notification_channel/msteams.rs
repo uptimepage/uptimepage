@@ -40,9 +40,5 @@ impl TransportConfig for MsTeamsConfig {
         Some(&self.webhook_url)
     }
 
-    fn operator_managed(&self) -> bool {
-        false
-    }
-
     fn quiet_broadcast_mention(&mut self) {}
 }

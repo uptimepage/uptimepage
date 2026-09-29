@@ -2,15 +2,15 @@
 //!
 //! The callback body (state consume, authority check, delegate spend) lives
 //! in `connect_oauth::run_callback`; this module only exchanges the code at
-//! Slack and keeps the incoming webhook, stored as a regular `slack` channel
-//! — the access token is discarded.
+//! Slack and keeps the incoming webhook, stored as a `slack_app` channel
+//! whose button presses reach our app. The access token is discarded.
 
 use axum::extract::{Query, State};
 use axum::response::Response;
 
 use crate::app::AppState;
 use crate::auth::slack;
-use crate::domain::{ChannelConfig, SlackConfig};
+use crate::domain::{ChannelConfig, SlackAppConfig};
 use crate::error::{AppError, Result};
 use crate::request::client_ip::ClientIp;
 use crate::request::{Authorized, ChannelsWrite, CurrentUser};
@@ -35,19 +35,22 @@ pub async fn callback(
     let exchange = {
         let state = state.clone();
         async move |code: String| {
-            let webhook = slack::exchange_code(
+            let install = slack::exchange_code(
                 &state.outbound_http,
                 &state.cfg.slack_oauth,
                 &callback_uri(&state, &connect_oauth::SLACK),
                 &code,
             )
             .await?;
+            let webhook = install.webhook;
             let name = webhook.channel.trim();
             let name = if name.is_empty() { "Slack" } else { name }.to_string();
             Ok((
-                ChannelConfig::Slack(SlackConfig {
+                ChannelConfig::SlackApp(SlackAppConfig {
                     webhook_url: webhook.url,
-                    mention: None,
+                    channel: webhook.channel,
+                    channel_id: webhook.channel_id,
+                    team_id: install.team_id,
                 }),
                 name,
             ))

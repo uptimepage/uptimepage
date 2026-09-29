@@ -127,8 +127,8 @@ async fn purges_past_window_and_keeps_fresh_rows() {
     .await
     .expect("insert fresh session");
 
-    // A Telegram code is dead once it expires; a Pushover offer only once the
-    // cooldown stops counting it too.
+    // A Telegram code or a Slack offer is dead once it expires; a Pushover
+    // offer only once the cooldown stops counting it too.
     let cooldown = PUSHOVER_OFFER_COOLDOWN.num_days();
     for (label, app, created_days_ago, expires_days_ago) in [
         ("offer-past", "pushover", cooldown + 1, cooldown),
@@ -137,6 +137,8 @@ async fn purges_past_window_and_keeps_fresh_rows() {
         ("offer-live", "pushover", 0, -1),
         ("tg-expired", "telegram", 1, 1),
         ("tg-live", "telegram", 0, -1),
+        ("slack-expired", "slack", 1, 1),
+        ("slack-live", "slack", 0, -1),
     ] {
         let telegram = app == "telegram";
         sqlx::query(
@@ -243,7 +245,13 @@ async fn purges_past_window_and_keeps_fresh_rows() {
     .expect("read link codes");
     assert_eq!(
         codes,
-        ["offer-cooling", "offer-live", "offer-unexpired", "tg-live"]
+        [
+            "offer-cooling",
+            "offer-live",
+            "offer-unexpired",
+            "slack-live",
+            "tg-live"
+        ]
     );
     assert!(report.app_link_codes >= 2);
 
@@ -310,7 +318,7 @@ fn windows_match_privacy_policy_and_clickhouse_ttl() {
         format!("| Sessions | {} days maximum", s.absolute_timeout_days),
         // The daily tick keeps a code up to a day past the cooldown.
         format!(
-            "| One-time codes for linking an account, and Pushover link offers | {} days |",
+            "| One-time codes for linking an account, and Pushover and Slack link offers | {} days |",
             PUSHOVER_OFFER_COOLDOWN.num_days() + 1
         ),
         format!("recoverable for {grace} days"),

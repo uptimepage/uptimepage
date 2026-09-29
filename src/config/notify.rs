@@ -33,6 +33,32 @@ impl ConnectOauthConfig {
     }
 }
 
+/// `[slack_interactivity]`. Signing secret of the operator Slack app behind
+/// `[slack_oauth]`, which signs every button press Slack posts to
+/// `/hooks/slack/interactions`. Empty leaves the receiver unmounted, and
+/// channels connected through the app fall back to the acknowledge page.
+/// Env only, never a config file.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SlackInteractivityConfig {
+    #[serde(default = "empty_secret", with = "secret_str")]
+    pub signing_secret: SecretString,
+}
+
+impl Default for SlackInteractivityConfig {
+    fn default() -> Self {
+        Self {
+            signing_secret: empty_secret(),
+        }
+    }
+}
+
+impl SlackInteractivityConfig {
+    pub fn enabled(&self) -> bool {
+        !self.signing_secret.expose_secret().trim().is_empty()
+    }
+}
+
 /// `[telegram]`. Operator-owned central bot shared by every org: customers
 /// link a chat by tapping a deep link instead of running their own BotFather
 /// bot. A non-empty `bot_token` enables the whole surface — the connect

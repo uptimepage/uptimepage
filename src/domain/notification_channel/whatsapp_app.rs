@@ -49,10 +49,6 @@ impl TransportConfig for WhatsAppAppConfig {
         None
     }
 
-    fn operator_managed(&self) -> bool {
-        true
-    }
-
     fn quiet_broadcast_mention(&mut self) {}
 
     /// The phone: an inbound `stop` severs every org linked to the number.

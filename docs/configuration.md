@@ -358,6 +358,9 @@ in a committed config file.
 client_id = ""            # env UPTIMEPAGE_SLACK_OAUTH__CLIENT_ID
 client_secret = ""        # env UPTIMEPAGE_SLACK_OAUTH__CLIENT_SECRET
 
+[slack_interactivity]
+signing_secret = ""       # env UPTIMEPAGE_SLACK_INTERACTIVITY__SIGNING_SECRET
+
 [discord_oauth]
 client_id = ""            # env UPTIMEPAGE_DISCORD_OAUTH__CLIENT_ID
 client_secret = ""        # env UPTIMEPAGE_DISCORD_OAUTH__CLIENT_SECRET
@@ -367,12 +370,23 @@ Credentials of operator-owned OAuth apps — Slack with the
 `incoming-webhook` scope, Discord with `webhook.incoming`. When a pair is
 set, that provider's panel in the channel form grows a connect button
 (plus a QR variant): the provider's consent screen picks the destination
-channel and the callback stores the returned webhook as a regular
-`slack`/`discord` channel — access tokens are discarded. The app's
+channel and the callback stores the returned webhook as a `slack_app` or
+`discord` channel — access tokens are discarded. The app's
 redirect URL must be `<auth.public_base_url>/auth/slack/callback` (or
 `…/auth/discord/callback`). Empty credentials (the default) hide the
 button; manual webhook paste always works. Env-only in production, never
 in a committed config file.
+
+`slack_interactivity.signing_secret` is the same Slack app's **Signing
+Secret** (Basic Information → App Credentials). Set, it mounts
+`<auth.public_base_url>/hooks/slack/interactions`, and alerts to channels
+connected through the app carry an Acknowledge button that works inside
+Slack. In the app's settings, turn on **Interactivity & Shortcuts** with
+that URL as the Request URL, after the secret is deployed: once it is on,
+Slack also reports clicks on the link buttons of messages already sent, and
+they need the endpoint to answer. No extra OAuth scope is needed. Empty
+(the default) leaves those channels on the acknowledge-page link that
+pasted Slack webhooks get.
 
 ## Public status page
 
