@@ -12,13 +12,12 @@ use chrono::Utc;
 use secrecy::ExposeSecret;
 
 use crate::app::AppState;
-use crate::domain::{ChannelKind, ExternalId, LinkedApp};
+use crate::domain::{ChannelKind, LinkedApp};
 use crate::notifier::slack::escape;
 use crate::security::app_link::external_id;
 use crate::slack::{Press, Reply, acknowledge_press, respond, signed_by_slack};
-use crate::storage::linked_apps::offer_link;
 
-use super::app_ack::{Pressed, Taken, acknowledged_notice, take};
+use super::app_ack::{Pressed, answer_offering_link};
 
 const TIMESTAMP_HEADER: &str = "x-slack-request-timestamp";
 const SIGNATURE_HEADER: &str = "x-slack-signature";
@@ -54,29 +53,19 @@ pub async fn interactions(
 }
 
 async fn handle_press(state: &AppState, press: Press) {
-    let sender = external_id(&state.app_link_secret, &press.person);
     let pressed = Pressed {
         app: LinkedApp::Slack,
         kind: ChannelKind::SlackApp,
         place: &press.channel_id,
-        sender,
+        sender: external_id(&state.app_link_secret, &press.person),
         data: &press.value,
     };
-    let (notice, announce) = match take(state, pressed).await {
-        Taken::Acknowledged { listed, linked } => {
-            let hint = match linked.invites_link() {
-                true => link_hint(state, sender, press.username.as_deref()).await,
-                false => None,
-            };
-            (
-                acknowledged_notice(listed, linked, hint.as_deref().unwrap_or_default()),
-                listed && !press.in_direct_message(),
-            )
-        }
-        Taken::Refused(notice) => (notice.to_string(), false),
-    };
+    let (notice, listed) = answer_offering_link(state, pressed, press.username.as_deref(), |url| {
+        format!("<{url}|Link your Slack account> so your next presses carry your name.")
+    })
+    .await;
     reply(state, &press, &Reply::to_presser(&notice)).await;
-    if announce {
+    if listed && !press.in_direct_message() {
         let who = press
             .username
             .as_deref()
@@ -88,32 +77,6 @@ async fn handle_press(state: &AppState, press: Press) {
             &Reply::to_channel(&text, press.thread_ts.as_deref()),
         )
         .await;
-    }
-}
-
-/// A one-time link naming the presser on their next presses, once whoever
-/// opens it signs in. Only the presser sees the message it rides in.
-async fn link_hint(state: &AppState, sender: ExternalId, username: Option<&str>) -> Option<String> {
-    let offer = offer_link(
-        state.linked_app_store.as_ref(),
-        &state.cfg.auth.public_base_url,
-        LinkedApp::Slack,
-        sender,
-        username,
-        Utc::now(),
-    )
-    .await;
-    match offer {
-        Ok(offer) => offer.map(|o| {
-            format!(
-                "<{}|Link your Slack account> so your next presses carry your name.",
-                o.url
-            )
-        }),
-        Err(err) => {
-            tracing::warn!(error = %err, "slack link offer failed");
-            None
-        }
     }
 }
 

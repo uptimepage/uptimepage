@@ -57,6 +57,9 @@ name: deploy
 #                                 needs SLACK_OAUTH_CLIENT_ID)
 #     DISCORD_OAUTH_CLIENT_ID     operator Discord app client id
 #     DISCORD_OAUTH_CLIENT_SECRET operator Discord app client secret (sensitive)
+#     DISCORD_PUBLIC_KEY          same app's public key; verifies the
+#                                 interactions Discord posts back (optional,
+#                                 needs DISCORD_OAUTH_CLIENT_ID)
 #   Google OAuth login (pair all-or-nothing; the redirect URL is managed
 #   manually in the server .env like the GitHub login trio):
 #     GOOGLE_OAUTH_CLIENT_ID      Google Cloud OAuth web client id
@@ -226,6 +229,7 @@ jobs:
           SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
           DISCORD_OAUTH_CLIENT_ID: ${{ secrets.DISCORD_OAUTH_CLIENT_ID }}
           DISCORD_OAUTH_CLIENT_SECRET: ${{ secrets.DISCORD_OAUTH_CLIENT_SECRET }}
+          DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY }}
           # Google OAuth login — presence enables the login button.
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
@@ -306,6 +310,7 @@ jobs:
                SLACK_SIGNING_SECRET='${SLACK_SIGNING_SECRET}' \
                DISCORD_OAUTH_CLIENT_ID='${DISCORD_OAUTH_CLIENT_ID}' \
                DISCORD_OAUTH_CLIENT_SECRET='${DISCORD_OAUTH_CLIENT_SECRET}' \
+               DISCORD_PUBLIC_KEY='${DISCORD_PUBLIC_KEY}' \
                GOOGLE_OAUTH_CLIENT_ID='${GOOGLE_OAUTH_CLIENT_ID}' \
                GOOGLE_OAUTH_CLIENT_SECRET='${GOOGLE_OAUTH_CLIENT_SECRET}' \
                MICROSOFT_OAUTH_CLIENT_ID='${MICROSOFT_OAUTH_CLIENT_ID}' \
@@ -875,6 +880,41 @@ jobs:
               n=$(grep -cxF "$pair" .env || true)
               [ "$n" = 1 ] || { echo "::error::${pair%%=*} not written exactly once to .env (count=${n})"; exit 1; }
             done
+          fi
+
+          # --- Discord interactions (optional) -------------------------------
+          # Same write contract as the blocks above. Verifies the interactions
+          # Discord posts back, so it only means something beside the Discord
+          # OAuth app whose webhooks carry the buttons. Checked here too: the
+          # app refuses to start on a malformed key.
+          if [ -n "${DISCORD_PUBLIC_KEY:-}" ]; then
+            if [ -z "${DISCORD_OAUTH_CLIENT_ID:-}" ]; then
+              echo "::error::DISCORD_PUBLIC_KEY is set but DISCORD_OAUTH_CLIENT_ID is empty"
+              exit 1
+            fi
+            if ! printf '%s' "$DISCORD_PUBLIC_KEY" | grep -Eqx '[0-9a-fA-F]{64}'; then
+              echo "::error::DISCORD_PUBLIC_KEY is not the 64 hex characters of the app's Public Key"
+              exit 1
+            fi
+            cp .env ".env.bak.$(date +%s).discord-key"
+            before=$(awk 'END { print NR }' .env)
+            awk '
+              BEGIN { m["UPTIMEPAGE_DISCORD_INTERACTIONS_PUBLIC_KEY"] = ENVIRON["DISCORD_PUBLIC_KEY"] }
+              {
+                for (k in m) if ($0 ~ ("^" k "=")) { print k "=" m[k]; seen[k] = 1; next }
+                print
+              }
+              END { for (k in m) if (!seen[k]) print k "=" m[k] }
+            ' .env > .env.next
+            mv .env.next .env
+            after=$(awk 'END { print NR }' .env)
+            # 0..+1: appended only if the key was absent before.
+            if [ "$after" -lt "$before" ] || [ "$after" -gt "$((before + 1))" ]; then
+              echo "::error::.env line count out of range after discord key upsert (${before} -> ${after})"
+              exit 1
+            fi
+            n=$(grep -cxF "UPTIMEPAGE_DISCORD_INTERACTIONS_PUBLIC_KEY=$(printenv DISCORD_PUBLIC_KEY)" .env || true)
+            [ "$n" = 1 ] || { echo "::error::UPTIMEPAGE_DISCORD_INTERACTIONS_PUBLIC_KEY not written exactly once to .env (count=${n})"; exit 1; }
           fi
 
           # --- Google OAuth login (optional) ----------------------------------

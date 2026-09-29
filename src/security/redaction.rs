@@ -32,6 +32,34 @@ pub fn redact_secrets(s: &mut String, secrets: &[String]) {
     }
 }
 
+/// Strip the path/query/userinfo from any URL in an outbound request's error
+/// before it is stored or logged. A Slack webhook secret lives in the path
+/// (`hooks.slack.com/services/T…/B…/<secret>`), a Telegram bot token in
+/// `…/bot<token>/…` and an interaction token in a reply address, so the raw
+/// error would leak them. Each whitespace token that parses as a URL is reduced to
+/// `scheme://host[:port]`; everything else is kept verbatim.
+pub fn redact_url_paths(msg: &str) -> String {
+    msg.split_whitespace()
+        .map(|tok| {
+            if !tok.contains("://") {
+                return tok.to_string();
+            }
+            let trimmed = tok.trim_matches(|c: char| !c.is_alphanumeric() && c != ':' && c != '/');
+            match url::Url::parse(trimmed) {
+                Ok(u) if u.host_str().is_some() => {
+                    let port = u.port().map(|p| format!(":{p}")).unwrap_or_default();
+                    format!("{}://{}{}", u.scheme(), u.host_str().unwrap_or(""), port)
+                }
+                // Contains "://" but does not cleanly parse to a host — never
+                // echo it verbatim (the secret-bearing path may survive); drop
+                // the whole token.
+                _ => "[redacted-url]".to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Probes end what they cut with `…`, and a secret straddling that cut
 /// survives as the text's tail. Where the longest such prefix starts; the
 /// [`secret_values`] minimum keeps a chance overlap from mangling text.

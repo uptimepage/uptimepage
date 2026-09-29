@@ -20,8 +20,8 @@ use crate::api::redaction::Redacted;
 use crate::app::AppState;
 use crate::channels::{
     check_channel_abuse, delegate_status_parts, email_delivery, fast_verify_member_email,
-    mint_and_send_verification, reject_managed_kind, spawn_send_verification, validate_config,
-    validate_name,
+    keep_managed_connection, mint_and_send_verification, reject_managed_kind,
+    spawn_send_verification, validate_config, validate_name,
 };
 use crate::domain::{
     ChannelConfig, IncidentOrigin, IncidentSeverity, IncidentUrgency, NewNotificationChannel,
@@ -189,7 +189,9 @@ pub async fn get(
     description = "Omit fields you don't want to change. A `config` that still \
                    carries the `***` sentinel returns 400 — omit `config` to \
                    keep the stored secret unchanged. A `config` identical to \
-                   the stored one keeps the verification state.",
+                   the stored one keeps the verification state. A `discord_app` \
+                   config changes only `mention`: its webhook stays the one \
+                   Add to Discord connected, whatever the body says.",
     params(("id" = Uuid, Path)),
     request_body(content = NotificationChannelUpdate),
     responses(
@@ -215,10 +217,10 @@ pub async fn update(
     }
     let config_replaced = update.config.is_some();
     if let Some(cfg) = &mut update.config {
-        reject_managed_kind(cfg)?;
+        let stored = state.notification_channel_store.get(org, id).await?;
+        keep_managed_connection(cfg, stored.as_ref().map(|c| &c.config))?;
         cfg.normalize();
         validate_config(cfg)?;
-        let stored = state.notification_channel_store.get(org, id).await?;
         let plan = state.quotas.limit_for_org(org).await?;
         // Gated only for a channel that is there: an unknown id is a 404, and
         // answering 403 would tell a caller the plan before the lookup.

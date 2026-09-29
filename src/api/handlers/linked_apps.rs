@@ -1,6 +1,6 @@
 //! App accounts on the caller's own account: starting a Telegram link,
-//! spending the offer a Pushover or Slack account was sent, and unlinking any
-//! of them.
+//! spending the offer a Pushover, Slack or Discord account was sent, and
+//! unlinking any of them.
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -120,6 +120,31 @@ pub async fn link_slack(
     Json(req): Json<LinkOfferRequest>,
 ) -> Result<StatusCode> {
     claim_offer(&state, user_id, LinkedApp::Slack, &req.code).await
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/me/linked-apps/discord",
+    tag = "account",
+    summary = "Link the Discord account a link offer was sent to",
+    description = "Only the Discord account that pressed Acknowledge sees the offer, \
+                   so presenting its code proves the caller holds that account. \
+                   Its presses then name the caller in every organization they \
+                   belong to. A code links once, within an hour; a Discord account \
+                   linked to someone else is refused, not moved.",
+    request_body = LinkOfferRequest,
+    responses(
+        (status = 204, description = "Linked, or it was the caller's already"),
+        (status = 400, body = crate::error::ApiError, description = "Unknown, used or expired code"),
+        (status = 409, body = crate::error::ApiError, description = "Linked to someone else"),
+    ),
+)]
+pub async fn link_discord(
+    State(state): State<AppState>,
+    BrowserUser(CurrentUser(user_id)): BrowserUser,
+    Json(req): Json<LinkOfferRequest>,
+) -> Result<StatusCode> {
+    claim_offer(&state, user_id, LinkedApp::Discord, &req.code).await
 }
 
 async fn claim_offer(

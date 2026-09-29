@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use anyhow::Context;
 use http_body_util::{BodyExt, Full, Limited};
-use hyper::Request;
 use hyper::body::Bytes;
 use hyper::header::{ACCEPT, CONTENT_TYPE};
+use hyper::{Method, Request, StatusCode};
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
@@ -133,6 +133,32 @@ pub async fn post_form_with_headers(
         headers,
     )
     .await
+}
+
+/// Send JSON with `method` and hand back the status and the bounded body,
+/// whatever the status: for a caller that decides on it, such as one honouring
+/// a rate limit. Only a request that got no answer is an error.
+pub async fn send_json_for_status<T: Serialize>(
+    client: &OutboundHttpClient,
+    method: Method,
+    url: &Url,
+    body: &T,
+) -> Result<(StatusCode, Bytes)> {
+    let payload = serde_json::to_vec(body).context("serializing request payload")?;
+    let req = Request::builder()
+        .method(method)
+        .uri(url.as_str())
+        .header(CONTENT_TYPE, "application/json")
+        .header(ACCEPT, "application/json")
+        .body(Full::new(Bytes::from(payload)))
+        .context("building request")?;
+    let at = exchange_deadline();
+    let resp = with_request_timeout(url, at, client.request(req)).await?;
+    let status = resp.status();
+    let body = read_body_within(url, at, resp.into_body(), MAX_RESPONSE_BYTES)
+        .await?
+        .unwrap_or_default();
+    Ok((status, body))
 }
 
 async fn post_bytes_ct(

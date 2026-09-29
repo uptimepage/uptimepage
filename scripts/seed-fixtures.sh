@@ -619,7 +619,7 @@ WHERE org_id = '${ORG}'::uuid AND acknowledged_at IS NOT NULL AND acknowledged_b
 ON CONFLICT DO NOTHING;
 SQL
 
-echo "==> Postgres: 14 notification channels (one per transport) and alert bindings"
+echo "==> Postgres: 15 notification channels (one per transport) and alert bindings"
 # Channel kinds match ChannelConfig — one per variant. The BYO Telegram row is
 # disabled so the operator UI renders both the enabled and disabled states;
 # the linked telegram_app row carries the platform-disable note.
@@ -648,6 +648,9 @@ INSERT INTO notification_channels (org_id, name, kind, config, external_ref, ena
   ('${ORG}'::uuid, 'Fixture Discord', 'discord',
    '{"type":"discord","webhook_url":"https://discord.com/api/webhooks/000000000000000000/fixture-discord-token"}'::jsonb,
    NULL, true, NULL),
+  ('${ORG}'::uuid, 'Fixture Discord App', 'discord_app',
+   '{"type":"discord_app","webhook_url":"https://discord.com/api/webhooks/100000000000000001/fixture-discord-app-token","webhook_id":"100000000000000001","mention":"&100000000000000002"}'::jsonb,
+   '100000000000000001', true, NULL),
   ('${ORG}'::uuid, 'Fixture Teams', 'msteams',
    '{"type":"msteams","webhook_url":"https://prod-00.westus.logic.azure.com/workflows/fixture/triggers/manual/paths/invoke"}'::jsonb,
    NULL, true, NULL),

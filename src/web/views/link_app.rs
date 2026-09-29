@@ -1,7 +1,7 @@
-//! `/link/{app}`, where the offer sent to a Pushover or Slack account that
-//! acknowledged without a name lands. Signing in is what names the person, so
-//! the page asks for a session first. It reads the offer only to say early that
-//! it lapsed; the code is spent by the API call the page makes.
+//! `/link/{app}`, where the offer sent to a Pushover, Slack or Discord account
+//! that acknowledged without a name lands. Signing in is what names the
+//! person, so the page asks for a session first. It reads the offer only to
+//! say early that it lapsed; the code is spent by the API call the page makes.
 
 use askama::Template;
 use askama_web::WebTemplate;
@@ -84,6 +84,10 @@ fn offer_copy(app: LinkedApp) -> Option<(&'static str, &'static str)> {
         LinkedApp::Slack => Some((
             "Alerts you acknowledge in Slack",
             "Press Acknowledge on a Slack alert again and a fresh one follows.",
+        )),
+        LinkedApp::Discord => Some((
+            "Alerts you acknowledge in Discord",
+            "Press Acknowledge on a Discord alert again and a fresh one follows.",
         )),
         LinkedApp::Telegram => None,
     }

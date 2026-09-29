@@ -101,8 +101,8 @@ pub(super) fn actor_label(
 ) -> (String, Option<&'static str>) {
     match e.actor_type {
         ActorType::User | ActorType::Mcp => (member_name(e.actor_id, members), e.actor_type.via()),
-        ActorType::Telegram | ActorType::Pushover | ActorType::Slack if e.actor_id.is_some() => {
-            (member_name(e.actor_id, members), e.actor_type.via())
+        app if app.linked_app().is_some() && e.actor_id.is_some() => {
+            (member_name(e.actor_id, members), app.via())
         }
         other => (unnamed_actor(other), None),
     }

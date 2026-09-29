@@ -75,6 +75,7 @@ pub struct ConfigFields {
     pub slack_app_channel: String,
     pub discord_webhook_url: String,
     pub discord_mention: String,
+    pub discord_app_mention: String,
     pub msteams_webhook_url: String,
     pub google_chat_webhook_url: String,
     pub email_to: String,
@@ -132,6 +133,7 @@ impl Default for ConfigFields {
             slack_app_channel: String::new(),
             discord_webhook_url: String::new(),
             discord_mention: String::new(),
+            discord_app_mention: String::new(),
             msteams_webhook_url: String::new(),
             google_chat_webhook_url: String::new(),
             email_to: String::new(),
@@ -231,9 +233,10 @@ pub struct ChannelFormModel {
     pub central_whatsapp: bool,
     /// Gates the "add to Slack" button on the slack panel (create mode).
     pub slack_oauth: bool,
-    /// A pasted Slack channel is worth connecting again through our app,
-    /// whose Acknowledge button takes the incident in Slack (edit mode).
-    pub slack_app_presses: bool,
+    /// A pasted Slack or Discord channel is worth connecting again through
+    /// our app, whose Acknowledge button takes the incident right there
+    /// (edit mode).
+    pub reconnect_for_button: bool,
     /// Gates the "add to Discord" button on the discord panel (create mode).
     pub discord_oauth: bool,
     /// Email channel still awaiting address verification (edit mode).
@@ -493,11 +496,11 @@ pub async fn edit_form(
         .ok_or_else(|| {
             AppError::not_found("CHANNEL_NOT_FOUND", "notification channel not found")
         })?;
+    let reconnect = reconnect_for_button(&state.cfg, channel.kind);
     let mut form = form_from_channel(channel);
     form.central_telegram = state.cfg.telegram.enabled();
     form.central_whatsapp = state.cfg.whatsapp_app.enabled();
-    form.slack_app_presses =
-        state.cfg.slack_oauth.enabled() && state.cfg.slack_interactivity.enabled();
+    form.reconnect_for_button = reconnect;
     let (options, picked) = rule_tag_options(&state, org, &form.auto_bind_tags).await?;
     form.tag_options = options;
     form.auto_bind_tags = picked;
@@ -528,10 +531,22 @@ fn empty_create_form() -> ChannelFormModel {
         central_telegram: false,
         central_whatsapp: false,
         slack_oauth: false,
-        slack_app_presses: false,
+        reconnect_for_button: false,
         discord_oauth: false,
         email_unverified: false,
     }
+}
+
+/// Where connecting a pasted channel again through our app would bring the
+/// button that takes the incident in the chat app itself.
+fn reconnect_for_button(cfg: &crate::config::AppConfig, kind: ChannelKind) -> bool {
+    use crate::domain::LinkedApp;
+    let (oauth, app) = match kind {
+        ChannelKind::Slack => (&cfg.slack_oauth, LinkedApp::Slack),
+        ChannelKind::Discord => (&cfg.discord_oauth, LinkedApp::Discord),
+        _ => return false,
+    };
+    oauth.enabled() && cfg.receives_presses(app)
 }
 
 fn form_from_channel(c: NotificationChannel) -> ChannelFormModel {
@@ -552,6 +567,8 @@ fn form_from_channel(c: NotificationChannel) -> ChannelFormModel {
             config.discord_webhook_url = c.webhook_url;
             config.discord_mention = c.mention.unwrap_or_default();
         }
+        // The ping is all an edit may change; the webhook stays the app's.
+        ChannelConfig::DiscordApp(c) => config.discord_app_mention = c.mention.unwrap_or_default(),
         ChannelConfig::MsTeams(c) => config.msteams_webhook_url = c.webhook_url,
         ChannelConfig::GoogleChat(c) => config.google_chat_webhook_url = c.webhook_url,
         ChannelConfig::Email(c) => config.email_to = c.to,
@@ -683,7 +700,7 @@ fn form_from_channel(c: NotificationChannel) -> ChannelFormModel {
         central_telegram: false,
         central_whatsapp: false,
         slack_oauth: false,
-        slack_app_presses: false,
+        reconnect_for_button: false,
         discord_oauth: false,
         email_unverified,
     }
@@ -958,7 +975,7 @@ mod tests {
         let toggle = ack_toggle(&html);
         assert!(
             toggle.contains(
-                r#"data-kinds="slack slack_app telegram_app discord msteams google_chat email ntfy mattermost""#
+                r#"data-kinds="slack slack_app telegram_app discord discord_app msteams google_chat email ntfy mattermost""#
             ),
             "{toggle}"
         );
@@ -1069,12 +1086,71 @@ mod tests {
     }
 
     #[test]
+    fn edit_form_for_add_to_discord_offers_only_the_ping() {
+        let mut ch = slack_channel("https://hooks.slack.com/services/T/B/x");
+        ch.kind = crate::domain::ChannelKind::DiscordApp;
+        ch.config = ChannelConfig::DiscordApp(crate::domain::DiscordAppConfig {
+            webhook_url: "https://discord.com/api/webhooks/112233445566778899/zzUNIQUESECRETzz"
+                .into(),
+            webhook_id: "112233445566778899".into(),
+            mention: Some("&123456789012345678".into()),
+        });
+        let html = render_form(form_from_channel(ch));
+        assert!(html.contains(r#"value="discord_app""#), "{html}");
+        assert!(html.contains("# connected with add to Discord"), "{html}");
+        assert!(html.contains(r#"name="discord_app_mention""#), "{html}");
+        assert!(html.contains("&amp;123456789012345678"), "{html}");
+        assert!(html.contains("data-managed-edit"), "{html}");
+        assert!(
+            !html.contains("zzUNIQUESECRETzz"),
+            "the webhook is a secret"
+        );
+        assert!(!html.contains("data-replace-config"), "{html}");
+    }
+
+    #[test]
+    fn a_pasted_discord_channel_is_told_about_add_to_discord_only_where_presses_arrive() {
+        let mut ch = slack_channel("https://hooks.slack.com/services/T/B/x");
+        ch.kind = crate::domain::ChannelKind::Discord;
+        ch.config = ChannelConfig::Discord(crate::domain::DiscordConfig {
+            webhook_url: "https://discord.com/api/webhooks/1/x".into(),
+            mention: None,
+        });
+        let html = render_form(form_from_channel(ch.clone()));
+        assert!(!html.contains("Connect this channel again"), "{html}");
+        let mut form = form_from_channel(ch);
+        form.reconnect_for_button = true;
+        assert!(render_form(form).contains("with <em>add to Discord</em>"));
+    }
+
+    #[test]
+    fn only_the_app_that_receives_presses_brings_the_reconnect_hint() {
+        let mut cfg = crate::config::AppConfig::load().expect("config");
+        cfg.slack_oauth = Default::default();
+        cfg.slack_interactivity = Default::default();
+        cfg.discord_oauth = Default::default();
+        cfg.discord_interactions = Default::default();
+        assert!(!reconnect_for_button(&cfg, ChannelKind::Discord));
+        cfg.discord_oauth.client_id = "1".into();
+        cfg.discord_oauth.client_secret = "s".into();
+        assert!(
+            !reconnect_for_button(&cfg, ChannelKind::Discord),
+            "no public key"
+        );
+        cfg.discord_interactions.public_key =
+            Some(ed25519_dalek::SigningKey::from_bytes(&[7; 32]).verifying_key());
+        assert!(reconnect_for_button(&cfg, ChannelKind::Discord));
+        assert!(!reconnect_for_button(&cfg, ChannelKind::Slack));
+        assert!(!reconnect_for_button(&cfg, ChannelKind::DiscordApp));
+    }
+
+    #[test]
     fn a_pasted_slack_channel_is_told_about_add_to_slack_only_where_presses_arrive() {
         let pasted = || slack_channel("https://hooks.slack.com/services/T/B/x");
         let html = render_form(form_from_channel(pasted()));
         assert!(!html.contains("Connect this channel again"), "{html}");
         let mut form = form_from_channel(pasted());
-        form.slack_app_presses = true;
+        form.reconnect_for_button = true;
         assert!(render_form(form).contains("Connect this channel again"));
     }
 

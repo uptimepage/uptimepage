@@ -364,6 +364,9 @@ signing_secret = ""       # env UPTIMEPAGE_SLACK_INTERACTIVITY__SIGNING_SECRET
 [discord_oauth]
 client_id = ""            # env UPTIMEPAGE_DISCORD_OAUTH__CLIENT_ID
 client_secret = ""        # env UPTIMEPAGE_DISCORD_OAUTH__CLIENT_SECRET
+
+[discord_interactions]
+public_key = ""           # env UPTIMEPAGE_DISCORD_INTERACTIONS__PUBLIC_KEY
 ```
 
 Credentials of operator-owned OAuth apps — Slack with the
@@ -371,7 +374,7 @@ Credentials of operator-owned OAuth apps — Slack with the
 set, that provider's panel in the channel form grows a connect button
 (plus a QR variant): the provider's consent screen picks the destination
 channel and the callback stores the returned webhook as a `slack_app` or
-`discord` channel — access tokens are discarded. The app's
+`discord_app` channel — access tokens are discarded. The app's
 redirect URL must be `<auth.public_base_url>/auth/slack/callback` (or
 `…/auth/discord/callback`). Empty credentials (the default) hide the
 button; manual webhook paste always works. Env-only in production, never
@@ -387,6 +390,19 @@ Slack also reports clicks on the link buttons of messages already sent, and
 they need the endpoint to answer. No extra OAuth scope is needed. Empty
 (the default) leaves those channels on the acknowledge-page link that
 pasted Slack webhooks get.
+
+`discord_interactions.public_key` is the same Discord app's **Public Key**
+(General Information), 64 hex characters; anything else fails startup. Set,
+it mounts `<auth.public_base_url>/hooks/discord/interactions`, and alerts to
+channels connected through the app carry an Acknowledge button that works
+inside Discord. A webhook made by Add to Discord belongs to the app, so a
+press on its button goes to the app's **Interactions Endpoint URL**. Set
+that field to the URL above after the key is deployed: Discord saves it
+only once the endpoint answers the signed check it sends, and it keeps
+testing the endpoint with bad signatures, which it must refuse. No bot, no
+command and no extra OAuth scope are needed. Empty (the default) leaves
+those channels on the acknowledge-page link that pasted Discord webhooks
+get.
 
 ## Public status page
 

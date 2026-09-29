@@ -10,15 +10,14 @@ use crate::domain::{
     NewNotificationChannel, NotificationChannelUpdate, OpsIncident, Target, TargetAlerts,
     WebhookConfig, WriteSource,
 };
+use crate::security::redaction::redact_url_paths;
 use crate::storage::{
     Actor, DueIncident, InMemoryContactStore, InMemoryEscalationPolicyStore,
     InMemoryIncidentOpsStore, InMemoryNotificationChannelStore, InMemoryOnCallStore,
     InMemoryTargetStore,
 };
 
-use super::rules::{
-    FlapState, flap_state, log_error_snippet, redact_secrets, retry_after_hint, retry_delay_secs,
-};
+use super::rules::{FlapState, flap_state, log_error_snippet, retry_after_hint, retry_delay_secs};
 
 fn org() -> OrgId {
     OrgId(Uuid::nil())
@@ -1380,10 +1379,10 @@ fn retry_after_hint_reads_discords_fractional_wait() {
 
 #[test]
 fn retry_after_hint_survives_redaction() {
-    // The hint is parsed AFTER redact_secrets; this pins that the
+    // The hint is parsed AFTER redact_url_paths; this pins that the
     // URL-token redaction never eats the JSON fragment.
     let raw = r#"https://api.telegram.org/bot123:SECRET/sendMessage returned 429 Too Many Requests: {"ok":false,"error_code":429,"parameters":{"retry_after":31}}"#;
-    let redacted = redact_secrets(raw);
+    let redacted = redact_url_paths(raw);
     assert_eq!(
         retry_after_hint(Some(&redacted)),
         Some(chrono::Duration::seconds(31))
@@ -1393,7 +1392,7 @@ fn retry_after_hint_survives_redaction() {
 #[test]
 fn redact_secrets_strips_channel_url_paths() {
     let slack = "POST https://hooks.slack.com/services/T01/B02/abcSECRETxyz failed: 404";
-    let out = redact_secrets(slack);
+    let out = redact_url_paths(slack);
     assert!(out.contains("https://hooks.slack.com"));
     assert!(
         !out.contains("abcSECRETxyz"),
@@ -1402,7 +1401,7 @@ fn redact_secrets_strips_channel_url_paths() {
     assert!(!out.contains("/services/"));
 
     let tg = "https://api.telegram.org/bot123456:AAH-SECRET-TOKEN/sendMessage 401";
-    let out = redact_secrets(tg);
+    let out = redact_url_paths(tg);
     assert!(out.contains("https://api.telegram.org"));
     assert!(
         !out.contains("SECRET-TOKEN"),
@@ -1410,11 +1409,11 @@ fn redact_secrets_strips_channel_url_paths() {
     );
 
     // Non-URL text is untouched.
-    assert_eq!(redact_secrets("connection refused"), "connection refused");
+    assert_eq!(redact_url_paths("connection refused"), "connection refused");
 
     // A "://"-bearing token that does not cleanly parse is dropped wholesale
     // rather than echoed (it might still carry the secret path).
-    let bad = redact_secrets("weird://[bad/SECRET-path");
+    let bad = redact_url_paths("weird://[bad/SECRET-path");
     assert!(
         !bad.contains("SECRET-path"),
         "an unparseable url token must not survive"

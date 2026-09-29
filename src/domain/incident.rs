@@ -379,6 +379,8 @@ pub enum ActorType {
     Pushover,
     /// Pressed in Slack, named the same way as [`Self::Telegram`].
     Slack,
+    /// Pressed in Discord, named the same way as [`Self::Telegram`].
+    Discord,
 }
 
 impl ActorType {
@@ -390,6 +392,7 @@ impl ActorType {
         Self::Telegram,
         Self::Pushover,
         Self::Slack,
+        Self::Discord,
     ];
     pub fn as_db_str(self) -> &'static str {
         match self {
@@ -400,6 +403,7 @@ impl ActorType {
             Self::Telegram => "telegram",
             Self::Pushover => "pushover",
             Self::Slack => "slack",
+            Self::Discord => "discord",
         }
     }
     pub fn from_db_str(s: &str) -> Self {
@@ -410,17 +414,27 @@ impl ActorType {
             "telegram" => Self::Telegram,
             "pushover" => Self::Pushover,
             "slack" => Self::Slack,
+            "discord" => Self::Discord,
             _ => Self::System,
         }
     }
+    /// The app whose own control this actor pressed, which names a member
+    /// only through an account they linked there.
+    pub const fn linked_app(self) -> Option<super::LinkedApp> {
+        match self {
+            Self::Telegram => Some(super::LinkedApp::Telegram),
+            Self::Pushover => Some(super::LinkedApp::Pushover),
+            Self::Slack => Some(super::LinkedApp::Slack),
+            Self::Discord => Some(super::LinkedApp::Discord),
+            Self::System | Self::User | Self::Mcp | Self::Link => None,
+        }
+    }
+
     /// Where a member acted when it was not the web app itself.
     pub fn via(self) -> Option<&'static str> {
         match self {
             Self::Mcp => Some("MCP"),
-            Self::Telegram => Some(super::LinkedApp::Telegram.label()),
-            Self::Pushover => Some(super::LinkedApp::Pushover.label()),
-            Self::Slack => Some(super::LinkedApp::Slack.label()),
-            Self::System | Self::User | Self::Link => None,
+            other => other.linked_app().map(super::LinkedApp::label),
         }
     }
 }

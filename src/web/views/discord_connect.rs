@@ -3,15 +3,15 @@
 //!
 //! The callback body (state consume, authority check, delegate spend) lives
 //! in `connect_oauth::run_callback`; this module only exchanges the code at
-//! Discord and keeps the webhook, stored as a regular `discord` channel —
-//! the access token is discarded.
+//! Discord and keeps the webhook, stored as a `discord_app` channel whose
+//! button presses reach our app. The access token is discarded.
 
 use axum::extract::{Query, State};
 use axum::response::Response;
 
 use crate::app::AppState;
 use crate::auth::discord;
-use crate::domain::{ChannelConfig, DiscordConfig};
+use crate::domain::{ChannelConfig, DiscordAppConfig};
 use crate::error::{AppError, Result};
 use crate::request::client_ip::ClientIp;
 use crate::request::{Authorized, ChannelsWrite, CurrentUser};
@@ -51,8 +51,9 @@ pub async fn callback(
                 .unwrap_or("Discord")
                 .to_string();
             Ok((
-                ChannelConfig::Discord(DiscordConfig {
+                ChannelConfig::DiscordApp(DiscordAppConfig {
                     webhook_url: webhook.url,
+                    webhook_id: webhook.id,
                     mention: None,
                 }),
                 name,

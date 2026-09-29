@@ -11,6 +11,7 @@ use crate::error::{AppError, Result};
 use crate::http_outbound::{OutboundHttpClient, post_json};
 use crate::notifier::slack::ACKNOWLEDGE_ACTION;
 use crate::security::mac::hmac_sha256_hex;
+use crate::security::redaction::redact_url_paths;
 
 /// Our app's Interactivity Request URL, appended to `auth.public_base_url`.
 pub const INTERACTIONS_PATH: &str = "/hooks/slack/interactions";
@@ -193,7 +194,11 @@ pub async fn respond(
                 "slack response_url is not a hooks.slack.com URL"
             ))
         })?;
-    post_json(http, &url, reply).await
+    // The path lets anyone post into the conversation, and a failed request
+    // names it.
+    post_json(http, &url, reply)
+        .await
+        .map_err(|err| AppError::Other(anyhow::anyhow!(redact_url_paths(&err.to_string()))))
 }
 
 #[cfg(test)]

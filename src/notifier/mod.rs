@@ -47,8 +47,8 @@ pub use crate::notifier::ntfy::PushAck;
 pub enum AckControl {
     /// ntfy's HTTP action: a signed link, pressed by whoever holds the page.
     Link(PushAck),
-    /// A button whose press reaches our own app, the central Telegram bot or
-    /// our Slack app, which learns from the app who pressed it.
+    /// A button whose press reaches our own app in Telegram, Slack or Discord,
+    /// which learns from the app who pressed it.
     Button(String),
     /// The incident's acknowledge page, for a transport whose buttons can only
     /// open a URL. Whoever presses signs in, so the ack names them.
@@ -287,6 +287,11 @@ pub fn build_notifier(
         ChannelConfig::Discord(c) => Arc::new(
             DiscordNotifier::new(http.clone(), parse(&c.webhook_url)?, c.mention_targets())
                 .with_ack_link(page),
+        ) as Arc<dyn Notifier>,
+        ChannelConfig::DiscordApp(c) => Arc::new(
+            DiscordNotifier::new(http.clone(), parse(&c.webhook_url)?, c.mention_targets())
+                .with_ack_link(page)
+                .with_ack_press(ack.and_then(AckControl::button)),
         ) as Arc<dyn Notifier>,
         ChannelConfig::MsTeams(c) => {
             Arc::new(MsTeamsNotifier::new(http.clone(), parse(&c.webhook_url)?).with_ack_link(page))

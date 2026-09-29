@@ -8,6 +8,10 @@ use super::transport::{MASK, TransportConfig, require_provider_webhook, trim_in_
 /// Discord snowflakes are 17 to 20 digits; shorter is a typo, not an id.
 const ID_DIGITS: std::ops::RangeInclusive<usize> = 17..=20;
 
+pub(super) fn snowflake(s: &str) -> bool {
+    ID_DIGITS.contains(&s.len()) && s.chars().all(|c| c.is_ascii_digit())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct DiscordConfig {
     /// Channel webhook URL. The path carries the webhook token, so the
@@ -33,23 +37,55 @@ pub struct DiscordMention {
 impl DiscordConfig {
     /// A typo drops out alone rather than costing the on-call ping beside it.
     pub fn mention_targets(&self) -> Option<DiscordMention> {
-        let mut targets: Vec<Mention> = Vec::new();
-        for target in tokens(self.mention.as_deref()?).filter_map(parse_token) {
-            if !targets.contains(&target) {
-                targets.push(target);
-            }
-        }
-        (!targets.is_empty()).then(|| DiscordMention {
-            markup: targets
-                .iter()
-                .map(Mention::markup)
-                .collect::<Vec<_>>()
-                .join(" "),
-            everyone: targets.iter().any(Mention::pings_everyone),
-            roles: targets.iter().filter_map(Mention::role).collect(),
-            users: targets.iter().filter_map(Mention::user).collect(),
-        })
+        mention_targets(self.mention.as_deref())
     }
+}
+
+/// Both halves of the ping `mention` asks for, `None` when it names nobody.
+pub(super) fn mention_targets(mention: Option<&str>) -> Option<DiscordMention> {
+    let mut targets: Vec<Mention> = Vec::new();
+    for target in tokens(mention?).filter_map(parse_token) {
+        if !targets.contains(&target) {
+            targets.push(target);
+        }
+    }
+    (!targets.is_empty()).then(|| DiscordMention {
+        markup: targets
+            .iter()
+            .map(Mention::markup)
+            .collect::<Vec<_>>()
+            .join(" "),
+        everyone: targets.iter().any(Mention::pings_everyone),
+        roles: targets.iter().filter_map(Mention::role).collect(),
+        users: targets.iter().filter_map(Mention::user).collect(),
+    })
+}
+
+pub(super) fn validate_ping(mention: Option<&str>) -> Result<(), String> {
+    validate_mention(
+        mention,
+        |t| parse_token(t).is_some(),
+        |t| {
+            format!(
+                "Discord cannot ping \"{t}\" — use @everyone, @here, a role id (&123…) \
+                 or a member id (123…), which you copy from Discord with developer mode on"
+            )
+        },
+    )
+}
+
+pub(super) fn require_discord_webhook(url: &str) -> Result<(), String> {
+    require_provider_webhook(
+        url,
+        "Discord",
+        &["discord.com", "discordapp.com"],
+        Some("/api/webhooks/"),
+    )
+}
+
+/// The ping without `@everyone` or `@here`, for a test send.
+pub(super) fn without_broadcast_ping(mention: Option<&str>) -> Option<String> {
+    without_broadcast(mention, is_broadcast)
 }
 
 #[derive(PartialEq, Eq)]
@@ -110,15 +146,13 @@ fn parse_token(token: &str) -> Option<Mention> {
         })
         .unwrap_or_else(|| token.to_string());
     let t = t.strip_prefix('@').unwrap_or(&t);
-    let is_id = |s: &str| ID_DIGITS.contains(&s.len()) && s.chars().all(|c| c.is_ascii_digit());
-
     if t.eq_ignore_ascii_case("everyone") {
         Some(Mention::Everyone)
     } else if t.eq_ignore_ascii_case("here") {
         Some(Mention::Here)
-    } else if let Some(id) = t.strip_prefix('&').filter(|id| is_id(id)) {
+    } else if let Some(id) = t.strip_prefix('&').filter(|id| snowflake(id)) {
         Some(Mention::Role(id.to_string()))
-    } else if is_id(t) {
+    } else if snowflake(t) {
         Some(Mention::User(t.to_string()))
     } else {
         None
@@ -142,26 +176,12 @@ impl TransportConfig for DiscordConfig {
     }
 
     fn validate(&self) -> Result<(), String> {
-        require_provider_webhook(
-            &self.webhook_url,
-            "Discord",
-            &["discord.com", "discordapp.com"],
-            Some("/api/webhooks/"),
-        )?;
-        validate_mention(
-            self.mention.as_deref(),
-            |t| parse_token(t).is_some(),
-            |t| {
-                format!(
-                    "Discord cannot ping \"{t}\" — use @everyone, @here, a role id (&123…) \
-                     or a member id (123…), which you copy from Discord with developer mode on"
-                )
-            },
-        )
+        require_discord_webhook(&self.webhook_url)?;
+        validate_ping(self.mention.as_deref())
     }
 
     fn quiet_broadcast_mention(&mut self) {
-        self.mention = without_broadcast(self.mention.as_deref(), is_broadcast);
+        self.mention = without_broadcast_ping(self.mention.as_deref());
     }
 
     fn abuse_url(&self) -> Option<&str> {

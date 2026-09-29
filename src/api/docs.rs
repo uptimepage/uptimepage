@@ -188,6 +188,7 @@ use crate::storage::UptimeStats;
         handlers::linked_apps::start_telegram,
         handlers::linked_apps::link_pushover,
         handlers::linked_apps::link_slack,
+        handlers::linked_apps::link_discord,
         handlers::linked_apps::unlink,
         handlers::api_tokens::list,
         handlers::api_tokens::create,

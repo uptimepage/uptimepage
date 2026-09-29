@@ -515,3 +515,21 @@ fn an_ask_bind_without_the_subdomain_surface_is_refused_at_boot() {
     cfg.server.custom_domain_ask_bind = String::new();
     assert!(cfg.validate_custom_domain_ask().is_ok());
 }
+
+#[test]
+fn a_discord_public_key_must_be_one() {
+    let read = |key: &str| {
+        serde_json::from_value::<super::DiscordInteractionsConfig>(
+            serde_json::json!({ "public_key": key }),
+        )
+    };
+    assert!(!read("").unwrap().enabled());
+    assert!(!read("  ").unwrap().enabled());
+    let key = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+    let cfg = read(key).unwrap();
+    assert!(cfg.enabled());
+    assert_eq!(serde_json::to_value(&cfg).unwrap()["public_key"], key);
+    assert!(read(&key.to_uppercase()).unwrap().enabled());
+    assert!(read("not a key").is_err());
+    assert!(read(&key[2..]).is_err());
+}

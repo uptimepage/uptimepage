@@ -7,6 +7,7 @@ pub mod connect_oauth;
 pub mod coverage;
 pub mod dashboard;
 pub mod delegate_connect;
+pub mod discord;
 pub mod discord_connect;
 pub mod escalation;
 pub mod heartbeat;
@@ -151,6 +152,7 @@ pub(crate) fn channel_kind_label(kind: crate::domain::ChannelKind) -> &'static s
         ChannelKind::Telegram => "telegram bot",
         ChannelKind::TelegramApp => "telegram",
         ChannelKind::SlackApp => "slack",
+        ChannelKind::DiscordApp => "discord",
         ChannelKind::WhatsApp => "whatsapp api",
         ChannelKind::WhatsAppApp => "whatsapp",
         ChannelKind::MsTeams => "teams",
@@ -164,7 +166,7 @@ pub(crate) fn channel_kind_icon(kind: crate::domain::ChannelKind) -> &'static st
     use crate::domain::ChannelKind;
     match kind {
         ChannelKind::Slack | ChannelKind::SlackApp => "slack",
-        ChannelKind::Discord => "discord",
+        ChannelKind::Discord | ChannelKind::DiscordApp => "discord",
         ChannelKind::Email => "email",
         ChannelKind::Telegram | ChannelKind::TelegramApp => "telegram",
         ChannelKind::WhatsApp | ChannelKind::WhatsAppApp => "whatsapp",

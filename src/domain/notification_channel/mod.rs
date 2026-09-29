@@ -20,6 +20,7 @@
 //! [`ChannelConfig::redacted`].
 
 mod discord;
+mod discord_app;
 mod email;
 mod google_chat;
 mod gotify;
@@ -40,6 +41,7 @@ mod whatsapp;
 mod whatsapp_app;
 
 pub use discord::{DiscordConfig, DiscordMention};
+pub use discord_app::DiscordAppConfig;
 pub use email::EmailConfig;
 pub use google_chat::GoogleChatConfig;
 pub use gotify::GotifyConfig;
@@ -79,6 +81,8 @@ pub enum ChannelKind {
     #[serde(rename = "whatsapp_app")]
     WhatsAppApp,
     Discord,
+    #[serde(rename = "discord_app")]
+    DiscordApp,
     #[serde(rename = "msteams")]
     MsTeams,
     GoogleChat,
@@ -105,6 +109,7 @@ impl ChannelKind {
         Self::WhatsApp,
         Self::WhatsAppApp,
         Self::Discord,
+        Self::DiscordApp,
         Self::MsTeams,
         Self::GoogleChat,
         Self::Email,
@@ -128,6 +133,7 @@ impl ChannelKind {
             Self::WhatsApp => "whatsapp",
             Self::WhatsAppApp => "whatsapp_app",
             Self::Discord => "discord",
+            Self::DiscordApp => "discord_app",
             Self::MsTeams => "msteams",
             Self::GoogleChat => "google_chat",
             Self::Email => "email",
@@ -153,6 +159,7 @@ impl ChannelKind {
             Self::Ntfy => Some(AckVia::SignedLink),
             Self::TelegramApp => Some(AckVia::Button(LinkedApp::Telegram)),
             Self::SlackApp => Some(AckVia::Button(LinkedApp::Slack)),
+            Self::DiscordApp => Some(AckVia::Button(LinkedApp::Discord)),
             Self::Webhook
             | Self::Telegram
             | Self::WhatsApp
@@ -168,13 +175,37 @@ impl ChannelKind {
         self.acknowledge_via().is_some()
     }
 
+    /// Whether a `retry_after` in a failed send's reply is the provider
+    /// throttling us: only the host-pinned transports that send one. A generic
+    /// webhook body echoing it is tenant-controlled and must not mute a
+    /// failure.
+    pub const fn provider_throttle_hint(self) -> bool {
+        match self {
+            Self::Telegram | Self::TelegramApp | Self::Discord | Self::DiscordApp => true,
+            Self::Webhook
+            | Self::Slack
+            | Self::SlackApp
+            | Self::WhatsApp
+            | Self::WhatsAppApp
+            | Self::MsTeams
+            | Self::GoogleChat
+            | Self::Email
+            | Self::PagerDuty
+            | Self::Ntfy
+            | Self::Gotify
+            | Self::Pushover
+            | Self::Sms
+            | Self::Mattermost => false,
+        }
+    }
+
     /// Whether only the operator's own connect flow may write this kind's
     /// config: a caller-supplied destination would ride the operator's
     /// credentials, or point our button presses somewhere the alerts never
     /// go.
     pub const fn operator_managed(self) -> bool {
         match self {
-            Self::SlackApp | Self::TelegramApp | Self::WhatsAppApp => true,
+            Self::SlackApp | Self::DiscordApp | Self::TelegramApp | Self::WhatsAppApp => true,
             Self::Webhook
             | Self::Slack
             | Self::Telegram
@@ -224,6 +255,8 @@ pub enum ChannelConfig {
     #[serde(rename = "whatsapp_app")]
     WhatsAppApp(WhatsAppAppConfig),
     Discord(DiscordConfig),
+    #[serde(rename = "discord_app")]
+    DiscordApp(DiscordAppConfig),
     #[serde(rename = "msteams")]
     MsTeams(MsTeamsConfig),
     GoogleChat(GoogleChatConfig),
@@ -250,6 +283,7 @@ macro_rules! with_transport {
             ChannelConfig::WhatsApp($c) => $body,
             ChannelConfig::WhatsAppApp($c) => $body,
             ChannelConfig::Discord($c) => $body,
+            ChannelConfig::DiscordApp($c) => $body,
             ChannelConfig::MsTeams($c) => $body,
             ChannelConfig::GoogleChat($c) => $body,
             ChannelConfig::Email($c) => $body,
@@ -300,6 +334,19 @@ impl ChannelConfig {
     /// See [`ChannelKind::operator_managed`].
     pub fn operator_managed(&self) -> bool {
         self.kind().operator_managed()
+    }
+
+    /// This config as an edit to `stored`, a managed channel: the connection
+    /// its flow wrote stays, and only what people may change comes from here.
+    /// `None` for a kind with nothing to edit, or when `stored` is another
+    /// kind.
+    pub fn edited_on(&self, stored: &Self) -> Option<Self> {
+        match (self, stored) {
+            (Self::DiscordApp(edit), Self::DiscordApp(stored)) => {
+                Some(Self::DiscordApp(edit.edited_on(stored)))
+            }
+            _ => None,
+        }
     }
 
     /// See [`TransportConfig::normalize`].
@@ -625,6 +672,11 @@ mod tests {
             }),
             ChannelConfig::Discord(DiscordConfig {
                 webhook_url: "https://discord.com/api/webhooks/1/x".into(),
+                mention: None,
+            }),
+            ChannelConfig::DiscordApp(DiscordAppConfig {
+                webhook_url: "https://discord.com/api/webhooks/112233445566778899/x".into(),
+                webhook_id: "112233445566778899".into(),
                 mention: None,
             }),
             ChannelConfig::MsTeams(MsTeamsConfig {

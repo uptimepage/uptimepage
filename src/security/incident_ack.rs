@@ -19,6 +19,10 @@ pub const LINK_TTL_SECS: i64 = 7 * 24 * 60 * 60;
 const BUTTON_PREFIX: &str = "a";
 const BUTTON_MAC_LEN: usize = 12;
 const BUTTON_RAW_LEN: usize = 16 + 4 + BUTTON_MAC_LEN;
+/// Telegram's callback data takes 64 bytes, the tightest of the apps: a
+/// Discord `custom_id` takes 100 characters and a Slack button value 2000.
+const BUTTON_MAX: usize = 64;
+const _: () = assert!(BUTTON_PREFIX.len() + (BUTTON_RAW_LEN * 4).div_ceil(3) <= BUTTON_MAX);
 
 /// Proof for the public acknowledge link. Reproduced at verify time, nothing
 /// persisted.
@@ -98,14 +102,13 @@ fn button_mac(
     )
 }
 
-/// The value of an Acknowledge button our own app receives, the central
-/// Telegram bot's or our Slack app's, on a page about `incident_id`'s episode
-/// `generation` sent to `channel_id`. A client may send any value it likes, so
-/// it is signed. It names the incident and the episode; the MAC also binds the
-/// org and channel, which the receiver recovers from the chat or channel the
-/// press came from. Within Telegram's 64 bytes, the tighter of the two. `None`
-/// for an episode past what the value can carry, which pages without the
-/// button.
+/// The value of an Acknowledge button our own app receives in Telegram, Slack
+/// or Discord, on a page about `incident_id`'s episode `generation` sent to
+/// `channel_id`. A client may send any value it likes, so it is signed. It
+/// names the incident and the episode; the MAC also binds the org and
+/// channel, which the receiver recovers from where the press came from. Fits
+/// [`BUTTON_MAX`]. `None` for an episode past what the value can carry, which
+/// pages without the button.
 pub fn button_data(
     secret: &str,
     org: OrgId,

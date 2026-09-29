@@ -38,6 +38,10 @@ pub struct DiscordNotifier {
     webhook_url: Url,
     ping: Option<Ping>,
     ack_link: Option<String>,
+    /// Signed `custom_id` of an Acknowledge button our own app receives. Only
+    /// on a channel connected through it: a webhook we do not own may send
+    /// link buttons alone.
+    ack_press: Option<String>,
 }
 
 struct Ping {
@@ -58,35 +62,54 @@ struct DiscordPayload<'a> {
     components: Vec<ActionRow>,
 }
 
-/// A row of link buttons: the one kind a webhook we do not own may send, and
-/// the press opens a browser rather than reaching any app.
 #[derive(Serialize)]
 struct ActionRow {
     #[serde(rename = "type")]
     kind: u8,
-    components: [LinkButton; 1],
+    components: [Button; 1],
 }
 
+/// A link button opens a browser rather than reaching any app, the one kind a
+/// webhook we do not own may send. A press on any other comes back to the app
+/// that owns the webhook, with its `custom_id`.
 #[derive(Serialize)]
-struct LinkButton {
+struct Button {
     #[serde(rename = "type")]
     kind: u8,
     style: u8,
     label: &'static str,
-    url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    custom_id: Option<String>,
 }
 
+const PRIMARY: u8 = 1;
+const LINK: u8 = 5;
+
 impl ActionRow {
-    fn acknowledge(url: &str) -> Self {
-        Self {
-            kind: 1,
-            components: [LinkButton {
+    fn acknowledge(press: Option<&str>, url: Option<&str>) -> Option<Self> {
+        let button = match (press, url) {
+            (Some(custom_id), _) => Button {
                 kind: 2,
-                style: 5,
+                style: PRIMARY,
                 label: "Acknowledge",
-                url: url.to_string(),
-            }],
-        }
+                url: None,
+                custom_id: Some(custom_id.to_string()),
+            },
+            (None, Some(url)) => Button {
+                kind: 2,
+                style: LINK,
+                label: "Acknowledge",
+                url: Some(url.to_string()),
+                custom_id: None,
+            },
+            (None, None) => return None,
+        };
+        Some(Self {
+            kind: 1,
+            components: [button],
+        })
     }
 }
 
@@ -151,6 +174,7 @@ impl DiscordNotifier {
                 allowed: allowed(&m),
             }),
             ack_link: None,
+            ack_press: None,
         }
     }
 
@@ -159,17 +183,20 @@ impl DiscordNotifier {
         self
     }
 
-    fn payload(&self, card: &AlertCard) -> DiscordPayload<'_> {
+    pub fn with_ack_press(mut self, custom_id: Option<String>) -> Self {
+        self.ack_press = custom_id;
+        self
+    }
+
+    /// `ack_press` takes the place of the card's link to the acknowledge page.
+    fn payload<'a>(&'a self, card: &AlertCard, ack_press: Option<&str>) -> DiscordPayload<'a> {
         let ping = card.ping(self.ping.as_ref());
         DiscordPayload {
             content: ping.map(|p| p.content.as_str()),
             embeds: [Self::embed(card)],
             allowed_mentions: ping.map_or(&SILENT, |p| &p.allowed),
             // The embed title already opens the incident.
-            components: card
-                .ack_link
-                .as_deref()
-                .map(ActionRow::acknowledge)
+            components: ActionRow::acknowledge(ack_press, card.ack_link.as_deref())
                 .into_iter()
                 .collect(),
         }
@@ -222,7 +249,7 @@ fn color(tone: CardTone) -> u32 {
 
 /// Customer text renders literally rather than as emphasis or a live link.
 /// Mentions need no handling: Discord does not resolve them inside an embed.
-fn escape(s: &str) -> String {
+pub fn escape(s: &str) -> String {
     escape_markdown(s, &['\\', '`', '*', '_', '~', '|', '[', ']', '<', '>'])
 }
 
@@ -248,7 +275,16 @@ fn allowed(mention: &DiscordMention) -> AllowedMentions {
 #[async_trait]
 impl Notifier for DiscordNotifier {
     async fn notify_incident(&self, notice: &IncidentNotice) -> Result<()> {
-        let payload = self.payload(&AlertCard::for_notice(notice, self.ack_link.as_deref()));
+        // A button minted for an incident still to be taken must not ride
+        // along on the all-clear.
+        let ack_press = self
+            .ack_press
+            .as_deref()
+            .filter(|_| notice.reason.awaits_acknowledgement());
+        let payload = self.payload(
+            &AlertCard::for_notice(notice, self.ack_link.as_deref()),
+            ack_press,
+        );
         post_json(&self.client, &self.webhook_url, &payload).await
     }
 }
@@ -281,7 +317,7 @@ mod tests {
             "https://discord.com/api/webhooks/123/tok".parse().unwrap(),
             cfg.mention_targets(),
         );
-        serde_json::to_value(sender.payload(&AlertCard::for_notice(n, None))).unwrap()
+        serde_json::to_value(sender.payload(&AlertCard::for_notice(n, None), None)).unwrap()
     }
 
     /// A second `wait` pair leaves the retry loop blind to a failed send.
@@ -413,9 +449,10 @@ mod tests {
     fn an_open_incident_carries_an_acknowledge_link_button() {
         let ack = crate::notifier::card::tests::ack_page();
         let card = AlertCard::for_notice(&notice(NotificationReason::Opened), Some(&ack));
-        let v =
-            serde_json::to_value(notifier("https://discord.com/api/webhooks/1/tok").payload(&card))
-                .unwrap();
+        let v = serde_json::to_value(
+            notifier("https://discord.com/api/webhooks/1/tok").payload(&card, None),
+        )
+        .unwrap();
         assert_eq!(
             v["components"],
             serde_json::json!([{
@@ -427,6 +464,25 @@ mod tests {
             payload(None, &notice(NotificationReason::Resolved))
                 .get("components")
                 .is_none()
+        );
+    }
+
+    /// A press on our own app's button comes back to us with its `custom_id`,
+    /// so it opens nothing and needs no page.
+    #[test]
+    fn a_button_our_app_receives_carries_its_custom_id_instead_of_a_link() {
+        let ack = crate::notifier::card::tests::ack_page();
+        let card = AlertCard::for_notice(&notice(NotificationReason::Opened), Some(&ack));
+        let v = serde_json::to_value(
+            notifier("https://discord.com/api/webhooks/1/tok").payload(&card, Some("a-signed")),
+        )
+        .unwrap();
+        assert_eq!(
+            v["components"],
+            serde_json::json!([{
+                "type": 1,
+                "components": [{"type": 2, "style": 1, "label": "Acknowledge", "custom_id": "a-signed"}]
+            }])
         );
     }
 

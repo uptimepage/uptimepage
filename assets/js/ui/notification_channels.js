@@ -119,7 +119,7 @@
 
     function syncNamePlaceholder() {
         const kind = currentKind();
-        const slug = { slack_app: "slack", telegram_app: "telegram", whatsapp_app: "whatsapp" }[kind] || kind;
+        const slug = { slack_app: "slack", discord_app: "discord", telegram_app: "telegram", whatsapp_app: "whatsapp" }[kind] || kind;
         if (nameInput) nameInput.placeholder = `ops-${slug}`;
     }
 
@@ -133,8 +133,9 @@
         if (!isEdit) return;
         const on = !!(replaceCb && replaceCb.checked);
         configFs.querySelectorAll("input, textarea, select").forEach(el => {
-            // The Acknowledge toggle is not part of the secret config.
-            if (el === replaceCb || el.closest("[data-acknowledge-toggle]")) return;
+            // The Acknowledge toggle is not part of the secret config, and a
+            // connected channel's editable part never touches its secret.
+            if (el === replaceCb || el.closest("[data-acknowledge-toggle], [data-managed-edit]")) return;
             el.disabled = !on;
         });
         if (kindFs) kindFs.disabled = !on;
@@ -799,8 +800,10 @@
         };
 
         // Edit + "replace config" unchecked: omit config so the stored
-        // secret is preserved (the API rejects a re-submitted "***").
-        if (usesFormConfig()) {
+        // secret is preserved (the API rejects a re-submitted "***"). A
+        // connected channel with a part people edit sends that part alone;
+        // the API keeps the connection.
+        if (usesFormConfig() || form.querySelector("[data-managed-edit]")) {
             const built = buildConfig();
             if (built.error) return built;
             payload.config = built.config;
@@ -1010,6 +1013,12 @@
             const device = (data.get("pushover_device") || "").trim();
             if (device) config.device = device;
             config.emergency = data.get("pushover_emergency") === "on";
+            return { config };
+        }
+        if (kind === "discord_app") {
+            const config = { type: "discord_app" };
+            const mention = (data.get("discord_app_mention") || "").trim();
+            if (mention) config.mention = mention;
             return { config };
         }
         if (kind === "slack_app") {

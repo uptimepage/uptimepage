@@ -1,5 +1,6 @@
 //! Outbound channels the operator owns: bot credentials and the transactional mailer.
 
+use ed25519_dalek::VerifyingKey;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 
@@ -56,6 +57,55 @@ impl Default for SlackInteractivityConfig {
 impl SlackInteractivityConfig {
     pub fn enabled(&self) -> bool {
         !self.signing_secret.expose_secret().trim().is_empty()
+    }
+}
+
+/// `[discord_interactions]`. Public key of the operator Discord app behind
+/// `[discord_oauth]`, which checks the signature on every interaction Discord
+/// posts to `/hooks/discord/interactions`. Empty leaves the receiver
+/// unmounted, and channels connected through the app fall back to the
+/// acknowledge page. Anything but the 64 hex characters Discord shows on the
+/// app's General Information page fails startup: a wrong key would refuse
+/// every press as unsigned. Not a secret.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct DiscordInteractionsConfig {
+    #[serde(with = "discord_public_key")]
+    pub public_key: Option<VerifyingKey>,
+}
+
+impl DiscordInteractionsConfig {
+    pub fn enabled(&self) -> bool {
+        self.public_key.is_some()
+    }
+}
+
+mod discord_public_key {
+    use ed25519_dalek::VerifyingKey;
+    use serde::de::Error;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(key: &Option<VerifyingKey>, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&key.map(|k| hex::encode(k.to_bytes())).unwrap_or_default())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<VerifyingKey>, D::Error> {
+        let raw = String::deserialize(d)?;
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return Ok(None);
+        }
+        hex::decode(raw)
+            .ok()
+            .and_then(|b| <[u8; 32]>::try_from(b).ok())
+            .and_then(|b| VerifyingKey::from_bytes(&b).ok())
+            .map(Some)
+            .ok_or_else(|| {
+                D::Error::custom(
+                    "discord_interactions.public_key must be the 64 hex characters of the \
+                     Discord app's Public Key",
+                )
+            })
     }
 }
 

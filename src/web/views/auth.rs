@@ -403,9 +403,9 @@ pub mod settings {
         pub offers_telegram: bool,
         /// A Pushover offer has somewhere to send its link.
         pub offers_pushover: bool,
-        /// Presses on our Slack app's buttons reach this deployment, and its
-        /// offers have somewhere to send their link.
-        pub offers_slack: bool,
+        /// The chat apps whose presses reach this deployment and bring an
+        /// offer, named for the sentence that says so.
+        pub press_link_apps: Option<String>,
         pub joined: Option<chrono::DateTime<chrono::Utc>>,
         pub last_seen: Option<chrono::DateTime<chrono::Utc>>,
         pub theme: String,
@@ -517,8 +517,7 @@ pub mod settings {
             linked_apps,
             offers_telegram: state.cfg.telegram.enabled(),
             offers_pushover: !state.cfg.auth.public_base_url.trim().is_empty(),
-            offers_slack: state.cfg.slack_interactivity.enabled()
-                && !state.cfg.auth.public_base_url.trim().is_empty(),
+            press_link_apps: press_link_apps(&state.cfg),
             joined,
             last_seen,
             theme: prefs.theme.as_str().to_string(),
@@ -526,6 +525,21 @@ pub mod settings {
             grace_days: state.cfg.tenancy.deletion_grace_period_days,
         }
         .into_response())
+    }
+
+    /// The apps whose own press brings an offer to link, where the presses
+    /// arrive and there is a public address to link to.
+    fn press_link_apps(cfg: &crate::config::AppConfig) -> Option<String> {
+        if cfg.auth.public_base_url.trim().is_empty() {
+            return None;
+        }
+        let apps: Vec<&str> = cfg
+            .pressed_apps()
+            .into_iter()
+            .filter(|a| crate::security::app_link::offer_terms(*a).is_some())
+            .map(|a| a.label())
+            .collect();
+        (!apps.is_empty()).then(|| apps.join(" or "))
     }
 
     /// `flash::take` clears the whole cookie, so anything this page does not
@@ -1216,7 +1230,7 @@ pub mod settings {
                 linked_apps: Vec::new(),
                 offers_telegram: false,
                 offers_pushover: true,
-                offers_slack: false,
+                press_link_apps: None,
                 joined: Some("2026-02-14T09:00:00Z".parse().unwrap()),
                 last_seen: Some("2026-05-16T12:00:00Z".parse().unwrap()),
                 theme: "default".into(),

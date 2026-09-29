@@ -1980,6 +1980,7 @@ async fn an_app_acknowledgement_names_only_a_linked_member_pg() {
         "someone else nobody linked"
     );
     assert!(listed(press(LinkedApp::Pushover, "taras", None)).await);
+    assert!(listed(press(LinkedApp::Discord, "taras", None)).await);
     assert!(listed(press(LinkedApp::Telegram, "olena", Some(olena))).await);
     assert!(
         !listed(Actor::User(olena)).await,
@@ -1994,7 +1995,10 @@ async fn an_app_acknowledgement_names_only_a_linked_member_pg() {
     .fetch_all(&pool)
     .await
     .expect("acknowledged events");
-    assert_eq!(kinds, ["telegram", "telegram", "pushover", "telegram"]);
+    assert_eq!(
+        kinds,
+        ["telegram", "telegram", "pushover", "discord", "telegram"]
+    );
     let named_senders: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM incident_acknowledgements \
          WHERE incident_id = $1 AND NOT anonymous AND sender IS NOT NULL",
@@ -2025,6 +2029,7 @@ async fn an_app_acknowledgement_names_only_a_linked_member_pg() {
             (ActorType::Telegram, None, true),
             (ActorType::Telegram, None, true),
             (ActorType::Pushover, None, true),
+            (ActorType::Discord, None, true),
             (ActorType::Telegram, None, false),
         ]
     );

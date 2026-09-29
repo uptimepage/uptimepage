@@ -1,12 +1,15 @@
 //! A press on an Acknowledge button whose press reaches our own app, in a
-//! Telegram chat or a Slack channel. The org comes from the chat or channel the
-//! press arrived in, confirmed by the button's MAC. The person comes from the
-//! app, and is named only through an account they linked there.
+//! Telegram chat, a Slack channel or under a Discord webhook's alert. The org
+//! comes from where the press arrived, confirmed by the button's MAC. The
+//! person comes from the app, and is named only through an account they
+//! linked there.
+
+use chrono::Utc;
 
 use crate::app::AppState;
 use crate::domain::{ChannelKind, ExternalId, LinkedApp};
 use crate::security::incident_ack::Button;
-use crate::storage::linked_apps::{Linked, identify};
+use crate::storage::linked_apps::{Linked, identify, offer_link};
 use crate::storage::{Acknowledged, Actor, AppPress, LifecycleOutcome};
 
 pub(super) const GONE: &str = "This button no longer works.";
@@ -110,6 +113,54 @@ pub(super) async fn take(state: &AppState, press: Pressed<'_>) -> Taken {
         Err(err) => {
             tracing::warn!(org_id = %org.0, ?err, app, "app acknowledge failed");
             Taken::Refused(FAILED)
+        }
+    }
+}
+
+/// What the presser is told about a press in Slack or Discord, and whether it
+/// added someone to the list, which the channel then hears about. A presser
+/// nobody linked is offered a one-time link naming them on their next
+/// presses, written by `link` into a message only they see.
+pub(super) async fn answer_offering_link(
+    state: &AppState,
+    press: Pressed<'_>,
+    username: Option<&str>,
+    link: impl Fn(&str) -> String,
+) -> (String, bool) {
+    let (app, sender) = (press.app, press.sender);
+    match take(state, press).await {
+        Taken::Acknowledged { listed, linked } => {
+            let hint = match linked.invites_link() {
+                true => offered_link(state, app, sender, username).await,
+                false => None,
+            };
+            let hint = hint.map(|url| link(&url)).unwrap_or_default();
+            (acknowledged_notice(listed, linked, &hint), listed)
+        }
+        Taken::Refused(notice) => (notice.to_string(), false),
+    }
+}
+
+async fn offered_link(
+    state: &AppState,
+    app: LinkedApp,
+    sender: ExternalId,
+    username: Option<&str>,
+) -> Option<String> {
+    let offer = offer_link(
+        state.linked_app_store.as_ref(),
+        &state.cfg.auth.public_base_url,
+        app,
+        sender,
+        username,
+        Utc::now(),
+    )
+    .await;
+    match offer {
+        Ok(offer) => offer.map(|o| o.url),
+        Err(err) => {
+            tracing::warn!(error = %err, app = app.as_db_str(), "link offer failed");
+            None
         }
     }
 }

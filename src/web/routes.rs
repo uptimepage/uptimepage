@@ -96,9 +96,9 @@ pub fn routes(state: AppState) -> Router {
             "/incident/ack",
             get(views::incident_ack::confirm).post(views::incident_ack::ack),
         )
-        // Only the Pushover or Slack account the offer was sent to holds it;
-        // signing in names who it belongs to. Linking itself is a CSRF-guarded
-        // API call.
+        // Only the Pushover, Slack or Discord account the offer was sent to
+        // holds it; signing in names who it belongs to. Linking itself is a
+        // CSRF-guarded API call.
         .route("/link/{app}", get(views::link_app::confirm))
         // Public status-page subscriptions: confirm/unsubscribe carry their own
         // token/HMAC proof, so they're always mounted like the verify link.
@@ -296,6 +296,15 @@ pub fn routes(state: AppState) -> Router {
         r = r.route(
             crate::slack::INTERACTIONS_PATH,
             post(views::slack::interactions),
+        );
+    }
+
+    // Our Discord app's Interactions Endpoint URL. Mounted only when its
+    // public key is configured; the signature is the only auth.
+    if cfg.discord_interactions.enabled() {
+        r = r.route(
+            crate::discord::INTERACTIONS_PATH,
+            post(views::discord::interactions),
         );
     }
 

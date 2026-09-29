@@ -39,8 +39,8 @@ pub use limits::{
     RateLimitJanitorConfig, RateLimitsConfig, SignupPolicy,
 };
 pub use notify::{
-    ConnectOauthConfig, EmailProvider, ResendConfig, SlackInteractivityConfig, TelegramBotConfig,
-    TransactionalEmailConfig, WhatsAppAppBotConfig,
+    ConnectOauthConfig, DiscordInteractionsConfig, EmailProvider, ResendConfig,
+    SlackInteractivityConfig, TelegramBotConfig, TransactionalEmailConfig, WhatsAppAppBotConfig,
 };
 pub use observability::{GrafanaConfig, HeartbeatConfig, LogFormat, ObservabilityConfig};
 pub use ops::{AgentConfig, EscalationConfig, FlowConfig, McpConfig, OperatorConfig};
@@ -136,6 +136,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub discord_oauth: ConnectOauthConfig,
     #[serde(default)]
+    pub discord_interactions: DiscordInteractionsConfig,
+    #[serde(default)]
     pub bootstrap: BootstrapConfig,
     #[serde(default)]
     pub billing: BillingConfig,
@@ -163,12 +165,22 @@ impl AppConfig {
         Ok(cfg.try_deserialize()?)
     }
 
+    /// The apps whose button presses reach this deployment.
+    pub fn pressed_apps(&self) -> Vec<LinkedApp> {
+        LinkedApp::ALL
+            .iter()
+            .copied()
+            .filter(|app| self.receives_presses(*app))
+            .collect()
+    }
+
     /// Whether presses on `app`'s own buttons reach this deployment. Pushover
     /// reports its acknowledgements on a receipt we poll instead.
     pub fn receives_presses(&self, app: LinkedApp) -> bool {
         match app {
             LinkedApp::Telegram => self.telegram.enabled(),
             LinkedApp::Slack => self.slack_interactivity.enabled(),
+            LinkedApp::Discord => self.discord_interactions.enabled(),
             LinkedApp::Pushover => false,
         }
     }

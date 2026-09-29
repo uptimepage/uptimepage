@@ -15,9 +15,10 @@ use std::time::Duration;
 
 use chrono::Utc;
 use uptimepage::domain::{
-    AlertBinding, ChannelConfig, ChannelKind, CheckSpec, EmailConfig, ExpectedStatus,
-    NewIncidentNotification, NewNotificationChannel, NewTarget, NotificationChannelUpdate,
-    NotificationReason, NotificationStatus, SlackAppConfig, SlackConfig, TargetAlerts, WriteSource,
+    AlertBinding, ChannelConfig, ChannelKind, CheckSpec, DiscordAppConfig, EmailConfig,
+    ExpectedStatus, NewIncidentNotification, NewNotificationChannel, NewTarget,
+    NotificationChannelUpdate, NotificationReason, NotificationStatus, SlackAppConfig, SlackConfig,
+    TargetAlerts, WriteSource,
 };
 use uptimepage::error::AppError;
 use uptimepage::error::codes;
@@ -1595,6 +1596,56 @@ async fn a_press_finds_only_channels_that_still_take_acknowledgements_pg() {
         .await
         .unwrap();
     assert_eq!(disabled, 2, "the switched-off channel is disabled too");
+
+    cleanup(&pool, &[org_a, org_b], &[user_a, user_b]).await;
+}
+
+/// A press on a Discord alert finds its channel by the webhook that posted
+/// it, the key a `discord_app` channel is stored under.
+#[tokio::test]
+#[ignore = "needs DATABASE_URL"]
+async fn a_discord_press_finds_its_channel_by_webhook_pg() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (org_a, org_b, user_a, user_b) = two_orgs(&pool, "nc-discord").await;
+    let store = PgNotificationChannelStore::new(pool.clone(), None);
+    let webhook = format!("1{:018}", uuid::Uuid::now_v7().as_u128() % 10u128.pow(18));
+    let channel = store
+        .create(
+            org_a,
+            NewNotificationChannel {
+                name: "Ops".into(),
+                config: ChannelConfig::DiscordApp(DiscordAppConfig {
+                    webhook_url: format!("https://discord.com/api/webhooks/{webhook}/tok"),
+                    webhook_id: webhook.clone(),
+                    mention: Some("&123456789012345678".into()),
+                }),
+                enabled: true,
+                auto_bind_tags: Vec::new(),
+                acknowledge_button: true,
+            },
+            WriteSource::Ui,
+            10,
+            Some(user_a),
+        )
+        .await
+        .unwrap();
+    assert_eq!(channel.kind, ChannelKind::DiscordApp);
+    assert_eq!(
+        store
+            .acknowledging_by_external_ref(ChannelKind::DiscordApp, &webhook)
+            .await
+            .unwrap(),
+        [(org_a, channel.id)]
+    );
+    assert!(
+        store
+            .acknowledging_by_external_ref(ChannelKind::SlackApp, &webhook)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 
     cleanup(&pool, &[org_a, org_b], &[user_a, user_b]).await;
 }

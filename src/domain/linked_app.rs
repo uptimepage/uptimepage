@@ -13,16 +13,18 @@ pub enum LinkedApp {
     Telegram,
     Pushover,
     Slack,
+    Discord,
 }
 
 impl LinkedApp {
-    pub const ALL: &'static [Self] = &[Self::Telegram, Self::Pushover, Self::Slack];
+    pub const ALL: &'static [Self] = &[Self::Telegram, Self::Pushover, Self::Slack, Self::Discord];
 
     pub const fn as_db_str(self) -> &'static str {
         match self {
             Self::Telegram => "telegram",
             Self::Pushover => "pushover",
             Self::Slack => "slack",
+            Self::Discord => "discord",
         }
     }
 
@@ -35,6 +37,7 @@ impl LinkedApp {
             Self::Telegram => "Telegram",
             Self::Pushover => "Pushover",
             Self::Slack => "Slack",
+            Self::Discord => "Discord",
         }
     }
 
@@ -43,6 +46,7 @@ impl LinkedApp {
             Self::Telegram => ActorType::Telegram,
             Self::Pushover => ActorType::Pushover,
             Self::Slack => ActorType::Slack,
+            Self::Discord => ActorType::Discord,
         }
     }
 }
@@ -78,6 +82,6 @@ mod tests {
         for app in LinkedApp::ALL {
             assert_eq!(LinkedApp::from_db_str(app.as_db_str()), Some(*app));
         }
-        assert_eq!(LinkedApp::from_db_str("discord"), None);
+        assert_eq!(LinkedApp::from_db_str("teams"), None);
     }
 }

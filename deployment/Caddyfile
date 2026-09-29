@@ -554,6 +554,27 @@ app.{$UPTIMEPAGE_DOMAIN} {
 		import app_upstream
 	}
 
+	# ─── Discord interactions — anonymous, per-IP edge cap ──────────────
+	# Authenticated in-app by Discord's Ed25519 signature, which Discord
+	# probes with bad ones now and then. A press carries the whole alert it
+	# sits on as JSON, embed included. Discord gives the answer 3 seconds
+	# and every server's presses arrive from Discord's own egress, so the
+	# cap stays generous like Slack's.
+	@discord_hook path /hooks/discord/interactions
+	handle @discord_hook {
+		request_body {
+			max_size 256KB
+		}
+		rate_limit {
+			zone discord_hook {
+				key {remote_host}
+				events 300
+				window 1m
+			}
+		}
+		import app_upstream
+	}
+
 	# ─── Operator surface: app-enforced session auth (SaaS) ─────────────
 	# No edge basic_auth. The health/metrics/public handle blocks above
 	# are terminal; every other (operator) request falls through to the

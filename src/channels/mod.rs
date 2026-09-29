@@ -161,9 +161,10 @@ pub fn delegate_status_parts(status: LinkCodeStatus) -> (&'static str, Option<Uu
 }
 
 /// A caller-supplied operator-managed config (a `telegram_app` chat id, a
-/// `slack_app` channel id) would let anyone alert-spam an arbitrary
-/// destination with our credentials, or point our presses at a channel the
-/// webhook does not post to. Only the transport's own flow may mint one.
+/// `slack_app` channel id, a `discord_app` webhook id) would let anyone
+/// alert-spam an arbitrary destination with our credentials, or point our
+/// presses at a channel the webhook does not post to. Only the transport's own
+/// flow may mint one.
 pub fn reject_managed_kind(cfg: &ChannelConfig) -> Result<()> {
     if !cfg.operator_managed() {
         return Ok(());
@@ -171,6 +172,10 @@ pub fn reject_managed_kind(cfg: &ChannelConfig) -> Result<()> {
     let how = match cfg.kind() {
         ChannelKind::SlackApp => {
             "slack_app channels are created by connecting a channel with Add to Slack"
+        }
+        ChannelKind::DiscordApp => {
+            "discord_app channels are created by connecting a channel with Add to Discord; \
+             an edit may change only the mention"
         }
         ChannelKind::WhatsAppApp => {
             "whatsapp_app channels are created by linking a number through our WhatsApp line; \
@@ -182,6 +187,25 @@ pub fn reject_managed_kind(cfg: &ChannelConfig) -> Result<()> {
         }
     };
     Err(AppError::unprocessable(codes::CHANNEL_KIND_MANAGED, how))
+}
+
+/// An edit to a managed channel keeps the connection its flow stored and
+/// takes only what the kind lets people change, the ping on a `discord_app`.
+/// Any other managed config in a request body is refused.
+pub fn keep_managed_connection(
+    cfg: &mut ChannelConfig,
+    stored: Option<&ChannelConfig>,
+) -> Result<()> {
+    if !cfg.operator_managed() {
+        return Ok(());
+    }
+    match stored.and_then(|s| cfg.edited_on(s)) {
+        Some(edit) => {
+            *cfg = edit;
+            Ok(())
+        }
+        None => reject_managed_kind(cfg),
+    }
 }
 
 pub fn validate_name(name: &str) -> Result<()> {

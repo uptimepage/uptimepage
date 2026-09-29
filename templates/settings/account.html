@@ -230,7 +230,7 @@
   <script defer src="{{ "js/ui/passkey_manage.js"|asset }}"></script>
   {% endif %}
 
-  {% if offers_telegram || offers_pushover || offers_slack || !linked_apps.is_empty() %}
+  {% if offers_telegram || offers_pushover || press_link_apps.is_some() || !linked_apps.is_empty() %}
   <section class="sticker-card overflow-hidden" aria-labelledby="linked-apps-heading" data-linked-apps>
     <header class="card-band">
       <h2 id="linked-apps-heading" class="panel-label">linked apps</h2>
@@ -270,8 +270,9 @@
           {% if offers_telegram %}Link Telegram opens a chat with our bot; press Start there.{% endif %}
           {% if offers_pushover %}A Pushover account links itself: acknowledge an emergency
           page in Pushover and it brings you a link.{% endif %}
-          {% if offers_slack %}So does a Slack account: press Acknowledge on an alert in a
-          channel connected with add to Slack, and Slack shows you a link.{% endif %}
+          {% if let Some(apps) = press_link_apps %}So does a {{ apps }} account: press
+          Acknowledge on an alert in a channel connected with add to {{ apps }}, and the app
+          shows you a link.{% endif %}
         </p>
       </div>
     </div>

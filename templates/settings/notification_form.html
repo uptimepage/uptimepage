@@ -42,7 +42,11 @@
         {% else %}
         {% call reg::chooser_card("data-kind-card", "kind", "slack", form.kind == "slack", "slack", "incoming webhook", icon="slack") %}{% endcall %}
         {% endif %}
+        {% if form.kind == "discord_app" %}
+        {% call reg::chooser_card("data-kind-card", "kind", "discord_app", true, "discord", "connected app", icon="discord") %}{% endcall %}
+        {% else %}
         {% call reg::chooser_card("data-kind-card", "kind", "discord", form.kind == "discord", "discord", "channel webhook", icon="discord") %}{% endcall %}
+        {% endif %}
         {% call reg::chooser_card("data-kind-card", "kind", "email", form.kind == "email", "email", "verified address", icon="email") %}{% endcall %}
         {% if form.offers_telegram_app() %}
         {% call reg::chooser_card("data-kind-card", "kind", "telegram_app", form.kind == "telegram_app", "telegram", "one-tap chat link", icon="telegram") %}{% endcall %}
@@ -141,7 +145,7 @@
             webhook URL to hand.
           </span>
         </label>
-        {% if form.kind == "slack" && form.slack_app_presses %}
+        {% if form.kind == "slack" && form.reconnect_for_button %}
         <p class="text-xs text-muted">
           Connect this channel again with <em>add to Slack</em> and its Acknowledge button
           takes the incident right in Slack, without signing in. Delete this one once
@@ -212,7 +216,38 @@
             webhook URL to hand.
           </span>
         </label>
+        {% if form.kind == "discord" && form.reconnect_for_button %}
+        <p class="text-xs text-muted">
+          Connect this channel again with <em>add to Discord</em> and its Acknowledge button
+          takes the incident right in Discord, without signing in. Set its ping again there,
+          and delete this one once the new channel is bound.
+        </p>
+        {% endif %}
       </div>
+
+      {% if form.kind == "discord_app" %}
+      <div data-variant="discord_app" class="space-y-4">
+        <p class="font-mono text-xs text-quiet"># connected with add to Discord</p>
+        <p class="text-xs text-muted">
+          Alerts are posted through our Discord app, and a press on their Acknowledge button
+          comes straight back here. Only the ping can change. To move the channel, delete it
+          below and connect again from the new Discord channel.
+        </p>
+        <label class="field-outline" data-managed-edit>
+          <span class="field-outline__label">Ping on alert (optional)</span>
+          <input name="discord_app_mention" type="text" value="{{ form.config.discord_app_mention }}"
+                 placeholder="@here &amp;123456789012345678"
+                 autocomplete="off" spellcheck="false" class="w-full field font-mono">
+          <span class="mt-1 block text-xs text-muted">
+            Leads the message so it wakes someone: <code>@everyone</code>, <code>@here</code>,
+            a role id (<code>&amp;123…</code>) or a member id (<code>123…</code>), copied from
+            Discord with <em>Advanced → Developer Mode</em> on. Space or comma separated, up to 5.
+            Recovery messages never ping, and a test send drops
+            <code>@everyone</code>/<code>@here</code>.
+          </span>
+        </label>
+      </div>
+      {% endif %}
 
       <div data-variant="msteams"{% if form.kind != "msteams" %} class="hidden"{% endif %}>
         <label class="field-outline">

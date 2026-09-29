@@ -318,7 +318,7 @@ fn windows_match_privacy_policy_and_clickhouse_ttl() {
         format!("| Sessions | {} days maximum", s.absolute_timeout_days),
         // The daily tick keeps a code up to a day past the cooldown.
         format!(
-            "| One-time codes for linking an account, and Pushover and Slack link offers | {} days |",
+            "| One-time codes for linking an account, and Pushover, Slack and Discord link offers | {} days |",
             PUSHOVER_OFFER_COOLDOWN.num_days() + 1
         ),
         format!("recoverable for {grace} days"),

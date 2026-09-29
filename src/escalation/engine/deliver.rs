@@ -12,9 +12,10 @@ use crate::error::Result;
 use crate::notifier::event::IncidentNotice;
 use crate::notifier::{EmailAlert, build_notifier, notify_following_moves};
 
-use super::rules::{log_error_snippet, push_target, redact_secrets, retry_after_hint};
+use super::rules::{log_error_snippet, push_target, retry_after_hint};
 use super::{PageTarget, Worker};
 use crate::metric_names;
+use crate::security::redaction::redact_url_paths;
 
 #[derive(Clone, Copy, PartialEq)]
 enum SendOutcome {
@@ -140,23 +141,17 @@ impl Worker {
                         );
                         return (NotificationStatus::Sent, None, n.taken_receipt());
                     }
-                    Err(err) => (redact_secrets(&err.to_string()), Some(started)),
+                    Err(err) => (redact_url_paths(&err.to_string()), Some(started)),
                 }
             }
-            Err(err) => (redact_secrets(&err.to_string()), None),
+            Err(err) => (redact_url_paths(&err.to_string()), None),
         };
         let snippet = log_error_snippet(&error);
         let took_ms = sent_at.map(|s| s.elapsed().as_millis());
         // A throttle hint means deferred, not broken, so the warn stream stays
-        // meaningful during a paging burst. Only host-pinned transports get the
-        // downgrade: a generic webhook body echoing "retry_after" is
-        // tenant-controlled and must not mute the warn.
-        let deferred = matches!(
-            channel.kind,
-            crate::domain::ChannelKind::Telegram
-                | crate::domain::ChannelKind::TelegramApp
-                | crate::domain::ChannelKind::Discord
-        ) && retry_after_hint(Some(&error)).is_some();
+        // meaningful during a paging burst.
+        let deferred =
+            channel.kind.provider_throttle_hint() && retry_after_hint(Some(&error)).is_some();
         note_send(
             transport,
             sent_at,

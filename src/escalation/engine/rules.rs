@@ -6,34 +6,6 @@ use crate::storage::{Actor, AppPress};
 
 use super::PageTarget;
 
-/// Strip the path/query/userinfo from any URL in a delivery error before it is
-/// persisted to `incident_notifications.error`. A Slack webhook secret lives in
-/// the path (`hooks.slack.com/services/T…/B…/<secret>`) and a Telegram bot
-/// token in `…/bot<token>/…`; storing the raw transport error would leak them
-/// at rest. Each whitespace token that parses as a URL is reduced to
-/// `scheme://host[:port]`; everything else is kept verbatim.
-pub(super) fn redact_secrets(msg: &str) -> String {
-    msg.split_whitespace()
-        .map(|tok| {
-            if !tok.contains("://") {
-                return tok.to_string();
-            }
-            let trimmed = tok.trim_matches(|c: char| !c.is_alphanumeric() && c != ':' && c != '/');
-            match url::Url::parse(trimmed) {
-                Ok(u) if u.host_str().is_some() => {
-                    let port = u.port().map(|p| format!(":{p}")).unwrap_or_default();
-                    format!("{}://{}{}", u.scheme(), u.host_str().unwrap_or(""), port)
-                }
-                // Contains "://" but does not cleanly parse to a host — never
-                // echo it verbatim (the secret-bearing path may survive); drop
-                // the whole token.
-                _ => "[redacted-url]".to_string(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 /// Delivery errors echo transport response bodies (up to the outbound read
 /// cap). The DB error column stays org-scoped, but the shared log stream must
 /// not carry tenant-endpoint-controlled bulk or recipient addresses, so the

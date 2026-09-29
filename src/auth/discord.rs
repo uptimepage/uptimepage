@@ -1,8 +1,8 @@
 //! "Add to Discord" connect dance. The `webhook.incoming` consent screen
 //! carries Discord's server + channel picker, and the token exchange
-//! returns a ready-made webhook; everything else — including the access
-//! and refresh tokens — is discarded, so no Discord credential is ever
-//! stored.
+//! returns a ready-made webhook owned by our app, whose id a press on one of
+//! its alerts names. Everything else, the access and refresh tokens
+//! included, is discarded, so no Discord credential is ever stored.
 
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::Request;
@@ -26,6 +26,7 @@ const UA: &str = "uptimepage/discord-connect";
 /// response that survives.
 #[derive(Debug, Clone, Deserialize)]
 pub struct IncomingWebhook {
+    pub id: String,
     pub url: String,
     /// Webhook name as shown in Discord; the consent screen lets the user
     /// rename it.
@@ -156,6 +157,7 @@ mod tests {
         )
         .unwrap();
         let wh = parsed.webhook.unwrap();
+        assert_eq!(wh.id, "1");
         assert_eq!(wh.name.as_deref(), Some("alerts"));
         assert!(wh.url.starts_with("https://discord.com/api/webhooks/"));
     }

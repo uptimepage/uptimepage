@@ -1,8 +1,8 @@
 //! What ties an app account to a person. A link offer is a single-use random
 //! code carrying one side of the link; the other side proves itself where the
 //! code is spent. Telegram vouches for who pressed Start on a code minted for a
-//! signed-in person, and a signed-in session vouches for who opened a Pushover
-//! or Slack offer sent to one account.
+//! signed-in person, and a signed-in session vouches for who opened a
+//! Pushover, Slack or Discord offer sent to one account.
 
 use chrono::Duration;
 
@@ -20,9 +20,9 @@ pub const PUSHOVER_LINK_TTL: Duration = Duration::hours(24);
 /// Someone who acknowledges from Pushover without linking hears about it at
 /// most this often, however many incidents they take.
 pub const PUSHOVER_OFFER_COOLDOWN: Duration = Duration::days(7);
-/// Only the presser sees the offer, and only until Slack reloads; the next
-/// press brings a fresh one.
-pub const SLACK_LINK_TTL: Duration = Duration::hours(1);
+/// Only the presser sees the offer, and only until their Slack or Discord
+/// reloads; the next press brings a fresh one.
+pub const PRESS_LINK_TTL: Duration = Duration::hours(1);
 
 /// How long a link offered to an app account stays open, and how long that
 /// account then waits before it is offered another.
@@ -33,8 +33,8 @@ pub struct OfferTerms {
 }
 
 /// `None` for Telegram, whose links the person asks for instead. A Pushover
-/// offer is a push to a phone, so it is rationed; a Slack one is a message
-/// only the presser sees, so every unnamed press brings one.
+/// offer is a push to a phone, so it is rationed; a Slack or Discord one is a
+/// message only the presser sees, so every unnamed press brings one.
 pub const fn offer_terms(app: LinkedApp) -> Option<OfferTerms> {
     match app {
         LinkedApp::Telegram => None,
@@ -42,8 +42,8 @@ pub const fn offer_terms(app: LinkedApp) -> Option<OfferTerms> {
             ttl: PUSHOVER_LINK_TTL,
             cooldown: Some(PUSHOVER_OFFER_COOLDOWN),
         }),
-        LinkedApp::Slack => Some(OfferTerms {
-            ttl: SLACK_LINK_TTL,
+        LinkedApp::Slack | LinkedApp::Discord => Some(OfferTerms {
+            ttl: PRESS_LINK_TTL,
             cooldown: None,
         }),
     }

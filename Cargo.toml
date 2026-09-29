@@ -144,6 +144,8 @@ hmac = "0.13.0"
 # Lowercase-hex encoding (asset fingerprints, content hashes).
 hex = "0.4.3"
 rand = "0.10"
+# Ed25519 for the signature Discord puts on every interaction it posts to us.
+ed25519-dalek = "3.0.0"
 # Constant-time byte comparison for secret material (OAuth state, magic-link
 # tokens, invitation tokens — see §7.3).
 subtle = "2.6"

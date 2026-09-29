@@ -699,10 +699,13 @@ fn actor_label_resolves_who_and_mcp() {
         ("notification".into(), None)
     );
     // An app names a member only through an account they linked.
-    assert_eq!(
-        actor_label(&ev(ActorType::Telegram, Some(u)), &members),
-        ("alice@example.com".into(), Some("Telegram"))
-    );
+    for app in crate::domain::LinkedApp::ALL {
+        assert_eq!(
+            actor_label(&ev(app.actor_type(), Some(u)), &members),
+            ("alice@example.com".into(), Some(app.label())),
+            "{app:?}"
+        );
+    }
     assert_eq!(
         actor_label(&ev(ActorType::Pushover, None), &members),
         ("Pushover".into(), None)

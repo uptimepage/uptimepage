@@ -8,6 +8,7 @@ pub mod billing;
 pub mod bootstrap;
 pub mod channels;
 pub mod config;
+pub mod discord;
 pub mod domain;
 pub mod email;
 pub mod error;
