@@ -11,12 +11,11 @@ use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::{OpsIncident, OrgId, UserId};
-use crate::notifier::AckControl;
+use crate::notifier::ack_page::{AlertLink, AlertLinkQuery};
 use crate::request::auth::{Session, login_redirect};
 use crate::storage::{Actor, LifecycleOutcome};
 use crate::templates::filters;
@@ -24,33 +23,6 @@ use crate::web::error::WebResult;
 
 use super::actors::{AckList, ack_list};
 use super::{fmt_secs, incident_label, members_map, state_label};
-
-#[derive(Debug, Deserialize)]
-pub struct AlertLinkQuery {
-    #[serde(default)]
-    pub org: String,
-    #[serde(default)]
-    pub channel: String,
-    #[serde(default)]
-    pub episode: String,
-}
-
-struct AlertLink {
-    org: OrgId,
-    channel: Uuid,
-    /// The episode the alert was sent for; a reopen since makes it stale.
-    episode: i64,
-}
-
-impl AlertLinkQuery {
-    fn link(&self) -> Option<AlertLink> {
-        Some(AlertLink {
-            org: OrgId(Uuid::parse_str(self.org.trim()).ok()?),
-            channel: Uuid::parse_str(self.channel.trim()).ok()?,
-            episode: self.episode.trim().parse().ok()?,
-        })
-    }
-}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Phase {
@@ -199,7 +171,7 @@ pub async fn acknowledge_page(
             .flatten(),
         monitored: inc.target_id.is_some(),
         acks,
-        action: AckControl::page_path(org, id, link.channel, link.episode),
+        action: link.path(id),
         switch_org: (session.active_org_id != Some(org)).then(|| org.0.to_string()),
     }
     .into_response())
@@ -309,20 +281,6 @@ mod tests {
             phase(&closed, 1, &link(1), &mine(false), true),
             Phase::Resolved
         );
-    }
-
-    #[test]
-    fn a_link_missing_its_org_channel_or_episode_is_no_link() {
-        let q = |org: &str, channel: &str, episode: &str| AlertLinkQuery {
-            org: org.into(),
-            channel: channel.into(),
-            episode: episode.into(),
-        };
-        let id = Uuid::now_v7().to_string();
-        assert!(q(&id, &id, "3").link().is_some());
-        assert!(q(&id, &id, "").link().is_none());
-        assert!(q(&id, "", "3").link().is_none());
-        assert!(q("acme", &id, "3").link().is_none());
     }
 
     fn render(page: AcknowledgePage) -> String {

@@ -1,3 +1,4 @@
+pub mod ack_page;
 pub mod card;
 pub mod discord;
 pub mod email;
@@ -18,9 +19,8 @@ pub mod whatsapp;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use uuid::Uuid;
 
-use crate::domain::{ChannelConfig, OrgId};
+use crate::domain::ChannelConfig;
 use crate::error::Result;
 use crate::http_outbound::OutboundHttpClient;
 use crate::notifier::discord::DiscordNotifier;
@@ -75,18 +75,6 @@ impl AckControl {
             Self::Page(url) => Some(url),
             Self::Link(_) | Self::Button(_) => None,
         }
-    }
-
-    /// Where [`Self::Page`] points, relative to the app. The org rides along
-    /// so a member of several lands in the one the alert is about, the
-    /// channel so switching its button off withdraws the alerts already sent,
-    /// and the episode so an alert kept through a reopen takes nothing after
-    /// it.
-    pub fn page_path(org: OrgId, incident_id: Uuid, channel_id: Uuid, episode: i64) -> String {
-        format!(
-            "/incidents/{incident_id}/acknowledge?org={}&channel={channel_id}&episode={episode}",
-            org.0
-        )
     }
 }
 

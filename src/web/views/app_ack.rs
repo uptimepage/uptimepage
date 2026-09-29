@@ -159,6 +159,12 @@ async fn offered_link(
     .map(|o| o.url)
 }
 
+/// What the chat hears when a press adds someone to the list. The caller
+/// escapes `who` for its app's markup; Telegram replies are plain text.
+pub(super) fn announcement(who: Option<String>) -> String {
+    format!("Acknowledged by {}.", who.as_deref().unwrap_or("someone"))
+}
+
 /// What the presser is told about a press that landed. `hint` follows when
 /// nobody linked the account that pressed.
 pub(super) fn acknowledged_notice(listed: bool, linked: Linked, hint: &str) -> String {
@@ -204,5 +210,11 @@ mod tests {
             acknowledged_notice(true, Linked::Unlinked, ""),
             "Acknowledged."
         );
+    }
+
+    #[test]
+    fn an_announcement_names_the_presser_or_someone() {
+        assert_eq!(announcement(Some("Olena".into())), "Acknowledged by Olena.");
+        assert_eq!(announcement(None), "Acknowledged by someone.");
     }
 }

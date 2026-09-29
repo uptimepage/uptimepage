@@ -298,12 +298,12 @@ pub(crate) mod tests {
     pub(crate) fn ack_page() -> String {
         format!(
             "https://app.test{}",
-            crate::notifier::AckControl::page_path(
-                crate::domain::OrgId(Uuid::from_u128(1)),
-                Uuid::from_u128(7),
-                Uuid::from_u128(2),
-                0
-            )
+            crate::notifier::ack_page::AlertLink {
+                org: crate::domain::OrgId(Uuid::from_u128(1)),
+                channel: Uuid::from_u128(2),
+                episode: 0,
+            }
+            .path(Uuid::from_u128(7))
         )
     }
 

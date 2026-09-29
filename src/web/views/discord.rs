@@ -21,7 +21,7 @@ use crate::domain::{ChannelKind, LinkedApp};
 use crate::notifier::discord::escape;
 use crate::security::app_link::external_id;
 
-use super::app_ack::{Pressed, answer_offering_link};
+use super::app_ack::{Pressed, announcement, answer_offering_link};
 
 const SIGNATURE_HEADER: &str = "x-signature-ed25519";
 const TIMESTAMP_HEADER: &str = "x-signature-timestamp";
@@ -91,11 +91,7 @@ async fn handle_press(state: &AppState, press: Press) {
         return;
     }
     if listed {
-        let who = press
-            .display_name
-            .as_deref()
-            .map_or_else(|| "someone".to_string(), escape);
-        let text = format!("Acknowledged by {who}.");
+        let text = announcement(press.display_name.as_deref().map(escape));
         if let Err(err) = announce(http, &press.reply, &text).await {
             tracing::warn!(error = %err, "discord acknowledgement announcement failed");
         }

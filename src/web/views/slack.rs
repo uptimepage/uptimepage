@@ -17,7 +17,7 @@ use crate::notifier::slack::escape;
 use crate::security::app_link::external_id;
 use crate::slack::{Press, Reply, acknowledge_press, respond, signed_by_slack};
 
-use super::app_ack::{Pressed, answer_offering_link};
+use super::app_ack::{Pressed, announcement, answer_offering_link};
 
 const TIMESTAMP_HEADER: &str = "x-slack-request-timestamp";
 const SIGNATURE_HEADER: &str = "x-slack-signature";
@@ -66,11 +66,7 @@ async fn handle_press(state: &AppState, press: Press) {
     .await;
     reply(state, &press, &Reply::to_presser(&notice)).await;
     if listed && !press.in_direct_message() {
-        let who = press
-            .username
-            .as_deref()
-            .map_or_else(|| "someone".to_string(), escape);
-        let text = format!("Acknowledged by {who}.");
+        let text = announcement(press.username.as_deref().map(escape));
         reply(
             state,
             &press,

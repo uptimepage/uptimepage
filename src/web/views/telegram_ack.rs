@@ -7,7 +7,7 @@ use crate::domain::{ChannelKind, Linked, LinkedApp};
 use crate::security::app_link::external_id;
 use crate::telegram::Press;
 
-use super::app_ack::{GONE, Pressed, Taken, acknowledged_notice, take};
+use super::app_ack::{GONE, Pressed, Taken, acknowledged_notice, announcement, take};
 use super::telegram::{bot, spawn_send};
 
 const LINK_HINT: &str =
@@ -33,15 +33,11 @@ pub(super) async fn handle_press(state: &AppState, press: Press) {
     let outcome = acknowledge(state, &press).await;
     answer(state, &press.query_id, &outcome.notice).await;
     if outcome.announce {
-        let who = press
-            .person
-            .display()
-            .unwrap_or_else(|| "someone".to_string());
         spawn_send(
             state,
             press.chat_id,
             Some(press.message_id),
-            format!("Acknowledged by {who}."),
+            announcement(press.person.display()),
         );
     }
 }

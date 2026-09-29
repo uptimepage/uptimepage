@@ -14,7 +14,7 @@ use uptimepage::domain::{
     ChannelConfig, IncidentState, NewManualIncident, NewNotificationChannel,
     NotificationChannelUpdate, OrgId, SlackConfig, UserId, WriteSource,
 };
-use uptimepage::notifier::AckControl;
+use uptimepage::notifier::ack_page::AlertLink;
 use uptimepage::storage::{Actor, IncidentOpsStore, NotificationChannelStore};
 use uuid::Uuid;
 
@@ -87,7 +87,12 @@ async fn rig() -> Rig {
 
 impl Rig {
     fn page(&self, episode: i64) -> String {
-        AckControl::page_path(self.org, self.incident_id, self.channel_id, episode)
+        AlertLink {
+            org: self.org,
+            channel: self.channel_id,
+            episode,
+        }
+        .path(self.incident_id)
     }
 
     async fn send(&self, app: &Router, method: &str, path: &str) -> (StatusCode, String) {
@@ -219,7 +224,12 @@ async fn another_orgs_incident_is_not_found() {
             "/incidents/{}/acknowledge?org={}&episode=0",
             rig.incident_id, rig.org.0
         ),
-        &AckControl::page_path(rig.org, Uuid::now_v7(), rig.channel_id, 0),
+        &AlertLink {
+            org: rig.org,
+            channel: rig.channel_id,
+            episode: 0,
+        }
+        .path(Uuid::now_v7()),
     ] {
         let (status, _) = rig.send(&rig.app, "GET", path).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "GET {path}");
@@ -276,7 +286,12 @@ async fn a_channel_that_stopped_offering_the_button_withdraws_its_alerts() {
 async fn a_channel_from_another_org_offers_no_button() {
     let rig = rig().await;
     let theirs = slack_channel(rig.channels.as_ref(), OrgId(Uuid::now_v7())).await;
-    let page = AckControl::page_path(rig.org, rig.incident_id, theirs, 0);
+    let page = AlertLink {
+        org: rig.org,
+        channel: theirs,
+        episode: 0,
+    }
+    .path(rig.incident_id);
     let (_, body) = rig.send(&rig.app, "GET", &page).await;
     assert!(body.contains("button withdrawn"), "{body}");
     let (status, _) = rig.send(&rig.app, "POST", &page).await;

@@ -230,6 +230,7 @@ impl Worker {
         notice: &IncidentNotice,
     ) -> Option<crate::notifier::AckControl> {
         use crate::domain::{AckVia, ChannelKind};
+        use crate::notifier::ack_page::AlertLink;
         use crate::notifier::{AckControl, PushAck};
         let via = match channel.kind.acknowledge_via()? {
             // Nothing here would receive the press, so the channel links to the
@@ -285,7 +286,12 @@ impl Worker {
             AckVia::Page => Some(AckControl::Page(format!(
                 "{}{}",
                 self.base_url.trim_end_matches('/'),
-                AckControl::page_path(org, notice.incident_id, channel.id, generation)
+                AlertLink {
+                    org,
+                    channel: channel.id,
+                    episode: generation,
+                }
+                .path(notice.incident_id)
             ))),
         }
     }
