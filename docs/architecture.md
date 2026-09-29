@@ -55,6 +55,7 @@ src/
 ├── auth/             sessions, OAuth providers, passkeys, magic links, API tokens,
 │                     invitations, login audit
 ├── billing/          plan moves and the paid lifecycle (provider-driven)
+├── app_accounts.rs   who pressed an app's Acknowledge, and the offer to link them
 │
 │   probe pipeline
 ├── scheduler/        target registry (full re-list + diff), single-driver timing
@@ -72,6 +73,7 @@ src/
 ├── escalation/       paging engine + on-call resolution
 ├── notifier/         one transport per channel kind + IncidentNotice event
 ├── email/ telegram/ whatsapp/    transport-specific helpers
+├── slack/ discord/   our Slack and Discord apps: signed button presses, replies
 ├── http_outbound.rs  shared outbound client for webhooks and provider APIs
 ├── jobs/             periodic jobs: retention, two-store erasure, token/session
 │                     cleanups, no-data silence sweep, dead-man snitch

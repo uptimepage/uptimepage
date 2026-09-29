@@ -10,57 +10,10 @@ use parking_lot::Mutex;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::domain::{ExternalId, LinkedApp, LinkedAppAccount, OrgId, UserId};
+use crate::domain::{ExternalId, Linked, LinkedApp, LinkedAppAccount, OrgId, UserId};
 use crate::error::{AppError, Result};
 use crate::security::app_link::{OfferTerms, offer_terms};
-use crate::security::sha256_hex;
-use crate::security::token_hash::generate_raw_token;
 use crate::storage::locks::{advisory_xact_lock, app_account_lock_key, app_link_user_lock_key};
-
-/// Who an app account is to one org.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Linked {
-    /// A live member of the org linked it.
-    Member(UserId),
-    /// Linked by someone the org does not count as a member.
-    Outsider,
-    /// Nobody linked it.
-    Unlinked,
-    /// The lookup failed, so nothing is known about it.
-    Unknown,
-}
-
-impl Linked {
-    pub fn member(self) -> Option<UserId> {
-        match self {
-            Self::Member(user) => Some(user),
-            Self::Outsider | Self::Unlinked | Self::Unknown => None,
-        }
-    }
-
-    /// Whoever holds the account is worth telling how to link it only when
-    /// it is known that nobody has.
-    pub fn invites_link(self) -> bool {
-        self == Self::Unlinked
-    }
-}
-
-/// Who pressed, as far as `org` is concerned. A failed lookup names nobody:
-/// taking the page matters more than naming who took it.
-pub async fn identify(
-    store: &dyn LinkedAppStore,
-    org: OrgId,
-    app: LinkedApp,
-    sender: ExternalId,
-) -> Linked {
-    match store.resolve(org, app, sender).await {
-        Ok(linked) => linked,
-        Err(err) => {
-            tracing::warn!(org_id = %org.0, app = app.as_db_str(), error = %err, "linked app lookup failed");
-            Linked::Unknown
-        }
-    }
-}
 
 /// The side of a link that whoever spends a code proves.
 #[derive(Debug, Clone, Copy)]
@@ -152,45 +105,6 @@ fn terms(app: LinkedApp) -> Result<OfferTerms> {
             app.as_db_str()
         ))
     })
-}
-
-/// A link offer stored for an app account and ready to send.
-#[derive(Debug, Clone)]
-pub struct LinkOffer {
-    /// Opens the offer; whoever signs in there gets the account.
-    pub url: String,
-    /// What the store holds, for taking back an offer that never arrived.
-    pub code_hash: String,
-}
-
-/// Offer `account` to whoever opens the link, on the app's [`OfferTerms`].
-/// `None` when there is no public address to link to, or while the account's
-/// last offer is still cooling down.
-pub async fn offer_link(
-    store: &dyn LinkedAppStore,
-    base_url: &str,
-    app: LinkedApp,
-    account: ExternalId,
-    label: Option<&str>,
-    now: DateTime<Utc>,
-) -> Result<Option<LinkOffer>> {
-    let base = base_url.trim_end_matches('/');
-    if base.is_empty() {
-        tracing::info!(
-            app = app.as_db_str(),
-            "link offer skipped: no public base URL to link to"
-        );
-        return Ok(None);
-    }
-    let code = generate_raw_token();
-    let code_hash = sha256_hex(&code);
-    if !store.offer(app, account, label, &code_hash, now).await? {
-        return Ok(None);
-    }
-    Ok(Some(LinkOffer {
-        url: format!("{base}/link/{}?c={code}", app.as_db_str()),
-        code_hash,
-    }))
 }
 
 /// Delete the codes nothing reads any more: each one once it expires, except
@@ -820,46 +734,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_offer_link_opens_the_apps_own_page_and_needs_a_public_address() {
-        let store = InMemoryLinkedAppStore::new();
-        let presser = external_id("s3cret", "T0AB12CD3:U0AB12CD3");
-        let now = Utc::now();
-        let offer = |base: &'static str, app| offer_link(&store, base, app, presser, None, now);
-
-        assert!(offer("", LinkedApp::Slack).await.unwrap().is_none());
-        let slack = offer("https://app.example.test/", LinkedApp::Slack)
-            .await
-            .unwrap()
-            .expect("a Slack offer");
-        let code = slack
-            .url
-            .strip_prefix("https://app.example.test/link/slack?c=")
-            .expect("the Slack offer page");
-        assert_eq!(slack.code_hash, sha256_hex(code));
-        assert!(
-            store
-                .offered(LinkedApp::Slack, &slack.code_hash)
-                .await
-                .unwrap()
-                .is_some()
-        );
-
-        assert!(
-            offer("https://app.example.test", LinkedApp::Pushover)
-                .await
-                .unwrap()
-                .is_some()
-        );
-        assert!(
-            offer("https://app.example.test", LinkedApp::Pushover)
-                .await
-                .unwrap()
-                .is_none(),
-            "a Pushover account waits out its cooldown"
-        );
-    }
-
-    #[tokio::test]
     async fn an_offer_that_never_arrived_does_not_hold_back_the_next() {
         let store = InMemoryLinkedAppStore::new();
         let key = external_id("s3cret", "ukey");
@@ -908,22 +782,6 @@ mod tests {
                 .unwrap(),
             LinkOutcome::Invalid
         );
-    }
-
-    /// Only a known-unlinked account is told how to link: one linked to
-    /// someone outside the org is linked already, and a failed lookup knows
-    /// nothing.
-    #[test]
-    fn only_an_account_nobody_linked_is_invited_to_link() {
-        let user = UserId(Uuid::now_v7());
-        assert_eq!(Linked::Member(user).member(), Some(user));
-        assert!(!Linked::Member(user).invites_link());
-        assert!(Linked::Unlinked.invites_link());
-        for nobody in [Linked::Outsider, Linked::Unlinked, Linked::Unknown] {
-            assert_eq!(nobody.member(), None);
-        }
-        assert!(!Linked::Outsider.invites_link());
-        assert!(!Linked::Unknown.invites_link());
     }
 
     #[test]

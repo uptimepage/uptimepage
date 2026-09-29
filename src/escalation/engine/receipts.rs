@@ -7,11 +7,11 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::time::Instant;
 use uuid::Uuid;
 
-use crate::domain::{ChannelConfig, ExternalId, LinkedApp, OrgId};
+use crate::app_accounts::{LinkOffer, identify, offer_link};
+use crate::domain::{ChannelConfig, ExternalId, Linked, LinkedApp, OrgId};
 use crate::error::Result;
 use crate::notifier::pushover::PushoverReceipts;
 use crate::security::app_link::external_id;
-use crate::storage::linked_apps::{LinkOffer, Linked, identify, offer_link};
 use crate::storage::{Acknowledged, Actor, EmergencyAck, LifecycleOutcome};
 
 use super::rules::{offers_pushover_link, pushover_acknowledger};
@@ -169,7 +169,7 @@ impl Worker {
         sender: ExternalId,
         device: Option<String>,
     ) {
-        let offer = offer_link(
+        let Some(LinkOffer { url, code_hash }) = offer_link(
             self.linked_apps.as_ref(),
             &self.base_url,
             LinkedApp::Pushover,
@@ -177,14 +177,9 @@ impl Worker {
             device.as_deref(),
             Utc::now(),
         )
-        .await;
-        let LinkOffer { url, code_hash } = match offer {
-            Ok(Some(offer)) => offer,
-            Ok(None) => return,
-            Err(err) => {
-                tracing::warn!(error = %err, "pushover link offer failed");
-                return;
-            }
+        .await
+        else {
+            return;
         };
         let linked_apps = self.linked_apps.clone();
         tokio::spawn(async move {

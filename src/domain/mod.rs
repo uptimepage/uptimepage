@@ -59,7 +59,7 @@ pub use incident::{
     PostmortemUpsert, TransitionError, coalesce_incidents, confirmed_downtime_secs, elapsed_at,
     next_state, uptime_pct_from_downtime,
 };
-pub use linked_app::{ExternalId, LinkedApp, LinkedAppAccount};
+pub use linked_app::{ExternalId, Linked, LinkedApp, LinkedAppAccount};
 pub use maintenance::{
     MaintenanceFilter, MaintenanceWindow, MaintenanceWindowUpdate, NewMaintenanceWindow,
 };

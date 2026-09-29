@@ -3,6 +3,7 @@ pub mod agent;
 pub mod analytics;
 pub mod api;
 pub mod app;
+pub mod app_accounts;
 pub mod auth;
 pub mod billing;
 pub mod bootstrap;

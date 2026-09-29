@@ -3,9 +3,8 @@
 //! with a reply to the alert.
 
 use crate::app::AppState;
-use crate::domain::{ChannelKind, LinkedApp};
+use crate::domain::{ChannelKind, Linked, LinkedApp};
 use crate::security::app_link::external_id;
-use crate::storage::linked_apps::Linked;
 use crate::telegram::Press;
 
 use super::app_ack::{GONE, Pressed, Taken, acknowledged_notice, take};

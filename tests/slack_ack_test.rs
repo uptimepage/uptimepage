@@ -17,15 +17,15 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use uptimepage::app::AppState;
 use uptimepage::domain::{
-    ActorType, ChannelConfig, IncidentAcknowledgement, IncidentState, LinkedApp, NewManualIncident,
-    NewNotificationChannel, NotificationChannelUpdate, OrgId, SlackAppConfig, UserId, WriteSource,
+    ActorType, ChannelConfig, IncidentAcknowledgement, IncidentState, Linked, LinkedApp,
+    NewManualIncident, NewNotificationChannel, NotificationChannelUpdate, OrgId, SlackAppConfig,
+    UserId, WriteSource,
 };
 use uptimepage::notifier::slack::ACKNOWLEDGE_ACTION;
 use uptimepage::security::incident_ack::button_data;
 use uptimepage::security::mac::hmac_sha256_hex;
 use uptimepage::security::sha256_hex;
 use uptimepage::storage::Actor;
-use uptimepage::storage::linked_apps::Linked;
 use uuid::Uuid;
 
 const ACK_SECRET: &str = "slack-button-test-ack-secret";

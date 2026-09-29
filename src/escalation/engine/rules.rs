@@ -1,7 +1,6 @@
 use uuid::Uuid;
 
-use crate::domain::{ExternalId, IncidentState, LinkedApp, NotificationReason, UserId};
-use crate::storage::linked_apps::Linked;
+use crate::domain::{ExternalId, IncidentState, Linked, LinkedApp, NotificationReason, UserId};
 use crate::storage::{Actor, AppPress};
 
 use super::PageTarget;

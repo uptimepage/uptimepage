@@ -19,14 +19,14 @@ use tower::ServiceExt;
 use uptimepage::app::AppState;
 use uptimepage::domain::{
     ActorType, ChannelConfig, ChannelKind, ExternalId, IncidentAcknowledgement, IncidentState,
-    LinkedApp, NewManualIncident, NewNotificationChannel, NotificationChannelUpdate, OrgId,
+    Linked, LinkedApp, NewManualIncident, NewNotificationChannel, NotificationChannelUpdate, OrgId,
     TelegramAppConfig, UserId, WriteSource,
 };
 use uptimepage::security::app_link::{PUSHOVER_OFFER_COOLDOWN, telegram_start_code};
 use uptimepage::security::incident_ack::button_data;
 use uptimepage::security::sha256_hex;
 use uptimepage::storage::Actor;
-use uptimepage::storage::linked_apps::{Claimant, LinkOutcome, Linked};
+use uptimepage::storage::linked_apps::{Claimant, LinkOutcome};
 use uuid::Uuid;
 
 const ACK_SECRET: &str = "telegram-button-test-ack-secret";

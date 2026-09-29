@@ -7,9 +7,9 @@
 use chrono::Utc;
 
 use crate::app::AppState;
-use crate::domain::{ChannelKind, ExternalId, LinkedApp};
+use crate::app_accounts::{identify, offer_link};
+use crate::domain::{ChannelKind, ExternalId, Linked, LinkedApp};
 use crate::security::incident_ack::Button;
-use crate::storage::linked_apps::{Linked, identify, offer_link};
 use crate::storage::{Acknowledged, Actor, AppPress, LifecycleOutcome};
 
 pub(super) const GONE: &str = "This button no longer works.";
@@ -147,7 +147,7 @@ async fn offered_link(
     sender: ExternalId,
     username: Option<&str>,
 ) -> Option<String> {
-    let offer = offer_link(
+    offer_link(
         state.linked_app_store.as_ref(),
         &state.cfg.auth.public_base_url,
         app,
@@ -155,14 +155,8 @@ async fn offered_link(
         username,
         Utc::now(),
     )
-    .await;
-    match offer {
-        Ok(offer) => offer.map(|o| o.url),
-        Err(err) => {
-            tracing::warn!(error = %err, app = app.as_db_str(), "link offer failed");
-            None
-        }
-    }
+    .await
+    .map(|o| o.url)
 }
 
 /// What the presser is told about a press that landed. `hint` follows when

@@ -18,14 +18,13 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use uptimepage::app::AppState;
 use uptimepage::domain::{
-    ActorType, ChannelConfig, DiscordAppConfig, IncidentAcknowledgement, IncidentState, LinkedApp,
-    NewManualIncident, NewNotificationChannel, NotificationChannelUpdate, OrgId, UserId,
+    ActorType, ChannelConfig, DiscordAppConfig, IncidentAcknowledgement, IncidentState, Linked,
+    LinkedApp, NewManualIncident, NewNotificationChannel, NotificationChannelUpdate, OrgId, UserId,
     WriteSource,
 };
 use uptimepage::security::incident_ack::button_data;
 use uptimepage::security::sha256_hex;
 use uptimepage::storage::Actor;
-use uptimepage::storage::linked_apps::Linked;
 use uuid::Uuid;
 
 const ACK_SECRET: &str = "discord-button-test-ack-secret";
