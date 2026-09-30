@@ -836,6 +836,23 @@ pub fn json_request(method: &str, path: &str, body: Value) -> Request<Body> {
         .expect("build request")
 }
 
+/// Sends a JSON request as the test owner signed in to `org` and decodes the
+/// JSON reply.
+pub async fn owner_json(
+    app: Router,
+    org: OrgId,
+    method: &str,
+    path: &str,
+    body: Value,
+) -> (StatusCode, Value) {
+    use tower::ServiceExt;
+    let resp = with_session(app, test_user_id(), Some(org), None)
+        .oneshot(json_request(method, path, body))
+        .await
+        .expect("response");
+    (resp.status(), body_json(resp).await)
+}
+
 /// Decodes the response body as JSON. Panics on non-JSON payloads.
 pub async fn body_json(resp: axum::http::Response<Body>) -> Value {
     let bytes = axum::body::to_bytes(resp.into_body(), 8 << 20)

@@ -1015,15 +1015,11 @@
             config.emergency = data.get("pushover_emergency") === "on";
             return { config };
         }
-        if (kind === "discord_app") {
-            const config = { type: "discord_app" };
-            const mention = (data.get("discord_app_mention") || "").trim();
+        if (kind === "slack_app" || kind === "discord_app") {
+            const config = { type: kind };
+            const mention = (data.get(`${kind}_mention`) || "").trim();
             if (mention) config.mention = mention;
             return { config };
-        }
-        if (kind === "slack_app") {
-            // The API rejects this kind in request bodies.
-            return { error: "Channels connected with \"add to Slack\" have no config to submit. Untick \"Replace transport config\" to keep the connection." };
         }
         if (kind === "telegram_app") {
             // The API rejects this kind in request bodies.

@@ -12,7 +12,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use chrono::Utc;
 use secrecy::SecretString;
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use uptimepage::app::AppState;
@@ -63,6 +63,7 @@ async fn rig() -> Rig {
                     channel: "#ops".into(),
                     channel_id: SLACK_CHANNEL.into(),
                     team_id: Some("T0INSTALL1".into()),
+                    mention: None,
                 }),
                 enabled: true,
                 auto_bind_tags: Vec::new(),
@@ -198,6 +199,10 @@ impl Rig {
             None => self.app.clone(),
         };
         app.oneshot(req).await.unwrap()
+    }
+
+    async fn as_owner(&self, method: &str, path: &str, body: Value) -> (StatusCode, Value) {
+        common::owner_json(self.app.clone(), self.org, method, path, body).await
     }
 }
 
@@ -366,4 +371,72 @@ async fn a_channel_with_the_button_switched_off_or_disabled_takes_nothing() {
         rig.settle().await;
         assert!(rig.acks().await.is_empty());
     }
+}
+
+/// A caller-supplied channel id would point our Slack app's presses at a
+/// channel the webhook does not post to, so an edit keeps the connection and
+/// changes only the ping.
+#[tokio::test]
+async fn an_edit_to_a_connected_channel_changes_only_its_ping() {
+    let rig = rig().await;
+    let path = format!("/api/v1/notification-channels/{}", rig.channel_id);
+    let (status, body) = rig
+        .as_owner(
+            "PATCH",
+            &path,
+            json!({ "config": {
+                "type": "slack_app",
+                "webhook_url": "https://hooks.slack.com/services/T/B/evil",
+                "channel": "#elsewhere",
+                "channel_id": "C0EVIL0001",
+                "mention": "@here S01ABC234",
+            } }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["config"]["webhook_url"], "***");
+    assert_eq!(body["config"]["channel"], "#ops");
+    assert_eq!(body["config"]["channel_id"], SLACK_CHANNEL);
+    assert_eq!(body["config"]["mention"], "@here S01ABC234");
+    let stored = rig
+        .state
+        .notification_channel_store
+        .get(rig.org, rig.channel_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let ChannelConfig::SlackApp(cfg) = stored.config else {
+        panic!("still a slack_app channel");
+    };
+    assert_eq!(cfg.webhook_url, "https://hooks.slack.com/services/T/B/x");
+    assert_eq!(cfg.team_id.as_deref(), Some("T0INSTALL1"));
+
+    // The ping alone, as the form sends it; a bad one is refused.
+    let (status, body) = rig
+        .as_owner(
+            "PATCH",
+            &path,
+            json!({ "config": { "type": "slack_app", "mention": "@sre" } }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+    let (status, body) = rig
+        .as_owner(
+            "PATCH",
+            &path,
+            json!({ "config": { "type": "slack_app", "mention": "" } }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["config"].get("mention").is_none(), "{body}");
+
+    let (status, body) = rig
+        .as_owner(
+            "PATCH",
+            &format!("/api/v1/notification-channels/{}", Uuid::now_v7()),
+            json!({ "config": { "type": "slack_app", "mention": "@here" } }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
 }

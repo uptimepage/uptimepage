@@ -1521,6 +1521,7 @@ async fn a_press_finds_only_channels_that_still_take_acknowledgements_pg() {
             channel: "#ops".into(),
             channel_id: slack_channel.clone(),
             team_id: Some("T0AB12CD3".into()),
+            mention: None,
         }),
         enabled: true,
         auto_bind_tags: Vec::new(),

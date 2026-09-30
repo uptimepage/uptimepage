@@ -12,7 +12,7 @@ use parking_lot::Mutex;
 use serde_json::Value;
 use uptimepage::domain::{
     ChannelConfig, IncidentOrigin, IncidentSeverity, IncidentUrgency, NotificationReason,
-    SlackConfig, TelegramConfig, WebhookConfig,
+    SlackAppConfig, SlackConfig, TelegramConfig, WebhookConfig,
 };
 use uptimepage::http_outbound::build_outbound_client;
 use uptimepage::notifier::build_notifier;
@@ -148,31 +148,43 @@ async fn slack_channel_posts_block_kit_layout() {
 #[tokio::test]
 async fn slack_mention_reaches_the_wire_as_ping_markup() {
     let (addr, store) = spawn_capture_server().await;
-    let cfg = ChannelConfig::Slack(SlackConfig {
-        webhook_url: format!("http://{addr}/hook"),
-        mention: Some("@here, S01ABC234".into()),
+    let webhook_url = format!("http://{addr}/hook");
+    let mention = Some("@here, S01ABC234".to_string());
+    let pasted = ChannelConfig::Slack(SlackConfig {
+        webhook_url: webhook_url.clone(),
+        mention: mention.clone(),
     });
-    let notifier = build_notifier(
-        &cfg,
-        &build_outbound_client(uptimepage::security::SsrfGuard::relaxed_for_tests()),
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
-    .expect("notifier");
-    notifier
-        .notify_incident(&make_notice())
-        .await
-        .expect("notify");
+    let connected = ChannelConfig::SlackApp(SlackAppConfig {
+        webhook_url,
+        channel: "#ops".into(),
+        channel_id: "C0AB12CD3".into(),
+        team_id: None,
+        mention,
+    });
+    for cfg in [pasted, connected] {
+        let notifier = build_notifier(
+            &cfg,
+            &build_outbound_client(uptimepage::security::SsrfGuard::relaxed_for_tests()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("notifier");
+        notifier
+            .notify_incident(&make_notice())
+            .await
+            .expect("notify");
 
-    let captured = store.lock().clone();
-    let text = captured[0].body["text"].as_str().unwrap().to_string();
-    assert!(
-        text.starts_with("<!here> <!subteam^S01ABC234> "),
-        "mention missing: {text}"
-    );
+        let captured = store.lock().pop().expect("one send");
+        let text = captured.body["text"].as_str().unwrap().to_string();
+        assert!(
+            text.starts_with("<!here> <!subteam^S01ABC234> "),
+            "{:?} mention missing: {text}",
+            cfg.kind()
+        );
+    }
 }
 
 #[tokio::test]

@@ -226,7 +226,7 @@ pub fn build_notifier(
                 .with_ack_link(page),
         ) as Arc<dyn Notifier>,
         ChannelConfig::SlackApp(c) => Arc::new(
-            SlackNotifier::new(http.clone(), parse(&c.webhook_url)?, None)
+            SlackNotifier::new(http.clone(), parse(&c.webhook_url)?, c.mention_markup())
                 .with_ack_link(page)
                 .with_ack_press(ack.and_then(AckControl::button)),
         ) as Arc<dyn Notifier>,

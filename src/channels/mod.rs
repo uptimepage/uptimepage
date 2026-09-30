@@ -171,7 +171,8 @@ pub fn reject_managed_kind(cfg: &ChannelConfig) -> Result<()> {
     }
     let how = match cfg.kind() {
         ChannelKind::SlackApp => {
-            "slack_app channels are created by connecting a channel with Add to Slack"
+            "slack_app channels are created by connecting a channel with Add to Slack; \
+             an edit may change only the mention"
         }
         ChannelKind::DiscordApp => {
             "discord_app channels are created by connecting a channel with Add to Discord; \
@@ -190,16 +191,14 @@ pub fn reject_managed_kind(cfg: &ChannelConfig) -> Result<()> {
 }
 
 /// An edit to a managed channel keeps the connection its flow stored and
-/// takes only what the kind lets people change, the ping on a `discord_app`.
+/// takes only what the kind lets people change, the ping on a `slack_app` or a
+/// `discord_app`.
 /// Any other managed config in a request body is refused.
-pub fn keep_managed_connection(
-    cfg: &mut ChannelConfig,
-    stored: Option<&ChannelConfig>,
-) -> Result<()> {
+pub fn keep_managed_connection(cfg: &mut ChannelConfig, stored: &ChannelConfig) -> Result<()> {
     if !cfg.operator_managed() {
         return Ok(());
     }
-    match stored.and_then(|s| cfg.edited_on(s)) {
+    match cfg.edited_on(stored) {
         Some(edit) => {
             *cfg = edit;
             Ok(())

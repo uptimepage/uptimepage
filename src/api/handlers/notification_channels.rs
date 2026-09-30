@@ -189,9 +189,10 @@ pub async fn get(
     description = "Omit fields you don't want to change. A `config` that still \
                    carries the `***` sentinel returns 400 — omit `config` to \
                    keep the stored secret unchanged. A `config` identical to \
-                   the stored one keeps the verification state. A `discord_app` \
-                   config changes only `mention`: its webhook stays the one \
-                   Add to Discord connected, whatever the body says.",
+                   the stored one keeps the verification state. A `slack_app` \
+                   or `discord_app` config changes only `mention`: its webhook \
+                   stays the one Add to Slack or Add to Discord connected, \
+                   whatever the body says.",
     params(("id" = Uuid, Path)),
     request_body(content = NotificationChannelUpdate),
     responses(
@@ -217,25 +218,22 @@ pub async fn update(
     }
     let config_replaced = update.config.is_some();
     if let Some(cfg) = &mut update.config {
-        let stored = state.notification_channel_store.get(org, id).await?;
-        keep_managed_connection(cfg, stored.as_ref().map(|c| &c.config))?;
+        let stored = state
+            .notification_channel_store
+            .get(org, id)
+            .await?
+            .ok_or_else(channel_not_found)?;
+        keep_managed_connection(cfg, &stored.config)?;
         cfg.normalize();
         validate_config(cfg)?;
         let plan = state.quotas.limit_for_org(org).await?;
-        // Gated only for a channel that is there: an unknown id is a 404, and
-        // answering 403 would tell a caller the plan before the lookup.
-        if let Some(held) = &stored {
-            let already_sms = matches!(held.config, ChannelConfig::Sms(_));
-            gate_sms(&state, cfg, &plan, already_sms)?;
-        }
+        let already_sms = matches!(stored.config, ChannelConfig::Sms(_));
+        gate_sms(&state, cfg, &plan, already_sms)?;
         // A different address is a new destination and gets the full gate.
-        let established = match &*cfg {
-            ChannelConfig::Email(new) => stored.is_some_and(|c| match &c.config {
-                ChannelConfig::Email(old) => {
-                    !c.awaiting_verification() && old.to.eq_ignore_ascii_case(&new.to)
-                }
-                _ => false,
-            }),
+        let established = match (&*cfg, &stored.config) {
+            (ChannelConfig::Email(new), ChannelConfig::Email(old)) => {
+                !stored.awaiting_verification() && old.to.eq_ignore_ascii_case(&new.to)
+            }
             _ => false,
         };
         check_channel_abuse(&state, org, cfg, established).await?;

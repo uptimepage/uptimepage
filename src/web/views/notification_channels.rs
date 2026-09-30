@@ -73,6 +73,7 @@ pub struct ConfigFields {
     pub slack_webhook_url: String,
     pub slack_mention: String,
     pub slack_app_channel: String,
+    pub slack_app_mention: String,
     pub discord_webhook_url: String,
     pub discord_mention: String,
     pub discord_app_mention: String,
@@ -131,6 +132,7 @@ impl Default for ConfigFields {
             slack_webhook_url: String::new(),
             slack_mention: String::new(),
             slack_app_channel: String::new(),
+            slack_app_mention: String::new(),
             discord_webhook_url: String::new(),
             discord_mention: String::new(),
             discord_app_mention: String::new(),
@@ -561,13 +563,15 @@ fn form_from_channel(c: NotificationChannel) -> ChannelFormModel {
             config.slack_webhook_url = c.webhook_url;
             config.slack_mention = c.mention.unwrap_or_default();
         }
-        // Display-only, same contract as telegram_app.
-        ChannelConfig::SlackApp(c) => config.slack_app_channel = c.channel,
+        // The ping is all an edit may change; the webhook stays the app's.
+        ChannelConfig::SlackApp(c) => {
+            config.slack_app_channel = c.channel;
+            config.slack_app_mention = c.mention.unwrap_or_default();
+        }
         ChannelConfig::Discord(c) => {
             config.discord_webhook_url = c.webhook_url;
             config.discord_mention = c.mention.unwrap_or_default();
         }
-        // The ping is all an edit may change; the webhook stays the app's.
         ChannelConfig::DiscordApp(c) => config.discord_app_mention = c.mention.unwrap_or_default(),
         ChannelConfig::MsTeams(c) => config.msteams_webhook_url = c.webhook_url,
         ChannelConfig::GoogleChat(c) => config.google_chat_webhook_url = c.webhook_url,
@@ -1064,7 +1068,7 @@ mod tests {
     }
 
     #[test]
-    fn edit_form_for_add_to_slack_shows_the_channel_and_nothing_to_replace() {
+    fn edit_form_for_add_to_slack_shows_the_channel_and_offers_only_the_ping() {
         let mut ch = slack_channel("https://hooks.slack.com/services/T/B/zzUNIQUESECRETzz");
         ch.kind = crate::domain::ChannelKind::SlackApp;
         ch.config = ChannelConfig::SlackApp(crate::domain::SlackAppConfig {
@@ -1072,11 +1076,15 @@ mod tests {
             channel: "#ops-alerts".into(),
             channel_id: "C0AB12CD3".into(),
             team_id: Some("T0AB12CD3".into()),
+            mention: Some("S01ABC234".into()),
         });
         let html = render_form(form_from_channel(ch));
         assert!(html.contains(r#"value="slack_app""#), "{html}");
         assert!(html.contains("# connected with add to Slack to"), "{html}");
         assert!(html.contains("#ops-alerts"), "{html}");
+        assert!(html.contains(r#"name="slack_app_mention""#), "{html}");
+        assert!(html.contains(r#"value="S01ABC234""#), "{html}");
+        assert!(html.contains("data-managed-edit"), "{html}");
         assert!(
             !html.contains("zzUNIQUESECRETzz"),
             "the webhook is a secret"

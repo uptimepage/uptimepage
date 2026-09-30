@@ -148,8 +148,8 @@
         {% if form.kind == "slack" && form.reconnect_for_button %}
         <p class="text-xs text-muted">
           Connect this channel again with <em>add to Slack</em> and its Acknowledge button
-          takes the incident right in Slack, without signing in. Delete this one once
-          the new channel is bound.
+          takes the incident right in Slack, without signing in. Set its ping again there,
+          and delete this one once the new channel is bound.
         </p>
         {% endif %}
       </div>
@@ -161,9 +161,22 @@
         </p>
         <p class="text-xs text-muted">
           Alerts are posted by our Slack app, and a press on their Acknowledge button
-          comes straight back here. There is no config to edit. To move it, delete the
-          channel below and connect again from the new Slack channel.
+          comes straight back here. Only the ping can change. To move the channel, delete
+          it below and connect again from the new Slack channel.
         </p>
+        <label class="field-outline" data-managed-edit>
+          <span class="field-outline__label">Ping on alert (optional)</span>
+          <input name="slack_app_mention" type="text" value="{{ form.config.slack_app_mention }}"
+                 placeholder="@here S01ABC234"
+                 autocomplete="off" spellcheck="false" class="w-full field font-mono">
+          <span class="mt-1 block text-xs text-muted">
+            Leads the message so it wakes someone: <code>@here</code>, <code>@channel</code>,
+            a user-group id (<code>S…</code>, from the group's Slack admin page) or a member id
+            (<code>U…</code>, or <code>W…</code> on Enterprise Grid). Space or comma separated,
+            up to 5. Recovery messages never ping, and a test send drops
+            <code>@here</code>/<code>@channel</code>.
+          </span>
+        </label>
       </div>
       {% endif %}
 

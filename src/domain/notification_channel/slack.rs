@@ -18,16 +18,39 @@ pub struct SlackConfig {
 }
 
 impl SlackConfig {
-    /// A typo drops out alone rather than costing the on-call ping beside it.
     pub fn mention_markup(&self) -> Option<String> {
-        let mut markup: Vec<String> = Vec::new();
-        for token in tokens(self.mention.as_deref()?).filter_map(token_markup) {
-            if !markup.contains(&token) {
-                markup.push(token);
-            }
-        }
-        (!markup.is_empty()).then(|| markup.join(" "))
+        mention_markup(self.mention.as_deref())
     }
+}
+
+/// The markup `mention` renders as, `None` when it pings nobody. A typo drops
+/// out alone rather than costing the on-call ping beside it.
+pub(super) fn mention_markup(mention: Option<&str>) -> Option<String> {
+    let mut markup: Vec<String> = Vec::new();
+    for token in tokens(mention?).filter_map(token_markup) {
+        if !markup.contains(&token) {
+            markup.push(token);
+        }
+    }
+    (!markup.is_empty()).then(|| markup.join(" "))
+}
+
+pub(super) fn validate_ping(mention: Option<&str>) -> Result<(), String> {
+    validate_mention(
+        mention,
+        |t| token_markup(t).is_some(),
+        |t| {
+            format!(
+                "Slack cannot ping \"{t}\" — use @here, @channel, a user-group id (S…) \
+                 or a member id (U… / W… on Enterprise Grid)"
+            )
+        },
+    )
+}
+
+/// The ping without `@here` or `@channel`, for a test send.
+pub(super) fn without_broadcast_ping(mention: Option<&str>) -> Option<String> {
+    without_broadcast(mention, is_broadcast)
 }
 
 /// `@here` / `@channel`: everyone in the channel, not a named responder.
@@ -93,20 +116,11 @@ impl TransportConfig for SlackConfig {
 
     fn validate(&self) -> Result<(), String> {
         require_https(&self.webhook_url, "webhook_url")?;
-        validate_mention(
-            self.mention.as_deref(),
-            |t| token_markup(t).is_some(),
-            |t| {
-                format!(
-                    "Slack cannot ping \"{t}\" — use @here, @channel, a user-group id (S…) \
-                     or a member id (U… / W… on Enterprise Grid)"
-                )
-            },
-        )
+        validate_ping(self.mention.as_deref())
     }
 
     fn quiet_broadcast_mention(&mut self) {
-        self.mention = without_broadcast(self.mention.as_deref(), is_broadcast);
+        self.mention = without_broadcast_ping(self.mention.as_deref());
     }
 
     fn abuse_url(&self) -> Option<&str> {

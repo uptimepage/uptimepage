@@ -51,6 +51,7 @@ pub async fn callback(
                     channel: webhook.channel,
                     channel_id: webhook.channel_id,
                     team_id: install.team_id,
+                    mention: None,
                 }),
                 name,
             ))

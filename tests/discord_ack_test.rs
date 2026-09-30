@@ -206,14 +206,7 @@ impl Rig {
     }
 
     async fn as_owner(&self, method: &str, path: &str, body: Value) -> (StatusCode, Value) {
-        let resp = self
-            .send(
-                common::json_request(method, path, body),
-                common::test_user_id(),
-            )
-            .await;
-        let status = resp.status();
-        (status, common::body_json(resp).await)
+        common::owner_json(self.app.clone(), self.org, method, path, body).await
     }
 }
 

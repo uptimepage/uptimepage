@@ -342,6 +342,9 @@ impl ChannelConfig {
     /// kind.
     pub fn edited_on(&self, stored: &Self) -> Option<Self> {
         match (self, stored) {
+            (Self::SlackApp(edit), Self::SlackApp(stored)) => {
+                Some(Self::SlackApp(edit.edited_on(stored)))
+            }
             (Self::DiscordApp(edit), Self::DiscordApp(stored)) => {
                 Some(Self::DiscordApp(edit.edited_on(stored)))
             }
@@ -650,6 +653,7 @@ mod tests {
                 channel: "#ops".into(),
                 channel_id: "C0AB12CD3".into(),
                 team_id: Some("T0AB12CD3".into()),
+                mention: None,
             }),
             ChannelConfig::Telegram(TelegramConfig {
                 bot_token: "t".into(),
