@@ -22,7 +22,8 @@ use crate::web::views::region_display::{LabeledRegion, labeled_regions};
 use crate::web::views::{RangeOption, build_range_options, describe_check, resolve_range_key};
 
 use load::{
-    FLAP_WINDOW_HOURS, LAST_RESULT_WINDOW_DAYS, alerts_nobody, flaps_by_region, load_flaps,
+    FLAP_WINDOW_HOURS, LAST_RESULT_WINDOW_DAYS, alerts_nobody, attach_titles, flaps_by_region,
+    load_flaps,
 };
 use rows::FLOW_RUNS_SHOWN;
 
@@ -621,7 +622,8 @@ pub async fn incidents(
     let (from, to) = resolve_incident_window(range_key, params.from, params.to);
     let time_range = TimeRange { from, to };
     let labels = WindowLabels::new(from, to);
-    let data = load_incidents_data(&state, org, target.id, time_range).await?;
+    let mut data = load_incidents_data(&state, org, target.id, time_range).await?;
+    attach_titles(&state, org, &mut data.rows).await;
     // Compared against the flap window, not the page range: an incident 29 days
     // ago explains nothing about failures from this morning.
     let flap_cutoff = Utc::now() - chrono::Duration::hours(FLAP_WINDOW_HOURS);

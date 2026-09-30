@@ -1569,6 +1569,7 @@ fn ongoing_row() -> IncidentRow {
         duration_secs: None,
         check_count: 4,
         error_sample: "connection refused".into(),
+        title: String::new(),
         ongoing: true,
         counts_as_downtime: true,
     }
@@ -1584,6 +1585,7 @@ fn resolved_row() -> IncidentRow {
         duration_secs: Some(420),
         check_count: 7,
         error_sample: "HTTP 503 Service Unavailable".into(),
+        title: String::new(),
         ongoing: false,
         counts_as_downtime: true,
     }
@@ -1604,10 +1606,12 @@ fn incidents_page_renders_table_rows_with_ongoing_emphasis() {
         .render()
         .unwrap();
     assert!(html.contains("<table"));
-    // Ongoing emphasis: themed left border + pulsing badge + severity-tagged label.
+    // Ongoing emphasis: themed left border + pulsing severity badge, and a
+    // duration and end that say it is still open rather than a blank.
     assert!(html.contains("sm-incident-ongoing"));
-    assert!(html.contains("animate-pulse"));
-    assert!(html.contains("ongoing · down"));
+    assert!(html.contains(r#"status-badge--down motion-safe:animate-pulse">down<"#));
+    assert!(html.contains(r#"text-state-bad">ongoing</span>"#));
+    assert!(html.contains("<span>now</span>"));
     // Resolved row uses the regular severity badge.
     assert!(html.contains(r#"status-badge status-badge--down">down<"#));
     // Each row has a hidden detail row + the chevron for expand.
@@ -1629,9 +1633,52 @@ fn incidents_rows_link_to_the_incident_page() {
     );
 }
 
+/// A declared incident has no failed checks of its own, but the window may
+/// still hold results, so the drawer stays.
+#[test]
+fn a_declared_incident_without_a_title_keeps_its_timeline_toggle() {
+    let mut row = resolved_row();
+    row.check_count = 0;
+    row.error_sample = String::new();
+    let html = sample_incidents_page(vec![row], 0).render().unwrap();
+    assert!(html.contains("data-incident-expand"), "{html}");
+    assert!(html.contains("data-incident-detail"), "{html}");
+    assert!(html.contains("data-incident-row"), "{html}");
+    assert!(html.contains("Untitled incident"), "{html}");
+    assert!(!html.contains("Declared by hand"), "{html}");
+
+    let with_checks = sample_incidents_page(vec![resolved_row()], 0)
+        .render()
+        .unwrap();
+    assert!(!with_checks.contains("Untitled incident"), "{with_checks}");
+}
+
+#[test]
+fn an_operator_title_names_the_row_in_place_of_the_fallback() {
+    let mut row = resolved_row();
+    row.check_count = 0;
+    row.error_sample = String::new();
+    row.title = "Payment provider degraded".into();
+    let html = sample_incidents_page(vec![row], 0).render().unwrap();
+    assert!(html.contains("Payment provider degraded"), "{html}");
+    assert!(!html.contains("Untitled incident"), "{html}");
+}
+
+#[test]
+fn a_truncated_incident_list_says_how_many_it_shows() {
+    let mut page = sample_incidents_page(vec![resolved_row()], 0);
+    assert!(!page.render().unwrap().contains("most recent incidents"));
+    page.incidents_has_more = true;
+    assert!(
+        page.render()
+            .unwrap()
+            .contains("Showing the 1 most recent incidents in this range.")
+    );
+}
+
 /// An unexplained row beside a 100% figure is the confusion, pointed the other way.
 #[test]
-fn an_excluded_incident_says_so_beside_its_duration() {
+fn an_excluded_incident_says_so() {
     let counted = sample_incidents_page(vec![resolved_row()], 1)
         .render()
         .unwrap();

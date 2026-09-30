@@ -74,6 +74,9 @@ pub struct IncidentRow {
     pub duration_secs: Option<i64>,
     pub check_count: u64,
     pub error_sample: String,
+    /// Operator-set title. Empty unless the operator view fills it in: it is
+    /// internal, so the shared view never carries one.
+    pub title: String,
     pub ongoing: bool,
     pub counts_as_downtime: bool,
 }
@@ -453,6 +456,7 @@ impl From<Incident> for IncidentRow {
                 .as_deref()
                 .map(fmt_error_display)
                 .unwrap_or_default(),
+            title: String::new(),
             ongoing,
             counts_as_downtime: inc.counts_as_downtime,
         }

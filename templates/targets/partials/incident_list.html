@@ -41,17 +41,14 @@
 {% else %}
 <section class="sticker-card overflow-hidden">
   <div class="overflow-x-auto">
-  <table class="min-w-full text-sm">
-    <caption class="sr-only">Incidents for {{ name }}</caption>
+  <table class="w-full text-sm">
+    <caption class="sr-only">Incidents for {{ name }}, newest first</caption>
     <thead class="table-head bg-[color:var(--theme-surface-sunk)]">
       <tr>
-        <th scope="col" class="px-3 py-2 w-28">Severity</th>
-        <th scope="col" class="px-3 py-2">Started</th>
-        <th scope="col" class="px-3 py-2">Ended</th>
-        <th scope="col" class="px-3 py-2 w-24">Duration</th>
-        <th scope="col" class="px-3 py-2 w-20 text-right">Checks</th>
-        <th scope="col" class="px-3 py-2">Trigger</th>
-        <th scope="col" class="w-px whitespace-nowrap px-3 py-2 text-right"><span class="sr-only">{% if incident_links %}Actions{% else %}Expand{% endif %}</span></th>
+        <th scope="col" class="w-px whitespace-nowrap px-3 py-2">Severity</th>
+        <th scope="col" class="px-3 py-2">What happened</th>
+        <th scope="col" class="w-px whitespace-nowrap px-3 py-2 text-right">Duration</th>
+        <th scope="col" class="w-px px-3 py-2"><span class="sr-only">{% if incident_links %}Actions{% else %}Timeline{% endif %}</span></th>
       </tr>
     </thead>
     <tbody>
@@ -63,55 +60,53 @@
           data-to="{% match inc.ended_at %}{% when Some with (ts) %}{{ ts|iso_ts }}{% when None %}{% endmatch %}"
           data-ongoing="{% if inc.ongoing %}true{% else %}false{% endif %}"
           class="cursor-pointer border-t border-[color:var(--theme-line)] hover:bg-[color:var(--theme-surface-sunk)]{% if inc.ongoing %} sm-incident-ongoing{% endif %}">
-        <td class="px-3 py-2 align-top">
-          {% if inc.ongoing %}
-            <span class="status-badge status-badge--{{ inc.severity }} motion-safe:animate-pulse">ongoing · {{ inc.severity }}</span>
+        <td class="whitespace-nowrap px-3 py-3 align-top">
+          <span class="status-badge status-badge--{{ inc.severity }}{% if inc.ongoing %} motion-safe:animate-pulse{% endif %}">{{ inc.severity }}</span>
+        </td>
+        <td class="min-w-0 px-3 py-3 align-top">
+          {% if !inc.title.is_empty() %}
+          <p class="line-clamp-2 text-body [overflow-wrap:anywhere]" title="{{ inc.title }}">{{ inc.title }}</p>
+          {% else if !inc.error_sample.is_empty() %}
+          <p class="line-clamp-2 text-body [overflow-wrap:anywhere]" title="{{ inc.error_sample }}">{{ inc.error_sample }}</p>
+          {% else if inc.check_count == 0 %}
+          <p class="text-muted">Untitled incident</p>
           {% else %}
-            <span class="status-badge status-badge--{{ inc.severity }}">{{ inc.severity }}</span>
+          <p class="text-muted">No error message recorded</p>
           {% endif %}
+          <p class="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-muted">
+            <time id="incident-started-{{ inc.id }}" class="font-mono tabular-nums" datetime="{{ inc.started_at|iso_ts }}" data-tz="exact">{{ inc.started_at|human_ts }}</time>
+            {% match inc.ended_at %}
+              {% when Some with (ts) %}<span aria-hidden="true">→</span><span class="sr-only">until</span><time class="font-mono tabular-nums" datetime="{{ ts|iso_ts }}" data-tz="exact">{{ ts|human_ts }}</time>
+              {% when None %}<span aria-hidden="true">→</span><span class="sr-only">until</span><span>now</span>
+            {% endmatch %}
+            {% if !inc.counts_as_downtime %}<span aria-hidden="true">·</span><span class="text-quiet">not counted in uptime</span>{% endif %}
+          </p>
         </td>
-        <td class="px-3 py-2 align-top tabular-nums">
-          <time id="incident-started-{{ inc.id }}" datetime="{{ inc.started_at|iso_ts }}" data-tz="exact">{{ inc.started_at|human_ts }}</time>
+        <td class="whitespace-nowrap px-3 py-3 text-right align-top font-mono text-xs tabular-nums">
+          {% match inc.duration_secs %}{% when Some with (s) %}<span class="text-body">{{ s|humanize_dur }}</span>{% when None %}<span class="font-medium text-state-bad">ongoing</span>{% endmatch %}
         </td>
-        <td class="px-3 py-2 align-top tabular-nums">
-          {% match inc.ended_at %}
-            {% when Some with (ts) %}<time datetime="{{ ts|iso_ts }}" data-tz="exact">{{ ts|human_ts }}</time>
-            {% when None %}<span class="font-medium text-state-bad">—</span>
-          {% endmatch %}
-        </td>
-        <td class="px-3 py-2 align-top font-mono text-xs">
-          {% match inc.duration_secs %}{% when Some with (s) %}{{ s|humanize_dur }}{% when None %}ongoing{% endmatch %}
-          {% if !inc.counts_as_downtime %}
-          <span class="block text-quiet" title="Declared by hand with no failing check behind it, so it is left out of the uptime figure">not counted</span>
-          {% endif %}
-        </td>
-        <td class="px-3 py-2 align-top text-right font-mono text-xs">{{ inc.check_count }}</td>
-        <td class="px-3 py-2 align-top text-muted">
-          <span class="line-clamp-2 break-words" title="{{ inc.error_sample }}">{% if !inc.error_sample.is_empty() %}{{ inc.error_sample }}{% else %}—{% endif %}</span>
-        </td>
-        <td class="px-3 py-2 align-top">
-          <div class="flex items-center justify-end gap-1.5">
-          {% if incident_links %}
-          <a href="/incidents/{{ inc.id }}" aria-describedby="incident-started-{{ inc.id }}"
-             class="sticker-btn sticker-btn--accent px-2 py-1 text-xs">view</a>
-          {% endif %}
-          <button type="button"
-                  data-incident-expand
-                  data-incident-id="{{ inc.id }}"
-                  aria-expanded="false"
-                  aria-controls="incident-detail-{{ inc.id }}"
-                  aria-label="Show timeline"
-                  class="inline-flex h-6 w-6 items-center justify-center rounded text-quiet hover:bg-[color:var(--theme-surface-sunk)] hover:text-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-[color:var(--theme-ink)]">
-            <span data-incident-chevron aria-hidden="true">▾</span>
-          </button>
+        <td class="px-3 py-1.5 align-top">
+          <div class="flex flex-col items-end gap-1 sm:flex-row sm:items-center sm:justify-end sm:gap-1.5">
+            {% if incident_links %}
+            <a href="/incidents/{{ inc.id }}" aria-describedby="incident-started-{{ inc.id }}"
+               class="sticker-btn sticker-btn--accent px-2 py-1 text-xs">view</a>
+            {% endif %}
+            <button type="button"
+                    data-incident-expand
+                    data-incident-id="{{ inc.id }}"
+                    aria-expanded="false"
+                    aria-controls="incident-detail-{{ inc.id }}"
+                    aria-describedby="incident-started-{{ inc.id }}"
+                    aria-label="Timeline"
+                    class="group inline-flex size-8 items-center justify-center rounded text-muted hover:bg-[color:var(--theme-surface-sunk)] hover:text-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-[color:var(--theme-ink)]">
+              <span data-incident-chevron aria-hidden="true" class="transition-transform motion-reduce:transition-none group-aria-expanded:rotate-180">▾</span>
+            </button>
           </div>
         </td>
       </tr>
       <tr data-incident-detail data-for="{{ inc.id }}" id="incident-detail-{{ inc.id }}" hidden>
-        <td colspan="7" class="border-t border-[color:var(--theme-line)] bg-[color:var(--theme-surface-sunk)] px-6 py-4">
-          <div data-incident-detail-body class="text-sm text-body">
-            <span class="font-mono text-xs text-quiet"># click to load timeline…</span>
-          </div>
+        <td colspan="4" class="border-t border-[color:var(--theme-line)] bg-[color:var(--theme-surface-sunk)] px-4 py-3 sm:px-6">
+          <div data-incident-detail-body class="text-sm text-body"></div>
         </td>
       </tr>
       {% endfor %}
@@ -120,7 +115,7 @@
   </div>
   {% if incidents_has_more %}
   <p class="border-t border-[color:var(--theme-line)] bg-[color:var(--theme-surface-sunk)] px-3 py-2 text-xs text-muted">
-    Showing first {{ incidents.len() }} incidents — narrow the range to see more.
+    Showing the {{ incidents.len() }} most recent incidents in this range.
   </p>
   {% endif %}
 </section>

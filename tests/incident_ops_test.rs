@@ -115,6 +115,44 @@ async fn a_target_less_incident_survives_every_narration_path_pg() {
     assert!(!briefs.iter().any(|b| b.id == declared.id), "{briefs:?}");
 }
 
+/// The title is internal, so the lookup names only incidents that have one and
+/// never reaches across orgs.
+#[tokio::test]
+#[ignore]
+async fn incident_titles_read_back_for_their_own_org_only_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, user, untitled) = seed(&pool, "inctitle").await;
+    let (other_org, _, _) = seed(&pool, "inctitleb").await;
+    let ops = PgIncidentOpsStore::new(pool.clone());
+    let narration = uptimepage::storage::PgIncidentNarrationStore::new(pool.clone());
+
+    let declared = ops
+        .declare(
+            org,
+            NewManualIncident {
+                title: Some("partner outage".into()),
+                ..Default::default()
+            },
+            Actor::User(user),
+        )
+        .await
+        .expect("declare");
+
+    let ids = [untitled, declared.id];
+    let own = uptimepage::storage::IncidentNarrationStore::titles(&narration, org, &ids)
+        .await
+        .expect("titles");
+    assert_eq!(own.len(), 1, "{own:?}");
+    assert_eq!(own[&declared.id], "partner outage");
+
+    let foreign = uptimepage::storage::IncidentNarrationStore::titles(&narration, other_org, &ids)
+        .await
+        .expect("titles");
+    assert!(foreign.is_empty(), "{foreign:?}");
+}
+
 /// Declaring is done with the least information, so every field it captures
 /// has to be changeable after.
 #[tokio::test]

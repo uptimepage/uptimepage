@@ -5,8 +5,9 @@
     const PAD_MS = 5_000;
     const TAIL_PAD_MS = 30_000;
 
-    const badEnough = (s) => s === "down" || s === "error";
-    const goodEnough = (s) => s === "up" || s === "degraded";
+    // Mirrors CheckStatus::is_bad: a degraded check keeps an incident open.
+    const badEnough = (s) => s === "down" || s === "error" || s === "degraded";
+    const goodEnough = (s) => s === "up";
 
     function fmtTime(iso) {
         const d = new Date(iso);
@@ -39,19 +40,33 @@
         return { firstFailure, lastFailure, recovered };
     }
 
-    function rowHtml(label, ev) {
-        if (!ev) return "";
+    function el(tag, className, text) {
+        const node = document.createElement(tag);
+        node.className = className;
+        if (text !== undefined) node.textContent = text;
+        return node;
+    }
+
+    const note = (text) => el("span", "font-mono text-xs text-quiet", text);
+    const failure = (text) => el("span", "flash-text flash-text--bad", text);
+
+    function eventRow(label, ev) {
+        if (!ev) return null;
         const meta = ev.response_code
             ? `HTTP ${ev.response_code}`
             : (ev.error ? ev.error : `${ev.duration_ms}ms`);
-        return `<div class="grid grid-cols-[8rem_8rem_1fr] gap-3 py-0.5">
-          <span class="font-mono text-xs text-quiet">${window.smEscapeHtml(label)}</span>
-          <time datetime="${window.smEscapeHtml(ev.timestamp)}" class="font-mono text-xs">${window.smEscapeHtml(fmtTime(ev.timestamp))}</time>
-          <span class="text-body"><span class="status-badge status-badge--${window.smEscapeHtml(ev.status)} mr-2">${window.smEscapeHtml(ev.status)}</span>${window.smEscapeHtml(meta)}</span>
-        </div>`;
+        const time = el("time", "font-mono text-xs tabular-nums", fmtTime(ev.timestamp));
+        time.dateTime = ev.timestamp;
+        const outcome = el("span", "min-w-0 text-body [overflow-wrap:anywhere]");
+        outcome.append(el("span", `status-badge status-badge--${ev.status} mr-2`, ev.status), meta);
+        const row = el("div", "grid grid-cols-1 gap-x-3 gap-y-0.5 py-1 sm:grid-cols-[7rem_11rem_1fr]");
+        row.append(el("span", "font-mono text-xs text-quiet", label), time, outcome);
+        return row;
     }
 
-    async function loadTimeline(row, body) {
+    async function loadTimeline(row, detail) {
+        const body = detail.querySelector("[data-incident-detail-body]");
+        if (!body) return;
         // `data-results-base` carries the per-surface results prefix
         // (`/api/v1/targets/{id}` operator-side, `/m/{token}` on a shared page),
         // so the same drawer works without leaking an operator id onto a share.
@@ -63,7 +78,7 @@
         const fromRaw = new Date(fromIso).getTime();
         const toRaw = toIso ? new Date(toIso).getTime() : Date.now();
         if (Number.isNaN(fromRaw) || Number.isNaN(toRaw)) {
-            body.innerHTML = `<span class="flash-text flash-text--bad">could not load timeline: invalid timestamp on incident row</span>`;
+            body.replaceChildren(failure("could not load timeline: invalid timestamp on incident row"));
             return;
         }
         const url = `${base}/results`
@@ -71,26 +86,28 @@
             + `&to=${encodeURIComponent(new Date(toRaw + TAIL_PAD_MS).toISOString())}`
             + `&limit=${TIMELINE_FETCH_LIMIT}`;
 
-        body.innerHTML = `<span class="font-mono text-xs text-quiet"># loading timeline…</span>`;
+        body.replaceChildren(note("# loading timeline…"));
         try {
             const r = await fetch(url, { headers: { "Accept": "application/json" } });
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             const json = await r.json();
             const items = Array.isArray(json.items) ? json.items : [];
             if (items.length === 0) {
-                body.innerHTML = `<span class="font-mono text-xs text-quiet"># no checks recorded in this window</span>`;
+                body.replaceChildren(note("# no checks are stored for this window"));
                 return;
             }
             const tl = pickTimeline(items, ongoing);
-            const parts = [
-                rowHtml("first failure", tl.firstFailure),
-                rowHtml("last failure", tl.lastFailure),
-                rowHtml("recovered", tl.recovered),
+            const rows = [
+                eventRow("first failure", tl.firstFailure),
+                eventRow("last failure", tl.lastFailure),
+                eventRow("recovered", tl.recovered),
             ].filter(Boolean);
-            body.innerHTML = parts.join("")
-                || `<span class="font-mono text-xs text-quiet"># no failures matched in this window</span>`;
+            body.replaceChildren(...(rows.length
+                ? rows
+                : [note("# no failing checks are stored for this window")]));
         } catch (err) {
-            body.innerHTML = `<span class="flash-text flash-text--bad">could not load timeline: ${window.smEscapeHtml(String(err.message || err))}</span>`;
+            body.replaceChildren(failure(`could not load timeline: ${String(err.message || err)}`));
+            delete detail.dataset.loaded;
         }
     }
 
@@ -111,11 +128,8 @@
         detail.removeAttribute("hidden");
         btn?.setAttribute("aria-expanded", "true");
         if (detail.dataset.loaded !== "1") {
-            const body = detail.querySelector("[data-incident-detail-body]");
-            if (body) {
-                loadTimeline(row, body);
-                detail.dataset.loaded = "1";
-            }
+            detail.dataset.loaded = "1";
+            loadTimeline(row, detail);
         }
     }
 

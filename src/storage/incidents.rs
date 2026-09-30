@@ -109,6 +109,9 @@ pub trait IncidentNarrationStore: Send + Sync {
         offset: usize,
         ongoing_only: bool,
     ) -> Result<Vec<Incident>>;
+    /// Operator-set titles for `ids`; an incident with none is absent. Internal,
+    /// so they stay off the public [`Incident`] projection and out of shared views.
+    async fn titles(&self, org: OrgId, ids: &[Uuid]) -> Result<HashMap<Uuid, String>>;
     /// Confirmed downtime per target over `range`; targets with no overlap absent.
     async fn confirmed_downtime_by_target(
         &self,
@@ -470,6 +473,18 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
             .collect())
     }
 
+    async fn titles(&self, org: OrgId, ids: &[Uuid]) -> Result<HashMap<Uuid, String>> {
+        let rows: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT id, title FROM incidents WHERE org_id = $1 AND id = ANY($2) AND title <> ''",
+        )
+        .bind(org.0)
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("incident titles: {e}"))?;
+        Ok(rows.into_iter().collect())
+    }
+
     async fn confirmed_downtime_by_target(
         &self,
         org: OrgId,
@@ -699,6 +714,10 @@ impl IncidentNarrationStore for InMemoryIncidentNarrationStore {
             .collect();
         out.sort_by_key(|i| (std::cmp::Reverse(i.started_at), std::cmp::Reverse(i.id)));
         Ok(out.into_iter().skip(offset).take(limit).collect())
+    }
+
+    async fn titles(&self, _org: OrgId, _ids: &[Uuid]) -> Result<HashMap<Uuid, String>> {
+        Ok(HashMap::new())
     }
 
     async fn confirmed_downtime_by_target(
