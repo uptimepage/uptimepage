@@ -160,9 +160,16 @@ async fn offered_link(
 }
 
 /// What the chat hears when a press adds someone to the list. The caller
-/// escapes `who` for its app's markup; Telegram replies are plain text.
+/// escapes `who` for its app's markup; Telegram replies are plain text. A
+/// name that already ends a sentence, like `Olena K.`, gets no second stop.
 pub(super) fn announcement(who: Option<String>) -> String {
-    format!("Acknowledged by {}.", who.as_deref().unwrap_or("someone"))
+    let who = who.as_deref().map_or("someone", str::trim_end);
+    let stop = if who.ends_with(['.', '!', '?', '…']) {
+        ""
+    } else {
+        "."
+    };
+    format!("Acknowledged by {who}{stop}")
 }
 
 /// What the presser is told about a press that landed. `hint` follows when
@@ -216,5 +223,19 @@ mod tests {
     fn an_announcement_names_the_presser_or_someone() {
         assert_eq!(announcement(Some("Olena".into())), "Acknowledged by Olena.");
         assert_eq!(announcement(None), "Acknowledged by someone.");
+        assert_eq!(
+            announcement(Some("Olena (SRE)".into())),
+            "Acknowledged by Olena (SRE)."
+        );
+    }
+
+    #[test]
+    fn a_name_that_ends_a_sentence_gets_no_second_stop() {
+        let said = |name: &str| announcement(Some(name.into()));
+        assert_eq!(said("Olena K."), "Acknowledged by Olena K.");
+        assert_eq!(said("Taras!"), "Acknowledged by Taras!");
+        assert_eq!(said("Olena…"), "Acknowledged by Olena…");
+        assert_eq!(said("?"), "Acknowledged by ?");
+        assert_eq!(said("Olena K. "), "Acknowledged by Olena K.");
     }
 }
