@@ -881,13 +881,14 @@
       </div>
 
       <div data-acknowledge-toggle data-kinds="{{ form.acknowledge_kinds() }}"{% if !form.offers_acknowledge() %} class="hidden"{% endif %}>
-        <label class="inline-flex items-center gap-2">
-          <input name="acknowledge_button" type="checkbox"{% if form.acknowledge_button %} checked{% endif %}>
-          <span class="text-sm">Acknowledge button</span>
-        </label>
-        <p class="mt-1 text-xs text-muted">
-          Alerts for an open incident carry an Acknowledge button. Turn it off
-          when the people reading this channel should not take incidents from it.
+        <span class="flag-label mb-2 block">alert buttons</span>
+        <div class="check-type-cards">
+          {% call reg::toggle_card("acknowledge_button", form.acknowledge_button, "acknowledge", "takes the incident from the alert") %}{% endcall %}
+        </div>
+        <p class="mt-2 text-xs text-muted">
+          Alerts for an open incident carry the buttons switched on here. Switch
+          them off when the people reading this channel should not act on
+          incidents from it.
         </p>
       </div>
 
