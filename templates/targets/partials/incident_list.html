@@ -3,7 +3,9 @@
    `None` on the share view), and `results_base` — the URL prefix incidents_tab.js
    appends `/results` to for the per-incident timeline. The operator page
    passes `/api/v1/targets/{id}`; the public share view passes `/m/{token}`,
-   so no operator target id leaks onto a shared page. #}
+   so no operator target id leaks onto a shared page. `incident_links`, set by
+   the including page, adds a link to each incident's own page, which the share
+   view cannot open. #}
 {% if incidents.is_empty() %}
 <div class="sticker-card flex items-center gap-3 p-6 font-mono text-sm text-muted">
   <span aria-hidden="true" class="text-lg text-state-ok">✓</span>
@@ -38,6 +40,7 @@
 {% endmatch %}
 {% else %}
 <section class="sticker-card overflow-hidden">
+  <div class="overflow-x-auto">
   <table class="min-w-full text-sm">
     <caption class="sr-only">Incidents for {{ name }}</caption>
     <thead class="table-head bg-[color:var(--theme-surface-sunk)]">
@@ -48,7 +51,7 @@
         <th scope="col" class="px-3 py-2 w-24">Duration</th>
         <th scope="col" class="px-3 py-2 w-20 text-right">Checks</th>
         <th scope="col" class="px-3 py-2">Trigger</th>
-        <th scope="col" class="px-3 py-2 w-10 text-right"><span class="sr-only">Expand</span></th>
+        <th scope="col" class="w-px whitespace-nowrap px-3 py-2 text-right"><span class="sr-only">{% if incident_links %}Actions{% else %}Expand{% endif %}</span></th>
       </tr>
     </thead>
     <tbody>
@@ -68,7 +71,7 @@
           {% endif %}
         </td>
         <td class="px-3 py-2 align-top tabular-nums">
-          <time datetime="{{ inc.started_at|iso_ts }}" data-tz="exact">{{ inc.started_at|human_ts }}</time>
+          <time id="incident-started-{{ inc.id }}" datetime="{{ inc.started_at|iso_ts }}" data-tz="exact">{{ inc.started_at|human_ts }}</time>
         </td>
         <td class="px-3 py-2 align-top tabular-nums">
           {% match inc.ended_at %}
@@ -86,7 +89,12 @@
         <td class="px-3 py-2 align-top text-muted">
           <span class="line-clamp-2 break-words" title="{{ inc.error_sample }}">{% if !inc.error_sample.is_empty() %}{{ inc.error_sample }}{% else %}—{% endif %}</span>
         </td>
-        <td class="px-3 py-2 align-top text-right">
+        <td class="px-3 py-2 align-top">
+          <div class="flex items-center justify-end gap-1.5">
+          {% if incident_links %}
+          <a href="/incidents/{{ inc.id }}" aria-describedby="incident-started-{{ inc.id }}"
+             class="sticker-btn sticker-btn--accent px-2 py-1 text-xs">view</a>
+          {% endif %}
           <button type="button"
                   data-incident-expand
                   data-incident-id="{{ inc.id }}"
@@ -96,6 +104,7 @@
                   class="inline-flex h-6 w-6 items-center justify-center rounded text-quiet hover:bg-[color:var(--theme-surface-sunk)] hover:text-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-[color:var(--theme-ink)]">
             <span data-incident-chevron aria-hidden="true">▾</span>
           </button>
+          </div>
         </td>
       </tr>
       <tr data-incident-detail data-for="{{ inc.id }}" id="incident-detail-{{ inc.id }}" hidden>
@@ -108,6 +117,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% if incidents_has_more %}
   <p class="border-t border-[color:var(--theme-line)] bg-[color:var(--theme-surface-sunk)] px-3 py-2 text-xs text-muted">
     Showing first {{ incidents.len() }} incidents — narrow the range to see more.

@@ -1617,6 +1617,18 @@ fn incidents_page_renders_table_rows_with_ongoing_emphasis() {
     assert!(html.contains(r#"data-from="2026-05-13T11:50:00Z""#));
 }
 
+#[test]
+fn incidents_rows_link_to_the_incident_page() {
+    // Not the monitor's own id, so a link built from the page id cannot pass.
+    let html = sample_incidents_page(vec![resolved_row()], 0)
+        .render()
+        .unwrap();
+    assert!(
+        html.contains(r#"href="/incidents/00000000-0000-0000-0000-000000000002""#),
+        "{html}"
+    );
+}
+
 /// An unexplained row beside a 100% figure is the confusion, pointed the other way.
 #[test]
 fn an_excluded_incident_says_so_beside_its_duration() {

@@ -12,14 +12,19 @@ mod common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use chrono::Utc;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use uptimepage::app::AppState;
 use uptimepage::domain::{
-    CheckSpec, CreatedShare, ExpectedStatus, NewMonitorShare, NewTarget, OrgId, UserId, WriteSource,
+    CheckSpec, CheckStatus, CreatedShare, ExpectedStatus, Incident, IncidentSeverity,
+    NewMonitorShare, NewTarget, OrgId, UserId, WriteSource,
 };
-use uptimepage::storage::{CreateShareOutcome, MonitorShareStore, TargetStore};
+use uptimepage::storage::{
+    CreateShareOutcome, InMemoryIncidentNarrationStore, MonitorShareStore, TargetStore,
+};
 use uuid::Uuid;
 
 use common::{build_test_app_state, default_http_check};
@@ -31,14 +36,26 @@ const SECRET: &str = "SUPERSECRET-bearer-do-not-leak";
 /// unauthenticated.
 fn app_with_stores() -> (
     axum::Router,
-    std::sync::Arc<dyn TargetStore>,
-    std::sync::Arc<dyn MonitorShareStore>,
+    Arc<dyn TargetStore>,
+    Arc<dyn MonitorShareStore>,
 ) {
-    let state: AppState = build_test_app_state(|_| {});
+    let (router, targets, shares, _) = app_with_seedable_incidents();
+    (router, targets, shares)
+}
+
+fn app_with_seedable_incidents() -> (
+    axum::Router,
+    Arc<dyn TargetStore>,
+    Arc<dyn MonitorShareStore>,
+    Arc<InMemoryIncidentNarrationStore>,
+) {
+    let mut state: AppState = build_test_app_state(|_| {});
+    let narration = Arc::new(InMemoryIncidentNarrationStore::new());
+    state.incident_narration_store = narration.clone();
     let target_store = state.target_store.clone();
     let share_store = state.monitor_share_store.clone();
     let router = uptimepage::build_app_router(state, CancellationToken::new());
-    (router, target_store, share_store)
+    (router, target_store, share_store, narration)
 }
 
 async fn make_target(store: &dyn TargetStore, org: OrgId, name: &str, secret: bool) -> Uuid {
@@ -210,6 +227,46 @@ async fn share_sub_resources_render() {
             .map(|v| v.to_str().unwrap()),
         Some("no-store")
     );
+}
+
+/// The incident page sits behind sign-in, so a share reader gets the row and
+/// its timeline but no link into it.
+#[tokio::test]
+async fn share_incidents_rows_do_not_link_to_the_incident_page() {
+    let (router, targets, shares, narration) = app_with_seedable_incidents();
+    let target = make_target(&*targets, org(), "linkless", false).await;
+    let token = mk_share(&*shares, org(), target, NewMonitorShare::default())
+        .await
+        .token;
+    let started = Utc::now() - chrono::Duration::minutes(10);
+    let incident = Uuid::now_v7();
+    narration.seed(Incident {
+        id: incident,
+        target_id: Some(target),
+        started_at: started,
+        ended_at: None,
+        status: CheckStatus::Down,
+        duration_secs: None,
+        check_count: 3,
+        counts_as_downtime: true,
+        error_sample: None,
+        severity: IncidentSeverity::Major,
+        public_title: None,
+        public_description: None,
+        created_at: Some(started),
+        updated_at: Some(started),
+        updates: vec![],
+        regions_down: Vec::new(),
+        regions_up: Vec::new(),
+    });
+
+    let (status, body) = get(&router, &format!("/m/{token}/incidents")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.contains(&format!(r#"data-incident-id="{incident}""#)),
+        "{body}"
+    );
+    assert!(!body.contains(&format!("/incidents/{incident}")), "{body}");
 }
 
 #[tokio::test]
