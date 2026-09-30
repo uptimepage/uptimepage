@@ -4,15 +4,72 @@
 
 mod common;
 
+use std::time::Duration;
+
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use common::{body_json, build_test_app_with_web_and_owner, json_request};
+use secrecy::SecretString;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+const BOT: &str = "uptimepagebot";
+const WEBHOOK_SECRET: &str = "telegram-webhook-secret-for-delegate-tests";
+
 fn app() -> Router {
     build_test_app_with_web_and_owner(|_| {})
+}
+
+fn app_with_bot() -> Router {
+    build_test_app_with_web_and_owner(|cfg| {
+        cfg.telegram.bot_token = SecretString::from("123:delegate-test-token");
+        cfg.telegram.bot_username = BOT.into();
+        cfg.telegram.webhook_secret = SecretString::from(WEBHOOK_SECRET);
+    })
+}
+
+/// Send the bot `/start <code>` from a private chat.
+async fn start(app: &Router, chat: i64, code: &str) {
+    let update = json!({
+        "message": {
+            "message_id": 1,
+            "text": format!("/start {code}"),
+            "chat": { "id": chat, "type": "private" },
+            "from": { "id": chat, "first_name": "Olena" },
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/hooks/telegram")
+                .header("content-type", "application/json")
+                .header("x-telegram-bot-api-secret-token", WEBHOOK_SECRET)
+                .body(Body::from(update.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+async fn link_status(app: &Router, code: &str) -> String {
+    let (st, body) = send(app, "GET", &format!("/c/{code}/status"), Value::Null).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    body["status"].as_str().unwrap().to_string()
+}
+
+/// The bot links off the request, so poll until `code` reads `want`.
+async fn await_status(app: &Router, code: &str, want: &str) {
+    for _ in 0..100 {
+        if link_status(app, code).await == want {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("link never reached {want}");
 }
 
 async fn send(app: &Router, method: &str, path: &str, body: Value) -> (StatusCode, Value) {
@@ -226,10 +283,44 @@ async fn mint_caps_outstanding_links_and_rejects_a_kind_it_cannot_create() {
 }
 
 #[tokio::test]
-async fn a_link_pins_the_one_tap_telegram_kind() {
-    let app = app();
-    let (_, code) = mint(&app, json!({ "kind": "telegram_app" })).await;
-    let (st, _) = get_html(&app, &format!("/c/{code}")).await;
+async fn a_link_pins_the_one_tap_telegram_kind_only_where_the_bot_runs() {
+    let with_bot = app_with_bot();
+    let (_, code) = mint(&with_bot, json!({ "kind": "telegram_app" })).await;
+    let (st, html) = get_html(&with_bot, &format!("/c/{code}")).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(html.contains(&format!("https://t.me/{BOT}?start={code}")));
+
+    let without_bot = build_test_app_with_web_and_owner(|cfg| {
+        cfg.telegram.bot_token = SecretString::from("");
+    });
+    let (st, body) = send(
+        &without_bot,
+        "POST",
+        "/api/v1/notification-channels/delegate",
+        json!({ "kind": "telegram_app" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], "DELEGATE_KIND_INVALID");
+}
+
+#[tokio::test]
+async fn the_bot_spends_only_a_link_that_may_make_a_telegram_channel() {
+    let app = app_with_bot();
+    let (_, email) = mint(&app, json!({ "kind": "email" })).await;
+    let (_, telegram) = mint(&app, json!({ "kind": "telegram_app" })).await;
+    let (_, open) = mint(&app, json!({})).await;
+
+    // The bot handles updates in spawn order, so once the later links are
+    // consumed it has already answered the email one.
+    for (chat, code) in [(1, &email), (2, &telegram), (3, &open)] {
+        start(&app, chat, code).await;
+    }
+    for code in [&telegram, &open] {
+        await_status(&app, code, "consumed").await;
+    }
+    assert_eq!(link_status(&app, &email).await, "pending");
+    let (st, _) = get_html(&app, &format!("/c/{email}")).await;
     assert_eq!(st, StatusCode::OK);
 }
 

@@ -73,6 +73,14 @@ pub struct ConsumedLink {
     pub kind_hint: Option<String>,
 }
 
+impl ConsumedLink {
+    /// Whether the link may make a channel of `kind` (db string): any kind
+    /// when unpinned, else only its pinned one.
+    pub fn accepts(&self, kind: &str) -> bool {
+        self.kind_hint.as_deref().is_none_or(|h| h == kind)
+    }
+}
+
 /// A live (or spent) delegate link as listed on the channels page.
 #[derive(Debug, Clone)]
 pub struct DelegateRow {

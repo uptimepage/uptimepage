@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::auth::url::token_link;
-use crate::config::TransactionalEmailConfig;
+use crate::config::{AppConfig, TransactionalEmailConfig};
 use crate::domain::{
     ChannelConfig, ChannelKind, NotificationChannel, OrgId, UserId, validate_channel_name,
 };
@@ -164,9 +164,13 @@ pub const DELEGATE_MANUAL_KINDS: &[ChannelKind] = &[
     ChannelKind::Webhook,
 ];
 
-/// A kind a delegation link can be pinned to: one its page can offer.
-pub fn delegate_pinnable(kind: ChannelKind) -> bool {
-    kind == ChannelKind::TelegramApp || DELEGATE_MANUAL_KINDS.contains(&kind)
+/// A kind a delegation link can be pinned to: one its page can offer on
+/// this deployment. The Telegram button needs the central bot.
+pub fn delegate_pinnable(kind: ChannelKind, cfg: &AppConfig) -> bool {
+    match kind {
+        ChannelKind::TelegramApp => cfg.telegram.enabled(),
+        other => DELEGATE_MANUAL_KINDS.contains(&other),
+    }
 }
 
 pub fn delegate_status_parts(status: LinkCodeStatus) -> (&'static str, Option<Uuid>) {

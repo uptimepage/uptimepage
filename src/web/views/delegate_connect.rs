@@ -16,8 +16,8 @@ use serde_json::json;
 
 use crate::app::AppState;
 use crate::channels::{
-    DELEGATE_MANUAL_KINDS, check_channel_abuse, delegate_status_parts, settle_config,
-    spawn_send_verification, validate_name,
+    DELEGATE_MANUAL_KINDS, check_channel_abuse, delegate_pinnable, delegate_status_parts,
+    settle_config, spawn_send_verification, validate_name,
 };
 use crate::domain::{ChannelConfig, ChannelKind, NotificationChannel, OrgId};
 use crate::error::codes;
@@ -101,28 +101,26 @@ pub async fn page(State(state): State<AppState>, Path(code): Path<String>) -> Re
             .unwrap_or_default(),
         None => String::new(),
     };
-    let kind_hint = link.kind_hint.unwrap_or_default();
-    let pin = |k: &str| kind_hint.is_empty() || kind_hint == k;
-    let bot = state.cfg.telegram.bot_username.trim_start_matches('@');
-    let offers_telegram = state.cfg.telegram.enabled()
-        && pin(ChannelKind::TelegramApp.as_db_str())
-        && !bot.is_empty();
+    let bot = &state.cfg.telegram.bot_username;
     let manual_kinds: Vec<(&'static str, &'static str)> = DELEGATE_MANUAL_KINDS
         .iter()
-        .filter(|k| pin(k.as_db_str()))
+        .filter(|k| link.accepts(k.as_db_str()))
         .map(|k| (k.as_db_str(), channel_kind_label(*k)))
         .collect();
     Ok(DelegateConnectPage {
         ok: true,
         org_name,
         code: code.trim().to_string(),
-        offers_telegram,
-        offers_slack_oauth: state.cfg.slack_oauth.enabled() && pin("slack"),
-        offers_discord_oauth: state.cfg.discord_oauth.enabled() && pin("discord"),
+        offers_telegram: delegate_pinnable(ChannelKind::TelegramApp, &state.cfg)
+            && link.accepts(ChannelKind::TelegramApp.as_db_str()),
+        offers_slack_oauth: state.cfg.slack_oauth.enabled()
+            && link.accepts(connect_oauth::SLACK.kind),
+        offers_discord_oauth: state.cfg.discord_oauth.enabled()
+            && link.accepts(connect_oauth::DISCORD.kind),
         telegram_deep_link: crate::telegram::start_link(bot, code.trim()),
         telegram_group_deep_link: crate::telegram::start_group_link(bot, code.trim()),
         name_hint: link.channel_name.unwrap_or_default(),
-        kind_hint,
+        kind_hint: link.kind_hint.unwrap_or_default(),
         manual_kinds,
     }
     .into_response())
@@ -321,7 +319,7 @@ async fn oauth_start(
     let Some(link) = live_link(state, code).await? else {
         return Ok(not_found_page());
     };
-    if link.kind_hint.as_deref().is_some_and(|h| h != p.kind) {
+    if !link.accepts(p.kind) {
         return Ok(not_found_page());
     }
     mint_start_response(state, p, q.wants_json(), link.org_id, Some(link.id)).await

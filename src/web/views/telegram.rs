@@ -23,6 +23,12 @@ use crate::web::views::notification_channels::{QuotaBlockLog, create_channel_ded
 
 const SECRET_HEADER: &str = "x-telegram-bot-api-secret-token";
 
+const DEAD_LINK: &str = "This link is invalid, expired, or already used. Mint a fresh link from \
+                         the notification settings and try again.";
+
+const OTHER_KIND: &str = "This link is for another kind of channel, not Telegram. Open the link \
+                          you were sent in a browser to set it up.";
+
 pub async fn webhook(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> StatusCode {
     let expected = state.cfg.telegram.webhook_secret.expose_secret();
     let provided = headers
@@ -160,20 +166,26 @@ async fn link_chat(state: &AppState, code: &str, chat: ChatRef) -> Result<String
         .await?
     {
         Some(l) => (l, false),
-        None => match state
-            .channel_link_code_store
-            .consume(LinkPurpose::Delegate, &hash)
-            .await?
-        {
-            Some(l) => (l, true),
-            None => {
-                return Ok(
-                    "This link is invalid, expired, or already used. Mint a fresh link from \
-                     the notification settings and try again."
-                        .to_string(),
+        None => {
+            let store = &state.channel_link_code_store;
+            let Some(live) = store.peek(LinkPurpose::Delegate, &hash).await? else {
+                return Ok(DEAD_LINK.to_string());
+            };
+            // Checked before the claim, so a link pinned to another kind
+            // stays live for the invitee it was meant for.
+            if !live.accepts(ChannelKind::TelegramApp.as_db_str()) {
+                tracing::info!(
+                    org_id = %live.org_id.0,
+                    link_id = %live.id,
+                    "telegram start refused: delegate link pinned to another kind"
                 );
+                return Ok(OTHER_KIND.to_string());
             }
-        },
+            match store.consume_by_id(live.id).await? {
+                Some(l) => (l, true),
+                None => return Ok(DEAD_LINK.to_string()),
+            }
+        }
     };
     let org = link.org_id;
 

@@ -865,7 +865,7 @@ pub async fn delegate_link_mint(
         Some(k) => {
             if !crate::domain::ChannelKind::ALL
                 .iter()
-                .any(|&c| c.as_db_str() == k && delegate_pinnable(c))
+                .any(|&c| c.as_db_str() == k && delegate_pinnable(c, &state.cfg))
             {
                 return Err(AppError::bad_request_field(
                     codes::DELEGATE_KIND_INVALID,
