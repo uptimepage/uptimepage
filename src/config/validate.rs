@@ -498,6 +498,17 @@ impl AppConfig {
         Ok(())
     }
 
+    /// With no resolver every hostname lookup fails, so every monitor would go
+    /// down at once.
+    pub fn validate_dns(&self) -> Result<()> {
+        if self.dns.servers.is_empty() {
+            return Err(crate::error::AppError::Other(anyhow::anyhow!(
+                "dns.servers must name at least one resolver"
+            )));
+        }
+        Ok(())
+    }
+
     /// Validate the regional-agent section. Only enforced when `agent.enabled`.
     pub fn validate_runtime(&self) -> Result<()> {
         fn err(msg: &str) -> crate::error::AppError {

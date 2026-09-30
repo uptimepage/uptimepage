@@ -3,7 +3,7 @@
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 
-use super::{empty_secret, secret_str};
+use super::{comma_list, empty_secret, secret_str};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ServerConfig {
@@ -72,6 +72,7 @@ pub struct DnsConfig {
     pub cache_size: usize,
     pub positive_ttl_secs: u64,
     pub negative_ttl_secs: u64,
+    #[serde(deserialize_with = "comma_list::deserialize")]
     pub servers: Vec<String>,
 }
 
@@ -87,7 +88,7 @@ pub struct SecurityConfig {
     /// — operators behind a reverse proxy (Caddy / nginx / a CDN) MUST set
     /// this, otherwise every `ip_hash` written to the database collapses to
     /// the proxy's address and IP-keyed abuse/audit signals are useless.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "comma_list::deserialize")]
     pub trusted_proxies: Vec<ipnet::IpNet>,
 }
 

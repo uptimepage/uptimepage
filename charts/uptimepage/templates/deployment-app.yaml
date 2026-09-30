@@ -140,7 +140,7 @@ spec:
                   name: {{ $pgSecret }}
                   key: {{ $pgKey }}
             - name: UPTIMEPAGE_STORAGE__POSTGRES__MAX_CONNECTIONS
-              value: {{ .Values.postgresql.maxConnections | quote }}
+              value: {{ .Values.postgresql.maxConnections | int | quote }}
             - name: UPTIMEPAGE_STORAGE__POSTGRES__MIN_CONNECTIONS
               value: {{ .Values.postgresql.minConnections | quote }}
             - name: UPTIMEPAGE_STORAGE__CLICKHOUSE__URL

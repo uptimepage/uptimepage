@@ -74,11 +74,11 @@ spec:
                   name: {{ default (printf "%s-env" (include "uptimepage.fullname" $root)) .existingSecret }}
                   key: {{ default (printf "probe-%s-token" .name) .existingSecretKey }}
             - name: UPTIMEPAGE_AGENT__PULL_INTERVAL_SECS
-              value: {{ default 30 .pullIntervalSecs | quote }}
+              value: {{ default 30 .pullIntervalSecs | int | quote }}
             - name: UPTIMEPAGE_AGENT__FLUSH_INTERVAL_SECS
-              value: {{ default 5 .flushIntervalSecs | quote }}
+              value: {{ default 5 .flushIntervalSecs | int | quote }}
             - name: UPTIMEPAGE_AGENT__BUFFER_CAPACITY
-              value: {{ default 10000 .bufferCapacity | quote }}
+              value: {{ default 10000 .bufferCapacity | int | quote }}
             {{- if and .flow .flow.enabled }}
             - name: UPTIMEPAGE_FLOW__ENABLED
               value: "true"

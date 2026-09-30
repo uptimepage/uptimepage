@@ -46,7 +46,7 @@ Passing the secrets through `--set` also works and lets the chart build the Secr
 Both charts are signed with cosign keyless signing, so there is no public key to distribute:
 
 ```bash
-cosign verify ghcr.io/uptimepage/charts/uptimepage:0.6.0 \
+cosign verify ghcr.io/uptimepage/charts/uptimepage:0.6.1 \
   --certificate-identity-regexp '^https://github.com/uptimepage/uptimepage/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

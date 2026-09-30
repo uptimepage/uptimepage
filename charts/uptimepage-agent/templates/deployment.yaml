@@ -62,11 +62,11 @@ spec:
                   name: {{ default (printf "%s-token" (include "uptimepage-agent.fullname" .)) .Values.existingSecret }}
                   key: {{ .Values.existingSecretKey }}
             - name: UPTIMEPAGE_AGENT__PULL_INTERVAL_SECS
-              value: {{ .Values.agent.pullIntervalSecs | quote }}
+              value: {{ .Values.agent.pullIntervalSecs | int | quote }}
             - name: UPTIMEPAGE_AGENT__FLUSH_INTERVAL_SECS
-              value: {{ .Values.agent.flushIntervalSecs | quote }}
+              value: {{ .Values.agent.flushIntervalSecs | int | quote }}
             - name: UPTIMEPAGE_AGENT__BUFFER_CAPACITY
-              value: {{ .Values.agent.bufferCapacity | quote }}
+              value: {{ .Values.agent.bufferCapacity | int | quote }}
             {{- if .Values.flow.enabled }}
             - name: UPTIMEPAGE_FLOW__ENABLED
               value: "true"

@@ -1,6 +1,7 @@
 use super::runtime::default_user_agent;
 use super::*;
 use config::FileFormat;
+use secrecy::ExposeSecret;
 
 /// Self-hosters get the roomiest plan without configuring anything, so the
 /// default is the whole feature; a revert to `free` would be silent.
@@ -216,39 +217,35 @@ tenant = "organizations"
     assert_eq!(cfg.tenant, "organizations");
 }
 
+/// The default config under exactly these env vars, through the loader's own
+/// env source.
+fn try_with_env(vars: &[(&str, &str)]) -> std::result::Result<AppConfig, config::ConfigError> {
+    let env = vars
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    Config::builder()
+        .add_source(File::with_name(DEFAULT_CONFIG_PATH))
+        .add_source(env_source().source(Some(env)))
+        .build()?
+        .try_deserialize()
+}
+
+fn with_env(vars: &[(&str, &str)]) -> AppConfig {
+    try_with_env(vars).unwrap()
+}
+
 #[test]
 fn microsoft_env_keys_reach_the_flattened_client() {
-    let env = std::collections::HashMap::from([
+    let cfg = with_env(&[
+        ("UPTIMEPAGE_AUTH__MICROSOFT__CLIENT_ID", "cid"),
+        ("UPTIMEPAGE_AUTH__MICROSOFT__CLIENT_SECRET", "sec"),
         (
-            "UPTIMEPAGE_AUTH__MICROSOFT__CLIENT_ID".to_string(),
-            "cid".to_string(),
+            "UPTIMEPAGE_AUTH__MICROSOFT__REDIRECT_URL",
+            "https://app.example.test/auth/microsoft/callback",
         ),
-        (
-            "UPTIMEPAGE_AUTH__MICROSOFT__CLIENT_SECRET".to_string(),
-            "sec".to_string(),
-        ),
-        (
-            "UPTIMEPAGE_AUTH__MICROSOFT__REDIRECT_URL".to_string(),
-            "https://app.example.test/auth/microsoft/callback".to_string(),
-        ),
-        (
-            "UPTIMEPAGE_AUTH__MICROSOFT__TENANT".to_string(),
-            "organizations".to_string(),
-        ),
+        ("UPTIMEPAGE_AUTH__MICROSOFT__TENANT", "organizations"),
     ]);
-    let cfg: AppConfig = Config::builder()
-        .add_source(File::with_name(DEFAULT_CONFIG_PATH))
-        .add_source(
-            Environment::with_prefix(ENV_PREFIX)
-                .prefix_separator("_")
-                .separator(ENV_SEPARATOR)
-                .try_parsing(true)
-                .source(Some(env)),
-        )
-        .build()
-        .unwrap()
-        .try_deserialize()
-        .unwrap();
     assert!(cfg.auth.microsoft.client.is_configured());
     assert_eq!(cfg.auth.microsoft.tenant, "organizations");
     assert!(cfg.auth.microsoft_login_enabled());
@@ -278,52 +275,162 @@ base_url = "https://git.corp.test"
 
 #[test]
 fn gitlab_env_keys_reach_the_flattened_client() {
-    let env = std::collections::HashMap::from([
+    let cfg = with_env(&[
+        ("UPTIMEPAGE_AUTH__GITLAB__CLIENT_ID", "cid"),
+        ("UPTIMEPAGE_AUTH__GITLAB__CLIENT_SECRET", "sec"),
         (
-            "UPTIMEPAGE_AUTH__GITLAB__CLIENT_ID".to_string(),
-            "cid".to_string(),
+            "UPTIMEPAGE_AUTH__GITLAB__REDIRECT_URL",
+            "https://app.example.test/auth/gitlab/callback",
         ),
+        ("UPTIMEPAGE_AUTH__GITLAB__BASE_URL", "https://git.corp.test"),
+    ]);
+    assert!(cfg.auth.gitlab.client.is_configured());
+    assert_eq!(cfg.auth.gitlab.base_url, "https://git.corp.test");
+    assert!(cfg.auth.gitlab_login_enabled());
+}
+
+/// Slack client ids look like decimals; read as an f64 this one came back as
+/// `2923044121.1187067` and Slack refused it.
+#[test]
+fn numeric_looking_env_strings_arrive_verbatim() {
+    let cfg = with_env(&[
         (
-            "UPTIMEPAGE_AUTH__GITLAB__CLIENT_SECRET".to_string(),
-            "sec".to_string(),
+            "UPTIMEPAGE_SLACK_OAUTH__CLIENT_ID",
+            "2923044121.11870682879441",
         ),
+        ("UPTIMEPAGE_SLACK_OAUTH__CLIENT_SECRET", "0071"),
         (
-            "UPTIMEPAGE_AUTH__GITLAB__REDIRECT_URL".to_string(),
-            "https://app.example.test/auth/gitlab/callback".to_string(),
-        ),
-        (
-            "UPTIMEPAGE_AUTH__GITLAB__BASE_URL".to_string(),
-            "https://git.corp.test".to_string(),
+            "UPTIMEPAGE_DISCORD_OAUTH__CLIENT_ID",
+            "18446744073709551616123",
         ),
     ]);
-    let cfg: AppConfig = Config::builder()
-        .add_source(File::with_name(DEFAULT_CONFIG_PATH))
-        .add_source(
-            Environment::with_prefix(ENV_PREFIX)
-                .prefix_separator("_")
-                .separator(ENV_SEPARATOR)
-                .try_parsing(true)
-                .source(Some(env)),
-        )
+    assert_eq!(cfg.slack_oauth.client_id, "2923044121.11870682879441");
+    assert_eq!(cfg.slack_oauth.client_secret.expose_secret(), "0071");
+    assert_eq!(cfg.discord_oauth.client_id, "18446744073709551616123");
+}
+
+#[test]
+fn env_strings_still_fill_bool_and_number_fields() {
+    let cfg = with_env(&[
+        ("UPTIMEPAGE_SECURITY__ALLOW_PRIVATE_TARGETS", "true"),
+        ("UPTIMEPAGE_DNS__CACHE_SIZE", "42"),
+    ]);
+    assert!(cfg.security.allow_private_targets);
+    assert_eq!(cfg.dns.cache_size, 42);
+}
+
+#[test]
+fn list_fields_read_a_comma_separated_env_string() {
+    let cfg = with_env(&[
+        (
+            "UPTIMEPAGE_SECURITY__TRUSTED_PROXIES",
+            "172.16.0.0/12,127.0.0.0/8, ::1/128",
+        ),
+        ("UPTIMEPAGE_DNS__SERVERS", "9.9.9.9:53"),
+    ]);
+    let proxies: Vec<String> = cfg
+        .security
+        .trusted_proxies
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(proxies, ["172.16.0.0/12", "127.0.0.0/8", "::1/128"]);
+    assert_eq!(cfg.dns.servers, ["9.9.9.9:53"]);
+}
+
+#[test]
+fn list_fields_read_a_toml_array_the_same_way() {
+    let cfg: SecurityConfig = Config::builder()
+        .add_source(File::from_str(
+            r#"
+allow_private_targets = false
+trusted_proxies = ["10.0.0.0/8", " ::1/128 ", ""]
+"#,
+            FileFormat::Toml,
+        ))
         .build()
         .unwrap()
         .try_deserialize()
         .unwrap();
-    assert!(cfg.auth.gitlab.client.is_configured());
-    assert_eq!(cfg.auth.gitlab.base_url, "https://git.corp.test");
-    assert!(cfg.auth.gitlab_login_enabled());
+    let proxies: Vec<String> = cfg
+        .trusted_proxies
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(proxies, ["10.0.0.0/8", "::1/128"]);
+}
+
+#[test]
+fn a_blank_dns_servers_env_string_fails_the_boot() {
+    assert!(with_env(&[]).validate_dns().is_ok());
+    let blank = with_env(&[("UPTIMEPAGE_DNS__SERVERS", " , ")]);
+    assert!(blank.dns.servers.is_empty());
+    assert!(blank.validate_dns().is_err());
+}
+
+#[test]
+fn an_empty_list_env_string_is_an_empty_list() {
+    let cfg = with_env(&[("UPTIMEPAGE_SECURITY__TRUSTED_PROXIES", "")]);
+    assert!(cfg.security.trusted_proxies.is_empty());
+}
+
+/// A mistyped range stops the boot instead of quietly narrowing who is trusted.
+#[test]
+fn a_bad_list_entry_fails_the_load_and_names_it() {
+    let err = try_with_env(&[(
+        "UPTIMEPAGE_SECURITY__TRUSTED_PROXIES",
+        "10.0.0.0/8,10.0.0.0/33",
+    )])
+    .unwrap_err();
+    assert!(err.to_string().contains("10.0.0.0/33"), "{err}");
+}
+
+/// Any key the shipped config sets can be set from the environment instead,
+/// and the string it arrives as lands the same value in bool and number fields.
+#[test]
+fn every_shipped_scalar_reads_the_same_from_an_env_string() {
+    fn leaves(table: &toml::Table, path: &mut Vec<String>, out: &mut Vec<(String, String)>) {
+        for (key, value) in table {
+            path.push(key.to_uppercase());
+            let raw = match value {
+                toml::Value::Table(inner) => {
+                    leaves(inner, path, out);
+                    None
+                }
+                toml::Value::String(s) => Some(s.clone()),
+                toml::Value::Integer(i) => Some(i.to_string()),
+                toml::Value::Float(f) => Some(f.to_string()),
+                toml::Value::Boolean(b) => Some(b.to_string()),
+                toml::Value::Array(_) | toml::Value::Datetime(_) => None,
+            };
+            if let Some(raw) = raw {
+                out.push((format!("{ENV_PREFIX}_{}", path.join(ENV_SEPARATOR)), raw));
+            }
+            path.pop();
+        }
+    }
+
+    let shipped: toml::Table = std::fs::read_to_string(DEFAULT_CONFIG_PATH)
+        .unwrap()
+        .parse()
+        .unwrap();
+    let mut vars = Vec::new();
+    leaves(&shipped, &mut Vec::new(), &mut vars);
+    assert!(
+        vars.iter().any(|(k, _)| k == "UPTIMEPAGE_DNS__CACHE_SIZE"),
+        "the walk missed the shipped keys"
+    );
+    let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+
+    let as_json = |cfg: AppConfig| serde_json::to_value(cfg).unwrap();
+    assert_eq!(as_json(with_env(&vars)), as_json(with_env(&[])));
 }
 
 /// An unaddressable instance stops the boot rather than signing users in
 /// against the wrong GitLab.
 #[test]
 fn an_unaddressable_gitlab_instance_fails_the_boot() {
-    let mut cfg: AppConfig = Config::builder()
-        .add_source(File::with_name(DEFAULT_CONFIG_PATH))
-        .build()
-        .unwrap()
-        .try_deserialize()
-        .unwrap();
+    let mut cfg = with_env(&[]);
     cfg.auth.gitlab.client.client_id = "cid".into();
     cfg.auth.gitlab.client.client_secret = "sec".to_string().into();
     cfg.auth.gitlab.client.redirect_url = "https://app.example.test/cb".into();
@@ -341,12 +448,7 @@ fn an_unaddressable_gitlab_instance_fails_the_boot() {
 /// A mistyped single-tenant lock stops the boot rather than widening.
 #[test]
 fn an_unaddressable_microsoft_tenant_fails_the_boot() {
-    let mut cfg: AppConfig = Config::builder()
-        .add_source(File::with_name(DEFAULT_CONFIG_PATH))
-        .build()
-        .unwrap()
-        .try_deserialize()
-        .unwrap();
+    let mut cfg = with_env(&[]);
     cfg.auth.microsoft.client.client_id = "cid".into();
     cfg.auth.microsoft.client.client_secret = "sec".to_string().into();
     cfg.auth.microsoft.client.redirect_url = "https://app.example.test/cb".into();

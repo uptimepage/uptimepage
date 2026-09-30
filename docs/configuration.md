@@ -1,6 +1,6 @@
 # Configuration
 
-Defaults live in `config/default.toml`. Every key can be overridden by an environment variable using the prefix `UPTIMEPAGE_` and `__` as the nested separator.
+Defaults live in `config/default.toml`. Every scalar key can be overridden by an environment variable using the prefix `UPTIMEPAGE_` and `__` as the nested separator; the value is read exactly as written, so an id or secret that looks like a number is never rounded or stripped of leading zeros. Of the list keys, only `dns.servers` and `security.trusted_proxies` can be set from the environment, as one comma-separated value (items are trimmed, blank items dropped); set the others in the config file.
 
 Example: `UPTIMEPAGE_SERVER__API_BIND=0.0.0.0:8080`
 

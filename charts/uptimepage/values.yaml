@@ -106,8 +106,8 @@ bootstrap:
   orgName: ""
 
 auth:
-  # auth.enabled_methods is list-valued and the app parses no list keys from the
-  # environment, so all of them stay on. A provider without credentials is inert.
+  # auth.enabled_methods is list-valued and cannot be set from the environment,
+  # so all of them stay on. A provider without credentials is inert.
   github:
     clientId: ""
     clientSecret: ""

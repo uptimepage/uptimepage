@@ -2,8 +2,8 @@
 //! refuses to start with.
 //!
 //! Values come from `config/default.toml` (overridable via
-//! `UPTIMEPAGE_CONFIG_PATH`) and then from `UPTIMEPAGE__`-prefixed environment
-//! variables, which win. Sections live in their own file by domain, and the
+//! `UPTIMEPAGE_CONFIG_PATH`) and then from `UPTIMEPAGE_`-prefixed environment
+//! variables with `__` between nested keys, which win. Sections live in their own file by domain, and the
 //! startup validators in `validate`.
 
 use std::path::PathBuf;
@@ -75,10 +75,82 @@ pub(crate) mod secret_str {
     }
 }
 
+/// A list field read from a TOML array or, from the environment, from one
+/// comma-separated string. Either way items are trimmed and blanks dropped.
+pub(crate) mod comma_list {
+    use std::fmt;
+    use std::marker::PhantomData;
+    use std::str::FromStr;
+
+    use serde::de::{Deserializer, Error, SeqAccess, Visitor};
+
+    pub fn deserialize<'de, D, T>(d: D) -> Result<Vec<T>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: FromStr,
+        T::Err: fmt::Display,
+    {
+        d.deserialize_any(List(PhantomData))
+    }
+
+    fn parse<'a, T, E>(items: impl Iterator<Item = &'a str>) -> Result<Vec<T>, E>
+    where
+        T: FromStr,
+        T::Err: fmt::Display,
+        E: Error,
+    {
+        items
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(|item| {
+                item.parse()
+                    .map_err(|e| E::custom(format!("{item:?}: {e}")))
+            })
+            .collect()
+    }
+
+    struct List<T>(PhantomData<T>);
+
+    impl<'de, T> Visitor<'de> for List<T>
+    where
+        T: FromStr,
+        T::Err: fmt::Display,
+    {
+        type Value = Vec<T>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a list or a comma-separated string")
+        }
+
+        fn visit_str<E: Error>(self, s: &str) -> Result<Vec<T>, E> {
+            parse(s.split(','))
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<T>, A::Error> {
+            let mut items = Vec::new();
+            while let Some(item) = seq.next_element::<String>()? {
+                items.push(item);
+            }
+            parse(items.iter().map(String::as_str))
+        }
+    }
+}
+
 const ENV_PREFIX: &str = "UPTIMEPAGE";
 const ENV_SEPARATOR: &str = "__";
 const DEFAULT_CONFIG_PATH: &str = "config/default.toml";
 const CONFIG_PATH_ENV: &str = "UPTIMEPAGE_CONFIG_PATH";
+
+/// Env values reach serde as the strings they are. `config` still turns them
+/// into bools and numbers for fields it reads itself, though not for fields
+/// under `#[serde(flatten)]`, which see the raw string. Parsing up front would
+/// turn a numeric-looking id such as `2923044121.11870682879441` into an f64
+/// and hand back a rounded one.
+fn env_source() -> Environment {
+    Environment::with_prefix(ENV_PREFIX)
+        .prefix_separator("_")
+        .separator(ENV_SEPARATOR)
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AppConfig {
@@ -151,15 +223,7 @@ impl AppConfig {
 
         let builder = Config::builder()
             .add_source(File::from(primary).required(false))
-            .add_source(
-                Environment::with_prefix(ENV_PREFIX)
-                    .prefix_separator("_")
-                    .separator(ENV_SEPARATOR)
-                    .try_parsing(true)
-                    .list_separator(",")
-                    .with_list_parse_key("dns.servers")
-                    .with_list_parse_key("security.trusted_proxies"),
-            );
+            .add_source(env_source());
 
         let cfg = builder.build()?;
         Ok(cfg.try_deserialize()?)

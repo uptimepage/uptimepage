@@ -168,6 +168,7 @@ async fn main() -> Result<()> {
         None
     };
 
+    cfg.validate_dns()?;
     cfg.validate_runtime()?;
 
     // Regional-agent mode: a stateless probe, no web/PG/CH/alerting. Branches
