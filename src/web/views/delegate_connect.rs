@@ -16,8 +16,8 @@ use serde_json::json;
 
 use crate::app::AppState;
 use crate::channels::{
-    check_channel_abuse, delegate_status_parts, settle_config, spawn_send_verification,
-    validate_name,
+    DELEGATE_MANUAL_KINDS, check_channel_abuse, delegate_status_parts, settle_config,
+    spawn_send_verification, validate_name,
 };
 use crate::domain::{ChannelConfig, ChannelKind, NotificationChannel, OrgId};
 use crate::error::codes;
@@ -31,17 +31,6 @@ use crate::templates::filters;
 use crate::web::views::channel_kind_label;
 use crate::web::views::connect_oauth::{self, ConnectProvider, StartQuery, mint_start_response};
 use crate::web::views::notification_channels::{QuotaBlockLog, create_channel_deduped};
-
-/// Manual-form kinds the page offers. Multi-secret transports (BYO
-/// telegram bot, WhatsApp) stay dashboard-only.
-const MANUAL_KINDS: &[ChannelKind] = &[
-    ChannelKind::Slack,
-    ChannelKind::Discord,
-    ChannelKind::MsTeams,
-    ChannelKind::GoogleChat,
-    ChannelKind::Email,
-    ChannelKind::Webhook,
-];
 
 #[derive(Template, WebTemplate)]
 #[template(path = "delegate_connect.html")]
@@ -118,7 +107,7 @@ pub async fn page(State(state): State<AppState>, Path(code): Path<String>) -> Re
     let offers_telegram = state.cfg.telegram.enabled()
         && pin(ChannelKind::TelegramApp.as_db_str())
         && !bot.is_empty();
-    let manual_kinds: Vec<(&'static str, &'static str)> = MANUAL_KINDS
+    let manual_kinds: Vec<(&'static str, &'static str)> = DELEGATE_MANUAL_KINDS
         .iter()
         .filter(|k| pin(k.as_db_str()))
         .map(|k| (k.as_db_str(), channel_kind_label(*k)))
@@ -188,12 +177,19 @@ pub async fn create(
             "this link is invalid, expired, or already used",
         ));
     };
+    let kind = req.config.kind();
     if let Some(hint) = link.kind_hint.as_deref()
-        && req.config.kind().as_db_str() != hint
+        && kind.as_db_str() != hint
     {
         return Err(AppError::unprocessable(
             codes::DELEGATE_KIND_INVALID,
             format!("this link only accepts a {hint} channel"),
+        ));
+    }
+    if !DELEGATE_MANUAL_KINDS.contains(&kind) {
+        return Err(AppError::unprocessable(
+            codes::DELEGATE_KIND_INVALID,
+            "this link only accepts a channel its page offers",
         ));
     }
     settle_config(&mut req.config, None)?;

@@ -21,8 +21,9 @@ use crate::api::redaction::Redacted;
 use crate::app::AppState;
 use crate::auth::scope::Scope;
 use crate::channels::{
-    check_channel_abuse, delegate_status_parts, email_delivery, fast_verify_member_email,
-    mint_and_send_verification, settle_config, spawn_send_verification, validate_name,
+    check_channel_abuse, delegate_pinnable, delegate_status_parts, email_delivery,
+    fast_verify_member_email, mint_and_send_verification, settle_config, spawn_send_verification,
+    validate_name,
 };
 use crate::domain::{
     ChannelConfig, IncidentOrigin, IncidentSeverity, IncidentUrgency, NewNotificationChannel,
@@ -805,7 +806,7 @@ pub struct DelegateLinkRequest {
     #[serde(default)]
     pub name: Option<String>,
     /// Optional pinned channel kind; the connect page then offers only
-    /// that transport.
+    /// that transport, so it must be one the page can offer.
     #[serde(default)]
     pub kind: Option<String>,
 }
@@ -842,7 +843,7 @@ pub struct DelegateLinkRow {
     request_body(content = DelegateLinkRequest, example = json!({ "name": "Ops Slack", "kind": "slack" })),
     responses(
         (status = 201, body = DelegateLinkResponse),
-        (status = 400, body = ApiError, description = "Invalid name or unknown kind"),
+        (status = 400, body = ApiError, description = "Invalid name, or a kind a delegation link cannot create"),
         (status = 422, body = ApiError, description = "Too many outstanding delegation links"),
     ),
 )]
@@ -864,11 +865,11 @@ pub async fn delegate_link_mint(
         Some(k) => {
             if !crate::domain::ChannelKind::ALL
                 .iter()
-                .any(|c| c.as_db_str() == k)
+                .any(|&c| c.as_db_str() == k && delegate_pinnable(c))
             {
                 return Err(AppError::bad_request_field(
                     codes::DELEGATE_KIND_INVALID,
-                    "unknown channel kind",
+                    "not a kind a delegation link can create",
                     "kind",
                 ));
             }

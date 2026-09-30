@@ -180,7 +180,7 @@ async fn create_honours_kind_pin_and_rejects_managed_kinds() {
     )
     .await;
     assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-    assert_eq!(body["error"]["code"], "CHANNEL_KIND_MANAGED");
+    assert_eq!(body["error"]["code"], "DELEGATE_KIND_INVALID");
 
     // A failed create keeps the pin-link alive.
     let (st, _) = get_html(&app, &format!("/c/{code}")).await;
@@ -188,7 +188,7 @@ async fn create_honours_kind_pin_and_rejects_managed_kinds() {
 }
 
 #[tokio::test]
-async fn mint_caps_outstanding_links_and_rejects_unknown_kind() {
+async fn mint_caps_outstanding_links_and_rejects_a_kind_it_cannot_create() {
     let app = app();
     for _ in 0..5 {
         mint(&app, json!({})).await;
@@ -203,15 +203,68 @@ async fn mint_caps_outstanding_links_and_rejects_unknown_kind() {
     assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert_eq!(body["error"]["code"], "DELEGATE_LINK_LIMIT");
 
+    for kind in [
+        "carrier-pigeon",
+        "sms",
+        "pagerduty",
+        "mattermost",
+        "telegram",
+        "whatsapp_app",
+        "slack_app",
+        "discord_app",
+    ] {
+        let (st, body) = send(
+            &app,
+            "POST",
+            "/api/v1/notification-channels/delegate",
+            json!({ "kind": kind }),
+        )
+        .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{kind}: {body}");
+        assert_eq!(body["error"]["code"], "DELEGATE_KIND_INVALID", "{kind}");
+    }
+}
+
+#[tokio::test]
+async fn a_link_pins_the_one_tap_telegram_kind() {
+    let app = app();
+    let (_, code) = mint(&app, json!({ "kind": "telegram_app" })).await;
+    let (st, _) = get_html(&app, &format!("/c/{code}")).await;
+    assert_eq!(st, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn create_takes_only_a_kind_the_page_offers() {
+    let app = app();
+    let (_, code) = mint(&app, json!({})).await;
+
+    for config in [
+        json!({ "type": "sms", "provider": "twilio", "to": "+15551234567",
+                "from": "+15559876543", "account_sid": "AC00000000000000000000000000000000",
+                "auth_token": "tok" }),
+        json!({ "type": "pagerduty", "routing_key": "0123456789abcdef0123456789abcdef" }),
+        json!({ "type": "telegram", "bot_token": "123456:abc", "chat_id": "-100" }),
+    ] {
+        let (st, body) = send(
+            &app,
+            "POST",
+            &format!("/c/{code}/create"),
+            json!({ "config": config }),
+        )
+        .await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"]["code"], "DELEGATE_KIND_INVALID");
+    }
+
+    // Refused before the claim, so the link still works.
     let (st, body) = send(
         &app,
         "POST",
-        "/api/v1/notification-channels/delegate",
-        json!({ "kind": "carrier-pigeon" }),
+        &format!("/c/{code}/create"),
+        json!({ "config": { "type": "webhook", "url": "https://example.com/hook" } }),
     )
     .await;
-    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["error"]["code"], "DELEGATE_KIND_INVALID");
+    assert_eq!(st, StatusCode::OK, "{body}");
 }
 
 #[tokio::test]

@@ -152,6 +152,23 @@ pub fn spawn_send_verification(state: &AppState, org: OrgId, ch: &NotificationCh
     });
 }
 
+/// Kinds a delegation link's manual form offers and its create accepts.
+/// SMS must stay out: that create runs no plan gate, and a plan may not
+/// include text alerts. The other transports are set up from the dashboard.
+pub const DELEGATE_MANUAL_KINDS: &[ChannelKind] = &[
+    ChannelKind::Slack,
+    ChannelKind::Discord,
+    ChannelKind::MsTeams,
+    ChannelKind::GoogleChat,
+    ChannelKind::Email,
+    ChannelKind::Webhook,
+];
+
+/// A kind a delegation link can be pinned to: one its page can offer.
+pub fn delegate_pinnable(kind: ChannelKind) -> bool {
+    kind == ChannelKind::TelegramApp || DELEGATE_MANUAL_KINDS.contains(&kind)
+}
+
 pub fn delegate_status_parts(status: LinkCodeStatus) -> (&'static str, Option<Uuid>) {
     match status {
         LinkCodeStatus::Pending => ("pending", None),
