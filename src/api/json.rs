@@ -11,7 +11,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use axum::body::Bytes;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{FromRequest, Request};
+use axum::extract::{FromRequest, OptionalFromRequest, Request};
 use axum::http::{HeaderMap, header};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
@@ -34,37 +34,76 @@ where
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         if !json_content_type(req.headers()) {
-            return Err(AppError::unsupported_media_type(
-                codes::INVALID_CONTENT_TYPE,
-                "expected request with `Content-Type: application/json`",
-            ));
+            return Err(not_json());
         }
-        let bytes = Bytes::from_request(req, state)
-            .await
-            .map_err(|e| match e.status() {
-                axum::http::StatusCode::PAYLOAD_TOO_LARGE => {
-                    AppError::payload_too_large(codes::INVALID_JSON, e.body_text())
-                }
-                _ => AppError::bad_request(codes::INVALID_JSON, e.body_text()),
-            })?;
-        let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
-            AppError::bad_request(
-                codes::INVALID_JSON,
-                format!("Failed to parse the request body as JSON: {e}"),
-            )
-        })?;
-        if let Some(message) = strict::describe(&value, &schema_of::<T>()) {
-            return Err(AppError::unprocessable(codes::INVALID_JSON, message));
-        }
-        // From the bytes, not the value: a duplicate key is refused here and
-        // would have collapsed silently in the value.
-        serde_json::from_slice(&bytes).map(Self).map_err(|e| {
-            AppError::unprocessable(
-                codes::INVALID_JSON,
-                format!("Failed to deserialize the JSON body into the target type: {e}"),
-            )
-        })
+        decode(&body(req, state).await?)
     }
+}
+
+/// A request with no body asks for none, whatever its content type says, so
+/// a caller that always sends one keeps working.
+impl<T, S> OptionalFromRequest<S> for Json<T>
+where
+    T: DeserializeOwned + PartialSchema + 'static,
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request(req: Request, state: &S) -> Result<Option<Self>, Self::Rejection> {
+        let is_json = json_content_type(req.headers());
+        let bytes = body(req, state).await?;
+        if bytes
+            .iter()
+            .all(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
+        {
+            return Ok(None);
+        }
+        if !is_json {
+            return Err(not_json());
+        }
+        decode(&bytes).map(Some)
+    }
+}
+
+fn not_json() -> AppError {
+    AppError::unsupported_media_type(
+        codes::INVALID_CONTENT_TYPE,
+        "expected request with `Content-Type: application/json`",
+    )
+}
+
+async fn body<S: Send + Sync>(req: Request, state: &S) -> Result<Bytes, AppError> {
+    Bytes::from_request(req, state)
+        .await
+        .map_err(|e| match e.status() {
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE => {
+                AppError::payload_too_large(codes::INVALID_JSON, e.body_text())
+            }
+            _ => AppError::bad_request(codes::INVALID_JSON, e.body_text()),
+        })
+}
+
+fn decode<T>(bytes: &Bytes) -> Result<Json<T>, AppError>
+where
+    T: DeserializeOwned + PartialSchema + 'static,
+{
+    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|e| {
+        AppError::bad_request(
+            codes::INVALID_JSON,
+            format!("Failed to parse the request body as JSON: {e}"),
+        )
+    })?;
+    if let Some(message) = strict::describe(&value, &schema_of::<T>()) {
+        return Err(AppError::unprocessable(codes::INVALID_JSON, message));
+    }
+    // From the bytes, not the value: a duplicate key is refused here and
+    // would have collapsed silently in the value.
+    serde_json::from_slice(bytes).map(Json).map_err(|e| {
+        AppError::unprocessable(
+            codes::INVALID_JSON,
+            format!("Failed to deserialize the JSON body into the target type: {e}"),
+        )
+    })
 }
 
 fn schema_of<T: PartialSchema + 'static>() -> Arc<serde_json::Value> {

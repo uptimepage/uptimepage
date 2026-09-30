@@ -289,6 +289,7 @@ use crate::storage::UptimeStats;
             ChannelKind,
             handlers::notification_channels::TestNotificationResponse,
             handlers::notification_channels::TestChannelConfigRequest,
+            handlers::notification_channels::TestChannelEditRequest,
             handlers::notification_channels::OneTapLinkRequest,
             handlers::linked_apps::LinkOfferRequest,
             handlers::linked_apps::TelegramAccountLink,

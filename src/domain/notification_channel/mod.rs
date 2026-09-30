@@ -338,15 +338,15 @@ impl ChannelConfig {
 
     /// This config as an edit to `stored`, a managed channel: the connection
     /// its flow wrote stays, and only what people may change comes from here.
-    /// `None` for a kind with nothing to edit, or when `stored` is another
-    /// kind.
+    /// `None` for a kind with nothing to edit, when `stored` is another kind,
+    /// or when the edit names another connection.
     pub fn edited_on(&self, stored: &Self) -> Option<Self> {
         match (self, stored) {
             (Self::SlackApp(edit), Self::SlackApp(stored)) => {
-                Some(Self::SlackApp(edit.edited_on(stored)))
+                edit.edited_on(stored).map(Self::SlackApp)
             }
             (Self::DiscordApp(edit), Self::DiscordApp(stored)) => {
-                Some(Self::DiscordApp(edit.edited_on(stored)))
+                edit.edited_on(stored).map(Self::DiscordApp)
             }
             _ => None,
         }

@@ -5,7 +5,7 @@ use super::discord::{
     mention_targets, require_discord_webhook, snowflake, validate_ping, without_broadcast_ping,
 };
 use super::mention::cleared_when_empty;
-use super::transport::{MASK, TransportConfig, trim_in_place};
+use super::transport::{MASK, TransportConfig, kept, secret_kept, trim_in_place};
 use super::{ChannelKind, DiscordMention};
 
 /// Discord channel connected through our own "Add to Discord" app. The
@@ -13,15 +13,16 @@ use super::{ChannelKind, DiscordMention};
 /// us, which a pasted webhook's never does. Only the connect flow creates one:
 /// a caller-supplied webhook id would point our presses at a webhook the
 /// alerts never go through. The ping is the one part people edit; an edit
-/// keeps the connection the flow stored, whatever the body says about it.
+/// that tries to move the connection is refused.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct DiscordAppConfig {
     /// Webhook the install minted. The path carries the webhook token, so the
-    /// whole value is treated as a secret. Kept from the connection on edit.
+    /// whole value is treated as a secret. An edit may leave it out or send it
+    /// back masked.
     #[serde(default)]
     pub webhook_url: String,
     /// Discord's id for that webhook, which every press on its alerts
-    /// carries. Kept from the connection on edit.
+    /// carries. An edit may leave it out or send it back as read.
     #[serde(default)]
     pub webhook_id: String,
     /// Who to ping on an alert, as on a pasted Discord webhook.
@@ -35,11 +36,14 @@ impl DiscordAppConfig {
     }
 
     /// This config as an edit to `stored`: its webhook, with this ping.
-    pub(super) fn edited_on(&self, stored: &Self) -> Self {
-        Self {
+    /// `None` when the edit names another webhook.
+    pub(super) fn edited_on(&self, stored: &Self) -> Option<Self> {
+        let keeps_connection =
+            secret_kept(&self.webhook_url) && kept(&self.webhook_id, &stored.webhook_id);
+        keeps_connection.then(|| Self {
             mention: self.mention.clone(),
             ..stored.clone()
-        }
+        })
     }
 }
 
@@ -126,17 +130,47 @@ mod tests {
     }
 
     #[test]
-    fn an_edit_keeps_the_connection_and_takes_only_the_ping() {
-        let edit = DiscordAppConfig {
+    fn an_edit_takes_only_the_ping_and_keeps_the_connection() {
+        let ping = Some("&123456789012345678".to_string());
+        let ping_only = DiscordAppConfig {
+            webhook_url: String::new(),
+            webhook_id: String::new(),
+            mention: ping.clone(),
+        };
+        let read_back = DiscordAppConfig {
             webhook_url: MASK.into(),
-            webhook_id: "998877665544332211".into(),
-            mention: Some("&123456789012345678".into()),
+            webhook_id: HOOK.into(),
+            mention: ping.clone(),
+        };
+        for edit in [ping_only, read_back] {
+            let edited = edit.edited_on(&cfg()).expect("keeps the connection");
+            assert_eq!(
+                edited,
+                DiscordAppConfig {
+                    mention: ping.clone(),
+                    ..cfg()
+                }
+            );
+            assert!(edited.validate().is_ok());
         }
-        .edited_on(&cfg());
-        assert_eq!(edit.webhook_url, cfg().webhook_url);
-        assert_eq!(edit.webhook_id, HOOK);
-        assert_eq!(edit.mention.as_deref(), Some("&123456789012345678"));
-        assert!(edit.validate().is_ok());
+    }
+
+    #[test]
+    fn an_edit_that_moves_the_webhook_is_refused() {
+        let mut read_back = cfg();
+        read_back.redact_in_place();
+        assert!(read_back.edited_on(&cfg()).is_some());
+        let mut edit = read_back.clone();
+        edit.webhook_id = "998877665544332211".into();
+        assert_eq!(edit.edited_on(&cfg()), None);
+        let mut edit = read_back;
+        edit.webhook_url = "https://discord.com/api/webhooks/112233445566778899/other".into();
+        assert_eq!(edit.edited_on(&cfg()), None);
+        assert_eq!(
+            cfg().edited_on(&cfg()),
+            None,
+            "the stored secret is never compared"
+        );
     }
 
     #[test]

@@ -412,12 +412,23 @@ async fn without_the_public_key_nothing_answers_at_the_hook() {
 }
 
 /// A caller-supplied webhook id would point our Discord app's presses at a
-/// webhook the alerts never go through, so an edit keeps the connection and
-/// changes only the ping, and nothing else may write the kind.
+/// webhook the alerts never go through, so an edit changes only the ping, one
+/// that names another webhook is refused, and nothing else may write the kind.
 #[tokio::test]
 async fn an_edit_to_a_connected_channel_changes_only_its_ping() {
     let rig = rig().await;
     let path = format!("/api/v1/notification-channels/{}", rig.channel_id);
+    let (_, read) = rig.as_owner("GET", &path, json!({})).await;
+    let mut config = read["config"].clone();
+    config["mention"] = "&123456789012345678".into();
+    let (status, body) = rig
+        .as_owner("PATCH", &path, json!({ "config": config }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["config"]["webhook_url"], "***");
+    assert_eq!(body["config"]["webhook_id"], WEBHOOK);
+    assert_eq!(body["config"]["mention"], "&123456789012345678");
+
     let (status, body) = rig
         .as_owner(
             "PATCH",
@@ -426,14 +437,25 @@ async fn an_edit_to_a_connected_channel_changes_only_its_ping() {
                 "type": "discord_app",
                 "webhook_url": "https://discord.com/api/webhooks/9998887776665554443/evil",
                 "webhook_id": "9998887776665554443",
-                "mention": "&123456789012345678",
+                "mention": "@here",
             } }),
         )
         .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["config"]["webhook_url"], "***");
-    assert_eq!(body["config"]["webhook_id"], WEBHOOK);
-    assert_eq!(body["config"]["mention"], "&123456789012345678");
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "CHANNEL_KIND_MANAGED");
+    let (status, body) = rig
+        .as_owner(
+            "PATCH",
+            &path,
+            json!({ "config": {
+                "type": "discord_app",
+                "webhook_id": "9998887776665554443",
+                "mention": "@here",
+            } }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "CHANNEL_KIND_MANAGED");
     let stored = rig
         .state
         .notification_channel_store
@@ -448,6 +470,7 @@ async fn an_edit_to_a_connected_channel_changes_only_its_ping() {
         cfg.webhook_url,
         format!("https://discord.com/api/webhooks/{WEBHOOK}/tok")
     );
+    assert_eq!(cfg.mention.as_deref(), Some("&123456789012345678"));
 
     // The ping alone, as the form sends it; a bad one is refused.
     let (status, body) = rig

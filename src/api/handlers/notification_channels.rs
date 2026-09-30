@@ -13,15 +13,16 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::AppendHeaders;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::api::redaction::Redacted;
 use crate::app::AppState;
+use crate::auth::scope::Scope;
 use crate::channels::{
     check_channel_abuse, delegate_status_parts, email_delivery, fast_verify_member_email,
-    keep_managed_connection, mint_and_send_verification, reject_managed_kind,
-    spawn_send_verification, validate_config, validate_name,
+    mint_and_send_verification, settle_config, spawn_send_verification, validate_name,
 };
 use crate::domain::{
     ChannelConfig, IncidentOrigin, IncidentSeverity, IncidentUrgency, NewNotificationChannel,
@@ -34,7 +35,7 @@ use crate::notifier::build_notifier;
 use crate::notifier::event::IncidentNotice;
 use crate::request::{
     Authorized, ChannelsDelete, ChannelsExecute, ChannelsRead, ChannelsWrite, CurrentUser,
-    RequestSource,
+    RequestSource, TokenScopes,
 };
 use crate::security::sha256_hex;
 use crate::security::token_hash::generate_raw_token;
@@ -109,11 +110,7 @@ pub async fn create(
 )> {
     validate_name(&new.name)?;
     new.auto_bind_tags = normalize_rule_tags(&new.auto_bind_tags)?;
-    reject_managed_kind(&new.config)?;
-    // The console trims in the browser, so without this the same paste that
-    // works in the app is refused over the API.
-    new.config.normalize();
-    validate_config(&new.config)?;
+    settle_config(&mut new.config, None)?;
     check_channel_abuse(&state, org, &new.config, false).await?;
     // Friendly pre-check; the store INSERT enforces the same cap atomically
     // under a per-org advisory lock.
@@ -190,16 +187,16 @@ pub async fn get(
                    carries the `***` sentinel returns 400 — omit `config` to \
                    keep the stored secret unchanged. A `config` identical to \
                    the stored one keeps the verification state. A `slack_app` \
-                   or `discord_app` config changes only `mention`: its webhook \
-                   stays the one Add to Slack or Add to Discord connected, \
-                   whatever the body says.",
+                   or `discord_app` config changes only `mention`: its \
+                   connection stays the one Add to Slack or Add to Discord \
+                   made, and a body that names another is refused with 422.",
     params(("id" = Uuid, Path)),
     request_body(content = NotificationChannelUpdate),
     responses(
         (status = 200, body = NotificationChannel),
         (status = 400, body = ApiError),
         (status = 404, body = ApiError),
-        (status = 422, body = ApiError, description = "Channel name already in use"),
+        (status = 422, body = ApiError, description = "Channel name already in use, or a connected channel's edit names another connection"),
     ),
 )]
 pub async fn update(
@@ -223,9 +220,7 @@ pub async fn update(
             .get(org, id)
             .await?
             .ok_or_else(channel_not_found)?;
-        keep_managed_connection(cfg, &stored.config)?;
-        cfg.normalize();
-        validate_config(cfg)?;
+        settle_config(cfg, Some(&stored.config))?;
         let plan = state.quotas.limit_for_org(org).await?;
         let already_sms = matches!(stored.config, ChannelConfig::Sms(_));
         gate_sms(&state, cfg, &plan, already_sms)?;
@@ -340,34 +335,62 @@ fn maybe_leave_telegram_group(state: &AppState, ch: &NotificationChannel) {
     description = "Delivers one clearly-labelled test alert through the \
                    channel's transport so the operator can confirm the \
                    webhook/token works before binding targets to it. Works on \
-                   a disabled channel too.",
+                   a disabled channel too. A `slack_app` or `discord_app` \
+                   channel may send its unsaved ping, `{ \"config\": { \"type\": \
+                   \"slack_app\", \"mention\": \"…\" } }`, to test it on its \
+                   connection; that needs `channels:write` besides \
+                   `channels:execute`, as a save does, and nothing is saved. \
+                   Any other body is refused.",
     params(("id" = Uuid, Path)),
+    request_body(content = Option<TestChannelEditRequest>),
     responses(
         (status = 200, body = TestNotificationResponse),
+        (status = 400, body = ApiError, description = "The body is not a connected channel's valid edit"),
+        (status = 403, body = ApiError, description = "An unsaved ping without `channels:write`"),
         (status = 404, body = ApiError),
-        (status = 422, body = ApiError, description = "The channel's transport rejected the test delivery"),
+        (status = 415, body = ApiError, description = "A body that is not JSON"),
+        (status = 422, body = ApiError, description = "The channel's transport rejected the test delivery, the edit names another connection, or the body is not the edit's shape"),
     ),
 )]
 pub async fn test_send(
     State(state): State<AppState>,
     Authorized(org, _): Authorized<ChannelsExecute>,
+    scopes: TokenScopes,
     Path(id): Path<Uuid>,
+    body: Option<Json<TestChannelEditRequest>>,
 ) -> Result<Json<TestNotificationResponse>> {
     let channel = state
         .notification_channel_store
         .get(org, id)
         .await?
         .ok_or_else(channel_not_found)?;
+    let config = match body.and_then(|Json(b)| b.config) {
+        None => Cow::Borrowed(&channel.config),
+        Some(mut edit) => {
+            // Choosing whom the connection pings is what a save does.
+            scopes.require(Scope::ChannelsWrite)?;
+            if !edit.operator_managed() {
+                return Err(AppError::bad_request_field(
+                    codes::INVALID_CHANNEL_CONFIG,
+                    "only a slack_app or discord_app channel's ping is tested here; \
+                     test any other config through POST /api/v1/notification-channels/test",
+                    "config",
+                ));
+            }
+            settle_config(&mut edit, Some(&channel.config))?;
+            Cow::Owned(edit)
+        }
+    };
     // A stored config can predate a deny-list entry — gate the test too.
     let established = !channel.awaiting_verification();
-    check_channel_abuse(&state, org, &channel.config, established).await?;
+    check_channel_abuse(&state, org, &config, established).await?;
     if channel.awaiting_verification() {
         return Err(AppError::unprocessable(
             codes::CHANNEL_UNVERIFIED,
             "email address not verified — confirm the verification link first",
         ));
     }
-    deliver_test(&state, &channel.config, Some((org, &channel))).await?;
+    deliver_test(&state, &config, Some((org, &channel))).await?;
     // A test that lands proves the endpoint is back, so it clears the run. Not
     // for a disabled channel, which delivers nothing whatever the test proves,
     // and never at the cost of failing a test that already went out.
@@ -380,6 +403,15 @@ pub async fn test_send(
         tracing::warn!(channel_id = %id, error = %err, "channel delivery run not cleared");
     }
     Ok(Json(TestNotificationResponse { delivered: true }))
+}
+
+/// Optional body of `POST /{id}/test`: a connected channel's unsaved edit,
+/// tested on the connection it keeps. Without `config` the stored one is
+/// tested.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TestChannelEditRequest {
+    pub config: Option<ChannelConfig>,
 }
 
 /// Body of `POST /test`: a full transport config to exercise without saving.
@@ -416,17 +448,9 @@ pub async fn test_config(
     Authorized(org, _): Authorized<ChannelsExecute>,
     Json(mut req): Json<TestChannelConfigRequest>,
 ) -> Result<Json<TestNotificationResponse>> {
-    // Same spam vector as create: the test would message a caller-supplied
-    // chat id with the operator bot.
-    reject_managed_kind(&req.config)?;
-    // Same cleaning a save would do, or a paste that saves fine fails its test.
-    req.config.normalize();
-    validate_config(&req.config)?;
-    // This body is a channel the caller has not saved yet, so it gets the gate
-    // create would apply. A channel already stored tests through `/{id}/test`.
-    let plan = state.quotas.limit_for_org(org).await?;
-    gate_sms(&state, &req.config, &plan, false)?;
-    check_channel_abuse(&state, org, &req.config, false).await?;
+    // Settled as create does: a paste that saves fine must test fine, and a
+    // managed config would message a caller-supplied chat with the operator bot.
+    settle_config(&mut req.config, None)?;
     // An unsaved email config can never have proven its inbox — testing it
     // would mail an arbitrary caller-supplied address.
     if matches!(req.config, ChannelConfig::Email(_)) {
@@ -435,6 +459,11 @@ pub async fn test_config(
             "email channels must be saved and verified before a test send",
         ));
     }
+    // This body is a channel the caller has not saved yet, so it gets the gate
+    // create would apply. A channel already stored tests through `/{id}/test`.
+    let plan = state.quotas.limit_for_org(org).await?;
+    gate_sms(&state, &req.config, &plan, false)?;
+    check_channel_abuse(&state, org, &req.config, false).await?;
     deliver_test(&state, &req.config, None).await?;
     Ok(Json(TestNotificationResponse { delivered: true }))
 }

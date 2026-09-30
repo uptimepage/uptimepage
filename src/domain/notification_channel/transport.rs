@@ -67,6 +67,18 @@ pub(super) fn strip_phone_separators(s: &str) -> String {
         .collect()
 }
 
+/// Whether an edit leaves a connection field as the flow stored it: left out
+/// or sent back unchanged.
+pub(super) fn kept(edit: &str, stored: &str) -> bool {
+    edit.is_empty() || edit == stored
+}
+
+/// [`kept`] for a secret, which a read returns masked. Its stored value is
+/// never compared, so an edit cannot confirm a guess at it.
+pub(super) fn secret_kept(edit: &str) -> bool {
+    edit.is_empty() || edit == MASK
+}
+
 pub(super) fn trim_in_place(s: &mut String) {
     let t = s.trim();
     if t.len() != s.len() {

@@ -165,18 +165,16 @@ pub fn delegate_status_parts(status: LinkCodeStatus) -> (&'static str, Option<Uu
 /// alert-spam an arbitrary destination with our credentials, or point our
 /// presses at a channel the webhook does not post to. Only the transport's own
 /// flow may mint one.
-pub fn reject_managed_kind(cfg: &ChannelConfig) -> Result<()> {
-    if !cfg.operator_managed() {
-        return Ok(());
-    }
-    let how = match cfg.kind() {
+fn managed_kind_refusal(kind: ChannelKind) -> AppError {
+    let how = match kind {
         ChannelKind::SlackApp => {
             "slack_app channels are created by connecting a channel with Add to Slack; \
-             an edit may change only the mention"
+             an edit may change only the mention and keeps the webhook, channel and \
+             workspace it connected"
         }
         ChannelKind::DiscordApp => {
             "discord_app channels are created by connecting a channel with Add to Discord; \
-             an edit may change only the mention"
+             an edit may change only the mention and keeps the webhook it connected"
         }
         ChannelKind::WhatsAppApp => {
             "whatsapp_app channels are created by linking a number through our WhatsApp line; \
@@ -187,24 +185,24 @@ pub fn reject_managed_kind(cfg: &ChannelConfig) -> Result<()> {
              mint a link code instead of supplying config"
         }
     };
-    Err(AppError::unprocessable(codes::CHANNEL_KIND_MANAGED, how))
+    AppError::unprocessable(codes::CHANNEL_KIND_MANAGED, how)
 }
 
-/// An edit to a managed channel keeps the connection its flow stored and
-/// takes only what the kind lets people change, the ping on a `slack_app` or a
-/// `discord_app`.
-/// Any other managed config in a request body is refused.
-pub fn keep_managed_connection(cfg: &mut ChannelConfig, stored: &ChannelConfig) -> Result<()> {
-    if !cfg.operator_managed() {
-        return Ok(());
-    }
-    match cfg.edited_on(stored) {
-        Some(edit) => {
-            *cfg = edit;
-            Ok(())
+/// A config cleaned as the console cleans it in the browser, then checked.
+/// `stored` is the config an edit lands on, `None` for one not saved yet. An
+/// edit to a managed channel keeps the connection its flow stored and takes
+/// only what the kind lets people change, the ping on a `slack_app` or a
+/// `discord_app`. One that names another connection, and any other managed
+/// config, is refused.
+pub fn settle_config(cfg: &mut ChannelConfig, stored: Option<&ChannelConfig>) -> Result<()> {
+    cfg.normalize();
+    if cfg.operator_managed() {
+        match stored.and_then(|s| cfg.edited_on(s)) {
+            Some(edit) => *cfg = edit,
+            None => return Err(managed_kind_refusal(cfg.kind())),
         }
-        None => reject_managed_kind(cfg),
     }
+    validate_config(cfg)
 }
 
 pub fn validate_name(name: &str) -> Result<()> {
@@ -216,7 +214,7 @@ pub fn validate_name(name: &str) -> Result<()> {
 /// copy-pasted redacted create reports `REDACTION_SENTINEL`, not a generic
 /// invalid-URL — `***` does not parse as a URL), then the structural
 /// transport check.
-pub fn validate_config(cfg: &ChannelConfig) -> Result<()> {
+fn validate_config(cfg: &ChannelConfig) -> Result<()> {
     if cfg.has_redaction_sentinel() {
         return Err(AppError::bad_request_field(
             codes::REDACTION_SENTINEL,

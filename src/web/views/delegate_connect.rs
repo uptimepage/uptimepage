@@ -16,8 +16,8 @@ use serde_json::json;
 
 use crate::app::AppState;
 use crate::channels::{
-    check_channel_abuse, delegate_status_parts, reject_managed_kind, spawn_send_verification,
-    validate_config, validate_name,
+    check_channel_abuse, delegate_status_parts, settle_config, spawn_send_verification,
+    validate_name,
 };
 use crate::domain::{ChannelConfig, ChannelKind, NotificationChannel, OrgId};
 use crate::error::codes;
@@ -196,9 +196,7 @@ pub async fn create(
             format!("this link only accepts a {hint} channel"),
         ));
     }
-    reject_managed_kind(&req.config)?;
-    req.config.normalize();
-    validate_config(&req.config)?;
+    settle_config(&mut req.config, None)?;
     check_channel_abuse(&state, link.org_id, &req.config, false).await?;
     if let Some(name) = req.name.as_deref().filter(|n| !n.trim().is_empty()) {
         validate_name(name)?;

@@ -4,27 +4,27 @@ use utoipa::ToSchema;
 use super::ChannelKind;
 use super::mention::cleared_when_empty;
 use super::slack::{id_like, mention_markup, validate_ping, without_broadcast_ping};
-use super::transport::{MASK, TransportConfig, require_https, trim_in_place};
+use super::transport::{MASK, TransportConfig, kept, require_https, secret_kept, trim_in_place};
 
 /// Slack channel connected through our own "Add to Slack" app. A press on a
 /// button in its alerts reaches us, which a pasted webhook's never does, so
 /// only the connect flow may create one: a caller-supplied channel id would
 /// point our presses at a channel the webhook does not post to. The ping is
-/// the one part people edit; an edit keeps the connection the flow stored,
-/// whatever the body says about it.
+/// the one part people edit; an edit that tries to move the connection is
+/// refused.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct SlackAppConfig {
     /// Incoming-webhook URL the install minted. The path carries the
-    /// workspace token, so the whole value is treated as a secret. Kept from
-    /// the connection on edit.
+    /// workspace token, so the whole value is treated as a secret. An edit may
+    /// leave it out or send it back as read.
     #[serde(default)]
     pub webhook_url: String,
-    /// The channel picked at install, e.g. `#ops-alerts`. Kept from the
-    /// connection on edit.
+    /// The channel picked at install, e.g. `#ops-alerts`. An edit may leave it
+    /// out or send it back as read.
     #[serde(default)]
     pub channel: String,
     /// Slack's id for that channel, which every press on its alerts carries.
-    /// Kept from the connection on edit.
+    /// An edit may leave it out or send it back as read.
     #[serde(default)]
     pub channel_id: String,
     /// The workspace the app was installed into, when Slack names one: an
@@ -42,11 +42,19 @@ impl SlackAppConfig {
     }
 
     /// This config as an edit to `stored`: its connection, with this ping.
-    pub(super) fn edited_on(&self, stored: &Self) -> Self {
-        Self {
+    /// `None` when the edit names another connection.
+    pub(super) fn edited_on(&self, stored: &Self) -> Option<Self> {
+        let keeps_connection = secret_kept(&self.webhook_url)
+            && kept(&self.channel, &stored.channel)
+            && kept(&self.channel_id, &stored.channel_id)
+            && self
+                .team_id
+                .as_deref()
+                .is_none_or(|t| kept(t, stored.team_id.as_deref().unwrap_or_default()));
+        keeps_connection.then(|| Self {
             mention: self.mention.clone(),
             ..stored.clone()
-        }
+        })
     }
 }
 
@@ -63,6 +71,7 @@ impl TransportConfig for SlackAppConfig {
 
     fn normalize(&mut self) {
         trim_in_place(&mut self.webhook_url);
+        trim_in_place(&mut self.channel);
         trim_in_place(&mut self.channel_id);
         if let Some(team) = &mut self.team_id {
             trim_in_place(team);
@@ -135,21 +144,47 @@ mod tests {
     }
 
     #[test]
-    fn an_edit_keeps_the_connection_and_takes_only_the_ping() {
-        let edit = SlackAppConfig {
-            webhook_url: MASK.into(),
-            channel: "#elsewhere".into(),
-            channel_id: "C0EVIL0001".into(),
+    fn an_edit_takes_only_the_ping_and_keeps_the_connection() {
+        let ping_only = SlackAppConfig {
+            webhook_url: String::new(),
+            channel: String::new(),
+            channel_id: String::new(),
             team_id: None,
             mention: Some("S01ABC234".into()),
+        };
+        let mut read_back = cfg();
+        read_back.redact_in_place();
+        read_back.mention = ping_only.mention.clone();
+        for edit in [ping_only, read_back] {
+            let edited = edit.edited_on(&cfg()).expect("keeps the connection");
+            assert_eq!(
+                edited,
+                SlackAppConfig {
+                    mention: Some("S01ABC234".into()),
+                    ..cfg()
+                }
+            );
+            assert!(edited.validate().is_ok());
         }
-        .edited_on(&cfg());
-        assert_eq!(edit.webhook_url, cfg().webhook_url);
-        assert_eq!(edit.channel, "#ops");
-        assert_eq!(edit.channel_id, "C0AB12CD3");
-        assert_eq!(edit.team_id.as_deref(), Some("T0AB12CD3"));
-        assert_eq!(edit.mention.as_deref(), Some("S01ABC234"));
-        assert!(edit.validate().is_ok());
+    }
+
+    #[test]
+    fn an_edit_that_moves_the_connection_is_refused() {
+        let mut read_back = cfg();
+        read_back.redact_in_place();
+        assert!(read_back.edited_on(&cfg()).is_some());
+        let moves: [fn(&mut SlackAppConfig); 5] = [
+            |c| c.webhook_url = "https://hooks.slack.com/services/T/B/other".into(),
+            |c| c.webhook_url = cfg().webhook_url,
+            |c| c.channel = "#elsewhere".into(),
+            |c| c.channel_id = "C0OTHER001".into(),
+            |c| c.team_id = Some("T0OTHER001".into()),
+        ];
+        for apply in moves {
+            let mut edit = read_back.clone();
+            apply(&mut edit);
+            assert_eq!(edit.edited_on(&cfg()), None, "{edit:?}");
+        }
     }
 
     #[test]

@@ -877,6 +877,26 @@ async fn targets_delete_and_execute_are_separate_from_write() {
     );
     assert!(b.contains("INSUFFICIENT_SCOPE"), "{b}");
 
+    // Choosing whom a test pings is a write, so channels:execute alone fires
+    // only the stored ping.
+    let cexec = token_with_scopes(&pool, user, "ce", r#"["channels:execute"]"#).await;
+    let edit = json!({ "config": { "type": "slack_app", "mention": "@here" } }).to_string();
+    let (st, b) = send(
+        &router,
+        "POST",
+        &format!("/api/v1/notification-channels/{cid}/test"),
+        &cexec,
+        &slug,
+        Some(edit),
+    )
+    .await;
+    assert_eq!(
+        st,
+        StatusCode::FORBIDDEN,
+        "channels:execute must not test an unsaved ping: {b}"
+    );
+    assert!(b.contains("INSUFFICIENT_SCOPE"), "{b}");
+
     // channels:write cannot delete a channel; channels:delete can.
     let path = format!("/api/v1/notification-channels/{cid}");
     let (st, b) = send(&router, "DELETE", &path, &cwrite, &slug, None).await;

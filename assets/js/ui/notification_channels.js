@@ -22,10 +22,16 @@
         return !isEdit || !!(replaceCb && replaceCb.checked);
     }
 
+    // A connected channel's editable part, which "test now" and a save send
+    // on their own while the rest of its config stays locked.
+    const managedEdit = form.querySelector("[data-managed-edit]");
+
     function syncTestHint() {
         const hint = form.querySelector("[data-test-hint]");
         if (!hint) return;
-        hint.textContent = usesFormConfig() ? hint.dataset.hintForm : hint.dataset.hintStored;
+        hint.textContent = usesFormConfig()
+            ? hint.dataset.hintForm
+            : managedEdit ? hint.dataset.hintManaged : hint.dataset.hintStored;
     }
 
     function hideTestResult() {
@@ -250,7 +256,8 @@
 
     // "Test now": exercises the same notifier path a real incident uses.
     // Create / replace-config: POSTs the form's config without saving;
-    // locked edit: tests the stored config by id.
+    // locked edit: tests the stored config by id, with a connected channel's
+    // unsaved edit on top.
     const testBtn = form.querySelector("[data-send-test]");
     if (testBtn) {
         const showResult = (text, cls) => showStatus(resultEl, text, cls);
@@ -278,6 +285,13 @@
                     return;
                 }
                 url = "/api/v1/notification-channels/test";
+                body = JSON.stringify({ config: built.config });
+            } else if (managedEdit) {
+                const built = buildConfig();
+                if (built.error) {
+                    showResult(`✗ ${built.error}`, "flash-text flash-text--bad");
+                    return;
+                }
                 body = JSON.stringify({ config: built.config });
             }
             testBtn.disabled = true;
@@ -803,7 +817,7 @@
         // secret is preserved (the API rejects a re-submitted "***"). A
         // connected channel with a part people edit sends that part alone;
         // the API keeps the connection.
-        if (usesFormConfig() || form.querySelector("[data-managed-edit]")) {
+        if (usesFormConfig() || managedEdit) {
             const built = buildConfig();
             if (built.error) return built;
             payload.config = built.config;

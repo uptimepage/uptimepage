@@ -374,30 +374,40 @@ async fn a_channel_with_the_button_switched_off_or_disabled_takes_nothing() {
 }
 
 /// A caller-supplied channel id would point our Slack app's presses at a
-/// channel the webhook does not post to, so an edit keeps the connection and
-/// changes only the ping.
+/// channel the webhook does not post to, so an edit changes only the ping and
+/// one that names another connection is refused.
 #[tokio::test]
 async fn an_edit_to_a_connected_channel_changes_only_its_ping() {
     let rig = rig().await;
     let path = format!("/api/v1/notification-channels/{}", rig.channel_id);
+    let (_, read) = rig.as_owner("GET", &path, json!({})).await;
+    let mut config = read["config"].clone();
+    config["mention"] = "@here S01ABC234".into();
     let (status, body) = rig
-        .as_owner(
-            "PATCH",
-            &path,
-            json!({ "config": {
-                "type": "slack_app",
-                "webhook_url": "https://hooks.slack.com/services/T/B/evil",
-                "channel": "#elsewhere",
-                "channel_id": "C0EVIL0001",
-                "mention": "@here S01ABC234",
-            } }),
-        )
+        .as_owner("PATCH", &path, json!({ "config": config }))
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["config"]["webhook_url"], "***");
-    assert_eq!(body["config"]["channel"], "#ops");
     assert_eq!(body["config"]["channel_id"], SLACK_CHANNEL);
     assert_eq!(body["config"]["mention"], "@here S01ABC234");
+
+    for moved in [
+        json!({ "webhook_url": "https://hooks.slack.com/services/T/B/evil" }),
+        json!({ "channel": "#elsewhere" }),
+        json!({ "channel_id": "C0EVIL0001" }),
+        json!({ "team_id": "T0EVIL0001" }),
+    ] {
+        let mut config = json!({ "type": "slack_app", "mention": "@here" });
+        config
+            .as_object_mut()
+            .unwrap()
+            .extend(moved.as_object().unwrap().clone());
+        let (status, body) = rig
+            .as_owner("PATCH", &path, json!({ "config": config }))
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{moved}: {body}");
+        assert_eq!(body["error"]["code"], "CHANNEL_KIND_MANAGED");
+    }
     let stored = rig
         .state
         .notification_channel_store
@@ -409,7 +419,8 @@ async fn an_edit_to_a_connected_channel_changes_only_its_ping() {
         panic!("still a slack_app channel");
     };
     assert_eq!(cfg.webhook_url, "https://hooks.slack.com/services/T/B/x");
-    assert_eq!(cfg.team_id.as_deref(), Some("T0INSTALL1"));
+    assert_eq!(cfg.channel_id, SLACK_CHANNEL);
+    assert_eq!(cfg.mention.as_deref(), Some("@here S01ABC234"));
 
     // The ping alone, as the form sends it; a bad one is refused.
     let (status, body) = rig
@@ -430,6 +441,8 @@ async fn an_edit_to_a_connected_channel_changes_only_its_ping() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body["config"].get("mention").is_none(), "{body}");
+    assert_eq!(body["config"]["channel"], "#ops");
+    assert_eq!(body["config"]["team_id"], "T0INSTALL1");
 
     let (status, body) = rig
         .as_owner(
@@ -439,4 +452,45 @@ async fn an_edit_to_a_connected_channel_changes_only_its_ping() {
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+/// A test send may carry the ping still being typed, checked like a save and
+/// sent on the stored connection only.
+#[tokio::test]
+async fn a_test_send_takes_an_unsaved_ping_and_nothing_else() {
+    let rig = rig().await;
+    let test = format!("/api/v1/notification-channels/{}/test", rig.channel_id);
+    let refused = [
+        (
+            json!({ "type": "slack_app", "mention": "@sre" }),
+            StatusCode::BAD_REQUEST,
+            "INVALID_CHANNEL_CONFIG",
+        ),
+        (
+            json!({ "type": "slack_app", "channel_id": "C0EVIL0001", "mention": "@here" }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "CHANNEL_KIND_MANAGED",
+        ),
+        (
+            json!({ "type": "slack", "webhook_url": "https://hooks.slack.com/services/T/B/y" }),
+            StatusCode::BAD_REQUEST,
+            "INVALID_CHANNEL_CONFIG",
+        ),
+    ];
+    for (config, status_expected, code) in refused {
+        let (status, body) = rig
+            .as_owner("POST", &test, json!({ "config": config }))
+            .await;
+        assert_eq!(status, status_expected, "{config}: {body}");
+        assert_eq!(body["error"]["code"], code, "{config}: {body}");
+    }
+    let (status, body) = rig
+        .as_owner(
+            "POST",
+            &test,
+            json!({ "config": { "type": "slack_app", "mention": "@here" }, "extra": 1 }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "INVALID_JSON");
 }
