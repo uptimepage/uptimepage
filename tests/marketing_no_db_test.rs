@@ -36,7 +36,7 @@ async fn get(path: &str) -> (StatusCode, String, axum::http::HeaderMap) {
         .expect("router call");
     let status = resp.status();
     let headers = resp.headers().clone();
-    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 23)
         .await
         .expect("collect body");
     let body = String::from_utf8(bytes.to_vec()).unwrap_or_default();
@@ -79,6 +79,10 @@ async fn pricing_renders_without_db() {
     assert!(
         body.contains("https://app.uptimepage.dev/login"),
         "pricing CTA should link to app_url"
+    );
+    assert!(
+        body.contains("<th>price</th><td>$0</td><td>$0</td><td>$9/mo</td><td>$19/mo</td>"),
+        "plans table must carry a price row"
     );
     assert!(
         !body.contains("render failed"),
@@ -317,7 +321,7 @@ async fn get_as_markdown(path: &str) -> (StatusCode, String, axum::http::HeaderM
         .expect("router call");
     let status = resp.status();
     let headers = resp.headers().clone();
-    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 23)
         .await
         .expect("collect body");
     (
@@ -506,6 +510,24 @@ async fn llms_txt_renders() {
     assert!(
         body.contains("registry.terraform.io/providers/uptimepage/uptimepage"),
         "must surface the Terraform provider"
+    );
+}
+
+#[tokio::test]
+async fn llms_txt_carries_prices_and_links_pricing_and_source() {
+    let (_, body, _) = get("/llms.txt").await;
+    assert!(body.contains("## Facts\n"), "must carry the facts block");
+    assert!(
+        body.contains("Pro is $9/month") && body.contains("Team is $19/month"),
+        "must state the paid prices"
+    );
+    assert!(
+        body.contains("](https://uptimepage.dev/pricing)"),
+        "must link the pricing page"
+    );
+    assert!(
+        body.contains("](https://github.com/uptimepage/uptimepage)"),
+        "must link the source repository"
     );
 }
 

@@ -432,8 +432,9 @@ pub async fn architecture(State(cfg): State<Arc<MarketingCfg>>, headers: HeaderM
     serve_cached(&headers, cached, &PAGE_CACHE_CONTROL)
 }
 
+pub(crate) const PRICING_PATH: &str = "/pricing";
 const PRICING_CREATED: &str = "2026-06-23";
-const PRICING_LASTMOD: &str = "2026-09-12";
+pub(crate) const PRICING_LASTMOD: &str = "2026-10-01";
 
 // Founding-claim figures shown on the pricing scarcity meter.
 const FOUNDING_TOTAL: u32 = 1000;
@@ -494,7 +495,7 @@ struct PricingPage {
 static PRICING_CACHED: OnceLock<CachedRender> = OnceLock::new();
 
 fn render_pricing(cfg: &MarketingCfg) -> CachedRender {
-    let canonical_url = format!("{}/pricing", cfg.canonical_origin);
+    let canonical_url = format!("{}{PRICING_PATH}", cfg.canonical_origin);
     let mut og = OpenGraph::default_for(
         &format!("Uptime Monitoring Pricing: Free & Pro | {BRAND}"),
         &canonical_url,
@@ -507,11 +508,11 @@ fn render_pricing(cfg: &MarketingCfg) -> CachedRender {
     let page = PricingPage {
         app_url: cfg.app_url.clone(),
         checkout_open: cfg.checkout_open,
-        breadcrumb_json_ld: json_ld_breadcrumb(&cfg.canonical_origin, "Pricing", "/pricing"),
+        breadcrumb_json_ld: json_ld_breadcrumb(&cfg.canonical_origin, "Pricing", PRICING_PATH),
         software_json_ld: json_ld_software_application(&cfg.canonical_origin),
         webpage_json_ld: json_ld_webpage(
             &cfg.canonical_origin,
-            "/pricing",
+            PRICING_PATH,
             "Pricing",
             PRICING_CREATED,
             PRICING_LASTMOD,

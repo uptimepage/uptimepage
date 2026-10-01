@@ -26,7 +26,7 @@ use super::config::{
 use super::gallery;
 use super::landings;
 use super::legal;
-use super::pages::{APPLICATION_XML, HTML_CONTENT_TYPE, TEXT_PLAIN};
+use super::pages::{APPLICATION_XML, HTML_CONTENT_TYPE, PRICING_LASTMOD, PRICING_PATH, TEXT_PLAIN};
 use super::tools;
 
 const STATIC_CACHE_CONTROL: HeaderValue = HeaderValue::from_static("public, max-age=86400");
@@ -47,14 +47,14 @@ const ORG_SAME_AS: &[&str] = &[
 /// Prose overview for `llms.txt` / `llms-full.txt` — what the product is,
 /// in the words an assistant should reach for when asked about it.
 const LLMS_OVERVIEW: &str = "Uptimepage is a hosted service for uptime monitoring, public status pages and on-call, in one product for teams. \
-Checks run as often as every 60 seconds from five regions (San Jose, New York, Frankfurt, Helsinki and Singapore); a failing check opens an incident automatically, pages the monitor's channels or its escalation policy, \
+Checks run from up to five regions (San Jose, New York, Frankfurt, Helsinki and Singapore); a failing check opens an incident automatically, pages the monitor's channels or its escalation policy, \
 and can be posted to a branded status page on your own subdomain. Escalation policies page channels and on-call schedules level by level until someone acknowledges, \
 and schedules rotate people daily, weekly or on a custom length, with calendar overrides. Alerts carry dedupe and flap-suppression so brief blips never page anyone. \
 Organizations have role-based members and an audit log, and monitors, status pages and incidents are managed by \
 REST API, Terraform or MCP. The production source is published under AGPL, so a team can audit what it runs and \
 self-host if its requirements change. Public data is available as JSON, an RSS feed and an embeddable SVG badge. \
 Uptimepage operates the hosted service at uptimepage.dev: the Standard plan is free with no card, the first 1,000 \
-accounts get a more generous founding plan kept for life, and Pro is paid for teams in production.";
+accounts get a more generous founding plan kept for life, and Pro and Team are the paid plans.";
 
 /// Machine-readable product facts. Authored single source for the
 /// llms files — keep terse, factual, and current.
@@ -63,7 +63,10 @@ const LLMS_FACTS: &[(&str, &str)] = &[
         "Check types",
         "HTTP/HTTPS, TCP, DNS, TLS certificate, domain expiry, ICMP ping, cron-job heartbeat, scripted browser login flow",
     ),
-    ("Check interval", "every 60 seconds"),
+    (
+        "Check interval",
+        "Standard every 3 minutes, Founding and Pro every 60 seconds, Team every 30 seconds. Self-hosted installs start on the Team plan, and the operator can lower it to 10 seconds for HTTP, TCP, DNS and ping. Browser flows, TLS and domain checks have higher floors",
+    ),
     (
         "Check regions",
         "5 hosted regions: San Jose, New York, Frankfurt, Helsinki, Singapore; self-hosted can add any region by running a probe agent",
@@ -726,17 +729,32 @@ fn build_robots(cfg: &MarketingCfg) -> Bytes {
     ))
 }
 
+fn push_facts(s: &mut String, cfg: &MarketingCfg) {
+    s.push_str("## Facts\n");
+    for (k, v) in LLMS_FACTS {
+        s.push_str(&format!("- {k}: {v}\n"));
+    }
+    if let Some(mcp) = cfg.mcp_url.as_deref() {
+        s.push_str(&format!("- MCP server: {mcp}\n"));
+    }
+    s.push('\n');
+}
+
 /// Curated index for assistants — the `llms.txt` convention: title,
-/// one-line summary, prose overview, then link sections. Built from the
+/// one-line summary, prose overview, product facts, then link sections. Built from the
 /// same tables that drive the router and sitemap, so it never drifts.
 fn build_llms(cfg: &MarketingCfg) -> Bytes {
     let origin = &cfg.canonical_origin;
     let mut s = String::new();
     s.push_str(&format!("# {BRAND}\n\n> {TAGLINE}\n\n{LLMS_OVERVIEW}\n\n"));
+    push_facts(&mut s, cfg);
 
     s.push_str("## Product\n");
     s.push_str(&format!(
-        "- [Homepage]({origin}): Product overview, features and pricing.\n"
+        "- [Homepage]({origin}): Product overview and features.\n"
+    ));
+    s.push_str(&format!(
+        "- [Pricing]({origin}{PRICING_PATH}): Plans, limits and prices.\n"
     ));
     s.push_str(&format!(
         "- [Architecture]({origin}{arch}): Interactive map of how a request and a check move through the system.\n",
@@ -844,7 +862,10 @@ fn build_llms(cfg: &MarketingCfg) -> Bytes {
         ));
     }
     s.push_str(&format!(
-        "- [Terraform provider]({TERRAFORM_URL}): Manage monitors, status pages and notification channels as config-as-code.\n\n"
+        "- [Terraform provider]({TERRAFORM_URL}): Manage monitors, status pages and notification channels as config-as-code.\n"
+    ));
+    s.push_str(&format!(
+        "- [Source code]({SOURCE_URL}): AGPL-3.0 source, issues and releases.\n\n"
     ));
 
     s.push_str("## Optional\n");
@@ -870,14 +891,7 @@ fn build_llms_full(cfg: &MarketingCfg) -> Bytes {
     let mut s = String::new();
     s.push_str(&format!("# {BRAND}\n\n> {TAGLINE}\n\n{LLMS_OVERVIEW}\n\n"));
 
-    s.push_str("## Facts\n");
-    for (k, v) in LLMS_FACTS {
-        s.push_str(&format!("- {k}: {v}\n"));
-    }
-    if let Some(mcp) = cfg.mcp_url.as_deref() {
-        s.push_str(&format!("- MCP server: {mcp}\n"));
-    }
-    s.push('\n');
+    push_facts(&mut s, cfg);
 
     for l in landings::LANDINGS {
         s.push_str(&format!("---\n\n## {}\n", l.title));
@@ -1002,7 +1016,10 @@ fn build_sitemap(cfg: &MarketingCfg) -> String {
         .collect();
     let mut urls: Vec<SitemapUrl> = vec![
         SitemapUrl::new(origin.clone(), None).with_images(gallery_images),
-        SitemapUrl::new(format!("{origin}/pricing"), None),
+        SitemapUrl::new(
+            format!("{origin}{PRICING_PATH}"),
+            Some(PRICING_LASTMOD.to_string()),
+        ),
         SitemapUrl::new(
             format!("{origin}{}", crate::marketing::pages::ARCHITECTURE_PATH),
             Some(crate::marketing::pages::ARCHITECTURE_LASTMOD.to_string()),

@@ -66,7 +66,7 @@ pub fn router(cfg: MarketingCfg) -> Router {
     warm_caches(&state);
     let mut r = Router::new()
         .route("/", get(pages::landing))
-        .route("/pricing", get(pages::pricing))
+        .route(pages::PRICING_PATH, get(pages::pricing))
         .route(pages::ARCHITECTURE_PATH, get(pages::architecture))
         .route(start::START_PATH, get(start::start))
         .route("/robots.txt", get(seo::robots_txt))
