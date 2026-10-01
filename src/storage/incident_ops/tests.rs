@@ -244,6 +244,62 @@ async fn cannot_acknowledge_resolved() {
     assert!(matches!(out, LifecycleOutcome::IllegalTransition(_)));
 }
 
+/// A page from before a resolve/reopen must not close the outage that followed
+/// it, and a second press on a closed incident records nothing.
+#[tokio::test]
+async fn a_resolve_from_an_alert_is_pinned_to_its_episode_and_needs_an_open_incident() {
+    let store = InMemoryIncidentOpsStore::new();
+    let id = seed_triggered(&store);
+    let (alice, bob) = (user(), user());
+    let events = || async { store.timeline(org(), id).await.unwrap().len() };
+
+    let out = store
+        .resolve_episode(org(), id, Actor::User(alice), 3)
+        .await
+        .unwrap();
+    assert!(matches!(out, LifecycleOutcome::Stale), "{out:?}");
+    assert_eq!(events().await, 0, "a refusal leaves no trace");
+
+    let inc = unwrap_updated(
+        store
+            .resolve_episode(org(), id, Actor::User(alice), 0)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(inc.state, IncidentState::Resolved);
+    assert_eq!(inc.resolved_by, Some(alice));
+    let closed = events().await;
+
+    let out = store
+        .resolve_episode(org(), id, Actor::User(bob), 0)
+        .await
+        .unwrap();
+    assert!(
+        matches!(out, LifecycleOutcome::IllegalTransition(_)),
+        "{out:?}"
+    );
+    assert_eq!(events().await, closed, "a second press adds nothing");
+    let kept = store.get(org(), id).await.unwrap().unwrap();
+    assert_eq!(kept.resolved_by, Some(alice), "the first resolver keeps it");
+
+    store
+        .reopen(org(), id, Actor::User(alice), None)
+        .await
+        .unwrap();
+    let out = store
+        .resolve_episode(org(), id, Actor::User(bob), 0)
+        .await
+        .unwrap();
+    assert!(matches!(out, LifecycleOutcome::Stale), "{out:?}");
+    let inc = unwrap_updated(
+        store
+            .resolve_episode(org(), id, Actor::User(bob), 1)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(inc.resolved_by, Some(bob));
+}
+
 #[tokio::test]
 async fn manual_resolve_records_user_auto_resolve_does_not() {
     let store = InMemoryIncidentOpsStore::new();

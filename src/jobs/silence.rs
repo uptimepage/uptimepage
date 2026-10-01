@@ -118,7 +118,7 @@ impl SilenceDelivery for SilenceNotifier {
                 self.central_whatsapp.as_ref(),
                 self.email.as_ref(),
                 email_alert,
-                None,
+                Default::default(),
             ) {
                 Ok(n) => crate::notifier::notify_following_moves(
                     self.channels.as_ref(),

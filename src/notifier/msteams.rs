@@ -22,6 +22,7 @@ pub struct MsTeamsNotifier {
     client: OutboundHttpClient,
     webhook_url: Url,
     ack_link: Option<String>,
+    resolve_link: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -108,11 +109,17 @@ impl MsTeamsNotifier {
             client,
             webhook_url,
             ack_link: None,
+            resolve_link: None,
         }
     }
 
     pub fn with_ack_link(mut self, ack_link: Option<String>) -> Self {
         self.ack_link = ack_link;
+        self
+    }
+
+    pub fn with_resolve_link(mut self, resolve_link: Option<String>) -> Self {
+        self.resolve_link = resolve_link;
         self
     }
 
@@ -171,20 +178,26 @@ impl MsTeamsNotifier {
     }
 }
 
-/// A Workflows card opens URLs and nothing else, so acknowledging happens on
-/// the page the button opens, first and highlighted.
+/// A Workflows card opens URLs and nothing else, so acknowledging and
+/// resolving happen on the page the button opens, Acknowledge first and
+/// highlighted.
 fn actions(card: &AlertCard) -> Vec<Action> {
     let acknowledge = card.ack_link.iter().map(|url| Action::OpenUrl {
         title: "Acknowledge",
         url: url.clone(),
         style: Some("positive"),
     });
+    let resolve = card.resolve_link.iter().map(|url| Action::OpenUrl {
+        title: "Resolve",
+        url: url.clone(),
+        style: None,
+    });
     let view = card.link.iter().map(|url| Action::OpenUrl {
         title: "View incident",
         url: url.clone(),
         style: None,
     });
-    acknowledge.chain(view).collect()
+    acknowledge.chain(resolve).chain(view).collect()
 }
 
 fn fact(f: &CardField) -> Fact {
@@ -242,7 +255,9 @@ fn defuse_date_functions(s: &str) -> String {
 #[async_trait]
 impl Notifier for MsTeamsNotifier {
     async fn notify_incident(&self, notice: &IncidentNotice) -> Result<()> {
-        let message = Self::message(&AlertCard::for_notice(notice, self.ack_link.as_deref()));
+        let card = AlertCard::for_notice(notice, self.ack_link.as_deref())
+            .with_resolve(notice, self.resolve_link.as_deref());
+        let message = Self::message(&card);
         post_json(&self.client, &self.webhook_url, &message).await
     }
 }
@@ -308,6 +323,20 @@ mod tests {
         assert_eq!(actions[0]["style"], "positive");
         assert_eq!(actions[1]["title"], "View incident");
         assert!(actions[1].get("style").is_none(), "{actions}");
+    }
+
+    #[test]
+    fn resolve_follows_acknowledge_and_takes_no_highlight() {
+        let ack = crate::notifier::card::tests::ack_page();
+        let resolve = crate::notifier::card::tests::resolve_page();
+        let n = notice(NotificationReason::Opened);
+        let card = AlertCard::for_notice(&n, Some(&ack)).with_resolve(&n, Some(&resolve));
+        let v = serde_json::to_value(MsTeamsNotifier::message(&card)).unwrap();
+        let actions = &v["attachments"][0]["content"]["actions"];
+        assert_eq!(actions[1]["title"], "Resolve");
+        assert_eq!(actions[1]["url"], resolve);
+        assert!(actions[1].get("style").is_none(), "{actions}");
+        assert_eq!(actions[2]["title"], "View incident");
     }
 
     /// An incident with no link at all must still deliver, without an action

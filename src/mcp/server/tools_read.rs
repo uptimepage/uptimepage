@@ -16,9 +16,9 @@ use rmcp::{RoleServer, tool, tool_router};
 use uuid::Uuid;
 
 use crate::auth::scope::Scope;
-use crate::domain::WriteSource;
 use crate::domain::metrics::DashboardMetrics;
 use crate::domain::target::Target;
+use crate::domain::{AlertAction, WriteSource};
 use crate::domain::{confirmed_downtime_secs, uptime_pct_from_downtime};
 use crate::storage::incidents::IncidentBriefFilter;
 use crate::storage::{TargetFilter, TimeRange};
@@ -641,7 +641,8 @@ impl McpServer {
                     not_delivering: c.is_failing(failure_limit),
                     enabled: c.enabled,
                     auto_bind_tags: c.auto_bind_tags.iter().map(|t| sanitize_data(t)).collect(),
-                    acknowledge_button: c.acknowledge_button && c.kind.offers_acknowledge(),
+                    acknowledge_button: c.offers(AlertAction::Acknowledge),
+                    resolve_button: c.offers(AlertAction::Resolve),
                 })
                 .collect(),
         }))

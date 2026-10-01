@@ -682,6 +682,9 @@ pub struct ChannelItem {
     /// Alerts for an open incident carry an Acknowledge button. False for a
     /// kind that cannot carry one.
     pub acknowledge_button: bool,
+    /// Alerts for an open incident carry a Resolve button. Off by default,
+    /// and false for a kind that cannot carry one.
+    pub resolve_button: bool,
 }
 
 /// `list_notification_channels` result.

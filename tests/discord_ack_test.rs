@@ -18,12 +18,11 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use uptimepage::app::AppState;
 use uptimepage::domain::{
-    ActorType, ChannelConfig, DiscordAppConfig, IncidentAcknowledgement, IncidentState, Linked,
-    LinkedApp, NewManualIncident, NewNotificationChannel, NotificationChannelUpdate, OrgId, UserId,
-    WriteSource,
+    ActorType, AlertAction, ChannelConfig, DiscordAppConfig, IncidentAcknowledgement,
+    IncidentState, Linked, LinkedApp, NewManualIncident, NewNotificationChannel,
+    NotificationChannelUpdate, OrgId, UserId, WriteSource,
 };
 use uptimepage::security::incident_ack::button_data;
-use uptimepage::security::sha256_hex;
 use uptimepage::storage::Actor;
 use uuid::Uuid;
 
@@ -73,6 +72,7 @@ async fn rig_with_key(public_key: Option<VerifyingKey>) -> Rig {
                 enabled: true,
                 auto_bind_tags: Vec::new(),
                 acknowledge_button: true,
+                resolve_button: false,
             },
             WriteSource::Ui,
             100,
@@ -126,7 +126,40 @@ fn signature(key: &SigningKey, timestamp: i64, body: &str) -> String {
 
 impl Rig {
     fn button(&self, org: OrgId, channel_id: Uuid) -> String {
-        button_data(ACK_SECRET, org, self.incident_id, channel_id, 0).expect("episode 0 fits")
+        self.minted(AlertAction::Acknowledge, org, channel_id)
+    }
+
+    fn resolve_button(&self) -> String {
+        self.minted(AlertAction::Resolve, self.org, self.channel_id)
+    }
+
+    fn minted(&self, action: AlertAction, org: OrgId, channel_id: Uuid) -> String {
+        button_data(ACK_SECRET, action, org, self.incident_id, channel_id, 0)
+            .expect("episode 0 fits")
+    }
+
+    async fn switch_resolve(&self, on: bool) {
+        common::switch_resolve(&self.state, self.org, self.channel_id, on).await;
+    }
+
+    async fn incident(&self) -> uptimepage::domain::OpsIncident {
+        common::ops_incident(&self.state, self.org, self.incident_id).await
+    }
+
+    async fn incident_reaching(&self, state: IncidentState) {
+        common::wait_for_incident_state(&self.state, self.org, self.incident_id, state).await;
+    }
+
+    async fn link_olena(&self) -> UserId {
+        common::link_offered_account(
+            &self.app,
+            &self.state,
+            self.org,
+            LinkedApp::Discord,
+            self.account(OLENA),
+            "discord-offer",
+        )
+        .await
     }
 
     async fn post(&self, body: String, timestamp: i64, signature: String) -> (StatusCode, Value) {
@@ -196,13 +229,6 @@ impl Rig {
 
     fn account(&self, user: &str) -> uptimepage::domain::ExternalId {
         uptimepage::security::app_link::external_id(LINK_SECRET, user)
-    }
-
-    async fn send(&self, req: Request<Body>, user: UserId) -> axum::http::Response<Body> {
-        common::with_session(self.app.clone(), user, Some(self.org), None)
-            .oneshot(req)
-            .await
-            .unwrap()
     }
 
     async fn as_owner(&self, method: &str, path: &str, body: Value) -> (StatusCode, Value) {
@@ -281,42 +307,7 @@ async fn an_unlinked_press_acknowledges_without_a_name_once_per_person() {
 #[tokio::test]
 async fn a_press_names_a_member_through_the_discord_account_they_linked() {
     let rig = rig().await;
-    let olena = UserId(Uuid::now_v7());
-    // What an unlinked press offers: a code only its presser sees.
-    assert!(
-        rig.state
-            .linked_app_store
-            .offer(
-                LinkedApp::Discord,
-                rig.account(OLENA),
-                Some("olena"),
-                &sha256_hex("discord-offer"),
-                Utc::now(),
-            )
-            .await
-            .unwrap()
-    );
-    let page = rig
-        .send(
-            Request::builder()
-                .uri("/link/discord?c=discord-offer")
-                .body(Body::empty())
-                .unwrap(),
-            olena,
-        )
-        .await;
-    assert_eq!(page.status(), StatusCode::OK);
-    let linked = rig
-        .send(
-            common::json_request(
-                "POST",
-                "/api/v1/me/linked-apps/discord",
-                json!({ "code": "discord-offer" }),
-            ),
-            olena,
-        )
-        .await;
-    assert_eq!(linked.status(), StatusCode::NO_CONTENT);
+    let olena = rig.link_olena().await;
     assert_eq!(
         rig.state
             .linked_app_store
@@ -331,6 +322,42 @@ async fn a_press_names_a_member_through_the_discord_account_they_linked() {
     assert_eq!(acks[0].actor_type, ActorType::Discord);
     assert_eq!(acks[0].actor_id, Some(olena));
     assert!(!acks[0].anonymous);
+}
+
+#[tokio::test]
+async fn a_linked_member_resolves_from_the_resolve_button_in_their_own_name() {
+    let rig = rig().await;
+    rig.switch_resolve(true).await;
+    let olena = rig.link_olena().await;
+
+    rig.press(OLENA, &rig.resolve_button()).await;
+    rig.incident_reaching(IncidentState::Resolved).await;
+    assert_eq!(rig.incident().await.resolved_by, Some(olena));
+}
+
+/// Closing an incident for everyone takes a name on it: an account nobody
+/// linked is told how to link it and resolves nothing.
+#[tokio::test]
+async fn a_press_from_an_account_nobody_linked_cannot_resolve() {
+    let rig = rig().await;
+    rig.switch_resolve(true).await;
+    rig.press(OLENA, &rig.resolve_button()).await;
+    rig.settle().await;
+    assert_eq!(rig.incident().await.state, IncidentState::Triggered);
+}
+
+/// Resolve has a switch of its own, off until someone turns it on.
+#[tokio::test]
+async fn a_resolve_button_does_nothing_while_the_channel_has_it_off() {
+    let rig = rig().await;
+    rig.link_olena().await;
+    rig.press(OLENA, &rig.resolve_button()).await;
+    rig.settle().await;
+    assert_eq!(rig.incident().await.state, IncidentState::Triggered);
+
+    rig.switch_resolve(true).await;
+    rig.press(OLENA, &rig.resolve_button()).await;
+    rig.incident_reaching(IncidentState::Resolved).await;
 }
 
 #[tokio::test]

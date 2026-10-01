@@ -21,8 +21,8 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::{
-    ChannelConfig, ChannelKind, MAX_CHANNEL_NAME_LEN, NewNotificationChannel, NotificationChannel,
-    OrgId, Target, WriteSource,
+    AlertAction, ChannelConfig, ChannelKind, MAX_CHANNEL_NAME_LEN, NewNotificationChannel,
+    NotificationChannel, OrgId, Target, WriteSource,
 };
 use crate::error::AppError;
 use crate::error::codes;
@@ -216,6 +216,7 @@ pub struct ChannelFormModel {
     pub name: String,
     pub enabled: bool,
     pub acknowledge_button: bool,
+    pub resolve_button: bool,
     /// The channel's tag rule.
     pub auto_bind_tags: Vec<String>,
     /// The org's tags, offered as chips. Carries the rule's own tags even
@@ -261,12 +262,11 @@ impl ChannelFormModel {
     /// The kinds the Acknowledge toggle shows for, space-joined for the
     /// script that follows the type picker.
     pub fn acknowledge_kinds(&self) -> String {
-        ChannelKind::ALL
-            .iter()
-            .filter(|k| k.offers_acknowledge())
-            .map(|k| k.as_db_str())
-            .collect::<Vec<_>>()
-            .join(" ")
+        offering(AlertAction::Acknowledge)
+    }
+
+    pub fn resolve_kinds(&self) -> String {
+        offering(AlertAction::Resolve)
     }
 
     /// A linked kind: only its own connect flow writes the config, so the
@@ -278,10 +278,22 @@ impl ChannelFormModel {
     }
 
     pub fn offers_acknowledge(&self) -> bool {
+        self.offers(AlertAction::Acknowledge)
+    }
+
+    pub fn offers_resolve(&self) -> bool {
+        self.offers(AlertAction::Resolve)
+    }
+
+    fn offers(&self, action: AlertAction) -> bool {
         ChannelKind::ALL
             .iter()
-            .any(|k| k.offers_acknowledge() && k.as_db_str() == self.kind)
+            .any(|k| k.offers(action) && k.as_db_str() == self.kind)
     }
+}
+
+fn offering(action: AlertAction) -> String {
+    ChannelKind::offering(action).join(" ")
 }
 
 impl ChannelFormModel {
@@ -523,6 +535,7 @@ fn empty_create_form() -> ChannelFormModel {
         name: String::new(),
         enabled: true,
         acknowledge_button: true,
+        resolve_button: false,
         auto_bind_tags: Vec::new(),
         tag_options: Vec::new(),
         disabled_reason: String::new(),
@@ -694,6 +707,7 @@ fn form_from_channel(c: NotificationChannel) -> ChannelFormModel {
         name: c.name,
         enabled: c.enabled,
         acknowledge_button: c.acknowledge_button,
+        resolve_button: c.resolve_button,
         auto_bind_tags: c.auto_bind_tags,
         tag_options: Vec::new(),
         disabled_reason: c.disabled_reason.unwrap_or_default(),
@@ -742,6 +756,7 @@ pub async fn create_channel_deduped(
             // A connect flow knows only the destination; rules come later.
             auto_bind_tags: Vec::new(),
             acknowledge_button: true,
+            resolve_button: false,
         };
         match store
             .create(org, new, WriteSource::Ui, max_channels, block_log.user)
@@ -958,7 +973,15 @@ mod tests {
 
     /// The toggle's wrapper and checkbox, up to the end of its label.
     fn ack_toggle(html: &str) -> &str {
-        let rest = &html[html.find("data-acknowledge-toggle").unwrap()..];
+        let rest = &html[html.find("data-alert-buttons").unwrap()..];
+        &rest[..rest.find("</label>").unwrap()]
+    }
+
+    /// The Resolve toggle's own label.
+    fn resolve_toggle(html: &str) -> &str {
+        let at = html.find(r#"name="resolve_button""#).unwrap();
+        let start = html[..at].rfind("<label").unwrap();
+        let rest = &html[start..];
         &rest[..rest.find("</label>").unwrap()]
     }
 
@@ -997,6 +1020,33 @@ mod tests {
         assert!(ack_toggle(&html).contains(r#"class="hidden""#), "{html}");
     }
 
+    /// Off for a new channel, shown only for kinds whose press names who made
+    /// it, and an edit reads back what was saved.
+    #[test]
+    fn the_resolve_toggle_is_off_by_default_and_follows_the_kind() {
+        let html = render_form(empty_create_form());
+        let toggle = resolve_toggle(&html);
+        assert!(
+            toggle.contains(
+                r#"data-kinds="slack slack_app telegram_app discord discord_app msteams google_chat email mattermost""#
+            ),
+            "{toggle}"
+        );
+        assert!(!toggle.contains("hidden"), "{toggle}");
+        assert!(!toggle.contains("checked"), "{toggle}");
+
+        let mut on = slack_channel("https://hooks.slack.com/services/T/B/x");
+        on.resolve_button = true;
+        let html = render_form(form_from_channel(on));
+        assert!(resolve_toggle(&html).contains("checked"), "{html}");
+
+        let mut ntfy = empty_create_form();
+        ntfy.kind = "ntfy";
+        let html = render_form(ntfy);
+        assert!(resolve_toggle(&html).contains("hidden"), "{html}");
+        assert!(!ack_toggle(&html).contains(r#"class="hidden""#), "{html}");
+    }
+
     #[test]
     fn edit_form_linked_telegram_shows_chat_info_not_inputs() {
         use chrono::Utc;
@@ -1019,6 +1069,7 @@ mod tests {
             updated_at: Utc::now(),
             auto_bind_tags: Vec::new(),
             acknowledge_button: true,
+            resolve_button: false,
         };
         let form = form_from_channel(ch);
         assert_eq!(form.kind, "telegram_app");
@@ -1183,6 +1234,7 @@ mod tests {
             updated_at: Utc::now(),
             auto_bind_tags: Vec::new(),
             acknowledge_button: true,
+            resolve_button: false,
         }
     }
 

@@ -1,7 +1,8 @@
-//! The Acknowledge button on an alert sent through our Slack app, end to end
-//! on the in-memory app: only a request Slack signed is read, a press lands in
-//! the org its button was minted for, and it names a member only through a
-//! Slack account they linked from the offer the press brought.
+//! The Acknowledge and Resolve buttons on an alert sent through our Slack app,
+//! end to end on the in-memory app: only a request Slack signed is read, a
+//! press lands in the org its button was minted for, and it names a member
+//! only through a Slack account they linked from the offer the press brought.
+//! Acknowledging takes anyone; resolving takes a member who linked theirs.
 
 mod common;
 
@@ -17,14 +18,13 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use uptimepage::app::AppState;
 use uptimepage::domain::{
-    ActorType, ChannelConfig, IncidentAcknowledgement, IncidentState, Linked, LinkedApp,
-    NewManualIncident, NewNotificationChannel, NotificationChannelUpdate, OrgId, SlackAppConfig,
-    UserId, WriteSource,
+    ActorType, AlertAction, ChannelConfig, IncidentAcknowledgement, IncidentState, Linked,
+    LinkedApp, NewManualIncident, NewNotificationChannel, NotificationChannelUpdate,
+    NotificationReason, OrgId, SlackAppConfig, UserId, WriteSource,
 };
-use uptimepage::notifier::slack::ACKNOWLEDGE_ACTION;
+use uptimepage::notifier::slack::{ACKNOWLEDGE_ACTION, RESOLVE_ACTION};
 use uptimepage::security::incident_ack::button_data;
 use uptimepage::security::mac::hmac_sha256_hex;
-use uptimepage::security::sha256_hex;
 use uptimepage::storage::Actor;
 use uuid::Uuid;
 
@@ -46,11 +46,17 @@ struct Rig {
 }
 
 async fn rig() -> Rig {
-    let state = common::build_test_app_state(|cfg| {
-        cfg.slack_interactivity.signing_secret = SecretString::from(SIGNING_SECRET);
-    })
-    .with_incident_ack_secret(ACK_SECRET.to_string())
-    .with_app_link_secret(LINK_SECRET.to_string());
+    rig_with(|state| state).await
+}
+
+async fn rig_with(wire: impl FnOnce(AppState) -> AppState) -> Rig {
+    let state = wire(
+        common::build_test_app_state(|cfg| {
+            cfg.slack_interactivity.signing_secret = SecretString::from(SIGNING_SECRET);
+        })
+        .with_incident_ack_secret(ACK_SECRET.to_string())
+        .with_app_link_secret(LINK_SECRET.to_string()),
+    );
     let org = common::test_org_id();
     let channel = state
         .notification_channel_store
@@ -68,6 +74,7 @@ async fn rig() -> Rig {
                 enabled: true,
                 auto_bind_tags: Vec::new(),
                 acknowledge_button: true,
+                resolve_button: false,
             },
             WriteSource::Ui,
             100,
@@ -128,7 +135,42 @@ fn signature(secret: &str, timestamp: i64, body: &str) -> String {
 
 impl Rig {
     fn button(&self, org: OrgId, channel_id: Uuid) -> String {
-        button_data(ACK_SECRET, org, self.incident_id, channel_id, 0).expect("episode 0 fits")
+        self.minted(AlertAction::Acknowledge, org, channel_id)
+    }
+
+    fn resolve_button(&self) -> String {
+        self.minted(AlertAction::Resolve, self.org, self.channel_id)
+    }
+
+    fn minted(&self, action: AlertAction, org: OrgId, channel_id: Uuid) -> String {
+        button_data(ACK_SECRET, action, org, self.incident_id, channel_id, 0)
+            .expect("episode 0 fits")
+    }
+
+    async fn switch_resolve(&self, on: bool) {
+        common::switch_resolve(&self.state, self.org, self.channel_id, on).await;
+    }
+
+    async fn state_of_incident(&self) -> IncidentState {
+        common::ops_incident(&self.state, self.org, self.incident_id)
+            .await
+            .state
+    }
+
+    async fn incident_reaching(&self, state: IncidentState) {
+        common::wait_for_incident_state(&self.state, self.org, self.incident_id, state).await;
+    }
+
+    async fn link_olena(&self) -> UserId {
+        common::link_offered_account(
+            &self.app,
+            &self.state,
+            self.org,
+            LinkedApp::Slack,
+            self.account(OLENA),
+            "slack-offer",
+        )
+        .await
     }
 
     async fn post(&self, body: String, timestamp: i64, signature: String) -> StatusCode {
@@ -162,6 +204,18 @@ impl Rig {
         assert_eq!(status, StatusCode::OK);
     }
 
+    async fn press_resolve(&self, user: &str) {
+        let status = self
+            .signed(form(
+                RESOLVE_ACTION,
+                Some(&self.resolve_button()),
+                user,
+                SLACK_CHANNEL,
+            ))
+            .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
     async fn acks(&self) -> Vec<IncidentAcknowledgement> {
         self.state
             .incident_ops_store
@@ -191,14 +245,6 @@ impl Rig {
 
     fn account(&self, user: &str) -> uptimepage::domain::ExternalId {
         uptimepage::security::app_link::external_id(LINK_SECRET, &format!("T0HOME001:{user}"))
-    }
-
-    async fn send(&self, req: Request<Body>, user: Option<UserId>) -> axum::http::Response<Body> {
-        let app = match user {
-            Some(u) => common::with_session(self.app.clone(), u, Some(self.org), None),
-            None => self.app.clone(),
-        };
-        app.oneshot(req).await.unwrap()
     }
 
     async fn as_owner(&self, method: &str, path: &str, body: Value) -> (StatusCode, Value) {
@@ -268,42 +314,7 @@ async fn an_unlinked_press_acknowledges_without_a_name_once_per_person() {
 #[tokio::test]
 async fn a_press_names_a_member_through_the_slack_account_they_linked() {
     let rig = rig().await;
-    let olena = UserId(Uuid::now_v7());
-    // What an unlinked press offers: a code only its presser sees.
-    assert!(
-        rig.state
-            .linked_app_store
-            .offer(
-                LinkedApp::Slack,
-                rig.account(OLENA),
-                Some("olena"),
-                &sha256_hex("slack-offer"),
-                Utc::now(),
-            )
-            .await
-            .unwrap()
-    );
-    let page = rig
-        .send(
-            Request::builder()
-                .uri("/link/slack?c=slack-offer")
-                .body(Body::empty())
-                .unwrap(),
-            Some(olena),
-        )
-        .await;
-    assert_eq!(page.status(), StatusCode::OK);
-    let linked = rig
-        .send(
-            common::json_request(
-                "POST",
-                "/api/v1/me/linked-apps/slack",
-                json!({ "code": "slack-offer" }),
-            ),
-            Some(olena),
-        )
-        .await;
-    assert_eq!(linked.status(), StatusCode::NO_CONTENT);
+    let olena = rig.link_olena().await;
     assert_eq!(
         rig.state
             .linked_app_store
@@ -318,6 +329,119 @@ async fn a_press_names_a_member_through_the_slack_account_they_linked() {
     assert_eq!(acks[0].actor_type, ActorType::Slack);
     assert_eq!(acks[0].actor_id, Some(olena));
     assert!(!acks[0].anonymous);
+}
+
+#[tokio::test]
+async fn a_linked_member_resolves_from_the_resolve_button_in_their_own_name() {
+    let rig = rig().await;
+    rig.switch_resolve(true).await;
+    let olena = rig.link_olena().await;
+
+    let status = rig
+        .signed(form(
+            RESOLVE_ACTION,
+            Some(&rig.resolve_button()),
+            OLENA,
+            SLACK_CHANNEL,
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    rig.incident_reaching(IncidentState::Resolved).await;
+    let incident = rig
+        .state
+        .incident_ops_store
+        .get(rig.org, rig.incident_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(incident.resolved_by, Some(olena));
+}
+
+/// The all-clear rides on the engine's resolved signal, so a press that closes
+/// the incident sends it, and one that closes nothing does not.
+#[tokio::test]
+async fn a_resolve_press_tells_the_engine_only_when_it_closed_the_incident() {
+    let (tx, mut signals) = tokio::sync::mpsc::channel(8);
+    let rig = rig_with(|state| state.with_incident_signals(tx)).await;
+    rig.switch_resolve(true).await;
+
+    rig.press_resolve(OLENA).await;
+    rig.settle().await;
+    assert!(signals.try_recv().is_err(), "nobody linked, nothing closed");
+
+    rig.link_olena().await;
+    rig.press_resolve(OLENA).await;
+    rig.incident_reaching(IncidentState::Resolved).await;
+    let signal = signals
+        .recv()
+        .await
+        .expect("the engine hears of the resolve");
+    assert_eq!(
+        (signal.org, signal.incident_id, signal.reason),
+        (rig.org, rig.incident_id, NotificationReason::Resolved)
+    );
+
+    rig.press_resolve(OLENA).await;
+    rig.settle().await;
+    assert!(
+        signals.try_recv().is_err(),
+        "a second press adds no all-clear"
+    );
+}
+
+/// Closing an incident for everyone takes a name on it: an account nobody
+/// linked is told how to link it and resolves nothing.
+#[tokio::test]
+async fn a_press_from_an_account_nobody_linked_cannot_resolve() {
+    let rig = rig().await;
+    rig.switch_resolve(true).await;
+    let status = rig
+        .signed(form(
+            RESOLVE_ACTION,
+            Some(&rig.resolve_button()),
+            OLENA,
+            SLACK_CHANNEL,
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    rig.settle().await;
+    assert_eq!(rig.state_of_incident().await, IncidentState::Triggered);
+}
+
+/// Resolve has a switch of its own, off until someone turns it on, so a
+/// button minted for it does nothing while it is off.
+#[tokio::test]
+async fn a_resolve_button_does_nothing_while_the_channel_has_it_off() {
+    let rig = rig().await;
+    rig.link_olena().await;
+    rig.press_resolve(OLENA).await;
+    rig.settle().await;
+    assert_eq!(rig.state_of_incident().await, IncidentState::Triggered);
+
+    rig.switch_resolve(true).await;
+    rig.press_resolve(OLENA).await;
+    rig.incident_reaching(IncidentState::Resolved).await;
+}
+
+/// The signed value says what a press does, not the action id around it: an
+/// Acknowledge button carried under Resolve's id still only acknowledges.
+#[tokio::test]
+async fn an_acknowledge_value_never_resolves_whichever_action_carries_it() {
+    let rig = rig().await;
+    rig.switch_resolve(true).await;
+    rig.link_olena().await;
+    let status = rig
+        .signed(form(
+            RESOLVE_ACTION,
+            Some(&rig.button(rig.org, rig.channel_id)),
+            OLENA,
+            SLACK_CHANNEL,
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    rig.incident_reaching(IncidentState::Acknowledged).await;
+    rig.settle().await;
+    assert_eq!(rig.state_of_incident().await, IncidentState::Acknowledged);
 }
 
 #[tokio::test]
@@ -336,7 +460,7 @@ async fn a_button_minted_elsewhere_or_a_link_click_takes_nothing() {
     );
     assert_eq!(rig.signed(elsewhere).await, StatusCode::OK);
     // Slack reports clicks on link buttons too; they only need an answer.
-    for action in ["view_incident", "acknowledge_page"] {
+    for action in ["view_incident", "acknowledge_page", "resolve_page"] {
         assert_eq!(
             rig.signed(form(action, None, OLENA, SLACK_CHANNEL)).await,
             StatusCode::OK

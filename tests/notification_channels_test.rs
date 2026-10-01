@@ -191,6 +191,49 @@ async fn the_acknowledge_button_defaults_on_and_survives_a_save_without_it() {
     assert_eq!(created["acknowledge_button"], false);
 }
 
+/// The Resolve button is off unless a create says otherwise, and a save that
+/// leaves it out keeps what was set, in both directions.
+#[tokio::test]
+async fn the_resolve_button_defaults_off_and_survives_a_save_without_it() {
+    let app = app();
+    let (_, created) = send(
+        &app,
+        "POST",
+        "/api/v1/notification-channels",
+        slack_body("Ops"),
+    )
+    .await;
+    assert_eq!(created["resolve_button"], false);
+    assert_eq!(created["acknowledge_button"], true);
+    let path = format!(
+        "/api/v1/notification-channels/{}",
+        created["id"].as_str().unwrap()
+    );
+
+    let (st, on) = send(&app, "PATCH", &path, json!({ "resolve_button": true })).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(on["resolve_button"], true);
+    assert_eq!(
+        on["acknowledge_button"], true,
+        "the other switch is untouched"
+    );
+    let (_, renamed) = send(&app, "PATCH", &path, json!({ "name": "Ops renamed" })).await;
+    assert_eq!(renamed["resolve_button"], true);
+    let (_, quiet) = send(&app, "PATCH", &path, json!({ "acknowledge_button": false })).await;
+    assert_eq!(
+        quiet["resolve_button"], true,
+        "switching acknowledge off leaves it"
+    );
+    let (_, off) = send(&app, "PATCH", &path, json!({ "resolve_button": false })).await;
+    assert_eq!(off["resolve_button"], false);
+
+    let mut eager = slack_body("Eager");
+    eager["resolve_button"] = json!(true);
+    let (st, created) = send(&app, "POST", "/api/v1/notification-channels", eager).await;
+    assert_eq!(st, StatusCode::CREATED);
+    assert_eq!(created["resolve_button"], true);
+}
+
 #[tokio::test]
 async fn rejects_non_https_config_and_empty_name() {
     let app = app();

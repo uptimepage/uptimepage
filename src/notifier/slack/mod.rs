@@ -1,6 +1,6 @@
 mod blocks;
 
-pub use blocks::{ACKNOWLEDGE_ACTION, escape};
+pub use blocks::{ACKNOWLEDGE_ACTION, RESOLVE_ACTION, escape};
 
 use async_trait::async_trait;
 use serde::Serialize;
@@ -12,7 +12,7 @@ use crate::http_outbound::{OutboundHttpClient, post_json};
 use crate::notifier::Notifier;
 use crate::notifier::event::IncidentNotice;
 
-use crate::notifier::card::AlertCard;
+use crate::notifier::card::{AlertCard, Presses};
 
 use blocks::{Block, render};
 
@@ -22,10 +22,20 @@ pub struct SlackNotifier {
     /// Already rendered to markup; the raw token would post as plain text.
     mention: Option<String>,
     ack_link: Option<String>,
+    resolve_link: Option<String>,
     /// Signed value of an Acknowledge button our own app receives. Only on a
     /// channel connected through it: a press on a pasted webhook's message
     /// goes to whichever app owns that webhook.
     ack_press: Option<String>,
+    resolve_press: Option<String>,
+}
+
+/// What the notifier adds to the card beyond the notice itself.
+#[derive(Clone, Copy, Default)]
+struct Controls<'a> {
+    ack_link: Option<&'a str>,
+    resolve_link: Option<&'a str>,
+    presses: Presses<'a>,
 }
 
 /// `text` is what a push notification and a client that cannot render blocks
@@ -43,7 +53,9 @@ impl SlackNotifier {
             webhook_url,
             mention,
             ack_link: None,
+            resolve_link: None,
             ack_press: None,
+            resolve_press: None,
         }
     }
 
@@ -52,8 +64,18 @@ impl SlackNotifier {
         self
     }
 
+    pub fn with_resolve_link(mut self, resolve_link: Option<String>) -> Self {
+        self.resolve_link = resolve_link;
+        self
+    }
+
     pub fn with_ack_press(mut self, value: Option<String>) -> Self {
         self.ack_press = value;
+        self
+    }
+
+    pub fn with_resolve_press(mut self, value: Option<String>) -> Self {
+        self.resolve_press = value;
         self
     }
 
@@ -61,14 +83,13 @@ impl SlackNotifier {
     /// the line a push notification shows.
     fn compose(
         mention: Option<&str>,
-        ack_link: Option<&str>,
-        ack_press: Option<&str>,
+        controls: Controls<'_>,
         n: &IncidentNotice,
     ) -> (String, Vec<Block>) {
-        let card = AlertCard::for_notice(n, ack_link);
+        let card =
+            AlertCard::for_notice(n, controls.ack_link).with_resolve(n, controls.resolve_link);
         let text = Self::render_incident(card.ping(mention), &card, n);
-        let ack_press = ack_press.filter(|_| n.reason.awaits_acknowledgement());
-        (text, render(&card, mention, ack_press))
+        (text, render(&card, mention, controls.presses.for_notice(n)))
     }
 
     /// From the card's values, not the notice's: they are bounded there, and
@@ -140,8 +161,14 @@ impl Notifier for SlackNotifier {
     async fn notify_incident(&self, notice: &IncidentNotice) -> Result<()> {
         let (text, blocks) = Self::compose(
             self.mention.as_deref(),
-            self.ack_link.as_deref(),
-            self.ack_press.as_deref(),
+            Controls {
+                ack_link: self.ack_link.as_deref(),
+                resolve_link: self.resolve_link.as_deref(),
+                presses: Presses {
+                    acknowledge: self.ack_press.as_deref(),
+                    resolve: self.resolve_press.as_deref(),
+                },
+            },
             notice,
         );
         post_json(
@@ -168,7 +195,7 @@ mod tests {
         let mut n = notice(NotificationReason::Opened);
         n.monitor_name = Some("A".repeat(60_000));
         n.note = Some("N".repeat(60_000));
-        let (text, _) = SlackNotifier::compose(None, None, None, &n);
+        let (text, _) = SlackNotifier::compose(None, Controls::default(), &n);
         assert!(
             text.chars().count() < 2_000,
             "fallback text ran to {} chars",
@@ -186,7 +213,7 @@ mod tests {
     fn a_note_reaches_slack_even_though_it_renders_its_own_body() {
         let mut n = notice(NotificationReason::Opened);
         n.note = Some("Flapping: alerts held".into());
-        let (text, _) = SlackNotifier::compose(None, None, None, &n);
+        let (text, _) = SlackNotifier::compose(None, Controls::default(), &n);
         assert!(text.contains("Flapping: alerts held"), "{text}");
     }
 
@@ -204,7 +231,7 @@ mod tests {
             NotificationReason::Reminder,
         ] {
             let (text, blocks) =
-                SlackNotifier::compose(Some("<!here>"), None, None, &notice(reason));
+                SlackNotifier::compose(Some("<!here>"), Controls::default(), &notice(reason));
             let card = serde_json::to_string(&blocks).unwrap();
             assert_eq!(
                 text.contains("<!here>"),
@@ -218,15 +245,13 @@ mod tests {
     fn a_mention_leads_the_alert_but_stays_off_the_all_clear() {
         let (opened, _) = SlackNotifier::compose(
             Some("<!here>"),
-            None,
-            None,
+            Controls::default(),
             &notice(NotificationReason::Opened),
         );
         assert!(opened.starts_with("<!here> *api-prod*"), "{opened}");
         let (resolved, _) = SlackNotifier::compose(
             Some("<!here>"),
-            None,
-            None,
+            Controls::default(),
             &notice(NotificationReason::Resolved),
         );
         assert!(!resolved.contains("<!here>"), "{resolved}");
@@ -236,11 +261,20 @@ mod tests {
     /// on the all-clear.
     #[test]
     fn only_an_incident_still_to_be_taken_carries_the_press() {
-        let press = |reason| {
-            let (_, blocks) = SlackNotifier::compose(None, None, Some("a-signed"), &notice(reason));
-            serde_json::to_string(&blocks).unwrap().contains("a-signed")
+        let controls = Controls {
+            presses: Presses {
+                acknowledge: Some("a-signed"),
+                resolve: Some("r-signed"),
+            },
+            ..Controls::default()
         };
-        assert!(press(NotificationReason::Opened));
-        assert!(!press(NotificationReason::Resolved));
+        let carries = |reason, value: &str| {
+            let (_, blocks) = SlackNotifier::compose(None, controls, &notice(reason));
+            serde_json::to_string(&blocks).unwrap().contains(value)
+        };
+        for value in ["a-signed", "r-signed"] {
+            assert!(carries(NotificationReason::Opened, value), "{value}");
+            assert!(!carries(NotificationReason::Resolved, value), "{value}");
+        }
     }
 }

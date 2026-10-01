@@ -326,6 +326,16 @@ pub trait IncidentOpsStore: Send + Sync {
         actor: Actor,
         note: Option<String>,
     ) -> Result<LifecycleOutcome>;
+    /// Resolve by a press on an alert, pinned to the episode it was about like
+    /// [`Self::acknowledge`]. An incident already closed is refused as an
+    /// illegal transition rather than recorded again.
+    async fn resolve_episode(
+        &self,
+        org: OrgId,
+        id: Uuid,
+        actor: Actor,
+        episode: i64,
+    ) -> Result<LifecycleOutcome>;
     /// Recovery detected by the writer (`resolved_by` = NULL, actor = system).
     async fn auto_resolve(&self, org: OrgId, id: Uuid) -> Result<LifecycleOutcome>;
     async fn reopen(

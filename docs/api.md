@@ -485,13 +485,16 @@ never read, mutate, or test another's channels.
   "enabled": true,
   "config": { "type": "slack", "webhook_url": "https://hooks.slack.com/services/T/B/XXXX" },
   "auto_bind_tags": ["db"],
-  "acknowledge_button": true
+  "acknowledge_button": true,
+  "resolve_button": false
 }
 ```
 
 `auto_bind_tags` is the channel's tag rule: on top of the monitors bound to it, the channel pages any monitor carrying at least one of these tags, resolved when the alert fires. Optional on create, replaced whole on `PATCH`, and `[]` clears it. Tags obey the same rules as monitor tags, except that matching ignores case: a rule reading `DB` covers a monitor tagged `db`, and two spellings of one tag are stored once. Tag *filters* elsewhere in the API stay exact.
 
 `acknowledge_button` says whether alerts for an open incident carry an Acknowledge button. Optional, `true` by default. Only the kinds that can carry one read it: `slack`, `slack_app`, `discord`, `discord_app`, `msteams`, `google_chat`, `mattermost`, `email`, `ntfy` and `telegram_app`.
+
+`resolve_button` says whether those alerts also carry a Resolve button, which closes the incident from the alert for a signed-in member or a chat account a member linked. Optional, `false` by default, and read by the same kinds except `ntfy`, whose link cannot say who pressed it.
 
 `config` is `type`-tagged. Supported transports:
 

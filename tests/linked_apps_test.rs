@@ -18,9 +18,9 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use uptimepage::app::AppState;
 use uptimepage::domain::{
-    ActorType, ChannelConfig, ChannelKind, ExternalId, IncidentAcknowledgement, IncidentState,
-    Linked, LinkedApp, NewManualIncident, NewNotificationChannel, NotificationChannelUpdate, OrgId,
-    TelegramAppConfig, UserId, WriteSource,
+    ActorType, AlertAction, ChannelConfig, ChannelKind, ExternalId, IncidentAcknowledgement,
+    IncidentState, Linked, LinkedApp, NewManualIncident, NewNotificationChannel,
+    NotificationChannelUpdate, OrgId, TelegramAppConfig, UserId, WriteSource,
 };
 use uptimepage::security::app_link::{PUSHOVER_OFFER_COOLDOWN, telegram_start_code};
 use uptimepage::security::incident_ack::button_data;
@@ -70,6 +70,7 @@ async fn rig() -> Rig {
                 enabled: true,
                 auto_bind_tags: Vec::new(),
                 acknowledge_button: true,
+                resolve_button: false,
             },
             WriteSource::Ui,
             100,
@@ -100,7 +101,28 @@ async fn rig() -> Rig {
 
 impl Rig {
     fn button(&self, org: OrgId, channel_id: Uuid) -> String {
-        button_data(ACK_SECRET, org, self.incident_id, channel_id, 0).expect("episode 0 fits")
+        self.minted(AlertAction::Acknowledge, org, channel_id)
+    }
+
+    fn resolve_button(&self) -> String {
+        self.minted(AlertAction::Resolve, self.org, self.channel_id)
+    }
+
+    fn minted(&self, action: AlertAction, org: OrgId, channel_id: Uuid) -> String {
+        button_data(ACK_SECRET, action, org, self.incident_id, channel_id, 0)
+            .expect("episode 0 fits")
+    }
+
+    async fn switch_resolve(&self, on: bool) {
+        common::switch_resolve(&self.state, self.org, self.channel_id, on).await;
+    }
+
+    async fn incident(&self) -> uptimepage::domain::OpsIncident {
+        common::ops_incident(&self.state, self.org, self.incident_id).await
+    }
+
+    async fn incident_reaching(&self, state: IncidentState) {
+        common::wait_for_incident_state(&self.state, self.org, self.incident_id, state).await;
     }
 
     async fn hook(&self, update: Value) -> StatusCode {
@@ -282,6 +304,43 @@ async fn an_unlinked_press_acknowledges_without_a_name() {
         .unwrap()
         .unwrap();
     assert_eq!(incident.state, IncidentState::Acknowledged);
+}
+
+#[tokio::test]
+async fn a_linked_member_resolves_from_the_resolve_button_in_their_own_name() {
+    let rig = rig().await;
+    rig.switch_resolve(true).await;
+    let olena = UserId(Uuid::now_v7());
+    rig.link_telegram(olena, OLENA).await;
+
+    rig.press(OLENA, &rig.resolve_button()).await;
+    rig.incident_reaching(IncidentState::Resolved).await;
+    assert_eq!(rig.incident().await.resolved_by, Some(olena));
+}
+
+/// Closing an incident for everyone takes a name on it, so an account nobody
+/// linked resolves nothing.
+#[tokio::test]
+async fn a_press_from_an_account_nobody_linked_cannot_resolve() {
+    let rig = rig().await;
+    rig.switch_resolve(true).await;
+    rig.press(OLENA, &rig.resolve_button()).await;
+    rig.settle().await;
+    assert_eq!(rig.incident().await.state, IncidentState::Triggered);
+}
+
+/// Resolve has a switch of its own, off until someone turns it on.
+#[tokio::test]
+async fn a_resolve_button_does_nothing_while_the_channel_has_it_off() {
+    let rig = rig().await;
+    rig.link_telegram(UserId(Uuid::now_v7()), OLENA).await;
+    rig.press(OLENA, &rig.resolve_button()).await;
+    rig.settle().await;
+    assert_eq!(rig.incident().await.state, IncidentState::Triggered);
+
+    rig.switch_resolve(true).await;
+    rig.press(OLENA, &rig.resolve_button()).await;
+    rig.incident_reaching(IncidentState::Resolved).await;
 }
 
 #[tokio::test]

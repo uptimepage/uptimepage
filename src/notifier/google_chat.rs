@@ -5,7 +5,7 @@ use url::Url;
 use crate::error::Result;
 use crate::http_outbound::{OutboundHttpClient, post_json};
 use crate::notifier::Notifier;
-use crate::notifier::card::acknowledge_link;
+use crate::notifier::card::alert_link;
 use crate::notifier::event::IncidentNotice;
 use crate::notifier::truncate_chars;
 
@@ -16,6 +16,7 @@ pub struct GoogleChatNotifier {
     client: OutboundHttpClient,
     webhook_url: Url,
     ack_link: Option<String>,
+    resolve_link: Option<String>,
 }
 
 /// The card renders below the text, which stays the whole alert on its own.
@@ -51,7 +52,7 @@ struct Widget {
 
 #[derive(Serialize)]
 struct ButtonList {
-    buttons: [Button; 1],
+    buttons: Vec<Button>,
 }
 
 #[derive(Serialize)]
@@ -74,25 +75,30 @@ struct OpenLink {
 
 impl CardWithId {
     /// A webhook message cannot carry an action that reaches back to us, only
-    /// a link, so acknowledging happens on the page it opens.
-    fn acknowledge(url: String) -> Self {
-        Self {
-            card_id: "acknowledge",
+    /// a link, so acknowledging and resolving happen on the page it opens.
+    /// `None` when there is no link to open.
+    fn controls(links: [(&'static str, Option<String>); 2]) -> Option<Self> {
+        let buttons: Vec<Button> = links
+            .into_iter()
+            .filter_map(|(text, url)| {
+                url.map(|url| Button {
+                    text,
+                    on_click: OnClick {
+                        open_link: OpenLink { url },
+                    },
+                })
+            })
+            .collect();
+        (!buttons.is_empty()).then_some(Self {
+            card_id: "alert_actions",
             card: Card {
                 sections: [Section {
                     widgets: [Widget {
-                        button_list: ButtonList {
-                            buttons: [Button {
-                                text: "Acknowledge",
-                                on_click: OnClick {
-                                    open_link: OpenLink { url },
-                                },
-                            }],
-                        },
+                        button_list: ButtonList { buttons },
                     }],
                 }],
             },
-        }
+        })
     }
 }
 
@@ -102,6 +108,7 @@ impl GoogleChatNotifier {
             client,
             webhook_url,
             ack_link: None,
+            resolve_link: None,
         }
     }
 
@@ -110,13 +117,20 @@ impl GoogleChatNotifier {
         self
     }
 
+    pub fn with_resolve_link(mut self, resolve_link: Option<String>) -> Self {
+        self.resolve_link = resolve_link;
+        self
+    }
+
     fn payload<'a>(&self, notice: &IncidentNotice, text: &'a str) -> GoogleChatPayload<'a> {
         GoogleChatPayload {
             text,
-            cards: acknowledge_link(notice, self.ack_link.as_deref())
-                .map(CardWithId::acknowledge)
-                .into_iter()
-                .collect(),
+            cards: CardWithId::controls([
+                ("Acknowledge", alert_link(notice, self.ack_link.as_deref())),
+                ("Resolve", alert_link(notice, self.resolve_link.as_deref())),
+            ])
+            .into_iter()
+            .collect(),
         }
     }
 }
@@ -139,7 +153,7 @@ mod tests {
     use super::*;
 
     use crate::domain::NotificationReason;
-    use crate::notifier::card::tests::{ack_page, notice};
+    use crate::notifier::card::tests::{ack_page, notice, resolve_page};
 
     fn notifier() -> GoogleChatNotifier {
         GoogleChatNotifier::new(
@@ -173,12 +187,28 @@ mod tests {
         assert_eq!(
             v["cardsV2"],
             serde_json::json!([{
-                "cardId": "acknowledge",
+                "cardId": "alert_actions",
                 "card": {"sections": [{"widgets": [{"buttonList": {"buttons": [{
                     "text": "Acknowledge",
                     "onClick": {"openLink": {"url": ack_page()}}
                 }]}}]}]}
             }])
         );
+    }
+
+    #[test]
+    fn resolve_follows_acknowledge_in_the_same_button_list() {
+        let resolve = resolve_page();
+        let sender = notifier().with_resolve_link(Some(resolve.clone()));
+        let v = serde_json::to_value(sender.payload(
+            &notice(NotificationReason::Opened),
+            "api-prod — major incident OPEN",
+        ))
+        .unwrap();
+        let buttons =
+            &v["cardsV2"][0]["card"]["sections"][0]["widgets"][0]["buttonList"]["buttons"];
+        assert_eq!(buttons[0]["text"], "Acknowledge");
+        assert_eq!(buttons[1]["text"], "Resolve");
+        assert_eq!(buttons[1]["onClick"]["openLink"]["url"], resolve);
     }
 }

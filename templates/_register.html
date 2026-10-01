@@ -16,9 +16,9 @@
 </label>
 {% endmacro %}
 
-{# Independent on/off choice in the chooser card's register: inks when on. #}
-{% macro toggle_card(name, checked, label, desc) %}
-<label class="check-type-card">
+{# Independent on/off choice in the chooser card's register: inks when on. `kinds` lists the channel kinds the card shows for, which a script follows. #}
+{% macro toggle_card(name, checked, label, desc, kinds = "", offered = true) %}
+<label class="check-type-card{% if !offered %} hidden{% endif %}"{% if kinds != "" %} data-kinds="{{ kinds }}"{% endif %}>
   <input type="checkbox" name="{{ name }}"{% if checked %} checked{% endif %} class="sr-only">
   <span class="check-type-card__name">{{ label }}</span>
   <span class="check-type-card__desc">{{ desc }}</span>

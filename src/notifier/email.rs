@@ -6,7 +6,7 @@ use crate::email::templates::incident_alert::IncidentAlert;
 use crate::email::{EmailAddress, EmailSender, EmailTemplate, TransactionalEmail};
 use crate::error::Result;
 use crate::notifier::Notifier;
-use crate::notifier::card::acknowledge_link;
+use crate::notifier::card::alert_link;
 use crate::notifier::event::IncidentNotice;
 
 /// Transactional-mail context for alert delivery: the process-wide sender
@@ -56,6 +56,7 @@ pub struct EmailNotifier {
     to: String,
     alert: EmailAlert,
     ack_link: Option<String>,
+    resolve_link: Option<String>,
 }
 
 impl EmailNotifier {
@@ -65,11 +66,17 @@ impl EmailNotifier {
             to: to.to_string(),
             alert,
             ack_link: None,
+            resolve_link: None,
         }
     }
 
     pub fn with_ack_link(mut self, ack_link: Option<String>) -> Self {
         self.ack_link = ack_link;
+        self
+    }
+
+    pub fn with_resolve_link(mut self, resolve_link: Option<String>) -> Self {
+        self.resolve_link = resolve_link;
         self
     }
 }
@@ -104,7 +111,8 @@ impl Notifier for EmailNotifier {
                 regions_down: notice.regions_down.clone(),
                 regions_up: notice.regions_up.clone(),
                 url: notice.url.clone(),
-                ack_url: acknowledge_link(notice, self.ack_link.as_deref()),
+                ack_url: alert_link(notice, self.ack_link.as_deref()),
+                resolve_url: alert_link(notice, self.resolve_link.as_deref()),
                 note: notice.note.clone(),
                 org_name: self.alert.org_name.clone(),
                 stop_url: self.alert.stop_url.clone(),

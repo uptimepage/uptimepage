@@ -517,6 +517,40 @@ impl PgIncidentOpsStore {
             listed: newly_listed,
         })
     }
+
+    async fn resolve_by(
+        &self,
+        org: OrgId,
+        id: Uuid,
+        transition: IncidentTransition,
+        actor: Actor,
+        note: Option<String>,
+        expect_generation: Option<i64>,
+    ) -> Result<LifecycleOutcome> {
+        // Manual resolve: resolved_by = actor's user (bound as $3).
+        let sql = format!(
+            "UPDATE incidents \
+             SET state = 'resolved', ended_at = COALESCE(ended_at, now()), \
+                 duration_secs = COALESCE(duration_secs, \
+                     GREATEST(0, EXTRACT(EPOCH FROM (now() - started_at))::int)), \
+                 resolved_by = $3, next_escalation_at = NULL, updated_at = now() \
+             WHERE id = $1 AND org_id = $2 RETURNING {OPS_COLS}"
+        );
+        let public_resolution = Some(resolved_public_message(note.as_deref()));
+        self.transition(
+            org,
+            id,
+            transition,
+            IncidentEventKind::Resolved,
+            actor,
+            note,
+            &sql,
+            public_resolution,
+            expect_generation,
+        )
+        .await
+        .map(|a| a.outcome)
+    }
 }
 
 #[async_trait]
@@ -848,29 +882,26 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         actor: Actor,
         note: Option<String>,
     ) -> Result<LifecycleOutcome> {
-        // Manual resolve: resolved_by = actor's user (bound as $3).
-        let sql = format!(
-            "UPDATE incidents \
-             SET state = 'resolved', ended_at = COALESCE(ended_at, now()), \
-                 duration_secs = COALESCE(duration_secs, \
-                     GREATEST(0, EXTRACT(EPOCH FROM (now() - started_at))::int)), \
-                 resolved_by = $3, next_escalation_at = NULL, updated_at = now() \
-             WHERE id = $1 AND org_id = $2 RETURNING {OPS_COLS}"
-        );
-        let public_resolution = Some(resolved_public_message(note.as_deref()));
-        self.transition(
+        self.resolve_by(org, id, IncidentTransition::Resolve, actor, note, None)
+            .await
+    }
+
+    async fn resolve_episode(
+        &self,
+        org: OrgId,
+        id: Uuid,
+        actor: Actor,
+        episode: i64,
+    ) -> Result<LifecycleOutcome> {
+        self.resolve_by(
             org,
             id,
-            IncidentTransition::Resolve,
-            IncidentEventKind::Resolved,
+            IncidentTransition::ResolveOpen,
             actor,
-            note,
-            &sql,
-            public_resolution,
             None,
+            Some(episode),
         )
         .await
-        .map(|a| a.outcome)
     }
 
     async fn auto_resolve(&self, org: OrgId, id: Uuid) -> Result<LifecycleOutcome> {

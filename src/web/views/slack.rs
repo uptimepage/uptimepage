@@ -1,7 +1,7 @@
 //! `/hooks/slack/interactions`, our Slack app's Interactivity Request URL.
 //! Slack's signature is the only authentication. A signed request is answered
 //! 200 at once, since Slack shows the presser an error after 3 seconds, and
-//! the one press acted on, Acknowledge, is taken off the request through
+//! the presses acted on, Acknowledge and Resolve, are taken off the request through
 //! [`super::app_ack`]. Every other click on our messages, such as a link
 //! button, is reported here too and gets nothing more.
 
@@ -15,7 +15,7 @@ use crate::app::AppState;
 use crate::domain::{ChannelKind, LinkedApp};
 use crate::notifier::slack::escape;
 use crate::security::app_link::external_id;
-use crate::slack::{Press, Reply, acknowledge_press, respond, signed_by_slack};
+use crate::slack::{Press, Reply, alert_press, respond, signed_by_slack};
 
 use super::app_ack::{Pressed, announcement, answer_offering_link};
 
@@ -46,7 +46,7 @@ pub async fn interactions(
         tracing::warn!("slack interaction rejected: bad signature");
         return StatusCode::UNAUTHORIZED;
     }
-    if let Some(press) = acknowledge_press(&body) {
+    if let Some(press) = alert_press(&body) {
         tokio::spawn(async move { handle_press(&state, press).await });
     }
     StatusCode::OK
@@ -60,13 +60,13 @@ async fn handle_press(state: &AppState, press: Press) {
         sender: external_id(&state.app_link_secret, &press.person),
         data: &press.value,
     };
-    let (notice, listed) = answer_offering_link(state, pressed, press.username.as_deref(), |url| {
+    let (notice, done) = answer_offering_link(state, pressed, press.username.as_deref(), |url| {
         format!("<{url}|Link your Slack account> so your next presses carry your name.")
     })
     .await;
     reply(state, &press, &Reply::to_presser(&notice)).await;
-    if listed && !press.in_direct_message() {
-        let text = announcement(press.username.as_deref().map(escape));
+    if let Some(action) = done.filter(|_| !press.in_direct_message()) {
+        let text = announcement(action, press.username.as_deref().map(escape));
         reply(
             state,
             &press,

@@ -1,9 +1,10 @@
-//! The acknowledge page link, for transports whose buttons can only open a URL.
+//! The acknowledge and resolve page links, for transports whose buttons can
+//! only open a URL.
 
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::domain::OrgId;
+use crate::domain::{AlertAction, OrgId};
 
 /// The org rides along so a member of several lands in the one the alert is
 /// about, the channel so switching its button off withdraws the alerts
@@ -17,10 +18,13 @@ pub struct AlertLink {
 }
 
 impl AlertLink {
-    pub fn path(&self, incident_id: Uuid) -> String {
+    pub fn path(&self, action: AlertAction, incident_id: Uuid) -> String {
         format!(
-            "/incidents/{incident_id}/acknowledge?org={}&channel={}&episode={}",
-            self.org.0, self.channel, self.episode
+            "/incidents/{incident_id}/{}?org={}&channel={}&episode={}",
+            action.as_path(),
+            self.org.0,
+            self.channel,
+            self.episode
         )
     }
 }
@@ -58,9 +62,29 @@ mod tests {
             channel: Uuid::now_v7(),
             episode: 3,
         };
-        let uri: axum::http::Uri = link.path(Uuid::now_v7()).parse().unwrap();
-        let Query(query) = Query::<AlertLinkQuery>::try_from_uri(&uri).unwrap();
-        assert_eq!(query.link(), Some(link));
+        for action in [AlertAction::Acknowledge, AlertAction::Resolve] {
+            let uri: axum::http::Uri = link.path(action, Uuid::now_v7()).parse().unwrap();
+            let Query(query) = Query::<AlertLinkQuery>::try_from_uri(&uri).unwrap();
+            assert_eq!(query.link(), Some(link), "{action:?}");
+        }
+    }
+
+    #[test]
+    fn each_action_has_its_own_page() {
+        let link = AlertLink {
+            org: OrgId(Uuid::now_v7()),
+            channel: Uuid::now_v7(),
+            episode: 0,
+        };
+        let id = Uuid::now_v7();
+        assert!(
+            link.path(AlertAction::Acknowledge, id)
+                .starts_with(&format!("/incidents/{id}/acknowledge?"))
+        );
+        assert!(
+            link.path(AlertAction::Resolve, id)
+                .starts_with(&format!("/incidents/{id}/resolve?"))
+        );
     }
 
     #[test]

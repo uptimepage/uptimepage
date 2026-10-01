@@ -42,7 +42,8 @@ use crate::notifier::whatsapp::WhatsAppNotifier;
 pub use crate::notifier::email::{EmailAlert, EmailDelivery, email_alert_for};
 pub use crate::notifier::ntfy::PushAck;
 
-/// The acknowledge control a page carries, when its transport can take one.
+/// How one button on a page reaches its action, when its transport can take
+/// one.
 #[derive(Clone)]
 pub enum AckControl {
     /// ntfy's HTTP action: a signed link, pressed by whoever holds the page.
@@ -50,7 +51,7 @@ pub enum AckControl {
     /// A button whose press reaches our own app in Telegram, Slack or Discord,
     /// which learns from the app who pressed it.
     Button(String),
-    /// The incident's acknowledge page, for a transport whose buttons can only
+    /// The incident's acknowledge or resolve page, for a transport whose buttons can only
     /// open a URL. Whoever presses signs in, so the ack names them.
     Page(String),
 }
@@ -76,6 +77,14 @@ impl AckControl {
             Self::Link(_) | Self::Button(_) => None,
         }
     }
+}
+
+/// The buttons a page carries: Acknowledge, and Resolve where the channel
+/// offers it.
+#[derive(Clone, Default)]
+pub struct AlertControls {
+    pub acknowledge: Option<AckControl>,
+    pub resolve: Option<AckControl>,
 }
 
 #[async_trait]
@@ -203,9 +212,14 @@ pub fn build_notifier(
     whatsapp: Option<&crate::config::WhatsAppAppBotConfig>,
     email: Option<&EmailDelivery>,
     email_alert: Option<EmailAlert>,
-    ack: Option<AckControl>,
+    controls: AlertControls,
 ) -> Result<Arc<dyn Notifier>> {
+    let AlertControls {
+        acknowledge: ack,
+        resolve,
+    } = controls;
     let page = ack.clone().and_then(AckControl::page);
+    let resolve_page = resolve.clone().and_then(AckControl::page);
     let parse = |s: &str| -> Result<url::Url> {
         s.parse::<url::Url>().map_err(|e| {
             crate::error::AppError::bad_request(
@@ -223,12 +237,15 @@ pub fn build_notifier(
         )) as Arc<dyn Notifier>,
         ChannelConfig::Slack(c) => Arc::new(
             SlackNotifier::new(http.clone(), parse(&c.webhook_url)?, c.mention_markup())
-                .with_ack_link(page),
+                .with_ack_link(page)
+                .with_resolve_link(resolve_page),
         ) as Arc<dyn Notifier>,
         ChannelConfig::SlackApp(c) => Arc::new(
             SlackNotifier::new(http.clone(), parse(&c.webhook_url)?, c.mention_markup())
                 .with_ack_link(page)
-                .with_ack_press(ack.and_then(AckControl::button)),
+                .with_resolve_link(resolve_page)
+                .with_ack_press(ack.and_then(AckControl::button))
+                .with_resolve_press(resolve.and_then(AckControl::button)),
         ) as Arc<dyn Notifier>,
         ChannelConfig::Telegram(c) => Arc::new(TelegramNotifier::new(
             http.clone(),
@@ -248,7 +265,8 @@ pub fn build_notifier(
             Arc::new(
                 TelegramNotifier::new(http.clone(), central.bot_token.trim(), c.chat_id.clone())?
                     .with_budget(central.budget.clone())
-                    .with_ack_button(ack.and_then(AckControl::button)),
+                    .with_ack_button(ack.and_then(AckControl::button))
+                    .with_resolve_button(resolve.and_then(AckControl::button)),
             ) as Arc<dyn Notifier>
         }
         ChannelConfig::WhatsApp(c) => {
@@ -274,19 +292,25 @@ pub fn build_notifier(
         }
         ChannelConfig::Discord(c) => Arc::new(
             DiscordNotifier::new(http.clone(), parse(&c.webhook_url)?, c.mention_targets())
-                .with_ack_link(page),
+                .with_ack_link(page)
+                .with_resolve_link(resolve_page),
         ) as Arc<dyn Notifier>,
         ChannelConfig::DiscordApp(c) => Arc::new(
             DiscordNotifier::new(http.clone(), parse(&c.webhook_url)?, c.mention_targets())
                 .with_ack_link(page)
-                .with_ack_press(ack.and_then(AckControl::button)),
+                .with_resolve_link(resolve_page)
+                .with_ack_press(ack.and_then(AckControl::button))
+                .with_resolve_press(resolve.and_then(AckControl::button)),
         ) as Arc<dyn Notifier>,
-        ChannelConfig::MsTeams(c) => {
-            Arc::new(MsTeamsNotifier::new(http.clone(), parse(&c.webhook_url)?).with_ack_link(page))
-                as Arc<dyn Notifier>
-        }
+        ChannelConfig::MsTeams(c) => Arc::new(
+            MsTeamsNotifier::new(http.clone(), parse(&c.webhook_url)?)
+                .with_ack_link(page)
+                .with_resolve_link(resolve_page),
+        ) as Arc<dyn Notifier>,
         ChannelConfig::GoogleChat(c) => Arc::new(
-            GoogleChatNotifier::new(http.clone(), parse(&c.webhook_url)?).with_ack_link(page),
+            GoogleChatNotifier::new(http.clone(), parse(&c.webhook_url)?)
+                .with_ack_link(page)
+                .with_resolve_link(resolve_page),
         ) as Arc<dyn Notifier>,
         ChannelConfig::Email(c) => {
             let email = email.ok_or_else(|| {
@@ -297,7 +321,8 @@ pub fn build_notifier(
             })?;
             Arc::new(
                 EmailNotifier::new(email, &c.to, email_alert.unwrap_or_default())
-                    .with_ack_link(page),
+                    .with_ack_link(page)
+                    .with_resolve_link(resolve_page),
             ) as Arc<dyn Notifier>
         }
         ChannelConfig::PagerDuty(c) => {
@@ -326,7 +351,8 @@ pub fn build_notifier(
         ChannelConfig::Sms(c) => Arc::new(SmsNotifier::new(http.clone(), c)?) as Arc<dyn Notifier>,
         ChannelConfig::Mattermost(c) => Arc::new(
             MattermostNotifier::new(http.clone(), parse(&c.webhook_url)?, c.mention_markup())
-                .with_ack_link(page),
+                .with_ack_link(page)
+                .with_resolve_link(resolve_page),
         ) as Arc<dyn Notifier>,
     })
 }
@@ -375,6 +401,7 @@ mod tests {
                     enabled: true,
                     auto_bind_tags: Vec::new(),
                     acknowledge_button: true,
+                    resolve_button: false,
                 },
                 WriteSource::Ui,
                 10,

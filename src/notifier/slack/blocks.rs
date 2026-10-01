@@ -6,7 +6,7 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::notifier::card::{AlertCard, CardField, CardValue, MAX_ERROR_CHARS};
+use crate::notifier::card::{AlertCard, CardField, CardValue, MAX_ERROR_CHARS, Presses};
 use crate::text::{single_line, truncate_chars};
 
 const HEADER_MAX: usize = 150;
@@ -18,15 +18,16 @@ const MAX_FIELDS: usize = 10;
 /// cap holds against Slack's only while the worst case plus the fence still fits.
 const _: () = assert!(MAX_ERROR_CHARS * 5 + 32 <= SECTION_MAX);
 
-/// Names a press on the Acknowledge button our own app receives, the only
-/// press it acts on.
+/// Name the presses on the buttons our own app receives, the only presses it
+/// acts on.
 pub const ACKNOWLEDGE_ACTION: &str = "acknowledge";
+pub const RESOLVE_ACTION: &str = "resolve";
 
 /// The card as Slack blocks. Who gets woken is the card's decision, so no
-/// future call site can page a channel with an all-clear. `ack_press` is the
+/// future call site can page a channel with an all-clear. A press is the
 /// signed value of a button whose press reaches our app; it takes the place of
-/// the card's link to the acknowledge page.
-pub fn render(card: &AlertCard, mention: Option<&str>, ack_press: Option<&str>) -> Vec<Block> {
+/// the card's link to the same page.
+pub fn render(card: &AlertCard, mention: Option<&str>, presses: Presses<'_>) -> Vec<Block> {
     let mention = card.ping(mention);
     let headline = match mention {
         Some(m) => format!("{m} *{}*", escape(&card.headline)),
@@ -43,7 +44,7 @@ pub fn render(card: &AlertCard, mention: Option<&str>, ack_press: Option<&str>) 
     if let Some(note) = &card.note {
         blocks.push(Block::context(escape(note)));
     }
-    blocks.extend(Block::links(card, ack_press));
+    blocks.extend(Block::links(card, presses));
     blocks
 }
 
@@ -135,27 +136,24 @@ impl Block {
         }
     }
 
-    /// Acknowledge first and highlighted, as the one thing the page asks for.
-    /// `None` when there is nothing to open, because an empty actions block is
-    /// refused.
-    fn links(card: &AlertCard, ack_press: Option<&str>) -> Option<Self> {
-        let acknowledge = match (ack_press, card.ack_link.as_deref()) {
-            (Some(value), _) => Some(Element::Button {
-                text: Text::plain("Acknowledge"),
-                action_id: ACKNOWLEDGE_ACTION,
-                url: None,
-                value: Some(value.to_string()),
-                style: Some("primary"),
-            }),
-            (None, Some(url)) => Some(Element::Button {
-                text: Text::plain("Acknowledge"),
-                action_id: "acknowledge_page",
-                url: Some(url.to_string()),
-                value: None,
-                style: Some("primary"),
-            }),
-            (None, None) => None,
-        };
+    /// Acknowledge first and highlighted, as the one thing the page asks for,
+    /// then Resolve. `None` when there is nothing to open, because an empty
+    /// actions block is refused.
+    fn links(card: &AlertCard, presses: Presses<'_>) -> Option<Self> {
+        let acknowledge = Element::control(
+            "Acknowledge",
+            (ACKNOWLEDGE_ACTION, "acknowledge_page"),
+            Some("primary"),
+            presses.acknowledge,
+            card.ack_link.as_deref(),
+        );
+        let resolve = Element::control(
+            "Resolve",
+            (RESOLVE_ACTION, "resolve_page"),
+            None,
+            presses.resolve,
+            card.resolve_link.as_deref(),
+        );
         let view = card.link.as_deref().map(|url| Element::Button {
             text: Text::plain("View incident"),
             action_id: "view_incident",
@@ -163,7 +161,7 @@ impl Block {
             value: None,
             style: None,
         });
-        let elements: Vec<Element> = acknowledge.into_iter().chain(view).collect();
+        let elements: Vec<Element> = acknowledge.into_iter().chain(resolve).chain(view).collect();
         (!elements.is_empty()).then_some(Self::Actions { elements })
     }
 }
@@ -211,6 +209,31 @@ pub enum Element {
     },
 }
 
+impl Element {
+    /// A press our app receives when there is one, else a link to the page.
+    /// `ids` are the action ids of the two, which Slack wants unique.
+    fn control(
+        label: &str,
+        ids: (&'static str, &'static str),
+        style: Option<&'static str>,
+        press: Option<&str>,
+        page: Option<&str>,
+    ) -> Option<Self> {
+        let (action_id, url, value) = match (press, page) {
+            (Some(value), _) => (ids.0, None, Some(value.to_string())),
+            (None, Some(url)) => (ids.1, Some(url.to_string()), None),
+            (None, None) => return None,
+        };
+        Some(Self::Button {
+            text: Text::plain(label),
+            action_id,
+            url,
+            value,
+            style,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,7 +243,7 @@ mod tests {
 
     fn json(reason: NotificationReason, mention: Option<&str>) -> String {
         let card = AlertCard::for_notice(&notice(reason), None);
-        serde_json::to_string(&render(&card, mention, None)).unwrap()
+        serde_json::to_string(&render(&card, mention, Presses::default())).unwrap()
     }
 
     #[test]
@@ -269,8 +292,12 @@ mod tests {
         let mut n = notice(NotificationReason::Opened);
         n.monitor_name = Some("<!channel> api".into());
         n.error_sample = Some("<!here> fix me".into());
-        let blocks =
-            serde_json::to_string(&render(&AlertCard::for_notice(&n, None), None, None)).unwrap();
+        let blocks = serde_json::to_string(&render(
+            &AlertCard::for_notice(&n, None),
+            None,
+            Presses::default(),
+        ))
+        .unwrap();
         assert!(!blocks.contains("<!channel>"), "{blocks}");
         assert!(!blocks.contains("<!here>"), "{blocks}");
     }
@@ -281,8 +308,12 @@ mod tests {
     fn an_error_cannot_break_out_of_its_code_fence() {
         let mut n = notice(NotificationReason::Opened);
         n.error_sample = Some("``` *not bold* ```".into());
-        let blocks =
-            serde_json::to_string(&render(&AlertCard::for_notice(&n, None), None, None)).unwrap();
+        let blocks = serde_json::to_string(&render(
+            &AlertCard::for_notice(&n, None),
+            None,
+            Presses::default(),
+        ))
+        .unwrap();
         assert_eq!(blocks.matches("```").count(), 2, "{blocks}");
     }
 
@@ -293,7 +324,12 @@ mod tests {
         let mut n = notice(NotificationReason::Opened);
         n.monitor_name = Some("search & index <!channel>".into());
         let v: Value = serde_json::from_str(
-            &serde_json::to_string(&render(&AlertCard::for_notice(&n, None), None, None)).unwrap(),
+            &serde_json::to_string(&render(
+                &AlertCard::for_notice(&n, None),
+                None,
+                Presses::default(),
+            ))
+            .unwrap(),
         )
         .unwrap();
         assert_eq!(v[0]["text"]["text"], "🔴 search & index !channel");
@@ -307,7 +343,7 @@ mod tests {
         let v = serde_json::to_value(render(
             &AlertCard::for_notice(&notice(NotificationReason::Opened), None),
             None,
-            None,
+            Presses::default(),
         ))
         .unwrap();
         assert_eq!(v[0]["type"], "header");
@@ -328,7 +364,7 @@ mod tests {
     fn an_open_incident_offers_acknowledge_before_the_incident_link() {
         let ack = crate::notifier::card::tests::ack_page();
         let card = AlertCard::for_notice(&notice(NotificationReason::Opened), Some(&ack));
-        let v = serde_json::to_value(render(&card, None, None)).unwrap();
+        let v = serde_json::to_value(render(&card, None, Presses::default())).unwrap();
         let buttons = &v[4]["elements"];
         assert_eq!(buttons[0]["text"]["text"], "Acknowledge");
         assert_eq!(buttons[0]["url"], ack);
@@ -344,7 +380,15 @@ mod tests {
     fn a_button_our_app_receives_carries_its_value_instead_of_a_link() {
         let ack = crate::notifier::card::tests::ack_page();
         let card = AlertCard::for_notice(&notice(NotificationReason::Opened), Some(&ack));
-        let v = serde_json::to_value(render(&card, None, Some("a-signed"))).unwrap();
+        let v = serde_json::to_value(render(
+            &card,
+            None,
+            Presses {
+                acknowledge: Some("a-signed"),
+                resolve: None,
+            },
+        ))
+        .unwrap();
         let buttons = &v[4]["elements"];
         assert_eq!(buttons[0]["text"]["text"], "Acknowledge");
         assert_eq!(buttons[0]["action_id"], ACKNOWLEDGE_ACTION);
@@ -353,14 +397,60 @@ mod tests {
         assert!(buttons[1].get("value").is_none(), "{v}");
     }
 
+    /// Resolve is the quieter of the two, so it follows Acknowledge and takes
+    /// no highlight.
+    #[test]
+    fn resolve_follows_acknowledge_and_comes_before_the_incident_link() {
+        let ack = crate::notifier::card::tests::ack_page();
+        let resolve = crate::notifier::card::tests::resolve_page();
+        let notice = notice(NotificationReason::Opened);
+        let card = AlertCard::for_notice(&notice, Some(&ack)).with_resolve(&notice, Some(&resolve));
+        let v = serde_json::to_value(render(&card, None, Presses::default())).unwrap();
+        let buttons = &v[4]["elements"];
+        assert_eq!(buttons[1]["text"]["text"], "Resolve");
+        assert_eq!(buttons[1]["url"], resolve);
+        assert!(buttons[1].get("style").is_none(), "{v}");
+        assert_eq!(buttons[2]["text"]["text"], "View incident");
+        let ids: std::collections::HashSet<_> = buttons
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["action_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids.len(), 3, "Slack wants action ids unique in a block");
+
+        let without = AlertCard::for_notice(&notice, Some(&ack));
+        let v = serde_json::to_value(render(&without, None, Presses::default())).unwrap();
+        assert_eq!(v[4]["elements"][1]["text"]["text"], "View incident", "{v}");
+    }
+
+    #[test]
+    fn a_resolve_press_our_app_receives_carries_its_value_under_its_own_action() {
+        let notice = notice(NotificationReason::Opened);
+        let card = AlertCard::for_notice(&notice, None);
+        let presses = Presses {
+            acknowledge: Some("a-signed"),
+            resolve: Some("r-signed"),
+        };
+        let v = serde_json::to_value(render(&card, None, presses)).unwrap();
+        let buttons = &v[4]["elements"];
+        assert_eq!(buttons[1]["action_id"], RESOLVE_ACTION);
+        assert_eq!(buttons[1]["value"], "r-signed");
+        assert!(buttons[1].get("url").is_none(), "{v}");
+    }
+
     /// A base URL set without a scheme is not a link Slack accepts, and Slack
     /// refuses the message rather than the button.
     #[test]
     fn an_unusable_link_costs_the_button_not_the_alert() {
         let mut n = notice(NotificationReason::Opened);
         n.url = Some("app.example.test/incidents/7".into());
-        let blocks =
-            serde_json::to_string(&render(&AlertCard::for_notice(&n, None), None, None)).unwrap();
+        let blocks = serde_json::to_string(&render(
+            &AlertCard::for_notice(&n, None),
+            None,
+            Presses::default(),
+        ))
+        .unwrap();
         assert!(!blocks.contains("actions"), "{blocks}");
         assert!(blocks.contains("major incident OPEN"), "{blocks}");
     }
@@ -371,8 +461,12 @@ mod tests {
     fn no_block_can_exceed_slacks_cap() {
         let mut n = notice(NotificationReason::Opened);
         n.error_sample = Some("&".repeat(20_000));
-        let v: Value =
-            serde_json::to_value(render(&AlertCard::for_notice(&n, None), None, None)).unwrap();
+        let v: Value = serde_json::to_value(render(
+            &AlertCard::for_notice(&n, None),
+            None,
+            Presses::default(),
+        ))
+        .unwrap();
 
         fn worst(v: &Value, out: &mut usize) {
             match v {

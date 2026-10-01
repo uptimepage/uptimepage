@@ -1002,7 +1002,7 @@ async fn deliver_test(
         whatsapp,
         Some(&email),
         None,
-        None,
+        Default::default(),
     )?;
     let notice = IncidentNotice {
         incident_id: Uuid::nil(),

@@ -38,6 +38,8 @@ use crate::storage::{
 
 use rules::{retry_after_hint, retry_delay_secs};
 
+#[cfg(test)]
+mod alert_controls_tests;
 mod deliver;
 mod episode;
 mod receipts;

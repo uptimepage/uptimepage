@@ -9,7 +9,7 @@ use url::Url;
 
 use crate::error::{AppError, Result};
 use crate::http_outbound::{OutboundHttpClient, post_json};
-use crate::notifier::slack::ACKNOWLEDGE_ACTION;
+use crate::notifier::slack::{ACKNOWLEDGE_ACTION, RESOLVE_ACTION};
 use crate::security::mac::hmac_sha256_hex;
 use crate::security::redaction::redact_url_paths;
 
@@ -118,10 +118,10 @@ struct Action {
     value: Option<String>,
 }
 
-/// The Acknowledge press in a form-encoded interaction body. `None` for
-/// everything else our messages send, such as a press on a link button,
+/// The Acknowledge or Resolve press in a form-encoded interaction body. `None`
+/// for everything else our messages send, such as a press on a link button,
 /// which Slack reports too.
-pub fn acknowledge_press(body: &[u8]) -> Option<Press> {
+pub fn alert_press(body: &[u8]) -> Option<Press> {
     let payload = url::form_urlencoded::parse(body)
         .find(|(key, _)| key == "payload")
         .map(|(_, value)| value)?;
@@ -130,7 +130,10 @@ pub fn acknowledge_press(body: &[u8]) -> Option<Press> {
         return None;
     }
     let action = i.actions.into_iter().next()?;
-    if action.action_id != ACKNOWLEDGE_ACTION {
+    if !matches!(
+        action.action_id.as_str(),
+        ACKNOWLEDGE_ACTION | RESOLVE_ACTION
+    ) {
         return None;
     }
     let user = i.user?;
@@ -296,7 +299,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_press_is_read_with_the_pressers_own_workspace() {
-        let press = acknowledge_press(&press_body(ACKNOWLEDGE_ACTION, Some("a-signed"))).unwrap();
+        let press = alert_press(&press_body(ACKNOWLEDGE_ACTION, Some("a-signed"))).unwrap();
         assert_eq!(press.value, "a-signed");
         assert_eq!(press.channel_id, "C0OPS0001");
         assert_eq!(press.person, "T0HOME001:U0OLENA01");
@@ -306,18 +309,21 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_resolve_press_is_read_like_an_acknowledge_press() {
+        let press = alert_press(&press_body(RESOLVE_ACTION, Some("r-signed"))).unwrap();
+        assert_eq!(press.value, "r-signed");
+        assert_eq!(press.channel_id, "C0OPS0001");
+        assert_eq!(alert_press(&press_body("resolve_page", None)), None);
+        assert_eq!(alert_press(&press_body(RESOLVE_ACTION, None)), None);
+    }
+
+    #[test]
     fn every_other_click_on_our_messages_is_no_press() {
-        assert_eq!(acknowledge_press(&press_body("view_incident", None)), None);
-        assert_eq!(
-            acknowledge_press(&press_body("acknowledge_page", None)),
-            None
-        );
-        assert_eq!(
-            acknowledge_press(&press_body(ACKNOWLEDGE_ACTION, None)),
-            None
-        );
-        assert_eq!(acknowledge_press(b"payload=not-json"), None);
-        assert_eq!(acknowledge_press(b""), None);
+        assert_eq!(alert_press(&press_body("view_incident", None)), None);
+        assert_eq!(alert_press(&press_body("acknowledge_page", None)), None);
+        assert_eq!(alert_press(&press_body(ACKNOWLEDGE_ACTION, None)), None);
+        assert_eq!(alert_press(b"payload=not-json"), None);
+        assert_eq!(alert_press(b""), None);
     }
 
     #[test]

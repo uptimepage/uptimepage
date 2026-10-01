@@ -22,6 +22,7 @@ pub struct TelegramNotifier {
     /// Callback data for an Acknowledge button. Central bot only: a press on a
     /// customer's own bot goes to that bot, not to us.
     ack_button: Option<String>,
+    resolve_button: Option<String>,
     /// Set whether or not the second send lands: the old id is dead either way.
     moved_to: parking_lot::Mutex<Option<String>>,
 }
@@ -40,7 +41,7 @@ struct SendMessage<'a> {
 
 #[derive(Serialize)]
 struct InlineKeyboard<'a> {
-    inline_keyboard: [[Button<'a>; 1]; 1],
+    inline_keyboard: [Vec<Button<'a>>; 1],
 }
 
 #[derive(Serialize)]
@@ -50,13 +51,20 @@ struct Button<'a> {
 }
 
 impl<'a> InlineKeyboard<'a> {
-    fn acknowledge(callback_data: &'a str) -> Self {
-        Self {
-            inline_keyboard: [[Button {
-                text: "Acknowledge",
-                callback_data,
-            }]],
-        }
+    /// One row, Acknowledge first. `None` when there is nothing to press.
+    fn controls(acknowledge: Option<&'a str>, resolve: Option<&'a str>) -> Option<Self> {
+        let row: Vec<Button<'a>> = [("Acknowledge", acknowledge), ("Resolve", resolve)]
+            .into_iter()
+            .filter_map(|(text, data)| {
+                data.map(|callback_data| Button {
+                    text,
+                    callback_data,
+                })
+            })
+            .collect();
+        (!row.is_empty()).then_some(Self {
+            inline_keyboard: [row],
+        })
     }
 }
 
@@ -83,6 +91,7 @@ impl TelegramNotifier {
             chat_id,
             budget: None,
             ack_button: None,
+            resolve_button: None,
             moved_to: parking_lot::Mutex::new(None),
         }
     }
@@ -94,6 +103,11 @@ impl TelegramNotifier {
 
     pub fn with_ack_button(mut self, callback_data: Option<String>) -> Self {
         self.ack_button = callback_data;
+        self
+    }
+
+    pub fn with_resolve_button(mut self, callback_data: Option<String>) -> Self {
+        self.resolve_button = callback_data;
         self
     }
 }
@@ -115,7 +129,10 @@ impl TelegramNotifier {
         let message = SendMessage {
             chat_id,
             text,
-            reply_markup: self.ack_button.as_deref().map(InlineKeyboard::acknowledge),
+            reply_markup: InlineKeyboard::controls(
+                self.ack_button.as_deref(),
+                self.resolve_button.as_deref(),
+            ),
         };
         post_json(&self.client, &self.send_url, &message).await
     }
@@ -249,11 +266,11 @@ mod tests {
     }
 
     #[test]
-    fn the_acknowledge_button_rides_the_message_only_when_given() {
+    fn the_buttons_ride_the_message_only_when_given() {
         let with = SendMessage {
             chat_id: "-5",
             text: "down",
-            reply_markup: Some(InlineKeyboard::acknowledge("aXYZ")),
+            reply_markup: InlineKeyboard::controls(Some("aXYZ"), None),
         };
         assert_eq!(
             serde_json::to_value(&with).unwrap()["reply_markup"],
@@ -261,10 +278,24 @@ mod tests {
                 "inline_keyboard": [[{ "text": "Acknowledge", "callback_data": "aXYZ" }]]
             })
         );
+        let both = SendMessage {
+            chat_id: "-5",
+            text: "down",
+            reply_markup: InlineKeyboard::controls(Some("aXYZ"), Some("rXYZ")),
+        };
+        assert_eq!(
+            serde_json::to_value(&both).unwrap()["reply_markup"],
+            serde_json::json!({
+                "inline_keyboard": [[
+                    { "text": "Acknowledge", "callback_data": "aXYZ" },
+                    { "text": "Resolve", "callback_data": "rXYZ" }
+                ]]
+            })
+        );
         let without = SendMessage {
             chat_id: "-5",
             text: "down",
-            reply_markup: None,
+            reply_markup: InlineKeyboard::controls(None, None),
         };
         assert!(
             serde_json::to_value(&without)

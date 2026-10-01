@@ -85,7 +85,7 @@
         form.querySelectorAll("[data-variant]").forEach(el => {
             el.classList.toggle("hidden", el.dataset.variant !== kind);
         });
-        syncAckToggle(kind);
+        syncAlertButtons(kind);
         syncCentralTelegram(kind);
     }
 
@@ -94,11 +94,12 @@
         return (kind === "telegram_app" || kind === "whatsapp_app") && !isEdit;
     }
 
-    function syncAckToggle(kind) {
-        const el = form.querySelector("[data-acknowledge-toggle]");
-        if (!el) return;
-        const offered = el.dataset.kinds.split(" ").includes(kind);
-        el.classList.toggle("hidden", !offered || oneTapCreate(kind));
+    function syncAlertButtons(kind) {
+        const block = form.querySelector("[data-alert-buttons]");
+        if (!block) return;
+        const offers = (el) => el.dataset.kinds.split(" ").includes(kind);
+        block.querySelectorAll("[data-kinds]").forEach(el => el.classList.toggle("hidden", !offers(el)));
+        block.classList.toggle("hidden", !offers(block) || oneTapCreate(kind));
     }
 
     // SMS is one kind with a per-gateway sub-form; show only the picked one.
@@ -139,9 +140,9 @@
         if (!isEdit) return;
         const on = !!(replaceCb && replaceCb.checked);
         configFs.querySelectorAll("input, textarea, select").forEach(el => {
-            // The Acknowledge toggle is not part of the secret config, and a
+            // The alert buttons are not part of the secret config, and a
             // connected channel's editable part never touches its secret.
-            if (el === replaceCb || el.closest("[data-acknowledge-toggle], [data-managed-edit]")) return;
+            if (el === replaceCb || el.closest("[data-alert-buttons], [data-managed-edit]")) return;
             el.disabled = !on;
         });
         if (kindFs) kindFs.disabled = !on;
@@ -182,7 +183,7 @@
     // A green "✓ delivered" must not vouch for a config edited after the
     // test ran.
     form.addEventListener("input", (evt) => {
-        if (evt.target.closest("[data-config]") && !evt.target.closest("[data-acknowledge-toggle]")) {
+        if (evt.target.closest("[data-config]") && !evt.target.closest("[data-alert-buttons]")) {
             hideTestResult();
         }
     });
@@ -801,6 +802,13 @@
         return { channelId, failed };
     }
 
+    // A tick left on a card the picked kind hides must not be saved: Resolve is
+    // off until someone turns it on for a kind that carries it.
+    function resolveOffered() {
+        const card = form.querySelector("input[name='resolve_button']")?.closest("label");
+        return !!card && !card.classList.contains("hidden") && !card.closest("[data-alert-buttons].hidden");
+    }
+
     function buildBody() {
         const data = new FormData(form);
         const name = (data.get("name") || "").trim();
@@ -809,6 +817,7 @@
             name,
             enabled: data.get("enabled") === "on",
             acknowledge_button: data.get("acknowledge_button") === "on",
+            resolve_button: data.get("resolve_button") === "on" && resolveOffered(),
             // Always sent: an emptied field is how a rule is cleared.
             auto_bind_tags: ruleTags(),
         };

@@ -15,8 +15,8 @@ use uptimepage::domain::{
     SlackAppConfig, SlackConfig, TelegramConfig, WebhookConfig,
 };
 use uptimepage::http_outbound::build_outbound_client;
-use uptimepage::notifier::build_notifier;
 use uptimepage::notifier::event::IncidentNotice;
+use uptimepage::notifier::{AlertControls, build_notifier};
 use uuid::Uuid;
 
 #[derive(Default, Clone)]
@@ -87,7 +87,7 @@ async fn slack_channel_posts_text_payload() {
         None,
         None,
         None,
-        None,
+        AlertControls::default(),
     )
     .expect("notifier");
     notifier
@@ -122,7 +122,7 @@ async fn slack_channel_posts_block_kit_layout() {
         None,
         None,
         None,
-        None,
+        AlertControls::default(),
     )
     .expect("notifier");
     let mut notice = make_notice();
@@ -169,7 +169,7 @@ async fn slack_mention_reaches_the_wire_as_ping_markup() {
             None,
             None,
             None,
-            None,
+            AlertControls::default(),
         )
         .expect("notifier");
         notifier
@@ -201,7 +201,7 @@ async fn slack_multi_region_includes_breakdown() {
         None,
         None,
         None,
-        None,
+        AlertControls::default(),
     )
     .expect("notifier");
     let mut notice = make_notice();
@@ -229,7 +229,7 @@ async fn slack_single_region_omits_breakdown() {
         None,
         None,
         None,
-        None,
+        AlertControls::default(),
     )
     .expect("notifier");
     let mut notice = make_notice();
@@ -259,7 +259,7 @@ async fn webhook_channel_posts_incident_payload_with_custom_header() {
         None,
         None,
         None,
-        None,
+        AlertControls::default(),
     )
     .expect("notifier");
     let mut notice = make_notice();
@@ -296,7 +296,7 @@ async fn webhook_signed_delivery_carries_a_verifiable_signature() {
         None,
         None,
         None,
-        None,
+        AlertControls::default(),
     )
     .expect("notifier");
     notifier
@@ -341,7 +341,7 @@ async fn build_notifier_constructs_each_kind() {
             None,
             None,
             None,
-            None,
+            AlertControls::default(),
         )
         .is_ok()
     );
@@ -356,7 +356,7 @@ async fn build_notifier_constructs_each_kind() {
             None,
             None,
             None,
-            None,
+            AlertControls::default(),
         )
         .is_ok()
     );
@@ -375,7 +375,7 @@ async fn build_notifier_rejects_unparseable_url() {
         None,
         None,
         None,
-        None,
+        AlertControls::default(),
     );
     assert!(err.is_err());
 }
@@ -404,18 +404,37 @@ async fn build_notifier_telegram_app_needs_central_token() {
             None,
             None,
             None,
-            None
+            AlertControls::default()
         )
         .is_ok()
     );
     // No operator bot → clear error, not a broken send.
-    let err = match build_notifier(&cfg, &http, None, None, None, None, None) {
+    let err = match build_notifier(
+        &cfg,
+        &http,
+        None,
+        None,
+        None,
+        None,
+        AlertControls::default(),
+    ) {
         Err(e) => e,
         Ok(_) => panic!("token-less telegram_app build must fail"),
     };
     assert!(err.to_string().contains("central bot"));
     // Blank token (misconfig) is treated as absent.
-    assert!(build_notifier(&cfg, &http, Some(central("  ")), None, None, None, None).is_err());
+    assert!(
+        build_notifier(
+            &cfg,
+            &http,
+            Some(central("  ")),
+            None,
+            None,
+            None,
+            AlertControls::default()
+        )
+        .is_err()
+    );
 }
 
 #[tokio::test(start_paused = true)]

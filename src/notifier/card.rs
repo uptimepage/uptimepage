@@ -23,7 +23,7 @@ pub const MAX_NOTE_CHARS: usize = 300;
 pub const MAX_TITLE_CHARS: usize = 200;
 
 /// Discord's cap on a link button's URL, the tightest of the vendors'. A base
-/// URL is operator config, so an acknowledge link past it is dropped rather
+/// URL is operator config, so an acknowledge or resolve link past it is dropped rather
 /// than costing the message.
 pub const MAX_ACK_LINK_CHARS: usize = 512;
 
@@ -98,6 +98,8 @@ pub struct AlertCard {
     /// The page where a signed-in member acknowledges the episode this alert
     /// is about. Only on an incident still to be taken.
     pub ack_link: Option<String>,
+    /// The page where a signed-in member resolves it, on the same terms.
+    pub resolve_link: Option<String>,
     /// Whether the event needs a human. Transports that carry a ping apply
     /// their own here; the rest ignore it.
     pub pings: bool,
@@ -135,7 +137,8 @@ impl CardTemplate {
             error: None,
             note: n.note.as_deref().map(|s| truncate_chars(s, MAX_NOTE_CHARS)),
             link: n.url.as_deref().filter(|u| is_web_link(u)).map(Into::into),
-            ack_link: acknowledge_link(n, ack_link),
+            ack_link: alert_link(n, ack_link),
+            resolve_link: None,
             pings: matches!(
                 n.reason,
                 NotificationReason::Opened
@@ -213,6 +216,12 @@ impl AlertCard {
         CardTemplate::for_reason(n.reason).card(n, ack_link)
     }
 
+    /// The page where the episode this alert is about is resolved.
+    pub fn with_resolve(mut self, n: &IncidentNotice, link: Option<&str>) -> Self {
+        self.resolve_link = alert_link(n, link);
+        self
+    }
+
     /// Title with its tone in front, the one line every transport leads with.
     /// Flattened, because a monitor name is customer text and a newline in a
     /// card heading pushes the state below the fold.
@@ -227,16 +236,36 @@ impl AlertCard {
     }
 }
 
-/// The acknowledge page a page about `n` may link to. Only an incident still
-/// to be taken has anything to acknowledge, and a link a client would refuse
-/// costs the link rather than the message.
-pub fn acknowledge_link(n: &IncidentNotice, link: Option<&str>) -> Option<String> {
+/// The acknowledge or resolve page a page about `n` may link to. Only an
+/// incident still to be taken has anything to act on, and a link a client
+/// would refuse costs the link rather than the message.
+pub fn alert_link(n: &IncidentNotice, link: Option<&str>) -> Option<String> {
     link.filter(|u| {
         n.reason.awaits_acknowledgement()
             && is_web_link(u)
             && u.chars().count() <= MAX_ACK_LINK_CHARS
     })
     .map(Into::into)
+}
+
+/// The values of the buttons whose press reaches our own app, which take the
+/// place of the card's links to the same pages.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Presses<'a> {
+    pub acknowledge: Option<&'a str>,
+    pub resolve: Option<&'a str>,
+}
+
+impl<'a> Presses<'a> {
+    /// Only an incident still to be taken has anything to press: a value
+    /// minted for one must not ride along on the all-clear.
+    pub fn for_notice(self, n: &IncidentNotice) -> Self {
+        if n.reason.awaits_acknowledgement() {
+            self
+        } else {
+            Self::default()
+        }
+    }
 }
 
 /// A link a client refuses can cost the whole message, so a base URL set
@@ -294,8 +323,8 @@ pub(crate) mod tests {
         }
     }
 
-    /// An acknowledge link as the paging path mints it.
-    pub(crate) fn ack_page() -> String {
+    /// The page link for `action` as the paging path mints it.
+    fn page(action: crate::domain::AlertAction) -> String {
         format!(
             "https://app.test{}",
             crate::notifier::ack_page::AlertLink {
@@ -303,8 +332,16 @@ pub(crate) mod tests {
                 channel: Uuid::from_u128(2),
                 episode: 0,
             }
-            .path(Uuid::from_u128(7))
+            .path(action, Uuid::from_u128(7))
         )
+    }
+
+    pub(crate) fn ack_page() -> String {
+        page(crate::domain::AlertAction::Acknowledge)
+    }
+
+    pub(crate) fn resolve_page() -> String {
+        page(crate::domain::AlertAction::Resolve)
     }
 
     fn labels(card: &AlertCard) -> Vec<&str> {
@@ -392,6 +429,29 @@ pub(crate) mod tests {
         ] {
             let card = AlertCard::for_notice(&notice(reason), Some(&ack));
             assert!(card.ack_link.is_none(), "{reason:?}");
+        }
+    }
+
+    #[test]
+    fn the_resolve_page_is_offered_on_the_same_terms() {
+        let (ack, resolve) = (ack_page(), resolve_page());
+        assert_ne!(ack, resolve);
+        let open = notice(NotificationReason::Opened);
+        let card = AlertCard::for_notice(&open, Some(&ack)).with_resolve(&open, Some(&resolve));
+        assert_eq!(card.resolve_link, Some(resolve.clone()));
+        assert!(
+            AlertCard::for_notice(&open, Some(&ack))
+                .resolve_link
+                .is_none()
+        );
+        for reason in [
+            NotificationReason::Resolved,
+            NotificationReason::NoData,
+            NotificationReason::DataResumed,
+        ] {
+            let n = notice(reason);
+            let card = AlertCard::for_notice(&n, None).with_resolve(&n, Some(&resolve));
+            assert!(card.resolve_link.is_none(), "{reason:?}");
         }
     }
 

@@ -49,12 +49,12 @@ The action bar drives the lifecycle:
 | Action | Effect |
 |---|---|
 | **Acknowledge** | `state = acknowledged`, stops escalation. Any member can acknowledge, a manager as well as whoever is on call, and each one is listed once, in order, on the dashboard banner, the console and the incident page. The first keeps the credit: they are the acker on record and their time is what MTTA measures. Your own button goes once you have acknowledged; pressing again from elsewhere adds nothing, except that a note sent with it is kept as a note. The Acknowledge button on a Slack, Discord, Teams, Google Chat, Mattermost or email alert opens a page where you sign in and take it in your own name. An ntfy link carries no login, so every acknowledgement from one counts as the same responder. Telegram, Pushover and a Slack or Discord channel connected with add to Slack or add to Discord report who pressed: someone who linked that account under **Account → linked apps** is named, and presses nobody linked count once per person the app reports. A reopen starts a new list. |
-| **Resolve** | `state = resolved`, records the resolver. (A sustained recovery auto-resolves with no resolver.) |
+| **Resolve** | `state = resolved`, records the resolver. (A sustained recovery auto-resolves with no resolver.) A channel can also carry a **Resolve** button on its alerts, off by default; see [Notifications](notifications.md). Pressing it records the resolver without a note and closes the incident only if it is still open and the alert is for the outage running now. |
 | **Reopen** | A resolved incident returns to `triggered` and re-arms escalation. |
 | **Assign / unassign** | Set or clear the owning responder. |
 | **Add note** | Free-text entry on the internal timeline. |
 
-Acknowledge and resolve prompt for an optional note so you can capture the *why* at the moment you act.
+Acknowledge and resolve prompt for an optional note in the console so you can capture the *why* at the moment you act. The buttons on an alert take no note.
 
 ### The activity log
 

@@ -105,7 +105,7 @@ impl Worker {
     ) -> (NotificationStatus, Option<String>, Option<String>) {
         let central = self.central_bot.as_ref().map(|c| c.as_central());
         let email_alert = self.email_alert(org, channel).await;
-        let ack = self.ack_control(org, channel, notice).await;
+        let controls = self.alert_controls(org, channel, notice).await;
         let transport = channel.kind.as_db_str();
         let (error, sent_at) = match build_notifier(
             &channel.config,
@@ -114,7 +114,7 @@ impl Worker {
             self.central_whatsapp.as_ref(),
             self.email.as_ref(),
             email_alert,
-            ack,
+            controls,
         ) {
             Ok(n) => {
                 let started = Instant::now();
@@ -220,25 +220,54 @@ impl Worker {
         (!base.is_empty()).then(|| format!("{base}/incidents/{id}"))
     }
 
-    /// Acknowledge control for one page, pinned to the incident's current
-    /// episode so a page kept on a phone through a reopen cannot silence what
+    /// Controls for one page, pinned to the incident's current episode so a
+    /// page kept on a phone through a reopen cannot silence or close what
     /// followed.
-    pub(super) async fn ack_control(
+    pub(super) async fn alert_controls(
         &self,
         org: OrgId,
         channel: &crate::domain::NotificationChannel,
         notice: &IncidentNotice,
-    ) -> Option<crate::notifier::AckControl> {
+    ) -> crate::notifier::AlertControls {
+        use crate::domain::AlertAction::{Acknowledge, Resolve};
+        let acknowledge = self.control_via(channel, notice, Acknowledge);
+        let resolve = self.control_via(channel, notice, Resolve);
+        if acknowledge.is_none() && resolve.is_none() {
+            return Default::default();
+        }
+        let generation = match self.ops.generation(org, notice.incident_id).await {
+            Ok(Some(g)) => g,
+            // Page without the controls rather than mint them for the wrong
+            // episode.
+            Ok(None) => return Default::default(),
+            Err(err) => {
+                tracing::warn!(error = %err, "alert control generation lookup failed");
+                return Default::default();
+            }
+        };
+        let mint = |via, action| self.mint(org, channel, notice, via, action, generation);
+        crate::notifier::AlertControls {
+            acknowledge: acknowledge.and_then(|via| mint(via, Acknowledge)),
+            resolve: resolve.and_then(|via| mint(via, Resolve)),
+        }
+    }
+
+    /// How `action` reaches this page: only when the channel offers it, the
+    /// incident still awaits it and its transport can deliver it.
+    fn control_via(
+        &self,
+        channel: &crate::domain::NotificationChannel,
+        notice: &IncidentNotice,
+        action: crate::domain::AlertAction,
+    ) -> Option<crate::domain::AckVia> {
         use crate::domain::{AckVia, ChannelKind};
-        use crate::notifier::ack_page::AlertLink;
-        use crate::notifier::{AckControl, PushAck};
-        let via = match channel.kind.acknowledge_via()? {
+        let via = match channel.kind.control_via(action)? {
             // Nothing here would receive the press, so the channel links to the
             // page like a pasted webhook does.
             AckVia::Button(app) if !self.pressed_apps.contains(&app) => AckVia::Page,
             via => via,
         };
-        if !channel.acknowledge_button || !notice.reason.awaits_acknowledgement() {
+        if !channel.button(action) || !notice.reason.awaits_acknowledgement() {
             return None;
         }
         let signed = !self.incident_ack_secret.is_empty();
@@ -251,22 +280,25 @@ impl Worker {
                     && (channel.kind != ChannelKind::Email || self.email.is_some())
             }
         };
-        if !deliverable {
-            return None;
-        }
-        let generation = match self.ops.generation(org, notice.incident_id).await {
-            Ok(Some(g)) => g,
-            // Page without the control rather than mint one for the wrong
-            // episode.
-            Ok(None) => return None,
-            Err(err) => {
-                tracing::warn!(error = %err, "acknowledge control generation lookup failed");
-                return None;
-            }
-        };
+        deliverable.then_some(via)
+    }
+
+    fn mint(
+        &self,
+        org: OrgId,
+        channel: &crate::domain::NotificationChannel,
+        notice: &IncidentNotice,
+        via: crate::domain::AckVia,
+        action: crate::domain::AlertAction,
+        generation: i64,
+    ) -> Option<crate::notifier::AckControl> {
+        use crate::domain::AckVia;
+        use crate::notifier::ack_page::AlertLink;
+        use crate::notifier::{AckControl, PushAck};
         match via {
             AckVia::Button(_) => crate::security::incident_ack::button_data(
                 &self.incident_ack_secret,
+                action,
                 org,
                 notice.incident_id,
                 channel.id,
@@ -291,7 +323,7 @@ impl Worker {
                     channel: channel.id,
                     episode: generation,
                 }
-                .path(notice.incident_id)
+                .path(action, notice.incident_id)
             ))),
         }
     }

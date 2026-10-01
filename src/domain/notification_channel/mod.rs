@@ -171,8 +171,26 @@ impl ChannelKind {
         }
     }
 
-    pub const fn offers_acknowledge(self) -> bool {
-        self.acknowledge_via().is_some()
+    /// How this kind's alerts carry the control for `action`, if they can.
+    /// Resolve is held to kinds whose press names who made it.
+    pub const fn control_via(self, action: AlertAction) -> Option<AckVia> {
+        match (action, self.acknowledge_via()) {
+            (AlertAction::Resolve, Some(via)) if !via.names_presser() => None,
+            (_, via) => via,
+        }
+    }
+
+    pub const fn offers(self, action: AlertAction) -> bool {
+        self.control_via(action).is_some()
+    }
+
+    /// The stored name of every kind that offers `action`.
+    pub fn offering(action: AlertAction) -> Vec<&'static str> {
+        Self::ALL
+            .iter()
+            .filter(|k| k.offers(action))
+            .map(|k| k.as_db_str())
+            .collect()
     }
 
     /// Whether a `retry_after` in a failed send's reply is the provider
@@ -224,7 +242,24 @@ impl ChannelKind {
     }
 }
 
-/// The Acknowledge control a kind's alert can hold.
+/// What a button on an alert does to its incident.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlertAction {
+    Acknowledge,
+    Resolve,
+}
+
+impl AlertAction {
+    /// The last segment of the page an alert's link opens.
+    pub const fn as_path(self) -> &'static str {
+        match self {
+            Self::Acknowledge => "acknowledge",
+            Self::Resolve => "resolve",
+        }
+    }
+}
+
+/// The control a kind's alert can hold for an [`AlertAction`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AckVia {
     /// A link to the acknowledge page, where the person signs in. All a
@@ -235,6 +270,15 @@ pub enum AckVia {
     /// A button whose press our own app receives there, which tells us who
     /// pressed it.
     Button(LinkedApp),
+}
+
+impl AckVia {
+    /// Whether a press says who made it. A page has them sign in and an app
+    /// press names them through an account they linked, while a signed link
+    /// is possession alone.
+    pub const fn names_presser(self) -> bool {
+        !matches!(self, Self::SignedLink)
+    }
 }
 
 /// Transport config, `type`-tagged on the wire (newtype variants flatten the
@@ -437,6 +481,9 @@ pub struct NotificationChannel {
     /// Whether alerts for an open incident carry an Acknowledge button. Read
     /// only by kinds that offer one.
     pub acknowledge_button: bool,
+    /// Whether alerts for an open incident carry a Resolve button. Off until
+    /// someone turns it on, and read only by kinds that offer one.
+    pub resolve_button: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     /// Where this channel was last changed from (UI, API, or Terraform).
@@ -468,11 +515,23 @@ impl NotificationChannel {
         }
     }
 
-    /// Whether a press on an Acknowledge control this channel already posted
+    pub fn button(&self, action: AlertAction) -> bool {
+        match action {
+            AlertAction::Acknowledge => self.acknowledge_button,
+            AlertAction::Resolve => self.resolve_button,
+        }
+    }
+
+    /// Whether its switch for `action` is on and its kind can carry one.
+    pub fn offers(&self, action: AlertAction) -> bool {
+        self.button(action) && self.kind.offers(action)
+    }
+
+    /// Whether a press on an `action` control this channel already posted
     /// still counts: switching the button off, disabling the channel or
     /// turning it into a kind without one withdraws those out there too.
-    pub fn takes_acknowledgements(&self) -> bool {
-        self.enabled && self.acknowledge_button && self.kind.offers_acknowledge()
+    pub fn takes(&self, action: AlertAction) -> bool {
+        self.enabled && self.offers(action)
     }
 
     /// One tag in common is enough: a team owns a set of resources, not an
@@ -537,6 +596,9 @@ pub struct NewNotificationChannel {
     /// See [`NotificationChannel::acknowledge_button`].
     #[serde(default = "default_true")]
     pub acknowledge_button: bool,
+    /// See [`NotificationChannel::resolve_button`].
+    #[serde(default)]
+    pub resolve_button: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
@@ -548,6 +610,7 @@ pub struct NotificationChannelUpdate {
     /// Replaces the whole rule; `[]` clears it.
     pub auto_bind_tags: Option<Vec<String>>,
     pub acknowledge_button: Option<bool>,
+    pub resolve_button: Option<bool>,
 }
 
 #[cfg(test)]
@@ -973,23 +1036,67 @@ mod tests {
 
     #[test]
     fn a_press_counts_only_on_an_enabled_channel_that_still_offers_the_button() {
-        let ch = sample_channel(false, false);
-        assert!(ch.takes_acknowledgements());
+        use AlertAction::{Acknowledge, Resolve};
+        let ch = NotificationChannel {
+            resolve_button: true,
+            ..sample_channel(false, false)
+        };
+        assert!(ch.takes(Acknowledge));
+        assert!(ch.takes(Resolve));
         let off = NotificationChannel {
             acknowledge_button: false,
+            resolve_button: false,
             ..ch.clone()
         };
-        assert!(!off.takes_acknowledgements());
+        assert!(!off.takes(Acknowledge));
+        assert!(!off.takes(Resolve));
         let disabled = NotificationChannel {
             enabled: false,
             ..ch.clone()
         };
-        assert!(!disabled.takes_acknowledgements());
+        assert!(!disabled.takes(Acknowledge));
+        assert!(!disabled.takes(Resolve));
         let retyped = NotificationChannel {
             kind: ChannelKind::Webhook,
             ..ch
         };
-        assert!(!retyped.takes_acknowledgements());
+        assert!(!retyped.takes(Acknowledge));
+        assert!(!retyped.takes(Resolve));
+    }
+
+    #[test]
+    fn each_button_is_switched_on_its_own() {
+        use AlertAction::{Acknowledge, Resolve};
+        let ch = sample_channel(false, false);
+        assert!(ch.takes(Acknowledge), "acknowledge is on by default");
+        assert!(!ch.takes(Resolve), "resolve waits to be switched on");
+    }
+
+    /// A link that works from the notification alone cannot say who closed the
+    /// incident, so it never carries Resolve.
+    #[test]
+    fn resolve_is_held_to_kinds_whose_press_names_the_presser() {
+        use AlertAction::{Acknowledge, Resolve};
+        assert!(ChannelKind::Ntfy.offers(Acknowledge));
+        assert!(!ChannelKind::Ntfy.offers(Resolve));
+        for kind in [
+            ChannelKind::Slack,
+            ChannelKind::SlackApp,
+            ChannelKind::Discord,
+            ChannelKind::DiscordApp,
+            ChannelKind::MsTeams,
+            ChannelKind::GoogleChat,
+            ChannelKind::Mattermost,
+            ChannelKind::Email,
+            ChannelKind::TelegramApp,
+        ] {
+            assert!(kind.offers(Resolve), "{kind:?}");
+        }
+        for kind in ChannelKind::ALL {
+            if !kind.offers(Acknowledge) {
+                assert!(!kind.offers(Resolve), "{kind:?}");
+            }
+        }
     }
 
     fn sample_channel(kind_email: bool, verified: bool) -> NotificationChannel {
@@ -1020,6 +1127,7 @@ mod tests {
             last_delivered_at: None,
             auto_bind_tags: Vec::new(),
             acknowledge_button: true,
+            resolve_button: false,
             write_source: WriteSource::Ui,
             created_at: Utc::now(),
             updated_at: Utc::now(),

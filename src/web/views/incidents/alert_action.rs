@@ -1,9 +1,9 @@
-//! `/incidents/{id}/acknowledge`, where the Acknowledge button on a chat or
-//! mail alert lands. The person signs in, so the ack names them. GET changes
-//! nothing, so a link scanner, a prefetch or a page that navigates here takes
-//! nothing and moves nobody to another org; the POST acknowledges, pinned to
-//! the episode the alert was about, while the channel it came through still
-//! offers the button.
+//! `/incidents/{id}/acknowledge` and `/incidents/{id}/resolve`, where the
+//! Acknowledge and Resolve buttons on a chat or mail alert land. The person
+//! signs in, so the action names them. GET changes nothing, so a link scanner,
+//! a prefetch or a page that navigates here takes nothing and moves nobody to
+//! another org; the POST acts, pinned to the episode the alert was about,
+//! while the channel it came through still offers the button.
 
 use askama::Template;
 use askama_web::WebTemplate;
@@ -14,7 +14,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::app::AppState;
-use crate::domain::{OpsIncident, OrgId, UserId};
+use crate::domain::{AlertAction, NotificationReason, OpsIncident, OrgId, UserId};
 use crate::notifier::ack_page::{AlertLink, AlertLinkQuery};
 use crate::request::auth::{Session, login_redirect};
 use crate::storage::{Actor, LifecycleOutcome};
@@ -42,9 +42,11 @@ pub enum Phase {
 }
 
 #[derive(Template, WebTemplate, Default)]
-#[template(path = "incidents/acknowledge.html")]
-pub struct AcknowledgePage {
+#[template(path = "incidents/alert_action.html")]
+pub struct AlertActionPage {
     pub phase: Phase,
+    /// Whether the button resolves rather than acknowledges.
+    pub resolving: bool,
     pub id: String,
     pub label: String,
     pub severity: &'static str,
@@ -62,14 +64,15 @@ pub struct AcknowledgePage {
 }
 
 fn missing() -> Response {
-    (StatusCode::NOT_FOUND, AcknowledgePage::default()).into_response()
+    (StatusCode::NOT_FOUND, AlertActionPage::default()).into_response()
 }
 
 /// Stale before resolved, the order the store refuses in: an alert from an
 /// earlier outage is out of date whatever the incident did since. A withdrawn
 /// button only replaces the offer, so the page still says what became of the
-/// incident.
+/// incident. Only an acknowledgement can already be the viewer's own.
 fn phase(
+    action: AlertAction,
     inc: &OpsIncident,
     episode: i64,
     link: &AlertLink,
@@ -80,7 +83,7 @@ fn phase(
         Phase::Stale
     } else if !inc.state.is_open() {
         Phase::Resolved
-    } else if acks.mine {
+    } else if action == AlertAction::Acknowledge && acks.mine {
         Phase::Taken
     } else if !offered {
         Phase::Withdrawn
@@ -106,19 +109,40 @@ async fn is_member(
 }
 
 /// Whether the channel the alert came through still offers the button.
-async fn still_offered(state: &AppState, link: &AlertLink) -> WebResult<bool> {
+async fn still_offered(state: &AppState, link: &AlertLink, action: AlertAction) -> WebResult<bool> {
     Ok(state
         .notification_channel_store
-        .takes_acknowledgements(link.org, link.channel)
+        .takes(link.org, link.channel, action)
         .await?)
 }
 
 pub async fn acknowledge_page(
+    state: State<AppState>,
+    session: Session,
+    uri: OriginalUri,
+    id: Path<Uuid>,
+    q: Query<AlertLinkQuery>,
+) -> WebResult<Response> {
+    show(state, session, uri, id, q, AlertAction::Acknowledge).await
+}
+
+pub async fn resolve_page(
+    state: State<AppState>,
+    session: Session,
+    uri: OriginalUri,
+    id: Path<Uuid>,
+    q: Query<AlertLinkQuery>,
+) -> WebResult<Response> {
+    show(state, session, uri, id, q, AlertAction::Resolve).await
+}
+
+async fn show(
     State(state): State<AppState>,
     session: Session,
     OriginalUri(uri): OriginalUri,
     Path(id): Path<Uuid>,
     Query(q): Query<AlertLinkQuery>,
+    action: AlertAction,
 ) -> WebResult<Response> {
     let Some(user) = session.user_id() else {
         let back = uri.path_and_query().map_or(uri.path(), |p| p.as_str());
@@ -149,15 +173,16 @@ pub async fn acknowledge_page(
                 None => None,
             })
         },
-        still_offered(&state, &link),
+        still_offered(&state, &link, action),
     )?;
     let Some(episode) = episode else {
         return Ok(missing());
     };
     let acks = ack_list(&acks.remove(&id).unwrap_or_default(), user, &members);
     let ongoing = inc.state.is_open();
-    Ok(AcknowledgePage {
-        phase: phase(&inc, episode, &link, &acks, offered),
+    Ok(AlertActionPage {
+        phase: phase(action, &inc, episode, &link, &acks, offered),
+        resolving: action == AlertAction::Resolve,
         id: id.to_string(),
         label: incident_label(inc.title.clone(), monitor_name),
         severity: inc.severity.as_db_str(),
@@ -171,18 +196,37 @@ pub async fn acknowledge_page(
             .flatten(),
         monitored: inc.target_id.is_some(),
         acks,
-        action: link.path(id),
+        action: link.path(action, id),
         switch_org: (session.active_org_id != Some(org)).then(|| org.0.to_string()),
     }
     .into_response())
 }
 
-/// The status is the whole answer: the page reloads and explains it.
 pub async fn acknowledge(
+    state: State<AppState>,
+    session: Session,
+    id: Path<Uuid>,
+    q: Query<AlertLinkQuery>,
+) -> WebResult<StatusCode> {
+    take(state, session, id, q, AlertAction::Acknowledge).await
+}
+
+pub async fn resolve(
+    state: State<AppState>,
+    session: Session,
+    id: Path<Uuid>,
+    q: Query<AlertLinkQuery>,
+) -> WebResult<StatusCode> {
+    take(state, session, id, q, AlertAction::Resolve).await
+}
+
+/// The status is the whole answer: the page reloads and explains it.
+async fn take(
     State(state): State<AppState>,
     session: Session,
     Path(id): Path<Uuid>,
     Query(q): Query<AlertLinkQuery>,
+    action: AlertAction,
 ) -> WebResult<StatusCode> {
     let Some(user) = session.user_id() else {
         return Ok(StatusCode::UNAUTHORIZED);
@@ -192,7 +236,7 @@ pub async fn acknowledge(
     };
     let (member, offered) = tokio::try_join!(
         is_member(&state, &session, user, link.org),
-        still_offered(&state, &link),
+        still_offered(&state, &link, action),
     )?;
     if !member {
         return Ok(StatusCode::NOT_FOUND);
@@ -200,18 +244,30 @@ pub async fn acknowledge(
     if !offered {
         return Ok(StatusCode::CONFLICT);
     }
-    let outcome = state
-        .incident_ops_store
-        .acknowledge(link.org, id, Actor::User(user), None, Some(link.episode))
-        .await?
-        .outcome;
+    let ops = &state.incident_ops_store;
+    let actor = Actor::User(user);
+    let outcome = match action {
+        AlertAction::Acknowledge => {
+            ops.acknowledge(link.org, id, actor, None, Some(link.episode))
+                .await?
+                .outcome
+        }
+        AlertAction::Resolve => {
+            ops.resolve_episode(link.org, id, actor, link.episode)
+                .await?
+        }
+    };
     Ok(match outcome {
         LifecycleOutcome::Updated(_) => {
             tracing::info!(
                 org_id = %link.org.0,
                 incident_id = %id,
-                "incident acknowledged from an alert's acknowledge page"
+                action = action.as_path(),
+                "incident acted on from an alert's page"
             );
+            if action == AlertAction::Resolve {
+                state.signal_incident(link.org, id, NotificationReason::Resolved);
+            }
             StatusCode::NO_CONTENT
         }
         LifecycleOutcome::Stale | LifecycleOutcome::IllegalTransition(_) => StatusCode::CONFLICT,
@@ -248,7 +304,14 @@ mod tests {
     #[test]
     fn an_alert_from_an_earlier_outage_takes_nothing_whatever_came_since() {
         for state in [IncidentState::Triggered, IncidentState::Resolved] {
-            let p = phase(&incident(state), 2, &link(1), &mine(false), true);
+            let p = phase(
+                AlertAction::Acknowledge,
+                &incident(state),
+                2,
+                &link(1),
+                &mine(false),
+                true,
+            );
             assert_eq!(p, Phase::Stale, "{state:?}");
         }
     }
@@ -259,37 +322,99 @@ mod tests {
     fn a_withdrawn_button_replaces_only_the_offer() {
         let open = incident(IncidentState::Triggered);
         assert_eq!(
-            phase(&open, 1, &link(1), &mine(false), false),
+            phase(
+                AlertAction::Acknowledge,
+                &open,
+                1,
+                &link(1),
+                &mine(false),
+                false
+            ),
             Phase::Withdrawn
         );
-        assert_eq!(phase(&open, 1, &link(1), &mine(true), false), Phase::Taken);
+        assert_eq!(
+            phase(
+                AlertAction::Acknowledge,
+                &open,
+                1,
+                &link(1),
+                &mine(true),
+                false
+            ),
+            Phase::Taken
+        );
         let closed = incident(IncidentState::Resolved);
         assert_eq!(
-            phase(&closed, 1, &link(1), &mine(false), false),
+            phase(
+                AlertAction::Acknowledge,
+                &closed,
+                1,
+                &link(1),
+                &mine(false),
+                false
+            ),
             Phase::Resolved
         );
-        assert_eq!(phase(&open, 2, &link(1), &mine(false), false), Phase::Stale);
+        assert_eq!(
+            phase(
+                AlertAction::Acknowledge,
+                &open,
+                2,
+                &link(1),
+                &mine(false),
+                false
+            ),
+            Phase::Stale
+        );
     }
 
     #[test]
     fn the_current_episode_offers_the_button_until_the_viewer_took_it() {
         let inc = incident(IncidentState::Acknowledged);
-        assert_eq!(phase(&inc, 1, &link(1), &mine(false), true), Phase::Confirm);
-        assert_eq!(phase(&inc, 1, &link(1), &mine(true), true), Phase::Taken);
+        assert_eq!(
+            phase(
+                AlertAction::Acknowledge,
+                &inc,
+                1,
+                &link(1),
+                &mine(false),
+                true
+            ),
+            Phase::Confirm
+        );
+        assert_eq!(
+            phase(
+                AlertAction::Acknowledge,
+                &inc,
+                1,
+                &link(1),
+                &mine(true),
+                true
+            ),
+            Phase::Taken
+        );
         let closed = incident(IncidentState::Resolved);
         assert_eq!(
-            phase(&closed, 1, &link(1), &mine(false), true),
+            phase(
+                AlertAction::Acknowledge,
+                &closed,
+                1,
+                &link(1),
+                &mine(false),
+                true
+            ),
             Phase::Resolved
         );
     }
 
-    fn render(page: AcknowledgePage) -> String {
+    fn render(page: AlertActionPage) -> String {
         page.render().unwrap()
     }
 
-    fn sample(phase: Phase) -> AcknowledgePage {
-        AcknowledgePage {
+    fn sample(phase: Phase) -> AlertActionPage {
+        AlertActionPage {
             phase,
+            resolving: false,
             id: "7".into(),
             label: "db unreachable".into(),
             severity: "major",
@@ -310,7 +435,7 @@ mod tests {
     #[test]
     fn only_the_confirm_phase_offers_the_button() {
         let confirm = page(Phase::Confirm);
-        assert!(confirm.contains("data-incident-acknowledge"), "{confirm}");
+        assert!(confirm.contains("data-alert-action"), "{confirm}");
         assert!(
             confirm.contains(
                 r#"data-action="/incidents/7/acknowledge?org=1&#38;channel=2&#38;episode=0""#
@@ -325,7 +450,7 @@ mod tests {
             Phase::Withdrawn,
         ] {
             let html = page(other);
-            assert!(!html.contains("data-incident-acknowledge"), "{other:?}");
+            assert!(!html.contains("data-alert-action"), "{other:?}");
             assert!(html.contains(r#"href="/incidents/7""#), "{other:?}");
         }
     }
@@ -392,5 +517,54 @@ mod tests {
         let html = render(elsewhere);
         assert!(html.contains(r#"data-switch-org="org-b""#), "{html}");
         assert!(html.contains("incident_acknowledge"), "script loaded");
+    }
+
+    /// Taking an incident does not close it, so the viewer's own
+    /// acknowledgement is no reason to withhold Resolve.
+    #[test]
+    fn resolve_is_still_offered_to_whoever_acknowledged() {
+        let inc = incident(IncidentState::Acknowledged);
+        let resolve = |inc, episode, offered| {
+            phase(
+                AlertAction::Resolve,
+                inc,
+                episode,
+                &link(1),
+                &mine(true),
+                offered,
+            )
+        };
+        assert_eq!(resolve(&inc, 1, true), Phase::Confirm);
+        assert_eq!(resolve(&inc, 1, false), Phase::Withdrawn);
+        assert_eq!(resolve(&inc, 2, true), Phase::Stale);
+        let closed = incident(IncidentState::Resolved);
+        assert_eq!(resolve(&closed, 1, true), Phase::Resolved);
+    }
+
+    fn resolving(phase: Phase) -> String {
+        let mut page = sample(phase);
+        page.resolving = true;
+        page.action = "/incidents/7/resolve?org=1&channel=2&episode=0".into();
+        render(page)
+    }
+
+    #[test]
+    fn the_resolve_page_speaks_of_resolving_not_acknowledging() {
+        let confirm = resolving(Phase::Confirm);
+        assert!(confirm.contains("Resolve this incident?"), "{confirm}");
+        assert!(confirm.contains(">resolve</button>"), "{confirm}");
+        assert!(!confirm.contains("acknowledge</button>"), "{confirm}");
+        assert!(confirm.contains("data-alert-action"), "{confirm}");
+        assert!(resolving(Phase::Withdrawn).contains("no longer offers the Resolve"));
+        let resolved = resolving(Phase::Resolved);
+        assert!(
+            resolved.contains("This incident is resolved."),
+            "{resolved}"
+        );
+        assert!(!resolved.contains("Nothing to acknowledge"), "{resolved}");
+        assert!(resolving(Phase::Stale).contains("Open it to resolve that one"));
+        for other in [Phase::Resolved, Phase::Stale, Phase::Withdrawn] {
+            assert!(!resolving(other).contains("data-alert-action"), "{other:?}");
+        }
     }
 }

@@ -1,7 +1,7 @@
 //! `/hooks/discord/interactions`, our Discord app's Interactions Endpoint URL.
 //! Discord's signature is the only authentication, and Discord checks now and
-//! then that a bad one is refused. A press on the Acknowledge button is
-//! answered at once with a private "thinking…", since Discord drops the
+//! then that a bad one is refused. A press on the Acknowledge or Resolve
+//! button is answered at once with a private "thinking…", since Discord drops the
 //! interaction after 3 seconds, and taken off the request through
 //! [`super::app_ack`]; the outcome then replaces the "thinking…". Every other
 //! interaction gets a valid answer that does nothing.
@@ -79,7 +79,7 @@ async fn handle_press(state: &AppState, press: Press) {
         sender: external_id(&state.app_link_secret, &press.person),
         data: &press.custom_id,
     };
-    let (notice, listed) = answer_offering_link(state, pressed, press.username.as_deref(), |url| {
+    let (notice, done) = answer_offering_link(state, pressed, press.username.as_deref(), |url| {
         format!("[Link your Discord account](<{url}>) so your next presses carry your name.")
     })
     .await;
@@ -90,10 +90,10 @@ async fn handle_press(state: &AppState, press: Press) {
         tracing::warn!(error = %err, "discord press answer failed");
         return;
     }
-    if listed {
-        let text = announcement(press.display_name.as_deref().map(escape));
+    if let Some(action) = done {
+        let text = announcement(action, press.display_name.as_deref().map(escape));
         if let Err(err) = announce(http, &press.reply, &text).await {
-            tracing::warn!(error = %err, "discord acknowledgement announcement failed");
+            tracing::warn!(error = %err, "discord press announcement failed");
         }
     }
 }

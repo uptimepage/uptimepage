@@ -46,6 +46,7 @@ fn email_channel(name: &str, to: &str) -> NewNotificationChannel {
         enabled: true,
         auto_bind_tags: Vec::new(),
         acknowledge_button: true,
+        resolve_button: false,
     }
 }
 
@@ -207,6 +208,7 @@ async fn mint_cap_and_config_replace_resets_gate() {
                 enabled: true,
                 auto_bind_tags: Vec::new(),
                 acknowledge_button: true,
+                resolve_button: false,
             },
             WriteSource::Ui,
             10,

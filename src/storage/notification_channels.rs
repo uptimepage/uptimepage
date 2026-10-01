@@ -19,7 +19,7 @@ use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use crate::domain::{
-    ChannelConfig, ChannelKind, NewNotificationChannel, NotificationChannel,
+    AlertAction, ChannelConfig, ChannelKind, NewNotificationChannel, NotificationChannel,
     NotificationChannelUpdate, OrgId, UserId, WriteSource,
 };
 use crate::error::codes;
@@ -134,19 +134,18 @@ pub trait NotificationChannelStore: Send + Sync {
     /// Channels of `kind` (any org) still carrying `external_ref`.
     async fn count_by_external_ref(&self, kind: ChannelKind, external_ref: &str) -> Result<i64>;
     /// Every `(org, channel)` of `kind` pointed at `external_ref` that still
-    /// takes an Acknowledge press, per
-    /// [`NotificationChannel::takes_acknowledgements`]. Cross-org: several
-    /// orgs can link one chat, and a press in it names none of them.
-    async fn acknowledging_by_external_ref(
+    /// takes an `action` press, per [`NotificationChannel::takes`]. Cross-org:
+    /// several orgs can link one chat, and a press in it names none of them.
+    async fn taking_by_external_ref(
         &self,
         kind: ChannelKind,
         external_ref: &str,
+        action: AlertAction,
     ) -> Result<Vec<(OrgId, Uuid)>>;
-    /// Whether this channel still takes an Acknowledge press, per
-    /// [`NotificationChannel::takes_acknowledgements`]; `false` once it is
-    /// gone. Reads plain columns, so a config that no longer opens refuses
-    /// nothing here.
-    async fn takes_acknowledgements(&self, org: OrgId, id: Uuid) -> Result<bool>;
+    /// Whether this channel still takes an `action` press, per
+    /// [`NotificationChannel::takes`]; `false` once it is gone. Reads plain
+    /// columns, so a config that no longer opens refuses nothing here.
+    async fn takes(&self, org: OrgId, id: Uuid, action: AlertAction) -> Result<bool>;
     /// Compare-and-swap on `from`. Verification, failure run and
     /// `write_source` are left alone: the operator changed nothing.
     async fn follow_chat_migration(
@@ -317,6 +316,7 @@ struct ChannelRow {
     last_delivered_at: Option<DateTime<Utc>>,
     auto_bind_tags: Vec<String>,
     acknowledge_button: bool,
+    resolve_button: bool,
     write_source: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -340,10 +340,19 @@ impl ChannelRow {
             last_delivered_at: self.last_delivered_at,
             auto_bind_tags: self.auto_bind_tags,
             acknowledge_button: self.acknowledge_button,
+            resolve_button: self.resolve_button,
             write_source: WriteSource::from_db(&self.write_source),
             created_at: self.created_at,
             updated_at: self.updated_at,
         })
+    }
+}
+
+/// The column behind each button's switch, spliced into a query as a constant.
+fn button_column(action: AlertAction) -> &'static str {
+    match action {
+        AlertAction::Acknowledge => "acknowledge_button",
+        AlertAction::Resolve => "resolve_button",
     }
 }
 
@@ -379,10 +388,10 @@ impl NotificationChannelStore for PgNotificationChannelStore {
             .map_err(|e| AppError::Other(anyhow!("advisory lock: {e}")))?;
         let pool_orgs = accounts::live_orgs("$10");
         let row: Option<ChannelRow> = sqlx::query_as(
-            &format!(r#"INSERT INTO notification_channels (org_id, name, kind, config, external_ref, enabled, write_source, auto_bind_tags, acknowledge_button)
-               SELECT $1, $2, $3, $4, $5, $6, $8, $9, $11
+            &format!(r#"INSERT INTO notification_channels (org_id, name, kind, config, external_ref, enabled, write_source, auto_bind_tags, acknowledge_button, resolve_button)
+               SELECT $1, $2, $3, $4, $5, $6, $8, $9, $11, $12
                WHERE (SELECT count(*) FROM notification_channels WHERE org_id IN ({pool_orgs})) < $7
-               RETURNING id, name, config, enabled, disabled_reason, verified_at, consecutive_failures, failing_since, last_delivered_at, auto_bind_tags, acknowledge_button, write_source, created_at, updated_at"#),
+               RETURNING id, name, config, enabled, disabled_reason, verified_at, consecutive_failures, failing_since, last_delivered_at, auto_bind_tags, acknowledge_button, resolve_button, write_source, created_at, updated_at"#),
         )
         .bind(org.0)
         .bind(&new.name)
@@ -395,6 +404,7 @@ impl NotificationChannelStore for PgNotificationChannelStore {
         .bind(&new.auto_bind_tags)
         .bind(account.0)
         .bind(new.acknowledge_button)
+        .bind(new.resolve_button)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| {
@@ -460,7 +470,7 @@ impl NotificationChannelStore for PgNotificationChannelStore {
                SELECT $1, $2, 'email', $3, $2, true, now(), 'ui'
                WHERE (SELECT count(*) FROM notification_channels WHERE org_id IN ({pool_orgs})) < $4
                ON CONFLICT (org_id, name) DO NOTHING
-               RETURNING id, name, config, enabled, disabled_reason, verified_at, consecutive_failures, failing_since, last_delivered_at, auto_bind_tags, acknowledge_button, write_source, created_at, updated_at"#),
+               RETURNING id, name, config, enabled, disabled_reason, verified_at, consecutive_failures, failing_since, last_delivered_at, auto_bind_tags, acknowledge_button, resolve_button, write_source, created_at, updated_at"#),
         )
         .bind(org.0)
         .bind(&address)
@@ -490,7 +500,7 @@ impl NotificationChannelStore for PgNotificationChannelStore {
 
     async fn list(&self, org: OrgId) -> Result<Vec<NotificationChannel>> {
         let rows: Vec<ChannelRow> = sqlx::query_as(
-            r#"SELECT id, name, config, enabled, disabled_reason, verified_at, consecutive_failures, failing_since, last_delivered_at, auto_bind_tags, acknowledge_button, write_source, created_at, updated_at
+            r#"SELECT id, name, config, enabled, disabled_reason, verified_at, consecutive_failures, failing_since, last_delivered_at, auto_bind_tags, acknowledge_button, resolve_button, write_source, created_at, updated_at
                FROM notification_channels
                WHERE org_id = $1
                ORDER BY name"#,
@@ -506,7 +516,7 @@ impl NotificationChannelStore for PgNotificationChannelStore {
 
     async fn get(&self, org: OrgId, id: Uuid) -> Result<Option<NotificationChannel>> {
         let row: Option<ChannelRow> = sqlx::query_as(
-            r#"SELECT id, name, config, enabled, disabled_reason, verified_at, consecutive_failures, failing_since, last_delivered_at, auto_bind_tags, acknowledge_button, write_source, created_at, updated_at
+            r#"SELECT id, name, config, enabled, disabled_reason, verified_at, consecutive_failures, failing_since, last_delivered_at, auto_bind_tags, acknowledge_button, resolve_button, write_source, created_at, updated_at
                FROM notification_channels WHERE id = $1 AND org_id = $2"#,
         )
         .bind(id)
@@ -592,10 +602,11 @@ impl NotificationChannelStore for PgNotificationChannelStore {
                    external_ref = CASE WHEN $4::jsonb IS NOT NULL THEN $8 ELSE external_ref END,
                    auto_bind_tags = COALESCE($9, auto_bind_tags),
                    acknowledge_button = COALESCE($10, acknowledge_button),
+                   resolve_button = COALESCE($11, resolve_button),
                    write_source = $7,
                    updated_at  = now()
                WHERE id = $1 AND org_id = $6
-               RETURNING id, name, config, enabled, disabled_reason, verified_at, consecutive_failures, failing_since, last_delivered_at, auto_bind_tags, acknowledge_button, write_source, created_at, updated_at"#,
+               RETURNING id, name, config, enabled, disabled_reason, verified_at, consecutive_failures, failing_since, last_delivered_at, auto_bind_tags, acknowledge_button, resolve_button, write_source, created_at, updated_at"#,
         )
         .bind(id)
         .bind(update.name.as_ref())
@@ -607,6 +618,7 @@ impl NotificationChannelStore for PgNotificationChannelStore {
         .bind(config.as_ref().and_then(|c| c.lifecycle_ref()))
         .bind(update.auto_bind_tags.as_ref())
         .bind(update.acknowledge_button)
+        .bind(update.resolve_button)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| {
@@ -701,39 +713,38 @@ impl NotificationChannelStore for PgNotificationChannelStore {
         Ok(n)
     }
 
-    async fn acknowledging_by_external_ref(
+    async fn taking_by_external_ref(
         &self,
         kind: ChannelKind,
         external_ref: &str,
+        action: AlertAction,
     ) -> Result<Vec<(OrgId, Uuid)>> {
-        let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
+        let column = button_column(action);
+        let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(&format!(
             r#"SELECT org_id, id FROM notification_channels /* SAFE: a press in a linked chat carries no org; each candidate is then proven by the button's MAC, which binds its org and channel */
-               WHERE kind = $1 AND external_ref = $2 AND enabled AND acknowledge_button"#,
-        )
+               WHERE kind = $1 AND external_ref = $2 AND enabled AND {column}"#
+        ))
         .bind(kind.as_db_str())
         .bind(external_ref)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| AppError::Other(anyhow!("acknowledging by external ref: {e}")))?;
+        .map_err(|e| AppError::Other(anyhow!("taking by external ref: {e}")))?;
         Ok(rows.into_iter().map(|(o, id)| (OrgId(o), id)).collect())
     }
 
-    async fn takes_acknowledgements(&self, org: OrgId, id: Uuid) -> Result<bool> {
-        let offering: Vec<&str> = ChannelKind::ALL
-            .iter()
-            .filter(|k| k.offers_acknowledge())
-            .map(|k| k.as_db_str())
-            .collect();
-        let takes: Option<bool> = sqlx::query_scalar(
-            "SELECT enabled AND acknowledge_button AND kind = ANY($3)
-               FROM notification_channels WHERE id = $1 AND org_id = $2",
-        )
+    async fn takes(&self, org: OrgId, id: Uuid, action: AlertAction) -> Result<bool> {
+        let offering = ChannelKind::offering(action);
+        let column = button_column(action);
+        let takes: Option<bool> = sqlx::query_scalar(&format!(
+            "SELECT enabled AND {column} AND kind = ANY($3)
+               FROM notification_channels WHERE id = $1 AND org_id = $2"
+        ))
         .bind(id)
         .bind(org.0)
         .bind(&offering)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| AppError::Other(anyhow!("channel takes acknowledgements: {e}")))?;
+        .map_err(|e| AppError::Other(anyhow!("channel takes a press: {e}")))?;
         Ok(takes.unwrap_or(false))
     }
 
@@ -1017,6 +1028,7 @@ impl NotificationChannelStore for InMemoryNotificationChannelStore {
             last_delivered_at: None,
             auto_bind_tags: new.auto_bind_tags,
             acknowledge_button: new.acknowledge_button,
+            resolve_button: new.resolve_button,
             write_source: source,
             created_at: now,
             updated_at: now,
@@ -1058,6 +1070,7 @@ impl NotificationChannelStore for InMemoryNotificationChannelStore {
             last_delivered_at: None,
             auto_bind_tags: Vec::new(),
             acknowledge_button: true,
+            resolve_button: false,
             write_source: WriteSource::Ui,
             created_at: now,
             updated_at: now,
@@ -1140,6 +1153,9 @@ impl NotificationChannelStore for InMemoryNotificationChannelStore {
         if let Some(on) = update.acknowledge_button {
             entry.ch.acknowledge_button = on;
         }
+        if let Some(on) = update.resolve_button {
+            entry.ch.resolve_button = on;
+        }
         if let Some(enabled) = update.enabled {
             let was_disabled = !entry.ch.enabled;
             entry.ch.enabled = enabled;
@@ -1194,10 +1210,11 @@ impl NotificationChannelStore for InMemoryNotificationChannelStore {
             .count() as i64)
     }
 
-    async fn acknowledging_by_external_ref(
+    async fn taking_by_external_ref(
         &self,
         kind: ChannelKind,
         external_ref: &str,
+        action: AlertAction,
     ) -> Result<Vec<(OrgId, Uuid)>> {
         Ok(self
             .inner
@@ -1205,20 +1222,20 @@ impl NotificationChannelStore for InMemoryNotificationChannelStore {
             .iter()
             .filter(|e| {
                 e.ch.kind == kind
-                    && e.ch.takes_acknowledgements()
+                    && e.ch.takes(action)
                     && e.external_ref.as_deref() == Some(external_ref)
             })
             .map(|e| (e.org, e.ch.id))
             .collect())
     }
 
-    async fn takes_acknowledgements(&self, org: OrgId, id: Uuid) -> Result<bool> {
+    async fn takes(&self, org: OrgId, id: Uuid, action: AlertAction) -> Result<bool> {
         Ok(self
             .inner
             .lock()
             .iter()
             .find(|e| e.org == org && e.ch.id == id)
-            .is_some_and(|e| e.ch.takes_acknowledgements()))
+            .is_some_and(|e| e.ch.takes(action)))
     }
 
     async fn follow_chat_migration(
@@ -1371,6 +1388,7 @@ mod tests {
             enabled: true,
             auto_bind_tags: Vec::new(),
             acknowledge_button: true,
+            resolve_button: false,
         }
     }
 
@@ -1576,6 +1594,7 @@ mod tests {
             enabled: true,
             auto_bind_tags: Vec::new(),
             acknowledge_button: true,
+            resolve_button: false,
         };
         // Two orgs linked the same chat; a third channel points elsewhere.
         let a = store
@@ -1670,6 +1689,7 @@ mod tests {
             enabled: true,
             auto_bind_tags: Vec::new(),
             acknowledge_button: true,
+            resolve_button: false,
         };
         let byo = NewNotificationChannel {
             name: "own-bot".into(),
@@ -1680,6 +1700,7 @@ mod tests {
             enabled: true,
             auto_bind_tags: Vec::new(),
             acknowledge_button: true,
+            resolve_button: false,
         };
         let a = store
             .create(org(), linked("prod", "-100"), WriteSource::Ui, 10, None)
@@ -2037,6 +2058,7 @@ mod tests {
             updated_at: Utc::now(),
             auto_bind_tags: Vec::new(),
             acknowledge_button: true,
+            resolve_button: false,
         };
         assert!(!ch.is_failing(3));
         ch.consecutive_failures = 3;

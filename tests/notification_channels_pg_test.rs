@@ -15,10 +15,10 @@ use std::time::Duration;
 
 use chrono::Utc;
 use uptimepage::domain::{
-    AlertBinding, ChannelConfig, ChannelKind, CheckSpec, DiscordAppConfig, EmailConfig,
-    ExpectedStatus, NewIncidentNotification, NewNotificationChannel, NewTarget,
-    NotificationChannelUpdate, NotificationReason, NotificationStatus, SlackAppConfig, SlackConfig,
-    TargetAlerts, WriteSource,
+    AlertAction, AlertBinding, ChannelConfig, ChannelKind, CheckSpec, DiscordAppConfig,
+    EmailConfig, ExpectedStatus, NewIncidentNotification, NewNotificationChannel, NewTarget,
+    NotificationChannelUpdate, NotificationReason, NotificationStatus, NtfyConfig, SlackAppConfig,
+    SlackConfig, TargetAlerts, WriteSource,
 };
 use uptimepage::error::AppError;
 use uptimepage::error::codes;
@@ -39,6 +39,7 @@ fn slack(name: &str, secret: &str) -> NewNotificationChannel {
         enabled: true,
         auto_bind_tags: Vec::new(),
         acknowledge_button: true,
+        resolve_button: false,
     }
 }
 
@@ -748,6 +749,7 @@ async fn telegram_lifecycle_disable_by_external_ref() {
         enabled: true,
         auto_bind_tags: Vec::new(),
         acknowledge_button: true,
+        resolve_button: false,
     };
     // Two orgs share the kicked chat; org A has a second, unrelated link.
     let a = store
@@ -861,6 +863,7 @@ async fn telegram_chat_migration_moves_sealed_config_ref_and_audit_live_pg() {
         enabled: true,
         auto_bind_tags: Vec::new(),
         acknowledge_button: true,
+        resolve_button: false,
     };
     let a = store
         .create(org_a, linked("prod"), WriteSource::Ui, 10, None)
@@ -882,6 +885,7 @@ async fn telegram_chat_migration_moves_sealed_config_ref_and_audit_live_pg() {
                 enabled: true,
                 auto_bind_tags: Vec::new(),
                 acknowledge_button: true,
+                resolve_button: false,
             },
             WriteSource::Api,
             10,
@@ -992,6 +996,7 @@ async fn email_lifecycle_ref_is_derived_and_follows_the_address() {
         enabled: true,
         auto_bind_tags: Vec::new(),
         acknowledge_button: true,
+        resolve_button: false,
     };
     let ch = store
         .create(org_a, email("mail", &addr_a), WriteSource::Ui, 10, None)
@@ -1356,6 +1361,7 @@ async fn the_failing_channel_gauge_agrees_with_the_domain_predicate_live_pg() {
                 enabled: true,
                 auto_bind_tags: Vec::new(),
                 acknowledge_button: true,
+                resolve_button: false,
             },
             WriteSource::Ui,
             i64::MAX,
@@ -1464,7 +1470,12 @@ async fn the_acknowledge_button_switch_round_trips_pg() {
         .unwrap()
         .unwrap();
     assert!(!kept.acknowledge_button);
-    assert!(!store.takes_acknowledgements(org_a, ch.id).await.unwrap());
+    assert!(
+        !store
+            .takes(org_a, ch.id, AlertAction::Acknowledge)
+            .await
+            .unwrap()
+    );
     store
         .update(
             org_a,
@@ -1478,12 +1489,22 @@ async fn the_acknowledge_button_switch_round_trips_pg() {
         .unwrap();
     let got = store.get(org_a, ch.id).await.unwrap().unwrap();
     assert!(got.acknowledge_button);
-    assert!(store.takes_acknowledgements(org_a, ch.id).await.unwrap());
+    assert!(
+        store
+            .takes(org_a, ch.id, AlertAction::Acknowledge)
+            .await
+            .unwrap()
+    );
     // Scoped to the org, and a channel that is gone takes nothing.
-    assert!(!store.takes_acknowledgements(org_b, ch.id).await.unwrap());
     assert!(
         !store
-            .takes_acknowledgements(org_a, uuid::Uuid::now_v7())
+            .takes(org_b, ch.id, AlertAction::Acknowledge)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !store
+            .takes(org_a, uuid::Uuid::now_v7(), AlertAction::Acknowledge)
             .await
             .unwrap()
     );
@@ -1495,6 +1516,204 @@ async fn the_acknowledge_button_switch_round_trips_pg() {
             .unwrap()
             .acknowledge_button
     );
+
+    cleanup(&pool, &[org_a, org_b], &[user_a, user_b]).await;
+}
+
+/// Resolve is off until switched on, switched apart from Acknowledge, and a
+/// kind whose press cannot name the presser never takes it.
+#[tokio::test]
+#[ignore = "needs DATABASE_URL"]
+async fn the_resolve_button_switch_round_trips_and_stands_apart_from_acknowledge_pg() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (org_a, org_b, user_a, user_b) = two_orgs(&pool, "nc-resolve").await;
+    let store = PgNotificationChannelStore::new(pool.clone(), None);
+    let ch = store
+        .create(
+            org_a,
+            slack("Ops", "T/B/resolve"),
+            WriteSource::Ui,
+            10,
+            Some(user_a),
+        )
+        .await
+        .unwrap();
+    assert!(!ch.resolve_button, "off until someone turns it on");
+    let takes = |action| store.takes(org_a, ch.id, action);
+    assert!(takes(AlertAction::Acknowledge).await.unwrap());
+    assert!(!takes(AlertAction::Resolve).await.unwrap());
+
+    let save = |acknowledge, resolve| NotificationChannelUpdate {
+        acknowledge_button: acknowledge,
+        resolve_button: resolve,
+        ..Default::default()
+    };
+    let on = store
+        .update(
+            org_a,
+            ch.id,
+            save(None, Some(true)),
+            WriteSource::Ui,
+            Some(user_a),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(on.resolve_button && on.acknowledge_button);
+    assert!(takes(AlertAction::Resolve).await.unwrap());
+
+    // A save that leaves it out keeps it, and the other switch is its own.
+    let kept = store
+        .update(
+            org_a,
+            ch.id,
+            save(Some(false), None),
+            WriteSource::Ui,
+            Some(user_a),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(kept.resolve_button && !kept.acknowledge_button);
+    assert!(!takes(AlertAction::Acknowledge).await.unwrap());
+    assert!(takes(AlertAction::Resolve).await.unwrap());
+    assert!(
+        store
+            .get(org_a, ch.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .resolve_button
+    );
+    assert!(
+        store
+            .list(org_a)
+            .await
+            .unwrap()
+            .iter()
+            .find(|c| c.id == ch.id)
+            .unwrap()
+            .resolve_button
+    );
+    // Scoped to the org, and a channel that is gone takes nothing.
+    assert!(
+        !store
+            .takes(org_b, ch.id, AlertAction::Resolve)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !store
+            .takes(org_a, uuid::Uuid::now_v7(), AlertAction::Resolve)
+            .await
+            .unwrap()
+    );
+
+    // An ntfy link is possession alone, so it takes Acknowledge and never
+    // Resolve, however the switch is set.
+    let ntfy = store
+        .create(
+            org_a,
+            NewNotificationChannel {
+                name: "Phone".into(),
+                config: ChannelConfig::Ntfy(NtfyConfig {
+                    server_url: "https://ntfy.sh".into(),
+                    topic: "ops-alerts".into(),
+                    access_token: None,
+                }),
+                enabled: true,
+                auto_bind_tags: Vec::new(),
+                acknowledge_button: true,
+                resolve_button: true,
+            },
+            WriteSource::Ui,
+            10,
+            Some(user_a),
+        )
+        .await
+        .unwrap();
+    assert!(
+        store
+            .takes(org_a, ntfy.id, AlertAction::Acknowledge)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !store
+            .takes(org_a, ntfy.id, AlertAction::Resolve)
+            .await
+            .unwrap()
+    );
+
+    cleanup(&pool, &[org_a, org_b], &[user_a, user_b]).await;
+}
+
+/// A Resolve press finds its channel through the Resolve switch alone.
+#[tokio::test]
+#[ignore = "needs DATABASE_URL"]
+async fn a_resolve_press_finds_only_channels_with_resolve_switched_on_pg() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (org_a, org_b, user_a, user_b) = two_orgs(&pool, "nc-resolvepress").await;
+    let store = PgNotificationChannelStore::new(pool.clone(), None);
+    let slack_channel = format!(
+        "C{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..10].to_uppercase()
+    );
+    let ch = store
+        .create(
+            org_a,
+            NewNotificationChannel {
+                name: "Ops".into(),
+                config: ChannelConfig::SlackApp(SlackAppConfig {
+                    webhook_url: "https://hooks.slack.com/services/T/B/resolvepress".into(),
+                    channel: "#ops".into(),
+                    channel_id: slack_channel.clone(),
+                    team_id: Some("T0AB12CD3".into()),
+                    mention: None,
+                }),
+                enabled: true,
+                auto_bind_tags: Vec::new(),
+                acknowledge_button: true,
+                resolve_button: false,
+            },
+            WriteSource::Ui,
+            10,
+            Some(user_a),
+        )
+        .await
+        .unwrap();
+    let finding =
+        |action| store.taking_by_external_ref(ChannelKind::SlackApp, &slack_channel, action);
+    assert_eq!(
+        finding(AlertAction::Acknowledge).await.unwrap(),
+        [(org_a, ch.id)]
+    );
+    assert!(finding(AlertAction::Resolve).await.unwrap().is_empty());
+
+    store
+        .update(
+            org_a,
+            ch.id,
+            NotificationChannelUpdate {
+                resolve_button: Some(true),
+                acknowledge_button: Some(false),
+                ..Default::default()
+            },
+            WriteSource::Ui,
+            Some(user_a),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        finding(AlertAction::Resolve).await.unwrap(),
+        [(org_a, ch.id)]
+    );
+    assert!(finding(AlertAction::Acknowledge).await.unwrap().is_empty());
 
     cleanup(&pool, &[org_a, org_b], &[user_a, user_b]).await;
 }
@@ -1512,7 +1731,7 @@ async fn a_press_finds_only_channels_that_still_take_acknowledgements_pg() {
     let store = PgNotificationChannelStore::new(pool.clone(), None);
     let slack_channel = format!(
         "C{}",
-        &uuid::Uuid::now_v7().simple().to_string()[..10].to_uppercase()
+        &uuid::Uuid::new_v4().simple().to_string()[..10].to_uppercase()
     );
     let connected = |name: &str| NewNotificationChannel {
         name: name.into(),
@@ -1526,6 +1745,7 @@ async fn a_press_finds_only_channels_that_still_take_acknowledgements_pg() {
         enabled: true,
         auto_bind_tags: Vec::new(),
         acknowledge_button: true,
+        resolve_button: false,
     };
     let a = store
         .create(org_a, connected("Ops"), WriteSource::Ui, 10, Some(user_a))
@@ -1535,13 +1755,23 @@ async fn a_press_finds_only_channels_that_still_take_acknowledgements_pg() {
         .create(org_b, connected("Ops"), WriteSource::Ui, 10, Some(user_b))
         .await
         .unwrap();
-    let found = || store.acknowledging_by_external_ref(ChannelKind::SlackApp, &slack_channel);
+    let found = || {
+        store.taking_by_external_ref(
+            ChannelKind::SlackApp,
+            &slack_channel,
+            AlertAction::Acknowledge,
+        )
+    };
     let both = found().await.unwrap();
     assert_eq!(both.len(), 2, "{both:?}");
     assert!(both.contains(&(org_a, a.id)) && both.contains(&(org_b, b.id)));
     assert!(
         store
-            .acknowledging_by_external_ref(ChannelKind::TelegramApp, &slack_channel)
+            .taking_by_external_ref(
+                ChannelKind::TelegramApp,
+                &slack_channel,
+                AlertAction::Acknowledge
+            )
             .await
             .unwrap()
             .is_empty()
@@ -1625,6 +1855,7 @@ async fn a_discord_press_finds_its_channel_by_webhook_pg() {
                 enabled: true,
                 auto_bind_tags: Vec::new(),
                 acknowledge_button: true,
+                resolve_button: false,
             },
             WriteSource::Ui,
             10,
@@ -1635,14 +1866,14 @@ async fn a_discord_press_finds_its_channel_by_webhook_pg() {
     assert_eq!(channel.kind, ChannelKind::DiscordApp);
     assert_eq!(
         store
-            .acknowledging_by_external_ref(ChannelKind::DiscordApp, &webhook)
+            .taking_by_external_ref(ChannelKind::DiscordApp, &webhook, AlertAction::Acknowledge)
             .await
             .unwrap(),
         [(org_a, channel.id)]
     );
     assert!(
         store
-            .acknowledging_by_external_ref(ChannelKind::SlackApp, &webhook)
+            .taking_by_external_ref(ChannelKind::SlackApp, &webhook, AlertAction::Acknowledge)
             .await
             .unwrap()
             .is_empty()

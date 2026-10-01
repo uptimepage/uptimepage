@@ -1,12 +1,13 @@
-// The page an alert's Acknowledge button opens: the press posts back to the
-// page's own link, then the page reloads to say where the incident now stands.
+// The page an alert's Acknowledge or Resolve button opens: the press posts
+// back to the page's own link, then the page reloads to say where the incident
+// now stands.
 // When the alert belongs to another of the viewer's orgs, "view incident"
 // switches to it on the click, never on opening the page.
 (function () {
     "use strict";
 
     const headers = { "X-Requested-With": "uptimepage" };
-    const result = document.querySelector("[data-acknowledge-result]");
+    const result = document.querySelector("[data-action-result]");
 
     function fail(message) {
         result.textContent = message;
@@ -34,7 +35,7 @@
         });
     }
 
-    const holder = document.querySelector("[data-incident-acknowledge]");
+    const holder = document.querySelector("[data-alert-action]");
     if (!holder) return;
     const button = holder.querySelector("button");
     button.addEventListener("click", async function () {
@@ -49,7 +50,7 @@
             }
             throw new Error("HTTP " + r.status);
         } catch (err) {
-            fail("Could not acknowledge: " + err.message);
+            fail("Could not " + button.textContent + ": " + err.message);
             button.disabled = false;
         }
     });

@@ -804,6 +804,10 @@ pub struct NotificationOutcome {
 pub enum IncidentTransition {
     Acknowledge,
     Resolve,
+    /// A press on an alert's Resolve button: like `Resolve`, but refused once
+    /// the incident is closed, so a second press, or one after the monitor
+    /// recovered, is not recorded as someone closing it.
+    ResolveOpen,
     AutoResolve,
     Reopen,
 }
@@ -848,6 +852,8 @@ pub fn next_state(
         (Resolved, Acknowledge) => Err(err()),
         // Resolve (manual or auto): from any open state; idempotent if resolved.
         (Triggered | Acknowledged | Resolved, Resolve | AutoResolve) => Ok(Resolved),
+        (Triggered | Acknowledged, ResolveOpen) => Ok(Resolved),
+        (Resolved, ResolveOpen) => Err(err()),
         // Reopen: only a resolved incident returns to triggered.
         (Resolved, Reopen) => Ok(Triggered),
         (Triggered | Acknowledged, Reopen) => Err(err()),
@@ -1000,6 +1006,17 @@ mod transition_tests {
                 Ok(IncidentState::Resolved)
             );
         }
+    }
+
+    #[test]
+    fn resolving_from_an_alert_needs_an_open_incident() {
+        for from in [IncidentState::Triggered, IncidentState::Acknowledged] {
+            assert_eq!(
+                next_state(from, IncidentTransition::ResolveOpen),
+                Ok(IncidentState::Resolved)
+            );
+        }
+        assert!(next_state(IncidentState::Resolved, IncidentTransition::ResolveOpen).is_err());
     }
 
     #[test]

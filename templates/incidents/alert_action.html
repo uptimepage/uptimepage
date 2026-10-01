@@ -1,5 +1,5 @@
 {% extends "chromeless_base.html" %}
-{% block title %}{% match phase %}{% when Phase::Confirm %}Acknowledge incident{% when Phase::Taken %}Incident acknowledged{% when Phase::Resolved %}Already resolved{% when Phase::Stale %}Alert out of date{% when Phase::Withdrawn %}Button withdrawn{% when Phase::Missing %}Incident not found{% endmatch %}{% endblock %}
+{% block title %}{% match phase %}{% when Phase::Confirm %}{% if resolving %}Resolve incident{% else %}Acknowledge incident{% endif %}{% when Phase::Taken %}Incident acknowledged{% when Phase::Resolved %}{% if resolving %}Incident resolved{% else %}Already resolved{% endif %}{% when Phase::Stale %}Alert out of date{% when Phase::Withdrawn %}Button withdrawn{% when Phase::Missing %}Incident not found{% endmatch %}{% endblock %}
 {% block head_scripts %}
     {% if phase == Phase::Confirm || switch_org.is_some() %}<script defer src="{{ "js/ui/incident_acknowledge.js"|asset }}"></script>{% endif %}
 {% endblock %}
@@ -12,7 +12,7 @@
             are not a member of.
         </p>
         {% else %}
-        <h1 class="page-title justify-center"><span class="page-title__prefix" aria-hidden="true">$</span>{% match phase %}{% when Phase::Taken %}acknowledged{% when Phase::Resolved %}already resolved{% when Phase::Stale %}alert out of date{% when Phase::Withdrawn %}button withdrawn{% when _ %}acknowledge{% endmatch %}</h1>
+        <h1 class="page-title justify-center"><span class="page-title__prefix" aria-hidden="true">$</span>{% match phase %}{% when Phase::Taken %}acknowledged{% when Phase::Resolved %}{% if resolving %}resolved{% else %}already resolved{% endif %}{% when Phase::Stale %}alert out of date{% when Phase::Withdrawn %}button withdrawn{% when _ %}{% if resolving %}resolve{% else %}acknowledge{% endif %}{% endmatch %}</h1>
         <div class="space-y-1">
             <p class="font-mono text-body break-words">{{ label }}</p>
             <p class="text-xs text-muted">
@@ -27,7 +27,9 @@
         {% match phase %}
         {% when Phase::Confirm %}
         <p class="text-sm text-muted">
-            {% if acks.ackers.is_empty() %}
+            {% if resolving %}
+            Resolve this incident? It closes for everyone and reminders stop.
+            {% else if acks.ackers.is_empty() %}
             Take this incident? Reminders stop and the escalation ladder halts.
             The incident stays open until someone resolves it.
             {% else %}
@@ -35,8 +37,8 @@
             add yourself to the list.
             {% endif %}
         </p>
-        <div data-incident-acknowledge data-action="{{ action }}">
-            <button type="button" class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">acknowledge</button>
+        <div data-alert-action data-action="{{ action }}">
+            <button type="button" class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">{% if resolving %}resolve{% else %}acknowledge{% endif %}</button>
         </div>
         {% when Phase::Taken %}
         <p class="text-sm text-muted">
@@ -47,7 +49,8 @@
         </p>
         {% when Phase::Resolved %}
         <p class="text-sm text-muted">
-            {% if acks.mine %}You acknowledged this, and it has since been
+            {% if resolving %}This incident is resolved.
+            {% else if acks.mine %}You acknowledged this, and it has since been
             resolved.{% else %}This incident closed before you got here. Nothing
             to acknowledge.{% endif %}
         </p>
@@ -55,19 +58,19 @@
         <p class="text-sm text-muted">
             This alert is from an earlier outage. The incident closed and then
             came back, so this alert takes nothing; what is shown above is the
-            outage running now. Open it to take that one.
+            outage running now. Open it to {% if resolving %}resolve{% else %}take{% endif %} that one.
         </p>
         {% when Phase::Withdrawn %}
         <p class="text-sm text-muted">
-            The channel this alert came through no longer offers the Acknowledge
-            button, so this alert takes nothing. Open the incident to take it
+            The channel this alert came through no longer offers the {% if resolving %}Resolve{% else %}Acknowledge{% endif %}
+            button, so this alert takes nothing. Open the incident to {% if resolving %}resolve it{% else %}take it{% endif %}
             from there.
         </p>
         {% when Phase::Missing %}
         {% endmatch %}
         <a href="/incidents/{{ id }}"{% if let Some(o) = switch_org %} data-switch-org="{{ o }}"{% endif %}
            class="text-sm text-muted underline decoration-dotted hover:text-body">view incident →</a>
-        <p data-acknowledge-result role="status" aria-live="polite" class="flash-text text-sm"></p>
+        <p data-action-result role="status" aria-live="polite" class="flash-text text-sm"></p>
         {% endif %}
     </main>
 {% endblock %}

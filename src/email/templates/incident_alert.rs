@@ -30,6 +30,8 @@ pub struct IncidentAlert {
     pub url: Option<String>,
     /// The page where a signed-in member takes this episode.
     pub ack_url: Option<String>,
+    /// The page where a signed-in member resolves it.
+    pub resolve_url: Option<String>,
     pub note: Option<String>,
     pub org_name: Option<String>,
     pub stop_url: Option<String>,
@@ -212,6 +214,9 @@ pub fn render(site_name: &str, alert: &IncidentAlert) -> RenderedEmail {
     if let Some(url) = &alert.ack_url {
         text.push_str(&format!("\nAcknowledge: {url}\n"));
     }
+    if let Some(url) = &alert.resolve_url {
+        text.push_str(&format!("\nResolve: {url}\n"));
+    }
     if let Some(url) = &alert.url {
         text.push_str(&format!("\n{url}\n"));
     }
@@ -246,6 +251,9 @@ pub fn render(site_name: &str, alert: &IncidentAlert) -> RenderedEmail {
     }
     if let Some(url) = &alert.ack_url {
         body.push_str(&layout::button(url, "Acknowledge", ButtonStyle::Solid));
+    }
+    if let Some(url) = &alert.resolve_url {
+        body.push_str(&layout::button(url, "Resolve", ButtonStyle::Outline));
     }
     if let Some(url) = &alert.url {
         body.push_str(&layout::button(url, "View incident", ButtonStyle::Outline));
@@ -310,6 +318,7 @@ mod tests {
             regions_up: vec!["us-east".into()],
             url: Some("https://app.test/incidents/7".into()),
             ack_url: None,
+            resolve_url: None,
             note: None,
             org_name: Some("My status".into()),
             stop_url: Some("https://app.test/alert-channel/stop?c=1&t=2".into()),
@@ -366,6 +375,32 @@ mod tests {
             !render("Uptimepage", &alert(NotificationReason::Opened))
                 .html_body
                 .contains("Acknowledge</a>")
+        );
+    }
+
+    /// Resolve is the quieter ask, so it follows Acknowledge and stays outlined.
+    #[test]
+    fn resolve_follows_acknowledge_in_both_bodies() {
+        let ack = crate::notifier::card::tests::ack_page();
+        let resolve = crate::notifier::card::tests::resolve_page();
+        let mut a = alert(NotificationReason::Opened);
+        a.ack_url = Some(ack);
+        a.resolve_url = Some(resolve.clone());
+        let r = render("Uptimepage", &a);
+        let text = &r.text_body;
+        assert!(text.contains(&format!("Resolve: {resolve}")), "{text}");
+        assert!(text.find("Acknowledge: ").unwrap() < text.find("Resolve: ").unwrap());
+        let html = &r.html_body;
+        let (ack_at, resolve_at, view_at) = (
+            html.find("Acknowledge</a>").expect("button"),
+            html.find("Resolve</a>").expect("button"),
+            html.find("View incident</a>").expect("button"),
+        );
+        assert!(ack_at < resolve_at && resolve_at < view_at);
+        assert!(
+            !render("Uptimepage", &alert(NotificationReason::Opened))
+                .html_body
+                .contains("Resolve</a>")
         );
     }
 

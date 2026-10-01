@@ -57,6 +57,7 @@ async fn rig() -> Rig {
                 enabled: true,
                 auto_bind_tags: Vec::new(),
                 acknowledge_button: true,
+                resolve_button: false,
             },
             WriteSource::Ui,
             10,

@@ -66,7 +66,11 @@ async fn resolve(state: &AppState, q: &AckQuery) -> WebResult<Option<Link>> {
     };
     let takes = state
         .notification_channel_store
-        .takes_acknowledgements(link.org, channel_id)
+        .takes(
+            link.org,
+            channel_id,
+            crate::domain::AlertAction::Acknowledge,
+        )
         .await?;
     Ok(takes.then_some(link))
 }

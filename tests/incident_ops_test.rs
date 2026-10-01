@@ -2197,6 +2197,68 @@ async fn an_ack_pinned_to_a_finished_episode_is_refused_pg() {
     assert_eq!(store.generation(org, Uuid::now_v7()).await.unwrap(), None);
 }
 
+/// The same guard for Resolve, on the real SQL, plus the rule that a press on
+/// a closed incident is refused instead of recorded as a second resolve.
+#[tokio::test]
+#[ignore]
+async fn a_resolve_pinned_to_a_finished_episode_or_a_closed_incident_is_refused_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, user, id) = seed(&pool, "incresolveepisode").await;
+    let store = PgIncidentOpsStore::new(pool.clone());
+    let resolved_events = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM incident_events WHERE incident_id = $1 AND kind = 'resolved'",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .expect("count resolved events")
+    };
+
+    let outcome = store
+        .resolve_episode(org, id, Actor::User(user), 5)
+        .await
+        .expect("resolve");
+    assert!(matches!(outcome, LifecycleOutcome::Stale), "{outcome:?}");
+    assert_eq!(resolved_events().await, 0);
+
+    let outcome = store
+        .resolve_episode(org, id, Actor::User(user), 0)
+        .await
+        .expect("resolve");
+    let closed = updated(outcome);
+    assert_eq!(closed.state, IncidentState::Resolved);
+    assert_eq!(closed.resolved_by, Some(user));
+    assert_eq!(resolved_events().await, 1);
+
+    let outcome = store
+        .resolve_episode(org, id, Actor::User(user), 0)
+        .await
+        .expect("resolve again");
+    assert!(
+        matches!(outcome, LifecycleOutcome::IllegalTransition(_)),
+        "{outcome:?}"
+    );
+    assert_eq!(resolved_events().await, 1, "nothing recorded twice");
+
+    store
+        .reopen(org, id, Actor::User(user), None)
+        .await
+        .expect("reopen");
+    let outcome = store
+        .resolve_episode(org, id, Actor::User(user), 0)
+        .await
+        .expect("resolve");
+    assert!(matches!(outcome, LifecycleOutcome::Stale), "{outcome:?}");
+    let outcome = store
+        .resolve_episode(org, id, Actor::User(user), 1)
+        .await
+        .expect("resolve");
+    assert_eq!(updated(outcome).state, IncidentState::Resolved);
+}
+
 /// A Pushover page carries the episode it belonged to, so an acknowledgement
 /// that arrives in the provider's app long after a reopen cannot land on the
 /// outage that followed. The engine must not have to rely on the reopen having

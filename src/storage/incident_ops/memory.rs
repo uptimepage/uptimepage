@@ -212,6 +212,31 @@ impl InMemoryIncidentOpsStore {
             listed: newly_listed,
         }
     }
+
+    fn resolve_by(
+        &self,
+        id: Uuid,
+        transition: IncidentTransition,
+        actor: Actor,
+        note: Option<String>,
+        expect_generation: Option<i64>,
+    ) -> LifecycleOutcome {
+        self.apply(
+            id,
+            transition,
+            IncidentEventKind::Resolved,
+            actor,
+            note,
+            expect_generation,
+            |i| {
+                i.state = IncidentState::Resolved;
+                i.ended_at.get_or_insert_with(Utc::now);
+                i.resolved_by = actor.user_id();
+                i.next_escalation_at = None;
+            },
+        )
+        .outcome
+    }
 }
 
 fn sev_rank(s: IncidentSeverity) -> u8 {
@@ -463,22 +488,23 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         actor: Actor,
         note: Option<String>,
     ) -> Result<LifecycleOutcome> {
-        Ok(self
-            .apply(
-                id,
-                IncidentTransition::Resolve,
-                IncidentEventKind::Resolved,
-                actor,
-                note,
-                None,
-                |i| {
-                    i.state = IncidentState::Resolved;
-                    i.ended_at.get_or_insert_with(Utc::now);
-                    i.resolved_by = actor.user_id();
-                    i.next_escalation_at = None;
-                },
-            )
-            .outcome)
+        Ok(self.resolve_by(id, IncidentTransition::Resolve, actor, note, None))
+    }
+
+    async fn resolve_episode(
+        &self,
+        _org: OrgId,
+        id: Uuid,
+        actor: Actor,
+        episode: i64,
+    ) -> Result<LifecycleOutcome> {
+        Ok(self.resolve_by(
+            id,
+            IncidentTransition::ResolveOpen,
+            actor,
+            None,
+            Some(episode),
+        ))
     }
 
     async fn generation(&self, _org: OrgId, id: Uuid) -> Result<Option<i64>> {

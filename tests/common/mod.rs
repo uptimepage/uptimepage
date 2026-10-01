@@ -1290,3 +1290,102 @@ pub async fn open_test_pool(db_url: &str) -> PgPool {
         .await
         .expect("open_test_pool: connect to test DB")
 }
+
+/// Turns a channel's Resolve button on or off, the way a save from the form does.
+pub async fn switch_resolve(state: &AppState, org: OrgId, channel: Uuid, on: bool) {
+    state
+        .notification_channel_store
+        .update(
+            org,
+            channel,
+            uptimepage::domain::NotificationChannelUpdate {
+                resolve_button: Some(on),
+                ..Default::default()
+            },
+            WriteSource::Ui,
+            None,
+        )
+        .await
+        .expect("update channel")
+        .expect("channel exists");
+}
+
+pub async fn ops_incident(
+    state: &AppState,
+    org: OrgId,
+    id: Uuid,
+) -> uptimepage::domain::OpsIncident {
+    state
+        .incident_ops_store
+        .get(org, id)
+        .await
+        .expect("read incident")
+        .expect("incident exists")
+}
+
+/// An app answers a press before it acts, so wait for the incident to reach
+/// `wanted`.
+pub async fn wait_for_incident_state(
+    state: &AppState,
+    org: OrgId,
+    id: Uuid,
+    wanted: uptimepage::domain::IncidentState,
+) {
+    for _ in 0..100 {
+        if ops_incident(state, org, id).await.state == wanted {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("the incident never reached {wanted:?}");
+}
+
+/// What an unlinked press offers a chat app's presser, then a member's sign-in
+/// taking it: the account behind `account` ends up linked to the returned
+/// member.
+pub async fn link_offered_account(
+    app: &Router,
+    state: &AppState,
+    org: OrgId,
+    linked: uptimepage::domain::LinkedApp,
+    account: uptimepage::domain::ExternalId,
+    code: &str,
+) -> uptimepage::domain::UserId {
+    use tower::ServiceExt;
+    let member = uptimepage::domain::UserId(Uuid::now_v7());
+    assert!(
+        state
+            .linked_app_store
+            .offer(
+                linked,
+                account,
+                Some("olena"),
+                &uptimepage::security::sha256_hex(code),
+                Utc::now(),
+            )
+            .await
+            .expect("store offer")
+    );
+    let name = linked.as_db_str();
+    let signed_in = || with_session(app.clone(), member, Some(org), None);
+    let page = signed_in()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/link/{name}?c={code}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let linked_up = signed_in()
+        .oneshot(json_request(
+            "POST",
+            &format!("/api/v1/me/linked-apps/{name}"),
+            serde_json::json!({ "code": code }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(linked_up.status(), StatusCode::NO_CONTENT);
+    member
+}

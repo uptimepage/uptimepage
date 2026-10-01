@@ -19,7 +19,7 @@ use crate::storage::{
 
 use super::rules::{FlapState, flap_state, log_error_snippet, retry_after_hint, retry_delay_secs};
 
-fn org() -> OrgId {
+pub(super) fn org() -> OrgId {
     OrgId(Uuid::nil())
 }
 
@@ -39,6 +39,7 @@ async fn failing_channel(store: &InMemoryNotificationChannelStore) -> Uuid {
                 enabled: true,
                 auto_bind_tags: Vec::new(),
                 acknowledge_button: true,
+                resolve_button: false,
             },
             WriteSource::Ui,
             100,
@@ -49,7 +50,7 @@ async fn failing_channel(store: &InMemoryNotificationChannelStore) -> Uuid {
         .id
 }
 
-fn target_with_channel(channel_id: Uuid) -> Target {
+pub(super) fn target_with_channel(channel_id: Uuid) -> Target {
     target_with_channel_recovery(channel_id, true)
 }
 
@@ -94,7 +95,7 @@ fn bare_target() -> Target {
     t
 }
 
-fn seed_incident(ops: &InMemoryIncidentOpsStore, target_id: Option<Uuid>) -> Uuid {
+pub(super) fn seed_incident(ops: &InMemoryIncidentOpsStore, target_id: Option<Uuid>) -> Uuid {
     let now = Utc::now();
     let id = Uuid::now_v7();
     ops.seed(OpsIncident {
@@ -195,7 +196,7 @@ fn engine_cfg(
 }
 
 /// [`engine_cfg`] with a capturing mail sender and an org that has an owner.
-fn engine_mailing(
+pub(super) fn engine_mailing(
     ops: Arc<dyn IncidentOpsStore>,
     targets: Arc<dyn TargetStore>,
     channels: Arc<dyn NotificationChannelStore>,
@@ -514,6 +515,7 @@ async fn unverified_email_channel_records_failure_without_sending() {
                 enabled: true,
                 auto_bind_tags: Vec::new(),
                 acknowledge_button: true,
+                resolve_button: false,
             },
             WriteSource::Ui,
             100,
@@ -1771,6 +1773,7 @@ async fn an_unverified_email_channel_is_not_flagged_as_failing() {
                 enabled: true,
                 auto_bind_tags: Vec::new(),
                 acknowledge_button: true,
+                resolve_button: false,
             },
             WriteSource::Ui,
             100,
@@ -2223,7 +2226,7 @@ async fn an_alert_mail_links_the_acknowledge_page_for_its_episode() {
     assert!(!resolved.contains("/acknowledge"), "{resolved}");
 }
 
-async fn verified_mail_channel(
+pub(super) async fn verified_mail_channel(
     channels: &InMemoryNotificationChannelStore,
     acknowledge_button: bool,
 ) -> Uuid {
@@ -2238,6 +2241,7 @@ async fn verified_mail_channel(
                 enabled: true,
                 auto_bind_tags: Vec::new(),
                 acknowledge_button,
+                resolve_button: false,
             },
             WriteSource::Ui,
             100,
@@ -2271,66 +2275,4 @@ async fn a_channel_with_the_button_off_pages_without_it() {
     assert_eq!(sent.len(), 1);
     let body = sent[0].template.render("Uptimepage").text_body;
     assert!(!body.contains("/acknowledge"), "{body}");
-}
-
-/// Every kind that offers a control gets one only while its switch is on,
-/// the bearer ones included: an ntfy link or a bot button lets anyone reading
-/// the room take the incident.
-#[tokio::test]
-async fn the_switch_decides_the_control_for_every_kind_that_offers_one() {
-    let channels = Arc::new(InMemoryNotificationChannelStore::new());
-    let cid = verified_mail_channel(&channels, true).await;
-    let mut channel = channels.get(org(), cid).await.unwrap().unwrap();
-    let ops = Arc::new(InMemoryIncidentOpsStore::new());
-    let mut notice = crate::notifier::card::tests::notice(NotificationReason::Opened);
-    notice.incident_id = seed_incident(&ops, None);
-    let targets = Arc::new(InMemoryTargetStore::from_vec(Vec::new()));
-    let (mut eng, _) = engine_mailing(ops, targets, channels, EscalationConfig::default());
-    let w = Arc::get_mut(&mut eng.w).expect("sole owner");
-    w.incident_ack_secret = "engine-acknowledge-test-secret".into();
-    w.pressed_apps = crate::domain::LinkedApp::ALL.to_vec();
-
-    for kind in crate::domain::ChannelKind::ALL {
-        channel.kind = *kind;
-        channel.acknowledge_button = true;
-        let on = eng.w.ack_control(org(), &channel, &notice).await;
-        assert_eq!(on.is_some(), kind.offers_acknowledge(), "{kind:?}");
-        channel.acknowledge_button = false;
-        let off = eng.w.ack_control(org(), &channel, &notice).await;
-        assert!(off.is_none(), "{kind:?}");
-    }
-}
-
-/// A channel connected through one of our apps carries a button only where
-/// this deployment receives that app's presses; elsewhere it links to the
-/// acknowledge page, rather than carry a button nothing answers.
-#[tokio::test]
-async fn an_app_channel_gets_its_button_only_where_presses_arrive() {
-    use crate::domain::{AckVia, ChannelKind};
-    use crate::notifier::AckControl;
-    let channels = Arc::new(InMemoryNotificationChannelStore::new());
-    let cid = verified_mail_channel(&channels, true).await;
-    let mut channel = channels.get(org(), cid).await.unwrap().unwrap();
-    let ops = Arc::new(InMemoryIncidentOpsStore::new());
-    let mut notice = crate::notifier::card::tests::notice(NotificationReason::Opened);
-    notice.incident_id = seed_incident(&ops, None);
-    let targets = Arc::new(InMemoryTargetStore::from_vec(Vec::new()));
-    let (mut eng, _) = engine_mailing(ops, targets, channels, EscalationConfig::default());
-    Arc::get_mut(&mut eng.w)
-        .expect("sole owner")
-        .incident_ack_secret = "engine-acknowledge-test-secret".into();
-
-    for kind in ChannelKind::ALL {
-        let Some(AckVia::Button(app)) = kind.acknowledge_via() else {
-            continue;
-        };
-        channel.kind = *kind;
-        Arc::get_mut(&mut eng.w).expect("sole owner").pressed_apps = Vec::new();
-        let unreceived = eng.w.ack_control(org(), &channel, &notice).await;
-        assert!(matches!(unreceived, Some(AckControl::Page(_))), "{kind:?}");
-
-        Arc::get_mut(&mut eng.w).expect("sole owner").pressed_apps = vec![app];
-        let received = eng.w.ack_control(org(), &channel, &notice).await;
-        assert!(matches!(received, Some(AckControl::Button(_))), "{kind:?}");
-    }
 }

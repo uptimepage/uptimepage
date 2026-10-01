@@ -191,6 +191,7 @@ async fn status_poll_is_org_scoped_and_transitions() {
                 enabled: true,
                 auto_bind_tags: Vec::new(),
                 acknowledge_button: true,
+                resolve_button: false,
             },
             WriteSource::Ui,
             10,

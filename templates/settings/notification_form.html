@@ -880,15 +880,17 @@
         </p>
       </div>
 
-      <div data-acknowledge-toggle data-kinds="{{ form.acknowledge_kinds() }}"{% if !form.offers_acknowledge() %} class="hidden"{% endif %}>
+      <div data-alert-buttons data-kinds="{{ form.acknowledge_kinds() }}"{% if !form.offers_acknowledge() %} class="hidden"{% endif %}>
         <span class="flag-label mb-2 block">alert buttons</span>
         <div class="check-type-cards">
           {% call reg::toggle_card("acknowledge_button", form.acknowledge_button, "acknowledge", "takes the incident from the alert") %}{% endcall %}
+          {% call reg::toggle_card("resolve_button", form.resolve_button, "resolve", "closes the incident from the alert", form.resolve_kinds(), form.offers_resolve()) %}{% endcall %}
         </div>
         <p class="mt-2 text-xs text-muted">
           Alerts for an open incident carry the buttons switched on here. Switch
           them off when the people reading this channel should not act on
-          incidents from it.
+          incidents from it. Resolve is off until you turn it on, and works
+          only for a signed-in member or a chat account a member linked.
         </p>
       </div>
 

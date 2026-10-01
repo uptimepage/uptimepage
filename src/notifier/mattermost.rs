@@ -23,11 +23,11 @@ const _: () = assert!(
     FALLBACK_MAX + TITLE_MAX + TEXT_MAX + MAX_FIELDS * (64 + FIELD_VALUE_MAX) + 256 <= POST_MAX
 );
 /// A cut inside the fence would leave it unterminated, and one at the end
-/// would take the acknowledge link.
+/// would take the acknowledge and resolve links.
 const _: () = assert!(
     crate::notifier::card::MAX_ERROR_CHARS
         + crate::notifier::card::MAX_NOTE_CHARS
-        + crate::notifier::card::MAX_ACK_LINK_CHARS
+        + 2 * crate::notifier::card::MAX_ACK_LINK_CHARS
         + 256
         <= TEXT_MAX
 );
@@ -37,6 +37,7 @@ pub struct MattermostNotifier {
     webhook_url: Url,
     mention: Option<String>,
     ack_link: Option<String>,
+    resolve_link: Option<String>,
 }
 
 /// No top-level message: it is scanned for mentions. A push notification
@@ -74,6 +75,7 @@ impl MattermostNotifier {
             webhook_url,
             mention,
             ack_link: None,
+            resolve_link: None,
         }
     }
 
@@ -82,8 +84,14 @@ impl MattermostNotifier {
         self
     }
 
+    pub fn with_resolve_link(mut self, resolve_link: Option<String>) -> Self {
+        self.resolve_link = resolve_link;
+        self
+    }
+
     fn payload(&self, notice: &IncidentNotice) -> MattermostPayload {
-        let card = AlertCard::for_notice(notice, self.ack_link.as_deref());
+        let card = AlertCard::for_notice(notice, self.ack_link.as_deref())
+            .with_resolve(notice, self.resolve_link.as_deref());
         let ping = card.ping(self.mention.as_deref());
         MattermostPayload {
             attachments: [Self::attachment(&card, ping, notice)],
@@ -99,9 +107,16 @@ impl MattermostNotifier {
             text.push_str(&format!("\n{note}"));
         }
         // An attachment button posts to an integration server-side instead of
-        // opening a browser, so the acknowledge page rides as a link.
-        if let Some(url) = &card.ack_link {
-            text.push_str(&format!("\n[Acknowledge]({url})"));
+        // opening a browser, so the pages ride as links.
+        let links: Vec<String> = [
+            ("Acknowledge", &card.ack_link),
+            ("Resolve", &card.resolve_link),
+        ]
+        .into_iter()
+        .filter_map(|(label, url)| url.as_ref().map(|url| format!("[{label}]({url})")))
+        .collect();
+        if !links.is_empty() {
+            text.push_str(&format!("\n{}", links.join(" · ")));
         }
         Attachment {
             fallback: truncate_chars(&n.summary(), FALLBACK_MAX),
@@ -211,6 +226,24 @@ mod tests {
             .unwrap();
         let text = v["attachments"][0]["text"].as_str().unwrap();
         assert!(text.ends_with(&format!("\n[Acknowledge]({ack})")), "{text}");
+    }
+
+    #[test]
+    fn resolve_follows_acknowledge_on_the_same_line_and_survives_the_cap() {
+        let ack = crate::notifier::card::tests::ack_page();
+        let resolve = crate::notifier::card::tests::resolve_page();
+        let mut n = notice(NotificationReason::Opened);
+        n.note = Some("N".repeat(60_000));
+        n.error_sample = Some("E".repeat(60_000));
+        let sender = notifier(None)
+            .with_ack_link(Some(ack.clone()))
+            .with_resolve_link(Some(resolve.clone()));
+        let v = serde_json::to_value(sender.payload(&n)).unwrap();
+        let text = v["attachments"][0]["text"].as_str().unwrap();
+        assert!(
+            text.ends_with(&format!("\n[Acknowledge]({ack}) · [Resolve]({resolve})")),
+            "{text}"
+        );
     }
 
     #[test]

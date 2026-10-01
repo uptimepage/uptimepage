@@ -1,7 +1,9 @@
-//! Proof that an acknowledge control on a page is ours: a signed link for a
-//! transport that opens a URL, a signed button for a chat app that reports the
-//! press back. Both bind the org, the incident, the channel the page went to
-//! and the episode, so a control minted before a reopen takes nothing after it.
+//! Proof that an alert's control is ours: a signed link for a transport that
+//! opens a URL, a signed button for a chat app that reports the press back.
+//! Both bind the org, the incident, the channel the page went to and the
+//! episode, so a control minted before a reopen takes nothing after it. A
+//! button also binds what it does, so an Acknowledge press cannot close the
+//! incident.
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -9,20 +11,20 @@ use chrono::{DateTime, Utc};
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
-use crate::domain::OrgId;
+use crate::domain::{AlertAction, OrgId};
 use crate::security::mac::{hmac_sha256, hmac_sha256_hex};
 
 /// Bounds a leaked link: unlike a mailed one this rides in a push payload that
 /// may sit on someone else's server.
 pub const LINK_TTL_SECS: i64 = 7 * 24 * 60 * 60;
 
-const BUTTON_PREFIX: &str = "a";
+const BUTTON_PREFIX_LEN: usize = 1;
 const BUTTON_MAC_LEN: usize = 12;
 const BUTTON_RAW_LEN: usize = 16 + 4 + BUTTON_MAC_LEN;
 /// Telegram's callback data takes 64 bytes, the tightest of the apps: a
 /// Discord `custom_id` takes 100 characters and a Slack button value 2000.
 const BUTTON_MAX: usize = 64;
-const _: () = assert!(BUTTON_PREFIX.len() + (BUTTON_RAW_LEN * 4).div_ceil(3) <= BUTTON_MAX);
+const _: () = assert!(BUTTON_PREFIX_LEN + (BUTTON_RAW_LEN * 4).div_ceil(3) <= BUTTON_MAX);
 
 /// Proof for the public acknowledge link. Reproduced at verify time, nothing
 /// persisted.
@@ -83,8 +85,32 @@ pub fn link_url(
     ))
 }
 
+/// What opens a button's value, and so tells which press it is before its
+/// proof is checked.
+const fn button_prefix(action: AlertAction) -> char {
+    match action {
+        AlertAction::Acknowledge => 'a',
+        AlertAction::Resolve => 'r',
+    }
+}
+
+fn prefixed_action(prefix: char) -> Option<AlertAction> {
+    [AlertAction::Acknowledge, AlertAction::Resolve]
+        .into_iter()
+        .find(|action| button_prefix(*action) == prefix)
+}
+
+/// Kept as it was for Acknowledge, so a button already sent keeps working.
+const fn button_label(action: AlertAction) -> &'static [u8] {
+    match action {
+        AlertAction::Acknowledge => b"ack-button",
+        AlertAction::Resolve => b"resolve-button",
+    }
+}
+
 fn button_mac(
     secret: &str,
+    action: AlertAction,
     org: OrgId,
     incident_id: Uuid,
     channel_id: Uuid,
@@ -93,7 +119,7 @@ fn button_mac(
     hmac_sha256(
         secret.as_bytes(),
         &[
-            b"ack-button",
+            button_label(action),
             org.0.as_bytes(),
             incident_id.as_bytes(),
             channel_id.as_bytes(),
@@ -102,8 +128,8 @@ fn button_mac(
     )
 }
 
-/// The value of an Acknowledge button our own app receives in Telegram, Slack
-/// or Discord, on a page about `incident_id`'s episode `generation` sent to
+/// The value of an `action` button our own app receives in Telegram, Slack or
+/// Discord, on a page about `incident_id`'s episode `generation` sent to
 /// `channel_id`. A client may send any value it likes, so it is signed. It
 /// names the incident and the episode; the MAC also binds the org and
 /// channel, which the receiver recovers from where the press came from. Fits
@@ -111,6 +137,7 @@ fn button_mac(
 /// pages without the button.
 pub fn button_data(
     secret: &str,
+    action: AlertAction,
     org: OrgId,
     incident_id: Uuid,
     channel_id: Uuid,
@@ -121,14 +148,19 @@ pub fn button_data(
     raw.extend_from_slice(incident_id.as_bytes());
     raw.extend_from_slice(&generation.to_be_bytes());
     raw.extend_from_slice(
-        &button_mac(secret, org, incident_id, channel_id, generation)[..BUTTON_MAC_LEN],
+        &button_mac(secret, action, org, incident_id, channel_id, generation)[..BUTTON_MAC_LEN],
     );
-    Some(format!("{BUTTON_PREFIX}{}", URL_SAFE_NO_PAD.encode(raw)))
+    Some(format!(
+        "{}{}",
+        button_prefix(action),
+        URL_SAFE_NO_PAD.encode(raw)
+    ))
 }
 
 /// A pressed button as its data describes it, not yet tied to any org.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Button {
+    pub action: AlertAction,
     pub incident_id: Uuid,
     pub generation: i64,
     mac: [u8; BUTTON_MAC_LEN],
@@ -136,13 +168,14 @@ pub struct Button {
 
 impl Button {
     pub fn parse(data: &str) -> Option<Self> {
-        let raw = URL_SAFE_NO_PAD
-            .decode(data.strip_prefix(BUTTON_PREFIX)?)
-            .ok()?;
+        let (prefix, rest) = data.split_at_checked(BUTTON_PREFIX_LEN)?;
+        let action = prefixed_action(prefix.chars().next()?)?;
+        let raw = URL_SAFE_NO_PAD.decode(rest).ok()?;
         if raw.len() != BUTTON_RAW_LEN {
             return None;
         }
         Some(Self {
+            action,
             incident_id: Uuid::from_slice(&raw[..16]).ok()?,
             generation: i64::from(u32::from_be_bytes(raw[16..20].try_into().ok()?)),
             mac: raw[20..].try_into().ok()?,
@@ -154,7 +187,14 @@ impl Button {
         let Ok(generation) = u32::try_from(self.generation) else {
             return false;
         };
-        let expected = button_mac(secret, org, self.incident_id, channel_id, generation);
+        let expected = button_mac(
+            secret,
+            self.action,
+            org,
+            self.incident_id,
+            channel_id,
+            generation,
+        );
         expected[..BUTTON_MAC_LEN].ct_eq(&self.mac).into()
     }
 }
@@ -266,11 +306,22 @@ mod tests {
     #[test]
     fn a_press_verifies_only_for_the_page_it_was_minted_for() {
         let (org, incident, channel) = (OrgId(Uuid::now_v7()), Uuid::now_v7(), Uuid::now_v7());
-        let data = button_data("s3cret", org, incident, channel, 3).unwrap();
+        let data = button_data(
+            "s3cret",
+            AlertAction::Acknowledge,
+            org,
+            incident,
+            channel,
+            3,
+        )
+        .unwrap();
         assert!(data.len() <= 64, "Telegram caps callback data at 64 bytes");
 
         let press = Button::parse(&data).unwrap();
-        assert_eq!((press.incident_id, press.generation), (incident, 3));
+        assert_eq!(
+            (press.action, press.incident_id, press.generation),
+            (AlertAction::Acknowledge, incident, 3)
+        );
         assert!(press.minted_for("s3cret", org, channel));
         assert!(!press.minted_for("s3cret", OrgId(Uuid::now_v7()), channel));
         assert!(!press.minted_for("s3cret", org, Uuid::now_v7()));
@@ -280,7 +331,15 @@ mod tests {
     #[test]
     fn a_press_moved_to_another_episode_or_incident_fails() {
         let (org, incident, channel) = (OrgId(Uuid::now_v7()), Uuid::now_v7(), Uuid::now_v7());
-        let data = button_data("s3cret", org, incident, channel, 0).unwrap();
+        let data = button_data(
+            "s3cret",
+            AlertAction::Acknowledge,
+            org,
+            incident,
+            channel,
+            0,
+        )
+        .unwrap();
         let mut raw = URL_SAFE_NO_PAD.decode(&data[1..]).unwrap();
         raw[19] = 1;
         let later = Button::parse(&format!("a{}", URL_SAFE_NO_PAD.encode(&raw))).unwrap();
@@ -292,18 +351,56 @@ mod tests {
         assert!(!other.minted_for("s3cret", org, channel));
     }
 
+    /// The same incident, episode and channel: only what the button does
+    /// differs, so one kind of press cannot stand in for the other.
+    #[test]
+    fn an_acknowledge_press_cannot_be_turned_into_a_resolve() {
+        let (org, incident, channel) = (OrgId(Uuid::now_v7()), Uuid::now_v7(), Uuid::now_v7());
+        let ack = button_data(
+            "s3cret",
+            AlertAction::Acknowledge,
+            org,
+            incident,
+            channel,
+            2,
+        )
+        .unwrap();
+        let resolve =
+            button_data("s3cret", AlertAction::Resolve, org, incident, channel, 2).unwrap();
+        assert_ne!(ack[1..], resolve[1..], "the proofs differ");
+        assert!(
+            resolve.len() <= 64,
+            "Telegram caps callback data at 64 bytes"
+        );
+
+        let press = Button::parse(&resolve).unwrap();
+        assert_eq!(press.action, AlertAction::Resolve);
+        assert!(press.minted_for("s3cret", org, channel));
+
+        let relabelled = format!("r{}", &ack[1..]);
+        let forged = Button::parse(&relabelled).unwrap();
+        assert_eq!(forged.action, AlertAction::Resolve);
+        assert!(!forged.minted_for("s3cret", org, channel));
+        let relabelled = format!("a{}", &resolve[1..]);
+        let forged = Button::parse(&relabelled).unwrap();
+        assert!(!forged.minted_for("s3cret", org, channel));
+    }
+
     #[test]
     fn junk_data_is_no_press() {
         assert_eq!(Button::parse(""), None);
         assert_eq!(Button::parse("a"), None);
         assert_eq!(Button::parse("ack"), None);
         assert_eq!(Button::parse("b".repeat(44).as_str()), None);
+        assert_eq!(Button::parse("é".repeat(22).as_str()), None);
     }
 
     #[test]
     fn an_episode_past_the_data_gets_no_button() {
         let id = Uuid::now_v7();
-        assert!(button_data("s", OrgId(id), id, id, i64::from(u32::MAX) + 1).is_none());
-        assert!(button_data("s", OrgId(id), id, id, -1).is_none());
+        let data =
+            |generation| button_data("s", AlertAction::Acknowledge, OrgId(id), id, id, generation);
+        assert!(data(i64::from(u32::MAX) + 1).is_none());
+        assert!(data(-1).is_none());
     }
 }

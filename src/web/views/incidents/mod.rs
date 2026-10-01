@@ -2,8 +2,8 @@
 //! operational lifecycle (acknowledge / resolve / reopen / declare / note),
 //! distinct from the per-monitor incident history under `/targets/{id}`.
 
-mod acknowledge;
 mod actors;
+mod alert_action;
 mod console;
 mod detail;
 mod forms;
@@ -20,8 +20,8 @@ use crate::domain::{IncidentState, OrgId, UserId};
 use crate::storage::orgs::list_members;
 use crate::web::error::WebResult;
 
-pub use acknowledge::{acknowledge, acknowledge_page};
 pub(crate) use actors::ack_list;
+pub use alert_action::{acknowledge, acknowledge_page, resolve, resolve_page};
 pub use console::{list, list_partial};
 pub use detail::detail;
 pub use forms::{declare_form, edit_form, postmortem_form};
