@@ -1910,6 +1910,8 @@
         line-height: 1.1;
     }
     .page-title__prefix { color: var(--theme-text-faint); margin-right: 0.4em; font-weight: 500; }
+    .page-title:has(> .page-title__input) { display: flex; align-items: baseline; }
+    .page-title:has(> .page-title__input) > .page-title__prefix { flex: none; }
 
     /* Inline editable title — reads as the <h1>, behaves as a text input. */
     .page-title__input {
