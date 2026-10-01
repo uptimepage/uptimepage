@@ -1,7 +1,7 @@
 +++
 title = "Best open-source, self-hosted uptime monitors (2026)"
 date = "2026-06-20"
-updated = "2026-09-24"
+updated = "2026-10-01"
 slug = "best-self-hosted-uptime-monitoring-tools"
 excerpt = "A fair look at the open-source, self-hostable tools for watching sites and APIs in 2026: what each is good at, where it stops, and how to pick one."
 tags = ["open-source", "self-hosted", "monitoring", "status-page"]
@@ -56,7 +56,7 @@ We build one of the tools on this list, Uptimepage, so keep that in mind. We hav
 > - Zabbix and Nagios Core watch your servers from the inside; they can probe a URL, but neither gives customers a status page.
 > - Cachet and Statping are status-page-first; teams already on Prometheus can add the Blackbox exporter.
 > - OpenStatus is the nearest AGPL alternative that does both jobs with monitoring as code, though self-hosting it runs several services rather than one.
-> - Uptimepage (ours) pairs monitoring with a customer status page in one AGPL binary, with a REST API, Terraform, roles and subscribers, for when you outgrow a single shared login.
+> - Uptimepage (ours) pairs monitoring, a customer status page and on-call in one AGPL binary, with a REST API, Terraform, roles and subscribers, for when you outgrow a single shared login.
 
 ## What actually matters when you self-host
 
@@ -145,7 +145,7 @@ The catch is the shape of the self-hosted stack. Running OpenStatus yourself mea
 
 Ours, so here is the good side and the warning together.
 
-Uptimepage is a single Rust binary that does uptime monitoring and a customer-facing status page together, with the parts Uptime Kuma users tend to ask for: a real REST API, a Terraform provider, organizations with roles, multi-region probe agents you run yourself, and status pages your customers can subscribe to over email or webhook. It is AGPL, so `docker compose up` and it is yours, or you can use the [hosted uptime monitor](https://uptimepage.dev) and skip running it. The same data model, API, and Terraform provider work either way, so you are not stuck with that choice. There is more on running it as an [open-source uptime monitor](/open-source-uptime-monitoring), on the [self-hosted setup](/docs/deployment), and on [driving it from code](/terraform-uptime-monitoring).
+Uptimepage is a single Rust binary that does uptime monitoring and a customer-facing status page together, with the parts Uptime Kuma users tend to ask for: a real REST API, a Terraform provider, organizations with roles, multi-region probe agents you run yourself, and status pages your customers can subscribe to over email or webhook. It also covers on-call: rotation schedules and escalation policies decide who gets paged when a check fails. It is AGPL, so `docker compose up` and it is yours, or you can use the [hosted uptime monitor](https://uptimepage.dev) and skip running it. The same data model, API, and Terraform provider work either way, so you are not stuck with that choice. There is more on running it as an [open-source uptime monitor](/open-source-uptime-monitoring), on the [self-hosted setup](/docs/deployment), and on [driving it from code](/terraform-uptime-monitoring).
 
 The caveat: it is younger than Uptime Kuma and has a smaller community, so it has had fewer years to find and fix rare bugs. If you want the most tested and proven option and you do not need an API or multi-tenant access, Uptime Kuma is the safer pick today. If you have outgrown a single shared login and want your monitoring in Git, that gap is exactly what we built for.
 

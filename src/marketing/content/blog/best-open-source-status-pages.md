@@ -1,6 +1,7 @@
 +++
 title = "Best open-source status pages you can self-host (2026)"
 date = "2026-09-24"
+updated = "2026-10-01"
 slug = "best-open-source-status-pages"
 excerpt = "Eleven open-source status pages compared: which ones monitor for you, which let customers subscribe, what each takes to run, and which ones are abandoned."
 tags = ["open-source", "self-hosted", "status-page", "incidents"]
@@ -129,7 +130,7 @@ It is slowing down. Its last commit and its last release, v0.93.0, are both from
 
 Ours, so the good side and the warning together.
 
-Uptimepage is one Rust binary that runs uptime checks and a customer status page together. A failing check opens the incident on the page. Visitors subscribe by confirmed email or signed webhook, and you can schedule maintenance. The page shows uptime it measured, not only what someone typed. Configuration can live in Git through the Terraform provider, and there is also a REST API and an MCP server. It is AGPL, so you can run it yourself with Postgres and ClickHouse, or use the hosted service, where Pro and Team put the page on your own domain. The [open-source status page](/open-source-status-page) page has the details, and [Uptimepage against Upptime, Cachet and Statping](/vs/self-hosted-status-pages) compares it with the page-first tools.
+Uptimepage is one Rust binary that runs uptime checks and a customer status page together. A failing check opens the incident on the page and pages whoever is on call, through rotation schedules and escalation policies. Visitors subscribe by confirmed email or signed webhook, and you can schedule maintenance. The page shows uptime it measured, not only what someone typed. Configuration can live in Git through the Terraform provider, and there is also a REST API and an MCP server. It is AGPL, so you can run it yourself with Postgres and ClickHouse, or use the hosted service, where Pro and Team put the page on your own domain. The [open-source status page](/open-source-status-page) page has the details, and [Uptimepage against Upptime, Cachet and Statping](/vs/self-hosted-status-pages) compares it with the page-first tools.
 
 The warning: the [repository](https://github.com/uptimepage/uptimepage) is young and small next to Uptime Kuma or Cachet. It has had fewer years to find rare bugs. If you want the most proven option and RSS is enough for your readers, Uptime Kuma is the safer choice today.
 
