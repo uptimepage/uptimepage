@@ -988,6 +988,11 @@ mod tests {
         for post in load_posts() {
             for (q, a) in &post.faqs {
                 assert!(!q.is_empty() && !a.is_empty(), "{}: empty FAQ", post.slug);
+                assert!(
+                    post.body_md.contains(&format!("<summary>{q}</summary>")),
+                    "{}: FAQ question {q:?} has no visible accordion",
+                    post.slug
+                );
                 // Answers may flatten inline links, so match the opening
                 // sentence rather than the whole string: catches drift
                 // between schema and the visible copy without false negatives.

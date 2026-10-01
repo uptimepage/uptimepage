@@ -1,7 +1,7 @@
 +++
 title = "ClickHouse disk full: system tables ate 12 GB (the fix)"
 date = "2026-07-09"
-updated = "2026-07-14"
+updated = "2026-10-01"
 slug = "clickhouse-system-tables-filled-disk"
 excerpt = "Disk at 100%, Postgres down with 'no space left on device'. Real data: 20 MB; ClickHouse had logged 12 GB about itself. The config that fixes it, for good."
 tags = ["clickhouse", "postgres", "postmortem", "observability", "performance", "ops"]
@@ -179,3 +179,41 @@ A downstream alert like "results lost" is not a substitute for watching the reso
 > - It is not just disk. The same logs burn CPU at idle on small servers. Disabling them, plus `asynchronous_metrics_update_period_s = 60`, took reporters in ClickHouse issue #60016 from 40 to 70% CPU down to about 1.5%.
 > - Anything that pulls artifacts on a schedule, Docker images in my case, needs matching cleanup or it becomes a slow disk leak.
 > - Alert on the cause (disk space), not only the effect (dropped writes). The cause gives you days of warning; the effect gives you minutes.
+
+## Common questions
+
+<details class="mk-faq">
+<summary>How do I fix Postgres "could not write lock file postmaster.pid: No space left on device"?</summary>
+<div class="mk-faq__body">
+
+That error is not a Postgres bug and not corruption. Postgres writes its lock file into the data directory at startup, and on a full filesystem that write fails, so the server refuses to start. Free space on the volume that holds the data directory, then start Postgres again and let it replay its WAL.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>Can I just delete postmaster.pid to get Postgres started?</summary>
+<div class="mk-faq__body">
+
+Only if no Postgres process is running. On a full disk the file is a symptom, not the cause: deleting it while the server is alive risks two postmasters on one data directory, which is how you corrupt a database. Check for a running process first, fix the disk, and leave the data directory alone.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>What fills a disk when the database itself is small?</summary>
+<div class="mk-faq__body">
+
+ClickHouse system log tables are unbounded by default and can dwarf your real data. Mine were 11.8 GB against 20 MB of actual data, with old Docker images taking most of the rest.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>Is it safe to truncate the ClickHouse system log tables?</summary>
+<div class="mk-faq__body">
+
+The system log tables are throwaway diagnostics, not real data. Truncating them reclaims the space immediately, and a config cap stops them growing back.
+
+</div>
+</details>

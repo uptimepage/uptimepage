@@ -1,7 +1,7 @@
 +++
 title = "Why I chose Rust over Go for an uptime monitor"
 date = "2026-07-18"
-updated = "2026-08-03"
+updated = "2026-10-01"
 slug = "choosing-rust-for-an-uptime-monitor"
 excerpt = "Go is the usual pick for a service like this. I chose Rust for one reason: a monitor sells clean timing, and its own runtime must not add random delay."
 tags = ["rust", "go", "monitoring", "devops"]
@@ -93,3 +93,41 @@ It is also why Uptimepage is open source and self-hostable. You can read the cod
 The honest version is not "Rust beats Go." It is "for a tool that lives or dies by timing and runs at high concurrency, Rust fit better." Pick the language for the job in front of you. Mine happened to be a job that Rust is very good at.
 
 If you want to see what that decision produced rather than the reasoning behind it, the [live architecture map](/architecture) traces a request and a check through every hop of the running system.
+
+## Common questions
+
+<details class="mk-faq">
+<summary>Is Rust better than Go for an uptime monitor?</summary>
+<div class="mk-faq__body">
+
+Rust has no garbage collector. For this job that matters, because the prober does not add random pauses to the latency it reports, and the compiler catches data races before they ship. Go is still an excellent choice for most network services, and it is faster to learn and build.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>Does Go's garbage collector really affect latency?</summary>
+<div class="mk-faq__body">
+
+Go has a garbage collector. It is fast and most apps never feel it, but at high concurrency its work can land inside the millisecond timings a monitor reports and lift high percentiles like p99. A runtime with no garbage collector removes that source of noise.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>How much memory does the Rust monitor use?</summary>
+<div class="mk-faq__body">
+
+In one run, a single machine held 50,000 checks in flight and peaked at 933 MiB of memory. A live server uses around 42 MiB while running its monitors. These are laptop load-test numbers for catching slowdowns between versions, not for production capacity planning.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>Is Rust worth the slower development for a solo developer?</summary>
+<div class="mk-faq__body">
+
+Rust asks more from you first. For a narrow, timing-sensitive service run without a team, the compiler catching data races and memory bugs pays back the slower build. For a general web app on a deadline, Go or another language may be the better trade.
+
+</div>
+</details>

@@ -1,7 +1,7 @@
 +++
 title = "Your E2E login test never runs in production"
 date = "2026-08-01"
-updated = "2026-08-02"
+updated = "2026-10-01"
 slug = "your-login-test-never-runs-in-production"
 excerpt = "Your end to end login test runs in CI, against staging, at merge time. The faults that lock real customers out cannot happen there."
 tags = ["qa", "e2e", "synthetic-monitoring", "testing", "playwright"]
@@ -158,4 +158,51 @@ A flow drives a whole browser per run, so it is the most expensive check there i
 
 Your suite still does what it always did. This covers the hours between deploys, which is most of them.
 
-Ours is [browser login monitoring](/browser-login-monitoring), free to start, with one flow monitor on every plan. The [monitor types reference](/docs/monitor-types#flow) has the mechanics, including [importing a recording](/docs/monitor-types#importing-a-recording) and a straight list of what a flow cannot do.
+Ours is [browser login monitoring](/browser-login-monitoring), with flow monitors on the Founding, Pro and Team plans. The [monitor types reference](/docs/monitor-types#flow) has the mechanics, including [importing a recording](/docs/monitor-types#importing-a-recording) and a straight list of what a flow cannot do.
+
+## Common questions
+
+<details class="mk-faq">
+<summary>Is this just my end to end tests running in production?</summary>
+<div class="mk-faq__body">
+
+Running the same journey against production on a schedule has a name, synthetic monitoring, and there is less to it than the name suggests. It is the test you already have, with two changes. It runs forever instead of once per merge, and a failure wakes someone up instead of turning a pipeline red.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>How do I monitor a login that needs two-factor?</summary>
+<div class="mk-faq__body">
+
+You have two options, and the second is better than it sounds. Turn the second factor off for this one account in your login provider, which is normal for service accounts, or stop the flow at the code screen and check that the prompt appeared. Reaching that screen already proves the password was accepted, the provider answered, and a session started.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>Will a browser check page me for flaky failures?</summary>
+<div class="mk-faq__body">
+
+One failing run wakes nobody. A region has to fail twice in a row before it counts as failing, so a single bad minute lands in the run history instead of on someone's phone at four in the morning. Steps that wait have their own timeout, and every run records each step with its duration.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>Can I reuse my Playwright or Cypress test?</summary>
+<div class="mk-faq__body">
+
+A flow is a list of steps, not a script, and the list is short on purpose: open a page, fill a field, click, wait for a selector, check text, check the URL. So you do not port the code. You either write those steps out, which takes a couple of minutes for a login, or you record the journey in Chrome and import it.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>Does this replace my end to end suite?</summary>
+<div class="mk-faq__body">
+
+Your suite still does what it always did. It covers a lot of ground against a build before that build ships. This covers one journey in production, again and again, after it ships. They fail for different reasons, and that is the point of running both.
+
+</div>
+</details>

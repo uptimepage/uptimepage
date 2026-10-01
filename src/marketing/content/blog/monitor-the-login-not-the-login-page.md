@@ -1,7 +1,7 @@
 +++
 title = "Your login page returns 200. Nobody can sign in."
 date = "2026-08-01"
-updated = "2026-09-05"
+updated = "2026-10-01"
 slug = "monitor-the-login-not-the-login-page"
 excerpt = "A 200 proves the page was sent. It proves nothing about the form. Four ways a login breaks while every check stays green, and how to tell them apart."
 tags = ["monitoring", "login", "trust", "uptime"]
@@ -155,6 +155,53 @@ Add one when money or access depends on a journey with several steps. That is us
 
 Watch that one journey, keep cheap checks on the rest, and you have covered the failure your dashboard is otherwise built to hide.
 
-Ours is [browser login monitoring](/browser-login-monitoring). Every plan includes at least one flow monitor, and the free plan is a real plan rather than a trial, because one journey is what most products need.
+Ours is [browser login monitoring](/browser-login-monitoring). The Founding, Pro and Team plans include flow monitors, starting with one on the free Founding plan, because one journey is what most products need.
 
 If you already have an [end to end login test in CI](/blog/your-login-test-never-runs-in-production), the next post explains why it cannot see any of these four faults. If you are still deciding what to watch at all, start with [do I need an uptime monitor](/blog/do-i-need-an-uptime-monitor).
+
+## Common questions
+
+<details class="mk-faq">
+<summary>Why does my monitor say up when customers cannot log in?</summary>
+<div class="mk-faq__body">
+
+An HTTP check asks for the login page and reads the status line. If the server sends the page, the check passes. Everything after that, filling the form, sending it, getting a session, happens where the check never goes.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>What is a browser flow check?</summary>
+<div class="mk-faq__body">
+
+A browser flow check runs a real browser through the steps a person takes. It opens the page, fills the fields, clicks the button, and then checks that the page behind the login really appeared. If a step fails, it tells you which one, and what the page said at that moment.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>How often should a login check run?</summary>
+<div class="mk-faq__body">
+
+Every five to fifteen minutes is normal, not every ten seconds. A browser costs much more than an HTTP request. Watch the one journey that earns you money, and keep cheap HTTP checks on everything else.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>Is it safe to give a monitor a real password?</summary>
+<div class="mk-faq__body">
+
+Use a separate account with the fewest rights that can still finish the journey. Keep the password in a secret that the monitor points at, not in the monitor's own config. Never use a real customer account, and never an admin one.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>Does every website need this?</summary>
+<div class="mk-faq__body">
+
+If your site is a blog, docs or a brochure, skip it. An HTTP check on the page, plus certificate and domain expiry, is enough. The moment money or access depends on a journey with several steps, that journey is the thing worth watching.
+
+</div>
+</details>

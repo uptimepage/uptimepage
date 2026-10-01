@@ -1,6 +1,7 @@
 +++
 title = "How to monitor an MCP server"
 date = "2026-08-18"
+updated = "2026-10-01"
 slug = "monitor-an-mcp-server"
 excerpt = "An MCP server can return 200 on every request and still be useless to an agent. Probe the handshake instead, with one HTTP POST and one assertion."
 tags = ["mcp", "monitoring", "agents", "uptime"]
@@ -135,3 +136,50 @@ Handshake failure is a real outage, because agents cannot use the server at all.
 Latency is worth watching separately. The `initialize` round trip is a floor under every agent interaction with that server, and an agent that waits three seconds to find out which tools exist has spent the user's patience before doing any work. Trend it and treat a slow drift as an early warning.
 
 What an uptime check cannot tell you is whether the tools return the right answers. That needs a real call with a known input and an expected result, which is a different and more expensive kind of check.
+
+## Common questions
+
+<details class="mk-faq">
+<summary>How do I check that an MCP server is up?</summary>
+<div class="mk-faq__body">
+
+Point an HTTP monitor at the MCP endpoint, POST a JSON-RPC `initialize` request, send `Accept: application/json, text/event-stream`, and assert the body contains `protocolVersion`. That is the smallest exchange proving the server speaks MCP rather than merely holding a socket open.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>Why is an HTTP 200 not enough to monitor an MCP server?</summary>
+<div class="mk-faq__body">
+
+A GET against that path can return a 200 from a load balancer, from a health handler mounted alongside, or from a container that started but never finished wiring up its tools. None of it exercises JSON-RPC, so the check passes while agents cannot use the server at all.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>Should I probe with initialize or tools/list?</summary>
+<div class="mk-faq__body">
+
+`initialize` is valid with no session because it is what starts one. Stateful servers hand back an `MCP-Session-Id` header and answer later sessionless requests with a 400, so a monitor firing `tools/list` by itself reports a hard failure against a healthy server.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>Why does my MCP monitor fail with a 406 or 400?</summary>
+<div class="mk-faq__body">
+
+The spec requires clients to list both `application/json` and `text/event-stream` on every POST. A missing or narrower `Accept` header is the usual cause. The other one is an `MCP-Protocol-Version` header naming a version the server does not support, which the spec requires it to reject with 400.
+
+</div>
+</details>
+
+<details class="mk-faq">
+<summary>How do I monitor an MCP server that requires OAuth?</summary>
+<div class="mk-faq__body">
+
+Send a bearer token and assert the handshake succeeds, and you are testing what your agents actually do. Send nothing and assert a 401, and you are testing that the guard is still there. Running both catches a server that is up but has quietly stopped requiring auth.
+
+</div>
+</details>
