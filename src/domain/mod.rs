@@ -68,7 +68,7 @@ pub use monitor_share::{
     CreatedShare, MonitorShare, MonitorShareId, NewMonitorShare, ResolvedShare, SharePageUse,
 };
 pub use notification_channel::{
-    AckVia, AlertAction, ChannelConfig, ChannelKind, DiscordAppConfig, DiscordConfig,
+    AlertAction, AlertVia, ChannelConfig, ChannelKind, DiscordAppConfig, DiscordConfig,
     DiscordMention, EmailConfig, GoogleChatConfig, GotifyConfig, MAX_CHANNEL_NAME_LEN,
     MattermostConfig, MsTeamsConfig, NewNotificationChannel, NotificationChannel,
     NotificationChannelUpdate, NtfyConfig, PagerDutyConfig, PushoverConfig, SlackAppConfig,

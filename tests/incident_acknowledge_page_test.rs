@@ -17,7 +17,7 @@ use uptimepage::domain::{
 };
 use uptimepage::escalation::IncidentSignal;
 use uptimepage::notifier::ack_page::AlertLink;
-use uptimepage::storage::{Actor, IncidentOpsStore, NotificationChannelStore};
+use uptimepage::storage::{Actor, IncidentOpsStore, LifecycleOutcome, NotificationChannelStore};
 use uuid::Uuid;
 
 struct Rig {
@@ -398,6 +398,73 @@ async fn resolving_from_an_alert_tells_the_engine_and_nothing_else_does() {
     assert!(
         signals.try_recv().is_err(),
         "a second press adds no all-clear"
+    );
+}
+
+/// Resolving by hand tells the engine when it closed something, and stays
+/// quiet for a missing incident, a stale episode and an incident already closed.
+#[tokio::test]
+async fn resolving_by_hand_tells_the_engine_only_when_it_closed_something() {
+    let (tx, mut signals) = tokio::sync::mpsc::channel::<IncidentSignal>(8);
+    let state = common::build_test_app_state(|_| {}).with_incident_signals(tx);
+    let rig = rig_with(state.clone()).await;
+    let actor = Actor::User(rig.user);
+
+    let outcome = state
+        .resolve_incident(rig.org, Uuid::now_v7(), actor, None)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, LifecycleOutcome::NotFound));
+    let outcome = state
+        .resolve_incident_episode(rig.org, rig.incident_id, actor, 7)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, LifecycleOutcome::Stale));
+    assert!(signals.try_recv().is_err(), "nothing closed, no all-clear");
+
+    let outcome = state
+        .resolve_incident(rig.org, rig.incident_id, actor, None)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, LifecycleOutcome::Updated(_)));
+    let signal = signals.try_recv().expect("the engine hears of the resolve");
+    assert_eq!(
+        (signal.org, signal.incident_id, signal.reason),
+        (rig.org, rig.incident_id, NotificationReason::Resolved)
+    );
+
+    let outcome = state
+        .resolve_incident_episode(rig.org, rig.incident_id, actor, 0)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, LifecycleOutcome::IllegalTransition(_)));
+    assert!(
+        signals.try_recv().is_err(),
+        "a closed incident is not closed twice"
+    );
+}
+
+/// The API's resolve goes through the same operation, so it tells the engine.
+#[tokio::test]
+async fn the_api_resolve_tells_the_engine() {
+    let (tx, mut signals) = tokio::sync::mpsc::channel::<IncidentSignal>(8);
+    let state = common::build_test_app_state(|_| {}).with_incident_signals(tx);
+    let rig = rig_with(state.clone()).await;
+    let api = uptimepage::build_app_router(state, CancellationToken::new());
+
+    let (status, body) = common::owner_json(
+        api,
+        rig.org,
+        "POST",
+        &format!("/api/v1/incidents/{}/resolve", rig.incident_id),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let signal = signals.try_recv().expect("the engine hears of the resolve");
+    assert_eq!(
+        (signal.incident_id, signal.reason),
+        (rig.incident_id, NotificationReason::Resolved)
     );
 }
 

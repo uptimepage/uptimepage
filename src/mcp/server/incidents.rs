@@ -76,17 +76,9 @@ impl McpServer {
         require_confirmation(ctx, auth, "Resolve this incident?".to_string()).await?;
         let outcome = self
             .state
-            .incident_ops_store
-            .resolve(auth.org, id, Actor::Mcp(auth.user_id), note)
+            .resolve_incident(auth.org, id, Actor::Mcp(auth.user_id), note)
             .await
             .map_err(|e| McpToolError::internal(format!("resolve_incident: {e}")))?;
-        if let crate::storage::LifecycleOutcome::Updated(inc) = &outcome {
-            self.state.signal_incident(
-                auth.org,
-                inc.id,
-                crate::domain::NotificationReason::Resolved,
-            );
-        }
         incident_action_result(id, outcome)
     }
 

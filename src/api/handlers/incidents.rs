@@ -464,12 +464,8 @@ pub async fn resolve_incident(
 ) -> Result<Json<OpsIncident>> {
     let note = clean_note(body.note)?;
     let outcome = state
-        .incident_ops_store
-        .resolve(org, id, Actor::User(user), note)
+        .resolve_incident(org, id, Actor::User(user), note)
         .await?;
-    if let LifecycleOutcome::Updated(inc) = &outcome {
-        state.signal_incident(org, inc.id, NotificationReason::Resolved);
-    }
     lifecycle_response(outcome)
 }
 

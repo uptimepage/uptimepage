@@ -20,8 +20,8 @@ use crate::public_status::PublicSource;
 use crate::quotas::{QuotaService, RateLimitService};
 use crate::security::AbuseGuard;
 use crate::storage::{
-    IncidentNarrationStore, MaintenanceStore, NotificationChannelStore, ResultSink, ResultsStore,
-    TargetStore,
+    Actor, IncidentNarrationStore, LifecycleOutcome, MaintenanceStore, NotificationChannelStore,
+    ResultSink, ResultsStore, TargetStore,
 };
 use crate::worker::WorkerPool;
 
@@ -662,6 +662,48 @@ impl AppState {
             )
             .increment(1);
             tracing::warn!(%org, %incident_id, error = %err, "incident paging signal dropped");
+        }
+    }
+
+    /// Resolve an incident by hand and tell the engine, so the all-clear goes
+    /// out and a repeating emergency page stops.
+    pub async fn resolve_incident(
+        &self,
+        org: OrgId,
+        id: uuid::Uuid,
+        actor: Actor,
+        note: Option<String>,
+    ) -> crate::error::Result<LifecycleOutcome> {
+        let outcome = self
+            .incident_ops_store
+            .resolve(org, id, actor, note)
+            .await?;
+        self.signal_resolution(org, &outcome);
+        Ok(outcome)
+    }
+
+    /// [`Self::resolve_incident`] for a press on an alert, pinned to the
+    /// episode the alert was about.
+    pub async fn resolve_incident_episode(
+        &self,
+        org: OrgId,
+        id: uuid::Uuid,
+        actor: Actor,
+        episode: i64,
+    ) -> crate::error::Result<LifecycleOutcome> {
+        let outcome = self
+            .incident_ops_store
+            .resolve_episode(org, id, actor, episode)
+            .await?;
+        self.signal_resolution(org, &outcome);
+        Ok(outcome)
+    }
+
+    /// Only a resolve that changed something is news: a refused or repeated
+    /// one sends no all-clear.
+    fn signal_resolution(&self, org: OrgId, outcome: &LifecycleOutcome) {
+        if let LifecycleOutcome::Updated(inc) = outcome {
+            self.signal_incident(org, inc.id, crate::domain::NotificationReason::Resolved);
         }
     }
 }

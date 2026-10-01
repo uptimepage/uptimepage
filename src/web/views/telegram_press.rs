@@ -1,5 +1,5 @@
 //! A press on the central bot's Acknowledge or Resolve button, taken through
-//! [`super::app_ack`]. Telegram answers the presser with a toast and the chat
+//! [`super::app_press`]. Telegram answers the presser with a toast and the chat
 //! with a reply to the alert.
 
 use crate::app::AppState;
@@ -7,7 +7,7 @@ use crate::domain::{AlertAction, ChannelKind, Linked, LinkedApp};
 use crate::security::app_link::external_id;
 use crate::telegram::Press;
 
-use super::app_ack::{
+use super::app_press::{
     GONE, Pressed, Taken, acknowledged_notice, announcement, take, unnamed_notice,
 };
 use super::telegram::{bot, spawn_send};

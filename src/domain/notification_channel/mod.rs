@@ -148,18 +148,18 @@ impl ChannelKind {
 
     /// How this kind's alerts carry an Acknowledge button, if they can.
     /// [`NotificationChannel::acknowledge_button`] then turns it on or off.
-    pub const fn acknowledge_via(self) -> Option<AckVia> {
+    pub const fn acknowledge_via(self) -> Option<AlertVia> {
         match self {
             Self::Slack
             | Self::Discord
             | Self::MsTeams
             | Self::GoogleChat
             | Self::Mattermost
-            | Self::Email => Some(AckVia::Page),
-            Self::Ntfy => Some(AckVia::SignedLink),
-            Self::TelegramApp => Some(AckVia::Button(LinkedApp::Telegram)),
-            Self::SlackApp => Some(AckVia::Button(LinkedApp::Slack)),
-            Self::DiscordApp => Some(AckVia::Button(LinkedApp::Discord)),
+            | Self::Email => Some(AlertVia::Page),
+            Self::Ntfy => Some(AlertVia::SignedLink),
+            Self::TelegramApp => Some(AlertVia::Button(LinkedApp::Telegram)),
+            Self::SlackApp => Some(AlertVia::Button(LinkedApp::Slack)),
+            Self::DiscordApp => Some(AlertVia::Button(LinkedApp::Discord)),
             Self::Webhook
             | Self::Telegram
             | Self::WhatsApp
@@ -173,7 +173,7 @@ impl ChannelKind {
 
     /// How this kind's alerts carry the control for `action`, if they can.
     /// Resolve is held to kinds whose press names who made it.
-    pub const fn control_via(self, action: AlertAction) -> Option<AckVia> {
+    pub const fn control_via(self, action: AlertAction) -> Option<AlertVia> {
         match (action, self.acknowledge_via()) {
             (AlertAction::Resolve, Some(via)) if !via.names_presser() => None,
             (_, via) => via,
@@ -261,18 +261,18 @@ impl AlertAction {
 
 /// The control a kind's alert can hold for an [`AlertAction`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AckVia {
-    /// A link to the acknowledge page, where the person signs in. All a
-    /// webhook message or a mail can hold.
+pub enum AlertVia {
+    /// A link to the action's page, where the person signs in. All a webhook
+    /// message or a mail can hold.
     Page,
-    /// A signed link that acknowledges from the notification itself.
+    /// A signed link that acts from the notification itself.
     SignedLink,
     /// A button whose press our own app receives there, which tells us who
     /// pressed it.
     Button(LinkedApp),
 }
 
-impl AckVia {
+impl AlertVia {
     /// Whether a press says who made it. A page has them sign in and an app
     /// press names them through an account they linked, while a signed link
     /// is possession alone.

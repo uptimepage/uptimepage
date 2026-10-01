@@ -259,12 +259,12 @@ impl Worker {
         channel: &crate::domain::NotificationChannel,
         notice: &IncidentNotice,
         action: crate::domain::AlertAction,
-    ) -> Option<crate::domain::AckVia> {
-        use crate::domain::{AckVia, ChannelKind};
+    ) -> Option<crate::domain::AlertVia> {
+        use crate::domain::{AlertVia, ChannelKind};
         let via = match channel.kind.control_via(action)? {
             // Nothing here would receive the press, so the channel links to the
             // page like a pasted webhook does.
-            AckVia::Button(app) if !self.pressed_apps.contains(&app) => AckVia::Page,
+            AlertVia::Button(app) if !self.pressed_apps.contains(&app) => AlertVia::Page,
             via => via,
         };
         if !channel.button(action) || !notice.reason.awaits_acknowledgement() {
@@ -273,9 +273,9 @@ impl Worker {
         let signed = !self.incident_ack_secret.is_empty();
         // Checked before the episode lookup, a query on the paging path.
         let deliverable = match via {
-            AckVia::SignedLink => signed && !self.base_url.is_empty(),
-            AckVia::Button(_) => signed,
-            AckVia::Page => {
+            AlertVia::SignedLink => signed && !self.base_url.is_empty(),
+            AlertVia::Button(_) => signed,
+            AlertVia::Page => {
                 !self.base_url.is_empty()
                     && (channel.kind != ChannelKind::Email || self.email.is_some())
             }
@@ -288,15 +288,15 @@ impl Worker {
         org: OrgId,
         channel: &crate::domain::NotificationChannel,
         notice: &IncidentNotice,
-        via: crate::domain::AckVia,
+        via: crate::domain::AlertVia,
         action: crate::domain::AlertAction,
         generation: i64,
     ) -> Option<crate::notifier::AckControl> {
-        use crate::domain::AckVia;
+        use crate::domain::AlertVia;
         use crate::notifier::ack_page::AlertLink;
         use crate::notifier::{AckControl, PushAck};
         match via {
-            AckVia::Button(_) => crate::security::incident_ack::button_data(
+            AlertVia::Button(_) => crate::security::incident_ack::button_data(
                 &self.incident_ack_secret,
                 action,
                 org,
@@ -305,7 +305,7 @@ impl Worker {
                 generation,
             )
             .map(AckControl::Button),
-            AckVia::SignedLink => crate::security::incident_ack::link_url(
+            AlertVia::SignedLink => crate::security::incident_ack::link_url(
                 &self.base_url,
                 &self.incident_ack_secret,
                 org,
@@ -315,7 +315,7 @@ impl Worker {
                 chrono::Utc::now(),
             )
             .map(|url| AckControl::Link(PushAck { url })),
-            AckVia::Page => Some(AckControl::Page(format!(
+            AlertVia::Page => Some(AckControl::Page(format!(
                 "{}{}",
                 self.base_url.trim_end_matches('/'),
                 AlertLink {

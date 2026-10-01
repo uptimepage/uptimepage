@@ -131,7 +131,7 @@ async fn an_all_clear_carries_no_control() {
 /// acknowledge page, rather than carry a button nothing answers.
 #[tokio::test]
 async fn an_app_channel_gets_its_button_only_where_presses_arrive() {
-    use crate::domain::{AckVia, ChannelKind};
+    use crate::domain::{AlertVia, ChannelKind};
     use crate::notifier::AckControl;
     let channels = Arc::new(InMemoryNotificationChannelStore::new());
     let cid = verified_mail_channel(&channels, true).await;
@@ -146,7 +146,7 @@ async fn an_app_channel_gets_its_button_only_where_presses_arrive() {
         .incident_ack_secret = "engine-acknowledge-test-secret".into();
 
     for kind in ChannelKind::ALL {
-        let Some(AckVia::Button(app)) = kind.acknowledge_via() else {
+        let Some(AlertVia::Button(app)) = kind.acknowledge_via() else {
             continue;
         };
         channel.kind = *kind;

@@ -3,7 +3,7 @@
 //! then that a bad one is refused. A press on the Acknowledge or Resolve
 //! button is answered at once with a private "thinking…", since Discord drops the
 //! interaction after 3 seconds, and taken off the request through
-//! [`super::app_ack`]; the outcome then replaces the "thinking…". Every other
+//! [`super::app_press`]; the outcome then replaces the "thinking…". Every other
 //! interaction gets a valid answer that does nothing.
 
 use axum::Json;
@@ -21,7 +21,7 @@ use crate::domain::{ChannelKind, LinkedApp};
 use crate::notifier::discord::escape;
 use crate::security::app_link::external_id;
 
-use super::app_ack::{Pressed, announcement, answer_offering_link};
+use super::app_press::{Pressed, announcement, answer_offering_link};
 
 const SIGNATURE_HEADER: &str = "x-signature-ed25519";
 const TIMESTAMP_HEADER: &str = "x-signature-timestamp";

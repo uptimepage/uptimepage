@@ -10,9 +10,7 @@ use chrono::Utc;
 
 use crate::app::AppState;
 use crate::app_accounts::{identify, offer_link};
-use crate::domain::{
-    AlertAction, ChannelKind, ExternalId, Linked, LinkedApp, NotificationReason, OrgId,
-};
+use crate::domain::{AlertAction, ChannelKind, ExternalId, Linked, LinkedApp, OrgId};
 use crate::security::incident_ack::Button;
 use crate::storage::{Acknowledged, Actor, AppPress, LifecycleOutcome};
 
@@ -157,8 +155,7 @@ async fn resolve(
         Linked::Outsider | Linked::Unlinked => return Taken::Unnamed(linked),
     }
     let resolved = state
-        .incident_ops_store
-        .resolve_episode(
+        .resolve_incident_episode(
             org,
             button.incident_id,
             actor(press, linked),
@@ -173,7 +170,6 @@ async fn resolve(
                 app,
                 "incident resolved from an app"
             );
-            state.signal_incident(org, button.incident_id, NotificationReason::Resolved);
             Taken::Resolved
         }
         Ok(outcome) => Taken::Refused(refusal(outcome)),

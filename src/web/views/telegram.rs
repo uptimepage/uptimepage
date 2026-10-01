@@ -77,10 +77,12 @@ pub async fn webhook(State(state): State<AppState>, headers: HeaderMap, body: By
             });
         }
         WebhookAction::Pressed(press) => {
-            tokio::spawn(async move { super::telegram_ack::handle_press(&state, press).await });
+            tokio::spawn(async move { super::telegram_press::handle_press(&state, press).await });
         }
         WebhookAction::Unanswerable { query_id } => {
-            tokio::spawn(async move { super::telegram_ack::answer_gone(&state, &query_id).await });
+            tokio::spawn(
+                async move { super::telegram_press::answer_gone(&state, &query_id).await },
+            );
         }
         WebhookAction::Ignore => {}
     }

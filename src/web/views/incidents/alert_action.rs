@@ -14,7 +14,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::app::AppState;
-use crate::domain::{AlertAction, NotificationReason, OpsIncident, OrgId, UserId};
+use crate::domain::{AlertAction, OpsIncident, OrgId, UserId};
 use crate::notifier::ack_page::{AlertLink, AlertLinkQuery};
 use crate::request::auth::{Session, login_redirect};
 use crate::storage::{Actor, LifecycleOutcome};
@@ -244,16 +244,18 @@ async fn take(
     if !offered {
         return Ok(StatusCode::CONFLICT);
     }
-    let ops = &state.incident_ops_store;
     let actor = Actor::User(user);
     let outcome = match action {
         AlertAction::Acknowledge => {
-            ops.acknowledge(link.org, id, actor, None, Some(link.episode))
+            state
+                .incident_ops_store
+                .acknowledge(link.org, id, actor, None, Some(link.episode))
                 .await?
                 .outcome
         }
         AlertAction::Resolve => {
-            ops.resolve_episode(link.org, id, actor, link.episode)
+            state
+                .resolve_incident_episode(link.org, id, actor, link.episode)
                 .await?
         }
     };
@@ -265,9 +267,6 @@ async fn take(
                 action = action.as_path(),
                 "incident acted on from an alert's page"
             );
-            if action == AlertAction::Resolve {
-                state.signal_incident(link.org, id, NotificationReason::Resolved);
-            }
             StatusCode::NO_CONTENT
         }
         LifecycleOutcome::Stale | LifecycleOutcome::IllegalTransition(_) => StatusCode::CONFLICT,

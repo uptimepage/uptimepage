@@ -1,5 +1,5 @@
 pub mod alert_channel_stop;
-mod app_ack;
+mod app_press;
 pub mod auth;
 pub mod billing;
 pub mod billing_hook;
@@ -38,7 +38,7 @@ pub mod team;
 pub mod team_lock;
 pub mod telegram;
 mod telegram_account;
-mod telegram_ack;
+mod telegram_press;
 pub mod variables;
 pub mod verify_channel;
 pub mod whatsapp;

@@ -2,7 +2,7 @@
 //! Slack's signature is the only authentication. A signed request is answered
 //! 200 at once, since Slack shows the presser an error after 3 seconds, and
 //! the presses acted on, Acknowledge and Resolve, are taken off the request through
-//! [`super::app_ack`]. Every other click on our messages, such as a link
+//! [`super::app_press`]. Every other click on our messages, such as a link
 //! button, is reported here too and gets nothing more.
 
 use axum::body::Bytes;
@@ -17,7 +17,7 @@ use crate::notifier::slack::escape;
 use crate::security::app_link::external_id;
 use crate::slack::{Press, Reply, alert_press, respond, signed_by_slack};
 
-use super::app_ack::{Pressed, announcement, answer_offering_link};
+use super::app_press::{Pressed, announcement, answer_offering_link};
 
 const TIMESTAMP_HEADER: &str = "x-slack-request-timestamp";
 const SIGNATURE_HEADER: &str = "x-slack-signature";
