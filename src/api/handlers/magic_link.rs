@@ -641,7 +641,7 @@ async fn bootstrap_invited_user(
         return Ok(None);
     }
     if let Err(err) =
-        crate::api::handlers::invitations::validate_acceptable(state, &invitation, None).await
+        crate::auth::invitations::validate_acceptable(pool, &state.quotas, &invitation, None).await
     {
         tracing::warn!(error = %err, %invitation_id, "invited bootstrap pre-flight failed");
         return Ok(None);

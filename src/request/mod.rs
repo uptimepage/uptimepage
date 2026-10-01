@@ -13,6 +13,7 @@ pub mod flash;
 pub mod host;
 pub mod http_metrics;
 pub mod login_hint;
+pub mod range;
 pub mod rate_limit;
 pub mod state;
 pub mod theme;

@@ -10,7 +10,6 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
-use crate::api::handlers::invitations::accept_for_user;
 use crate::app::AppState;
 use crate::auth::invitations as inv;
 use crate::auth::url::url_encode;
@@ -76,7 +75,7 @@ pub async fn accept_landing(
     let Some(row) = inv::find_pending_by_token(pool, token).await? else {
         return Ok(invalid_invitation_page());
     };
-    match accept_for_user(&state, user.id, row).await {
+    match inv::accept_for_user(pool, &state.quotas, user.id, row).await {
         Ok(accepted) => {
             // Rotate the live session into the joined org — without this the
             // redirect lands on the OLD org's dashboard and the joined

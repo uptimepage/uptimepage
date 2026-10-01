@@ -21,7 +21,7 @@ use crate::domain::{OrgId, UserId};
 use crate::error::Result;
 use crate::storage::users::SessionOrg;
 
-use super::invitations::{self, AcceptedInvitation};
+use crate::auth::invitations::{self, AcceptedInvitation};
 
 /// What the dance carried and what came of it.
 pub(super) enum Invited {
@@ -51,9 +51,14 @@ pub(super) async fn redeem(
 ) -> Invited {
     match invitation_id {
         None => Invited::Nobody,
-        Some(id) => match invitations::try_auto_accept(state, user_id, id).await {
-            Some(joined) => Invited::Joined(joined),
-            None => Invited::Missed,
+        Some(id) => match state.require_db() {
+            Ok(pool) => {
+                match invitations::try_auto_accept(pool, &state.quotas, user_id, id).await {
+                    Some(joined) => Invited::Joined(joined),
+                    None => Invited::Missed,
+                }
+            }
+            Err(_) => Invited::Missed,
         },
     }
 }

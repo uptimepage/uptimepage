@@ -1098,12 +1098,12 @@ fn normalize_rule_tags(tags: &[String]) -> Result<Vec<String>> {
         other => other,
     };
     // The list the client sent, so a positional fault names the tag they typed.
-    match crate::api::handlers::targets::normalize_tags(tags) {
+    match crate::targets::validate::normalize_tags(tags) {
         Ok(valid) => Ok(fold_spellings(&valid)),
         // Matching folds case, so spellings that collapse into one entry must
         // not spend the cap twice.
         Err(AppError::BadRequest { code, .. }) if code == codes::TOO_MANY_TAGS => {
-            crate::api::handlers::targets::normalize_tags(&fold_spellings(tags))
+            crate::targets::validate::normalize_tags(&fold_spellings(tags))
                 .map(|v| fold_spellings(&v))
                 .map_err(field)
         }

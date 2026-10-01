@@ -10,7 +10,7 @@ use thiserror::Error;
 use crate::error::{AppError, Result};
 use crate::http_client::HttpClients;
 use crate::worker::rdap::RdapClient;
-use crate::worker::whois::{self, WhoisClient};
+use crate::worker::whois::WhoisClient;
 
 #[derive(Debug, Clone)]
 pub struct RegistrationAnswer {
@@ -37,13 +37,6 @@ impl From<RegistrationError> for AppError {
 /// Saves callers from matching on message strings.
 pub fn tld_verdict(err: &anyhow::Error) -> Option<&RegistrationError> {
     err.downcast_ref::<RegistrationError>()
-}
-
-/// False only for registries known to publish no expiry at all. A TLD absent
-/// from every lookup table still passes here and fails at probe time naming the
-/// TLD, because coverage cannot be checked without the async RDAP bootstrap.
-pub fn is_monitorable(tld: &str) -> bool {
-    !whois::publishes_no_expiry(tld)
 }
 
 pub struct RegistrationClient {
@@ -76,7 +69,7 @@ impl RegistrationClient {
             )));
         };
 
-        if whois::publishes_no_expiry(tld) {
+        if crate::domain::publishes_no_expiry(tld) {
             return Err(RegistrationError::NoPublicExpiry {
                 tld: tld.to_owned(),
             }
@@ -104,16 +97,6 @@ impl RegistrationClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn expiryless_registries_are_not_monitorable() {
-        for tld in ["de", "eu", "gg", "at", "be", "ch", "jp"] {
-            assert!(!is_monitorable(tld), ".{tld} publishes no expiry");
-        }
-        for tld in ["co", "com", "it", "nu", "se", "dk", "ie", "hk"] {
-            assert!(is_monitorable(tld), ".{tld} is monitorable");
-        }
-    }
 
     #[test]
     fn tld_verdict_survives_anyhow_wrapping() {

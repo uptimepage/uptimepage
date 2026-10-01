@@ -229,6 +229,15 @@ impl AppConfig {
         Ok(cfg.try_deserialize()?)
     }
 
+    /// Whether the org may add on-call coverage.
+    ///
+    /// Self-host is exempt for the same reason it is exempt from the SMS gate: the
+    /// operator owns the `plans` row, so gating them against it means nothing.
+    /// The plan's caps still decide how many of each it may keep.
+    pub fn on_call_available(&self, plan: &crate::domain::Plan) -> bool {
+        !self.marketing.enabled || plan.on_call_enabled
+    }
+
     /// The apps whose button presses reach this deployment.
     pub fn pressed_apps(&self) -> Vec<LinkedApp> {
         LinkedApp::ALL

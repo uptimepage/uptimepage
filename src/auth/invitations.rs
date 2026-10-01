@@ -21,10 +21,13 @@ use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::domain::{OrgId, Role, UserId};
+use crate::domain::{OrgId, Organization, Role, UserId};
+use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::quotas::QuotaService;
 use crate::security::token_hash::{self, slice_prefix};
 use crate::storage::locks::{account_lock_key, advisory_xact_lock};
+use crate::storage::orgs as orgs_store;
 
 /// Hash-friendly invitation record. `token_hash` is the encoded argon2id
 /// PHC string; only the hash leaves this row.
@@ -511,6 +514,139 @@ pub async fn purge_old(pool: &PgPool, keep_history_days: i64) -> Result<u64> {
     .await
     .context("invitations::purge_old")?;
     Ok(res.rows_affected())
+}
+
+/// Outcome of a successful accept — enough for the `/?joined=<slug>` bounce.
+#[derive(Debug, Clone)]
+pub struct AcceptedInvitation {
+    pub org_id: OrgId,
+    pub org_slug: String,
+}
+
+impl AcceptedInvitation {
+    /// The dashboard, carrying the slug for its joined banner.
+    pub fn landing_url(&self) -> String {
+        format!("/?joined={}", crate::auth::url::url_encode(&self.org_slug))
+    }
+}
+
+/// Org liveness + member-cap pre-flight, shared by every accept path and by
+/// the magic-link bootstrap (which must fail BEFORE creating a user row —
+/// `user` is None there). Returns the org + plan for the accept tail.
+pub async fn validate_acceptable(
+    pool: &PgPool,
+    quotas: &QuotaService,
+    row: &InvitationRow,
+    user: Option<UserId>,
+) -> Result<(Organization, std::sync::Arc<crate::domain::Plan>)> {
+    // Refuse on soft-deleted org. The owner could have soft-deleted the org
+    // after the invite was sent; silently adding a membership to a tombstoned
+    // org would mask itself in `list_orgs_for_user`.
+    let Some(org_row) = orgs_store::get_org(pool, row.org_id).await? else {
+        return Err(AppError::not_found(codes::ORG_NOT_FOUND, "org not found"));
+    };
+    if org_row.deleted_at.is_some() {
+        return Err(AppError::not_found(codes::ORG_DELETED, "org is deleted"));
+    }
+    // Member cap, friendly pre-check: reject an over-cap accept *before*
+    // marking the invitation consumed (and before the bootstrap path creates
+    // a user row), so on the common path the recipient keeps their token.
+    let plan = quotas.limit_for_org(row.org_id).await?;
+    quotas.check_can_add_member(row.org_id, user).await?;
+    Ok((org_row, plan))
+}
+
+/// Single owner of "user X redeems pending invitation row": liveness +
+/// email match + quota pre-check + mark_accepted + add_member. Used by the
+/// POST endpoint, the GET landing page, and both post-login auto-accepts.
+pub async fn accept_for_user(
+    pool: &PgPool,
+    quotas: &QuotaService,
+    user_id: UserId,
+    row: InvitationRow,
+) -> Result<AcceptedInvitation> {
+    let (org_row, plan) = validate_acceptable(pool, quotas, &row, Some(user_id)).await?;
+
+    // Caller's email must match the invitation.
+    let Some(caller_email) = crate::storage::users::live_email(pool, user_id).await? else {
+        return Err(AppError::Unauthorized);
+    };
+    if !caller_email.eq_ignore_ascii_case(&row.email) {
+        return Err(AppError::forbidden_code(
+            codes::INVITATION_EMAIL_MISMATCH,
+            "this invitation is for a different email address",
+        ));
+    }
+
+    // One transaction for the stamp and the membership: a sign-in racing this
+    // accept sees either a pending invitation or a committed membership, never
+    // the gap between, and a refused seat rolls the stamp back with it. The
+    // account lock comes before the row lock because account deletion takes
+    // them in that order and then deletes the inviter's pending invitations.
+    let mut tx = pool.begin().await.context("accept: begin")?;
+    let account = crate::storage::accounts::account_for_org(&mut *tx, row.org_id).await?;
+    crate::storage::locks::advisory_xact_lock(
+        &mut *tx,
+        &crate::storage::locks::account_lock_key(account),
+    )
+    .await
+    .context("accept: account lock")?;
+    if !mark_accepted(&mut *tx, row.org_id, row.id).await? {
+        tx.rollback().await.ok();
+        return Err(AppError::not_found(
+            codes::INVITATION_INVALID,
+            "invitation is invalid or has expired",
+        ));
+    }
+    // actor = the redeeming user (self-onboard via invitation token). The
+    // advisory-locked count in add_member is the race-safe backstop on the
+    // same plan number; it only fires if a concurrent accept slipped past
+    // the lockless pre-check in validate_acceptable.
+    let max_members = u32::try_from(plan.max_members).unwrap_or(u32::MAX);
+    let added =
+        orgs_store::add_member_in_tx(&mut tx, row.org_id, user_id, user_id, row.role, max_members)
+            .await?;
+    if let orgs_store::AddMemberOutcome::LimitReached { current, limit } = added {
+        tx.rollback().await.ok();
+        // Same audit shape every quota block uses — go through the one place
+        // that owns it rather than re-assembling the event by hand.
+        quotas.record_block(row.org_id, Some(user_id), "max_members", current, limit);
+        return Err(AppError::quota_exceeded(
+            "max_members",
+            current,
+            limit,
+            plan.id.clone(),
+        ));
+    }
+    tx.commit().await.context("accept: commit")?;
+    Ok(AcceptedInvitation {
+        org_id: row.org_id,
+        org_slug: org_row.slug,
+    })
+}
+
+/// Login-flow wrapper: a stale/raced/over-quota invitation must never break
+/// the sign-in itself.
+pub async fn try_auto_accept(
+    pool: &PgPool,
+    quotas: &QuotaService,
+    user_id: UserId,
+    invitation_id: uuid::Uuid,
+) -> Option<AcceptedInvitation> {
+    match find_pending_by_id(pool, invitation_id).await {
+        Ok(Some(row)) => match accept_for_user(pool, quotas, user_id, row).await {
+            Ok(accepted) => Some(accepted),
+            Err(err) => {
+                tracing::warn!(error = %err, %invitation_id, "post-login invitation accept failed");
+                None
+            }
+        },
+        Ok(None) => None,
+        Err(err) => {
+            tracing::warn!(error = %err, %invitation_id, "post-login invitation lookup failed");
+            None
+        }
+    }
 }
 
 #[cfg(test)]

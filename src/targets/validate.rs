@@ -1,67 +1,20 @@
-use super::ALLOWED_SCHEMES;
-use crate::targets::{default_region_set, flow_capable_set};
+use super::{default_region_set, flow_capable_set};
 use std::collections::HashSet;
 use std::net::IpAddr;
 
 use url::Host;
-use uuid::Uuid;
 
-use crate::app::AppState;
+use crate::config::AppConfig;
 use crate::domain::REDACTED;
 use crate::domain::{
-    CheckSpec, NewTarget, OrgId, RegionIncidentPolicy, Target, TargetAlerts, TargetUpdate,
-    min_interval_secs_for_kind,
+    CheckSpec, NewTarget, RegionIncidentPolicy, TargetAlerts, min_interval_secs_for_kind,
 };
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::security::SsrfGuard;
+use crate::storage::TargetStore;
 
-/// Reject a monitor whose `{{var}}` references don't all resolve against the
-/// org's variables — an unknown key or a secret used in a field that forbids it.
-/// Fails fast at save instead of silently dropping the monitor at probe time.
-/// Non-HTTP or no-variable specs are a no-op.
-pub(crate) async fn validate_variable_refs(
-    state: &AppState,
-    org: OrgId,
-    check: &CheckSpec,
-) -> Result<()> {
-    use crate::domain::interpolate::{
-        flow_uses_vars, repoint_risk, resolve_flow_spec, resolve_http_spec, uses_vars,
-    };
-
-    let unresolved = |e: crate::domain::interpolate::ResolveError| {
-        AppError::unprocessable(codes::UNRESOLVED_VARIABLE, e.to_string())
-    };
-    match check {
-        CheckSpec::Http(http) if uses_vars(http) => {
-            let vars = state.variable_store.resolve_map(org).await?;
-            resolve_http_spec(http, &vars)
-                .map(drop)
-                .map_err(unresolved)?;
-            if let Some(risk) = repoint_risk(http, &vars) {
-                tracing::warn!(
-                    org = %org.0,
-                    url_variables = ?risk.url_keys,
-                    secret_headers = ?risk.secret_header_keys,
-                    "monitor combines a url variable with a secret header; repointing the \
-                     url variable would send the secret to a different host"
-                );
-            }
-        }
-        CheckSpec::Flow(flow) if flow_uses_vars(flow) => {
-            let vars = state.variable_store.resolve_map(org).await?;
-            resolve_flow_spec(flow, &vars)
-                .map(drop)
-                .map_err(unresolved)?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-pub(crate) fn ssrf_guard(state: &AppState) -> SsrfGuard {
-    SsrfGuard::new(state.cfg.security.allow_private_targets)
-}
+const ALLOWED_SCHEMES: &[&str] = &["http", "https"];
 
 /// Interactive probing (test-now / check-now) is meaningless for a passive
 /// check, since there is nothing to reach out to.
@@ -106,26 +59,11 @@ pub(crate) fn gate_flow_steps(check: &CheckSpec, plan: &crate::domain::Plan) -> 
     Ok(())
 }
 
-/// Reject a flow monitor whose regions have no node that can run it — otherwise
-/// it is accepted and then silently never probed. Capable = an enabled
-/// flow-capable agent in the region, or the control plane's own region when it
-/// runs flow in-process. No-op for non-flow checks.
-pub(crate) async fn ensure_flow_regions_covered(
-    state: &AppState,
+pub(crate) fn flow_covered(
+    capable: &HashSet<String>,
     check: &CheckSpec,
     regions: &[String],
 ) -> Result<()> {
-    if !matches!(check, CheckSpec::Flow(_)) {
-        return Ok(());
-    }
-    flow_covered(
-        &flow_capable_set(state.target_store.as_ref(), &state.cfg).await?,
-        check,
-        regions,
-    )
-}
-
-fn flow_covered(capable: &HashSet<String>, check: &CheckSpec, regions: &[String]) -> Result<()> {
     if !matches!(check, CheckSpec::Flow(_)) || regions.iter().any(|r| capable.contains(r)) {
         return Ok(());
     }
@@ -138,7 +76,7 @@ fn flow_covered(capable: &HashSet<String>, check: &CheckSpec, regions: &[String]
 
 /// What a create needs to know about regions, read once per request so a bulk
 /// of thousands does not ask the database per item.
-pub(crate) struct RegionSnapshot {
+pub struct RegionSnapshot {
     available: Vec<String>,
     preferred: Vec<String>,
     flow_capable: HashSet<String>,
@@ -146,17 +84,21 @@ pub(crate) struct RegionSnapshot {
 }
 
 impl RegionSnapshot {
-    pub(crate) async fn load(state: &AppState) -> Result<Self> {
+    pub(crate) async fn load(targets: &dyn TargetStore, cfg: &AppConfig) -> Result<Self> {
         Ok(Self {
-            available: state.target_store.available_regions().await?,
-            preferred: state.target_store.default_selected_regions().await?,
-            flow_capable: flow_capable_set(state.target_store.as_ref(), &state.cfg).await?,
-            default_region: state.cfg.scheduler.effective_default_region().to_string(),
+            available: targets.available_regions().await?,
+            preferred: targets.default_selected_regions().await?,
+            flow_capable: flow_capable_set(targets, cfg).await?,
+            default_region: cfg.scheduler.effective_default_region().to_string(),
         })
     }
 
     pub(crate) fn available_count(&self) -> usize {
         self.available.len()
+    }
+
+    pub(crate) fn is_available(&self, region: &str) -> bool {
+        self.available.iter().any(|r| r == region)
     }
 
     /// The set a create that names none gets. A flow only runs where an engine
@@ -206,96 +148,6 @@ impl RegionSnapshot {
             None => Ok(()),
         }
     }
-}
-
-/// Abuse admission control for one user-supplied check. Every handler that
-/// accepts a `CheckSpec` (create, bulk per item, update, test) routes through
-/// this single chokepoint, so a denylisted URL/domain can never enter the
-/// store — and every block is audited fire-and-forget to `quota_events`.
-pub(crate) fn check_abuse(
-    state: &AppState,
-    org: OrgId,
-    check: &crate::domain::CheckSpec,
-) -> Result<()> {
-    let Some(hit) = state.abuse.inspect(check) else {
-        return Ok(());
-    };
-    crate::quotas::service::record_quota_event(
-        state.db.clone(),
-        Some(org),
-        None,
-        "abuse_blocked",
-        Some(hit.quota_name()),
-        serde_json::json!({ "detail": hit.detail }),
-        None,
-    );
-    Err(hit.into_app_error())
-}
-
-/// The PATCH counterpart of the floor check in [`validate_new_target`]. Either
-/// half can arrive alone, so the floor and the heartbeat pairing are judged on
-/// the merge of the request and the stored row. A heartbeat window that shrinks
-/// with no interval sent lowers the stored interval to the new cadence, rather
-/// than refusing a field the caller never named. A missing target is left for
-/// the update itself to 404.
-pub(crate) async fn validate_patch_interval(
-    state: &AppState,
-    org: OrgId,
-    id: Uuid,
-    update: &mut TargetUpdate,
-    prefetched: Option<&Target>,
-) -> Result<()> {
-    let requested = update.interval.map(|i| i.as_secs() as i64);
-    if requested.is_none() && update.check.is_none() {
-        return Ok(());
-    }
-    // The row is only worth reading for the half the request leaves out. A high
-    // interval answers the kind floor on its own, but never the heartbeat
-    // pairing, which needs the spec to know the window it is judged against.
-    let needs_row = requested.is_none() || update.check.is_none();
-    let fetched = match (needs_row, prefetched) {
-        (true, None) => state.target_store.get(org, id).await?,
-        _ => None,
-    };
-    let stored = prefetched.or(fetched.as_ref());
-    let Some(requested) = requested.or_else(|| stored.map(|t| t.interval.as_secs() as i64)) else {
-        return Ok(());
-    };
-    let kind = update
-        .check
-        .as_ref()
-        .map(|c| c.kind())
-        .or_else(|| stored.map(|t| t.check.kind()));
-    let plan = state.quotas.limit_for_org(org).await?;
-    let plan_min = i64::from(plan.min_check_interval_secs);
-    // No kind means the read was skipped, which happens only when no kind floor
-    // could bind. The plan floor applies either way.
-    let effective_floor = plan_min.max(kind.map_or(0, |k| min_interval_secs_for_kind(k) as i64));
-    if requested < effective_floor {
-        return Err(AppError::min_check_interval(
-            requested,
-            effective_floor,
-            plan.id.clone(),
-        ));
-    }
-    // Either half can arrive alone, so the pairing is judged on the merge of
-    // the request and the stored row.
-    let Some(check) = update.check.as_ref().or(stored.map(|t| &t.check)) else {
-        return Ok(());
-    };
-    let mut interval = std::time::Duration::from_secs(requested.max(0) as u64);
-    if update.interval.is_none()
-        && let Some(hb) = check.as_heartbeat()
-    {
-        let cadence = hb
-            .evaluation_cadence()
-            .max(std::time::Duration::from_secs(effective_floor.max(0) as u64));
-        if interval > cadence {
-            interval = cadence;
-            update.interval = Some(cadence);
-        }
-    }
-    validate_heartbeat_cadence(check, interval, effective_floor as u64)
 }
 
 pub(crate) fn validate_new_target(
@@ -426,36 +278,16 @@ pub(crate) fn normalize_tags(tags: &[String]) -> Result<Vec<String>> {
 }
 
 pub(crate) fn validate_group_name(group: Option<&str>) -> Result<()> {
-    use crate::api::handlers::validation;
+    use crate::error::validation;
     if let Some(g) = group {
         validation::check_length(g, "group_name", 50, codes::GROUP_TOO_LONG)?;
     }
     Ok(())
 }
 
-/// `targets_owner_is_member_fk` refuses a non-member owner too; this turns that
-/// into a 400 naming the field instead of a constraint violation.
-pub(crate) async fn validate_owner_is_member(
-    state: &AppState,
-    org: OrgId,
-    owner: Option<Uuid>,
-) -> Result<()> {
-    let Some(uid) = owner else { return Ok(()) };
-    let pool = state.require_db()?;
-    let members = crate::storage::orgs::list_members(pool, org).await?;
-    if !members.iter().any(|m| m.membership.user_id.0 == uid) {
-        return Err(AppError::bad_request_field(
-            codes::OWNER_NOT_MEMBER,
-            format!("owner_user_id {uid} is not a member of this org"),
-            "owner_user_id",
-        ));
-    }
-    Ok(())
-}
-
 /// Structural-only (no I/O): reject duplicate channel bindings. The bound
 /// `channel_id` is checked to exist in the caller's org by the async
-/// [`verify_alert_channels`] — kept separate so the sync per-item path
+/// `TargetOps::verify_alert_channels` — kept separate so the sync per-item path
 /// (`validate_new_target`, also used by bulk) stays sync.
 pub(crate) fn validate_alerts(alerts: &TargetAlerts) -> Result<()> {
     let mut seen = std::collections::HashSet::new();
@@ -514,57 +346,6 @@ pub(crate) fn normalize_region_ids(requested: &[String]) -> Result<Vec<String>> 
         ));
     }
     Ok(regions)
-}
-
-/// Shared so naming regions at create time and setting them afterwards cannot
-/// drift into two ideas of a valid set. Existence before the cap: a misspelt
-/// set must not read as a quota hit, nor be audited as one.
-pub(crate) async fn vet_requested_regions(
-    state: &AppState,
-    org: OrgId,
-    requested: &[String],
-    snapshot: &RegionSnapshot,
-) -> Result<Vec<String>> {
-    let regions = normalize_region_ids(requested)?;
-    if let Some(bad) = regions.iter().find(|r| !snapshot.available.contains(r)) {
-        return Err(AppError::unprocessable(
-            codes::REGION_INVALID,
-            format!("unknown or disabled region: {bad}"),
-        ));
-    }
-    state
-        .quotas
-        .check_region_assignment(org, None, regions.len() as i64)
-        .await?;
-    Ok(regions)
-}
-
-/// Reject a binding to a channel the caller's org doesn't own (the store is
-/// org-scoped, so a foreign or deleted id resolves to `None`). Closes the
-/// IDOR where a target could otherwise reference another tenant's channel.
-pub(crate) async fn verify_alert_channels(
-    state: &AppState,
-    org: OrgId,
-    alerts: &TargetAlerts,
-) -> Result<()> {
-    if alerts.is_empty() {
-        return Ok(());
-    }
-    // One batched org-scoped query (mirrors maintenance's
-    // `validate_component_ids`) instead of N point lookups.
-    let ids: Vec<uuid::Uuid> = alerts.iter().map(|b| b.channel_id).collect();
-    let known = state
-        .notification_channel_store
-        .existing_channel_ids(org, &ids)
-        .await?;
-    if let Some(missing) = ids.iter().find(|id| !known.contains(id)) {
-        return Err(AppError::bad_request_field(
-            codes::INVALID_ALERT_CONFIG,
-            format!("notification channel {missing} does not exist"),
-            "alerts.channel_id",
-        ));
-    }
-    Ok(())
 }
 
 /// An empty-string credential means "clear"; an omitted one is kept.
@@ -636,7 +417,7 @@ pub(crate) fn carry_flow_secrets(
 /// Returns `400` when IDN encoding fails on a user-supplied host.
 pub(crate) fn canonicalize_check(check: &mut crate::domain::CheckSpec) -> Result<()> {
     use crate::domain::CheckSpec;
-    use crate::worker::host_throttle::canonical_host_strict;
+    use crate::net::host::canonical_host_strict;
     use std::net::IpAddr;
     fn canon_host(host: &mut String, field: &'static str, code: &'static str) -> Result<()> {
         let raw = std::mem::take(host);
@@ -924,7 +705,7 @@ pub(crate) fn validate_check(check: &crate::domain::CheckSpec, guard: &SsrfGuard
             }
             // Accepting a check that can never succeed would alert forever.
             if let Some(tld) = d.domain.rsplit('.').next()
-                && !crate::worker::registration::is_monitorable(&tld.to_ascii_lowercase())
+                && !crate::domain::is_monitorable(&tld.to_ascii_lowercase())
             {
                 return Err(AppError::bad_request_field(
                     codes::INVALID_DOMAIN_PARAMS,
@@ -1092,3 +873,6 @@ pub(crate) fn check_ip(ip: IpAddr, guard: &SsrfGuard) -> Result<()> {
         AppError::bad_request_field(codes::SSRF_BLOCKED, err.to_string(), "check.url")
     })
 }
+
+#[cfg(test)]
+mod tests;

@@ -13,8 +13,6 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::api::handlers::validation::{self, validate_message};
-use crate::api::handlers::{invalidate_incident_pages, publish_and_invalidate};
 use crate::app::AppState;
 use crate::domain::{
     Incident, IncidentEvent, IncidentEventKind, IncidentMetrics, IncidentNarrationUpdate,
@@ -24,6 +22,7 @@ use crate::domain::{
 };
 use crate::error::ApiError;
 use crate::error::codes;
+use crate::error::validation::{self, validate_message};
 use crate::error::{AppError, Result};
 use crate::request::{Authorized, CurrentUser, IncidentsRead, IncidentsWrite};
 use crate::storage::{Actor, IncidentOpsFilter, LifecycleOutcome};
@@ -407,7 +406,11 @@ pub async fn declare_incident(
     // request: the incident is open, and retrying it would 409 on the
     // one-open-incident index forever.
     let inc = if publish {
-        match publish_and_invalidate(&state, org, inc.id, None, None, None, actor).await {
+        match state
+            .publishing()
+            .publish_incident(org, inc.id, None, None, None, actor)
+            .await
+        {
             Ok(Some(published)) => published,
             Ok(None) => inc,
             Err(err) => {
@@ -567,17 +570,18 @@ pub async fn publish_incident(
         Some(&body.public_description),
         "public_description",
     )?;
-    let inc = publish_and_invalidate(
-        &state,
-        org,
-        id,
-        body.public_title,
-        body.public_description,
-        body.status_page_ids,
-        Actor::User(user),
-    )
-    .await?
-    .ok_or_else(|| AppError::not_found(codes::INCIDENT_NOT_FOUND, "incident not found"))?;
+    let inc = state
+        .publishing()
+        .publish_incident(
+            org,
+            id,
+            body.public_title,
+            body.public_description,
+            body.status_page_ids,
+            Actor::User(user),
+        )
+        .await?
+        .ok_or_else(|| AppError::not_found(codes::INCIDENT_NOT_FOUND, "incident not found"))?;
     Ok(Json(inc))
 }
 
@@ -598,7 +602,7 @@ pub async fn unpublish_incident(
         .unpublish(org, id, Actor::User(user))
         .await?
         .ok_or_else(|| AppError::not_found(codes::INCIDENT_NOT_FOUND, "incident not found"))?;
-    invalidate_incident_pages(&state, org, &inc).await;
+    state.publishing().invalidate_incident(org, &inc).await;
     Ok(Json(inc))
 }
 

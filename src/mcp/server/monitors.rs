@@ -11,6 +11,10 @@ use crate::domain::notification_channel::NotificationChannel;
 use crate::domain::target::{NewTarget, TargetUpdate};
 use crate::domain::{CheckSpec, TargetAlerts, WriteSource};
 use crate::quotas::ratelimit::RateLimitCategory;
+use crate::targets::validate::{
+    validate_alert_confirmations, validate_group_name, validate_region_policy,
+    validate_renotify_interval,
+};
 use crate::web::views::describe_check;
 
 use crate::mcp::auth::McpAuth;
@@ -108,10 +112,12 @@ impl McpServer {
 
         // Same region-aware agent dispatch as REST check-now; the agent runs
         // the probe and persists the result.
-        let result =
-            crate::api::handlers::targets::check_now_via_dispatch(&self.state, auth.org, &target)
-                .await
-                .map_err(probe_dispatch_error)?;
+        let result = self
+            .state
+            .target_ops()
+            .check_now_via_dispatch(auth.org, &target)
+            .await
+            .map_err(probe_dispatch_error)?;
 
         Ok(Json(CheckRunResult {
             id: target.id.to_string(),
@@ -205,8 +211,6 @@ impl McpServer {
         auth: &McpAuth,
         args: &CreateMonitorArgs,
     ) -> Result<PreparedCreate, McpToolError> {
-        use crate::api::handlers::targets as rest;
-
         self.enforce_rate_limit(auth.org, RateLimitCategory::ApiWrites)
             .await?;
         self.enforce_rate_limit(auth.org, RateLimitCategory::TestNow)
@@ -299,16 +303,16 @@ impl McpServer {
             regions: args.regions.clone(),
         };
         new.default_owner(auth.user_id);
-        rest::vet_new_target(&self.state, auth.org, &mut new, &plan)
+        let ops = self.state.target_ops();
+        ops.vet_new_target(auth.org, &mut new, &plan)
             .await
             .map_err(config_error)?;
 
         // With the other argument checks: a set the fleet cannot serve is a
         // mistake worth answering before a probe is spent on it.
-        let snapshot = rest::RegionSnapshot::load(&self.state)
-            .await
-            .map_err(config_error)?;
-        let regions = rest::resolve_create_regions(&self.state, auth.org, &new, &plan, &snapshot)
+        let snapshot = ops.region_snapshot().await.map_err(config_error)?;
+        let regions = ops
+            .resolve_create_regions(auth.org, &new, &plan, &snapshot)
             .await
             .map_err(config_error)?;
 
@@ -337,8 +341,6 @@ impl McpServer {
         auth: &McpAuth,
         prepared: PreparedCreate,
     ) -> Result<Json<MonitorCreated>, McpToolError> {
-        use crate::api::handlers::targets as rest;
-
         let PreparedCreate {
             new,
             plan,
@@ -350,16 +352,12 @@ impl McpServer {
             reads_channels,
         } = prepared;
 
-        let created = rest::create_target(
-            &self.state,
-            auth.org,
-            new,
-            WriteSource::Api,
-            &plan,
-            regions.clone(),
-        )
-        .await
-        .map_err(config_error)?;
+        let created = self
+            .state
+            .target_ops()
+            .create_target(auth.org, new, WriteSource::Api, &plan, regions.clone())
+            .await
+            .map_err(config_error)?;
 
         Ok(Json(MonitorCreated {
             id: created.id.to_string(),
@@ -532,16 +530,18 @@ impl McpServer {
             .iter()
             .min_by_key(|r| (self.state.ad_hoc.region_state(r), r.as_str() != default))
             .map_or_else(|| default.to_string(), String::clone);
-        let delivered = crate::api::handlers::targets::run_ad_hoc(
-            &self.state,
-            org,
-            &region,
-            crate::domain::agent_wire::DispatchKind::Test,
-            None,
-            check.clone(),
-        )
-        .await
-        .map_err(probe_dispatch_error)?;
+        let delivered = self
+            .state
+            .target_ops()
+            .run_ad_hoc(
+                org,
+                &region,
+                crate::domain::agent_wire::DispatchKind::Test,
+                None,
+                check.clone(),
+            )
+            .await
+            .map_err(probe_dispatch_error)?;
         let r = delivered.result;
         Ok((
             region,
@@ -562,8 +562,6 @@ impl McpServer {
         auth: &McpAuth,
         args: &UpdateMonitorArgs,
     ) -> Result<Json<MonitorUpdateResult>, McpToolError> {
-        use crate::api::handlers::targets as rest;
-
         auth.require(Scope::TargetsWrite)?;
         self.enforce_rate_limit(auth.org, RateLimitCategory::ApiWrites)
             .await?;
@@ -594,10 +592,10 @@ impl McpServer {
             }));
         }
 
-        rest::validate_alert_confirmations(update.alert_confirmations).map_err(config_error)?;
-        rest::validate_renotify_interval(update.renotify_interval_secs).map_err(config_error)?;
+        validate_alert_confirmations(update.alert_confirmations).map_err(config_error)?;
+        validate_renotify_interval(update.renotify_interval_secs).map_err(config_error)?;
         if let Some(Some(group)) = update.group_name.as_ref() {
-            rest::validate_group_name(Some(group.as_str())).map_err(config_error)?;
+            validate_group_name(Some(group.as_str())).map_err(config_error)?;
         }
         if update.region_policy.is_some() {
             let available = self
@@ -606,10 +604,11 @@ impl McpServer {
                 .available_regions()
                 .await
                 .map_err(|e| McpToolError::internal(format!("region catalog: {e}")))?;
-            rest::validate_region_policy(update.region_policy, available.len())
-                .map_err(config_error)?;
+            validate_region_policy(update.region_policy, available.len()).map_err(config_error)?;
         }
-        rest::validate_patch_interval(&self.state, auth.org, id, &mut update, Some(&target))
+        self.state
+            .target_ops()
+            .validate_patch_interval(auth.org, id, &mut update, Some(&target))
             .await
             .map_err(config_error)?;
 

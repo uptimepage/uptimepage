@@ -35,6 +35,7 @@ pub mod scheduler;
 pub mod security;
 pub mod slack;
 pub mod storage;
+pub mod target_ops;
 pub mod targets;
 pub mod telegram;
 pub mod templates;

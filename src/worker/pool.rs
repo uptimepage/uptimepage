@@ -54,7 +54,7 @@ impl CheckTask {
 /// controlled casing.
 pub fn host_for_spec(spec: &CheckSpec) -> String {
     if let Some((host, _)) = crate::worker::host_throttle::host_port_raw(spec) {
-        return crate::worker::host_throttle::canonical_host(host);
+        return crate::net::host::canonical_host(host);
     }
     match spec {
         // Group circuit-breaker state by TLD so a flaky registry doesn't

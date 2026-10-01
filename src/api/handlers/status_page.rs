@@ -18,20 +18,23 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::{
-    AssetSlot, NewMonitorShare, NewStatusPage, NewStatusPageComponent, OrgId, PublicOrgBranding,
-    PublicStyle, StatusPage, StatusPageComponent, StatusPageComponentUpdate, StatusPageId,
-    StatusPageUpdate, UserId, validate_slug,
+    AssetSlot, NewStatusPage, NewStatusPageComponent, OrgId, PublicOrgBranding, PublicStyle,
+    StatusPage, StatusPageComponent, StatusPageComponentUpdate, StatusPageId, StatusPageUpdate,
+    validate_slug,
 };
 use crate::error::ApiError;
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::public_status::LogoMime;
+use crate::public_status::curation::{
+    clean_curation, clean_curation_patch, normalise_opt, validate_name,
+};
 use crate::public_status::urls::{LOGO_ROUTE, public_base, public_logo_url, public_status_url};
 use crate::request::{
     Authorized, CurrentUser, OwnerAuthorized, RequestSource, StatusPageDelete, StatusPageRead,
     StatusPageWrite,
 };
-use crate::storage::{AddComponentOutcome, CreateShareOutcome};
+use crate::storage::AddComponentOutcome;
 
 // ── DTOs ────────────────────────────────────────────────────────────────────
 
@@ -346,7 +349,10 @@ pub async fn add_component(
     {
         AddComponentOutcome::Added => {
             if wants_detail_link {
-                ensure_detail_share(&state, org, StatusPageId(id), target_id, user).await?;
+                state
+                    .publishing()
+                    .ensure_detail_share(org, StatusPageId(id), target_id, user)
+                    .await?;
             }
             state.public_source.invalidate(StatusPageId(id)).await;
             Ok(StatusCode::NO_CONTENT)
@@ -395,69 +401,13 @@ pub async fn update_component(
         return Err(component_not_found());
     }
     if wants_detail_link {
-        ensure_detail_share(&state, org, StatusPageId(id), target_id, user).await?;
+        state
+            .publishing()
+            .ensure_detail_share(org, StatusPageId(id), target_id, user)
+            .await?;
     }
     state.public_source.invalidate(StatusPageId(id)).await;
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// Mints only when the component has no live share, so an untick then re-tick
-/// returns the same URL. Plan share caps do not apply: the page already
-/// publishes this monitor.
-pub(crate) async fn ensure_detail_share(
-    state: &AppState,
-    org: OrgId,
-    page: StatusPageId,
-    target_id: Uuid,
-    user: UserId,
-) -> Result<()> {
-    let existing = state
-        .status_page_store
-        .list_components(org, page)
-        .await?
-        .into_iter()
-        .find(|c| c.target_id == target_id)
-        .and_then(|c| c.share_id);
-    if let Some(share) = existing {
-        let now = chrono::Utc::now();
-        let live = state
-            .monitor_share_store
-            .list_for_target(org, target_id)
-            .await?
-            .iter()
-            .any(|s| s.id == share && s.expires_at.is_none_or(|e| e > now));
-        if live {
-            return Ok(());
-        }
-    }
-    let outcome = state
-        .monitor_share_store
-        .create(
-            org,
-            target_id,
-            NewMonitorShare::default(),
-            Some(user),
-            None,
-            None,
-        )
-        .await?;
-    let CreateShareOutcome::Created(created) = outcome else {
-        return Err(component_not_found());
-    };
-    if !state
-        .status_page_store
-        .attach_share(org, page, target_id, existing, created.share.id)
-        .await?
-    {
-        // Lost the swap or the component vanished; either way another mint owns
-        // the slot now, so don't strand this one as a live public URL.
-        state
-            .monitor_share_store
-            .revoke(org, target_id, created.share.id, Some(user))
-            .await?;
-        return Err(component_not_found());
-    }
-    Ok(())
 }
 
 #[utoipa::path(
@@ -646,18 +596,6 @@ fn component_not_found() -> AppError {
     AppError::not_found(codes::STATUS_PAGE_NOT_FOUND, "component not on this page")
 }
 
-pub(crate) fn validate_name(name: &str) -> Result<String> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() || trimmed.chars().count() > 80 {
-        return Err(AppError::bad_request_field(
-            codes::BRANDING_INVALID,
-            "name must be 1–80 characters",
-            "name",
-        ));
-    }
-    Ok(trimmed.to_owned())
-}
-
 fn view(state: &AppState, p: StatusPage) -> StatusPageView {
     let cfg = &state.cfg.public_status;
     let base = public_base(&state.cfg, &p.slug);
@@ -682,46 +620,6 @@ fn view(state: &AppState, p: StatusPage) -> StatusPageView {
         status_url: base
             .as_ref()
             .map(|origin| public_status_url(&state.cfg, origin)),
-    }
-}
-
-fn normalise_opt(s: Option<String>) -> Option<String> {
-    s.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty())
-}
-
-/// Trim a per-page curation field, treat blank as cleared (`None`), and bound
-/// it to the DB CHECK's max so an over-long value is a 400 with the field name
-/// rather than an opaque 500 from the constraint. `max` is in characters to
-/// match Postgres `char_length`.
-pub(crate) fn clean_curation(
-    v: Option<String>,
-    field: &'static str,
-    max: usize,
-) -> Result<Option<String>> {
-    let v = normalise_opt(v);
-    if let Some(ref s) = v
-        && s.chars().count() > max
-    {
-        return Err(AppError::bad_request_field(
-            codes::BRANDING_INVALID,
-            format!("{field} must be at most {max} characters"),
-            field,
-        ));
-    }
-    Ok(v)
-}
-
-/// Patch-flavoured [`clean_curation`]: preserves the present/absent distinction
-/// (outer `None` = leave unchanged) while normalising + validating the inner
-/// value (an explicit blank or `null` clears the override).
-pub(crate) fn clean_curation_patch(
-    v: Option<Option<String>>,
-    field: &'static str,
-    max: usize,
-) -> Result<Option<Option<String>>> {
-    match v {
-        None => Ok(None),
-        Some(inner) => Ok(Some(clean_curation(inner, field, max)?)),
     }
 }
 
@@ -795,12 +693,6 @@ fn process_logo(raw: &[u8], max_dim: u32) -> Result<(LogoMime, Vec<u8>, (u32, u3
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn normalise_blanks_to_none() {
-        assert_eq!(normalise_opt(Some("  ".into())), None);
-        assert_eq!(normalise_opt(Some("  hi ".into())), Some("hi".into()));
-    }
 
     #[test]
     fn process_logo_rejects_non_image() {

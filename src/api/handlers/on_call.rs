@@ -437,15 +437,6 @@ pub async fn reset_my_calendar(
     }))
 }
 
-/// Whether the org may add on-call coverage.
-///
-/// Self-host is exempt for the same reason it is exempt from the SMS gate: the
-/// operator owns the `plans` row, so gating them against it means nothing.
-/// The plan's caps still decide how many of each it may keep.
-pub(crate) fn on_call_available(state: &AppState, plan: &crate::domain::Plan) -> bool {
-    !state.cfg.marketing.enabled || plan.on_call_enabled
-}
-
 /// Refuses new on-call coverage on a plan that does not sell it.
 ///
 /// Write-time only, following the text-message gate: an org that already has
@@ -454,7 +445,7 @@ pub(crate) fn on_call_available(state: &AppState, plan: &crate::domain::Plan) ->
 /// live paging on a plan change would be a far worse failure than carrying a
 /// feature the account has stopped paying for.
 pub(crate) fn gate_on_call(state: &AppState, plan: &crate::domain::Plan) -> Result<()> {
-    if !on_call_available(state, plan) {
+    if !state.cfg.on_call_available(plan) {
         return Err(AppError::forbidden_code(
             crate::error::codes::ON_CALL_DISABLED,
             "on-call and escalation are not available on your plan",

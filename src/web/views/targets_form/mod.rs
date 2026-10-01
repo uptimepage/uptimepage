@@ -5,7 +5,6 @@ use askama_web::WebTemplate;
 use axum::extract::{Path, Query, State};
 use uuid::Uuid;
 
-use crate::api::handlers::on_call::on_call_available;
 use crate::app::AppState;
 use crate::domain::{CadenceAdvice, OrgId, RegionIncidentPolicy, TargetAlerts};
 use crate::error::AppError;
@@ -101,7 +100,7 @@ pub async fn new_form(
     form.group_options = group_options;
     form.tag_options = tag_options;
     ensure_tags_listed(&mut form);
-    if !on_call_available(&state, &plan) {
+    if !state.cfg.on_call_available(&plan) {
         form.escalation = EscalationOffer::Locked;
     }
     form.flow_available = plan.max_flow_checks > 0;
@@ -186,7 +185,7 @@ pub async fn edit_form(
     let binding = crate::web::views::escalation::monitor_binding(&state, org, id).await?;
     form.escalation_choices = binding.choices;
     form.escalation_hint = binding.hint;
-    if !on_call_available(&state, &plan) {
+    if !state.cfg.on_call_available(&plan) {
         form.escalation = if binding.escalating {
             // Only choices that will not be refused: the current binding, and
             // the template's "inherit".

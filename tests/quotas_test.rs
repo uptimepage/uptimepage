@@ -1883,8 +1883,8 @@ fn every_quota_create_path_is_gated() {
             "vet_new_target",
         ),
         (
-            "src/api/handlers/targets/mod.rs",
-            "pub(crate) async fn vet_new_target(",
+            "src/target_ops/mod.rs",
+            "pub async fn vet_new_target(",
             "check_can_create_targets",
         ),
         // MCP's create splits confirmation from persistence; the cap is vetted
@@ -1920,8 +1920,8 @@ fn every_quota_create_path_is_gated() {
             "max_pending_invitations",
         ),
         (
-            "src/api/handlers/invitations.rs",
-            "pub(crate) async fn validate_acceptable(",
+            "src/auth/invitations.rs",
+            "pub async fn validate_acceptable(",
             "check_can_add_member",
         ),
         (

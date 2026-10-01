@@ -8,11 +8,11 @@ use rmcp::handler::server::wrapper::Json;
 use rmcp::service::RequestContext;
 use uuid::Uuid;
 
-use crate::api::handlers::validation::{MAX_DESCRIPTION, MAX_TITLE};
 use crate::auth::scope::Scope;
 use crate::domain::incident::{NewIncidentUpdate, OpsIncident};
 use crate::domain::public::IncidentStatusPhase;
 use crate::domain::{IncidentVisibility, OrgId};
+use crate::error::validation::{MAX_DESCRIPTION, MAX_TITLE};
 use crate::quotas::ratelimit::RateLimitCategory;
 use crate::storage::Actor;
 use crate::storage::incident_ops::opening_update_message;
@@ -201,18 +201,20 @@ impl McpServer {
             ),
         )
         .await?;
-        let incident = crate::api::handlers::publish_and_invalidate(
-            &self.state,
-            auth.org,
-            id,
-            title,
-            description,
-            pages,
-            Actor::Mcp(auth.user_id),
-        )
-        .await
-        .map_err(config_error)?
-        .ok_or_else(|| McpToolError::not_found("incident not found"))?;
+        let incident = self
+            .state
+            .publishing()
+            .publish_incident(
+                auth.org,
+                id,
+                title,
+                description,
+                pages,
+                Actor::Mcp(auth.user_id),
+            )
+            .await
+            .map_err(config_error)?
+            .ok_or_else(|| McpToolError::not_found("incident not found"))?;
         Ok(Json(visibility_result(id, incident.visibility)))
     }
 

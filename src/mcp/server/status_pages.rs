@@ -7,14 +7,12 @@ use rmcp::RoleServer;
 use rmcp::handler::server::wrapper::Json;
 use rmcp::service::RequestContext;
 
-use crate::api::handlers::status_page::{
-    clean_curation, clean_curation_patch, ensure_detail_share, validate_name,
-};
 use crate::auth::scope::Scope;
 use crate::domain::{
     NewStatusPage, NewStatusPageComponent, OrgId, StatusPage, StatusPageComponentUpdate,
     StatusPageUpdate, WriteSource, validate_slug,
 };
+use crate::public_status::curation::{clean_curation, clean_curation_patch, validate_name};
 use crate::quotas::ratelimit::RateLimitCategory;
 use crate::storage::status_pages::AddComponentOutcome;
 
@@ -331,14 +329,11 @@ impl McpServer {
                 Ok(AddComponentOutcome::Added) => {
                     added += 1;
                     if wants_detail_link
-                        && let Err(e) = ensure_detail_share(
-                            &self.state,
-                            auth.org,
-                            page.id,
-                            target_id,
-                            auth.user_id,
-                        )
-                        .await
+                        && let Err(e) = self
+                            .state
+                            .publishing()
+                            .ensure_detail_share(auth.org, page.id, target_id, auth.user_id)
+                            .await
                     {
                         ("added", Some(format!("detail link not published: {e}")))
                     } else {

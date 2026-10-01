@@ -5,6 +5,7 @@ use thiserror::Error;
 
 pub mod codes;
 pub mod public;
+pub mod validation;
 mod wire;
 
 pub use public::{PublicApiError, PublicApiErrorBody, PublicAppError};

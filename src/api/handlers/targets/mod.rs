@@ -31,28 +31,12 @@ use crate::targets::{HeartbeatInfo, heartbeat_info, heartbeat_info_from};
 const BULK_MAX: usize = 10_000;
 const LIST_LIMIT_DEFAULT: usize = 50;
 const LIST_LIMIT_MAX: usize = 10_000;
-const ALLOWED_SCHEMES: &[&str] = &["http", "https"];
 
-use super::invalidate_pages_for;
-
-mod dispatch;
-#[cfg(test)]
-mod tests;
-pub(crate) mod validate;
-
-use dispatch::{dispatch_first_check, pick_flow_region};
-use validate::{
-    canonicalize_check, carry_credentials, carry_flags, carry_flow_secrets, check_abuse,
-    ensure_flow_regions_covered, gate_flow, gate_flow_steps, reject_passive_probe, ssrf_guard,
-    take_cleared_credentials, validate_alerts, validate_check, validate_new_target,
-    validate_owner_is_member, verify_alert_channels,
-};
-
-pub(crate) use dispatch::{check_now_via_dispatch, run_ad_hoc};
-pub(crate) use validate::{
-    RegionSnapshot, normalize_tags, validate_alert_confirmations, validate_group_name,
-    validate_patch_interval, validate_region_policy, validate_renotify_interval,
-    validate_variable_refs, vet_requested_regions,
+use crate::targets::validate::{
+    canonicalize_check, carry_credentials, carry_flags, carry_flow_secrets, gate_flow,
+    gate_flow_steps, normalize_tags, reject_passive_probe, take_cleared_credentials,
+    validate_alert_confirmations, validate_alerts, validate_check, validate_group_name,
+    validate_new_target, validate_region_policy, validate_renotify_interval,
 };
 
 #[derive(Debug, Deserialize, IntoParams)]
@@ -206,19 +190,22 @@ pub async fn create(
     AppendHeaders<[(axum::http::HeaderName, HeaderValue); 1]>,
     Redacted<Target>,
 )> {
+    let ops = state.target_ops();
     let plan = state.quotas.limit_for_org(org).await?;
     canonicalize_check(&mut new.check)?;
     gate_flow(&new.check, &plan)?;
-    vet_new_target(&state, org, &mut new, &plan).await?;
-    verify_alert_channels(&state, org, &new.alerts).await?;
-    validate_owner_is_member(&state, org, new.owner()).await?;
+    ops.vet_new_target(org, &mut new, &plan).await?;
+    ops.verify_alert_channels(org, &new.alerts).await?;
+    ops.validate_owner_is_member(org, new.owner()).await?;
     new.default_owner(user);
     if matches!(&new.check, CheckSpec::Flow(_)) {
         state.quotas.check_can_create_flow(org, None, 1).await?;
     }
-    let snapshot = RegionSnapshot::load(&state).await?;
-    let regions = resolve_create_regions(&state, org, &new, &plan, &snapshot).await?;
-    let t = create_target(&state, org, new, source, &plan, regions).await?;
+    let snapshot = ops.region_snapshot().await?;
+    let regions = ops
+        .resolve_create_regions(org, &new, &plan, &snapshot)
+        .await?;
+    let t = ops.create_target(org, new, source, &plan, regions).await?;
     // UUID hex is always ASCII-safe → infallible.
     let location = HeaderValue::from_str(&format!("/api/v1/targets/{}", t.id))
         .expect("uuid produces ascii-only path");
@@ -256,6 +243,7 @@ pub async fn update(
     Path(id): Path<Uuid>,
     Json(mut update): Json<TargetUpdate>,
 ) -> Result<Redacted<Target>> {
+    let ops = state.target_ops();
     // Read once and share: the kind guard, the credential carry, the flow
     // secret carry, and the interval floor all want the same row.
     let mut stored_target: Option<Target> = None;
@@ -285,9 +273,9 @@ pub async fn update(
         {
             carry_flow_secrets(flow, stored_flow);
         }
-        validate_check(check, &ssrf_guard(&state))?;
-        check_abuse(&state, org, check)?;
-        validate_variable_refs(&state, org, check).await?;
+        validate_check(check, &ops.ssrf_guard())?;
+        ops.check_abuse(org, check)?;
+        ops.validate_variable_refs(org, check).await?;
         // A flow edit is never a net-new flow, so the capability and the count
         // are not re-checked: a downgraded org can still fix a monitor it
         // already runs. The step cap still binds.
@@ -295,14 +283,14 @@ pub async fn update(
             let plan = state.quotas.limit_for_org(org).await?;
             gate_flow_steps(check, &plan)?;
             if let Some(regions) = state.target_store.regions_for_target(org, id).await? {
-                ensure_flow_regions_covered(&state, check, &regions).await?;
+                ops.ensure_flow_regions_covered(check, &regions).await?;
             }
         }
         stored_target = Some(stored);
     }
     if let Some(alerts) = &update.alerts {
         validate_alerts(alerts)?;
-        verify_alert_channels(&state, org, alerts).await?;
+        ops.verify_alert_channels(org, alerts).await?;
     }
     if let Some(tags) = update.tags.as_ref() {
         update.tags = Some(normalize_tags(tags)?);
@@ -317,9 +305,10 @@ pub async fn update(
         validate_group_name(Some(g.as_str()))?;
     }
     if let Some(Some(uid)) = update.owner_user_id {
-        validate_owner_is_member(&state, org, Some(uid)).await?;
+        ops.validate_owner_is_member(org, Some(uid)).await?;
     }
-    validate_patch_interval(&state, org, id, &mut update, stored_target.as_ref()).await?;
+    ops.validate_patch_interval(org, id, &mut update, stored_target.as_ref())
+        .await?;
     // The disabled→enabled re-arm is folded into the store's enable statement,
     // so this path (and every other enable surface) inherits it.
     match state
@@ -328,7 +317,7 @@ pub async fn update(
         .await?
     {
         Some(t) => {
-            invalidate_pages_for(&state, org, &[id]).await;
+            state.publishing().invalidate_targets(org, &[id]).await;
             Ok(Redacted::new(t))
         }
         None => Err(AppError::not_found(
@@ -336,18 +325,6 @@ pub async fn update(
             "target not found",
         )),
     }
-}
-
-/// Mint (or keep) the ping-token row for a heartbeat-kind target. Its anchor
-/// becomes resident on the next scheduler refresh, the same refresh that
-/// admits the target into evaluation, so the ordering is safe.
-async fn ensure_heartbeat(state: &AppState, org: OrgId, target_id: Uuid) -> Result<()> {
-    state
-        .heartbeat_store
-        .ensure(org, target_id)
-        .await?
-        .ok_or_else(|| AppError::Other(anyhow::anyhow!("heartbeat row missing for {target_id}")))?;
-    Ok(())
 }
 
 /// The regions a monitor probes from. A single-region deployment is one entry.
@@ -437,6 +414,7 @@ pub async fn set_target_regions(
     Path(id): Path<Uuid>,
     Json(req): Json<TargetRegions>,
 ) -> Result<Json<TargetRegions>> {
+    let ops = state.target_ops();
     let target = state
         .target_store
         .get(org, id)
@@ -448,8 +426,10 @@ pub async fn set_target_regions(
             "heartbeat monitors receive pings; they are not probed from regions",
         ));
     }
-    let snapshot = RegionSnapshot::load(&state).await?;
-    let regions = vet_requested_regions(&state, org, &req.regions, &snapshot).await?;
+    let snapshot = ops.region_snapshot().await?;
+    let regions = ops
+        .vet_requested_regions(org, &req.regions, &snapshot)
+        .await?;
     if !state
         .target_store
         .set_target_regions(org, id, &regions)
@@ -709,6 +689,7 @@ pub async fn bulk_create(
     RequestSource(source): RequestSource,
     Json(mut items): Json<Vec<NewTarget>>,
 ) -> Result<(StatusCode, Redacted<Vec<Target>>)> {
+    let ops = state.target_ops();
     if items.is_empty() {
         return Err(AppError::bad_request(
             codes::BULK_EMPTY,
@@ -722,16 +703,16 @@ pub async fn bulk_create(
         ));
     }
     let plan = state.quotas.limit_for_org(org).await?;
-    let guard = ssrf_guard(&state);
-    let snapshot = RegionSnapshot::load(&state).await?;
+    let guard = ops.ssrf_guard();
+    let snapshot = ops.region_snapshot().await?;
     for new in &mut items {
         canonicalize_check(&mut new.check)?;
         gate_flow(&new.check, &plan)?;
         validate_new_target(new, &guard, &plan)?;
         validate_region_policy(new.region_policy, snapshot.available_count())?;
-        verify_alert_channels(&state, org, &new.alerts).await?;
-        check_abuse(&state, org, &new.check)?;
-        validate_variable_refs(&state, org, &new.check).await?;
+        ops.verify_alert_channels(org, &new.alerts).await?;
+        ops.check_abuse(org, &new.check)?;
+        ops.validate_variable_refs(org, &new.check).await?;
     }
     let owner_ids: std::collections::HashSet<Uuid> =
         items.iter().filter_map(NewTarget::owner).collect();
@@ -771,7 +752,9 @@ pub async fn bulk_create(
     // stays one batch.
     let mut placed = Vec::with_capacity(items.len());
     for target in items {
-        let regions = resolve_create_regions(&state, org, &target, &plan, &snapshot).await?;
+        let regions = ops
+            .resolve_create_regions(org, &target, &plan, &snapshot)
+            .await?;
         placed.push(NewTargetWithRegions { target, regions });
     }
     let out = state
@@ -964,21 +947,24 @@ pub async fn test_check(
     Authorized(org, _): Authorized<TargetsExecute>,
     Json(mut req): Json<TestRequest>,
 ) -> Result<Json<TestResponse>> {
-    let guard = ssrf_guard(&state);
+    let ops = state.target_ops();
+    let guard = ops.ssrf_guard();
     canonicalize_check(&mut req.check)?;
     validate_check(&req.check, &guard)?;
-    check_abuse(&state, org, &req.check)?;
+    ops.check_abuse(org, &req.check)?;
     reject_passive_probe(&req.check)?;
     let requested = req.region.filter(|r| !r.trim().is_empty());
     let region = if matches!(&req.check, CheckSpec::Flow(_)) {
         let plan = state.quotas.limit_for_org(org).await?;
         gate_flow(&req.check, &plan)?;
         let prefer: Vec<String> = requested.into_iter().collect();
-        pick_flow_region(&state, &prefer).await?
+        ops.pick_flow_region(&prefer).await?
     } else {
         requested.unwrap_or_else(|| state.cfg.scheduler.effective_default_region().to_string())
     };
-    let view = run_ad_hoc(&state, org, &region, DispatchKind::Test, None, req.check).await?;
+    let view = ops
+        .run_ad_hoc(org, &region, DispatchKind::Test, None, req.check)
+        .await?;
     let matched_expectations = matches!(view.result.status, crate::domain::CheckStatus::Up);
     Ok(Json(TestResponse {
         matched_expectations,
@@ -1018,96 +1004,11 @@ pub async fn check_now(
     Authorized(org, _): Authorized<TargetsExecute>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<CheckResult>> {
+    let ops = state.target_ops();
     let target = state
         .target_store
         .get(org, id)
         .await?
         .ok_or_else(|| AppError::not_found(codes::TARGET_NOT_FOUND, "target not found"))?;
-    Ok(Json(check_now_via_dispatch(&state, org, &target).await?))
-}
-
-/// What every front door checks before a monitor may exist, the plan's
-/// check-interval floor among them. Flow gating, alert bindings and owner stay
-/// with the REST handler, the only caller that accepts them.
-pub(crate) async fn vet_new_target(
-    state: &AppState,
-    org: OrgId,
-    new: &mut NewTarget,
-    plan: &crate::domain::quota::Plan,
-) -> Result<()> {
-    canonicalize_check(&mut new.check)?;
-    validate_new_target(new, &ssrf_guard(state), plan)?;
-    let available = state.target_store.available_regions().await?;
-    validate_region_policy(new.region_policy, available.len())?;
-    check_abuse(state, org, &new.check)?;
-    validate_variable_refs(state, org, &new.check).await?;
-    state.quotas.check_can_create_targets(org, None, 1).await
-}
-
-/// Split from `create_target` so a caller that confirms with a human can name the
-/// regions in the prompt, and so an unrunnable set is refused before any probe.
-pub(crate) async fn resolve_create_regions(
-    state: &AppState,
-    org: OrgId,
-    new: &NewTarget,
-    plan: &crate::domain::quota::Plan,
-    snapshot: &RegionSnapshot,
-) -> Result<Vec<String>> {
-    let check = &new.check;
-    let regions = match (&new.regions, check.is_passive()) {
-        (Some(_), true) => {
-            return Err(AppError::unprocessable(
-                codes::REGION_INVALID,
-                "heartbeat monitors receive pings; they are not probed from regions",
-            ));
-        }
-        (None, true) => Vec::new(),
-        (Some(requested), false) => {
-            let named = vet_requested_regions(state, org, requested, snapshot).await?;
-            snapshot.ensure_flow_runs_in_each(check, &named)?;
-            named
-        }
-        (None, false) => snapshot.default_for(check, plan.max_regions),
-    };
-    snapshot.ensure_flow_covered(check, &regions)?;
-    Ok(regions)
-}
-
-/// Persist a vetted monitor and everything that has to exist alongside it: a
-/// heartbeat's ping row, the region set its plan pays for, and a first check so
-/// the monitor reports a state instead of sitting blank until its next tick.
-/// A caller that only writes the row leaves a monitor that cannot be pinged,
-/// probes from one region, and shows nothing. `regions` comes from
-/// `resolve_create_regions`, empty only for a heartbeat.
-pub(crate) async fn create_target(
-    state: &AppState,
-    org: OrgId,
-    new: NewTarget,
-    source: crate::domain::WriteSource,
-    plan: &crate::domain::quota::Plan,
-    regions: Vec<String>,
-) -> Result<Target> {
-    let t = state
-        .target_store
-        .create(
-            org,
-            new,
-            source,
-            i64::from(plan.max_targets),
-            i64::from(plan.max_flow_checks),
-        )
-        .await?;
-    if t.check.is_passive() {
-        ensure_heartbeat(state, org, t.id).await?;
-    }
-    // The store seeds the deployment's default region; only this write makes a
-    // set that seed does not contain stick.
-    if !regions.is_empty() {
-        state
-            .target_store
-            .set_target_regions(org, t.id, &regions)
-            .await?;
-    }
-    dispatch_first_check(state, org, &t, &regions).await;
-    Ok(t)
+    Ok(Json(ops.check_now_via_dispatch(org, &target).await?))
 }

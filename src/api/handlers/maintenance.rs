@@ -13,7 +13,6 @@ use serde::Deserialize;
 use utoipa::IntoParams;
 use uuid::Uuid;
 
-use crate::api::handlers::validation;
 use crate::app::AppState;
 use crate::domain::{
     MaintenanceFilter, MaintenanceWindow, MaintenanceWindowUpdate, NewMaintenanceWindow, OrgId,
@@ -21,6 +20,7 @@ use crate::domain::{
 };
 use crate::error::ApiError;
 use crate::error::codes;
+use crate::error::validation;
 use crate::error::{AppError, Result};
 use crate::pagination::page::{PageEnvelope, PageOfMaintenanceWindow};
 use crate::request::{

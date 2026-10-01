@@ -81,7 +81,11 @@ fn suggestions(check: &CheckSpec, host: &str, covered: &CoveredHosts) -> Vec<Cov
     }
     let apex = registered_domain(&host);
     // A registry publishing no expiry would only fail at probe time.
-    if apex.rsplit('.').next().is_some_and(is_monitorable_tld) {
+    if apex
+        .rsplit('.')
+        .next()
+        .is_some_and(crate::domain::is_monitorable)
+    {
         offer(
             "domain_expiry",
             "domain",
@@ -107,10 +111,6 @@ fn serves_tls(check: &CheckSpec) -> bool {
         CheckSpec::TlsCert(_) => true,
         _ => false,
     }
-}
-
-fn is_monitorable_tld(tld: &str) -> bool {
-    crate::worker::registration::is_monitorable(tld)
 }
 
 #[cfg(test)]

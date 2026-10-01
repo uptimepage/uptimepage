@@ -12,6 +12,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
+use crate::domain::publishes_no_expiry;
 use crate::error::{AppError, Result};
 use crate::http_client::HttpClients;
 use crate::worker::connect_via_guard;
@@ -49,11 +50,6 @@ const WHOIS_SERVERS: &[(&str, &str)] = &[
     ("us", "whois.nic.us"),
 ];
 
-/// These registries omit expiry by policy, so the check can never succeed.
-const NO_PUBLIC_EXPIRY: &[&str] = &[
-    "ae", "at", "be", "bg", "ch", "de", "eu", "gg", "hu", "jp", "lu", "lv", "nz", "ro",
-];
-
 /// Ordered by preference: the registry's value beats the registrar's copy.
 const EXPIRY_LABELS: &[&str] = &[
     "registry expiry date",
@@ -71,10 +67,6 @@ pub fn whois_server(tld: &str) -> Option<&'static str> {
         .iter()
         .find(|(t, _)| *t == tld)
         .map(|(_, server)| *server)
-}
-
-pub fn publishes_no_expiry(tld: &str) -> bool {
-    NO_PUBLIC_EXPIRY.contains(&tld)
 }
 
 #[derive(Default)]

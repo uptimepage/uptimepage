@@ -6,10 +6,12 @@
 pub mod aggregator;
 pub mod badge;
 pub mod cache;
+pub mod curation;
 pub mod custom_domain_ask;
 pub mod incident_writer;
 pub mod logo_storage;
 pub mod overall_status;
+pub mod publishing;
 pub mod source;
 pub mod subscriber_dispatch;
 pub mod urls;

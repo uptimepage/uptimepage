@@ -3,6 +3,7 @@
 //! and the outbound connector to race v6/v4 connects.
 
 pub mod happy_eyeballs;
+pub mod host;
 
 /// Loopback per RFC 8252 §7.3, on the typed host so `[::1]` counts.
 pub fn is_loopback_http(u: &url::Url) -> bool {

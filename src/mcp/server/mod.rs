@@ -8,8 +8,8 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{ServerCapabilities, ServerInfo};
 use rmcp::{ServerHandler, tool_handler};
 
-use crate::api::handlers::validation::MAX_MESSAGE;
 use crate::app::AppState;
+use crate::error::validation::MAX_MESSAGE;
 
 mod args;
 mod incidents;

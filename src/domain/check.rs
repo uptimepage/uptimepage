@@ -338,6 +338,22 @@ pub fn reduced_domain_hint(domain: &str) -> Option<String> {
     (registered != normalized).then_some(registered)
 }
 
+/// These registries omit expiry by policy, so the check can never succeed.
+const NO_PUBLIC_EXPIRY: &[&str] = &[
+    "ae", "at", "be", "bg", "ch", "de", "eu", "gg", "hu", "jp", "lu", "lv", "nz", "ro",
+];
+
+pub fn publishes_no_expiry(tld: &str) -> bool {
+    NO_PUBLIC_EXPIRY.contains(&tld)
+}
+
+/// False only for registries known to publish no expiry at all. A TLD absent
+/// from every lookup table still passes here and fails at probe time naming the
+/// TLD, because coverage cannot be checked without the async RDAP bootstrap.
+pub fn is_monitorable(tld: &str) -> bool {
+    !publishes_no_expiry(tld)
+}
+
 fn normalize_domain(domain: &str) -> String {
     domain.trim().trim_end_matches('.').to_ascii_lowercase()
 }
@@ -514,6 +530,16 @@ pub fn unbracket(host: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expiryless_registries_are_not_monitorable() {
+        for tld in ["de", "eu", "gg", "at", "be", "ch", "jp"] {
+            assert!(!is_monitorable(tld), ".{tld} publishes no expiry");
+        }
+        for tld in ["co", "com", "it", "nu", "se", "dk", "ie", "hk"] {
+            assert!(is_monitorable(tld), ".{tld} is monitorable");
+        }
+    }
 
     #[test]
     fn every_kind_suggests_a_cadence_it_would_accept() {

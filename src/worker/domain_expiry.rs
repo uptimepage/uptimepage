@@ -179,7 +179,7 @@ async fn fresh_probe(
     // outbound RDAP call, and one per-TLD permit. Without this, the
     // ingest-side canonicalisation could be defeated by anything that fed a
     // raw user string here (e.g. a future test/admin path).
-    let canonical = crate::worker::host_throttle::canonical_host(&check.domain);
+    let canonical = crate::net::host::canonical_host(&check.domain);
     let domain: Arc<str> = Arc::from(canonical.as_str());
     let tld = HostThrottle::rdap_tld(&canonical).map(Arc::<str>::from);
     let deadline = Instant::now() + check.timeout;

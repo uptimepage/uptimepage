@@ -18,6 +18,7 @@ use crate::email::EmailSender;
 use crate::http_client::HttpClients;
 use crate::http_outbound::OutboundHttpClient;
 use crate::public_status::PublicSource;
+use crate::public_status::publishing::Publishing;
 use crate::quotas::{QuotaService, RateLimitService};
 use crate::request::RequestState;
 use crate::request::state::{AgentSeenDebounce, build_agent_seen_debounce};
@@ -26,6 +27,7 @@ use crate::storage::{
     Actor, IncidentNarrationStore, LifecycleOutcome, MaintenanceStore, NotificationChannelStore,
     ResultSink, ResultsStore, TargetStore,
 };
+use crate::target_ops::TargetOps;
 use crate::worker::WorkerPool;
 
 /// Per-org dashboard summary snapshot. Cached for 5 seconds to absorb the
@@ -308,6 +310,30 @@ impl AppState {
     /// rewrite the same anyhow string.
     pub fn require_db(&self) -> crate::error::Result<&PgPool> {
         crate::request::state::require_pool(self.db.as_ref())
+    }
+
+    pub fn publishing(&self) -> Publishing<'_> {
+        Publishing {
+            pages: self.status_page_store.as_ref(),
+            shares: self.monitor_share_store.as_ref(),
+            incidents: self.incident_ops_store.as_ref(),
+            source: self.public_source.as_ref(),
+        }
+    }
+
+    pub fn target_ops(&self) -> TargetOps<'_> {
+        TargetOps {
+            targets: self.target_store.as_ref(),
+            quotas: &self.quotas,
+            variables: self.variable_store.as_ref(),
+            channels: self.notification_channel_store.as_ref(),
+            heartbeats: self.heartbeat_store.as_ref(),
+            abuse: &self.abuse,
+            ad_hoc: &self.ad_hoc,
+            flow_runs: self.flow_run_sink.as_deref(),
+            cfg: &self.cfg,
+            db: self.db.as_ref(),
+        }
     }
 
     pub fn request_state(&self) -> RequestState {

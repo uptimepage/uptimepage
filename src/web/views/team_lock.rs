@@ -1,7 +1,6 @@
 //! What an org whose plan lacks on-call sees on the on-call and escalation
 //! pages and the monitor form, in place of controls the API would refuse.
 
-use crate::api::handlers::on_call::on_call_available;
 use crate::app::AppState;
 use crate::domain::{OrgId, UserId};
 use crate::storage::accounts;
@@ -19,7 +18,7 @@ pub struct TeamLock {
 /// Whether the plan leaves the org unable to add on-call coverage.
 pub(crate) async fn plan_locked(state: &AppState, org: OrgId) -> WebResult<bool> {
     let plan = state.quotas.limit_for_org(org).await?;
-    Ok(!on_call_available(state, &plan))
+    Ok(!state.cfg.on_call_available(&plan))
 }
 
 /// `None` when the org may build schedules and policies. `built` answers

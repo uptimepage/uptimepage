@@ -83,7 +83,7 @@ pub(super) fn build_monitor_patch(
         update.renotify_interval_secs = Some(secs);
     }
     if let Some(tags) = args.tags.as_ref() {
-        let tags = crate::api::handlers::targets::normalize_tags(tags).map_err(config_error)?;
+        let tags = crate::targets::validate::normalize_tags(tags).map_err(config_error)?;
         if sorted(&tags) != sorted(&target.tags) {
             moved("tags", tag_list(&target.tags), tag_list(&tags));
             update.tags = Some(tags);

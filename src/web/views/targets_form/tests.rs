@@ -864,7 +864,7 @@ fn the_heartbeat_default_pairs_with_the_default_interval() {
         max_runtime: None,
     });
     let interval = crate::domain::interval_hints_for_kind("heartbeat").default;
-    crate::api::handlers::targets::validate::validate_heartbeat_cadence(
+    crate::targets::validate::validate_heartbeat_cadence(
         &spec,
         std::time::Duration::from_secs(interval),
         60,

@@ -40,7 +40,7 @@ src/
 │                     the narrower public-API envelope
 ├── security/         AES-GCM envelope crypto, token and MAC hashing, SSRF guard,
 │                     abuse deny-lists, redaction, RDAP and certificate probes
-├── net/              happy-eyeballs dial (RFC 8305)
+├── net/              happy-eyeballs dial (RFC 8305), canonical host forms
 ├── custom_domains.rs in-memory snapshot of the verified custom domains + host normalization
 ├── metric_names.rs   every metric name this process emits
 ├── templates/        askama filters, fingerprinted assets, timestamp formats
@@ -52,7 +52,7 @@ src/
 │                     admin.rs / operator.rs are the audited tenancy escape hatches;
 │                     locks.rs holds the advisory-lock helpers
 ├── quotas/           effective-plan resolution + governor rate limiter
-├── targets/          monitor read models, region defaults, folded status
+├── targets/          monitor read models, region defaults, folded status, check validation
 ├── auth/             sessions, OAuth providers, passkeys, magic links, API tokens,
 │                     invitations, login audit
 ├── billing/          plan moves and the paid lifecycle (provider-driven)
@@ -70,7 +70,8 @@ src/
 ├── agent/            stateless agent-mode entry point
 │
 │   detection and delivery
-├── public_status/    incident writer (poller), status-page aggregator, subscriber dispatch
+├── public_status/    incident writer (poller), status-page aggregator, subscriber dispatch,
+│                     the view that publishes a page change and busts the cached page
 ├── escalation/       paging engine + on-call resolution
 ├── notifier/         one transport per channel kind + IncidentNotice event
 ├── email/ telegram/ whatsapp/    transport-specific helpers
@@ -82,12 +83,14 @@ src/
 │
 │   HTTP surfaces
 ├── request/          what every surface reads off a request first: caller extractors,
-│                     client IP, host parsing, state cookies, metrics and rate-limit layers
+│                     client IP, host parsing, state cookies, time-range query, metrics and
+│                     rate-limit layers
 ├── api/              REST /api/v1 handlers, routes, OpenAPI doc, strict bodies
 ├── web/              server-rendered operator UI (renders only; mutations call the API)
 ├── mcp/              in-process MCP server (typed, authorized, audited tools)
 ├── oauth/            OAuth 2.1 authorization server backing the MCP connector
 ├── channels/         notification-channel create/repair shared by the API and the UI
+├── target_ops/       monitor create and interactive probe shared by the API and MCP
 ├── analytics.rs      sign-in funnel events for Umami
 ├── marketing/        apex/www/blog/docs/landing pages; no storage or tenancy imports
 └── bin/              the loadtest binary
@@ -99,7 +102,7 @@ migrations/           postgres/NNN_name.{up,down}.sql + clickhouse/*.sql
 
 ### Dependency rule
 
-Imports point downward through the groups above and never back up. A leaf imports other leaves only. A service or store imports leaves and other services, never a surface module. A handler module imports anything below it, and the only thing above it is `app`, whose `AppState` every handler receives. That last edge is the deliberate exception: `app` names handler types in its cache fields, and handlers take `&AppState`, so `app` and each handler surface (`api`, `web`, `mcp`, `oauth`, `channels`) point at each other. Splitting `AppState` into per-surface sub-states would touch most handler files for no behavioural gain, so those cycles stay and are the known ones. `request` is the one slice worth the cost: its extractors and middleware sit under every surface, so they take `RequestState`, the fields they read, which `app` builds, and `request` never imports `app`.
+Imports point downward through the groups above and never back up. A leaf imports other leaves only. A service or store imports leaves and other services, never a surface module. A handler module imports anything below it, never a sibling surface's handlers (logic two surfaces both need lives in `target_ops`, `channels`, `request` or a service), and the only thing above it is `app`, whose `AppState` every handler receives. That last edge is the deliberate exception: `app` names handler types in its cache fields, and handlers take `&AppState`, so `app` and each handler surface (`api`, `web`, `mcp`, `oauth`, `channels`) point at each other. Splitting `AppState` into per-surface sub-states would touch most handler files for no behavioural gain, so those cycles stay and are the known ones. `request` is the one slice worth the cost: its extractors and middleware sit under every surface, so they take `RequestState`, the fields they read, which `app` builds, and `request` never imports `app`.
 
 The rule is what keeps `marketing` extractable and the agent mode small. `tests/marketing_coupling_test.rs` scans the marketing tree and fails on any `crate::` path outside `templates`, `security`, `request`, `custom_domains` and `http_outbound`; the agent entry point reaches the probe pipeline, the store traits it needs and the leaves, and nothing from the HTTP surfaces. How the crate got to this shape, and the tool that found the cycles it replaced, is in [Uncle Bob's uml-viewer on Rust: 35 dependency cycles down to 3](https://uptimepage.dev/blog/uml-viewer-rust-dependency-cycles).
 

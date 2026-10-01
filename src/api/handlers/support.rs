@@ -80,7 +80,7 @@ pub async fn create(
         ));
     }
     let message = body.message.trim();
-    crate::api::handlers::validation::check_required_text(
+    crate::error::validation::check_required_text(
         message,
         "message",
         MAX_MESSAGE,

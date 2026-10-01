@@ -166,7 +166,10 @@ impl McpServer {
         org: crate::domain::OrgId,
         incident: &crate::domain::OpsIncident,
     ) {
-        crate::api::handlers::invalidate_incident_pages(&self.state, org, incident).await;
+        self.state
+            .publishing()
+            .invalidate_incident(org, incident)
+            .await;
     }
 
     /// Public URL of a status page slug, mirroring the operator UI's own

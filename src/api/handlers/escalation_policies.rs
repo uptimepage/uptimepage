@@ -35,9 +35,7 @@ async fn gate_binding(
         return Ok(());
     };
     let plan = state.quotas.limit_for_org(org).await?;
-    if crate::api::handlers::on_call::on_call_available(state, &plan)
-        || current.await? == Some(wanted)
-    {
+    if state.cfg.on_call_available(&plan) || current.await? == Some(wanted) {
         return Ok(());
     }
     crate::api::handlers::on_call::gate_on_call(state, &plan)

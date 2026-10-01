@@ -4,6 +4,7 @@
 pub mod heartbeat;
 pub mod regions;
 pub mod status;
+pub mod validate;
 
 pub use heartbeat::{
     CadenceAdviceView, HeartbeatInfo, heartbeat_info, heartbeat_info_from, observed_cadence,
