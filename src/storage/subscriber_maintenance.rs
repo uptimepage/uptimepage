@@ -38,6 +38,8 @@ pub struct PendingMaintenance {
 /// components) whose `scheduled`/`completed` phase hasn't been sent. `event_at`
 /// — the window's creation for `scheduled`, its end for `completed` — gates the
 /// lookback and the subscribed-since check so neither phase resurrects history.
+/// The candidate subquery keeps only windows ending inside the lookback or still
+/// ahead, so a tick never joins the whole history; `event_at` then picks the phase.
 pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingMaintenance>> {
     let sql = format!(
         "SELECT DISTINCT subscriber_id, maintenance_id, org_id, channel, target, phase, title,
@@ -64,6 +66,7 @@ pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingMainte
              JOIN maintenance_windows mw ON mw.id = mwc.maintenance_id AND mw.org_id = mwc.org_id
              WHERE s.channel IN ('email', 'webhook') AND s.verified_at IS NOT NULL
                AND mw.deleted_at IS NULL
+               AND mw.ends_at >= now() - make_interval(hours => $2)
                AND {PAGE_NOT_HELD}
                AND {COMPONENT_NOT_HELD}
          ) cand

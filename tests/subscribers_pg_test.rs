@@ -629,6 +629,43 @@ async fn maintenance_fanout_scheduled_and_completed() {
     );
 }
 
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn maintenance_fanout_reaches_back_only_the_lookback_for_completed_windows() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let org = seed_org(&pool).await;
+    let target = seed_target(&pool, org).await;
+    let page = seed_page(&pool, org).await;
+    add_component(&pool, org, page, target).await;
+
+    let sub_id = confirmed_subscriber(&pool, org, page, "lookback@example.com").await;
+    sqlx::query(
+        "UPDATE status_page_subscribers SET verified_at = now() - interval '5 days' WHERE id = $1",
+    )
+    .bind(sub_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let inside = seed_maintenance(&pool, org, -24, -23).await;
+    add_maintenance_component(&pool, org, inside, target).await;
+    let outside = seed_maintenance(&pool, org, -26, -25).await;
+    add_maintenance_component(&pool, org, outside, target).await;
+
+    let pending = subscriber_maintenance::list_pending(&pool, 100)
+        .await
+        .unwrap();
+    let reached: Vec<Uuid> = pending
+        .iter()
+        .filter(|m| m.subscriber_id == sub_id)
+        .map(|m| m.maintenance_id)
+        .collect();
+    assert_eq!(reached, [inside]);
+    cleanup(&pool, org).await;
+}
+
 fn dispatcher(
     pool: PgPool,
     email: std::sync::Arc<dyn uptimepage::email::EmailSender>,
