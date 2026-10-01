@@ -77,7 +77,7 @@ pub struct MaintenanceWindowUpdate {
 /// Where a window is in its life, for code holding a loaded window. The SQL that
 /// classifies rows in the database spells out the same boundaries and has to
 /// change with them: `storage::maintenance` builds its filters, the suppression
-/// check, cancel and end from one set of helpers, while the quota count, the
+/// check, edit and cancel from one set of helpers, while the quota count, the
 /// public read and the subscriber fan-out carry their own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowPhase {

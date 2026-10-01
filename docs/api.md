@@ -85,8 +85,7 @@ These mutate the public surface; they live under the same auth boundary as
 | `POST` | `/api/v1/maintenance` | schedule a maintenance window |
 | `GET` | `/api/v1/maintenance` | list windows (`status=active\|upcoming\|past\|all`, paginated; `upcoming` lists the soonest first) |
 | `GET` | `/api/v1/maintenance/{id}` | get one window |
-| `PATCH` | `/api/v1/maintenance/{id}` | edit title / description / time range / components / alert suppression (rejected after `ends_at` or once cancelled; `ends_at` must stay in the future) |
-| `POST` | `/api/v1/maintenance/{id}/end` | end a running window now, at the server's clock (`422` if it has not started, already ended or was cancelled) |
+| `PATCH` | `/api/v1/maintenance/{id}` | edit title / description / time range / components / alert suppression (rejected after `ends_at` or once cancelled; `ends_at` must stay in the future, except that on a running window an `ends_at` at or before now ends it at the server's clock) |
 | `DELETE` | `/api/v1/maintenance/{id}` | cancel a window that has not ended (kept as history with `deleted_at` / `deleted_by`) |
 | `PATCH` | `/api/v1/incidents/{id}` | update narration: `public_title`, `public_description`, `severity` (JSON `null` clears, omit to leave alone), plus `counts_as_downtime` on a declared incident (`422` on a monitor-opened one) |
 | `POST` | `/api/v1/incidents/{id}/updates` | append a status update — `phase` ∈ `investigating`/`identified`/`monitoring`/`resolved`/`postmortem`, `message` ≤ 2 000 chars |

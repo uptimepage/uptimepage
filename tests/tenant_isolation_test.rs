@@ -13,8 +13,9 @@ use std::time::Duration;
 use chrono::Utc;
 use sqlx::PgPool;
 use uptimepage::domain::{
-    CheckResult, CheckSpec, CheckStatus, ExpectedStatus, NewMaintenanceWindow, NewStatusPage,
-    NewStatusPageComponent, NewTarget, OrgId, UserId, WriteSource,
+    CheckResult, CheckSpec, CheckStatus, ExpectedStatus, MaintenanceWindowUpdate,
+    NewMaintenanceWindow, NewStatusPage, NewStatusPageComponent, NewTarget, OrgId, UserId,
+    WriteSource,
 };
 use uptimepage::storage::traits::{ClampedRange, TimeRange};
 use uptimepage::storage::{
@@ -268,11 +269,20 @@ async fn two_tenants_never_see_each_others_data() {
     );
     assert!(
         maintenance_store
-            .end(a.org, mw_b.id, WriteSource::Ui, None)
+            .update(
+                a.org,
+                mw_b.id,
+                MaintenanceWindowUpdate {
+                    title: Some("hijacked".into()),
+                    ..Default::default()
+                },
+                WriteSource::Ui,
+                None,
+            )
             .await
             .unwrap()
             .is_none(),
-        "tenant a must not end b's window"
+        "tenant a must not edit or end b's window"
     );
     assert!(
         !maintenance_store

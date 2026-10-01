@@ -64,15 +64,6 @@ pub trait MaintenanceStore: Send + Sync {
         source: WriteSource,
         actor: Option<UserId>,
     ) -> Result<bool>;
-    /// Ends a running window at the database's clock, so the browser's never
-    /// decides when it stopped. `None` when the window is not running.
-    async fn end(
-        &self,
-        org: OrgId,
-        id: Uuid,
-        source: WriteSource,
-        actor: Option<UserId>,
-    ) -> Result<Option<MaintenanceWindow>>;
     /// Subset of `ids` that exist in `targets` for the caller's org. Used to
     /// validate `component_ids` on create/update without requiring callers to
     /// plumb in a `TargetStore`.
@@ -418,54 +409,6 @@ impl MaintenanceStore for PgMaintenanceStore {
         Ok(true)
     }
 
-    async fn end(
-        &self,
-        org: OrgId,
-        id: Uuid,
-        source: WriteSource,
-        actor: Option<UserId>,
-    ) -> Result<Option<MaintenanceWindow>> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| anyhow::anyhow!("begin: {e}"))?;
-        let row: Option<MaintenanceRow> = sqlx::query_as(&format!(
-            r#"UPDATE maintenance_windows
-               SET ends_at      = GREATEST(now(), starts_at + interval '1 microsecond'),
-                   write_source = $3,
-                   updated_by   = $4,
-                   updated_at   = now()
-               WHERE id = $1 AND org_id = $2 AND {running}
-               RETURNING {COLUMNS}"#,
-            running = running_sql("", "now()"),
-        ))
-        .bind(id)
-        .bind(org.0)
-        .bind(source.as_str())
-        .bind(actor.map(|u| u.0))
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| anyhow::anyhow!("end maintenance: {e}"))?;
-        let Some(row) = row else {
-            tx.rollback().await.ok();
-            return Ok(None);
-        };
-        crate::storage::orgs::record_audit_tx(
-            &mut tx,
-            org,
-            actor,
-            "maintenance.ended",
-            serde_json::json!({ "maintenance_id": row.id, "title": row.title }),
-        )
-        .await?;
-        tx.commit()
-            .await
-            .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
-        let components = load_components_of(&self.pool, row.id, org.0).await?;
-        Ok(Some(row.into_window(components)))
-    }
-
     async fn existing_target_ids(&self, org: OrgId, ids: &[Uuid]) -> Result<Vec<Uuid>> {
         if ids.is_empty() {
             return Ok(Vec::new());
@@ -724,29 +667,6 @@ impl MaintenanceStore for InMemoryMaintenanceStore {
         w.write_source = source;
         w.updated_at = now;
         Ok(true)
-    }
-
-    async fn end(
-        &self,
-        _org: OrgId,
-        id: Uuid,
-        source: WriteSource,
-        actor: Option<UserId>,
-    ) -> Result<Option<MaintenanceWindow>> {
-        let now = Utc::now();
-        let mut g = self.inner.lock();
-        let Some(w) = g
-            .windows
-            .iter_mut()
-            .find(|w| w.id == id && w.phase(now) == WindowPhase::Active)
-        else {
-            return Ok(None);
-        };
-        w.ends_at = now;
-        w.write_source = source;
-        w.updated_by = actor;
-        w.updated_at = now;
-        Ok(Some(w.clone()))
     }
 
     async fn existing_target_ids(&self, _org: OrgId, ids: &[Uuid]) -> Result<Vec<Uuid>> {

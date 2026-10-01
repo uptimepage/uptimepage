@@ -154,8 +154,10 @@ curl -X PATCH https://app.uptimepage.dev/api/v1/maintenance/$ID \
   -H "Authorization: Bearer $UPTIMEPAGE_TOKEN" \
      -H 'content-type: application/json' \
      -d '{"title": "PG cutover (postponed)"}'
-curl -X POST https://app.uptimepage.dev/api/v1/maintenance/$ID/end \
-  -H "Authorization: Bearer $UPTIMEPAGE_TOKEN"
+curl -X PATCH https://app.uptimepage.dev/api/v1/maintenance/$ID \
+  -H "Authorization: Bearer $UPTIMEPAGE_TOKEN" \
+     -H 'content-type: application/json' \
+     -d '{"ends_at": "1970-01-01T00:00:00Z"}'
 curl -X DELETE https://app.uptimepage.dev/api/v1/maintenance/$ID \
   -H "Authorization: Bearer $UPTIMEPAGE_TOKEN"
 ```
@@ -167,20 +169,19 @@ Validation rules:
 | `title` | non-whitespace, ≤ 200 chars | `EMPTY_TITLE` / `TITLE_TOO_LONG` |
 | `description` | ≤ 5 000 chars | `DESCRIPTION_TOO_LONG` |
 | `ends_at` | strictly after `starts_at` | `INVALID_TIME_RANGE` |
-| `ends_at` | on create and on every edit, must be in the future | `INVALID_TIME_RANGE` |
+| `ends_at` | on create and on every edit, must be in the future, except to end a running window now (below) | `INVALID_TIME_RANGE` |
 | `ends_at - starts_at` | ≤ 30 days | `INVALID_DURATION` |
 | `component_ids` | every id must reference an existing target | `INVALID_COMPONENT_ID` |
 | `suppress_alerts` | boolean, defaults to `true` | — |
 | PATCH on a window whose `ends_at` is already past | rejected | `422 MAINTENANCE_COMPLETED` |
 | PATCH on a cancelled window | rejected | `422 MAINTENANCE_CANCELLED` |
 | DELETE on a window whose `ends_at` is already past | rejected | `422 MAINTENANCE_COMPLETED` |
-| `POST …/end` on a window that has not started | rejected, cancel it instead | `422 MAINTENANCE_NOT_STARTED` |
-| `POST …/end` on a window that already ended | rejected | `422 MAINTENANCE_COMPLETED` |
-| `POST …/end` on a cancelled window | rejected | `422 MAINTENANCE_CANCELLED` |
 
-Ending a running window with `POST /api/v1/maintenance/{id}/end` sets `ends_at` to the server's clock, so a script or a browser with a wrong clock cannot end it at the wrong moment, and the audit log records `maintenance.ended`. Cancelling is a soft delete. The window stops showing on the page, stops holding paging and stops counting toward the quota, but it stays listed under **past** with `deleted_at` and `deleted_by` set, and `status=past` and `status=all` include it. Only a window that has not ended can be cancelled. Cancelling it again returns `404`, and editing it returns `422 MAINTENANCE_CANCELLED`. Subscribers who were already told about the window are not sent a cancellation, and edits made after the announcement are not re-sent either.
+To end a running window now, PATCH an `ends_at` at or before the current time and leave `starts_at` alone. The server sets `ends_at` to its own clock, so a script or a browser with a wrong clock cannot end the window at the wrong moment. The same `ends_at` on a window that has not started, or together with a new `starts_at`, is rejected with `INVALID_TIME_RANGE`. Because a past `ends_at` on a running window ends it at once, check the offset of any timestamp you send.
 
-Every window records who scheduled it (`created_by`), who changed it last (`updated_by`) and, once cancelled, who cancelled it (`deleted_by`). Creating, editing, ending and cancelling a window also write `maintenance.created`, `maintenance.updated`, `maintenance.ended` and `maintenance.cancelled` entries to the organization audit log.
+Cancelling is a soft delete. The window stops showing on the page, stops holding paging and stops counting toward the quota, but it stays listed under **past** with `deleted_at` and `deleted_by` set, and `status=past` and `status=all` include it. Only a window that has not ended can be cancelled. Cancelling it again returns `404`, and editing it returns `422 MAINTENANCE_CANCELLED`. Subscribers who were already told about the window are not sent a cancellation, and edits made after the announcement are not re-sent either.
+
+Every window records who scheduled it (`created_by`), who changed it last (`updated_by`) and, once cancelled, who cancelled it (`deleted_by`). Creating, editing (which includes ending) and cancelling a window also write `maintenance.created`, `maintenance.updated` and `maintenance.cancelled` entries to the organization audit log.
 
 ## What the public page renders
 

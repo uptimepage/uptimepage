@@ -385,7 +385,7 @@ async fn listing_loads_each_windows_components() {
 }
 
 #[tokio::test]
-async fn ending_a_running_window_uses_the_database_clock_and_is_audited() {
+async fn closing_a_running_window_is_audited_and_cannot_repeat() {
     let Some(pool) = pg_pool_from_env().await else {
         return;
     };
@@ -396,42 +396,30 @@ async fn ending_a_running_window_uses_the_database_clock_and_is_audited() {
         .create(org, running_window(vec![]), WriteSource::Ui, None)
         .await
         .unwrap();
-    let upcoming = store
-        .create(org, window_from_now(3, 4), WriteSource::Ui, None)
-        .await
-        .unwrap();
+    let close = || MaintenanceWindowUpdate {
+        ends_at: Some(Utc::now() - Duration::minutes(1)),
+        ..Default::default()
+    };
 
-    assert!(
-        store
-            .end(org, upcoming.id, WriteSource::Api, Some(actor))
-            .await
-            .unwrap()
-            .is_none(),
-        "a window that has not started is not ended"
-    );
-    let ended = store
-        .end(org, running.id, WriteSource::Api, Some(actor))
+    let closed = store
+        .update(org, running.id, close(), WriteSource::Api, Some(actor))
         .await
         .unwrap()
-        .expect("a running window ends");
+        .expect("a running window can be closed");
 
-    assert_eq!(
-        ended.ends_at, ended.updated_at,
-        "both come from the database's now() in the same statement"
-    );
-    assert!(ended.ends_at < running.ends_at && ended.ends_at > running.starts_at);
-    assert_eq!(ended.updated_by, Some(actor));
-    assert_eq!(ended.write_source, WriteSource::Api);
+    assert!(closed.ends_at < running.ends_at && closed.ends_at > running.starts_at);
+    assert_eq!(closed.updated_by, Some(actor));
+    assert_eq!(closed.write_source, WriteSource::Api);
     assert!(
         store
-            .end(org, running.id, WriteSource::Api, Some(actor))
+            .update(org, running.id, close(), WriteSource::Api, Some(actor))
             .await
             .unwrap()
             .is_none(),
-        "a window that already ended is not ended again"
+        "a window that already ended is not edited again"
     );
-    let actions: Vec<(String,)> = sqlx::query_as(
-        "SELECT action FROM org_audit_log \
+    let trail: Vec<(String, Option<serde_json::Value>)> = sqlx::query_as(
+        "SELECT action, metadata->'changed' FROM org_audit_log \
          WHERE org_id = $1 AND action LIKE 'maintenance.%' ORDER BY occurred_at",
     )
     .bind(org.0)
@@ -439,11 +427,13 @@ async fn ending_a_running_window_uses_the_database_clock_and_is_audited() {
     .await
     .unwrap();
     assert_eq!(
-        actions.into_iter().map(|a| a.0).collect::<Vec<_>>(),
-        [
-            "maintenance.created",
-            "maintenance.created",
-            "maintenance.ended"
+        trail,
+        vec![
+            ("maintenance.created".to_string(), None),
+            (
+                "maintenance.updated".to_string(),
+                Some(serde_json::json!(["ends_at"]))
+            ),
         ]
     );
 
@@ -465,7 +455,16 @@ async fn a_finished_window_cannot_be_cancelled_and_upcoming_lists_soonest_first(
         .await
         .unwrap();
     store
-        .end(org, over.id, WriteSource::Ui, None)
+        .update(
+            org,
+            over.id,
+            MaintenanceWindowUpdate {
+                ends_at: Some(Utc::now() - Duration::minutes(1)),
+                ..Default::default()
+            },
+            WriteSource::Ui,
+            None,
+        )
         .await
         .unwrap()
         .expect("ended");

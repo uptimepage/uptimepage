@@ -148,10 +148,6 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
                 .delete(handlers::maintenance::delete_maintenance),
         )
         .route(
-            "/maintenance/{id}/end",
-            post(handlers::maintenance::end_maintenance),
-        )
-        .route(
             "/variables",
             get(handlers::variables::list).post(handlers::variables::create),
         )

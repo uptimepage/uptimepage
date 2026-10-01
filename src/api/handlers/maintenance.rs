@@ -168,9 +168,10 @@ pub async fn get_maintenance(
     tag = "maintenance",
     summary = "Edit a maintenance window",
     description = "Editing a window whose `ends_at` is already in the past, or that was cancelled, \
-                   is rejected with 422. `ends_at` must stay in the future; end a running window \
-                   with `POST /api/v1/maintenance/{id}/end`. A body that sets nothing changes \
-                   nothing and is not recorded.",
+                   is rejected with 422. `ends_at` must stay in the future, except on a running \
+                   window: there, an `ends_at` at or before the current time, with `starts_at` \
+                   unchanged, ends the window now at the server's clock. A body that sets nothing \
+                   changes nothing and is not recorded.",
     params(("id" = Uuid, Path)),
     request_body(content = MaintenanceWindowUpdate),
     responses(
@@ -186,15 +187,16 @@ pub async fn update_maintenance(
     CurrentUser(actor): CurrentUser,
     RequestSource(source): RequestSource,
     Path(id): Path<Uuid>,
-    Json(update): Json<MaintenanceWindowUpdate>,
+    Json(mut update): Json<MaintenanceWindowUpdate>,
 ) -> Result<Json<MaintenanceWindow>> {
+    let now = Utc::now();
     // The store re-checks that the window has not ended, so an edit that loses
     // a race with the window ending or being ended reports 404 instead of
     // reviving it.
     let existing = state.maintenance_store.get(org, id).await?.ok_or_else(|| {
         AppError::not_found(codes::MAINTENANCE_NOT_FOUND, "maintenance window not found")
     })?;
-    reject_closed(existing.phase(Utc::now()), "edit")?;
+    reject_closed(existing.phase(now))?;
     if update.changed_fields().is_empty() {
         return Ok(Json(existing));
     }
@@ -202,10 +204,11 @@ pub async fn update_maintenance(
         validation::validate_title(t, "title")?;
     }
     validation::validate_description(update.description.as_deref(), "description")?;
+    let ends_now = pin_end_now(&existing, &mut update, now);
     let starts = update.starts_at.unwrap_or(existing.starts_at);
     let ends = update.ends_at.unwrap_or(existing.ends_at);
     validate_time_range(starts, ends)?;
-    if update.ends_at.is_some() {
+    if update.ends_at.is_some() && !ends_now {
         require_future_end(ends)?;
     }
     if let Some(ids) = update.component_ids.as_deref() {
@@ -272,68 +275,40 @@ pub async fn delete_maintenance(
     ))
 }
 
-#[utoipa::path(
-    post,
-    path = "/api/v1/maintenance/{id}/end",
-    tag = "maintenance",
-    summary = "End a running maintenance window now",
-    description = "Sets `ends_at` to the server's current time, so the window moves to `past` and \
-                   stops holding paging at once. Only a running window can be ended: a window \
-                   that has not started is cancelled instead (`422 MAINTENANCE_NOT_STARTED`), and \
-                   one that already ended or was cancelled is rejected with 422.",
-    params(("id" = Uuid, Path)),
-    responses(
-        (status = 200, body = MaintenanceWindow),
-        (status = 404, body = ApiError),
-        (status = 422, body = ApiError, description = "The window is not running"),
-    ),
-)]
-pub async fn end_maintenance(
-    State(state): State<AppState>,
-    Authorized(org, _): Authorized<MaintenanceWrite>,
-    CurrentUser(actor): CurrentUser,
-    RequestSource(source): RequestSource,
-    Path(id): Path<Uuid>,
-) -> Result<Json<MaintenanceWindow>> {
-    if let Some(ended) = state
-        .maintenance_store
-        .end(org, id, source, Some(actor))
-        .await?
-    {
-        return Ok(Json(ended));
-    }
-    let existing = state.maintenance_store.get(org, id).await?.ok_or_else(|| {
-        AppError::not_found(codes::MAINTENANCE_NOT_FOUND, "maintenance window not found")
-    })?;
-    let phase = existing.phase(Utc::now());
-    reject_closed(phase, "end")?;
-    Err(match phase {
-        WindowPhase::Upcoming => AppError::unprocessable(
-            codes::MAINTENANCE_NOT_STARTED,
-            "cannot end a maintenance window that has not started; cancel it instead",
-        ),
-        _ => AppError::unprocessable(
-            codes::MAINTENANCE_COMPLETED,
-            "the maintenance window is no longer running",
-        ),
-    })
-}
-
 // ── Validation ──────────────────────────────────────────────────────────
 
-/// A completed or cancelled window is history, so nothing may act on it.
-fn reject_closed(phase: WindowPhase, verb: &str) -> Result<()> {
+/// A completed or cancelled window is history, so it cannot be edited.
+fn reject_closed(phase: WindowPhase) -> Result<()> {
     match phase {
         WindowPhase::Cancelled => Err(AppError::unprocessable(
             codes::MAINTENANCE_CANCELLED,
-            format!("cannot {verb} a cancelled maintenance window"),
+            "cannot edit a cancelled maintenance window",
         )),
         WindowPhase::Completed => Err(AppError::unprocessable(
             codes::MAINTENANCE_COMPLETED,
-            format!("cannot {verb} a completed maintenance window"),
+            "cannot edit a completed maintenance window",
         )),
         WindowPhase::Upcoming | WindowPhase::Active => Ok(()),
     }
+}
+
+/// An `ends_at` at or before `now` on a running window whose start is left
+/// alone means "stop now": it is replaced by the server's clock instead of the
+/// client's. Returns whether it did.
+fn pin_end_now(
+    existing: &MaintenanceWindow,
+    update: &mut MaintenanceWindowUpdate,
+    now: chrono::DateTime<Utc>,
+) -> bool {
+    let ends_now = existing.phase(now) == WindowPhase::Active
+        && update.ends_at.is_some_and(|ends| ends <= now)
+        && update
+            .starts_at
+            .is_none_or(|starts| starts == existing.starts_at);
+    if ends_now {
+        update.ends_at = Some(now);
+    }
+    ends_now
 }
 
 fn validate_time_range(starts: chrono::DateTime<Utc>, ends: chrono::DateTime<Utc>) -> Result<()> {
