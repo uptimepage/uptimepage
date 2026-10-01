@@ -24,18 +24,22 @@ use axum::{Json, http::StatusCode};
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use crate::app::AppState;
 use crate::auth::api_tokens;
 use crate::domain::UserId;
 use crate::error::codes;
 use crate::error::{ApiError, ApiErrorBody};
 use crate::error::{AppError, Result};
+use crate::request::RequestState;
 
 use super::{AuthContext, CurrentUser, Session, bearer_from_headers};
 
 /// Middleware entry point. Mount on the API router so it runs ahead of any
 /// `FromRequestParts` impl that reads `AuthContext`.
-pub async fn middleware(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
+pub async fn middleware(
+    State(state): State<RequestState>,
+    mut req: Request,
+    next: Next,
+) -> Response {
     let Some(raw) = bearer_from_headers(req.headers()) else {
         return next.run(req).await;
     };
@@ -132,7 +136,7 @@ pub struct BrowserUser(pub CurrentUser);
 impl<S> FromRequestParts<S> for BrowserUser
 where
     S: Send + Sync,
-    AppState: FromRef<S>,
+    RequestState: FromRef<S>,
 {
     type Rejection = AppError;
 
@@ -166,12 +170,12 @@ pub struct VerifiedBrowserUser(pub CurrentUser);
 impl<S> FromRequestParts<S> for VerifiedBrowserUser
 where
     S: Send + Sync,
-    AppState: FromRef<S>,
+    RequestState: FromRef<S>,
 {
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self> {
-        let app_state = AppState::from_ref(state);
+        let app_state = RequestState::from_ref(state);
         let BrowserUser(user) = BrowserUser::from_request_parts(parts, state).await?;
         let pool = app_state.db.as_ref().ok_or(AppError::Unauthorized)?;
         ensure_email_verified(pool, user.0).await?;

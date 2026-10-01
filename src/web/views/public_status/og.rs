@@ -41,7 +41,7 @@ pub(super) fn build_og_meta(
     og_type: &'static str,
     branding: &BrandingView,
 ) -> OgMeta {
-    let url = published_page_origin(state, headers, page)
+    let url = published_page_origin(&state.request_state(), headers, page)
         .map(|origin| format!("{origin}{path}"))
         .unwrap_or_default();
 

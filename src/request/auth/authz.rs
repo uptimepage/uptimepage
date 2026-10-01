@@ -12,11 +12,11 @@ use std::marker::PhantomData;
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
 
-use crate::app::AppState;
 use crate::auth::scope::{Scope, ScopeSet};
 use crate::domain::{OrgId, WriteSource};
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::request::RequestState;
 use crate::storage::{MembershipStatus, membership_status};
 
 use super::{AuthContext, CurrentOrg, CurrentUser};
@@ -84,7 +84,7 @@ pub struct Authorized<R: RequiredScope>(pub OrgId, pub PhantomData<R>);
 impl<S, R> FromRequestParts<S> for Authorized<R>
 where
     S: Send + Sync,
-    AppState: FromRef<S>,
+    RequestState: FromRef<S>,
     R: RequiredScope,
 {
     type Rejection = AppError;
@@ -111,7 +111,7 @@ pub struct OwnerAuthorized<R: RequiredScope>(pub OrgId, pub PhantomData<R>);
 impl<S, R> FromRequestParts<S> for OwnerAuthorized<R>
 where
     S: Send + Sync,
-    AppState: FromRef<S>,
+    RequestState: FromRef<S>,
     R: RequiredScope,
 {
     type Rejection = AppError;
@@ -120,7 +120,7 @@ where
         let CurrentOrg(org) = CurrentOrg::from_request_parts(parts, state).await?;
         assert_scope(parts, R::SCOPE)?;
         let CurrentUser(user) = CurrentUser::from_request_parts(parts, state).await?;
-        let app_state = AppState::from_ref(state);
+        let app_state = RequestState::from_ref(state);
         let pool = app_state.require_db()?;
         match membership_status(pool, user, org).await? {
             MembershipStatus::Owner => Ok(OwnerAuthorized(org, PhantomData)),

@@ -21,9 +21,9 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use subtle::ConstantTimeEq;
 
-use crate::app::AppState;
 use crate::error::ApiErrorBody;
 use crate::error::codes;
+use crate::request::RequestState;
 use crate::request::auth::bearer_from_headers;
 
 pub const CSRF_HEADER: HeaderName = HeaderName::from_static("x-requested-with");
@@ -46,7 +46,11 @@ const TOKEN_AUTHENTICATED_PATHS: &[&str] = &[
 ];
 
 /// Tower middleware that enforces the rule documented at module level.
-pub async fn middleware(State(state): State<AppState>, req: Request<Body>, next: Next) -> Response {
+pub async fn middleware(
+    State(state): State<RequestState>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
     if !is_state_changing(req.method()) {
         return next.run(req).await;
     }

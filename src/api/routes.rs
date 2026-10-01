@@ -39,9 +39,12 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
         // rate-limit added first (innermost) so auth runs before it and the
         // limiter keys on the resolved org/user. Bulk keeps the large body
         // limit; it must not inherit v1's 64 KiB single-item limit.
-        .layer(from_fn_with_state(state.clone(), rate_limit_middleware))
         .layer(from_fn_with_state(
-            state.clone(),
+            state.request_state(),
+            rate_limit_middleware,
+        ))
+        .layer(from_fn_with_state(
+            state.request_state(),
             crate::request::auth::api_token::middleware,
         ))
         .layer(from_fn_with_state(
@@ -65,9 +68,12 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
             "/status-pages/{id}/logo",
             post(handlers::status_page::upload_logo).delete(handlers::status_page::delete_logo),
         )
-        .layer(from_fn_with_state(state.clone(), rate_limit_middleware))
         .layer(from_fn_with_state(
-            state.clone(),
+            state.request_state(),
+            rate_limit_middleware,
+        ))
+        .layer(from_fn_with_state(
+            state.request_state(),
             crate::request::auth::api_token::middleware,
         ))
         .layer(DefaultBodyLimit::max(logo_body_limit));
@@ -468,9 +474,12 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
         // Added before the auth layer so it ends up *inner*: auth runs
         // first and populates `AuthContext`, then the rate-limit middleware
         // keys on the resolved org/user (never the TCP peer).
-        .layer(from_fn_with_state(state.clone(), rate_limit_middleware))
         .layer(from_fn_with_state(
-            state.clone(),
+            state.request_state(),
+            rate_limit_middleware,
+        ))
+        .layer(from_fn_with_state(
+            state.request_state(),
             crate::request::auth::api_token::middleware,
         ))
         .layer(DefaultBodyLimit::max(SINGLE_BODY_LIMIT))

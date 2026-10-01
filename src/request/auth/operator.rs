@@ -9,9 +9,9 @@ use axum::http::request::Parts;
 use secrecy::ExposeSecret;
 use subtle::ConstantTimeEq;
 
-use crate::app::AppState;
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::request::RequestState;
 use crate::request::auth::bearer_from_headers;
 use crate::security::sha256_hex;
 
@@ -22,12 +22,12 @@ pub struct OperatorAuth;
 impl<S> FromRequestParts<S> for OperatorAuth
 where
     S: Send + Sync,
-    AppState: FromRef<S>,
+    RequestState: FromRef<S>,
 {
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self> {
-        let app = AppState::from_ref(state);
+        let app = RequestState::from_ref(state);
         let expected = app.cfg.operator.admin_token.expose_secret();
         if expected.is_empty() {
             return Err(AppError::not_found(

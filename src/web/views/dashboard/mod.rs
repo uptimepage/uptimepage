@@ -87,7 +87,7 @@ const ROW_LIMIT: usize = 500;
 
 pub async fn root(state: State<AppState>, mut parts: Parts) -> Response {
     let State(ref app_state) = state;
-    if is_subdomain_public_request(app_state, &parts.headers) {
+    if is_subdomain_public_request(&app_state.request_state(), &parts.headers) {
         // Preserve axum's standard `Query<T>` rejection — a malformed
         // `?fragment=` value used to 400 via the framework extractor, so a
         // bare `.unwrap_or(default)` here would silently turn invalid params

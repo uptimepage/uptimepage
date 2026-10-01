@@ -205,13 +205,13 @@ async fn published_links_stay_on_the_subdomain_until_activation() {
     let headers = host_header(SERVED);
 
     assert_eq!(
-        published_page_origin(&state, &headers, page).as_deref(),
+        published_page_origin(&state.request_state(), &headers, page).as_deref(),
         Some("https://page1.example.com")
     );
 
     state.custom_domains.install(vec![row(SERVED, 1, true)]);
     assert_eq!(
-        published_page_origin(&state, &headers, page).as_deref(),
+        published_page_origin(&state.request_state(), &headers, page).as_deref(),
         Some("https://status.acme.test")
     );
 }
@@ -222,7 +222,7 @@ async fn an_activated_domain_canonicalises_the_subdomain_too() {
     state.custom_domains.install(vec![row(SERVED, 1, true)]);
     assert_eq!(
         published_page_origin(
-            &state,
+            &state.request_state(),
             &host_header("page1.example.com"),
             StatusPageId(uuid::Uuid::from_u128(1))
         )

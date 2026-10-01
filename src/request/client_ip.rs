@@ -25,7 +25,7 @@ use axum::http::HeaderMap;
 use axum::http::request::Parts;
 use ipnet::IpNet;
 
-use crate::app::AppState;
+use crate::request::RequestState;
 
 const XFF: &str = "x-forwarded-for";
 const X_REAL_IP: &str = "x-real-ip";
@@ -53,7 +53,7 @@ pub fn extract(headers: &HeaderMap, peer: IpAddr, trusted: &[IpNet]) -> IpAddr {
 
 /// Axum extractor wrapping [`extract`]. Reads `ConnectInfo<SocketAddr>` and
 /// the request headers from `Parts`, the trusted-proxy CIDRs from
-/// `AppState`, and yields the resolved client IP. Removes the per-handler
+/// `RequestState`, and yields the resolved client IP. Removes the per-handler
 /// ceremony of threading three arguments through every login/auth surface
 /// — handlers just take `ClientIp(ip): ClientIp` and the spoofing model is
 /// enforced by the extractor, not by call-site discipline.
@@ -62,12 +62,12 @@ pub struct ClientIp(pub IpAddr);
 impl<S> FromRequestParts<S> for ClientIp
 where
     S: Send + Sync,
-    AppState: FromRef<S>,
+    RequestState: FromRef<S>,
 {
     type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let app_state = AppState::from_ref(state);
+        let app_state = RequestState::from_ref(state);
         // ConnectInfo is required by every handler that needs the peer
         // address; if it's missing the deployment is misconfigured (no
         // `into_make_service_with_connect_info`). Fall back to an

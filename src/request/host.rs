@@ -17,11 +17,11 @@ use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
-use crate::app::AppState;
 use crate::config::AppConfig;
 use crate::custom_domains::CustomDomains;
 use crate::domain::{OrgId, PageRef, StatusPageId};
 use crate::error::public::PublicAppError;
+use crate::request::RequestState;
 use crate::request::is_health_path;
 
 /// Subdomain labels that route to the operator surface (dashboard + auth +
@@ -192,7 +192,7 @@ pub fn request_origin(headers: &HeaderMap, base_domain: &str) -> Option<String> 
 /// page. Activated rather than verified, for the reason on
 /// `PAGE_CUSTOM_DOMAIN_PUBLISHED`.
 pub fn published_page_origin(
-    state: &AppState,
+    state: &RequestState,
     headers: &HeaderMap,
     page: StatusPageId,
 ) -> Option<String> {
@@ -288,7 +288,7 @@ pub struct ResolvedStatusPage(pub PageRef);
 ///
 /// [`find_public_status_page_by_slug`]: crate::storage::orgs::find_public_status_page_by_slug
 pub async fn resolve_status_page(
-    state: &AppState,
+    state: &RequestState,
     headers: &HeaderMap,
 ) -> Result<PageRef, PublicAppError> {
     if !state.cfg.tenancy.subdomain_public_routes {
@@ -337,7 +337,7 @@ pub async fn resolve_status_page(
 /// branch is reachable ONLY from in-memory test fixtures, where `PublicSource`
 /// is mocked and ignores the returned ids. The nil sentinel keeps those
 /// fixtures rendering as before.
-async fn resolve_default_page(state: &AppState) -> Result<PageRef, PublicAppError> {
+async fn resolve_default_page(state: &RequestState) -> Result<PageRef, PublicAppError> {
     let Some(pool) = state.db.as_ref() else {
         return Ok(PageRef {
             page: StatusPageId(uuid::Uuid::nil()),
@@ -353,12 +353,12 @@ async fn resolve_default_page(state: &AppState) -> Result<PageRef, PublicAppErro
 impl<S> FromRequestParts<S> for ResolvedStatusPage
 where
     S: Send + Sync,
-    AppState: FromRef<S>,
+    RequestState: FromRef<S>,
 {
     type Rejection = PublicAppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let app_state = AppState::from_ref(state);
+        let app_state = RequestState::from_ref(state);
         let page = resolve_status_page(&app_state, &parts.headers).await?;
         Ok(ResolvedStatusPage(page))
     }
@@ -374,7 +374,7 @@ where
 /// slug. Routing the broader reserved list here would multiply the
 /// operator surface (login, API, settings) across dozens of hosts and
 /// leak the reserved set via response-code fingerprints.
-pub fn is_subdomain_public_request(state: &AppState, headers: &HeaderMap) -> bool {
+pub fn is_subdomain_public_request(state: &RequestState, headers: &HeaderMap) -> bool {
     host_surface(state, headers) == HostSurface::Tenant
 }
 
@@ -397,7 +397,7 @@ enum HostSurface {
 ///
 /// On SaaS an unrecognised host reaches nothing. On a path-based self-host
 /// deploy every host is legitimately the operator, so the default stands.
-fn host_surface(state: &AppState, headers: &HeaderMap) -> HostSurface {
+fn host_surface(state: &RequestState, headers: &HeaderMap) -> HostSurface {
     let Some(host) = headers.get(HOST).and_then(|h| h.to_str().ok()) else {
         // Caddy talks HTTP/1.1 upstream, which cannot omit `Host`, and the app
         // port is not exposed past the docker network.
@@ -502,7 +502,11 @@ fn is_mcp_host_path(path: &str) -> bool {
 /// probe doesn't take the upstream down. The tenant gate is a no-op when
 /// SaaS subdomain mode is off; the MCP gate needs only a base domain, so
 /// a self-host that turns the connector on gets it too.
-pub async fn host_isolation(State(state): State<AppState>, req: Request, next: Next) -> Response {
+pub async fn host_isolation(
+    State(state): State<RequestState>,
+    req: Request,
+    next: Next,
+) -> Response {
     let path = req.uri().path();
     if !is_health_path(path) {
         let surface = host_surface(&state, req.headers());

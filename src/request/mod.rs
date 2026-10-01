@@ -14,6 +14,7 @@ pub mod host;
 pub mod http_metrics;
 pub mod login_hint;
 pub mod rate_limit;
+pub mod state;
 pub mod theme;
 pub mod time_format;
 
@@ -29,6 +30,7 @@ pub use auth::authz::{
 pub use auth::operator::OperatorAuth;
 pub use auth::{AuthedBrowser, CurrentOrg, CurrentUser, PendingDeletionUser, Session, User};
 pub use host::{ResolvedStatusPage, StatusPageHost, extract_status_slug};
+pub use state::RequestState;
 
 /// Probe endpoints that every health-conscious caller — Caddy active
 /// health check, Docker healthcheck, k8s probes, the trace-span skip,

@@ -7,9 +7,9 @@
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
 
-use crate::app::AppState;
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::request::RequestState;
 use crate::request::auth::bearer_from_headers;
 use crate::storage::operator::{AgentAuth, OperatorRepo};
 
@@ -24,12 +24,12 @@ pub struct AgentIdentity {
 impl<S> FromRequestParts<S> for AgentIdentity
 where
     S: Send + Sync,
-    AppState: FromRef<S>,
+    RequestState: FromRef<S>,
 {
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self> {
-        let app = AppState::from_ref(state);
+        let app = RequestState::from_ref(state);
         let pool = app.require_db()?.clone();
         let raw = bearer_from_headers(&parts.headers).ok_or(AppError::Unauthorized)?;
         let repo = OperatorRepo::new(pool.clone());

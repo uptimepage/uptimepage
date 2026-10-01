@@ -114,7 +114,7 @@ pub async fn index(
     headers: HeaderMap,
     Query(params): Query<StatusParams>,
 ) -> Response {
-    let page_ref = match resolve_status_page(&state, &headers).await {
+    let page_ref = match resolve_status_page(&state.request_state(), &headers).await {
         Ok(p) => p,
         Err(err) => return render_public_error(err),
     };
@@ -179,12 +179,12 @@ pub async fn status_path(
     headers: HeaderMap,
     query: Query<StatusParams>,
 ) -> Response {
-    if !is_subdomain_public_request(&state, &headers) {
+    if !is_subdomain_public_request(&state.request_state(), &headers) {
         return index(State(state), headers, query).await;
     }
     // Resolve before redirecting so a host with no live page still 404s here
     // rather than answering for one it cannot serve.
-    if let Err(err) = resolve_status_page(&state, &headers).await {
+    if let Err(err) = resolve_status_page(&state.request_state(), &headers).await {
         return render_public_error(err);
     }
     // The 30s refresh poll of an already-open tab still asks for `?fragment=1`
@@ -200,7 +200,7 @@ pub async fn status_path(
 /// resolution as the page itself; the query string is a cache-buster only,
 /// never a selector — the bytes come from the page's `logo` asset row.
 pub async fn logo(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    let page_ref = match resolve_status_page(&state, &headers).await {
+    let page_ref = match resolve_status_page(&state.request_state(), &headers).await {
         Ok(p) => p,
         Err(err) => return render_public_error(err),
     };
@@ -259,7 +259,7 @@ pub async fn incident(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Response {
-    let page_ref = match resolve_status_page(&state, &headers).await {
+    let page_ref = match resolve_status_page(&state.request_state(), &headers).await {
         Ok(p) => p,
         Err(err) => return render_public_error(err),
     };
@@ -317,7 +317,7 @@ pub async fn archive(
     use crate::pagination::cursor::IncidentCursor;
     use crate::public_status::IncidentListQuery;
 
-    let page_ref = match resolve_status_page(&state, &headers).await {
+    let page_ref = match resolve_status_page(&state.request_state(), &headers).await {
         Ok(p) => p,
         Err(err) => return render_public_error(err),
     };
@@ -442,14 +442,15 @@ fn canonical_link(
     headers: &HeaderMap,
     page: StatusPageId,
 ) -> Option<header::HeaderValue> {
-    let origin = published_page_origin(state, headers, page).unwrap_or_else(|| {
-        state
-            .cfg
-            .auth
-            .public_base_url
-            .trim_end_matches('/')
-            .to_owned()
-    });
+    let origin =
+        published_page_origin(&state.request_state(), headers, page).unwrap_or_else(|| {
+            state
+                .cfg
+                .auth
+                .public_base_url
+                .trim_end_matches('/')
+                .to_owned()
+        });
     if origin.is_empty() {
         return None;
     }

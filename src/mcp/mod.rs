@@ -56,7 +56,7 @@ pub fn mount(router: Router, state: AppState) -> Router {
         // Added inner→outer: rate-limit first (inner) so auth runs before it
         // and the limiter sees the resolved org/user, never the TCP peer.
         .layer(from_fn_with_state(
-            state.clone(),
+            state.request_state(),
             crate::request::rate_limit::rate_limit_middleware,
         ))
         .layer(from_fn_with_state(state.clone(), auth::middleware));

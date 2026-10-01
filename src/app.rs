@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::extract::FromRef;
 use moka::sync::Cache;
 use sqlx::PgPool;
 
@@ -18,6 +19,8 @@ use crate::http_client::HttpClients;
 use crate::http_outbound::OutboundHttpClient;
 use crate::public_status::PublicSource;
 use crate::quotas::{QuotaService, RateLimitService};
+use crate::request::RequestState;
+use crate::request::state::{AgentSeenDebounce, build_agent_seen_debounce};
 use crate::security::AbuseGuard;
 use crate::storage::{
     Actor, IncidentNarrationStore, LifecycleOutcome, MaintenanceStore, NotificationChannelStore,
@@ -146,17 +149,6 @@ fn build_agent_ingest_dedup() -> AgentIngestDedup {
     Cache::builder()
         .time_to_live(Duration::from_secs(300))
         .max_capacity(100_000)
-        .build()
-}
-
-/// Per-agent "last_seen written recently" set, so a chatty agent doesn't UPDATE
-/// its row on every pull/push.
-pub type AgentSeenDebounce = Cache<uuid::Uuid, ()>;
-
-fn build_agent_seen_debounce() -> AgentSeenDebounce {
-    Cache::builder()
-        .time_to_live(Duration::from_secs(30))
-        .max_capacity(10_000)
         .build()
 }
 
@@ -315,11 +307,20 @@ impl AppState {
     /// the "tenancy enabled but db is None" cloak so every handler doesn't
     /// rewrite the same anyhow string.
     pub fn require_db(&self) -> crate::error::Result<&PgPool> {
-        self.db.as_ref().ok_or_else(|| {
-            crate::error::AppError::Other(anyhow::anyhow!(
-                "tenancy enabled but AppState.db is None"
-            ))
-        })
+        crate::request::state::require_pool(self.db.as_ref())
+    }
+
+    pub fn request_state(&self) -> RequestState {
+        RequestState {
+            cfg: self.cfg.clone(),
+            db: self.db.clone(),
+            quotas: self.quotas.clone(),
+            rate_limits: self.rate_limits.clone(),
+            custom_domains: self.custom_domains.clone(),
+            session_debounce: self.session_debounce.clone(),
+            api_token_debounce: self.api_token_debounce.clone(),
+            agent_seen_debounce: self.agent_seen_debounce.clone(),
+        }
     }
 
     /// `signup_policy` was validated at boot, so the fallback is unreachable;
@@ -705,5 +706,11 @@ impl AppState {
         if let LifecycleOutcome::Updated(inc) = outcome {
             self.signal_incident(org, inc.id, crate::domain::NotificationReason::Resolved);
         }
+    }
+}
+
+impl FromRef<AppState> for RequestState {
+    fn from_ref(state: &AppState) -> Self {
+        state.request_state()
     }
 }

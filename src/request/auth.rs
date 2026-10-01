@@ -44,12 +44,12 @@ use uuid::Uuid;
 
 use crate::auth::url::url_encode;
 
-use crate::app::AppState;
 use crate::auth::scope::ScopeSet;
 use crate::auth::session as session_store;
 use crate::domain::{OrgId, UserId};
 use crate::error::codes;
 use crate::error::{AppError, Result};
+use crate::request::RequestState;
 use crate::storage::orgs::is_active_member;
 
 /// Custom header used by API-token clients to scope writes/reads to a specific
@@ -122,7 +122,7 @@ impl AuthContext {
 impl<S> FromRequestParts<S> for Session
 where
     S: Send + Sync,
-    AppState: FromRef<S>,
+    RequestState: FromRef<S>,
 {
     type Rejection = Infallible;
 
@@ -131,7 +131,7 @@ where
             return Ok(injected);
         }
 
-        let app_state = AppState::from_ref(state);
+        let app_state = RequestState::from_ref(state);
         let Some(pool) = app_state.db.as_ref() else {
             return Ok(Session::default());
         };
@@ -192,12 +192,12 @@ pub struct PendingDeletionUser {
 impl<S> FromRequestParts<S> for PendingDeletionUser
 where
     S: Send + Sync,
-    AppState: FromRef<S>,
+    RequestState: FromRef<S>,
 {
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self> {
-        let app_state = AppState::from_ref(state);
+        let app_state = RequestState::from_ref(state);
         let pool = app_state.require_db()?;
         let (_, cookie_val) = session_cookie(parts, &app_state).ok_or(AppError::Unauthorized)?;
         let row = match session_store::lookup(pool, &app_state.cfg.auth.session, &cookie_val).await
@@ -227,7 +227,7 @@ where
 impl<S> OptionalFromRequestParts<S> for PendingDeletionUser
 where
     S: Send + Sync,
-    AppState: FromRef<S>,
+    RequestState: FromRef<S>,
 {
     type Rejection = Infallible;
 
@@ -244,7 +244,7 @@ where
 }
 
 /// The request's session cookie jar and raw cookie value, if it carries one.
-fn session_cookie(parts: &Parts, app_state: &AppState) -> Option<(Cookies, String)> {
+fn session_cookie(parts: &Parts, app_state: &RequestState) -> Option<(Cookies, String)> {
     let cookies = parts.extensions.get::<Cookies>().cloned()?;
     let value = cookies
         .get(app_state.cfg.auth.session.cookie_name.as_str())
@@ -269,7 +269,7 @@ pub struct CurrentUser(pub UserId);
 impl<S> FromRequestParts<S> for CurrentUser
 where
     S: Send + Sync,
-    AppState: FromRef<S>,
+    RequestState: FromRef<S>,
 {
     type Rejection = AppError;
 
@@ -296,12 +296,12 @@ pub struct CurrentOrg(pub OrgId);
 impl<S> FromRequestParts<S> for CurrentOrg
 where
     S: Send + Sync,
-    AppState: FromRef<S>,
+    RequestState: FromRef<S>,
 {
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self> {
-        let app_state = AppState::from_ref(state);
+        let app_state = RequestState::from_ref(state);
 
         // API-token path: an unbound token MUST surface the org via
         // `X-Uptimepage-Org` (no fallback — a missing/unknown header is a 400).
@@ -378,7 +378,7 @@ pub struct AuthedBrowser;
 impl<S> FromRequestParts<S> for AuthedBrowser
 where
     S: Send + Sync,
-    AppState: FromRef<S>,
+    RequestState: FromRef<S>,
 {
     type Rejection = Response;
 

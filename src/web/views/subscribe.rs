@@ -92,7 +92,7 @@ pub async fn subscribe(
         )
     };
 
-    let page = match resolve_status_page(&state, &headers).await {
+    let page = match resolve_status_page(&state.request_state(), &headers).await {
         Ok(p) => p,
         Err(_) => return Ok(invalid_page()),
     };

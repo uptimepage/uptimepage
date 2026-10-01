@@ -55,9 +55,12 @@ fn apply_cross_cutting_layers(router: Router, state: AppState) -> Router {
     // constant-time header compare; reordering reverses request semantics.
     router
         .layer(from_fn_with_state(
-            state.clone(),
+            state.request_state(),
             request::auth::csrf::middleware,
         ))
-        .layer(from_fn_with_state(state, request::host::host_isolation))
+        .layer(from_fn_with_state(
+            state.request_state(),
+            request::host::host_isolation,
+        ))
         .layer(from_fn(http_metrics::middleware))
 }
