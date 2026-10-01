@@ -359,6 +359,7 @@ impl OrgAggregator {
                FROM maintenance_windows mw
                LEFT JOIN maintenance_window_components mwc ON mwc.maintenance_id = mw.id
                WHERE mw.org_id = $3
+                 AND mw.deleted_at IS NULL
                  AND mw.ends_at > $1
                  AND mw.starts_at < $2
                GROUP BY mw.id

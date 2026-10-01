@@ -124,6 +124,8 @@ Validation rules:
 
 A maintenance window is a planned outage. While the window is active, the page renders affected components as `Maintenance` (the truth-table rule is: maintenance dominates outage, so a real failure during the window still classifies as `Maintenance`, not `MajorOutage`). On the 90-day history strip, any day that overlapped a maintenance window renders as a maintenance cell rather than an outage cell.
 
+Open **maintenance** in the top navigation to schedule one. Pick the monitors, a start and an end in your own timezone, and whether to hold paging. Active and upcoming windows are listed first, and completed ones sit under **past** as read-only history. An upcoming window can be edited or cancelled. An active one can be edited or ended now, which moves it to past straight away. Everything the screen does is also available through the API.
+
 Create:
 
 ```bash
@@ -152,6 +154,8 @@ curl -X PATCH https://app.uptimepage.dev/api/v1/maintenance/$ID \
   -H "Authorization: Bearer $UPTIMEPAGE_TOKEN" \
      -H 'content-type: application/json' \
      -d '{"title": "PG cutover (postponed)"}'
+curl -X POST https://app.uptimepage.dev/api/v1/maintenance/$ID/end \
+  -H "Authorization: Bearer $UPTIMEPAGE_TOKEN"
 curl -X DELETE https://app.uptimepage.dev/api/v1/maintenance/$ID \
   -H "Authorization: Bearer $UPTIMEPAGE_TOKEN"
 ```
@@ -163,14 +167,20 @@ Validation rules:
 | `title` | non-whitespace, ≤ 200 chars | `EMPTY_TITLE` / `TITLE_TOO_LONG` |
 | `description` | ≤ 5 000 chars | `DESCRIPTION_TOO_LONG` |
 | `ends_at` | strictly after `starts_at` | `INVALID_TIME_RANGE` |
+| `ends_at` | on create and on every edit, must be in the future | `INVALID_TIME_RANGE` |
 | `ends_at - starts_at` | ≤ 30 days | `INVALID_DURATION` |
 | `component_ids` | every id must reference an existing target | `INVALID_COMPONENT_ID` |
 | `suppress_alerts` | boolean, defaults to `true` | — |
 | PATCH on a window whose `ends_at` is already past | rejected | `422 MAINTENANCE_COMPLETED` |
+| PATCH on a cancelled window | rejected | `422 MAINTENANCE_CANCELLED` |
+| DELETE on a window whose `ends_at` is already past | rejected | `422 MAINTENANCE_COMPLETED` |
+| `POST …/end` on a window that has not started | rejected, cancel it instead | `422 MAINTENANCE_NOT_STARTED` |
+| `POST …/end` on a window that already ended | rejected | `422 MAINTENANCE_COMPLETED` |
+| `POST …/end` on a cancelled window | rejected | `422 MAINTENANCE_CANCELLED` |
 
-For audit, prefer PATCHing a cancelled window's title (e.g. `"[cancelled] PG cutover"`) over hard-deleting historical entries.
+Ending a running window with `POST /api/v1/maintenance/{id}/end` sets `ends_at` to the server's clock, so a script or a browser with a wrong clock cannot end it at the wrong moment, and the audit log records `maintenance.ended`. Cancelling is a soft delete. The window stops showing on the page, stops holding paging and stops counting toward the quota, but it stays listed under **past** with `deleted_at` and `deleted_by` set, and `status=past` and `status=all` include it. Only a window that has not ended can be cancelled. Cancelling it again returns `404`, and editing it returns `422 MAINTENANCE_CANCELLED`. Subscribers who were already told about the window are not sent a cancellation, and edits made after the announcement are not re-sent either.
 
-Maintenance windows are managed through the API only in this release; there is no editor screen for them yet, so do not go hunting for one under Settings.
+Every window records who scheduled it (`created_by`), who changed it last (`updated_by`) and, once cancelled, who cancelled it (`deleted_by`). Creating, editing, ending and cancelling a window also write `maintenance.created`, `maintenance.updated`, `maintenance.ended` and `maintenance.cancelled` entries to the organization audit log.
 
 ## What the public page renders
 

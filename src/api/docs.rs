@@ -85,6 +85,7 @@ use crate::storage::UptimeStats;
         handlers::maintenance::get_maintenance,
         handlers::maintenance::update_maintenance,
         handlers::maintenance::delete_maintenance,
+        handlers::maintenance::end_maintenance,
         handlers::variables::list,
         handlers::variables::get,
         handlers::variables::create,

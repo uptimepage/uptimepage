@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% import "_register.html" as reg %}
+{% block title %}{% if mode == "create" %}Schedule maintenance{% else %}Edit maintenance{% endif %} · Uptimepage{% endblock %}
+{% block content %}
+<section class="space-y-6">
+  <form id="maintenance-form"
+        data-action="{{ action }}"
+        data-method="{{ method }}"
+        data-mode="{{ mode }}"
+        novalidate
+        class="space-y-6">
+
+    <header class="space-y-1">
+      <a href="/maintenance" class="inline-block text-sm text-muted hover:text-body">← maintenance</a>
+      <h1 class="page-title">
+        <span class="page-title__prefix" aria-hidden="true">$</span><input
+          name="title" type="text" required maxlength="200" value="{{ title }}"
+          autocomplete="off" spellcheck="false" placeholder="new maintenance window"
+          aria-label="Title" class="page-title__input">
+      </h1>
+    </header>
+
+    <div id="form-errors" role="alert" aria-live="polite"
+         class="hidden alert-card alert-card--error"></div>
+
+    <fieldset class="sticker-card form-card">
+      <legend>schedule</legend>
+      <div class="clear-both space-y-4 p-5">
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <label class="field-outline">
+            <span class="field-outline__label">Starts</span>
+            <input name="starts_at" type="datetime-local" required
+                   data-utc="{% if let Some(t) = starts_at %}{{ t|iso_ts }}{% endif %}"
+                   class="w-full field font-mono">
+          </label>
+          <label class="field-outline">
+            <span class="field-outline__label">Ends</span>
+            <input name="ends_at" type="datetime-local" required
+                   data-utc="{% if let Some(t) = ends_at %}{{ t|iso_ts }}{% endif %}"
+                   class="w-full field font-mono">
+          </label>
+        </div>
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="text-xs text-muted">Length</span>
+          <div class="sm-rail" role="group" aria-label="Set the length">
+            <button type="button" class="sm-rail__seg" data-minutes="30">30m</button>
+            <button type="button" class="sm-rail__seg" data-minutes="60">1h</button>
+            <button type="button" class="sm-rail__seg" data-minutes="120">2h</button>
+            <button type="button" class="sm-rail__seg" data-minutes="240">4h</button>
+          </div>
+        </div>
+        <p class="font-mono text-xs text-quiet"># times are in your timezone: <span data-tz-name></span></p>
+      </div>
+    </fieldset>
+
+    <fieldset class="sticker-card form-card">
+      <legend>monitors</legend>
+      <div class="clear-both space-y-3 p-5">
+        <p class="text-xs text-muted">Pick the monitors this work affects. The status page shows them under maintenance for the window. A monitor that is not on a status page stays out of the public view.</p>
+        {% if monitors.is_empty() %}
+        <p class="font-mono text-xs text-quiet"># no monitors yet. <a href="/targets/new" class="underline decoration-dotted hover:text-body">create one</a></p>
+        {% else %}
+        <div class="flex flex-wrap items-center gap-3">
+          <label class="monitors-search monitors-search--fluid" for="monitor-search">
+            <svg class="monitors-search__icon" aria-hidden="true"><use href="#i-search" /></svg>
+            <input id="monitor-search" type="search" data-monitor-search
+                   placeholder="Search monitors…" autocomplete="off" class="monitors-search__input">
+          </label>
+          <span class="font-mono text-xs text-quiet" data-selected-count aria-live="polite"></span>
+        </div>
+        <div class="max-h-72 divide-y divide-[color:var(--theme-line)] overflow-y-auto rounded-sm border border-[color:var(--theme-line)]" data-monitor-list>
+          {% for m in monitors %}
+          <label class="flex cursor-pointer items-center gap-3 px-3 py-2 text-sm hover:bg-[color:var(--theme-surface-sunk)]"
+                 data-monitor-row data-name="{{ m.name|lower }}" data-published="{{ m.published }}">
+            <input type="checkbox" name="component_ids" value="{{ m.id }}"{% if m.selected %} checked{% endif %}>
+            <span class="min-w-0 flex-1 truncate">{{ m.name }}</span>
+            <span class="font-mono text-xs text-quiet">{{ m.kind|lower }}</span>
+            {% if !m.published %}<span class="cli-brackets font-normal" title="not on a status page, so this window does not show publicly for it">not on a page</span>{% endif %}
+          </label>
+          {% endfor %}
+        </div>
+        <p class="hidden font-mono text-xs text-quiet" data-no-match># no monitors match</p>
+        <p class="hidden font-mono text-xs text-quiet" data-unpublished-note></p>
+        {% endif %}
+      </div>
+    </fieldset>
+
+    <fieldset class="sticker-card form-card">
+      <legend>details</legend>
+      <div class="clear-both space-y-4 p-5">
+        <label class="field-outline">
+          <span class="field-outline__label">Description (optional)</span>
+          <textarea name="description" rows="3" maxlength="5000" class="w-full field"
+                    placeholder="what is changing and what readers will notice">{{ description }}</textarea>
+        </label>
+        <div class="check-type-cards">
+          {% call reg::toggle_card("suppress_alerts", suppress_alerts, "hold paging", "monitors in this window page nobody while it runs") %}{% endcall %}
+        </div>
+        <p class="text-xs text-muted">Held is not dropped: if an incident is still open when the window ends, the alert goes out then. An incident you declare by hand still pages.</p>
+        <p class="text-xs text-muted">{% if mode == "create" %}Subscribers get one notice when you schedule this and another when it ends.{% else %}Subscribers were told when this was scheduled. Later edits are not re-sent.{% endif %}</p>
+      </div>
+    </fieldset>
+
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-3">
+      <button type="submit"
+              class="sticker-btn sticker-btn--primary px-4 py-2 text-sm font-medium">
+        {% if mode == "create" %}schedule{% else %}save changes{% endif %}
+      </button>
+      <a href="/maintenance" class="btn-ghost px-4 py-2 text-sm">cancel</a>
+    </div>
+  </form>
+</section>
+
+<script defer src="{{ "js/ui/api_form.js"|asset }}"></script>
+<script defer src="{{ "js/ui/maintenance_form.js"|asset }}"></script>
+{% endblock %}

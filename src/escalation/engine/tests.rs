@@ -888,6 +888,7 @@ async fn window_over(
                 suppress_alerts,
             },
             WriteSource::Ui,
+            None,
         )
         .await
         .unwrap();

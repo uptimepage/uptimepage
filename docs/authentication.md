@@ -301,7 +301,7 @@ Every token carries a set of `resource:action` scopes. A request is rejected wit
 | `targets` | list / get / results / uptime / latency / incident history | create / update / bulk | delete, bulk-delete | run a check now, test-probe a config |
 | `channels` | list / get | create / update | delete | send a test notification |
 | `incidents` | incident list / detail / delivery log / metrics / postmortem (the public timeline needs no token) | narrate / post update, acknowledge / resolve | — | — |
-| `maintenance` | list / get | create / update | delete | — |
+| `maintenance` | list / get | create / update / end | delete | — |
 | `status_page` | read settings | update settings, upload logo | remove logo | — |
 | `variables` | list / get (secret values redacted) | create / rotate | delete (blocked while referenced) | — |
 | `oncall` | view escalation policies and on-call schedules | manage them (owner-only) | — | — |

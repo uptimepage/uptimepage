@@ -17,6 +17,7 @@ pub mod incidents;
 pub mod invitations;
 pub mod legal;
 pub mod link_app;
+pub mod maintenance;
 pub mod nav;
 pub mod notification_channels;
 pub mod on_call;

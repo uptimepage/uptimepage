@@ -22,6 +22,9 @@ pub fn routes(state: AppState) -> Router {
     let mut r = Router::new()
         .route("/", get(views::dashboard::root))
         .route("/targets", get(views::targets_list::index))
+        .route("/maintenance", get(views::maintenance::index))
+        .route("/maintenance/new", get(views::maintenance::new_form))
+        .route("/maintenance/{id}/edit", get(views::maintenance::edit_form))
         .route("/targets/new", get(views::targets_form::new_form))
         .route("/targets/{id}", get(views::targets_detail::index))
         .route(

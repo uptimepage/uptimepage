@@ -221,13 +221,14 @@ impl SubscriberDispatcher {
             m.custom_domain.as_deref(),
             m.custom_domain_published,
         );
+        let description = m.description.as_deref().filter(|d| !d.trim().is_empty());
         if m.channel == "webhook" {
             let payload = serde_json::json!({
                 "type": "maintenance",
                 "maintenance": {
                     "id": m.maintenance_id,
                     "title": m.title,
-                    "description": m.description,
+                    "description": description,
                     "phase": m.phase,
                     "starts_at": m.starts_at,
                     "ends_at": m.ends_at,
@@ -245,7 +246,7 @@ impl SubscriberDispatcher {
             template: EmailTemplate::SubscriberMaintenance {
                 page_name: m.page_name.clone(),
                 title: m.title.clone(),
-                description: m.description.clone(),
+                description: description.map(str::to_owned),
                 phase: m.phase.clone(),
                 starts_at: m.starts_at,
                 ends_at: m.ends_at,

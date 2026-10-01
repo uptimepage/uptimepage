@@ -47,6 +47,7 @@ use crate::domain::{
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::storage::accounts;
+use crate::storage::admin::NOT_HELD_PREDICATE;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock};
 
 /// Outcome of [`StatusPageStore::add_component`]. The store stays free of
@@ -156,6 +157,10 @@ pub trait StatusPageStore: Send + Sync {
     /// cascade hasn't yet dropped the join rows.
     async fn pages_for_targets(&self, org: OrgId, target_ids: &[Uuid])
     -> Result<Vec<StatusPageId>>;
+
+    /// Targets a live public page shows: on an enabled page the plan still
+    /// covers, and not held themselves.
+    async fn published_target_ids(&self, org: OrgId) -> Result<HashSet<Uuid>>;
 }
 
 pub struct PgStatusPageStore {
@@ -683,6 +688,24 @@ impl StatusPageStore for PgStatusPageStore {
         .map_err(db_err)?;
         Ok(rows.into_iter().map(|(id,)| StatusPageId(id)).collect())
     }
+
+    async fn published_target_ids(&self, org: OrgId) -> Result<HashSet<Uuid>> {
+        let rows: Vec<(Uuid,)> = sqlx::query_as(&format!(
+            r#"SELECT DISTINCT spc.target_id
+               FROM status_page_components spc
+               JOIN status_pages sp ON sp.id = spc.status_page_id AND sp.org_id = spc.org_id
+               JOIN targets t ON t.id = spc.target_id AND t.org_id = spc.org_id
+               WHERE spc.org_id = $1
+                 AND sp.enabled
+                 AND {PAGE_NOT_HELD}
+                 AND {NOT_HELD_PREDICATE}"#
+        ))
+        .bind(org.0)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
 }
 
 fn db_err(e: sqlx::Error) -> AppError {
@@ -1054,6 +1077,23 @@ impl StatusPageStore for InMemoryStatusPageStore {
         pages.sort_by_key(|p| p.0);
         pages.dedup();
         Ok(pages)
+    }
+
+    /// No target store here, so a monitor held by the plan is not excluded.
+    async fn published_target_ids(&self, org: OrgId) -> Result<HashSet<Uuid>> {
+        let st = self.inner.lock().unwrap();
+        let live: HashSet<StatusPageId> = st
+            .pages
+            .iter()
+            .filter(|p| p.org_id == org && p.enabled && p.plan_hold_at.is_none())
+            .map(|p| p.id)
+            .collect();
+        Ok(st
+            .components
+            .iter()
+            .filter(|c| c.org == org && live.contains(&c.page))
+            .map(|c| c.target_id)
+            .collect())
     }
 }
 

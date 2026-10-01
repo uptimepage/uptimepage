@@ -154,6 +154,7 @@ pub struct MaintenanceExport {
     pub description: Option<String>,
     pub starts_at: DateTime<Utc>,
     pub ends_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -504,7 +505,7 @@ async fn build_owned_org(pool: &sqlx::PgPool, org: OrgExport) -> Result<OwnedOrg
     }
 
     let maintenance_windows: Vec<MaintenanceExport> = sqlx::query_as(
-        "SELECT id, title, description, starts_at, ends_at, created_at, updated_at \
+        "SELECT id, title, description, starts_at, ends_at, deleted_at, created_at, updated_at \
          FROM maintenance_windows WHERE org_id = $1 ORDER BY starts_at DESC",
     )
     .bind(org.id)

@@ -10,6 +10,7 @@
         { group: "go", label: "dashboard", href: "/", meta: "g d", icon: "i-grid" },
         { group: "go", label: "monitors", href: "/targets", meta: "g m", icon: "i-pulse" },
         { group: "go", label: "incidents", href: "/incidents", meta: "g i", icon: "i-alert" },
+        { group: "go", label: "maintenance", href: "/maintenance", meta: "g w", icon: "i-calendar" },
         { group: "go", label: "status pages", href: "/settings/pages", meta: "g p", icon: "i-www" },
         { group: "go", label: "notifications", href: "/settings/notifications", meta: "g n", icon: "i-mail" },
         { group: "go", label: "variables", href: "/settings/variables", meta: "g v", icon: "i-variable" },

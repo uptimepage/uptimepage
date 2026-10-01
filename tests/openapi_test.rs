@@ -67,6 +67,7 @@ async fn openapi_doc_lists_every_documented_path() {
         "/api/v1/dashboard/summary",
         "/api/v1/maintenance",
         "/api/v1/maintenance/{id}",
+        "/api/v1/maintenance/{id}/end",
         "/api/v1/notification-channels",
         "/api/v1/notification-channels/test",
         "/api/v1/notification-channels/{id}",

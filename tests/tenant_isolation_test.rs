@@ -229,6 +229,7 @@ async fn two_tenants_never_see_each_others_data() {
                 suppress_alerts: true,
             },
             WriteSource::Ui,
+            None,
         )
         .await
         .expect("a mw");
@@ -244,6 +245,7 @@ async fn two_tenants_never_see_each_others_data() {
                 suppress_alerts: true,
             },
             WriteSource::Ui,
+            None,
         )
         .await
         .expect("b mw");
@@ -264,6 +266,21 @@ async fn two_tenants_never_see_each_others_data() {
             .is_none(),
         "tenant b maintenance get of a's id must be None"
     );
+    assert!(
+        maintenance_store
+            .end(a.org, mw_b.id, WriteSource::Ui, None)
+            .await
+            .unwrap()
+            .is_none(),
+        "tenant a must not end b's window"
+    );
+    assert!(
+        !maintenance_store
+            .delete(a.org, mw_b.id, WriteSource::Ui, None)
+            .await
+            .unwrap(),
+        "tenant a must not cancel b's window"
+    );
 
     // A window that silences paging does so only for its own org's monitor,
     // and only while `suppress_alerts` is on.
@@ -279,6 +296,7 @@ async fn two_tenants_never_see_each_others_data() {
                 suppress_alerts: true,
             },
             WriteSource::Ui,
+            None,
         )
         .await
         .expect("a covering mw");
@@ -305,6 +323,7 @@ async fn two_tenants_never_see_each_others_data() {
                 ..Default::default()
             },
             WriteSource::Ui,
+            None,
         )
         .await
         .expect("turn suppression off");

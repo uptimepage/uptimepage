@@ -198,3 +198,354 @@ async fn update_maintenance_changes_title() {
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(body_json(resp).await["title"], "renamed");
 }
+
+#[tokio::test]
+async fn cancelled_window_stays_as_history() {
+    let app = make_app();
+    let create = app
+        .clone()
+        .oneshot(json_request("POST", "/api/v1/maintenance", valid_window()))
+        .await
+        .unwrap();
+    let id = body_json(create).await["id"].as_str().unwrap().to_string();
+    let cancel = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/maintenance/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cancel.status(), StatusCode::NO_CONTENT);
+
+    let got = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/maintenance/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(got.status(), StatusCode::OK);
+    assert!(body_json(got).await["deleted_at"].is_string());
+
+    for (filter, expected) in [("upcoming", 0), ("past", 1), ("all", 1)] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/maintenance?status={filter}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let items = body_json(resp).await["items"].as_array().unwrap().len();
+        assert_eq!(items, expected, "status={filter}");
+    }
+
+    let patch = app
+        .oneshot(json_request(
+            "PATCH",
+            &format!("/api/v1/maintenance/{id}"),
+            json!({"title": "too late"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(patch.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        body_json(patch).await["error"]["code"],
+        "MAINTENANCE_CANCELLED"
+    );
+}
+
+async fn create_window(app: &axum::Router, body: Value) -> String {
+    let resp = app
+        .clone()
+        .oneshot(json_request("POST", "/api/v1/maintenance", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    body_json(resp).await["id"].as_str().unwrap().to_string()
+}
+
+fn running_window() -> Value {
+    json!({
+        "title": "running",
+        "starts_at": (Utc::now() - Duration::hours(2)).to_rfc3339(),
+        "ends_at":   (Utc::now() + Duration::hours(1)).to_rfc3339(),
+        "component_ids": []
+    })
+}
+
+async fn post_end(app: &axum::Router, id: &str) -> axum::response::Response {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/maintenance/{id}/end"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+async fn end_running_window(app: &axum::Router, id: &str) {
+    let resp = post_end(app, id).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "a running window can be ended"
+    );
+}
+
+#[tokio::test]
+async fn create_maintenance_rejects_a_window_that_already_ended() {
+    let app = make_app();
+    let mut body = valid_window();
+    body["starts_at"] = json!((Utc::now() - Duration::hours(3)).to_rfc3339());
+    body["ends_at"] = json!((Utc::now() - Duration::hours(2)).to_rfc3339());
+    let resp = app
+        .oneshot(json_request("POST", "/api/v1/maintenance", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let v = body_json(resp).await;
+    assert_eq!(v["error"]["code"], "INVALID_TIME_RANGE");
+    assert_eq!(v["error"]["field"], "ends_at");
+}
+
+#[tokio::test]
+async fn an_upcoming_window_cannot_be_moved_into_the_past() {
+    let app = make_app();
+    let id = create_window(&app, valid_window()).await;
+    let resp = app
+        .oneshot(json_request(
+            "PATCH",
+            &format!("/api/v1/maintenance/{id}"),
+            json!({
+                "starts_at": (Utc::now() - Duration::hours(3)).to_rfc3339(),
+                "ends_at": (Utc::now() - Duration::hours(2)).to_rfc3339(),
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(resp).await["error"]["code"], "INVALID_TIME_RANGE");
+}
+
+#[tokio::test]
+async fn a_completed_window_cannot_be_cancelled() {
+    let app = make_app();
+    let id = create_window(&app, running_window()).await;
+    end_running_window(&app, &id).await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/maintenance/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        body_json(resp).await["error"]["code"],
+        "MAINTENANCE_COMPLETED"
+    );
+
+    let got = app
+        .oneshot(
+            Request::get(format!("/api/v1/maintenance/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(body_json(got).await["deleted_at"].is_null());
+}
+
+#[tokio::test]
+async fn an_empty_patch_changes_nothing() {
+    let app = make_app();
+    let created = app
+        .clone()
+        .oneshot(json_request("POST", "/api/v1/maintenance", valid_window()))
+        .await
+        .unwrap();
+    let before = body_json(created).await;
+    let id = before["id"].as_str().unwrap();
+
+    let resp = app
+        .oneshot(json_request(
+            "PATCH",
+            &format!("/api/v1/maintenance/{id}"),
+            json!({}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let after = body_json(resp).await;
+    assert_eq!(after["updated_at"], before["updated_at"]);
+    assert_eq!(after["write_source"], before["write_source"]);
+}
+
+#[tokio::test]
+async fn ending_a_running_window_stamps_the_server_clock() {
+    let app = make_app();
+    let id = create_window(&app, running_window()).await;
+    let before = Utc::now();
+
+    let resp = post_end(&app, &id).await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ended: chrono::DateTime<Utc> = body_json(resp).await["ends_at"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(
+        ended >= before - Duration::seconds(1) && ended <= Utc::now(),
+        "ends_at is the server's now, not something the caller chose"
+    );
+    let past = app
+        .oneshot(
+            Request::get("/api/v1/maintenance?status=past")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(body_json(past).await["items"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn only_a_running_window_can_be_ended() {
+    let app = make_app();
+    let upcoming = create_window(&app, valid_window()).await;
+    let resp = post_end(&app, &upcoming).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        body_json(resp).await["error"]["code"],
+        "MAINTENANCE_NOT_STARTED"
+    );
+
+    let finished = create_window(&app, running_window()).await;
+    end_running_window(&app, &finished).await;
+    let resp = post_end(&app, &finished).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        body_json(resp).await["error"]["code"],
+        "MAINTENANCE_COMPLETED"
+    );
+
+    let resp = post_end(&app, "00000000-0000-0000-0000-000000000099").await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_cancelled_window_cannot_be_ended() {
+    let app = make_app();
+    let id = create_window(&app, valid_window()).await;
+    let cancel = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/maintenance/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cancel.status(), StatusCode::NO_CONTENT);
+
+    let resp = post_end(&app, &id).await;
+
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        body_json(resp).await["error"]["code"],
+        "MAINTENANCE_CANCELLED"
+    );
+}
+
+#[tokio::test]
+async fn a_running_window_cannot_be_patched_to_end_in_the_past() {
+    let app = make_app();
+    let id = create_window(&app, running_window()).await;
+    let resp = app
+        .oneshot(json_request(
+            "PATCH",
+            &format!("/api/v1/maintenance/{id}"),
+            json!({"ends_at": (Utc::now() - Duration::hours(1)).to_rfc3339()}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(resp).await["error"]["code"], "INVALID_TIME_RANGE");
+}
+
+#[tokio::test]
+async fn upcoming_windows_list_soonest_first() {
+    let app = make_app();
+    let window = |title: &str, hours: i64| {
+        json!({
+            "title": title,
+            "starts_at": (Utc::now() + Duration::hours(hours)).to_rfc3339(),
+            "ends_at": (Utc::now() + Duration::hours(hours + 1)).to_rfc3339(),
+            "component_ids": []
+        })
+    };
+    for (title, hours) in [("later", 30), ("soonest", 2), ("middle", 10)] {
+        create_window(&app, window(title, hours)).await;
+    }
+
+    let resp = app
+        .oneshot(
+            Request::get("/api/v1/maintenance?status=upcoming")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let titles: Vec<String> = body_json(resp).await["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["title"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(titles, ["soonest", "middle", "later"]);
+}
+
+#[tokio::test]
+async fn a_completed_window_cannot_be_edited() {
+    let app = make_app();
+    let id = create_window(&app, running_window()).await;
+    end_running_window(&app, &id).await;
+
+    let resp = app
+        .oneshot(json_request(
+            "PATCH",
+            &format!("/api/v1/maintenance/{id}"),
+            json!({"title": "too late"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        body_json(resp).await["error"]["code"],
+        "MAINTENANCE_COMPLETED"
+    );
+}

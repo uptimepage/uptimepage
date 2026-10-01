@@ -517,6 +517,54 @@ async fn add_maintenance_component(pool: &PgPool, org: Uuid, mid: Uuid, target: 
 
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_cancelled_maintenance_window_is_not_fanned_out() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let org = seed_org(&pool).await;
+    let target = seed_target(&pool, org).await;
+    let page = seed_page(&pool, org).await;
+    add_component(&pool, org, page, target).await;
+    let sub_id = confirmed_subscriber(&pool, org, page, "cancelled@example.com").await;
+    let window = seed_maintenance(&pool, org, 24, 25).await;
+    add_maintenance_component(&pool, org, window, target).await;
+
+    let pending_for = |pending: Vec<subscriber_maintenance::PendingMaintenance>| {
+        pending
+            .into_iter()
+            .filter(|m| m.subscriber_id == sub_id)
+            .count()
+    };
+    assert_eq!(
+        pending_for(
+            subscriber_maintenance::list_pending(&pool, 100)
+                .await
+                .unwrap()
+        ),
+        1,
+        "the announced window is pending"
+    );
+
+    sqlx::query("UPDATE maintenance_windows SET deleted_at = now() WHERE id = $1")
+        .bind(window)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        pending_for(
+            subscriber_maintenance::list_pending(&pool, 100)
+                .await
+                .unwrap()
+        ),
+        0,
+        "a cancelled window is no longer announced"
+    );
+    cleanup(&pool, org).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
 async fn maintenance_fanout_scheduled_and_completed() {
     let Some(pool) = pg_pool_from_env().await else {
         return;

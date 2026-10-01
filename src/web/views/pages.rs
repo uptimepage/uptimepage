@@ -139,7 +139,7 @@ pub struct ComponentRow {
     pub detail_link: bool,
 }
 
-fn kind_label(kind: &str) -> &'static str {
+pub(crate) fn kind_label(kind: &str) -> &'static str {
     match kind {
         "http" => "HTTP",
         "tcp" => "TCP",

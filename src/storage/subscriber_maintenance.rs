@@ -63,6 +63,7 @@ pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingMainte
                   ON mwc.target_id = c.target_id AND mwc.org_id = c.org_id
              JOIN maintenance_windows mw ON mw.id = mwc.maintenance_id AND mw.org_id = mwc.org_id
              WHERE s.channel IN ('email', 'webhook') AND s.verified_at IS NOT NULL
+               AND mw.deleted_at IS NULL
                AND {PAGE_NOT_HELD}
                AND {COMPONENT_NOT_HELD}
          ) cand

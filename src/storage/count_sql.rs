@@ -34,7 +34,7 @@ pooled!(
 );
 pooled!(
     maintenance_windows,
-    "SELECT count(*) FROM maintenance_windows WHERE org_id IN ({orgs}) AND ends_at > now()"
+    "SELECT count(*) FROM maintenance_windows WHERE org_id IN ({orgs}) AND deleted_at IS NULL AND ends_at > now()"
 );
 pooled!(
     notification_channels,

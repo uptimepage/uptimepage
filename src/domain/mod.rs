@@ -62,6 +62,7 @@ pub use incident::{
 pub use linked_app::{ExternalId, Linked, LinkedApp, LinkedAppAccount};
 pub use maintenance::{
     MaintenanceFilter, MaintenanceWindow, MaintenanceWindowUpdate, NewMaintenanceWindow,
+    WindowPhase,
 };
 pub use membership::{Membership, Role};
 pub use monitor_share::{

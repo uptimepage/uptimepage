@@ -1044,7 +1044,7 @@ async fn completed_maintenance_windows_do_not_count_toward_the_cap() {
     };
 
     store
-        .create(org, window(-3, -2), WriteSource::Api)
+        .create(org, window(-3, -2), WriteSource::Api, None)
         .await
         .expect("completed window");
     svc.check_can_create_maintenance_window(org, None)
@@ -1052,15 +1052,15 @@ async fn completed_maintenance_windows_do_not_count_toward_the_cap() {
         .expect("a completed window leaves the cap free");
 
     store
-        .create(org, window(1, 2), WriteSource::Api)
+        .create(org, window(1, 2), WriteSource::Api, None)
         .await
         .expect("upcoming window");
     svc.check_can_create_maintenance_window(org, None)
         .await
         .expect("one live window of two leaves the cap free");
 
-    store
-        .create(org, window(-1, 1), WriteSource::Api)
+    let active = store
+        .create(org, window(-1, 1), WriteSource::Api, None)
         .await
         .expect("active window");
     match svc.check_can_create_maintenance_window(org, None).await {
@@ -1075,6 +1075,14 @@ async fn completed_maintenance_windows_do_not_count_toward_the_cap() {
         2,
         "the usage count matches the number the create check blocks at"
     );
+
+    store
+        .delete(org, active.id, WriteSource::Api, None)
+        .await
+        .expect("cancel");
+    svc.check_can_create_maintenance_window(org, None)
+        .await
+        .expect("a cancelled window leaves the cap free");
 
     let _ = sqlx::query("DELETE FROM organizations WHERE id = $1")
         .bind(org.0)
