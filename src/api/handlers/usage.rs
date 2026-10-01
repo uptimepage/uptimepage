@@ -54,6 +54,7 @@ pub struct OrgQuotas {
     pub max_members: QuotaUsage,
     pub max_pending_invitations: QuotaUsage,
     pub max_public_components: QuotaUsage,
+    /// Counts windows that have not ended (upcoming and active). Completed windows are history and do not count.
     pub max_maintenance_windows: QuotaUsage,
     pub max_notification_channels: QuotaUsage,
 }

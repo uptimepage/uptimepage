@@ -1345,6 +1345,7 @@ pub struct OrgUsage {
     pub status_pages: Quota,
     pub members: Quota,
     pub public_components: Quota,
+    /// Counts windows that have not ended (upcoming and active). Completed windows do not count.
     pub maintenance_windows: Quota,
     pub notification_channels: Quota,
     /// Minimum allowed check interval, seconds.

@@ -36,7 +36,7 @@ Four plans ship seeded: `free`, `founding` (a more generous free tier granted to
 | `max_public_components` | 15 | 30 | 30 | 75 | Distinct monitors published across all of the account's pages (a monitor on several pages counts once) |
 | `max_share_links_per_monitor` | 1 | 3 | 3 | 5 | Live share links on one monitor |
 | `max_shared_monitors` | 2 | 5 | 5 | 10 | Monitors with at least one share link |
-| `max_maintenance_windows` | 20 | 30 | 30 | 50 | Scheduled maintenance windows |
+| `max_maintenance_windows` | 20 | 30 | 30 | 50 | Maintenance windows that have not ended (upcoming and active). Completed windows stay as history and do not count |
 | `max_notification_channels` | 20 | 30 | 30 | 50 | Notification channels (Slack/webhook/Telegram/WhatsApp/SMS/…) across the account's orgs |
 | `max_escalation_policies` | 0 | 0 | 0 | 50 | Escalation policies. On-call and escalation are a `team` feature |
 | `max_on_call_schedules` | 0 | 0 | 0 | 25 | On-call schedules |

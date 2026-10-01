@@ -24,10 +24,14 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use uptimepage::config::AppConfig;
 use uptimepage::domain::quota::Plan;
-use uptimepage::domain::{AccountId, NewStatusPage, OrgId, Role, UserId, WriteSource};
+use uptimepage::domain::{
+    AccountId, NewMaintenanceWindow, NewStatusPage, OrgId, Role, UserId, WriteSource,
+};
 use uptimepage::error::AppError;
 use uptimepage::quotas::{QuotaService, RateLimitCategory, RateLimitKey, RateLimitService};
-use uptimepage::storage::{PgStatusPageStore, StatusPageStore, TargetStore};
+use uptimepage::storage::{
+    MaintenanceStore, PgMaintenanceStore, PgStatusPageStore, StatusPageStore, TargetStore,
+};
 use uuid::Uuid;
 
 /// A `Plan` whose every per-minute rate is `per_min` and whose resource caps
@@ -1014,6 +1018,70 @@ async fn status_page_cap_blocks_create_live_pg() {
         .await;
     let _ = sqlx::query("DELETE FROM plans WHERE id = $1")
         .bind(&_pid)
+        .execute(&pool)
+        .await;
+}
+
+// ── a completed maintenance window is history, not quota ────────────
+#[tokio::test]
+async fn completed_maintenance_windows_do_not_count_toward_the_cap() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (pid, org) = seed_org_on_plan(&pool, 5, 5, 10, 10).await;
+    seed_override(&pool, org, r#"{"max_maintenance_windows": 2}"#, false).await;
+    let cfg = AppConfig::load().expect("config");
+    let svc = QuotaService::new(&cfg, Some(pool.clone()));
+    let store = PgMaintenanceStore::new(pool.clone());
+    let now = chrono::Utc::now();
+    let window = |from_hours: i64, to_hours: i64| NewMaintenanceWindow {
+        title: "w".into(),
+        description: None,
+        starts_at: now + chrono::Duration::hours(from_hours),
+        ends_at: now + chrono::Duration::hours(to_hours),
+        component_ids: vec![],
+        suppress_alerts: true,
+    };
+
+    store
+        .create(org, window(-3, -2), WriteSource::Api)
+        .await
+        .expect("completed window");
+    svc.check_can_create_maintenance_window(org, None)
+        .await
+        .expect("a completed window leaves the cap free");
+
+    store
+        .create(org, window(1, 2), WriteSource::Api)
+        .await
+        .expect("upcoming window");
+    svc.check_can_create_maintenance_window(org, None)
+        .await
+        .expect("one live window of two leaves the cap free");
+
+    store
+        .create(org, window(-1, 1), WriteSource::Api)
+        .await
+        .expect("active window");
+    match svc.check_can_create_maintenance_window(org, None).await {
+        Err(AppError::QuotaExceeded { quota, .. }) => assert_eq!(quota, "max_maintenance_windows"),
+        other => panic!("expected max_maintenance_windows quota error, got {other:?}"),
+    }
+    assert_eq!(
+        svc.account_usage(org)
+            .await
+            .expect("usage")
+            .maintenance_windows,
+        2,
+        "the usage count matches the number the create check blocks at"
+    );
+
+    let _ = sqlx::query("DELETE FROM organizations WHERE id = $1")
+        .bind(org.0)
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM plans WHERE id = $1")
+        .bind(&pid)
         .execute(&pool)
         .await;
 }

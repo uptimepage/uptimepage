@@ -346,7 +346,7 @@ pub const DOCS: &[DocPage] = &[
         section: Section::Reference,
         scope: Scope::Everyone,
         created: "2026-07-22",
-        lastmod: "2026-09-15",
+        lastmod: "2026-10-01",
         source: include_str!("../../docs/quotas.md"),
         dir: "",
     },
