@@ -17,7 +17,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::app::AppState;
-use crate::domain::{MaintenanceFilter, MaintenanceWindow, OrgId, UserId};
+use crate::domain::{MaintenanceFilter, MaintenanceWindow, OrgId, UserId, WindowPhase};
 use crate::error::AppError;
 use crate::request::CurrentOrg;
 use crate::storage::MaintenanceListQuery;
@@ -47,6 +47,9 @@ pub struct WindowRow {
     pub phase: &'static str,
     pub starts_at: DateTime<Utc>,
     pub ends_at: DateTime<Utc>,
+    pub duration_secs: i64,
+    /// Seconds until an upcoming window starts or an active one ends.
+    pub eta_secs: Option<i64>,
     pub monitors: Vec<String>,
     pub more_monitors: usize,
     pub suppress_alerts: bool,
@@ -104,7 +107,12 @@ fn window_row(
     members: &HashMap<UserId, String>,
     now: DateTime<Utc>,
 ) -> WindowRow {
-    let phase = w.phase(now).as_str();
+    let phase = w.phase(now);
+    let eta_secs = match phase {
+        WindowPhase::Upcoming => Some((w.starts_at - now).num_seconds()),
+        WindowPhase::Active => Some((w.ends_at - now).num_seconds()),
+        WindowPhase::Completed | WindowPhase::Cancelled => None,
+    };
     let mut monitors: Vec<&str> = w
         .component_ids
         .iter()
@@ -117,9 +125,11 @@ fn window_row(
         id: w.id.to_string(),
         title: w.title,
         description: w.description.filter(|d| !d.trim().is_empty()),
-        phase,
+        phase: phase.as_str(),
         starts_at: w.starts_at,
         ends_at: w.ends_at,
+        duration_secs: (w.ends_at - w.starts_at).num_seconds(),
+        eta_secs,
         monitors: monitors.into_iter().map(str::to_owned).collect(),
         more_monitors,
         suppress_alerts: w.suppress_alerts,

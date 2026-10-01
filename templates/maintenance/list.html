@@ -8,8 +8,10 @@
       <h1 class="page-title"><span class="page-title__prefix" aria-hidden="true">$</span>maintenance</h1>
       <p class="text-sm text-muted">Planned work, announced on your status pages. Affected monitors show as under maintenance and, by default, page nobody while a window runs.</p>
     </div>
+    {% if past || !rows.is_empty() %}
     <a href="/maintenance/new"
        class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">+ schedule maintenance</a>
+    {% endif %}
   </header>
 
   <div id="maintenance-errors" role="alert" aria-live="polite"
@@ -23,67 +25,87 @@
   </nav>
 
   {% if rows.is_empty() %}
-  <div class="sticker-card p-6 font-mono text-xs text-quiet">
-    # {% if past %}no completed or cancelled windows yet{% else %}nothing scheduled. use "schedule maintenance" to announce planned work{% endif %}
+  {% if past %}
+  <div class="sticker-card p-6 font-mono text-xs text-quiet"># no completed or cancelled windows yet</div>
+  {% else %}
+  <div class="empty-hero">
+    <div class="empty-hero__body">
+      <h2 class="empty-hero__title">nothing scheduled.</h2>
+      <p class="empty-hero__lede">
+        Announce planned work before it starts. Readers see the window on your
+        status page, and the monitors it covers show as under maintenance.
+      </p>
+      <a href="/maintenance/new"
+         class="empty-hero__cta sticker-btn sticker-btn--primary">schedule maintenance</a>
+    </div>
   </div>
+  {% endif %}
   {% else %}
   <section class="sticker-card overflow-hidden">
     <table class="min-w-full text-xs">
       <thead class="table-head bg-[color:var(--theme-surface-sunk)]">
         <tr>
           <th scope="col" class="px-3 py-2">Window</th>
-          <th scope="col" class="px-3 py-2 w-32">State</th>
+          <th scope="col" class="px-3 py-2 w-40">State</th>
           <th scope="col" class="px-3 py-2 w-56">When</th>
-          <th scope="col" class="px-3 py-2 w-28">Alerts</th>
-          {% if !past %}<th scope="col" class="px-3 py-2 w-48 text-right">Actions</th>{% endif %}
+          {% if !past %}<th scope="col" class="px-3 py-2 w-56 text-right">Actions</th>{% endif %}
         </tr>
       </thead>
       <tbody>
         {% for row in rows %}
         <tr class="border-t border-[color:var(--theme-line)] hover:bg-[color:var(--theme-surface-sunk)]">
-          <td class="px-3 py-2 align-top">
+          <td class="px-3 py-3 align-top">
+            {% if past %}
             <span class="block max-w-[26rem] truncate text-sm font-medium text-body" title="{{ row.title }}">{{ row.title }}</span>
+            {% else %}
+            <a href="/maintenance/{{ row.id }}/edit" title="{{ row.title }}"
+               class="block max-w-[26rem] truncate text-sm font-medium text-body hover:underline">{{ row.title }}</a>
+            {% endif %}
             {% if let Some(d) = row.description %}
             <p class="mt-0.5 max-w-[26rem] truncate text-xs text-muted" title="{{ d }}">{{ d }}</p>
             {% endif %}
-            <div class="mt-1 flex flex-wrap items-center gap-1">
-              {% for m in row.monitors %}<span class="status-badge status-badge--tag">{{ m }}</span>{% endfor %}
+            <div class="mt-1.5 flex flex-wrap items-center gap-1">
+              {% for m in row.monitors %}<span class="dashboard-chip dashboard-chip--flat">{{ m }}</span>{% endfor %}
               {% if row.more_monitors > 0 %}<span class="cli-brackets font-normal">+{{ row.more_monitors }} more</span>{% endif %}
               {% if row.monitors.is_empty() %}<span class="font-mono text-xs text-quiet"># no monitors</span>{% endif %}
               {% if let Some(m) = row.managed_by %}<span class="managed-chip" title="Managed by {{ m }}. Changes made here may be overwritten on the next apply">{{ m }}</span>{% endif %}
             </div>
             {% if let Some(at) = row.cancelled_at %}
-            <p class="mt-1 font-mono text-xs text-quiet"># cancelled <time datetime="{{ at|iso_ts }}" data-tz="exact">{{ at|human_ts }}</time>{% if let Some(who) = row.cancelled_by %} by {{ who }}{% endif %}</p>
+            <p class="mt-1.5 font-mono text-xs text-quiet"># cancelled <time datetime="{{ at|iso_ts }}" data-tz="exact">{{ at|human_ts }}</time>{% if let Some(who) = row.cancelled_by %} by {{ who }}{% endif %}</p>
             {% endif %}
           </td>
-          <td class="px-3 py-2 align-top">
-            {% if row.phase == "active" %}
-            <span class="status-badge status-badge--held">in progress</span>
-            {% else if row.phase == "upcoming" %}
-            <span class="status-badge status-badge--pending">scheduled</span>
-            {% else if row.phase == "cancelled" %}
-            <span class="status-badge status-badge--none">cancelled</span>
-            {% else %}
-            <span class="status-badge status-badge--disabled">completed</span>
-            {% endif %}
+          <td class="px-3 py-3 align-top">
+            <div class="flex flex-col items-start gap-1.5">
+              {% if row.phase == "active" %}
+              <span class="status-badge status-badge--degraded">in progress</span>
+              {% else if row.phase == "upcoming" %}
+              <span class="status-badge status-badge--tag">scheduled</span>
+              {% else if row.phase == "cancelled" %}
+              <span class="status-badge status-badge--none">cancelled</span>
+              {% else %}
+              <span class="status-badge status-badge--up">completed</span>
+              {% endif %}
+              {% if let Some(s) = row.eta_secs %}
+              <span class="font-mono text-xs text-quiet"># {% if row.phase == "active" %}ends{% else %}starts{% endif %} in {{ s|humanize_dur }}</span>
+              {% endif %}
+              {% if row.phase != "cancelled" %}
+              {% if row.suppress_alerts %}
+              <span class="cli-brackets font-normal" title="paging is held while this window runs">paging held</span>
+              {% else %}
+              <span class="cli-brackets font-normal" title="monitors keep paging during this window">paging live</span>
+              {% endif %}
+              {% endif %}
+            </div>
           </td>
-          <td class="px-3 py-2 align-top text-body tabular-nums">
+          <td class="px-3 py-3 align-top text-body tabular-nums">
             <div><span class="text-quiet">from</span> <time datetime="{{ row.starts_at|iso_ts }}" data-tz="exact">{{ row.starts_at|human_ts }}</time></div>
             <div><span class="text-quiet">until</span> <time datetime="{{ row.ends_at|iso_ts }}" data-tz="exact">{{ row.ends_at|human_ts }}</time></div>
-          </td>
-          <td class="px-3 py-2 align-top">
-            {% if row.phase != "cancelled" %}
-            {% if row.suppress_alerts %}
-            <span class="cli-brackets font-normal" title="paging is held while this window runs">held</span>
-            {% else %}
-            <span class="cli-brackets font-normal" title="monitors keep paging during this window">live</span>
-            {% endif %}
-            {% endif %}
+            <div class="mt-1 font-mono text-xs text-quiet"># lasts {{ row.duration_secs|humanize_dur }}</div>
           </td>
           {% if !past %}
-          <td class="px-3 py-2 align-top">
-            <div class="flex items-center justify-end gap-3">
-              <a href="/maintenance/{{ row.id }}/edit" class="row-link font-mono">edit</a>
+          <td class="px-3 py-3 align-top whitespace-nowrap">
+            <div class="flex items-center justify-end gap-1.5">
+              <a href="/maintenance/{{ row.id }}/edit" class="sticker-btn sticker-btn--accent px-2 py-1 text-xs">edit</a>
               {% if row.phase == "active" %}
               <button type="button" data-end-now data-id="{{ row.id }}"
                       data-confirm-modal
@@ -91,7 +113,7 @@
                       data-confirm-body="{{ row.title }} ends now and moves to past. This ends the window's alert suppression; another overlapping window may still suppress alerts."
                       data-confirm-label="end now"
                       data-confirm-danger
-                      class="row-link row-link--danger font-mono">end now</button>
+                      class="sticker-btn px-2 py-1 text-xs">end now</button>
               {% else %}
               <button type="button"
                       hx-delete="/api/v1/maintenance/{{ row.id }}"
@@ -104,7 +126,7 @@
                       data-confirm-body="{{ row.title }} is cancelled and no longer shown on your status pages. It stays under past as a record. Subscribers who were already told about it are not sent a cancellation."
                       data-confirm-label="cancel maintenance"
                       data-confirm-danger
-                      class="row-link row-link--danger font-mono">cancel</button>
+                      class="btn-ghost btn-ghost--danger px-2 py-1 text-xs">cancel</button>
               {% endif %}
             </div>
           </td>

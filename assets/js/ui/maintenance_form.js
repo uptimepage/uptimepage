@@ -95,6 +95,7 @@
     rows.forEach((r) => r.querySelector("input").addEventListener("change", refreshSelection));
     refreshSelection();
 
+    const holdsPaging = () => form.elements.suppress_alerts.value === "1";
     const pickedIds = () =>
         rows
             .map((r) => r.querySelector("input"))
@@ -106,7 +107,7 @@
         start: startInput.value,
         end: endInput.value,
         components: [...pickedIds()].sort().join(","),
-        suppress: form.elements.suppress_alerts.checked,
+        suppress: holdsPaging(),
     };
 
     function flag(field) {
@@ -134,7 +135,7 @@
         if (!title) return { error: "Give the window a title.", field: "title" };
         const description = form.elements.description.value.trim();
         const components = pickedIds();
-        const suppress = form.elements.suppress_alerts.checked;
+        const suppress = holdsPaging();
         // An edit sends only what changed, so the audit trail lists real edits
         // and an untouched time is not rewritten at minute precision. A create
         // sends everything it has.

@@ -194,7 +194,7 @@ async fn new_form_holds_paging_by_default_and_flags_unpublished_monitors() {
 
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("data-method=\"POST\""));
-    assert!(body.contains("name=\"suppress_alerts\" checked"));
+    assert!(body.contains("name=\"suppress_alerts\" value=\"1\" checked"));
     assert!(body.contains("pick-me"));
     assert!(body.contains("data-published=\"false\""));
 }
