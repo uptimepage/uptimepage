@@ -166,7 +166,7 @@ pub const DOCS: &[DocPage] = &[
         section: Section::Start,
         scope: Scope::Everyone,
         created: "2026-07-22",
-        lastmod: "2026-09-29",
+        lastmod: "2026-10-01",
         source: include_str!("../../docs/architecture.md"),
         dir: "",
     },

@@ -11,8 +11,8 @@ use sqlx::PgPool;
 use tokio::time::{MissedTickBehavior, interval};
 use tokio_util::sync::CancellationToken;
 
+use crate::custom_domains::CustomDomains;
 use crate::metric_names;
-use crate::request::custom_domains::CustomDomains;
 use crate::storage::status_pages::load_verified_custom_domains;
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(30);

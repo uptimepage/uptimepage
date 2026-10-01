@@ -17,7 +17,7 @@ use axum::http::{Request, Response, StatusCode};
 use axum::response::IntoResponse;
 use tower::Service;
 
-use crate::request::custom_domains::CustomDomains;
+use crate::custom_domains::CustomDomains;
 use crate::request::host::{HostClass, HostScheme, classify_host};
 use crate::request::http_metrics::record_unrecognised_host;
 use crate::request::is_health_path;

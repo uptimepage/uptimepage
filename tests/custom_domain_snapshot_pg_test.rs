@@ -9,7 +9,7 @@ mod common;
 use chrono::Utc;
 use common::{make_user, pg_pool_from_env, unique_slug};
 use sqlx::PgPool;
-use uptimepage::request::custom_domains::CustomDomains;
+use uptimepage::custom_domains::CustomDomains;
 use uptimepage::storage::status_pages::load_verified_custom_domains;
 use uuid::Uuid;
 

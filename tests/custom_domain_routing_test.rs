@@ -8,8 +8,8 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use tower::util::ServiceExt;
 use uptimepage::app::AppState;
+use uptimepage::custom_domains::CustomDomainRow;
 use uptimepage::domain::{OrgId, PageRef, StatusPageId};
-use uptimepage::request::custom_domains::CustomDomainRow;
 use uptimepage::request::host::published_page_origin;
 
 use crate::common::build_test_app_state;

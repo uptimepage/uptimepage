@@ -9,6 +9,7 @@ pub mod billing;
 pub mod bootstrap;
 pub mod channels;
 pub mod config;
+pub mod custom_domains;
 pub mod discord;
 pub mod domain;
 pub mod email;

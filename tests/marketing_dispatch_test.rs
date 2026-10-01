@@ -12,9 +12,9 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use tower::util::ServiceExt;
 
+use uptimepage::custom_domains::{CustomDomainRow, CustomDomains};
 use uptimepage::domain::{OrgId, PageRef, StatusPageId};
 use uptimepage::marketing::RouteByHost;
-use uptimepage::request::custom_domains::{CustomDomainRow, CustomDomains};
 use uptimepage::request::host::HostScheme;
 
 use common::{metric_value, metrics_handle};

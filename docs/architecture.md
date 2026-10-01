@@ -26,7 +26,7 @@ The same binary runs in one of three modes; the mode is chosen at startup, befor
 ```
 src/
 ├── main.rs           startup: config load, validation, mode branch, subsystem spawn
-├── lib.rs            crate root (40 modules)
+├── lib.rs            crate root
 ├── app.rs            AppState, the composition root (every store + engine as a field)
 ├── router.rs         router assembly + middleware layer order
 ├── bootstrap.rs      bootstrap-owner CLI mode + first-run owner seeding
@@ -41,6 +41,7 @@ src/
 ├── security/         AES-GCM envelope crypto, token and MAC hashing, SSRF guard,
 │                     abuse deny-lists, redaction, RDAP and certificate probes
 ├── net/              happy-eyeballs dial (RFC 8305)
+├── custom_domains.rs in-memory snapshot of the verified custom domains + host normalization
 ├── metric_names.rs   every metric name this process emits
 ├── templates/        askama filters, fingerprinted assets, timestamp formats
 ├── pagination/       page envelopes + opaque cursors shared by every list surface
@@ -100,7 +101,7 @@ migrations/           postgres/NNN_name.{up,down}.sql + clickhouse/*.sql
 
 Imports point downward through the groups above and never back up. A leaf imports other leaves only. A service or store imports leaves and other services, never a surface module. A handler module imports anything below it, and the only thing above it is `app`, whose `AppState` every handler receives. That last edge is the deliberate exception: `app` names handler types in its cache fields, and handlers take `&AppState`, so `app` and each surface point at each other. Splitting `AppState` into per-surface sub-states would touch most handler files for no behavioural gain, so those cycles stay and are the known ones.
 
-The rule is what keeps `marketing` extractable and the agent mode small. `tests/marketing_coupling_test.rs` scans the marketing tree and fails on any `crate::` path outside `templates`, `security`, `request` and `http_outbound`; the agent entry point reaches the probe pipeline, the store traits it needs and the leaves, and nothing from the HTTP surfaces. How the crate got to this shape, and the tool that found the cycles it replaced, is in [Uncle Bob's uml-viewer on Rust: 35 dependency cycles down to 3](https://uptimepage.dev/blog/uml-viewer-rust-dependency-cycles).
+The rule is what keeps `marketing` extractable and the agent mode small. `tests/marketing_coupling_test.rs` scans the marketing tree and fails on any `crate::` path outside `templates`, `security`, `request`, `custom_domains` and `http_outbound`; the agent entry point reaches the probe pipeline, the store traits it needs and the leaves, and nothing from the HTTP surfaces. How the crate got to this shape, and the tool that found the cycles it replaced, is in [Uncle Bob's uml-viewer on Rust: 35 dependency cycles down to 3](https://uptimepage.dev/blog/uml-viewer-rust-dependency-cycles).
 
 ## Request path
 

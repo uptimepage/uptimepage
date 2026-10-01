@@ -38,6 +38,7 @@ pub(crate) const PAGE_CUSTOM_DOMAIN_PUBLISHED: &str = "(sp.custom_domain_activat
 /// choose differently. For a query that aliases the page `sp`.
 pub(crate) const PAGE_NOT_HELD: &str = "sp.plan_hold_at IS NULL";
 
+use crate::custom_domains::CustomDomainRow;
 use crate::domain::{
     MonitorShareId, NewStatusPage, NewStatusPageComponent, OrgId, PageRef, PublicOrgBranding,
     PublicStyle, StatusPage, StatusPageComponent, StatusPageComponentUpdate, StatusPageId,
@@ -45,7 +46,6 @@ use crate::domain::{
 };
 use crate::error::codes;
 use crate::error::{AppError, Result};
-use crate::request::custom_domains::CustomDomainRow;
 use crate::storage::accounts;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock};
 
@@ -1058,7 +1058,7 @@ impl StatusPageStore for InMemoryStatusPageStore {
 }
 
 /// PUBLIC-STATUS PATH ONLY. Feeds the in-memory snapshot the host decisions
-/// read ([`crate::request::custom_domains`]).
+/// read ([`crate::custom_domains`]).
 ///
 /// The third door onto the public surface, and its membership filter must
 /// stay identical to [`find_public_status_page_by_slug`]'s: page enabled, not

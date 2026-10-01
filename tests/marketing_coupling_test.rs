@@ -7,13 +7,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Every `crate::<module>` marketing touches. Each is stateless and travels
-/// with the site on extraction: no pool, no `AppState`, no scheduler.
+/// Every `crate::<module>` marketing touches. Each travels with the site on
+/// extraction because it needs no pool, no `AppState` and no scheduler;
+/// `custom_domains` is an in-memory snapshot that imports only `domain`.
 const ALLOWED_CRATE_MODULES: &[&str] = &[
     "marketing",
     "templates",
     "security",
     "request",
+    "custom_domains",
     "http_outbound",
 ];
 

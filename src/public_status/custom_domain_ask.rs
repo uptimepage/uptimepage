@@ -17,7 +17,7 @@ use serde::Deserialize;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
-use crate::request::custom_domains::{CustomDomains, normalize};
+use crate::custom_domains::{CustomDomains, normalize};
 
 pub const ASK_PATH: &str = "/custom-domain/ask";
 
@@ -85,8 +85,8 @@ pub async fn spawn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::custom_domains::CustomDomainRow;
     use crate::domain::{OrgId, PageRef, StatusPageId};
-    use crate::request::custom_domains::CustomDomainRow;
     use axum::body::Body;
     use axum::http::Request;
     use tower::util::ServiceExt;

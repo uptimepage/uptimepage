@@ -19,9 +19,9 @@ use axum::response::{IntoResponse, Response};
 
 use crate::app::AppState;
 use crate::config::AppConfig;
+use crate::custom_domains::CustomDomains;
 use crate::domain::{OrgId, PageRef, StatusPageId};
 use crate::error::public::PublicAppError;
-use crate::request::custom_domains::CustomDomains;
 use crate::request::is_health_path;
 
 /// Subdomain labels that route to the operator surface (dashboard + auth +
@@ -816,7 +816,7 @@ mod tests {
 
     fn serving(domain: &str) -> CustomDomains {
         let d = CustomDomains::new("example.com");
-        d.install(vec![crate::request::custom_domains::CustomDomainRow {
+        d.install(vec![crate::custom_domains::CustomDomainRow {
             domain: domain.into(),
             page: PageRef {
                 page: StatusPageId(uuid::Uuid::from_u128(1)),
