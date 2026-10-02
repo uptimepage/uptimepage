@@ -433,6 +433,19 @@ impl CheckStatus {
         }
     }
 
+    /// The Up/Degraded/Down ladder shared by the TLS-cert and domain-expiry
+    /// checks. A negative `days_remaining` always falls below `critical_days`
+    /// (a `u32`), so an expired subject takes the same branch as a critical one.
+    pub fn from_days_remaining(days_remaining: i64, warn_days: u32, critical_days: u32) -> Self {
+        if days_remaining < i64::from(critical_days) {
+            Self::Down
+        } else if days_remaining < i64::from(warn_days) {
+            Self::Degraded
+        } else {
+            Self::Up
+        }
+    }
+
     /// `None` for the view-layer pseudo-statuses ("no_data", "late").
     pub fn from_label(s: &str) -> Option<Self> {
         match s {
@@ -466,6 +479,17 @@ impl CheckStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn days_remaining_ladder_breaks_at_warn_and_critical() {
+        let status = |days| CheckStatus::from_days_remaining(days, 30, 7);
+        assert_eq!(status(31), CheckStatus::Up);
+        assert_eq!(status(30), CheckStatus::Up);
+        assert_eq!(status(29), CheckStatus::Degraded);
+        assert_eq!(status(7), CheckStatus::Degraded);
+        assert_eq!(status(6), CheckStatus::Down);
+        assert_eq!(status(-1), CheckStatus::Down);
+    }
 
     fn synth(status: CheckStatus, error: Option<&str>) -> CheckResult {
         CheckResult {

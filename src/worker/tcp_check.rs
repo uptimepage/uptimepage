@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::domain::{CheckResult, CheckStatus, TcpCheck};
 use crate::http_client::HttpClients;
-use crate::worker::connect_via_guard;
+use crate::http_client::dial::connect_via_guard;
 
 pub async fn execute_tcp_check(
     target_id: Uuid,

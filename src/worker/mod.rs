@@ -10,6 +10,7 @@ pub mod pool;
 pub mod rdap;
 pub mod rdap_singleflight;
 pub mod registration;
+pub(crate) mod sweep;
 pub mod tcp_check;
 pub mod tls_cert;
 pub mod whois;
@@ -18,47 +19,11 @@ pub use http_check::execute_http_check;
 pub(crate) use http_check::{HttpProbe, execute_http_check_probe};
 pub use pool::{CheckTask, ResultFanout, WorkerPool, host_for_spec};
 
-use std::hash::Hash;
-use std::net::SocketAddr;
-use std::sync::Arc;
-
-use dashmap::DashMap;
-use tokio::net::TcpStream;
 use uuid::Uuid;
 
 use crate::domain::{CheckResult, CheckSpec};
 use crate::http_client::HttpClients;
-use crate::http_client::connector::tcp_reason;
 use crate::worker::domain_expiry::DomainExpiryRuntime;
-
-/// Off-hot-path eviction over a `DashMap<K, Arc<T>>`. Drops entries whose
-/// only strong reference is the map's own and that the caller-supplied
-/// `idle` predicate accepts. Atomic per shard via `DashMap::retain` — never
-/// drops an entry another task just cloned out of the map.
-///
-/// Used by `HostThrottle::sweep`, `WorkerPool::sweep_breakers`, and
-/// `RdapSingleflight::sweep`. Three sites converged on this shape so an
-/// invariant fix (e.g. tightening the strong-count check) only has to be
-/// made in one place.
-pub(crate) fn sweep_idle<K, T, F>(map: &DashMap<K, Arc<T>>, idle: F) -> usize
-where
-    K: Eq + Hash,
-    F: Fn(&T) -> bool,
-{
-    let mut removed = 0usize;
-    map.retain(|_, slot| {
-        if Arc::strong_count(slot) != 1 {
-            return true;
-        }
-        if idle(slot.as_ref()) {
-            removed += 1;
-            false
-        } else {
-            true
-        }
-    });
-    removed
-}
 
 /// Per-dispatch dependencies handed to `execute`. Bundles everything an
 /// executor sub-handler might need so adding a new dep (e.g. another
@@ -70,74 +35,6 @@ pub struct WorkerDeps<'a> {
     /// Browser-flow engine on a flow-capable node; `None` elsewhere (routing
     /// never sends flow to a node without it).
     pub flow: Option<&'a crate::worker::flow::engine::CdpEngine>,
-}
-
-/// Maps a `days_remaining` value to the canonical Up/Degraded/Down ladder used
-/// by the TLS-cert and domain-expiry checks. Negative `days_remaining` always
-/// falls below `critical_days` (which is `u32 >= 0`), so expiration is covered
-/// by the same branch as the critical threshold.
-pub(crate) fn classify_days(
-    days_remaining: i64,
-    warn_days: u32,
-    critical_days: u32,
-) -> crate::domain::CheckStatus {
-    use crate::domain::CheckStatus;
-    if days_remaining < i64::from(critical_days) {
-        CheckStatus::Down
-    } else if days_remaining < i64::from(warn_days) {
-        CheckStatus::Degraded
-    } else {
-        CheckStatus::Up
-    }
-}
-
-/// Resolves `host` and keeps only addresses the shared SSRF guard allows.
-/// Errors when resolution fails or nothing survives the filter, so callers
-/// always receive at least one address. Single chokepoint for the
-/// resolve-then-filter dance (TCP, TLS-cert, ping) — a guard-semantics fix
-/// lands once.
-pub(crate) async fn allowed_addrs(
-    host: &str,
-    clients: &HttpClients,
-) -> anyhow::Result<Vec<std::net::IpAddr>> {
-    let guard = clients.ssrf_guard();
-    // The resolver's own Display names the query it failed, brace-printed
-    // struct and all. Same reason the connect below is normalised: no error
-    // class can name that, so it reaches the customer verbatim and lands in
-    // `ErrorClass::Other`.
-    let resolved = clients.resolver().resolve_addrs(host).await.map_err(|e| {
-        let reason = crate::http_client::connector::dns_reason(&e);
-        e.context(reason)
-    })?;
-    let addrs: Vec<std::net::IpAddr> = resolved.into_iter().filter(|ip| guard.allow(*ip)).collect();
-    if addrs.is_empty() {
-        anyhow::bail!("no allowed addresses for {host}");
-    }
-    Ok(addrs)
-}
-
-/// Tries to open a TCP connection to `(ip, port)` for each allowed address of
-/// `host`. Used by TCP and TLS-cert checks.
-pub(crate) async fn connect_via_guard(
-    host: &str,
-    port: u16,
-    clients: &HttpClients,
-) -> anyhow::Result<TcpStream> {
-    let mut last_err: Option<std::io::Error> = None;
-    for ip in allowed_addrs(host, clients).await? {
-        match TcpStream::connect(SocketAddr::new(ip, port)).await {
-            Ok(s) => return Ok(s),
-            Err(e) => last_err = Some(e),
-        }
-    }
-    // The raw `io::Error` Display carries a platform-specific errno, which no
-    // error class can name and the customer should never read. Kept as the
-    // source so an operator can still tell a refused port from a blocked one:
-    // `context` is what `to_string` yields, the errno survives in `{:?}`.
-    let err = last_err.expect("allowed_addrs yields at least one address");
-    tracing::debug!(host, port, error = %err, "connect failed");
-    let reason = tcp_reason(&err);
-    Err(anyhow::Error::new(err).context(reason))
 }
 
 pub async fn execute(

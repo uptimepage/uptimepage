@@ -14,6 +14,7 @@ use crate::http_client::HttpClients;
 use crate::metric_names;
 use crate::worker::circuit_breaker::{BreakerState, CIRCUIT_OPEN_REASON, CircuitBreaker};
 use crate::worker::host_throttle::{HostPermit, HostThrottle, Throttled};
+use crate::worker::sweep::sweep_idle;
 
 // Hot-path counters resolved once. `counter!` rebuilds the label set on
 // every call — at high QPS that's a per-check allocation we don't need.
@@ -247,7 +248,7 @@ impl WorkerPool {
     /// in the steady `Closed` state. Run from the scheduler tick to bound
     /// the breaker map under target churn (user-driven host edits, deletes).
     pub fn sweep_breakers(&self) -> usize {
-        crate::worker::sweep_idle(&self.breakers, |b| b.state() == BreakerState::Closed)
+        sweep_idle(&self.breakers, |b| b.state() == BreakerState::Closed)
     }
 
     /// Runs a one-off check against `target` honoring the per-host circuit

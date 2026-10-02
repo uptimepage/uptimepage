@@ -118,7 +118,7 @@ impl ConnectError {
     }
 }
 
-/// Shared with the TCP and TLS-cert kinds through `worker::allowed_addrs`,
+/// Shared with the TCP and TLS-cert kinds through `dial::allowed_addrs`,
 /// which would otherwise hand the resolver's own Display to the customer.
 pub(crate) fn dns_reason(e: &anyhow::Error) -> &'static str {
     let Some(n) = e.downcast_ref::<hickory_resolver::net::NetError>() else {
@@ -135,7 +135,7 @@ pub(crate) fn dns_reason(e: &anyhow::Error) -> &'static str {
     }
 }
 
-/// Shared with the TCP and TLS-cert kinds through `worker::connect_via_guard`.
+/// Shared with the TCP and TLS-cert kinds through `dial::connect_via_guard`.
 /// Ping builds its own message and is not normalised through here.
 pub(crate) fn tcp_reason(io: &io::Error) -> &'static str {
     match io.kind() {

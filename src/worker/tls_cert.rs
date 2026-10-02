@@ -8,8 +8,8 @@ use uuid::Uuid;
 use crate::domain::{CheckResult, CheckStatus, TlsCertCheck};
 use crate::http_client::HttpClients;
 use crate::http_client::connector::tls_reason;
+use crate::http_client::dial::connect_via_guard;
 use crate::security::cert_probe::{self, CertFacts, CertProbeError};
-use crate::worker::connect_via_guard;
 
 pub async fn execute_tls_cert_check(
     target_id: Uuid,
@@ -108,8 +108,11 @@ fn probe_error(host: &str, err: CertProbeError) -> anyhow::Error {
 }
 
 fn grade(facts: &CertFacts, check: &TlsCertCheck) -> CertVerdict {
-    let status =
-        crate::worker::classify_days(facts.days_remaining, check.warn_days, check.critical_days);
+    let status = CheckStatus::from_days_remaining(
+        facts.days_remaining,
+        check.warn_days,
+        check.critical_days,
+    );
 
     #[derive(Serialize)]
     struct Details<'a> {

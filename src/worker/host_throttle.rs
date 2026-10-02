@@ -5,6 +5,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::domain::{CheckSpec, OrgId};
 use crate::net::host::canonical_host;
+use crate::worker::sweep::sweep_idle;
 
 /// Two bulkheads with different contention rules.
 ///
@@ -116,8 +117,8 @@ impl HostThrottle {
     pub fn sweep(&self) -> usize {
         let per_host_max = self.per_host_max;
         let rdap_max = self.rdap_max;
-        crate::worker::sweep_idle(&self.caps, |sem| sem.available_permits() == per_host_max)
-            + crate::worker::sweep_idle(&self.rdap, |sem| sem.available_permits() == rdap_max)
+        sweep_idle(&self.caps, |sem| sem.available_permits() == per_host_max)
+            + sweep_idle(&self.rdap, |sem| sem.available_permits() == rdap_max)
     }
 
     #[cfg(test)]

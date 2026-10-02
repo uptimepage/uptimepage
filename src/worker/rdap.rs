@@ -8,7 +8,7 @@ use url::Url;
 use crate::error::Result;
 use crate::http_outbound::{OutboundHttpClient, get_json};
 use crate::security::rdap::{DomainResponse, override_url};
-use crate::worker::registration::{RegistrationAnswer, RegistrationError};
+use crate::worker::registration::types::{RegistrationAnswer, RegistrationError};
 
 /// IANA-published RDAP bootstrap registry for DNS. Maps TLDs to one or more
 /// RDAP server base URLs. Public and rarely changes.

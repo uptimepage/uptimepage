@@ -4,7 +4,7 @@
 //!  1. Fresh-probe attempt: per-TLD bulkhead + cross-tenant singleflight.
 //!  2. On success: write the answer to `domain_expiry_state` (last-good
 //!     cache) and emit a CheckResult whose status is derived from
-//!     `classify_days`.
+//!     `CheckStatus::from_days_remaining`.
 //!  3. On failure (timeout, network, registry error): load last-good. If
 //!     younger than `max_staleness`, emit a CheckResult with the *cached*
 //!     status and an `error="served_stale: …"` annotation so operator tools
@@ -42,9 +42,8 @@ use crate::metric_names;
 use crate::storage::DomainExpiryStateStore;
 use crate::worker::host_throttle::HostThrottle;
 use crate::worker::rdap_singleflight::{FetchOutcome, RdapSingleflight};
-use crate::worker::registration::{
-    RegistrationAnswer, RegistrationClient, RegistrationError, tld_verdict,
-};
+use crate::worker::registration::RegistrationClient;
+use crate::worker::registration::types::{RegistrationAnswer, RegistrationError, tld_verdict};
 
 /// Default ceiling on how old a cached last-good answer may be while still
 /// being served. Past this, the executor escalates to `CheckStatus::Error`
@@ -309,7 +308,8 @@ fn classify(
     registrar: Option<&str>,
 ) -> Verdict {
     let days_remaining = (expiration - Utc::now()).num_days();
-    let status = crate::worker::classify_days(days_remaining, check.warn_days, check.critical_days);
+    let status =
+        CheckStatus::from_days_remaining(days_remaining, check.warn_days, check.critical_days);
 
     #[derive(Serialize)]
     struct Details<'a> {

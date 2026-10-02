@@ -64,7 +64,8 @@ src/
 ├── worker/           worker pool + per-host circuit breaker + host throttle +
 │                     one executor per check kind (http/tcp/ping/heartbeat/dns/
 │                     tls_cert/domain_expiry/flow)
-├── http_client/      poolless probe client: phase-timing connector, DNS cache
+├── http_client/      poolless probe client: phase-timing connector, DNS cache,
+│                     SSRF-guarded dial for the raw-socket checks
 ├── pipeline/         result batcher (size + timeout flush, bounded, counted drops)
 ├── ad_hoc_dispatch.rs  check-now / test long-poll to the region's agent
 ├── agent/            stateless agent-mode entry point

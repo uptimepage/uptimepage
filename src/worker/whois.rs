@@ -15,8 +15,8 @@ use tokio::time::timeout;
 use crate::domain::publishes_no_expiry;
 use crate::error::{AppError, Result};
 use crate::http_client::HttpClients;
-use crate::worker::connect_via_guard;
-use crate::worker::registration::{RegistrationAnswer, RegistrationError};
+use crate::http_client::dial::connect_via_guard;
+use crate::worker::registration::types::{RegistrationAnswer, RegistrationError};
 
 const WHOIS_PORT: u16 = 43;
 const READ_TIMEOUT: Duration = Duration::from_secs(10);

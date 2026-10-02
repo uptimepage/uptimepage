@@ -1,5 +1,6 @@
 pub mod client;
 pub mod connector;
+pub(crate) mod dial;
 pub mod dns;
 
 pub use client::{HttpClients, build_clients};

@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::domain::{CheckResult, CheckStatus, PingCheck};
 use crate::http_client::HttpClients;
-use crate::worker::allowed_addrs;
+use crate::http_client::dial::allowed_addrs;
 
 /// Sized like the classic `ping` default so middleboxes treat the probe as
 /// ordinary diagnostic traffic.

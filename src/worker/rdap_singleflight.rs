@@ -24,7 +24,8 @@ use dashmap::DashMap;
 use tokio::sync::Mutex;
 
 use crate::error::Result;
-use crate::worker::registration::RegistrationAnswer;
+use crate::worker::registration::types::RegistrationAnswer;
+use crate::worker::sweep::sweep_idle;
 
 /// Default in-process cache window for a successful RDAP answer.
 pub const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(60);
@@ -124,7 +125,7 @@ impl RdapSingleflight {
     /// locked (`try_lock` fails). Atomic per shard.
     pub fn sweep(&self) -> usize {
         let cache_ttl = self.cache_ttl;
-        crate::worker::sweep_idle(&self.slots, |slot| {
+        sweep_idle(&self.slots, |slot| {
             let Ok(guard) = slot.state.try_lock() else {
                 return false;
             };
