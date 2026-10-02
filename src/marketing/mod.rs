@@ -34,12 +34,14 @@ pub mod dispatch;
 pub mod docs;
 pub mod gallery;
 mod highlight;
+pub mod home;
 pub mod landings;
 pub mod legal;
 pub mod md;
 mod negotiate;
 pub mod pages;
 pub mod seo;
+pub mod site_files;
 pub mod start;
 pub mod tools;
 
@@ -65,19 +67,19 @@ pub fn router(cfg: MarketingCfg) -> Router {
     let state = Arc::new(cfg);
     warm_caches(&state);
     let mut r = Router::new()
-        .route("/", get(pages::landing))
+        .route("/", get(home::landing))
         .route(pages::PRICING_PATH, get(pages::pricing))
         .route(pages::ARCHITECTURE_PATH, get(pages::architecture))
         .route(start::START_PATH, get(start::start))
-        .route("/robots.txt", get(seo::robots_txt))
-        .route("/sitemap.xml", get(seo::sitemap_xml))
-        .route("/llms.txt", get(seo::llms_txt))
-        .route("/llms-full.txt", get(seo::llms_full_txt))
+        .route("/robots.txt", get(site_files::robots_txt))
+        .route("/sitemap.xml", get(site_files::sitemap_xml))
+        .route("/llms.txt", get(site_files::llms_txt))
+        .route("/llms-full.txt", get(site_files::llms_full_txt))
         .route(discovery::CATALOG_PATH, get(discovery::api_catalog))
         .route(discovery::CARD_PATH, get(discovery::mcp_server_card))
         .route(
             "/startupranking1371476620941810.html",
-            get(seo::startupranking_verification),
+            get(site_files::startupranking_verification),
         );
     r = legal::mount(r);
     r = landings::mount(r);
@@ -109,6 +111,7 @@ pub fn router(cfg: MarketingCfg) -> Router {
 /// `list_published()` auto-loads posts), so call order is irrelevant —
 /// no cross-module ordering contract to keep in lockstep with edits.
 fn warm_caches(state: &Arc<MarketingCfg>) {
+    home::warm(state);
     pages::warm(state);
     legal::warm(state);
     landings::warm(state);
@@ -119,5 +122,5 @@ fn warm_caches(state: &Arc<MarketingCfg>) {
     if state.blog_enabled {
         blog::warm(state);
     }
-    seo::warm(state);
+    site_files::warm(state);
 }

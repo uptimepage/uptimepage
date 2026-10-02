@@ -1,4 +1,4 @@
-use crate::marketing::config::{BRAND, MarketingCfg};
+use crate::marketing::config::{BRAND, CONTACT_EMAIL, MarketingCfg, ORG_LOCALITY};
 use crate::marketing::seo::AUTHOR_PAGE;
 
 use super::catalog::LANDINGS;
@@ -380,4 +380,25 @@ fn only_the_author_page_carries_the_person_node() {
             "{path} Person node presence does not match the author page"
         );
     }
+}
+
+/// The Organization JSON-LD claims these facts and is invisible on the page, so
+/// it goes stale unnoticed when the contact rows change.
+#[test]
+fn the_about_page_states_what_the_organization_node_claims() {
+    let about = LANDINGS
+        .iter()
+        .find(|l| l.path == AUTHOR_PAGE)
+        .expect("/about is a landing");
+    assert!(
+        about
+            .features
+            .iter()
+            .any(|f| f.value.contains(ORG_LOCALITY)),
+        "/about no longer says where the company is; the JSON-LD still claims {ORG_LOCALITY}"
+    );
+    assert!(
+        about.features.iter().any(|f| f.value == CONTACT_EMAIL),
+        "/about no longer lists {CONTACT_EMAIL}; the JSON-LD still claims it"
+    );
 }
