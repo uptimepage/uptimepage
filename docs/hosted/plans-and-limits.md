@@ -6,10 +6,10 @@ This page covers the hosted service at `uptimepage.dev`. Nothing here binds a se
 
 | Plan | Who gets it |
 |---|---|
-| Standard | Every new account, free, no card |
+| Standard | New accounts once the founding spots are gone, free, no card |
 | Founding | The first 1,000 accounts, granted at signup and kept for life, free |
-| Pro | Coming |
-| Team | Coming |
+| Pro | Paid, monthly or yearly, from **Settings → Billing** |
+| Team | Paid, monthly or yearly, from **Settings → Billing** |
 
 Prices, monitor counts, check intervals, history windows, seats, and status-page limits are on the [pricing page](https://uptimepage.dev/pricing), which is the number you are actually enforced at.
 

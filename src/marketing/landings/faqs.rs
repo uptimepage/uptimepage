@@ -237,7 +237,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "How often does the Blackbox exporter check?",
-                "As often as Prometheus scrapes it, which defaults to once a minute. Check frequency is not an exporter setting at all. Uptime Kuma's 2.x line goes down to one second, and Uptimepage runs at 60 seconds on the free tier and 10 seconds self-hosted.",
+                "As often as Prometheus scrapes it, which defaults to once a minute. Check frequency is not an exporter setting at all. Uptime Kuma's 2.x line goes down to one second, and Uptimepage runs at 60 seconds on the free Founding plan and 10 seconds self-hosted.",
             ),
             (
                 "Can the Blackbox exporter alert me before a certificate expires?",
@@ -251,7 +251,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
         "/compare/pingdom-vs-statuscake" => &[
             (
                 "Does Pingdom have a free plan?",
-                "No. Pingdom offers a 30-day trial, then paid usage-based plans. StatusCake keeps a permanent free tier with ten monitors at five-minute intervals, and Uptimepage's free tier checks every 60 seconds with no card.",
+                "No. Pingdom offers a 30-day trial, then paid usage-based plans. StatusCake keeps a permanent free tier with ten monitors at five-minute intervals, and Uptimepage's free Founding plan checks every 60 seconds with no card.",
             ),
             (
                 "Are StatusCake status pages included in its plans?",
@@ -379,7 +379,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "What can it monitor?",
-                "HTTP, TCP, DNS, TLS-certificate and domain expiry, ICMP ping, cron-job heartbeats and scripted browser login flows, every 60 seconds from as many regions as you run.",
+                "HTTP, TCP, DNS, ICMP ping and cron-job heartbeats as often as every 60 seconds, plus TLS-certificate and domain expiry and scripted browser login flows, from as many regions as you run.",
             ),
             (
                 "Does it include a status page?",
@@ -449,7 +449,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "Can I manage many clients from one account?",
-                "Yes. Add every client as a monitor, group them, and give each a branded page. One account covers the whole roster, with no per-client tool or invoice.",
+                "Yes. Add every client as a monitor, group them, and give each a branded page. One account covers the whole roster, with no per-client tool or invoice. Hosted plans cap the number of status pages (five on Team); a self-hosted instance has no cap.",
             ),
             (
                 "Is there per-client or per-seat pricing?",
@@ -575,7 +575,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
         "/vs/self-hosted-status-pages" => &[
             (
                 "Does Cachet do monitoring?",
-                "As of mid-2026, partly. Cachet v3 added basic HTTP checks you schedule yourself (GET only, no TCP, DNS or TLS), though it is still in development with no stable release. Uptimepage runs HTTP, TCP, DNS, TLS, domain, ping, heartbeat and browser-flow checks every 60 seconds from multiple regions and opens incidents automatically.",
+                "As of mid-2026, partly. Cachet v3 added basic HTTP checks you schedule yourself (GET only, no TCP, DNS or TLS), though it is still in development with no stable release. Uptimepage runs HTTP, TCP, DNS, ping and heartbeat checks as often as every 60 seconds from multiple regions, plus TLS, domain and browser-flow checks, and opens incidents automatically.",
             ),
             (
                 "How often can Upptime check?",
@@ -629,7 +629,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
         "/status-page-for-agencies" => &[
             (
                 "Can I manage many clients from one account?",
-                "Yes. Watch every client site from a single dashboard and give each client its own branded status page.",
+                "Yes. Watch every client site from a single dashboard and give each client its own branded status page. Hosted plans cap the number of status pages (five on Team); a self-hosted instance has no cap.",
             ),
             (
                 "Does each client get a separate branded page?",
@@ -765,7 +765,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "How often does it check?",
-                "As often as every 60 seconds, across HTTP, TCP, DNS, TLS, domain, ping, heartbeat and flow, with the timing split across DNS, connect, TLS and first byte so you can see why a check is slow.",
+                "As often as every 60 seconds for HTTP, TCP, DNS, ping and heartbeat, with TLS, domain and flow checks on slower schedules. HTTP timing is split across DNS, connect, TLS and first byte so you can see why a check is slow.",
             ),
             (
                 "Can I manage it as code?",

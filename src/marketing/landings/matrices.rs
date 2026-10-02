@@ -4,6 +4,10 @@
 
 use super::model::{Matrix, MatrixRow};
 
+/// Our column of every "fastest interval" row: Founding and Pro floor at 60s, Team at
+/// 30s, a self-hosted install at 10s.
+const OUR_FASTEST_INTERVAL: &str = "60s free · 30s Team · 10s self-hosted";
+
 /// Decision matrix for `/open-source-uptime-monitoring`, verified July 2026
 /// against each project's repo and docs. Uptime Kuma is the search default,
 /// OpenStatus the nearest AGPL alternative, and Prometheus + Blackbox the
@@ -451,7 +455,7 @@ static MONITORING_MATRIX: Matrix = Matrix {
         },
     ],
     notes: &[
-        "Fastest interval each tool can reach; hosted free tiers are usually slower. Uptimepage's self-hosted floor is 10s, and hosted plans run at 60s on the free founding plan (with 50 monitors) or 30s on Team.",
+        "Fastest interval each tool can reach; hosted free tiers are usually slower. Uptimepage's self-hosted floor is 10s, and hosted plans run at 60s on the free Founding plan (with 50 monitors) and on Pro, or 30s on Team.",
         "OpenStatus lists ICMP, UDP and SSL-certificate monitors in its config, but its open-source Go checker implements only HTTP, TCP and DNS.",
         "Uptime Kuma has 31 monitor types and 94 alert integrations, but it is single-user, is configured over a socket API rather than REST or Terraform, and its status pages offer RSS, not email or webhook subscribers.",
         "Gatus is a health dashboard with badges rather than a subscriber status page, and its multi-region support is an experimental status-federation feature, not distributed probes.",
@@ -468,7 +472,7 @@ static UPTIME_KUMA_MATRIX: Matrix = Matrix {
     rows: &[
         MatrixRow {
             label: "fastest check interval",
-            cells: &[("60s hosted · 10s self", ""), ("1s", "yes")],
+            cells: &[(OUR_FASTEST_INTERVAL, ""), ("1s", "yes")],
         },
         MatrixRow {
             label: "check types",
@@ -548,7 +552,7 @@ static ONEUPTIME_MATRIX: Matrix = Matrix {
     rows: &[
         MatrixRow {
             label: "fastest check interval",
-            cells: &[("60s hosted · 10s self", "yes"), ("60s", "")],
+            cells: &[(OUR_FASTEST_INTERVAL, "yes"), ("60s", "")],
         },
         MatrixRow {
             label: "check types",
@@ -625,7 +629,7 @@ static UPTIMEROBOT_MATRIX: Matrix = Matrix {
         MatrixRow {
             label: "fastest check interval",
             cells: &[
-                ("60s hosted · 10s self", "yes"),
+                (OUR_FASTEST_INTERVAL, "yes"),
                 ("5 min free · 60s paid", "part"),
             ],
         },
@@ -706,7 +710,7 @@ static BETTER_STACK_MATRIX: Matrix = Matrix {
         MatrixRow {
             label: "fastest check interval",
             cells: &[
-                ("60s hosted · 10s self", "yes"),
+                (OUR_FASTEST_INTERVAL, "yes"),
                 ("3 min free · 30s paid", "part"),
             ],
         },
@@ -783,7 +787,7 @@ static PINGDOM_MATRIX: Matrix = Matrix {
     rows: &[
         MatrixRow {
             label: "fastest check interval",
-            cells: &[("60s hosted · 10s self", "yes"), ("60s", "")],
+            cells: &[(OUR_FASTEST_INTERVAL, "yes"), ("60s", "")],
         },
         MatrixRow {
             label: "check types",
@@ -954,7 +958,7 @@ static OPENSTATUS_KUMA_MATRIX: Matrix = Matrix {
             cells: &[
                 ("30s on hosted paid tiers", ""),
                 ("1s", ""),
-                ("60s free · 30s Pro · 10s self-hosted", ""),
+                (OUR_FASTEST_INTERVAL, ""),
             ],
         },
         MatrixRow {
@@ -1155,7 +1159,7 @@ static KUMA_GATUS_MATRIX: Matrix = Matrix {
             cells: &[
                 ("1s", ""),
                 ("no documented floor, default 60s", ""),
-                ("60s free · 30s Pro · 10s self-hosted", ""),
+                (OUR_FASTEST_INTERVAL, ""),
             ],
         },
         MatrixRow {
@@ -1260,7 +1264,7 @@ static KUMA_UPPTIME_MATRIX: Matrix = Matrix {
             cells: &[
                 ("1s", ""),
                 ("5 min, the Actions schedule", "no"),
-                ("60s free · 30s Pro · 10s self-hosted", ""),
+                (OUR_FASTEST_INTERVAL, ""),
             ],
         },
         MatrixRow {
@@ -1375,11 +1379,7 @@ static KUMA_ONEUPTIME_MATRIX: Matrix = Matrix {
         },
         MatrixRow {
             label: "fastest interval",
-            cells: &[
-                ("1s", ""),
-                ("60s", ""),
-                ("60s free · 30s Pro · 10s self-hosted", ""),
-            ],
+            cells: &[("1s", ""), ("60s", ""), (OUR_FASTEST_INTERVAL, "")],
         },
         MatrixRow {
             label: "page subscribers",
@@ -1535,7 +1535,7 @@ static PINGDOM_STATUSCAKE_MATRIX: Matrix = Matrix {
             cells: &[
                 ("usage ladders per product", ""),
                 ("three tiers + add-ons", ""),
-                ("free · founding · Pro", ""),
+                ("free · Founding · Pro · Team", ""),
             ],
         },
         MatrixRow {
@@ -1554,7 +1554,7 @@ static PINGDOM_STATUSCAKE_MATRIX: Matrix = Matrix {
             cells: &[
                 ("1 min", ""),
                 ("30s on top tier", ""),
-                ("60s free · 30s Pro · 10s self-hosted", ""),
+                (OUR_FASTEST_INTERVAL, ""),
             ],
         },
         MatrixRow {
@@ -1659,7 +1659,7 @@ static KUMA_HEALTHCHECKS_MATRIX: Matrix = Matrix {
             cells: &[
                 ("1s", "yes"),
                 ("60s ping period", ""),
-                ("60s free · 30s Pro · 10s self-hosted", ""),
+                (OUR_FASTEST_INTERVAL, ""),
             ],
         },
         MatrixRow {
@@ -1889,7 +1889,7 @@ static OPENSTATUS_GATUS_MATRIX: Matrix = Matrix {
             cells: &[
                 ("30s on paid tiers", ""),
                 ("no documented floor, default 60s", ""),
-                ("60s free · 30s Pro · 10s self-hosted", ""),
+                (OUR_FASTEST_INTERVAL, ""),
             ],
         },
         MatrixRow {

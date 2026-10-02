@@ -34,7 +34,7 @@ pub(super) fn page_figures(path: &str) -> &'static [Figure] {
 pub(super) static FITS: &[(&str, &str)] = &[
     (
         "/vs/uptimerobot",
-        "Everything on this page is one product and one account: HTTP, TCP, DNS, TLS, domain, ping, heartbeat and browser-flow checks every 60 seconds, a branded status page on your own subdomain, and incidents that open themselves when a check fails. Teammates get their own logins with roles, customers subscribe by confirmed email or signed webhook, and the whole configuration can live in Git through a Terraform provider, a REST API and an MCP server. Hosted free with no card, or self-hosted under AGPL when you would rather hold the data yourself.",
+        "Everything on this page is one product and one account: HTTP, TCP, DNS, ping and heartbeat checks as often as every 60 seconds plus TLS, domain and browser-flow checks, a branded status page on your own subdomain, and incidents that open themselves when a check fails. Teammates get their own logins with roles, customers subscribe by confirmed email or signed webhook, and the whole configuration can live in Git through a Terraform provider, a REST API and an MCP server. Hosted free with no card, or self-hosted under AGPL when you would rather hold the data yourself.",
     ),
     (
         "/vs/statuspage",
@@ -54,7 +54,7 @@ pub(super) static FITS: &[(&str, &str)] = &[
     ),
     (
         "/vs/pingdom",
-        "The checks and the public page are one product at one price. HTTP, TCP, DNS, TLS, domain, ping, heartbeat and browser-flow checks every 60 seconds on the free tier, timings that point at the cause, incidents opened automatically, and a branded status page with confirmed email and webhook subscribers. Configuration lives in Git when you want it there, through a Terraform provider, a REST API and an MCP server. Open source under AGPL, so self-hosting is always the fallback.",
+        "The checks and the public page are one product at one price. HTTP, TCP, DNS, ping and heartbeat checks as often as every 60 seconds on the free Founding plan plus TLS, domain and browser-flow checks, timings that point at the cause, incidents opened automatically, and a branded status page with confirmed email and webhook subscribers. Configuration lives in Git when you want it there, through a Terraform provider, a REST API and an MCP server. Open source under AGPL, so self-hosting is always the fallback.",
     ),
     (
         "/vs/self-hosted-status-pages",
@@ -74,7 +74,7 @@ pub(super) static FITS: &[(&str, &str)] = &[
     ),
     (
         "/compare/pingdom-vs-statuscake",
-        "Uptimepage does not do browser transactions or RUM, and says so plainly. What it does is pair the monitoring with the status page in one product and one price: HTTP, TCP, DNS, TLS, domain, ping, heartbeat and browser-flow checks every 60 seconds on the free tier, a branded status page with confirmed email and webhook subscribers included, incidents that open automatically, and a Terraform provider, REST API and MCP server for teams who keep config in code. It is also open source under AGPL, so you can always self-host instead of being locked in.",
+        "Uptimepage does not do browser transactions or RUM, and says so plainly. What it does is pair the monitoring with the status page in one product and one price: HTTP, TCP, DNS, ping and heartbeat checks as often as every 60 seconds on the free Founding plan plus TLS, domain and browser-flow checks, a branded status page with confirmed email and webhook subscribers included, incidents that open automatically, and a Terraform provider, REST API and MCP server for teams who keep config in code. It is also open source under AGPL, so you can always self-host instead of being locked in.",
     ),
     (
         "/compare/uptime-kuma-vs-healthchecks",
@@ -82,7 +82,7 @@ pub(super) static FITS: &[(&str, &str)] = &[
     ),
     (
         "/compare/uptime-kuma-vs-cachet",
-        "Uptimepage is that pairing collapsed into one binary. Checks over HTTP, TCP, DNS, TLS, domain expiry, ping, heartbeat and browser flows run every 60 seconds from multiple regions, a failing check opens an incident by itself, and the incident lands on a branded status page where visitors have subscribed with confirmed email or a signed webhook. No glue code, one deployment, one set of roles. Hosted free with no card, or self-host under AGPL with docker compose.",
+        "Uptimepage is that pairing collapsed into one binary. HTTP, TCP, DNS, ping and heartbeat checks run as often as every 60 seconds from multiple regions, alongside TLS, domain expiry and browser flows, and a failing check opens an incident by itself, and the incident lands on a branded status page where visitors have subscribed with confirmed email or a signed webhook. No glue code, one deployment, one set of roles. Hosted free with no card, or self-host under AGPL with docker compose.",
     ),
     (
         "/compare/openstatus-vs-gatus",
@@ -94,15 +94,15 @@ pub(super) static FITS: &[(&str, &str)] = &[
     ),
     (
         "/compare/uptime-kuma-vs-zabbix",
-        "Uptimepage does the outside-in job, from several regions by default, and you can run your own probe agent inside the network for the private targets an external checker cannot see. It checks over HTTP, TCP, DNS, TLS, domain expiry, ping, heartbeat and browser flows at 60 seconds on the free tier and 10 seconds self-hosted. The config lives in Git through a Terraform provider we publish and maintain, a REST API and an MCP server, so monitoring is reviewed like the rest of your infrastructure. On top: a branded status page with confirmed email and webhook subscribers, incidents opened automatically from failing checks, and organizations with roles instead of one shared password. It is one Rust binary. It is also AGPL-3.0, the same license Zabbix uses, so self-hosting is a real exit rather than a trial. It does not replace Zabbix for CPU graphs and capacity planning, and it is not trying to. Plenty of teams run Zabbix inside and Uptimepage outside.",
+        "Uptimepage does the outside-in job, from several regions by default, and you can run your own probe agent inside the network for the private targets an external checker cannot see. It checks HTTP, TCP, DNS and ping as often as every 60 seconds on the free Founding plan and every 10 seconds self-hosted, alongside heartbeat, TLS, domain expiry and browser flows. The config lives in Git through a Terraform provider we publish and maintain, a REST API and an MCP server, so monitoring is reviewed like the rest of your infrastructure. On top: a branded status page with confirmed email and webhook subscribers, incidents opened automatically from failing checks, and organizations with roles instead of one shared password. It is one Rust binary. It is also AGPL-3.0, the same license Zabbix uses, so self-hosting is a real exit rather than a trial. It does not replace Zabbix for CPU graphs and capacity planning, and it is not trying to. Plenty of teams run Zabbix inside and Uptimepage outside.",
     ),
     (
         "/compare/uptime-kuma-vs-upptime",
-        "You may like Upptime because its settings live in version control, but five minutes is too slow for you. Or you may like Uptime Kuma's checks, but one login is not enough. Uptimepage sits between the two. It checks every 60 seconds over HTTP, TCP, DNS, TLS, domain, ping, heartbeat and flow. You can set it up in the UI, or declare it with the Terraform provider and REST API. It has organizations with user roles, and probes in several regions that you can also run yourself. Its status page is branded, and customers can subscribe by email or webhook. Incidents open on their own. It is one Rust binary. Host it free with no card, or self-host it under AGPL.",
+        "You may like Upptime because its settings live in version control, but five minutes is too slow for you. Or you may like Uptime Kuma's checks, but one login is not enough. Uptimepage sits between the two. It checks HTTP, TCP, DNS, ping and heartbeat as often as every 60 seconds, and TLS, domain and flow on their own schedules. You can set it up in the UI, or declare it with the Terraform provider and REST API. It has organizations with user roles, and probes in several regions that you can also run yourself. Its status page is branded, and customers can subscribe by email or webhook. Incidents open on their own. It is one Rust binary. Host it free with no card, or self-host it under AGPL.",
     ),
     (
         "/compare/uptime-kuma-vs-oneuptime",
-        "Most teams that grow past Kuma do not want a full observability platform. They want the two or three things Kuma lacks: an account for each teammate, a status page customers can subscribe to, and monitoring settings kept in version control. Uptimepage adds those things and little else, on purpose. It checks every 60 seconds over HTTP, TCP, DNS, TLS, domain, ping, heartbeat and flow. It has organizations with user roles, a Terraform provider, a REST API and an MCP server. Its probes run in several regions, and you can run your own. Its status page is branded, and customers can subscribe by email or webhook. It is one binary. Host it free, or self-host it under AGPL.",
+        "Most teams that grow past Kuma do not want a full observability platform. They want the two or three things Kuma lacks: an account for each teammate, a status page customers can subscribe to, and monitoring settings kept in version control. Uptimepage adds those things and little else, on purpose. It checks HTTP, TCP, DNS, ping and heartbeat as often as every 60 seconds, and TLS, domain and flow on their own schedules. It has organizations with user roles, a Terraform provider, a REST API and an MCP server. Its probes run in several regions, and you can run your own. Its status page is branded, and customers can subscribe by email or webhook. It is one binary. Host it free, or self-host it under AGPL.",
     ),
     (
         "/compare/uptime-kuma-vs-kener",
