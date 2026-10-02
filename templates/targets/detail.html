@@ -37,6 +37,38 @@
   </p>
   {% endif %}
 
+  {% if let Some(m) = manual %}
+  {% let current = m.status.as_str() %}
+  <section class="sticker-card space-y-4 p-5" data-manual-state data-target-id="{{ id }}">
+    <h2 class="panel-label">state</h2>
+    <p class="text-xs text-muted">
+      Nothing probes this monitor: its state is what you set here.
+      <span class="hl">Down or degraded opens an incident</span> and shows on its
+      status pages, and up closes it. Every change is recorded.
+    </p>
+    <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Set state">
+      <button type="button" data-manual-set="up" aria-pressed="{{ current == "up" }}"
+              class="sticker-btn px-3 py-1.5 text-sm font-medium{% if current == "up" %} sticker-btn--primary{% endif %}">up</button>
+      <button type="button" data-manual-set="degraded" aria-pressed="{{ current == "degraded" }}"
+              class="sticker-btn px-3 py-1.5 text-sm font-medium{% if current == "degraded" %} sticker-btn--highlight{% endif %}">degraded</button>
+      <button type="button" data-manual-set="down" aria-pressed="{{ current == "down" }}"
+              class="sticker-btn px-3 py-1.5 text-sm font-medium{% if current == "down" %} sticker-btn--danger{% endif %}">down</button>
+    </div>
+    <label class="field-outline block w-full">
+      <span class="field-outline__label">Note</span>
+      <input data-manual-note type="text" maxlength="200" spellcheck="false" autocomplete="off"
+             placeholder="why, in a line: it becomes the incident's cause"
+             class="w-full field">
+    </label>
+    <p class="text-xs text-muted">
+      {{ current }} since <time datetime="{{ m.set_at|iso_ts }}" data-tz="exact">{{ m.set_at|human_ts }}</time>{% if let Some(who) = manual_set_by %} by {{ who }}{% endif %}{% if let Some(n) = m.note %}: <span class="text-body">{{ n }}</span>{% endif %}.
+      Each press replaces the note with what is typed here, so press the current
+      state to reword it.
+      {% if !enabled %}<span class="hl">Paused:</span> a change is kept and takes effect when you enable the monitor.{% endif %}
+    </p>
+  </section>
+  {% endif %}
+
   {% if let Some(hb) = heartbeat %}
   <section class="sticker-card space-y-4 p-5">
     <h2 class="panel-label">ping url</h2>
@@ -149,8 +181,8 @@
     {% include "targets/partials/detail_live_kpi_cards.html" %}
   </section>
 
-  {# Heartbeat checks carry no latency, so the charts would just draw zero. #}
-  {% if kind != "HEARTBEAT" %}
+  {# Passive checks carry no latency, so the charts would just draw zero. #}
+  {% if kind != "HEARTBEAT" && kind != "MANUAL" %}
   {# A browser journey has no per-phase network timing, so the breakdown would be
      one meaningless band; where its time goes is a per-step question, answered
      below in its own section. #}

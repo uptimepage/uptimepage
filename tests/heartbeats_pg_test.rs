@@ -16,7 +16,7 @@ use uptimepage::domain::{
     CheckSpec, ExpectedStatus, HeartbeatCheck, NewTarget, OrgId, PingSignal, TargetUpdate, UserId,
     WriteSource,
 };
-use uptimepage::scheduler::sources::HeartbeatTargetSource;
+use uptimepage::scheduler::sources::PassiveTargetSource;
 use uptimepage::storage::admin::{AdminRepo, EnabledTargetSource};
 use uptimepage::storage::{
     HeartbeatStore, PgHeartbeatStore, PostgresTargetStore, RestoreOutcome, TargetStore,
@@ -1562,10 +1562,12 @@ async fn a_coarse_stored_interval_is_evaluated_at_the_windows_cadence_live_pg() 
         "the ping carries the window it is judged against"
     );
 
-    let runtime = std::sync::Arc::new(uptimepage::worker::heartbeat::HeartbeatRuntime::default());
-    let source = HeartbeatTargetSource::new(
+    let source = PassiveTargetSource::new(
         AdminRepo::new(pool.clone(), None, "heartbeat_cadence"),
-        runtime,
+        uptimepage::worker::PassiveRuntimes {
+            heartbeat: std::sync::Arc::default(),
+            manual: std::sync::Arc::default(),
+        },
     );
     let handed_out = source
         .list_all_enabled_targets()

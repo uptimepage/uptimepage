@@ -118,6 +118,10 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
             get(handlers::targets::get_heartbeat),
         )
         .route(
+            "/targets/{id}/state",
+            get(handlers::targets::get_manual_state).put(handlers::targets::set_manual_state),
+        )
+        .route(
             "/targets/{id}/heartbeat/rotate",
             axum::routing::post(handlers::targets::rotate_heartbeat),
         )

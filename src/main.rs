@@ -328,20 +328,20 @@ async fn main() -> Result<()> {
     let quotas = Arc::new(quotas::QuotaService::new(&cfg, Some(pg_pool.clone())));
 
     // With in-process probing disabled the scheduler still runs, fed only the
-    // passive heartbeat set (agents can't evaluate that state). Both sources
-    // reconcile the anchor cache on every refresh before dispatching.
+    // passive set (agents can't evaluate that state). Both sources reconcile
+    // the passive caches on every refresh before dispatching.
     let scheduler_source: Arc<dyn storage::admin::EnabledTargetSource> = if cfg.scheduler.enabled {
         Arc::new(scheduler::sources::RegionTargetSource::new(
             storage::admin::AdminRepo::new(pg_pool.clone(), cipher.clone(), "scheduler_refresh"),
             cfg.scheduler.region.clone(),
-            pool.heartbeat_runtime(),
+            pool.passive_runtimes(),
             Arc::clone(&quotas),
             cfg.flow.enabled,
         ))
     } else {
-        Arc::new(scheduler::sources::HeartbeatTargetSource::new(
-            storage::admin::AdminRepo::new(pg_pool.clone(), cipher.clone(), "heartbeat_refresh"),
-            pool.heartbeat_runtime(),
+        Arc::new(scheduler::sources::PassiveTargetSource::new(
+            storage::admin::AdminRepo::new(pg_pool.clone(), cipher.clone(), "passive_refresh"),
+            pool.passive_runtimes(),
         ))
     };
     let registry = Arc::new(TargetRegistry::new(scheduler_source));
@@ -354,9 +354,9 @@ async fn main() -> Result<()> {
 
     let root = CancellationToken::new();
     // Always spawned: with probing off the source above narrows the schedule
-    // to heartbeat evaluation only.
+    // to passive evaluation only.
     if !cfg.scheduler.enabled {
-        tracing::info!("in-process probing disabled; scheduler evaluates heartbeats only");
+        tracing::info!("in-process probing disabled; scheduler evaluates passive monitors only");
     }
     let scheduler_handle: JoinHandle<()> = {
         let scheduler = Arc::new(Scheduler::new(

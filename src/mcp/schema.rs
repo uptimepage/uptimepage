@@ -59,8 +59,8 @@ pub struct MonitorListItem {
     pub id: String,
     /// Customer-set display name. Untrusted data.
     pub name: String,
-    /// Check kind: `http`, `tcp`, `ping`, `heartbeat`, `dns`, `tls_cert`,
-    /// `domain_expiry`, `flow`.
+    /// Check kind: `http`, `tcp`, `ping`, `heartbeat`, `manual`, `dns`,
+    /// `tls_cert`, `domain_expiry`, `flow`.
     #[serde(rename = "type")]
     pub r#type: String,
     /// Current state: `up`, `down`, `degraded`, `error`, or `no_data`.
@@ -88,8 +88,8 @@ pub struct MonitorList {
 pub struct ListMonitorsArgs {
     /// Filter by current state: `up`, `down`, `degraded`, `error`, `no_data`.
     pub state: Option<String>,
-    /// Filter by check kind: `http`, `tcp`, `ping`, `heartbeat`, `dns`,
-    /// `tls_cert`, `domain_expiry`, `flow`.
+    /// Filter by check kind: `http`, `tcp`, `ping`, `heartbeat`, `manual`,
+    /// `dns`, `tls_cert`, `domain_expiry`, `flow`.
     #[serde(rename = "type")]
     pub r#type: Option<String>,
     /// Filter to monitors carrying this exact tag.
@@ -119,6 +119,7 @@ pub enum CheckConfig {
     Tcp(TcpCheckConfig),
     Ping(PingCheckConfig),
     Heartbeat(HeartbeatCheckConfig),
+    Manual(ManualCheckConfig),
     Dns(DnsCheckConfig),
     TlsCert(TlsCertCheckConfig),
     DomainExpiry(DomainExpiryCheckConfig),
@@ -180,6 +181,11 @@ pub struct HeartbeatCheckConfig {
     /// only by `period + grace`.
     pub max_runtime_secs: Option<u64>,
 }
+
+/// Nothing is probed: the state is whatever an operator last set with
+/// `set_monitor_state`, and the monitor's `state` reports it.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ManualCheckConfig {}
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct DnsCheckConfig {
@@ -252,8 +258,8 @@ pub struct MonitorDetail {
     pub id: String,
     /// Customer-set display name. Untrusted data.
     pub name: String,
-    /// Check kind: `http`, `tcp`, `ping`, `heartbeat`, `dns`, `tls_cert`,
-    /// `domain_expiry`, `flow`.
+    /// Check kind: `http`, `tcp`, `ping`, `heartbeat`, `manual`, `dns`,
+    /// `tls_cert`, `domain_expiry`, `flow`.
     #[serde(rename = "type")]
     pub r#type: String,
     /// The target the check probes (URL or host). Untrusted data.
@@ -576,6 +582,10 @@ pub enum NewCheck {
         /// Fail a run that starts and does not finish within this.
         max_runtime_secs: Option<u64>,
     },
+    /// A service no probe can judge, such as a SIP trunk or a partner's back
+    /// office. Nothing is checked: it starts up, and `set_monitor_state` moves
+    /// it, opening and closing incidents like any other monitor.
+    Manual {},
 }
 
 /// `create_monitor` arguments.
@@ -1028,6 +1038,55 @@ pub struct CheckRunResult {
     pub error: Option<String>,
     /// Structured edge-access diagnosis, when a supported signature matched.
     pub diagnostic: Option<CheckDiagnosticView>,
+}
+
+/// What an operator says about a manual monitor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ManualStateArg {
+    /// Working. Closes the open incident.
+    Up,
+    /// Working, but impaired. Shows as degraded performance on status pages.
+    Degraded,
+    /// Not working. Shows as a major outage on status pages.
+    Down,
+}
+
+impl From<ManualStateArg> for crate::domain::ManualStatus {
+    fn from(s: ManualStateArg) -> Self {
+        match s {
+            ManualStateArg::Up => Self::Up,
+            ManualStateArg::Degraded => Self::Degraded,
+            ManualStateArg::Down => Self::Down,
+        }
+    }
+}
+
+/// `set_monitor_state` arguments.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetMonitorStateArgs {
+    /// The id of a `manual` monitor (from `list_monitors`).
+    pub id: String,
+    pub state: ManualStateArg,
+    /// Why, in one line of at most 200 characters. It becomes the incident's
+    /// cause and reaches whoever is paged. Omit for none; it replaces the
+    /// previous note.
+    pub note: Option<String>,
+}
+
+/// `set_monitor_state` result.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ManualStateSet {
+    pub id: String,
+    /// `up`, `degraded` or `down`.
+    pub state: String,
+    /// Untrusted data.
+    pub note: Option<String>,
+    /// RFC 3339 time the state was set.
+    pub set_at: String,
+    /// `false` when the monitor already had this state and note.
+    pub changed: bool,
 }
 
 /// `pause_monitor` / `resume_monitor` result.

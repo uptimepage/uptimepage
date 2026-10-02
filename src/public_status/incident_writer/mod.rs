@@ -80,6 +80,15 @@ pub trait IncidentStore: Send + Sync {
     /// Move `regions` from not-confirmed to confirmed on a still-open incident.
     /// A union, so two writers widening at once both land.
     async fn widen(&self, org: OrgId, incident_id: Uuid, regions: &[String]) -> Result<()>;
+    /// Mark a still-open incident down, with the cause of the failure that
+    /// took it there when there is one. Never lowers it, so two writers
+    /// escalating at once both land.
+    async fn escalate(
+        &self,
+        org: OrgId,
+        incident_id: Uuid,
+        error_sample: Option<String>,
+    ) -> Result<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +100,8 @@ pub struct OpenIncident {
     pub region: Option<String>,
     /// Regions that have confirmed the failure so far.
     pub regions_down: Vec<String>,
+    /// The worst status the outage has reached, kept in `status_at_start`.
+    pub worst_status: CheckStatus,
 }
 
 #[derive(Debug, Clone)]
@@ -389,6 +400,14 @@ impl IncidentWriter {
                 } => {
                     self.incident_store
                         .widen(org, incident_id, &regions)
+                        .await?;
+                }
+                Action::Escalate {
+                    incident_id,
+                    error_sample,
+                } => {
+                    self.incident_store
+                        .escalate(org, incident_id, error_sample)
                         .await?;
                 }
             }

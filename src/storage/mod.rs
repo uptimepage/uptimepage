@@ -18,6 +18,7 @@ pub mod incidents;
 pub mod linked_apps;
 pub mod locks;
 pub mod maintenance;
+pub mod manual;
 pub mod memory;
 pub mod monitor_shares;
 pub mod notification_channels;
@@ -78,6 +79,7 @@ pub use maintenance::suppressing_window_sql;
 pub use maintenance::{
     InMemoryMaintenanceStore, MaintenanceListQuery, MaintenanceStore, PgMaintenanceStore,
 };
+pub use manual::{InMemoryManualStore, ManualChange, ManualStore, PgManualStore};
 pub use memory::{InMemorySink, InMemoryTargetStore};
 pub use monitor_shares::{
     CreateShareOutcome, InMemoryMonitorShareStore, MonitorShareStore, PgMonitorShareStore,

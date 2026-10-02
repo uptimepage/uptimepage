@@ -5,6 +5,7 @@ pub mod flow;
 pub mod heartbeat;
 pub mod host_throttle;
 pub mod http_check;
+pub mod manual;
 pub mod ping;
 pub mod pool;
 pub mod rdap;
@@ -18,6 +19,8 @@ pub mod whois;
 pub use http_check::execute_http_check;
 pub(crate) use http_check::{HttpProbe, execute_http_check_probe};
 pub use pool::{CheckTask, ResultFanout, WorkerPool, host_for_spec};
+
+use std::sync::Arc;
 
 use uuid::Uuid;
 
@@ -37,6 +40,45 @@ pub struct WorkerDeps<'a> {
     pub flow: Option<&'a crate::worker::flow::engine::CdpEngine>,
 }
 
+/// Shorter than the sink's own retry budget, so a wedged store sheds these
+/// rather than accumulating a task per signal that changed a verdict.
+const PASSIVE_RESULT_WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Writes a passive verdict the moment it changes instead of at the next tick.
+/// Detached: the sink retries a degraded ClickHouse for up to 30s, and the
+/// caller is holding a request open. The scheduler restates the verdict on its
+/// own tick if this never lands.
+pub(crate) fn spawn_passive_results(
+    sink: Arc<dyn crate::storage::ResultSink>,
+    results: Vec<CheckResult>,
+) {
+    if results.is_empty() {
+        return;
+    }
+    tokio::spawn(async move {
+        let write = sink.write_batch(&results);
+        let outcome = match tokio::time::timeout(PASSIVE_RESULT_WRITE_TIMEOUT, write).await {
+            Ok(Ok(())) => return,
+            Ok(Err(err)) => err.to_string(),
+            Err(_) => "timed out".to_string(),
+        };
+        tracing::warn!(
+            target_id = %results[0].target_id,
+            count = results.len(),
+            error = %outcome,
+            "passive results not written; the scheduler reports on its own tick"
+        );
+    });
+}
+
+/// The control-plane state the passive kinds are judged from, shared by the
+/// pool that evaluates them and the paths that change them.
+#[derive(Clone)]
+pub struct PassiveRuntimes {
+    pub heartbeat: Arc<heartbeat::HeartbeatRuntime>,
+    pub manual: Arc<manual::ManualRuntime>,
+}
+
 pub async fn execute(
     target_id: Uuid,
     org_id: Uuid,
@@ -50,12 +92,12 @@ pub async fn execute(
         }
         CheckSpec::Ping(p) => ping::execute_ping_check(target_id, org_id, p, deps.http).await,
         // Evaluated on the WorkerPool's passive fast path; the WorkerDeps
-        // paths (agents, ad-hoc) have no ping state and reject the kind
+        // paths (agents, ad-hoc) hold no passive state and reject the kinds
         // upstream.
-        CheckSpec::Heartbeat(_) => CheckResult::error(
+        CheckSpec::Heartbeat(_) | CheckSpec::Manual(_) => CheckResult::error(
             target_id,
             org_id,
-            "heartbeat monitors are evaluated on the control plane, not probed",
+            "passive monitors are evaluated on the control plane, not probed",
         ),
         CheckSpec::TlsCert(cert) => {
             tls_cert::execute_tls_cert_check(target_id, org_id, cert, deps.http).await

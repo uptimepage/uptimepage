@@ -11,6 +11,7 @@ pub mod interpolate;
 pub mod linked_app;
 pub mod mailbox;
 pub mod maintenance;
+pub mod manual;
 pub mod membership;
 pub mod metrics;
 pub mod monitor_share;
@@ -38,9 +39,9 @@ pub mod write_source;
 pub use alert::{AlertBinding, TargetAlerts};
 pub use check::{
     CheckSpec, DnsCheck, DnsRecordType, DomainExpiryCheck, ExpectedStatus, FlowCheck, FlowStep,
-    HeartbeatCheck, HttpCheck, HttpMethod, IntervalHints, MAX_CHECK_TIMEOUT, PingCheck, TcpCheck,
-    TlsCertCheck, interval_hints_for_kind, is_monitorable, min_interval_secs_for_kind,
-    publishes_no_expiry, reduced_domain_hint, registered_domain,
+    HeartbeatCheck, HttpCheck, HttpMethod, IntervalHints, MAX_CHECK_TIMEOUT, ManualCheck,
+    PingCheck, TcpCheck, TlsCertCheck, interval_hints_for_kind, is_monitorable,
+    min_interval_secs_for_kind, publishes_no_expiry, reduced_domain_hint, registered_domain,
 };
 pub use check_error::{ErrorClass, ErrorFamily, classify_check_error, humanize_check_error};
 pub use credential::{CredentialAction, CredentialOrigin, LinkedIdentity, OauthProvider, WaysIn};
@@ -64,6 +65,7 @@ pub use maintenance::{
     MaintenanceFilter, MaintenanceWindow, MaintenanceWindowUpdate, NewMaintenanceWindow,
     WindowPhase,
 };
+pub use manual::{MAX_MANUAL_NOTE_CHARS, ManualState, ManualStatus};
 pub use membership::{Membership, Role};
 pub use monitor_share::{
     CreatedShare, MonitorShare, MonitorShareId, NewMonitorShare, ResolvedShare, SharePageUse,

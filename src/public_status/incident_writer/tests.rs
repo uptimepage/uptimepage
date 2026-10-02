@@ -310,6 +310,7 @@ fn the_breakdown_only_grows_while_open() {
         region: None,
         regions_down: vec!["fra".into(), "us".into()],
         started_at: ts(base, 0),
+        worst_status: CheckStatus::Down,
     };
     let down = |offsets: &[i64]| -> Vec<CheckResult> {
         offsets
@@ -378,6 +379,7 @@ fn decide_two_good_closes_open_incident() {
         region: None,
         regions_down: Vec::new(),
         started_at: ts(base, 0),
+        worst_status: CheckStatus::Down,
     };
     let results = vec![
         result(target, ts(base, 30), CheckStatus::Down),
@@ -406,6 +408,7 @@ fn decide_single_good_does_not_close_open_incident() {
         region: None,
         regions_down: Vec::new(),
         started_at: ts(base, 0),
+        worst_status: CheckStatus::Down,
     };
     let results = vec![
         result(target, ts(base, 30), CheckStatus::Down),
@@ -425,6 +428,7 @@ fn decide_recovery_run_before_incident_does_not_close() {
         region: None,
         regions_down: Vec::new(),
         started_at: ts(base, 1_000),
+        worst_status: CheckStatus::Down,
     };
     let results = vec![
         result(target, ts(base, 0), CheckStatus::Up),
@@ -449,6 +453,7 @@ fn decide_isolated_good_blip_does_not_close_then_reopen() {
         region: None,
         regions_down: Vec::new(),
         started_at: ts(base, 0),
+        worst_status: CheckStatus::Down,
     };
     let results = vec![
         result(target, ts(base, 30), CheckStatus::Down),
@@ -490,6 +495,7 @@ fn decide_degraded_run_does_not_close_open_incident() {
         region: None,
         regions_down: Vec::new(),
         started_at: ts(base, 0),
+        worst_status: CheckStatus::Down,
     };
     let results = vec![
         result(target, ts(base, 30), CheckStatus::Error),
@@ -550,6 +556,7 @@ fn decide_trailing_degraded_does_not_close() {
         region: None,
         regions_down: Vec::new(),
         started_at: ts(base, 0),
+        worst_status: CheckStatus::Down,
     };
     let results = vec![
         result(target, ts(base, 30), CheckStatus::Down),
@@ -579,6 +586,7 @@ fn decide_running_twice_with_same_data_is_idempotent_for_open() {
         region: None,
         regions_down: Vec::new(),
         started_at: ts(base, 0),
+        worst_status: CheckStatus::Down,
     };
     // Same input, but now we know about the open incident; trailing 'up'
     // run length is 0, so nothing happens.
@@ -634,6 +642,7 @@ fn any_down_stays_open_while_one_region_still_bad() {
         started_at: ts(b, 0),
         region: None,
         regions_down: vec!["eu".into()],
+        worst_status: CheckStatus::Down,
     };
     let by_region = vec![
         (
@@ -673,6 +682,7 @@ fn any_down_closes_when_all_regions_recovered() {
         started_at: ts(b, 0),
         region: None,
         regions_down: Vec::new(),
+        worst_status: CheckStatus::Down,
     };
     let by_region = vec![
         (
@@ -769,6 +779,7 @@ fn quorum_closes_when_back_below_threshold() {
         started_at: ts(b, 0),
         region: None,
         regions_down: Vec::new(),
+        worst_status: CheckStatus::Down,
     };
     let by_region = vec![
         (
@@ -1366,4 +1377,231 @@ async fn shutdown_cancels_run_loop() {
         .await
         .expect("run did not exit within deadline")
         .expect("join");
+}
+
+// ── escalation and manual monitors ──────────────────────────────────────
+
+fn open_at(target_id: Uuid, started_at: DateTime<Utc>, worst: CheckStatus) -> OpenIncident {
+    OpenIncident {
+        id: Uuid::now_v7(),
+        target_id,
+        started_at,
+        region: None,
+        regions_down: Vec::new(),
+        worst_status: worst,
+    }
+}
+
+/// A degraded outage that turns hard down raises the incident, so the status
+/// page stops calling a major outage degraded performance.
+#[test]
+fn a_worse_confirmed_status_escalates_the_open_incident() {
+    let base = Utc.with_ymd_and_hms(2026, 5, 13, 12, 0, 0).unwrap();
+    let t = Uuid::now_v7();
+    let open = open_at(t, ts(base, 0), CheckStatus::Degraded);
+    let mut down = result(t, ts(base, 60), CheckStatus::Down);
+    down.error = Some("marked down: all trunks down".into());
+    let by_region = vec![(
+        String::new(),
+        vec![result(t, ts(base, 0), CheckStatus::Degraded), down],
+    )];
+    assert_eq!(
+        decide_multi(t, std::slice::from_ref(&open), &by_region, 1, 1),
+        vec![Action::Escalate {
+            incident_id: open.id,
+            error_sample: Some("marked down: all trunks down".into()),
+        }]
+    );
+}
+
+/// A diagnosed failure escalates with the diagnosis, not the bare status line,
+/// the same cause an incident opening on it would carry.
+#[test]
+fn an_escalation_keeps_the_diagnosed_cause() {
+    let base = Utc.with_ymd_and_hms(2026, 5, 13, 12, 0, 0).unwrap();
+    let t = Uuid::now_v7();
+    let open = open_at(t, ts(base, 0), CheckStatus::Degraded);
+    let by_region = vec![(
+        String::new(),
+        vec![
+            result(t, ts(base, 0), CheckStatus::Degraded),
+            tunnel_down(t, ts(base, 60)),
+        ],
+    )];
+    let opening = match decide_multi(t, &[], &by_region, 1, 1).as_slice() {
+        [Action::Open(new)] => new.error_sample.clone(),
+        other => panic!("expected Open, got {other:?}"),
+    };
+    match decide_multi(t, std::slice::from_ref(&open), &by_region, 1, 1).as_slice() {
+        [Action::Escalate { error_sample, .. }] => {
+            assert_eq!(*error_sample, opening);
+            assert_ne!(error_sample.as_deref(), Some("unexpected status 530"));
+        }
+        other => panic!("expected Escalate, got {other:?}"),
+    }
+}
+
+#[test]
+fn escalation_diagnostics_require_quorum_and_keep_region_agreement() {
+    let base = Utc.with_ymd_and_hms(2026, 5, 13, 12, 0, 0).unwrap();
+    let target = Uuid::now_v7();
+    let regions = ["eu-helsinki", "us-east", "apac-sg"];
+    let mut open = open_at(target, base, CheckStatus::Degraded);
+    open.regions_down = regions.iter().map(|region| region.to_string()).collect();
+
+    for diagnosed_regions in 1..=3 {
+        let by_region: Vec<_> = regions
+            .iter()
+            .enumerate()
+            .map(|(index, region)| {
+                let mut down = tunnel_down(target, ts(base, 60));
+                if index >= diagnosed_regions {
+                    down.diagnostic = None;
+                }
+                (
+                    region.to_string(),
+                    vec![result(target, base, CheckStatus::Degraded), down],
+                )
+            })
+            .collect();
+        let opening = match decide_multi(target, &[], &by_region, 2, 2).as_slice() {
+            [Action::Open(new)] => new.error_sample.clone(),
+            other => panic!("expected Open, got {other:?}"),
+        };
+        match decide_multi(target, std::slice::from_ref(&open), &by_region, 2, 2).as_slice() {
+            [
+                Action::Escalate {
+                    incident_id,
+                    error_sample,
+                },
+            ] => {
+                assert_eq!(*incident_id, open.id);
+                assert_eq!(*error_sample, opening);
+                let sample = error_sample.as_deref().expect("escalation cause");
+                if diagnosed_regions >= 2 {
+                    assert!(sample.contains("origin tunnel down behind the Cloudflare edge"));
+                    assert!(sample.contains("restart the tunnel daemon"));
+                    assert!(
+                        sample.contains(&format!("{diagnosed_regions}/3 reporting regions agree"))
+                    );
+                } else {
+                    assert_eq!(sample, "unexpected status 530");
+                }
+            }
+            other => panic!("expected Escalate, got {other:?}"),
+        }
+    }
+}
+
+/// An error is as often our probe as the service, so it never turns a
+/// degraded incident into an outage.
+#[test]
+fn an_error_does_not_escalate_a_degraded_incident() {
+    let base = Utc.with_ymd_and_hms(2026, 5, 13, 12, 0, 0).unwrap();
+    let t = Uuid::now_v7();
+    let open = open_at(t, ts(base, 0), CheckStatus::Degraded);
+    let by_region = vec![(
+        String::new(),
+        vec![
+            result(t, ts(base, 0), CheckStatus::Degraded),
+            result(t, ts(base, 60), CheckStatus::Error),
+        ],
+    )];
+    assert!(decide_multi(t, std::slice::from_ref(&open), &by_region, 1, 1).is_empty());
+}
+
+/// The cause is the newest failure's, so a second set landing before the
+/// writer's tick is the one the incident opens with.
+#[test]
+fn an_incident_opens_with_the_newest_cause() {
+    let base = Utc.with_ymd_and_hms(2026, 5, 13, 12, 0, 0).unwrap();
+    let t = Uuid::now_v7();
+    let mut first = result(t, ts(base, 0), CheckStatus::Degraded);
+    first.error = Some("marked degraded: one trunk of two".into());
+    let mut second = result(t, ts(base, 10), CheckStatus::Down);
+    second.error = Some("marked down: all trunks down".into());
+    match decide_multi(t, &[], &[(String::new(), vec![first, second])], 1, 1).as_slice() {
+        [Action::Open(new)] => {
+            assert_eq!(new.status_at_start, CheckStatus::Down);
+            assert_eq!(
+                new.error_sample.as_deref(),
+                Some("marked down: all trunks down")
+            );
+        }
+        other => panic!("expected Open, got {other:?}"),
+    }
+}
+
+/// The row keeps the worst the outage was: an improvement is the close's
+/// business, and an equal status writes nothing.
+#[test]
+fn escalation_never_lowers_and_never_repeats() {
+    let base = Utc.with_ymd_and_hms(2026, 5, 13, 12, 0, 0).unwrap();
+    let t = Uuid::now_v7();
+    let open = open_at(t, ts(base, 0), CheckStatus::Down);
+    let by_region = vec![(
+        String::new(),
+        vec![
+            result(t, ts(base, 0), CheckStatus::Down),
+            result(t, ts(base, 60), CheckStatus::Degraded),
+        ],
+    )];
+    assert!(decide_multi(t, std::slice::from_ref(&open), &by_region, 1, 1).is_empty());
+}
+
+/// As create stores it: the operator's set is the confirmation.
+fn make_manual_target(name: &str) -> Target {
+    Target {
+        check: CheckSpec::Manual(crate::domain::ManualCheck {}),
+        interval: StdDuration::from_secs(60),
+        alert_confirmations: 1,
+        ..make_public_target(name)
+    }
+}
+
+#[tokio::test]
+async fn a_manual_monitor_opens_on_its_first_bad_result() {
+    let target = make_manual_target("sip trunks");
+    let target_id = target.id;
+    let now = Utc::now();
+    let targets = Arc::new(InMemoryTargetStore::from_vec(vec![target]));
+    let sink = Arc::new(InMemorySink::new());
+    let incidents = Arc::new(InMemoryIncidentStore::new());
+    seed_results(
+        &sink,
+        vec![result(
+            target_id,
+            now - ChronoDuration::seconds(5),
+            CheckStatus::Degraded,
+        )],
+    )
+    .await;
+    let w = writer(targets, sink.clone(), incidents.clone());
+    w.tick_once().await.expect("tick");
+    assert_eq!(incidents.insert_count(), 1);
+    assert_eq!(
+        incidents.all_for(target_id)[0].status_at_start,
+        CheckStatus::Degraded
+    );
+
+    seed_results(
+        &sink,
+        vec![result(
+            target_id,
+            now - ChronoDuration::seconds(2),
+            CheckStatus::Down,
+        )],
+    )
+    .await;
+    w.tick_once().await.expect("tick");
+    assert_eq!(incidents.insert_count(), 1, "still the same outage");
+    assert_eq!(
+        incidents.all_for(target_id)[0].status_at_start,
+        CheckStatus::Down,
+        "raised from degraded"
+    );
+
+    seed_results(&sink, vec![result(target_id, now, CheckStatus::Up)]).await;
+    w.tick_once().await.expect("tick");
+    assert_eq!(incidents.close_count(), 1, "one up closes it");
 }

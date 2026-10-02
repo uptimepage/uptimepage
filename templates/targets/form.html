@@ -11,6 +11,7 @@
         data-min-interval="{{ form.min_interval_s }}"
         data-interval="{{ form.interval_s }}"
         data-kind-floors="{{ form.kind_floors_json() }}"
+        data-passive-kinds="{{ form.passive_kinds_json() }}"
         data-kind-intervals="{{ form.kind_intervals_json() }}"
         {% if form.interval_pinned %}data-interval-touched="1"{% endif %}
         novalidate
@@ -316,6 +317,17 @@
       </div>
     </fieldset>
 
+    <fieldset data-variant="manual"
+              class="{% if form.check_type != "manual" %}hidden{% endif %}">
+      <legend class="float-left mb-3 w-full"><span class="form-legend">manual check</span></legend>
+      <p class="clear-both text-xs text-muted">
+        For a service nothing can probe: a SIP trunk, a carrier link, a
+        partner's back office. It starts up, and <span class="hl">you set its
+        state on the monitor page</span>. Down or degraded opens an incident and
+        shows on its status pages like any other monitor, and up closes it.
+      </p>
+    </fieldset>
+
     <fieldset data-variant="dns"
               class="{% if form.check_type != "dns" %}hidden{% endif %}">
       <legend class="float-left mb-3 w-full"><span class="form-legend">dns check</span></legend>
@@ -540,7 +552,7 @@
     </div>
 
     <div class="space-y-6 border-t border-[color:var(--theme-line)] pt-6">
-    <fieldset data-schedule-section{% if form.check_type == "heartbeat" %} hidden{% endif %}>
+    <fieldset data-schedule-section{% if form.passive() %} hidden{% endif %}>
       <legend class="float-left mb-3 w-full"><span class="form-legend">schedule</span></legend>
       <div class="clear-both">
         <span class="mb-1.5 block text-xs text-muted">Check every</span>
@@ -653,7 +665,7 @@
         <div class="space-y-3">
           <span class="flag-label block">detection</span>
           <div class="grid items-start gap-x-4 gap-y-5 sm:grid-cols-2">
-          <div{% if !form.show_regions %} class="sm:col-span-2"{% endif %}>
+          <div data-confirmations{% if !form.show_regions %} class="sm:col-span-2"{% endif %}{% if form.check_type == "manual" %} hidden{% endif %}>
             <span class="mb-1.5 block text-xs text-muted">Open incident after</span>
             <div class="sm-rail sm-rail--wide" role="radiogroup" aria-label="Open incident after">
               {% for o in form.confirmation_options() %}
@@ -806,7 +818,7 @@
           {% if form.mode == "create" %}create{% else %}save changes{% endif %}
         </button>
         <button type="button" data-test-now title="Runs the check once without saving"
-                {% if form.check_type == "heartbeat" %}hidden{% endif %}
+                {% if form.passive() %}hidden{% endif %}
                 class="sticker-btn sticker-btn--accent px-4 py-2 text-sm font-medium inline-flex items-center justify-center gap-1.5">
           <span aria-hidden="true">▶</span> test now
         </button>

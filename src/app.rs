@@ -135,6 +135,11 @@ pub struct AppState {
     /// In-memory heartbeat anchors + ping rate state, taken from the worker
     /// pool's executor so the two can never diverge.
     pub heartbeat_runtime: Arc<crate::worker::heartbeat::HeartbeatRuntime>,
+    /// Manual monitor states. Built from `db` so `AppState::new`'s signature
+    /// stays unchanged.
+    pub manual_store: Arc<dyn crate::storage::ManualStore>,
+    /// Taken from the worker pool so a set reaches the evaluator on this node.
+    pub manual_runtime: Arc<crate::worker::manual::ManualRuntime>,
     /// Reusable org variables + the secret credential store. Secret values are
     /// sealed with the KEK and resolved into monitor request fields worker-side.
     /// Built from `db` so `AppState::new`'s signature stays unchanged.
@@ -259,6 +264,15 @@ impl AppState {
         }
     }
 
+    pub fn manual_ops(&self) -> crate::targets::ManualOps<'_> {
+        crate::targets::ManualOps {
+            targets: self.target_store.as_ref(),
+            store: self.manual_store.as_ref(),
+            runtime: &self.manual_runtime,
+            results: &self.result_sink,
+        }
+    }
+
     pub fn target_ops(&self) -> TargetOps<'_> {
         TargetOps {
             targets: self.target_store.as_ref(),
@@ -269,6 +283,7 @@ impl AppState {
             abuse: &self.abuse,
             ad_hoc: &self.ad_hoc,
             flow_runs: self.flow_run_sink.as_deref(),
+            results: &self.result_sink,
             cfg: &self.cfg,
             db: self.db.as_ref(),
         }
@@ -398,6 +413,11 @@ impl AppState {
             None => Arc::new(crate::storage::InMemoryHeartbeatStore::new()),
         };
         let heartbeat_runtime = worker_pool.heartbeat_runtime();
+        let manual_store: Arc<dyn crate::storage::ManualStore> = match db.clone() {
+            Some(pool) => Arc::new(crate::storage::PgManualStore::new(pool)),
+            None => Arc::new(crate::storage::InMemoryManualStore::new()),
+        };
+        let manual_runtime = worker_pool.manual_runtime();
         let variable_store: Arc<dyn crate::storage::VariableStore> = match db.clone() {
             Some(pool) => Arc::new(crate::storage::PgVariableStore::new(pool, cipher.clone())),
             None => Arc::new(crate::storage::InMemoryVariableStore::new()),
@@ -468,6 +488,8 @@ impl AppState {
             monitor_share_store,
             heartbeat_store,
             heartbeat_runtime,
+            manual_store,
+            manual_runtime,
             variable_store,
             channel_link_code_store,
             telegram_send_budget: Arc::new(crate::telegram::TelegramSendBudget::new()),

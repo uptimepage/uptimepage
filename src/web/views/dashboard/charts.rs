@@ -18,6 +18,7 @@ pub(super) const TYPE_CHIP_ORDER: &[&str] = &[
     "TCP",
     "PING",
     "HEARTBEAT",
+    "MANUAL",
     "DNS",
     "TLS",
     "DOMAIN",

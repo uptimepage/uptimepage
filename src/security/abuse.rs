@@ -233,6 +233,7 @@ impl AbuseGuard {
             CheckSpec::Tcp(_)
             | CheckSpec::Ping(_)
             | CheckSpec::Heartbeat(_)
+            | CheckSpec::Manual(_)
             | CheckSpec::TlsCert(_)
             | CheckSpec::DomainExpiry(_)
             | CheckSpec::Dns(_) => None,

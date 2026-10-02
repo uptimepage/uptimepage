@@ -97,6 +97,7 @@ pub(super) fn form_from_target(t: Target, kind: FormKind) -> Result<FormModel, A
             };
             "heartbeat"
         }
+        CheckSpec::Manual(_) => "manual",
         CheckSpec::Dns(d) => {
             dns = DnsFields {
                 domain: d.domain,

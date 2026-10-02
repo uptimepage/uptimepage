@@ -1,6 +1,6 @@
 # Monitor types
 
-Eight kinds of check, each answering a different question. Picking the right one matters more than tuning it afterwards: a monitor that watches the wrong layer either misses the outage or pages you for something that was never broken.
+Eight kinds of check, each answering a different question, plus a manual monitor for what no check can judge. Picking the right one matters more than tuning it afterwards: a monitor that watches the wrong layer either misses the outage or pages you for something that was never broken.
 
 The exact payload for each is in [REST API](api.md#check-specs). This page is about which to reach for.
 
@@ -16,6 +16,7 @@ The exact payload for each is in [REST API](api.md#check-specs). This page is ab
 | Is my domain about to expire | Domain expiry |
 | Does this hostname still resolve where it should | DNS |
 | Can a real user still log in | Flow |
+| Is a service up that only people can judge | Manual |
 
 Most orgs run mostly HTTP monitors, one TLS and one domain-expiry per property, a heartbeat per scheduled job, and a flow for the login path that would cost them the most.
 
@@ -100,6 +101,24 @@ Heartbeats never run on regional probes, and test and check-now do not apply to 
 The URL is a bearer credential. Anyone holding it can mark the job healthy, which also means anyone holding it can keep a real outage invisible. It spreads by design, pasted into crontabs, CI config and runbooks, so when it leaks, or when someone who knew it leaves, rotate it from the monitor page or with `POST /api/v1/targets/{id}/heartbeat/rotate`. The monitor keeps its incidents, history, share links and status-page placement, and rotation does not restart the silence clock.
 
 By default the old URL keeps working for 24 hours, because a URL that dies instantly does not alert: the job just goes quiet and pages you a full period plus grace later, long after you have moved on. Roll the new URL out, watch the monitor page say when the old one was last used, and end the overlap early once it goes quiet. If the URL actually leaked, do not wait the window out. Rotate, then end the overlap straight away from the same card, or pass `revoke_previous_immediately` to the API to skip it entirely. Either way a job still carrying the old URL reads as down until you update it.
+
+## Manual
+
+No check at all. Its state is whatever someone last set: up, degraded or down.
+
+Some services fail in ways only the people running them can judge. A SIP trunk, a carrier interconnect or a partner's back office has nothing to probe, yet it belongs on the status page next to everything else. A manual monitor puts it there. It starts up, and you set its state from the monitor page, with `PUT /api/v1/targets/{id}/state`, or through the MCP `set_monitor_state` tool:
+
+```bash
+curl -X PUT "$BASE/api/v1/targets/$ID/state" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"status": "down", "note": "carrier reports a trunk outage"}'
+```
+
+From there it behaves like any other monitor. Down or degraded opens an incident within about 30 seconds and pages the channels bound to it, unless a maintenance window holds paging. Its status pages show a major outage or degraded performance, and up closes the incident. There is no confirmation count to wait out, because the person who set the state already confirmed it. Moving from degraded to down raises the open incident rather than opening a second one. The time it spends down counts against uptime like any other monitor's.
+
+The optional note, one line of at most 200 characters, becomes the incident's cause, so write it for whoever gets paged. Each set replaces the previous note, and while an incident is open a new note replaces its cause too. The monitor's page shows when the current state was set and which member set it, every change is recorded with who made it, and setting the state a monitor already has changes nothing.
+
+A paused manual monitor keeps a state you set and reports it once you enable it again. Test and check-now do not apply, and it never runs on regional probes.
 
 ## TLS certificate
 
@@ -250,6 +269,7 @@ Every kind has a floor, and your plan sets its own on top. The effective minimum
 | HTTP, TCP, Ping | 10 seconds | 60 seconds |
 | DNS | 10 seconds | 5 minutes |
 | Heartbeat | 60 seconds (evaluation cadence, at most a tenth of period + grace, capped at 5 minutes) | n/a, you set period and grace |
+| Manual | 60 seconds, fixed (it restates its state; a change takes effect at once) | n/a |
 | Flow | 5 minutes | 15 minutes |
 | TLS certificate | 1 hour | 12 hours |
 | Domain expiry | 12 hours | 24 hours |

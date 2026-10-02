@@ -52,12 +52,13 @@ use load::{active_incidents, build_snapshot, load_snapshot};
 pub(crate) const RANGE_KEYS: [&str; 4] = ["24h", "7d", "30d", "90d"];
 pub(crate) const DEFAULT_RANGE: &str = "24h";
 pub(crate) const STATUS_FILTERS: [&str; 5] = ["any", "up", "degraded", "down", "paused"];
-pub(crate) const TYPE_FILTERS: [&str; 9] = [
+pub(crate) const TYPE_FILTERS: [&str; 10] = [
     "any",
     "http",
     "tcp",
     "ping",
     "heartbeat",
+    "manual",
     "dns",
     "tls",
     "domain",

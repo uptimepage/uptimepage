@@ -2300,3 +2300,16 @@ fn a_past_end_is_refused_rather_than_quietly_becoming_now() {
     let err = build_window_patch(&args, &running, &monitor_names(), Utc::now()).unwrap_err();
     assert!(err.message.contains("end_now"), "{}", err.message);
 }
+
+/// The prompt is the safety gate, so it says what a set actually does.
+#[test]
+fn the_manual_prompt_states_the_real_effect() {
+    use super::monitors::manual_set_effect as effect;
+    use crate::domain::ManualStatus::{Degraded, Down, Up};
+    assert!(effect(true, Up, Down).contains("opens an incident"));
+    assert!(effect(true, Degraded, Down).contains("becomes an outage"));
+    assert!(effect(true, Down, Degraded).contains("stays an outage"));
+    assert!(effect(true, Down, Down).contains("note becomes the cause"));
+    assert!(effect(true, Down, Up).contains("closes"));
+    assert!(effect(false, Up, Down).contains("paused"));
+}

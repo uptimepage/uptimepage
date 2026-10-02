@@ -154,6 +154,8 @@ fn sample_page() -> DetailPage {
         selected_region: None,
         region_breakdown: Vec::new(),
         heartbeat: None,
+        manual: None,
+        manual_set_by: None,
     }
 }
 
@@ -168,6 +170,32 @@ fn a_never_pinged_heartbeat_reads_waiting_not_down() {
     assert!(
         !html.contains(">down<") && !html.contains("checking\u{2026}"),
         "an unwired job is neither down nor being checked"
+    );
+}
+
+#[test]
+fn a_manual_card_names_who_set_the_state() {
+    let mut p = sample_page();
+    p.kind = "MANUAL";
+    p.manual = Some(crate::domain::ManualState {
+        status: crate::domain::ManualStatus::Degraded,
+        note: Some("one trunk of two".into()),
+        set_at: chrono::Utc::now(),
+        set_by: Some(crate::domain::UserId(Uuid::from_u128(7))),
+    });
+    p.manual_set_by = Some("oksana@example.com".into());
+    let html = p.render().unwrap();
+    assert!(
+        html.contains("</time> by oksana@example.com: <span"),
+        "{html}"
+    );
+    assert!(html.contains("sticker-btn--highlight\">degraded<"));
+
+    p.manual_set_by = None;
+    let html = p.render().unwrap();
+    assert!(
+        !html.contains("</time> by "),
+        "a former member is not named"
     );
 }
 

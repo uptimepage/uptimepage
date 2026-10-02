@@ -177,6 +177,11 @@ pub struct DetailPage {
     pub liveness: Option<HeartbeatLiveness>,
     /// The notice renders in place here, not as an OOB swap.
     pub liveness_oob: bool,
+    /// State card for manual monitors; `None` for every other kind.
+    pub manual: Option<crate::domain::ManualState>,
+    /// The member who set it, by email; `None` when nobody has, they left, or
+    /// the lookup failed.
+    pub manual_set_by: Option<String>,
     /// Stored runs, newest first. Empty for every kind but flow, which is what
     /// keeps the panel and its query off the other seven.
     pub flow_runs: Vec<FlowRunRow>,
@@ -311,6 +316,23 @@ pub async fn index(
         .ok(),
         None => None,
     };
+    let manual = match target.check {
+        CheckSpec::Manual(_) => state
+            .manual_ops()
+            .current(org, &target)
+            .await
+            .map_err(|err| tracing::warn!(error = %err, "manual state card unavailable"))
+            .ok(),
+        _ => None,
+    };
+    let manual_set_by = match manual.as_ref().and_then(|m| m.set_by) {
+        Some(user) => crate::web::views::incidents::members_map(&state, org)
+            .await
+            .map_err(|err| tracing::warn!(error = %err, "manual setter unavailable"))
+            .ok()
+            .and_then(|mut members| members.remove(&user)),
+        None => None,
+    };
     // Only counted when the damper is on, so the banner never promises a hold
     // that is not happening.
     let flap_cfg = &state.cfg.escalation;
@@ -391,6 +413,8 @@ pub async fn index(
         liveness,
         liveness_oob: false,
         heartbeat,
+        manual,
+        manual_set_by,
         flow_runs,
     })
 }

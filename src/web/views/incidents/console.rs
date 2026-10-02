@@ -193,6 +193,7 @@ pub(super) fn kind_label(kind: &str) -> &'static str {
         "tcp" => "tcp",
         "ping" => "ping",
         "heartbeat" => "heartbeat",
+        "manual" => "manual",
         "dns" => "dns",
         "tls_cert" => "tls",
         "domain_expiry" => "domain",

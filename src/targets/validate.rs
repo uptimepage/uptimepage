@@ -6,6 +6,7 @@ use url::Host;
 
 use crate::config::AppConfig;
 use crate::domain::REDACTED;
+use crate::domain::check::MANUAL_EVALUATION_SECS;
 use crate::domain::{
     CheckSpec, NewTarget, RegionIncidentPolicy, TargetAlerts, min_interval_secs_for_kind,
 };
@@ -19,13 +20,28 @@ const ALLOWED_SCHEMES: &[&str] = &["http", "https"];
 /// Interactive probing (test-now / check-now) is meaningless for a passive
 /// check, since there is nothing to reach out to.
 pub(crate) fn reject_passive_probe(check: &CheckSpec) -> Result<()> {
-    if check.is_passive() {
+    if let Some(reason) = check.passive_reason() {
         return Err(AppError::bad_request(
             codes::HEARTBEAT_NOT_PROBEABLE,
-            "heartbeat monitors receive pings from your systems; there is nothing to probe",
+            format!("{reason}; there is nothing to probe"),
         ));
     }
     Ok(())
+}
+
+/// Passive kinds are not probed from regions, so naming any is a mistake.
+pub(crate) fn reject_passive_regions(check: &CheckSpec) -> Result<()> {
+    match check.passive_reason() {
+        Some(reason) => Err(passive_regions_error(reason)),
+        None => Ok(()),
+    }
+}
+
+pub(crate) fn passive_regions_error(reason: &str) -> AppError {
+    AppError::unprocessable(
+        codes::REGION_INVALID,
+        format!("{reason}; they are not probed from regions"),
+    )
 }
 
 /// Apply the plan's flow limits: whether the kind is available at all, and how
@@ -155,9 +171,33 @@ pub(crate) fn validate_new_target(
     guard: &SsrfGuard,
     plan: &crate::domain::quota::Plan,
 ) -> Result<()> {
+    // Neither is the operator's to tune on a manual monitor: the state is
+    // restated at a fixed cadence that no plan governs, and a set is itself the
+    // confirmation. A body always names its interval, so another one is refused
+    // as an edit would be; the count has a default no body can opt out of, so
+    // it is stored as run.
+    let manual = matches!(new.check, CheckSpec::Manual(_));
+    if manual {
+        if new.interval.as_secs() != MANUAL_EVALUATION_SECS {
+            return Err(AppError::bad_request_field(
+                codes::INVALID_INTERVAL,
+                format!(
+                    "a manual monitor restates its state every {MANUAL_EVALUATION_SECS}s; \
+                     send that interval"
+                ),
+                "interval",
+            ));
+        }
+        new.alert_confirmations = 1;
+    }
     let requested = new.interval.as_secs() as i64;
     let kind_floor = min_interval_secs_for_kind(new.check.kind()) as i64;
-    let effective_floor = i64::from(plan.min_check_interval_secs).max(kind_floor);
+    let plan_floor = if manual {
+        0
+    } else {
+        i64::from(plan.min_check_interval_secs)
+    };
+    let effective_floor = plan_floor.max(kind_floor);
     if requested < effective_floor {
         return Err(AppError::min_check_interval(
             requested,
@@ -444,7 +484,10 @@ pub(crate) fn canonicalize_check(check: &mut crate::domain::CheckSpec) -> Result
     }
     match check {
         // Host lives in the URL, already normalized on parse.
-        CheckSpec::Http(_) | CheckSpec::Heartbeat(_) | CheckSpec::Flow(_) => Ok(()),
+        CheckSpec::Http(_)
+        | CheckSpec::Heartbeat(_)
+        | CheckSpec::Manual(_)
+        | CheckSpec::Flow(_) => Ok(()),
         CheckSpec::Tcp(tcp) => canon_host(&mut tcp.host, "check.host", codes::INVALID_TCP_HOST),
         CheckSpec::Ping(p) => canon_host(&mut p.host, "check.host", codes::INVALID_PING_HOST),
         CheckSpec::TlsCert(cert) => {
@@ -655,6 +698,7 @@ pub(crate) fn validate_check(check: &crate::domain::CheckSpec, guard: &SsrfGuard
                 ));
             }
         }
+        CheckSpec::Manual(_) => {}
         CheckSpec::TlsCert(cert) => {
             if cert.host.is_empty() {
                 return Err(AppError::bad_request_field(

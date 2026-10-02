@@ -104,6 +104,7 @@ const KIND_CARDS: &[(&str, &str, &str)] = &[
     ("tls_cert", "tls cert", "expiry + chain"),
     ("domain_expiry", "domain", "registration expiry"),
     ("heartbeat", "heartbeat", "your job pings us"),
+    ("manual", "manual", "you set the state"),
     ("flow", "flow", "browser login / journey"),
 ];
 
@@ -200,7 +201,7 @@ impl FormModel {
                 let locked = *value == "flow" && !self.flow_available;
                 let (badge, badge_tone) = match *value {
                     "flow" if locked => ("coming soon", "warn"),
-                    "flow" | "heartbeat" => ("new", "ok"),
+                    "flow" | "heartbeat" | "manual" => ("new", "ok"),
                     _ => ("", ""),
                 };
                 KindCard {
@@ -214,6 +215,16 @@ impl FormModel {
                 }
             })
             .collect()
+    }
+
+    /// Nothing to probe: no schedule to pick and no test run.
+    pub fn passive(&self) -> bool {
+        CheckSpec::PASSIVE_KINDS.contains(&self.check_type)
+    }
+
+    /// Mirrored so the client hides the same controls on a kind switch.
+    pub fn passive_kinds_json(&self) -> String {
+        serde_json::to_string(&CheckSpec::PASSIVE_KINDS).unwrap_or_else(|_| "[]".into())
     }
 
     /// Whether the selected kind sits on the slow cadence group (the API

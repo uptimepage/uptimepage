@@ -6,7 +6,7 @@ It is another authorized front door to the same stores the web app and [`/api/v1
 
 - **Transport** — Streamable HTTP at `POST/GET /mcp`, served on its own host (`mcp.{DOMAIN}` in production).
 - **Auth** — an org-bound scoped API token (`sm_live_…`), minted either by hand (Settings → API tokens) or by the one-click OAuth 2.1 connector flow.
-- **Surface** — 18 read tools (16 of them under the default grant; `list_notification_channels` needs `channels:read` and `list_variables` needs `variables:read`) + 18 write tools (each scope-gated, confirmed per action where the client can ask, and audited); see [Confirmations](#confirmations).
+- **Surface** — 18 read tools (16 of them under the default grant; `list_notification_channels` needs `channels:read` and `list_variables` needs `variables:read`) + 19 write tools (each scope-gated, confirmed per action where the client can ask, and audited); see [Confirmations](#confirmations).
 
 The server only mounts when enabled (see [Enabling](#enabling)); a deployment that leaves it off never exposes `/mcp`.
 
@@ -51,7 +51,7 @@ Not read-only. Each requires its scope **and**, from a client that can show one,
 
 | Tool | Scope | Effect |
 |---|---|---|
-| `create_monitor` | `targets:write` + `targets:execute` (+ `channels:read` to bind channels) | Create an `http`, `tcp`, `ping`, `dns`, `tls_cert`, `domain_expiry` or `heartbeat` monitor, optionally naming the `regions` it probes from. See [How creation is guarded](#how-creation-is-guarded). |
+| `create_monitor` | `targets:write` + `targets:execute` (not for a `heartbeat` or `manual` monitor, which has nothing to probe) (+ `channels:read` to bind channels) | Create an `http`, `tcp`, `ping`, `dns`, `tls_cert`, `domain_expiry`, `heartbeat` or `manual` monitor, optionally naming the `regions` it probes from. See [How creation is guarded](#how-creation-is-guarded). |
 | `create_monitors` | same as `create_monitor` | Create several monitors under **one** confirmation. Every check is trial-run first and all the results are shown together; an item that fails validation or its probe is reported in the results and the rest are still created. Same per-monitor fields and same guards as `create_monitor`. Prefer it whenever the user names more than one thing to watch — ten monitors otherwise costs ten prompts. |
 | `create_status_page` | `status_page:write` + org owner | Create a status page from a `slug` and `name`. Created unpublished unless `enabled` is passed, so its components can be curated before anyone can read it. The slug is the page's public address, first-come across the platform, and moving it later breaks every existing link. |
 | `update_status_page` | `status_page:write` + org owner | Rename a page, move it to a new slug, or publish and unpublish it. An omitted field is left alone. Idempotent. |
@@ -61,6 +61,7 @@ Not read-only. Each requires its scope **and**, from a client that can show one,
 | `update_monitor` | `targets:write` (+ `channels:read` to rebind channels) | Change how loudly a monitor is watched: `interval_secs`, `alert_confirmations`, `notify_recovery`, `renotify_interval_secs`, `tags`, `group_name`, `region_policy`, `channel_ids`. Nothing else — see [What it will not change](#what-update-monitor-will-not-change). `tags` replaces the whole list and takes at most 50, each at most 50 characters, with no blank and no invisible characters. The confirmation names the monitor and states old → new for every field, and a request whose values already match writes nothing and never prompts. If the monitor moves between the prompt and the approval, the write is refused as `conflict` instead of landing on top of the newer value. Idempotent. |
 | `pause_monitor` | `targets:write` | Stop a monitor's checks until resumed. Idempotent. |
 | `resume_monitor` | `targets:write` | Restart a paused monitor's checks. Idempotent. |
+| `set_monitor_state` | `targets:write` | Set a [manual monitor](monitor-types.md#manual) `up`, `degraded` or `down`, with an optional one-line `note` that becomes the incident's cause. Down or degraded opens an incident and up closes it, through the same pipeline as any other monitor. Refused as `invalid_argument` for any other kind. Allowed on a Terraform-managed monitor, since the state is not config. Idempotent. |
 | `create_maintenance` | `maintenance:write` | Schedule a maintenance window: `title`, optional `description`, `starts_at` and `ends_at` (RFC 3339; the end in the future, at most 30 days after the start), the `monitor_ids` it covers, and `suppress_alerts` (default `true`), the same rules as [`/api/v1/maintenance`](public-status.md#scheduling-maintenance). The confirmation names the covered monitors, says whether their paging is held, and says whether the window is announced: it shows on every published status page carrying one of them, whose subscribers are notified when it is scheduled and when it ends. The gentler alternative to `pause_monitor` for planned work, since checks keep running. |
 | `update_maintenance` | `maintenance:write` | Edit an upcoming or running window: `title`, `description`, `starts_at`, `ends_at`, `monitor_ids` (replaces the whole set) or `suppress_alerts`. `end_now` ends a running window at the server's clock and keeps it as completed work. A completed or cancelled window is history and is refused before anything is asked. Like `update_monitor`, the confirmation states old → new per field, a request that changes nothing writes nothing, and a window that moves while the prompt is open is refused as `conflict`. |
 | `cancel_maintenance` | `maintenance:delete` | Cancel a window that has not ended. It leaves the status pages and stops holding paging, and stays listed under `past` as a record; subscribers already told about it are not sent a cancellation. |
@@ -110,7 +111,7 @@ This is not squeamishness about writes. Changing the interval or the confirmatio
 
 ### Terraform-managed monitors
 
-A monitor whose `write_source` is `terraform` is refused by `update_monitor`, `pause_monitor` and `resume_monitor` with `managed_externally`, naming the monitor and pointing at the `.tf` that declares it. There is no override argument. Without the guard the edit lands and the next `terraform apply` reverts it, which no confirmation prompt can warn about because the prompt is answered long before the revert.
+A monitor whose `write_source` is `terraform` is refused by `update_monitor`, `pause_monitor` and `resume_monitor` with `managed_externally`, naming the monitor and pointing at the `.tf` that declares it. There is no override argument. Without the guard the edit lands and the next `terraform apply` reverts it, which no confirmation prompt can warn about because the prompt is answered long before the revert. `set_monitor_state` is allowed on one, because a manual monitor's state is not in its config.
 
 MCP writes also leave `write_source` as they found it, rather than restamping it. Otherwise the first MCP write would erase the `terraform` marker and the guard would protect exactly one edit. Attribution for MCP writes lives in the [audit](#audit) log, which records the token, the user, and the tool for every outcome.
 
@@ -178,7 +179,7 @@ The connector advertises twelve grantable scopes. A request with no `scope` (or 
 | `incidents:read` | `list_incidents`, `get_incident`, `get_incident_metrics` | ✅ |
 | `maintenance:read` | `list_maintenance`, `get_maintenance` | ✅ |
 | `channels:read` | `list_notification_channels`, and binding channels on `create_monitor` / `update_monitor` | opt-in |
-| `targets:write` | `create_monitor`, `create_monitors`, `update_monitor`, `pause_monitor`, `resume_monitor` | opt-in |
+| `targets:write` | `create_monitor`, `create_monitors`, `update_monitor`, `pause_monitor`, `resume_monitor`, `set_monitor_state` | opt-in |
 | `targets:execute` | `run_check_now`, and the trial probes `create_monitor` / `create_monitors` run | opt-in |
 | `maintenance:write` | `create_maintenance`, `update_maintenance` | opt-in |
 | `maintenance:delete` | `cancel_maintenance` | opt-in |

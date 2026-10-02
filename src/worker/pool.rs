@@ -71,9 +71,10 @@ pub fn host_for_spec(spec: &CheckSpec) -> String {
             Some(addr) => format!("dns:{addr}"),
             None => format!("dns:{}", d.domain.to_ascii_lowercase()),
         },
-        // Passive kind, dispatched on the fast path before any breaker
-        // lookup, so this key never gates.
+        // Passive kinds, dispatched on the fast path before any breaker
+        // lookup, so these keys never gate.
         CheckSpec::Heartbeat(_) => "heartbeat".to_owned(),
+        CheckSpec::Manual(_) => "manual".to_owned(),
         // host_port_raw already covered these; reaching here means an
         // HTTP URL with no host_str. Listed explicitly so a future
         // CheckSpec variant is forced through the match and can't
@@ -138,6 +139,8 @@ pub struct WorkerPool {
     /// injected) so the pool and web ingest path share one instance. A split
     /// would silently evaluate stale anchors.
     heartbeat: Arc<crate::worker::heartbeat::HeartbeatRuntime>,
+    /// Manual monitor states, shared with the set path for the same reason.
+    manual: Arc<crate::worker::manual::ManualRuntime>,
     /// Target ids whose probe is mid-flight. Drop-guard backed (see
     /// `InFlightGuard`) so panics also release. Bounds duplicate probes when
     /// a slow check outlasts its cadence.
@@ -168,6 +171,7 @@ impl WorkerPool {
             host_throttle,
             domain_expiry,
             heartbeat: Arc::new(crate::worker::heartbeat::HeartbeatRuntime::default()),
+            manual: Arc::new(crate::worker::manual::ManualRuntime::default()),
             in_flight: Arc::new(DashSet::new()),
             flow_engine: None,
             flow_runs: None,
@@ -206,6 +210,17 @@ impl WorkerPool {
 
     pub fn heartbeat_runtime(&self) -> Arc<crate::worker::heartbeat::HeartbeatRuntime> {
         self.heartbeat.clone()
+    }
+
+    pub fn manual_runtime(&self) -> Arc<crate::worker::manual::ManualRuntime> {
+        self.manual.clone()
+    }
+
+    pub fn passive_runtimes(&self) -> crate::worker::PassiveRuntimes {
+        crate::worker::PassiveRuntimes {
+            heartbeat: self.heartbeat.clone(),
+            manual: self.manual.clone(),
+        }
     }
 
     pub fn max_concurrent(&self) -> usize {
@@ -278,18 +293,30 @@ impl WorkerPool {
     }
 
     pub fn dispatch(&self, task: CheckTask) {
-        // Passive fast path: a heartbeat evaluation is a synchronous map read
-        // with no spawn, permit, breaker, or throttle. Kept out of the probe
-        // pipeline so the machinery below needs no passive special case.
-        if let CheckSpec::Heartbeat(h) = &task.target.check {
-            let result = crate::worker::heartbeat::execute_heartbeat_check(
+        // Passive fast path: an evaluation is a synchronous map read with no
+        // spawn, permit, breaker, or throttle. Kept out of the probe pipeline
+        // so the machinery below needs no passive special case.
+        let passive = match &task.target.check {
+            CheckSpec::Heartbeat(h) => {
+                Some(Some(crate::worker::heartbeat::execute_heartbeat_check(
+                    task.target.id,
+                    task.org_id.0,
+                    h,
+                    &self.heartbeat,
+                )))
+            }
+            CheckSpec::Manual(_) => Some(crate::worker::manual::execute_manual_check(
                 task.target.id,
                 task.org_id.0,
-                h,
-                &self.heartbeat,
-            );
-            record_metrics(&result);
-            self.fanout.dispatch(result);
+                &self.manual,
+            )),
+            _ => None,
+        };
+        if let Some(result) = passive {
+            if let Some(result) = result {
+                record_metrics(&result);
+                self.fanout.dispatch(result);
+            }
             return;
         }
         // Skip-if-in-flight: scheduler ticks every `interval`, but a slow

@@ -715,7 +715,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
         "/mcp-server" => &[
             (
                 "What can an AI assistant actually do with my monitoring over MCP?",
-                "Thirty-six tools. Eighteen read: what is down and since when, each check's full configuration, history region by region with DNS, connect, TLS and first-byte timing split out, browser flow runs step by step, incidents and their metrics, maintenance windows, status pages, the channel inventory, variable keys, and usage against your plan. Eighteen write: create one monitor or a batch, run a check now, pause or resume one, retune how loudly it is watched, schedule, edit or cancel a maintenance window, acknowledge or resolve an incident, publish it to your status page or take it down, post an update, and create or edit a status page and its components.",
+                "Thirty-seven tools. Eighteen read: what is down and since when, each check's full configuration, history region by region with DNS, connect, TLS and first-byte timing split out, browser flow runs step by step, incidents and their metrics, maintenance windows, status pages, the channel inventory, variable keys, and usage against your plan. Nineteen write: create one monitor or a batch, run a check now, pause or resume one, retune how loudly it is watched, set the state of a manual one, schedule, edit or cancel a maintenance window, acknowledge or resolve an incident, publish it to your status page or take it down, post an update, and create or edit a status page and its components.",
             ),
             (
                 "Can the AI change my monitoring without asking me?",

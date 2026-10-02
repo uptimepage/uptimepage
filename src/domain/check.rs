@@ -16,6 +16,7 @@ pub enum CheckSpec {
     Tcp(TcpCheck),
     Ping(PingCheck),
     Heartbeat(HeartbeatCheck),
+    Manual(ManualCheck),
     TlsCert(TlsCertCheck),
     DomainExpiry(DomainExpiryCheck),
     Dns(DnsCheck),
@@ -25,11 +26,12 @@ pub enum CheckSpec {
 impl CheckSpec {
     /// Every kind string `kind()` can return. Bounded set — safe as a metric
     /// label and lets inventory emit a 0 for kinds with no enabled monitors.
-    pub const ALL_KINDS: [&'static str; 8] = [
+    pub const ALL_KINDS: [&'static str; 9] = [
         "http",
         "tcp",
         "ping",
         "heartbeat",
+        "manual",
         "dns",
         "tls_cert",
         "domain_expiry",
@@ -42,6 +44,7 @@ impl CheckSpec {
             CheckSpec::Tcp(_) => "tcp",
             CheckSpec::Ping(_) => "ping",
             CheckSpec::Heartbeat(_) => "heartbeat",
+            CheckSpec::Manual(_) => "manual",
             CheckSpec::Dns(_) => "dns",
             CheckSpec::TlsCert(_) => "tls_cert",
             CheckSpec::DomainExpiry(_) => "domain_expiry",
@@ -49,13 +52,26 @@ impl CheckSpec {
         }
     }
 
+    /// The kinds [`Self::is_passive`] is true for, for the surfaces that only
+    /// hold a kind string.
+    pub const PASSIVE_KINDS: [&'static str; 2] = ["heartbeat", "manual"];
+
     /// A passive kind evaluates in-memory state instead of probing the
     /// network: no circuit breaker, no host throttle, never runs on agents.
     pub fn is_passive(&self) -> bool {
-        matches!(self, CheckSpec::Heartbeat(_))
+        self.passive_reason().is_some()
     }
 
-    /// The probe's own time budget. Zero for heartbeat, which never probes.
+    /// Why a passive kind has nothing to probe, for the errors that refuse one.
+    pub fn passive_reason(&self) -> Option<&'static str> {
+        match self {
+            CheckSpec::Heartbeat(_) => Some("heartbeat monitors receive pings from your systems"),
+            CheckSpec::Manual(_) => Some("manual monitors are set by hand"),
+            _ => None,
+        }
+    }
+
+    /// The probe's own time budget. Zero for the passive kinds, which never probe.
     pub fn timeout(&self) -> Duration {
         match self {
             CheckSpec::Http(c) => c.timeout,
@@ -65,7 +81,7 @@ impl CheckSpec {
             CheckSpec::DomainExpiry(c) => c.timeout,
             CheckSpec::Dns(c) => c.timeout,
             CheckSpec::Flow(c) => c.timeout,
-            CheckSpec::Heartbeat(_) => Duration::ZERO,
+            CheckSpec::Heartbeat(_) | CheckSpec::Manual(_) => Duration::ZERO,
         }
     }
 
@@ -76,8 +92,8 @@ impl CheckSpec {
         }
     }
 
-    /// The host this check concerns, IPv6 brackets stripped. `None` for
-    /// heartbeat, which is inbound-only. Distinct from
+    /// The host this check concerns, IPv6 brackets stripped. `None` for the
+    /// passive kinds, which reach nothing. Distinct from
     /// [`crate::worker::host_throttle::host_port_raw`], which keys a *network endpoint* and
     /// so excludes dns/domain_expiry: their subject is a name, not a socket.
     pub fn primary_host(&self) -> Option<&str> {
@@ -89,7 +105,7 @@ impl CheckSpec {
             CheckSpec::DomainExpiry(d) => Some(d.domain.as_str()),
             CheckSpec::Dns(d) => Some(d.domain.as_str()),
             CheckSpec::Flow(f) => f.start_url.host_str().map(unbracket),
-            CheckSpec::Heartbeat(_) => None,
+            CheckSpec::Heartbeat(_) | CheckSpec::Manual(_) => None,
         }
     }
 }
@@ -97,7 +113,7 @@ impl CheckSpec {
 /// Per-kind check-interval floor. Expiry state moves slowly, so certificates
 /// floor at an hour and registrations at twelve. Heartbeat's interval is its
 /// evaluation cadence, which can't be finer than the grace it judges, so a
-/// minute floor.
+/// minute floor, and a manual monitor only restates what it was set to.
 pub fn min_interval_secs_for_kind(kind: &str) -> u64 {
     match kind {
         // RDAP rate-limits by source address, so this floor guards the probe IPs.
@@ -106,6 +122,7 @@ pub fn min_interval_secs_for_kind(kind: &str) -> u64 {
         // A headless-browser run is far heavier than a single probe.
         "flow" => 300,
         "heartbeat" => EVALUATION_CADENCE_MIN_SECS,
+        "manual" => MANUAL_EVALUATION_SECS,
         _ => 10,
     }
 }
@@ -142,6 +159,10 @@ pub fn interval_hints_for_kind(kind: &str) -> IntervalHints {
         "heartbeat" => IntervalHints {
             min: 60,
             default: 300,
+        },
+        "manual" => IntervalHints {
+            min: MANUAL_EVALUATION_SECS,
+            default: MANUAL_EVALUATION_SECS,
         },
         other => IntervalHints {
             min: min_interval_secs_for_kind(other),
@@ -283,6 +304,15 @@ impl HeartbeatCheck {
 
 pub const EVALUATION_CADENCE_MIN_SECS: u64 = 60;
 pub const EVALUATION_CADENCE_MAX_SECS: u64 = 300;
+
+/// A service no probe can judge. Its state is whatever an operator last set,
+/// so there is nothing to configure: the state itself is not config.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct ManualCheck {}
+
+/// How often a manual monitor restates what it was set to. The set itself
+/// lands at once; this only keeps the history and the incident writer fed.
+pub const MANUAL_EVALUATION_SECS: u64 = 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TlsCertCheck {
@@ -563,6 +593,7 @@ mod tests {
             | CheckSpec::Tcp(_)
             | CheckSpec::Ping(_)
             | CheckSpec::Heartbeat(_)
+            | CheckSpec::Manual(_)
             | CheckSpec::Dns(_)
             | CheckSpec::TlsCert(_)
             | CheckSpec::DomainExpiry(_)
@@ -576,7 +607,7 @@ mod tests {
         for k in CheckSpec::ALL_KINDS {
             assert!(seen.insert(k), "duplicate kind in ALL_KINDS: {k}");
         }
-        assert_eq!(CheckSpec::ALL_KINDS.len(), 8);
+        assert_eq!(CheckSpec::ALL_KINDS.len(), 9);
     }
 
     fn http(url: &str) -> CheckSpec {
@@ -637,10 +668,35 @@ mod tests {
     }
 
     #[test]
-    fn primary_host_none_for_heartbeat() {
+    fn passive_kinds_list_what_is_passive() {
+        let hb: CheckSpec =
+            serde_json::from_str(r#"{"type":"heartbeat","period":300000,"grace":60000}"#).unwrap();
+        let manual: CheckSpec = serde_json::from_str(r#"{"type":"manual"}"#).unwrap();
+        for spec in [&hb, &manual, &http("https://example.com/")] {
+            assert_eq!(
+                spec.is_passive(),
+                CheckSpec::PASSIVE_KINDS.contains(&spec.kind()),
+                "{}",
+                spec.kind()
+            );
+        }
+        assert_eq!(
+            CheckSpec::ALL_KINDS
+                .iter()
+                .filter(|k| CheckSpec::PASSIVE_KINDS.contains(k))
+                .count(),
+            CheckSpec::PASSIVE_KINDS.len()
+        );
+    }
+
+    #[test]
+    fn primary_host_none_for_passive_kinds() {
         let hb: CheckSpec =
             serde_json::from_str(r#"{"type":"heartbeat","period":300000,"grace":60000}"#).unwrap();
         assert_eq!(hb.primary_host(), None);
+        let manual: CheckSpec = serde_json::from_str(r#"{"type":"manual"}"#).unwrap();
+        assert_eq!(manual.primary_host(), None);
+        assert!(manual.is_passive());
     }
 
     #[test]

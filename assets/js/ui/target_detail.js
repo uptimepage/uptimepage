@@ -135,7 +135,7 @@
         });
     }
 
-    async function hbCall(path, method, body) {
+    async function callAndReload(path, method, body) {
         try {
             const r = await fetch(path, {
                 method,
@@ -162,6 +162,22 @@
         return false;
     }
 
+    // Each press is a whole statement: the state plus the note as typed.
+    const manualPanel = document.querySelector("[data-manual-state]");
+    if (manualPanel) {
+        const buttons = manualPanel.querySelectorAll("[data-manual-set]");
+        buttons.forEach((b) => {
+            b.addEventListener("click", async () => {
+                const note = manualPanel.querySelector("[data-manual-note]")?.value.trim() || null;
+                buttons.forEach((x) => { x.disabled = true; });
+                const done = await callAndReload(
+                    `/api/v1/targets/${manualPanel.dataset.targetId}/state`, "PUT",
+                    { status: b.dataset.manualSet, note });
+                if (!done) buttons.forEach((x) => { x.disabled = false; });
+            });
+        });
+    }
+
     const hbRotateBtn = document.querySelector("[data-hb-rotate]");
     if (hbRotateBtn) {
         hbRotateBtn.addEventListener("click", async () => {
@@ -182,7 +198,7 @@
             if (!ok) return;
             // Stays disabled on success so the pending reload can't double-fire.
             hbRotateBtn.disabled = true;
-            const done = await hbCall(`/api/v1/targets/${id}/heartbeat/rotate`, "POST",
+            const done = await callAndReload(`/api/v1/targets/${id}/heartbeat/rotate`, "POST",
                 { revoke_previous_immediately: false });
             if (!done) hbRotateBtn.disabled = false;
         });
@@ -203,7 +219,7 @@
             });
             if (!ok) return;
             hbRevokePrevBtn.disabled = true;
-            const done = await hbCall(`/api/v1/targets/${id}/heartbeat/previous`, "DELETE");
+            const done = await callAndReload(`/api/v1/targets/${id}/heartbeat/previous`, "DELETE");
             if (!done) hbRevokePrevBtn.disabled = false;
         });
     }

@@ -4,9 +4,9 @@ use crate::storage::LifecycleOutcome;
 
 use rmcp::handler::server::wrapper::Json;
 
-use crate::domain::humanize_check_error;
 use crate::domain::target::NewTarget;
 use crate::domain::text::is_invisible;
+use crate::domain::{CheckSpec, humanize_check_error};
 
 use crate::mcp::error::McpToolError;
 use crate::mcp::schema::{FieldChange, IncidentActionResult, ProbeOutcome};
@@ -64,6 +64,9 @@ pub(super) fn create_prompt_lines(
             sanitize_prompt(region),
             sanitize_prompt(&probe_line(p))
         ),
+        None if matches!(new.check, CheckSpec::Manual(_)) => {
+            "nothing to probe: it starts up and stays so until someone sets its state".to_string()
+        }
         None => "nothing to probe: it reports nothing and alerts nobody until the job's \
                  first ping"
             .to_string(),
@@ -74,10 +77,10 @@ pub(super) fn create_prompt_lines(
     if let Some(group) = &new.group_name {
         lines.push(format!("group: {}", sanitize_prompt(group)));
     }
-    lines.push(format!(
-        "alerts after {} failing checks",
-        new.alert_confirmations
-    ));
+    lines.push(match new.check {
+        CheckSpec::Manual(_) => "alerts as soon as it is set down or degraded".to_string(),
+        _ => format!("alerts after {} failing checks", new.alert_confirmations),
+    });
     if !new.notify_recovery {
         lines.push("recovery is not announced".to_string());
     }

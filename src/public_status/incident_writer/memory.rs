@@ -87,6 +87,7 @@ impl IncidentStore for InMemoryIncidentStore {
                     started_at: i.started_at,
                     region: i.region.clone(),
                     regions_down: i.regions_down.clone(),
+                    worst_status: i.status_at_start,
                 })
                 .collect();
             if !open.is_empty() {
@@ -111,6 +112,7 @@ impl IncidentStore for InMemoryIncidentStore {
                 started_at: i.started_at,
                 region: i.region.clone(),
                 regions_down: i.regions_down.clone(),
+                worst_status: i.status_at_start,
             });
         Ok(open)
     }
@@ -193,6 +195,27 @@ impl IncidentStore for InMemoryIncidentStore {
             }
         }
         g.widens += 1;
+        Ok(())
+    }
+
+    async fn escalate(
+        &self,
+        _org: OrgId,
+        incident_id: Uuid,
+        error_sample: Option<String>,
+    ) -> Result<()> {
+        let mut g = self.inner.lock();
+        for inc in g.by_target.values_mut().flatten() {
+            if inc.id == incident_id
+                && inc.ended_at.is_none()
+                && inc.status_at_start != CheckStatus::Down
+            {
+                inc.status_at_start = CheckStatus::Down;
+                if error_sample.is_some() {
+                    inc.error_sample = error_sample.clone();
+                }
+            }
+        }
         Ok(())
     }
 }

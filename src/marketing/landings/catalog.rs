@@ -2348,7 +2348,7 @@ resource "uptimepage_target" "api" {
         title: "MCP Server for Uptime Monitoring",
         eyebrow: "for ai & llm workflows",
         h1: "Ask an AI what’s broken, over MCP",
-        meta_description: "Model Context Protocol server for uptime monitoring. 36 tools read monitors, incidents and status pages, and write only with your approval. Free, no card.",
+        meta_description: "Model Context Protocol server for uptime monitoring. 37 tools read monitors, incidents and status pages, and write only with your approval. Free, no card.",
         lede: "Point a Model Context Protocol client (Claude, an IDE, anything that speaks MCP) at your monitoring and ask it what’s down in plain language. The answers come from your real monitors, not from the model’s imagination, and nothing changes without your approval.",
         features: &[
             Feature {
@@ -2361,7 +2361,7 @@ resource "uptimepage_target" "api" {
             },
             Feature {
                 label: "Tools",
-                value: "36 (18 read + 18 fenced writes)",
+                value: "37 (18 read + 19 fenced writes)",
             },
             Feature {
                 label: "Every write",
@@ -2387,11 +2387,11 @@ resource "uptimepage_target" "api" {
         sections: &[
             Section {
                 heading: "Ask your monitoring in plain language",
-                body: "What’s down right now, and since when? Why is this check slow? Is that incident still open? Thirty-six tools answer from your live data. Eighteen of them can only read: monitors with the full config of what each check asserts, their history region by region, incidents and their metrics, maintenance windows, status pages, org health, usage against your plan. The model sees exactly what your dashboard sees, in your org, behind your permissions. Worst case, it tells you everything is fine, and you never had to open a dashboard to find out.",
+                body: "What’s down right now, and since when? Why is this check slow? Is that incident still open? Thirty-seven tools answer from your live data. Eighteen of them can only read: monitors with the full config of what each check asserts, their history region by region, incidents and their metrics, maintenance windows, status pages, org health, usage against your plan. The model sees exactly what your dashboard sees, in your org, behind your permissions. Worst case, it tells you everything is fine, and you never had to open a dashboard to find out.",
             },
             Section {
                 heading: "Every tool, by name",
-                body: "Eighteen read: get_org_health, list_monitors, get_monitor, get_monitor_history, list_regions, list_tags, get_flow_runs, get_flow_step_trend, list_incidents, get_incident, get_incident_metrics, list_maintenance, get_maintenance, list_status_pages, get_status_page, get_org_usage, list_notification_channels, list_variables. Eighteen write: create_monitor, create_monitors, run_check_now, update_monitor, pause_monitor, resume_monitor, create_maintenance, update_maintenance, cancel_maintenance, acknowledge_incident, resolve_incident, publish_incident, unpublish_incident, post_incident_update, create_status_page, update_status_page, add_status_page_components, update_status_page_component. A real outage runs straight through them. get_org_health names what is failing and, for a monitor that sits on a status page, hands back the incident id. get_incident shows the timeline, acknowledge_incident takes ownership and stops the escalation, publish_incident puts it on your status page, and post_incident_update tells your customers what you know so far.",
+                body: "Eighteen read: get_org_health, list_monitors, get_monitor, get_monitor_history, list_regions, list_tags, get_flow_runs, get_flow_step_trend, list_incidents, get_incident, get_incident_metrics, list_maintenance, get_maintenance, list_status_pages, get_status_page, get_org_usage, list_notification_channels, list_variables. Nineteen write: create_monitor, create_monitors, run_check_now, update_monitor, pause_monitor, resume_monitor, set_monitor_state, create_maintenance, update_maintenance, cancel_maintenance, acknowledge_incident, resolve_incident, publish_incident, unpublish_incident, post_incident_update, create_status_page, update_status_page, add_status_page_components, update_status_page_component. A real outage runs straight through them. get_org_health names what is failing and, for a monitor that sits on a status page, hands back the incident id. get_incident shows the timeline, acknowledge_incident takes ownership and stops the escalation, publish_incident puts it on your status page, and post_incident_update tells your customers what you know so far.",
             },
             Section {
                 heading: "It sets the monitoring up too",
@@ -2411,7 +2411,7 @@ resource "uptimepage_target" "api" {
             },
             Section {
                 heading: "Actions stay behind a human",
-                body: "Eighteen tools can act: create a monitor or a batch of them, run a check now, pause or resume a monitor, retune how loudly one is watched, schedule, edit or cancel a maintenance window, acknowledge or resolve an incident, publish one to your status page or take it back down, post an update to one, create or edit a status page and the components on it. None of them can fire on its own. The token must carry the right scope, you approve the exact action in the moment in any client that can ask, and every outcome writes one audit row that says whether you were asked. There is no \"remember my choice\"; each action is its own decision. We let the AI pause a monitor. We did not let it pause a monitor without asking you. Those are different sentences, and the gap between them is most of the design.",
+                body: "Nineteen tools can act: create a monitor or a batch of them, run a check now, pause or resume a monitor, retune how loudly one is watched, set the state of a manual one, schedule, edit or cancel a maintenance window, acknowledge or resolve an incident, publish one to your status page or take it back down, post an update to one, create or edit a status page and the components on it. None of them can fire on its own. The token must carry the right scope, you approve the exact action in the moment in any client that can ask, and every outcome writes one audit row that says whether you were asked. There is no \"remember my choice\"; each action is its own decision. We let the AI pause a monitor. We did not let it pause a monitor without asking you. Those are different sentences, and the gap between them is most of the design.",
             },
             Section {
                 heading: "Your data can’t hijack the assistant",
@@ -2480,7 +2480,7 @@ resource "uptimepage_target" "api" {
         eyebrow: "for claude.ai, claude code and claude desktop",
         h1: "Connect Claude to your uptime monitoring",
         meta_description: "Add Uptimepage to Claude over MCP: one click in claude.ai, one command in Claude Code, a scoped token for Claude Desktop. Reads free, every write asks first.",
-        lede: "Claude is the client this server was built against first. In claude.ai and Claude Desktop the connector is one click and a consent screen. In Claude Code it is one command and a sign-in. Connected that way, Claude sees all 36 tools, and every one that changes something stops and asks you before it runs. A plan without connectors still gets the read tools through mcp-remote and a scoped token.",
+        lede: "Claude is the client this server was built against first. In claude.ai and Claude Desktop the connector is one click and a consent screen. In Claude Code it is one command and a sign-in. Connected that way, Claude sees all 37 tools, and every one that changes something stops and asks you before it runs. A plan without connectors still gets the read tools through mcp-remote and a scoped token.",
         features: &[
             Feature {
                 label: "Server URL",
@@ -2504,7 +2504,7 @@ resource "uptimepage_target" "api" {
             },
             Feature {
                 label: "Confirmations",
-                value: "shown, so all 36 tools are offered",
+                value: "shown, so all 37 tools are offered",
             },
             Feature {
                 label: "OAuth connection lifetime",
@@ -2530,7 +2530,7 @@ resource "uptimepage_target" "api" {
             },
             Section {
                 heading: "What Claude can do once connected",
-                body: "Claude negotiates elicitation at connect time, so each of the 18 tools that act asks you before it runs, alongside the 18 that read. Ask what is down and Claude calls get_org_health, then get_monitor_history for the one that matters, and reads the DNS, connect, TLS and first-byte timings apart. Ask it to cover a new service and it proposes the monitors, runs each check once, and shows you the result inside the confirmation before anything is saved. There is no remember-my-choice: every write is its own approval.",
+                body: "Claude negotiates elicitation at connect time, so each of the 19 tools that act asks you before it runs, alongside the 18 that read. Ask what is down and Claude calls get_org_health, then get_monitor_history for the one that matters, and reads the DNS, connect, TLS and first-byte timings apart. Ask it to cover a new service and it proposes the monitors, runs each check once, and shows you the result inside the confirmation before anything is saved. There is no remember-my-choice: every write is its own approval.",
             },
             Section {
                 heading: "Three prompts to start with",
@@ -2622,7 +2622,7 @@ resource "uptimepage_target" "api" {
             },
             Section {
                 heading: "What the agent can do",
-                body: "Cursor has supported MCP elicitation since 1.5, so each of the 18 tools that act sits behind a prompt Cursor shows you before it runs, alongside the 18 that read. Ask about the endpoint you are editing and the agent calls get_monitor for its full config, get_monitor_history for its last 24 hours with timings split into DNS, connect, TLS and first byte, and names the region where it fails if it only fails from one. A monitor it creates runs its check first and shows the result in the confirmation.",
+                body: "Cursor has supported MCP elicitation since 1.5, so each of the 19 tools that act sits behind a prompt Cursor shows you before it runs, alongside the 18 that read. Ask about the endpoint you are editing and the agent calls get_monitor for its full config, get_monitor_history for its last 24 hours with timings split into DNS, connect, TLS and first byte, and names the region where it fails if it only fails from one. A monitor it creates runs its check first and shows the result in the confirmation.",
             },
             Section {
                 heading: "Prompts that fit an editor",
@@ -2663,7 +2663,7 @@ resource "uptimepage_target" "api" {
         eyebrow: "for vs code and copilot agent mode",
         h1: "Connect VS Code to your uptime monitoring",
         meta_description: "Add Uptimepage to VS Code as an HTTP MCP server. Sign in once, then Copilot agent mode reads your monitors and incidents and asks before a write. Free, no card.",
-        lede: "VS Code adds the server as type http, signs you in through the browser, and comes back on a loopback port. Commit the config to .vscode/mcp.json and the whole team gets the server with the repo, each person signing in as themselves. Confirmations render as native VS Code dialogs, so the 18 tools that act are offered and each one asks.",
+        lede: "VS Code adds the server as type http, signs you in through the browser, and comes back on a loopback port. Commit the config to .vscode/mcp.json and the whole team gets the server with the repo, each person signing in as themselves. Confirmations render as native VS Code dialogs, so the 19 tools that act are offered and each one asks.",
         features: &[
             Feature {
                 label: "Server URL",
@@ -2683,7 +2683,7 @@ resource "uptimepage_target" "api" {
             },
             Feature {
                 label: "Confirmations",
-                value: "native dialogs, all 36 tools offered",
+                value: "native dialogs, all 37 tools offered",
             },
             Feature {
                 label: "Shared with the team",
@@ -2797,7 +2797,7 @@ resource "uptimepage_target" "api" {
             },
             Section {
                 heading: "What Grok can do",
-                body: "Ask what is down and Grok calls get_org_health, then get_monitor_history for the monitor that matters, with response time split into DNS, connect, TLS and first byte. Ask about an incident and it reads the timeline and the operator updates. Ask for the month's numbers and get_incident_metrics returns MTTA, MTTR and the noisiest monitors. All 36 tools are listed, but the scopes above are read scopes, so the 18 read tools are the ones that work, which is where most of the value is anyway; the 18 that act refuse until a write scope is granted on the consent screen. With one granted, each asks you first when Grok can show the prompt, and runs on the granted scope, marked unconfirmed in the audit trail, when it cannot.",
+                body: "Ask what is down and Grok calls get_org_health, then get_monitor_history for the monitor that matters, with response time split into DNS, connect, TLS and first byte. Ask about an incident and it reads the timeline and the operator updates. Ask for the month's numbers and get_incident_metrics returns MTTA, MTTR and the noisiest monitors. All 37 tools are listed, but the scopes above are read scopes, so the 18 read tools are the ones that work, which is where most of the value is anyway; the 19 that act refuse until a write scope is granted on the consent screen. With one granted, each asks you first when Grok can show the prompt, and runs on the granted scope, marked unconfirmed in the audit trail, when it cannot.",
             },
             Section {
                 heading: "Three prompts to start with",
@@ -2896,7 +2896,7 @@ resource "uptimepage_target" "api" {
             },
             Section {
                 heading: "The AI can act, inside a fence",
-                body: "Thirty-six tools are exposed over MCP. Eighteen read, as far as your token's scopes allow: monitors and their history region by region, browser flow runs, incidents and their metrics, maintenance windows, status pages, channels, variable keys, org health, usage against your plan. The other eighteen can act. Every action needs the right scope on an org-bound token, your approval in the moment in any client that can stop and ask, and each one writes an audit row that says whether you were asked; a client that cannot ask runs the write on the granted scope, as the REST API would, so give such a client read scopes only. There is no remember-my-choice. What the assistant cannot do matters as much. It cannot set request headers, auth tokens or flow passwords on a monitor, and a URL carrying a password is refused outright. Reading back, header values and request bodies come through masked, a heartbeat's ping token is withheld, and what a flow types is never returned. The address is the exception: it reports as configured, so a credential someone put in the URL itself is visible there, exactly as it is in the API. It cannot create a notification channel, since that would mean handing it a webhook or a bot token, though it can bind a monitor to one you already made. Retuning a monitor changes how loudly it is watched, never what it watches, and a monitor managed by Terraform is refused so the next apply cannot quietly undo it.",
+                body: "Thirty-seven tools are exposed over MCP. Eighteen read, as far as your token's scopes allow: monitors and their history region by region, browser flow runs, incidents and their metrics, maintenance windows, status pages, channels, variable keys, org health, usage against your plan. The other nineteen can act. Every action needs the right scope on an org-bound token, your approval in the moment in any client that can stop and ask, and each one writes an audit row that says whether you were asked; a client that cannot ask runs the write on the granted scope, as the REST API would, so give such a client read scopes only. There is no remember-my-choice. What the assistant cannot do matters as much. It cannot set request headers, auth tokens or flow passwords on a monitor, and a URL carrying a password is refused outright. Reading back, header values and request bodies come through masked, a heartbeat's ping token is withheld, and what a flow types is never returned. The address is the exception: it reports as configured, so a credential someone put in the URL itself is visible there, exactly as it is in the API. It cannot create a notification channel, since that would mean handing it a webhook or a bot token, though it can bind a monitor to one you already made. Retuning a monitor changes how loudly it is watched, never what it watches, and a monitor managed by Terraform is refused so the next apply cannot quietly undo it.",
             },
             Section {
                 heading: "Or keep it in version control",

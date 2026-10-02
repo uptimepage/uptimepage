@@ -374,6 +374,10 @@ async fn a_write_finds_nothing_to_publish_in_another_org() {
         ("unpublish_incident", json!({ "id": b_incident })),
         ("pause_monitor", json!({ "id": b_target })),
         ("resume_monitor", json!({ "id": b_target })),
+        (
+            "set_monitor_state",
+            json!({ "id": b_target, "state": "down" }),
+        ),
     ] {
         assert_eq!(
             error_code(&mcp.call(tool, args).await).as_deref(),

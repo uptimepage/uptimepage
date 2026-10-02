@@ -157,6 +157,9 @@ pub(super) fn build_monitor_patch(
 /// any other front door does. A heartbeat gets the cadence its window calls
 /// for, since a coarser tick only delays the alarm.
 pub(super) fn default_interval_secs(check: &CheckSpec, plan_floor_secs: u64) -> u64 {
+    if matches!(check, CheckSpec::Manual(_)) {
+        return crate::domain::check::MANUAL_EVALUATION_SECS;
+    }
     let opening = plan_floor_secs.max(crate::domain::interval_hints_for_kind(check.kind()).default);
     match check.as_heartbeat() {
         // Never below the floor: a default the plan forbids would be refused
@@ -356,7 +359,8 @@ fn check_headers(
 /// tool refuses to take left at their defaults.
 pub(super) fn new_check_spec(check: &NewCheck) -> Result<CheckSpec, McpToolError> {
     use crate::domain::{
-        DnsCheck, DomainExpiryCheck, HeartbeatCheck, HttpCheck, PingCheck, TcpCheck, TlsCertCheck,
+        DnsCheck, DomainExpiryCheck, HeartbeatCheck, HttpCheck, ManualCheck, PingCheck, TcpCheck,
+        TlsCertCheck,
     };
     use std::time::Duration;
 
@@ -459,6 +463,7 @@ pub(super) fn new_check_spec(check: &NewCheck) -> Result<CheckSpec, McpToolError
             grace: Duration::from_secs(*grace_secs),
             max_runtime: max_runtime_secs.map(Duration::from_secs),
         }),
+        NewCheck::Manual {} => CheckSpec::Manual(ManualCheck {}),
     })
 }
 

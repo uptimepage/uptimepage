@@ -158,7 +158,10 @@ pub fn host_port_raw(spec: &CheckSpec) -> Option<(&str, Option<u16>)> {
             flow.start_url.host_str()?,
             flow.start_url.port_or_known_default(),
         )),
-        CheckSpec::Heartbeat(_) | CheckSpec::Dns(_) | CheckSpec::DomainExpiry(_) => None,
+        CheckSpec::Heartbeat(_)
+        | CheckSpec::Manual(_)
+        | CheckSpec::Dns(_)
+        | CheckSpec::DomainExpiry(_) => None,
     }
 }
 

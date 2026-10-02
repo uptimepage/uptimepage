@@ -144,6 +144,7 @@ pub enum ErrorClass {
     FlowStep,
     HeartbeatJob,
     HeartbeatMissed,
+    ManualState,
     Other,
 }
 
@@ -190,6 +191,7 @@ impl ErrorClass {
         Self::FlowStep,
         Self::HeartbeatJob,
         Self::HeartbeatMissed,
+        Self::ManualState,
         Self::Other,
     ];
 
@@ -234,6 +236,7 @@ impl ErrorClass {
             Self::FlowStep => "flow_step",
             Self::HeartbeatJob => "heartbeat_job",
             Self::HeartbeatMissed => "heartbeat_missed",
+            Self::ManualState => "manual_state",
             Self::Other => "other",
         }
     }
@@ -288,7 +291,8 @@ impl ErrorClass {
             | Self::DomainExpiry
             | Self::FlowStep
             | Self::HeartbeatJob
-            | Self::HeartbeatMissed => ErrorFamily::Verdict,
+            | Self::HeartbeatMissed
+            | Self::ManualState => ErrorFamily::Verdict,
             Self::Other => ErrorFamily::Other,
         }
     }
@@ -311,7 +315,7 @@ pub fn classify_check_error(raw: &str) -> ErrorClass {
             return ErrorClass::HeartbeatStateUnavailable;
         }
         "flow engine not configured on this node" => return ErrorClass::FlowNotConfigured,
-        "heartbeat monitors are evaluated on the control plane, not probed" => {
+        "passive monitors are evaluated on the control plane, not probed" => {
             return ErrorClass::HeartbeatNotProbed;
         }
         "circuit_open" => return ErrorClass::CircuitOpen,
@@ -416,6 +420,9 @@ pub fn classify_check_error(raw: &str) -> ErrorClass {
     }
     if raw.starts_with("no ping for ") {
         return ErrorClass::HeartbeatMissed;
+    }
+    if raw.starts_with("marked down") || raw.starts_with("marked degraded") {
+        return ErrorClass::ManualState;
     }
     // `step N/M op: reason`
     if raw.starts_with("step ") && raw.contains(": ") {
@@ -574,7 +581,7 @@ mod tests {
             ErrorClass::FlowNotConfigured,
         ),
         (
-            "heartbeat monitors are evaluated on the control plane, not probed",
+            "passive monitors are evaluated on the control plane, not probed",
             ErrorClass::HeartbeatNotProbed,
         ),
         ("circuit_open", ErrorClass::CircuitOpen),
@@ -687,6 +694,8 @@ mod tests {
             "no ping for 700s, expected every 600s (+60s grace)",
             ErrorClass::HeartbeatMissed,
         ),
+        ("marked down", ErrorClass::ManualState),
+        ("marked degraded: one trunk of two", ErrorClass::ManualState),
         (
             "step 2/5 http_get: connection refused",
             ErrorClass::FlowStep,
@@ -724,7 +733,7 @@ mod tests {
             vec![
                 "heartbeat state unavailable on this node",
                 "flow engine not configured on this node",
-                "heartbeat monitors are evaluated on the control plane, not probed",
+                "passive monitors are evaluated on the control plane, not probed",
             ],
             "the alertable family must stay narrow; a class that persists \
              legitimately buries the alert in customer downtime"

@@ -68,7 +68,8 @@ impl ServerHandler for McpServer {
         info.instructions = Some(
             "Tools for one Uptimepage organization's monitors, status pages, and health. \
              Read-only tools report on the org; the rest perform actions (create a monitor, pause/resume \
-             one, retune how loudly one is watched, run a check, schedule, edit or cancel a \
+             one, retune how loudly one is watched, set a manual one's state, run a check, \
+             schedule, edit or cancel a \
              maintenance window, publish an incident, post an incident update, create or edit a \
              status page and the components on it) and each \
              asks the user to confirm before it runs when the client can show a prompt; a \
@@ -86,6 +87,9 @@ impl ServerHandler for McpServer {
              For planned work, schedule a maintenance window with `create_maintenance` rather \
              than pausing monitors: checks keep running, the status page shows the work, and \
              paging for the covered monitors is held until it ends. \
+             A service only people can judge, such as a SIP trunk or a partner's back office, \
+             is a `manual` monitor: nothing probes it, and `set_monitor_state` marks it up, \
+             degraded or down, which opens and closes incidents like any other monitor. \
              An authenticated check is built by referencing an org variable in a header, as \
              `Bearer {{ my_key }}`; `list_variables` names the keys. Never paste a credential \
              into a tool argument: it is refused, and it would persist in the transcript. \

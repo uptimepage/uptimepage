@@ -138,6 +138,7 @@ pub(crate) fn describe_check(spec: &CheckSpec) -> (&'static str, String) {
                 exact_duration(c.grace.as_secs())
             ),
         ),
+        CheckSpec::Manual(_) => ("MANUAL", "set by hand".to_string()),
         CheckSpec::TlsCert(c) => ("TLS", format!("{}:{}", c.host, c.port)),
         CheckSpec::DomainExpiry(c) => ("DOMAIN", c.domain.clone()),
         CheckSpec::Dns(c) => ("DNS", format!("{} {}", c.record_type.as_str(), c.domain)),

@@ -28,13 +28,30 @@ struct OpenIncidentRow {
     started_at: DateTime<Utc>,
     region: Option<String>,
     regions_down: Option<Vec<String>>,
+    status_at_start: String,
+}
+
+impl OpenIncidentRow {
+    fn into_open(self) -> OpenIncident {
+        OpenIncident {
+            id: self.id,
+            target_id: self.target_id,
+            started_at: self.started_at,
+            region: self.region,
+            regions_down: self.regions_down.unwrap_or_default(),
+            // Unreadable reads as the worst, so it is never escalated past.
+            worst_status: CheckStatus::from_label(&self.status_at_start)
+                .unwrap_or(CheckStatus::Down),
+        }
+    }
 }
 
 #[async_trait]
 impl IncidentStore for PgIncidentStore {
     async fn open_for_target(&self, org: OrgId, target_id: Uuid) -> Result<Option<OpenIncident>> {
         let row: Option<OpenIncidentRow> = sqlx::query_as::<_, OpenIncidentRow>(
-            r#"SELECT id, target_id, started_at, region, regions_down FROM incidents
+            r#"SELECT id, target_id, started_at, region, regions_down, status_at_start
+               FROM incidents
                WHERE target_id = $1 AND org_id = $2 AND ended_at IS NULL
                  AND origin = 'monitor'
                ORDER BY started_at DESC LIMIT 1"#,
@@ -44,13 +61,7 @@ impl IncidentStore for PgIncidentStore {
         .fetch_optional(&self.pool)
         .await
         .context("incident open_for_target")?;
-        Ok(row.map(|r| OpenIncident {
-            id: r.id,
-            target_id: r.target_id,
-            started_at: r.started_at,
-            region: r.region,
-            regions_down: r.regions_down.unwrap_or_default(),
-        }))
+        Ok(row.map(OpenIncidentRow::into_open))
     }
 
     async fn open_for_pairs(
@@ -69,14 +80,12 @@ impl IncidentStore for PgIncidentStore {
         #[derive(FromRow)]
         struct Row {
             org_id: Uuid,
-            id: Uuid,
-            target_id: Uuid,
-            started_at: DateTime<Utc>,
-            region: Option<String>,
-            regions_down: Option<Vec<String>>,
+            #[sqlx(flatten)]
+            open: OpenIncidentRow,
         }
         let rows: Vec<Row> = sqlx::query_as::<_, Row>(
-            r#"SELECT i.org_id, i.id, i.target_id, i.started_at, i.region, i.regions_down
+            r#"SELECT i.org_id, i.id, i.target_id, i.started_at, i.region, i.regions_down,
+                      i.status_at_start
                FROM incidents i
                JOIN unnest($1::uuid[], $2::uuid[]) AS pairs(org_id, target_id)
                  ON i.org_id = pairs.org_id AND i.target_id = pairs.target_id
@@ -90,15 +99,10 @@ impl IncidentStore for PgIncidentStore {
         let mut out: std::collections::HashMap<(OrgId, Uuid), Vec<OpenIncident>> =
             std::collections::HashMap::new();
         for r in rows {
-            out.entry((OrgId(r.org_id), r.target_id))
+            let open = r.open.into_open();
+            out.entry((OrgId(r.org_id), open.target_id))
                 .or_default()
-                .push(OpenIncident {
-                    id: r.id,
-                    target_id: r.target_id,
-                    started_at: r.started_at,
-                    region: r.region,
-                    regions_down: r.regions_down.unwrap_or_default(),
-                });
+                .push(open);
         }
         Ok(out)
     }
@@ -281,6 +285,27 @@ impl IncidentStore for PgIncidentStore {
         .execute(&self.pool)
         .await
         .context("incident widen")?;
+        Ok(())
+    }
+
+    async fn escalate(
+        &self,
+        org: OrgId,
+        incident_id: Uuid,
+        error_sample: Option<String>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE incidents SET status_at_start = 'down', \
+                    error_sample = COALESCE($3, error_sample), updated_at = now() \
+             WHERE id = $1 AND org_id = $2 AND ended_at IS NULL \
+               AND status_at_start <> 'down'",
+        )
+        .bind(incident_id)
+        .bind(org.0)
+        .bind(error_sample)
+        .execute(&self.pool)
+        .await
+        .context("incident escalate")?;
         Ok(())
     }
 }

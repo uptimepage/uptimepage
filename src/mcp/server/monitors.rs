@@ -15,15 +15,16 @@ use crate::targets::validate::{
     validate_alert_confirmations, validate_group_name, validate_region_policy,
     validate_renotify_interval,
 };
+use crate::targets::vet_note;
 use crate::web::views::describe_check;
 
 use crate::mcp::auth::McpAuth;
 use crate::mcp::confirm::require_confirmation;
 use crate::mcp::error::{McpToolError, codes, config_error, probe_dispatch_error};
 use crate::mcp::schema::{
-    CheckRunResult, CreateMonitorArgs, CreateMonitorsArgs, MonitorCreateOutcome, MonitorCreated,
-    MonitorIdArg, MonitorStateResult, MonitorUpdateResult, MonitorsCreated, ProbeOutcome,
-    UpdateMonitorArgs,
+    CheckRunResult, CreateMonitorArgs, CreateMonitorsArgs, ManualStateSet, MonitorCreateOutcome,
+    MonitorCreated, MonitorIdArg, MonitorStateResult, MonitorUpdateResult, MonitorsCreated,
+    NewCheck, ProbeOutcome, SetMonitorStateArgs, UpdateMonitorArgs,
 };
 
 use super::McpServer;
@@ -186,6 +187,75 @@ impl McpServer {
         }))
     }
 
+    /// `set_monitor_state` body (no audit — the wrapper's `finish` records it).
+    /// Allowed on a Terraform-managed monitor: the state is not config.
+    pub(super) async fn set_manual_state_inner(
+        &self,
+        ctx: &RequestContext<RoleServer>,
+        auth: &McpAuth,
+        args: &SetMonitorStateArgs,
+    ) -> Result<Json<ManualStateSet>, McpToolError> {
+        auth.require(Scope::TargetsWrite)?;
+        self.enforce_rate_limit(auth.org, RateLimitCategory::ApiWrites)
+            .await?;
+        let id = parse_uuid(&args.id, "monitor id")?;
+        let target = self.load_target(auth.org, id).await?;
+        if !matches!(target.check, CheckSpec::Manual(_)) {
+            return Err(McpToolError::invalid_argument(
+                "only a manual monitor's state can be set; this one is checked automatically",
+            ));
+        }
+        let status = crate::domain::ManualStatus::from(args.state);
+        let note = vet_note(args.note.as_deref()).map_err(config_error)?;
+        let ops = self.state.manual_ops();
+        let current = ops
+            .current(auth.org, &target)
+            .await
+            .map_err(|e| McpToolError::internal(format!("manual state: {e}")))?;
+        // Matches what is there: nothing to write, so nothing to ask.
+        if current.matches(status, &note) {
+            return Ok(Json(manual_state_set(id, current, false)));
+        }
+        let effect = manual_set_effect(target.enabled, current.status, status);
+        let shown_note = note
+            .as_deref()
+            .map(|n| format!(" Note: \"{}\".", sanitize_prompt(n)))
+            .unwrap_or_default();
+        require_confirmation(
+            ctx,
+            auth,
+            format!(
+                "Mark monitor \"{}\" {} (now {})?{shown_note} {effect}",
+                sanitize_prompt(&target.name),
+                status.as_str(),
+                current.status.as_str()
+            ),
+        )
+        .await?;
+
+        // The prompt promised an effect read from this state; if someone moved
+        // it meanwhile, that promise no longer holds.
+        let target_now = self.load_target(auth.org, id).await?;
+        let state_now = ops
+            .current(auth.org, &target_now)
+            .await
+            .map_err(|e| McpToolError::internal(format!("manual state: {e}")))?;
+        // Every set moves `set_at`; who made the last one is not the state.
+        if state_now.set_at != current.set_at || target_now.enabled != target.enabled {
+            return Err(McpToolError::new(
+                codes::CONFLICT,
+                "monitor changed while the change was being confirmed; read it again and retry",
+                true,
+            ));
+        }
+        let change = ops
+            .set_on(auth.org, &target_now, status, note, Some(auth.user_id))
+            .await
+            .map_err(config_error)?;
+        let changed = change.changed();
+        Ok(Json(manual_state_set(id, change.state, changed)))
+    }
+
     /// `create_monitor` body (no audit — the wrapper's `finish` records it).
     pub(super) async fn create_monitor_inner(
         &self,
@@ -197,7 +267,9 @@ impl McpServer {
         // The trial run is a real probe against a caller-supplied address, so
         // this needs the scope that dispatching a probe needs, and it is metered
         // against the same probe budget the REST dry run spends.
-        auth.require(Scope::TargetsExecute)?;
+        if probes(&args.check) {
+            auth.require(Scope::TargetsExecute)?;
+        }
 
         let prepared = self.prepare_create(auth, args).await?;
         require_confirmation(ctx, auth, prepared.prompt()).await?;
@@ -213,8 +285,10 @@ impl McpServer {
     ) -> Result<PreparedCreate, McpToolError> {
         self.enforce_rate_limit(auth.org, RateLimitCategory::ApiWrites)
             .await?;
-        self.enforce_rate_limit(auth.org, RateLimitCategory::TestNow)
-            .await?;
+        if probes(&args.check) {
+            self.enforce_rate_limit(auth.org, RateLimitCategory::TestNow)
+                .await?;
+        }
 
         let name = args.name.trim();
         if name.is_empty() {
@@ -387,7 +461,9 @@ impl McpServer {
         args: &CreateMonitorsArgs,
     ) -> Result<Json<MonitorsCreated>, McpToolError> {
         auth.require(Scope::TargetsWrite)?;
-        auth.require(Scope::TargetsExecute)?;
+        if args.monitors.iter().any(|m| probes(&m.check)) {
+            auth.require(Scope::TargetsExecute)?;
+        }
 
         if args.monitors.is_empty() {
             return Err(McpToolError::invalid_argument(
@@ -608,7 +684,7 @@ impl McpServer {
         }
         self.state
             .target_ops()
-            .validate_patch_interval(auth.org, id, &mut update, Some(&target))
+            .validate_patch_schedule(auth.org, id, &mut update, Some(&target))
             .await
             .map_err(config_error)?;
 
@@ -653,4 +729,46 @@ impl McpServer {
             changes,
         }))
     }
+}
+
+fn manual_state_set(
+    id: uuid::Uuid,
+    state: crate::domain::ManualState,
+    changed: bool,
+) -> ManualStateSet {
+    ManualStateSet {
+        id: id.to_string(),
+        state: state.status.as_str().to_string(),
+        note: state.note,
+        set_at: state.set_at.to_rfc3339(),
+        changed,
+    }
+}
+
+/// What a set will do, said before it is approved. Incidents only ever get
+/// worse while open, so a softer bad state changes the cause, not the outage.
+pub(super) fn manual_set_effect(
+    enabled: bool,
+    from: crate::domain::ManualStatus,
+    to: crate::domain::ManualStatus,
+) -> &'static str {
+    use crate::domain::ManualStatus::{Degraded, Down, Up};
+    if !enabled {
+        return "The monitor is paused: the state is kept and takes effect once it is enabled.";
+    }
+    match (from, to) {
+        (_, Up) => "Its open incident, if any, closes.",
+        (Up, _) => "It opens an incident, which may alert its channels.",
+        (Degraded, Down) => "Its open incident becomes an outage, with the note as its cause.",
+        (Down, Degraded) => {
+            "Its open incident stays an outage until it is set up; the note becomes its cause."
+        }
+        _ => "The note becomes the cause of its open incident.",
+    }
+}
+
+/// Whether creating this check spends a trial probe. A passive kind has
+/// nothing to reach, so it needs neither the scope nor the budget.
+fn probes(check: &NewCheck) -> bool {
+    !matches!(check, NewCheck::Heartbeat { .. } | NewCheck::Manual {})
 }

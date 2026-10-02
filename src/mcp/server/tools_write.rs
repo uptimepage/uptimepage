@@ -17,10 +17,10 @@ use crate::mcp::schema::{
     AddComponentsArgs, CheckRunResult, ComponentUpdated, ComponentsAdded, CreateMaintenanceArgs,
     CreateMonitorArgs, CreateMonitorsArgs, CreateStatusPageArgs, IncidentActionArgs,
     IncidentActionResult, IncidentIdArg, IncidentUpdatePosted, IncidentVisibilityResult,
-    MaintenanceIdArg, MaintenanceUpdateResult, MaintenanceWindowView, MonitorCreated, MonitorIdArg,
-    MonitorStateResult, MonitorUpdateResult, MonitorsCreated, PostIncidentUpdateArgs,
-    PublishIncidentArgs, StatusPageWritten, UpdateComponentArgs, UpdateMaintenanceArgs,
-    UpdateMonitorArgs, UpdateStatusPageArgs,
+    MaintenanceIdArg, MaintenanceUpdateResult, MaintenanceWindowView, ManualStateSet,
+    MonitorCreated, MonitorIdArg, MonitorStateResult, MonitorUpdateResult, MonitorsCreated,
+    PostIncidentUpdateArgs, PublishIncidentArgs, SetMonitorStateArgs, StatusPageWritten,
+    UpdateComponentArgs, UpdateMaintenanceArgs, UpdateMonitorArgs, UpdateStatusPageArgs,
 };
 
 use super::McpServer;
@@ -72,10 +72,32 @@ impl McpServer {
             .await
     }
 
+    #[tool(
+        description = "Set the state of a manual monitor: up, degraded or down. A manual monitor has no probe; its state is whatever an operator last set, for a service only people can judge, such as a SIP trunk, a carrier link or a partner's back office. Down or degraded opens an incident within about 30 seconds, which pages the monitor's channels unless a maintenance window holds it, and shows on its status pages as a major outage or degraded performance; up closes the incident. The note becomes the incident's cause, so make it a reason a responder can act on. Refused for any other kind of monitor. Asks for confirmation where the client can show a prompt; otherwise runs on the token's scope. Not read-only; idempotent.",
+        title = "Set manual monitor state",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true
+        )
+    )]
+    async fn set_monitor_state(
+        &self,
+        Parameters(args): Parameters<SetMonitorStateArgs>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<Json<ManualStateSet>, McpToolError> {
+        let auth = McpAuth::from_ctx(&ctx)?;
+        let pool = self.require_pool()?;
+        let args_json = json!({ "id": args.id, "state": args.state, "note": args.note });
+        let result = self.set_manual_state_inner(&ctx, &auth, &args).await;
+        self.finish(pool, &auth, "set_monitor_state", args_json, result)
+            .await
+    }
+
     /// Create a monitor. The check runs once first and its result is shown in
     /// the confirmation, so a misconfigured check is visible before it exists.
     #[tool(
-        description = "Create a monitor for an http, tcp, ping, dns, tls_cert, domain_expiry or heartbeat check. The check is run once before anything is saved and the result is shown to the user along with every setting it would apply; where the client can show a prompt, nothing is created unless they approve; otherwise the monitor is created on the token's scope and the trial result comes back with it. Bind it to alerts as you create it: pass channel_ids from list_notification_channels (this needs the channels:read scope), and if the org has no channel yet, say so rather than leaving a monitor that pages nobody. Leave regions unset unless the user named where they want the check to run from — omitted, it probes from the operator's default set, which is already the intended coverage; naming more regions than the plan allows is refused outright. Request headers and a request body can be set, but a credential must be referenced rather than pasted: write `Bearer {{ my_key }}` and call list_variables for the keys this org has. A URL carrying a username or password is refused, and browser flows cannot be created here — add those in the app. Not read-only.",
+        description = "Create a monitor for an http, tcp, ping, dns, tls_cert, domain_expiry, heartbeat or manual check. A manual monitor has nothing to probe; set its state afterwards with set_monitor_state. The check is run once before anything is saved and the result is shown to the user along with every setting it would apply; where the client can show a prompt, nothing is created unless they approve; otherwise the monitor is created on the token's scope and the trial result comes back with it. Bind it to alerts as you create it: pass channel_ids from list_notification_channels (this needs the channels:read scope), and if the org has no channel yet, say so rather than leaving a monitor that pages nobody. Leave regions unset unless the user named where they want the check to run from — omitted, it probes from the operator's default set, which is already the intended coverage; naming more regions than the plan allows is refused outright. Request headers and a request body can be set, but a credential must be referenced rather than pasted: write `Bearer {{ my_key }}` and call list_variables for the keys this org has. A URL carrying a username or password is refused, and browser flows cannot be created here — add those in the app. Not read-only.",
         title = "Create monitor",
         annotations(
             read_only_hint = false,

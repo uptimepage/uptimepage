@@ -41,7 +41,7 @@ use crate::storage::UptimeStats;
 #[openapi(
     info(
         title = "uptimepage",
-        description = "HTTP / TCP / ping / heartbeat / TLS-cert / domain-expiry / DNS / browser-flow health-check service. \
+        description = "HTTP / TCP / ping / heartbeat / manual / TLS-cert / domain-expiry / DNS / browser-flow health-check service. \
                        Schedules checks against configured targets, stores results, \
                        exposes a REST API.",
         license(name = "MIT"),
@@ -64,6 +64,8 @@ use crate::storage::UptimeStats;
         handlers::targets::check_now,
         handlers::targets::get_heartbeat,
         handlers::targets::rotate_heartbeat,
+        handlers::targets::get_manual_state,
+        handlers::targets::set_manual_state,
         handlers::targets::revoke_heartbeat_previous,
         handlers::results::list_results,
         handlers::results::latency,
@@ -212,6 +214,10 @@ use crate::storage::UptimeStats;
             HeartbeatCheck,
             crate::targets::HeartbeatInfo,
             handlers::targets::RotateHeartbeatRequest,
+            crate::domain::ManualCheck,
+            crate::domain::ManualStatus,
+            crate::domain::ManualState,
+            crate::targets::SetManualState,
             TlsCertCheck,
             DomainExpiryCheck,
             DnsCheck,

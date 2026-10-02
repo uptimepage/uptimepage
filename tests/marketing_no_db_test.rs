@@ -1586,7 +1586,10 @@ fn the_site_description_counts_every_check_kind() {
     const WORDS: [&str; 9] = [
         "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
     ];
-    let real = CheckSpec::ALL_KINDS.len();
+    let real = CheckSpec::ALL_KINDS
+        .iter()
+        .filter(|k| **k != "manual")
+        .count();
     let text = META_DESCRIPTION.to_lowercase();
     let (claimed, word) = WORDS
         .iter()

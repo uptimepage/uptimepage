@@ -23,7 +23,9 @@ use uuid::Uuid;
 use crate::domain::OrgId;
 use crate::domain::quota::RegionCaps;
 use crate::error::Result;
-use crate::storage::admin::{NOT_HELD_PREDICATE, REGION_CAP_JOIN, REGION_CAP_PREDICATE};
+use crate::storage::admin::{
+    NOT_HELD_PREDICATE, PROBED_KIND_PREDICATE, REGION_CAP_JOIN, REGION_CAP_PREDICATE,
+};
 
 /// An open (unresolved) silence row. `notified` = the customer was already told.
 #[derive(Debug, Clone, Copy)]
@@ -94,8 +96,7 @@ impl SilenceStore for PgSilenceStore {
                JOIN organizations o ON o.id = t.org_id
                {REGION_CAP_JOIN}
                WHERE t.enabled AND o.deleted_at IS NULL AND {NOT_HELD_PREDICATE}
-                 -- Heartbeats run on the control plane; agent liveness is moot.
-                 AND t.kind IS DISTINCT FROM 'heartbeat'
+                 AND {PROBED_KIND_PREDICATE}
                  AND EXISTS (SELECT 1 FROM target_regions tr WHERE tr.target_id = t.id)
                  AND NOT EXISTS (
                      SELECT 1 FROM target_regions tr
@@ -119,17 +120,18 @@ impl SilenceStore for PgSilenceStore {
     }
 
     async fn orgs_with_assigned_targets(&self) -> Result<Vec<OrgId>> {
-        let rows: Vec<(Uuid,)> = sqlx::query_as(
+        let sql = format!(
             "SELECT DISTINCT t.org_id \
              FROM targets t \
              JOIN organizations o ON o.id = t.org_id \
-             WHERE t.enabled AND o.deleted_at IS NULL AND t.plan_hold_at IS NULL \
-               AND t.kind IS DISTINCT FROM 'heartbeat' \
-               AND EXISTS (SELECT 1 FROM target_regions tr WHERE tr.target_id = t.id)",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("silence orgs: {e}"))?;
+             WHERE t.enabled AND o.deleted_at IS NULL AND {NOT_HELD_PREDICATE} \
+               AND {PROBED_KIND_PREDICATE} \
+               AND EXISTS (SELECT 1 FROM target_regions tr WHERE tr.target_id = t.id)"
+        );
+        let rows: Vec<(Uuid,)> = sqlx::query_as(&sql)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("silence orgs: {e}"))?;
         Ok(rows.into_iter().map(|(o,)| OrgId(o)).collect())
     }
 

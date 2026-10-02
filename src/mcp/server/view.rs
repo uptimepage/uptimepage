@@ -19,8 +19,8 @@ use crate::mcp::schema::{
     CheckConfig, CheckDiagnosticView, CheckTiming, DnsCheckConfig, DomainExpiryCheckConfig,
     FlowCheckConfig, FlowRunEvidence, FlowRunItem, FlowStepConfig, FlowStepRun, FlowStepTrendItem,
     HeartbeatCheckConfig, HttpCheckConfig, IncidentDetail, IncidentSummary, IncidentUpdateItem,
-    IncidentVisibilityResult, PingCheckConfig, ProbeOutcome, RegionHealth, RegionItem,
-    RegionPolicyArg, RegionPolicyMode, TcpCheckConfig, TlsCertCheckConfig,
+    IncidentVisibilityResult, ManualCheckConfig, PingCheckConfig, ProbeOutcome, RegionHealth,
+    RegionItem, RegionPolicyArg, RegionPolicyMode, TcpCheckConfig, TlsCertCheckConfig,
 };
 
 pub(super) fn check_diagnostic(result: &CheckResult) -> Option<CheckDiagnosticView> {
@@ -249,6 +249,7 @@ pub(super) fn check_config(check: &CheckSpec) -> CheckConfig {
             grace_secs: h.grace.as_secs(),
             max_runtime_secs: h.max_runtime.map(|d| d.as_secs()),
         }),
+        CheckSpec::Manual(_) => CheckConfig::Manual(ManualCheckConfig {}),
         CheckSpec::Dns(d) => CheckConfig::Dns(DnsCheckConfig {
             domain: sanitize_data(&d.domain),
             record_type: d.record_type.as_str().to_string(),

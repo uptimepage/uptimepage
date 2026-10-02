@@ -12,6 +12,13 @@ import { parseDuration } from "./_duration.js";
     const form = document.getElementById("check-form");
     if (!form) return;
 
+    // Nothing to probe: the verdict is control-plane state. Mirrored from the
+    // server via data-passive-kinds.
+    let PASSIVE_KINDS = [];
+    try {
+        PASSIVE_KINDS = JSON.parse(form.dataset.passiveKinds || "[]");
+    } catch { /* every kind then shows its probe controls */ }
+
     const DURATION_HELP = (label, lo, hi) =>
         `${label} must be between ${lo} and ${hi}. Use a number of seconds, or a unit: 90s, 15m, 2h, 30d.`;
 
@@ -96,16 +103,19 @@ import { parseDuration } from "./_duration.js";
         return Math.max(minInterval, base);
     }
 
-    // Heartbeat is passive: no test-now, no cadence to pick (fixed floor), no
-    // probe regions.
+    // Passive kinds have no test-now, no cadence to pick (fixed floor) and no
+    // probe regions. A manual state is a person's call, so it needs no
+    // confirmations either.
     function applyPassiveKind(kind) {
-        const passive = kind === "heartbeat";
+        const passive = PASSIVE_KINDS.includes(kind);
         const schedule = form.querySelector("[data-schedule-section]");
         if (schedule) schedule.hidden = passive;
         const testBtn = form.querySelector("[data-test-now]");
         if (testBtn) testBtn.hidden = passive;
         const regions = document.querySelector("[data-monitor-regions]");
         if (regions) regions.hidden = passive;
+        const confirmations = form.querySelector("[data-confirmations]");
+        if (confirmations) confirmations.hidden = kind === "manual";
     }
 
     // A flow only runs where an engine exists, so on the flow kind the picker
@@ -414,7 +424,7 @@ import { parseDuration } from "./_duration.js";
                 const n = parseInt(sel.value, 10);
                 built.payload.region_policy = Number.isInteger(n) ? { count: n } : sel.value;
             }
-            if (currentCheckType() !== "heartbeat") {
+            if (!PASSIVE_KINDS.includes(currentCheckType())) {
                 regions = [...regionRoot.querySelectorAll("[data-region-checkbox]:checked")]
                     .filter((c) => !c.disabled)
                     .map((c) => c.value);
@@ -591,6 +601,9 @@ import { parseDuration } from "./_duration.js";
                 },
             };
         }
+        if (checkType === "manual") {
+            return { check: { type: "manual" } };
+        }
         if (checkType === "heartbeat") {
             const period = parseDuration(data.get("heartbeat_period_s"));
             if (period === null || period < 60 || period > 2592000) {
@@ -721,7 +734,9 @@ import { parseDuration } from "./_duration.js";
         }
 
         const confEl = form.querySelector("input[name='alert_confirmations']:checked");
-        const confirmations = confEl ? parseInt(confEl.value, 10) : 2;
+        const confirmations = currentCheckType() === "manual"
+            ? 1
+            : (confEl ? parseInt(confEl.value, 10) : 2);
         if (!Number.isInteger(confirmations) || confirmations < 1) {
             return { error: "Open incident after must be a whole number of failed checks (≥ 1)." };
         }
@@ -731,10 +746,13 @@ import { parseDuration } from "./_duration.js";
         const planMin = Number(form.dataset.minInterval) || 60;
         const kind = data.get("check_type") || "http";
         const minInterval = Math.max(planMin, kindFloor(kind));
+        // A manual monitor's cadence is fixed and no plan floor governs it.
         const interval = kind === "heartbeat"
             ? heartbeatInterval(data, minInterval)
-            : parseInt(data.get("interval_s"), 10);
-        if (!Number.isInteger(interval) || interval < minInterval) {
+            : kind === "manual"
+                ? kindFloor(kind)
+                : parseInt(data.get("interval_s"), 10);
+        if (kind !== "manual" && (!Number.isInteger(interval) || interval < minInterval)) {
             return { error: `Check interval must be at least ${floorLabel(minInterval)}.` };
         }
 

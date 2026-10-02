@@ -126,7 +126,7 @@ fn flow_is_offered_but_locked_until_the_plan_allows_it() {
     .unwrap();
     assert!(html.contains(r#"name="check_type" value="flow""#));
     assert!(!html.contains("coming soon"));
-    assert_eq!(html.matches(r#"card-badge--ok">new<"#).count(), 2);
+    assert_eq!(html.matches(r#"card-badge--ok">new<"#).count(), 3);
 
     // The URL names the kind before the plan is known; it stays locked.
     let mut form = empty_create_form();

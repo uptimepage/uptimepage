@@ -1,5 +1,5 @@
 //! What the scheduler enumerates on a refresh tick: the control plane's own
-//! region plus every passive heartbeat monitor, reconciled before dispatch.
+//! region plus every passive monitor, reconciled before dispatch.
 
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -9,17 +9,19 @@ use crate::error::Result;
 use crate::quotas::QuotaService;
 use crate::quotas::effective;
 use crate::storage::admin::{AdminRepo, EnabledTargetSource};
+use crate::worker::PassiveRuntimes;
 use crate::worker::heartbeat::HeartbeatRuntime;
+use crate::worker::manual::ManualRuntime;
 
 /// Scheduler source scoped to the control plane's own region. Wraps
 /// [`AdminRepo`] so the local scheduler runs exactly the targets assigned to
 /// its region — the same query an agent pulls for its region. Remote regions
-/// are left to their agents. Heartbeat monitors are appended: passive (no
-/// probing), so the control plane evaluates all of them regardless of region.
+/// are left to their agents. Passive monitors are appended: nothing is
+/// probed, so the control plane evaluates all of them regardless of region.
 pub struct RegionTargetSource {
     repo: AdminRepo,
     region: String,
-    heartbeat: Arc<HeartbeatRuntime>,
+    passive: PassiveRuntimes,
     quotas: Arc<QuotaService>,
     /// Whether this control plane runs flow in-process (single-node/self-host).
     /// Distributed deployments leave flow to a capable agent and set this `false`.
@@ -30,14 +32,14 @@ impl RegionTargetSource {
     pub fn new(
         repo: AdminRepo,
         region: String,
-        heartbeat: Arc<HeartbeatRuntime>,
+        passive: PassiveRuntimes,
         quotas: Arc<QuotaService>,
         flow_capable: bool,
     ) -> Self {
         Self {
             repo,
             region,
-            heartbeat,
+            passive,
             quotas,
             flow_capable,
         }
@@ -53,39 +55,51 @@ impl RegionTargetSource {
 #[async_trait]
 impl EnabledTargetSource for RegionTargetSource {
     async fn list_all_enabled_targets(&self) -> Result<Vec<(OrgId, Target)>> {
-        let (mut targets, heartbeats) = tokio::try_join!(
+        let (mut targets, passive) = tokio::try_join!(
             self.governed_region_targets(),
-            enabled_heartbeats_synced(&self.repo, &self.heartbeat),
+            enabled_passive_synced(&self.repo, &self.passive),
         )?;
-        targets.extend(heartbeats);
+        targets.extend(passive);
         Ok(targets)
     }
 }
 
 /// Scheduler source for a control plane with in-process probing disabled
-/// (agents cover every region): feeds the scheduler only the passive heartbeat
-/// set, which is control-plane state and must run here regardless.
-pub struct HeartbeatTargetSource {
+/// (agents cover every region): feeds the scheduler only the passive set,
+/// which is control-plane state and must run here regardless.
+pub struct PassiveTargetSource {
     repo: AdminRepo,
-    heartbeat: Arc<HeartbeatRuntime>,
+    passive: PassiveRuntimes,
 }
 
-impl HeartbeatTargetSource {
-    pub fn new(repo: AdminRepo, heartbeat: Arc<HeartbeatRuntime>) -> Self {
-        Self { repo, heartbeat }
+impl PassiveTargetSource {
+    pub fn new(repo: AdminRepo, passive: PassiveRuntimes) -> Self {
+        Self { repo, passive }
     }
 }
 
 #[async_trait]
-impl EnabledTargetSource for HeartbeatTargetSource {
+impl EnabledTargetSource for PassiveTargetSource {
     async fn list_all_enabled_targets(&self) -> Result<Vec<(OrgId, Target)>> {
-        enabled_heartbeats_synced(&self.repo, &self.heartbeat).await
+        enabled_passive_synced(&self.repo, &self.passive).await
     }
 }
 
-/// One refresh tick's heartbeat work, shared by both sources: heal + list the
-/// rows, then reconcile the ping state before the registry dispatches, so a
-/// freshly added target is guaranteed resident state by ordering.
+async fn enabled_passive_synced(
+    repo: &AdminRepo,
+    passive: &PassiveRuntimes,
+) -> Result<Vec<(OrgId, Target)>> {
+    let (mut targets, manual) = tokio::try_join!(
+        enabled_heartbeats_synced(repo, &passive.heartbeat),
+        enabled_manual_synced(repo, &passive.manual),
+    )?;
+    targets.extend(manual);
+    Ok(targets)
+}
+
+/// One refresh tick's heartbeat work: heal + list the rows, then reconcile the
+/// ping state before the registry dispatches, so a freshly added target is
+/// guaranteed resident state by ordering.
 async fn enabled_heartbeats_synced(
     repo: &AdminRepo,
     runtime: &HeartbeatRuntime,
@@ -100,5 +114,15 @@ async fn enabled_heartbeats_synced(
             target.interval = target.interval.min(hb.evaluation_cadence());
         }
     }
+    Ok(targets)
+}
+
+/// The manual half, reconciled the same way.
+async fn enabled_manual_synced(
+    repo: &AdminRepo,
+    runtime: &ManualRuntime,
+) -> Result<Vec<(OrgId, Target)>> {
+    let (targets, states) = repo.list_enabled_manual_targets().await?;
+    runtime.sync_states(states.into_iter().collect());
     Ok(targets)
 }

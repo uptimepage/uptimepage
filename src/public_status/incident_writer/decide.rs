@@ -22,6 +22,12 @@ pub enum Action {
         incident_id: Uuid,
         regions: Vec<String>,
     },
+    /// A confirmed failure went hard down on an incident that opened softer;
+    /// the cause moves with it.
+    Escalate {
+        incident_id: Uuid,
+        error_sample: Option<String>,
+    },
 }
 
 struct Verdict<'a> {
@@ -90,11 +96,7 @@ pub fn decide_multi(
                 let origin = bad[0];
                 // Worst across every confirmed bad run — a degraded origin
                 // region must not mask a concurrently hard-down region.
-                let status_at_start = bad
-                    .iter()
-                    .flat_map(|v| v.bad.iter().map(|r| r.status))
-                    .max_by_key(|s| s.severity_rank())
-                    .unwrap_or(CheckStatus::Down);
+                let status_at_start = worst_status(&bad).unwrap_or(CheckStatus::Down);
                 let (regions_down, regions_up) = split_regions(&bad, &verdicts);
                 vec![Action::Open(NewOpenIncident {
                     target_id,
@@ -131,20 +133,38 @@ pub fn decide_multi(
             // The breakdown only grows: a region one check behind the quorum
             // joins once it confirms, silence adds nothing, and a recovery is
             // the close's business, so the row keeps the worst the outage was.
+            // The status follows the same rule.
+            let mut actions = Vec::new();
             let (confirmed, _) = split_regions(&bad, &verdicts);
             let regions: Vec<String> = confirmed
                 .into_iter()
                 .filter(|r| !inc.regions_down.contains(r))
                 .collect();
-            if regions.is_empty() {
-                return vec![];
+            if !regions.is_empty() {
+                actions.push(Action::Widen {
+                    incident_id: inc.id,
+                    regions,
+                });
             }
-            vec![Action::Widen {
-                incident_id: inc.id,
-                regions,
-            }]
+            // Only to down: an error is as often our probe as the service, so
+            // it never turns a degraded incident into an outage.
+            if inc.worst_status != CheckStatus::Down
+                && worst_status(&bad) == Some(CheckStatus::Down)
+            {
+                actions.push(Action::Escalate {
+                    incident_id: inc.id,
+                    error_sample: incident_error_sample(&bad, verdicts.len(), quorum),
+                });
+            }
+            actions
         }
     }
+}
+
+fn worst_status(bad: &[&Verdict]) -> Option<CheckStatus> {
+    bad.iter()
+        .flat_map(|v| v.bad.iter().map(|r| r.status))
+        .max_by_key(|s| s.severity_rank())
 }
 
 /// Confirmed regions in the order they failed, then the reporting regions that
@@ -224,9 +244,15 @@ fn incident_error_sample(
         }
     }
 
-    // Nothing cleared the bar: report the protocol failure rather than guess.
-    bad.iter()
-        .find_map(|verdict| verdict.bad.iter().find_map(|result| result.error.clone()))
+    // Nothing cleared the bar: report the protocol failure rather than guess,
+    // newest first for the same reason as above.
+    bad.iter().find_map(|verdict| {
+        verdict
+            .bad
+            .iter()
+            .rev()
+            .find_map(|result| result.error.clone())
+    })
 }
 
 fn trailing_bad_run(results: &[CheckResult]) -> &[CheckResult] {

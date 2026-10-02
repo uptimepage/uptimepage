@@ -22,8 +22,8 @@
           aria-label="{{ share_count }} active share link{% if share_count != 1 %}s{% endif %} — manage sharing">[ shared:{{ share_count }} ]</button>
   {% endif %}
   <span class="ml-auto flex flex-wrap items-center gap-2">
-    {# Heartbeats are pinged from outside; there is nothing to run. #}
-    {% if kind != "HEARTBEAT" %}
+    {# Passive monitors have nothing to run. #}
+    {% if kind != "HEARTBEAT" && kind != "MANUAL" %}
     <button type="button"
             data-detail-test-now data-target-id="{{ id }}"
             aria-describedby="detail-test-hint"

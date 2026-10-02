@@ -99,7 +99,9 @@ fn scope_label(scope: &str) -> &'static str {
         "incidents:read" => "Read your incidents and their updates",
         "maintenance:read" => "Read your maintenance windows",
         "channels:read" => "Read the names of your notification channels",
-        "targets:write" => "Create monitors, and pause, resume or retune existing ones",
+        "targets:write" => {
+            "Create monitors, pause, resume or retune them, and set a manual monitor up or down"
+        }
         "targets:execute" => "Run checks on your monitors on demand",
         "maintenance:write" => "Schedule and edit maintenance windows (shown publicly)",
         "maintenance:delete" => "Cancel maintenance windows",

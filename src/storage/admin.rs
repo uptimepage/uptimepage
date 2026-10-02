@@ -153,6 +153,13 @@ pub(crate) const REGION_CAP_PREDICATE: &str = "(cap.max_regions IS NULL \
 /// account no longer holds and the no-data alarm fires for the one it does.
 pub(crate) const NOT_HELD_PREDICATE: &str = "t.plan_hold_at IS NULL";
 
+/// Kinds an agent probes. The passive ones are judged from control-plane state,
+/// so their region rows are inert: an agent handed one has nothing to evaluate,
+/// and its silence says nothing about them. NULL-safe: a row whose check has
+/// no type stays probed, as `IS DISTINCT FROM` kept it.
+pub(crate) const PROBED_KIND_PREDICATE: &str =
+    "(t.kind IS NULL OR t.kind NOT IN ('heartbeat', 'manual'))";
+
 /// [`NOT_HELD_PREDICATE`] for a query whose `targets` is aliased something
 /// other than `t`, or which names a target only by id.
 pub(crate) fn not_held_sql(target_col: &str) -> String {
@@ -400,6 +407,54 @@ impl AdminRepo {
             .collect())
     }
 
+    /// Every enabled manual-kind target in a live org with the state it
+    /// restates, read in one statement so the two cannot disagree. One never
+    /// set reads up since it was created. Region-independent for the same
+    /// reason as [`Self::list_enabled_heartbeat_targets`].
+    pub async fn list_enabled_manual_targets(
+        &self,
+    ) -> Result<(
+        Vec<(OrgId, Target)>,
+        Vec<(Uuid, crate::domain::ManualState)>,
+    )> {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            #[sqlx(flatten)]
+            row: OrgTargetRow,
+            #[sqlx(flatten)]
+            manual: crate::storage::manual::ManualRow,
+        }
+        let sql = format!(
+            "SELECT {TARGET_COLUMNS}, COALESCE(mm.status, 'up') AS status, mm.note AS note, \
+                    COALESCE(mm.set_at, t.created_at) AS set_at, mm.set_by AS set_by \
+             FROM targets t \
+             JOIN organizations o ON o.id = t.org_id \
+             LEFT JOIN manual_monitors mm ON mm.target_id = t.id AND mm.org_id = t.org_id \
+             WHERE t.enabled = true AND o.deleted_at IS NULL AND {NOT_HELD_PREDICATE} \
+               AND t.kind = 'manual'"
+        );
+        let rows: Vec<Row> = sqlx::query_as(&sql)
+            .fetch_all(&self.pool)
+            .await
+            .context("admin: list enabled manual targets")?;
+        let mut states = Vec::with_capacity(rows.len());
+        let mut targets = Vec::with_capacity(rows.len());
+        for r in rows {
+            let id = r.row.target.id;
+            match r.manual.into_state() {
+                Ok(state) => states.push((id, state)),
+                Err(err) => {
+                    tracing::warn!(target_id = %id, error = %err, "manual state unreadable")
+                }
+            }
+            targets.push(r.row);
+        }
+        Ok((
+            decode_targets_or_err(targets, self.cipher.as_deref())?,
+            states,
+        ))
+    }
+
     /// Orgs with an enabled target in this region. The caller resolves their
     /// plans through the quota service, which is what governs the pull.
     pub async fn region_org_ids(&self, region: &str) -> Result<Vec<OrgId>> {
@@ -458,7 +513,7 @@ impl AdminRepo {
                  {REGION_CAP_JOIN} \
                  WHERE tr.region = $1 AND t.enabled = true AND o.deleted_at IS NULL \
                    AND {NOT_HELD_PREDICATE} \
-                   AND rg.enabled AND t.kind IS DISTINCT FROM 'heartbeat' \
+                   AND rg.enabled AND {PROBED_KIND_PREDICATE} \
                    AND {REGION_CAP_PREDICATE}"
         );
         let (cap_orgs, cap_limits) = caps.arrays();
@@ -480,9 +535,8 @@ impl AdminRepo {
 
     /// Enabled targets assigned to one region (via `target_regions`), in live
     /// orgs. Backs the agent config-pull API. Same decrypted shape as
-    /// [`Self::list_all_enabled_targets`]. Heartbeat monitors are excluded:
-    /// their region rows are inert and an agent has no ping state to evaluate
-    /// them against.
+    /// [`Self::list_all_enabled_targets`]. Passive monitors are excluded, see
+    /// [`PROBED_KIND_PREDICATE`].
     ///
     /// `caps` limits how many of a monitor's regions are served: the first
     /// `max_regions` of its enabled ones, defaults first then by id, so a plan
@@ -505,7 +559,7 @@ impl AdminRepo {
              {REGION_CAP_JOIN} \
              WHERE t.enabled = true AND o.deleted_at IS NULL AND tr.region = $1 \
                AND {NOT_HELD_PREDICATE} \
-               AND rg.enabled AND t.kind IS DISTINCT FROM 'heartbeat' \
+               AND rg.enabled AND {PROBED_KIND_PREDICATE} \
                AND ($4 OR t.kind IS DISTINCT FROM 'flow') \
                AND {REGION_CAP_PREDICATE}"
         );
@@ -608,19 +662,20 @@ impl AdminRepo {
         &self,
         region: &str,
     ) -> Result<std::collections::HashMap<Uuid, OrgId>> {
-        let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
+        let sql = format!(
             "SELECT tr.target_id, t.org_id \
              FROM target_regions tr \
              JOIN targets t ON t.id = tr.target_id \
              JOIN organizations o ON o.id = t.org_id \
              JOIN regions rg ON rg.id = tr.region \
              WHERE tr.region = $1 AND t.enabled = true AND o.deleted_at IS NULL \
-               AND rg.enabled AND t.kind IS DISTINCT FROM 'heartbeat'",
-        )
-        .bind(region)
-        .fetch_all(&self.pool)
-        .await
-        .context("admin: assigned targets for region")?;
+               AND rg.enabled AND {PROBED_KIND_PREDICATE}"
+        );
+        let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(&sql)
+            .bind(region)
+            .fetch_all(&self.pool)
+            .await
+            .context("admin: assigned targets for region")?;
         Ok(rows.into_iter().map(|(t, o)| (t, OrgId(o))).collect())
     }
 
@@ -677,6 +732,19 @@ impl AdminRepo {
                 return Ok(decoded);
             }
             cursor = Some(next);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn agents_are_never_handed_a_passive_kind() {
+        for kind in crate::domain::CheckSpec::PASSIVE_KINDS {
+            assert!(
+                super::PROBED_KIND_PREDICATE.contains(&format!("'{kind}'")),
+                "{kind} is handed to agents"
+            );
         }
     }
 }

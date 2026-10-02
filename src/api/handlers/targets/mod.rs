@@ -26,7 +26,7 @@ use crate::request::{
     TargetsWrite, TokenScopes,
 };
 use crate::storage::TargetFilter;
-use crate::targets::{HeartbeatInfo, heartbeat_info, heartbeat_info_from};
+use crate::targets::{HeartbeatInfo, SetManualState, heartbeat_info, heartbeat_info_from};
 
 const BULK_MAX: usize = 10_000;
 const LIST_LIMIT_DEFAULT: usize = 50;
@@ -307,7 +307,7 @@ pub async fn update(
     if let Some(Some(uid)) = update.owner_user_id {
         ops.validate_owner_is_member(org, Some(uid)).await?;
     }
-    ops.validate_patch_interval(org, id, &mut update, stored_target.as_ref())
+    ops.validate_patch_schedule(org, id, &mut update, stored_target.as_ref())
         .await?;
     // The disabled→enabled re-arm is folded into the store's enable statement,
     // so this path (and every other enable surface) inherits it.
@@ -420,12 +420,7 @@ pub async fn set_target_regions(
         .get(org, id)
         .await?
         .ok_or_else(|| AppError::not_found(codes::TARGET_NOT_FOUND, "target not found"))?;
-    if target.check.is_passive() {
-        return Err(AppError::unprocessable(
-            codes::REGION_INVALID,
-            "heartbeat monitors receive pings; they are not probed from regions",
-        ));
-    }
+    crate::targets::validate::reject_passive_regions(&target.check)?;
     let snapshot = ops.region_snapshot().await?;
     let regions = ops
         .vet_requested_regions(org, &req.regions, &snapshot)
@@ -603,6 +598,51 @@ pub async fn revoke_heartbeat_previous(
 }
 
 #[utoipa::path(
+    get, path = "/api/v1/targets/{id}/state", tag = "targets",
+    summary = "Get a manual monitor's state",
+    params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, body = crate::domain::ManualState),
+        (status = 404, body = ApiError),
+    ),
+)]
+pub async fn get_manual_state(
+    State(state): State<AppState>,
+    Authorized(org, _): Authorized<TargetsRead>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<crate::domain::ManualState>> {
+    Ok(Json(state.manual_ops().get(org, id).await?))
+}
+
+#[utoipa::path(
+    put, path = "/api/v1/targets/{id}/state", tag = "targets",
+    summary = "Set a manual monitor's state",
+    description = "Sets the state of a monitor whose check `type` is `manual`. \
+                   `down` and `degraded` open an incident within about 30 seconds, \
+                   and `up` closes it. Each set replaces the previous note, and \
+                   is written to the organization's audit log with who made it. \
+                   Setting the same state with the same note again changes nothing.",
+    params(("id" = Uuid, Path)),
+    request_body = SetManualState,
+    responses(
+        (status = 200, body = crate::domain::ManualState),
+        (status = 400, body = ApiError),
+        (status = 404, body = ApiError),
+        (status = 422, description = "Unknown field or status", body = ApiError),
+    ),
+)]
+pub async fn set_manual_state(
+    State(state): State<AppState>,
+    Authorized(org, _): Authorized<TargetsWrite>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<SetManualState>,
+) -> Result<Json<crate::domain::ManualState>> {
+    let change = state.manual_ops().set(org, id, req, Some(user)).await?;
+    Ok(Json(change.state))
+}
+
+#[utoipa::path(
     delete,
     path = "/api/v1/targets/{id}",
     tag = "targets",
@@ -767,6 +807,7 @@ pub async fn bulk_create(
             i64::from(plan.max_flow_checks),
         )
         .await?;
+    ops.report_initial_states(org, &out);
     Ok((StatusCode::CREATED, Redacted::new(out)))
 }
 

@@ -45,6 +45,8 @@ Documentation pages, blog posts and the homepage also answer `Accept: text/markd
 | `GET` | `/api/v1/targets/{id}/heartbeat` | a heartbeat monitor's ping URL and last reported run |
 | `POST` | `/api/v1/targets/{id}/heartbeat/rotate` | mint a replacement ping URL; the old one keeps working for 24 h unless `revoke_previous_immediately` |
 | `DELETE` | `/api/v1/targets/{id}/heartbeat/previous` | end a rotation's overlap window early |
+| `GET` | `/api/v1/targets/{id}/state` | a manual monitor's state |
+| `PUT` | `/api/v1/targets/{id}/state` | set a manual monitor's state |
 | `GET` | `/api/v1/regions` | list the enabled probe-region catalog: `{ "regions": [...] }`, each entry `id`, `name`, `city`, `country_code`, `continent`, `latitude`, `longitude` |
 | `GET` | `/api/v1/targets/{id}/incidents` | coalesced incident periods (`from`, `to`, `ongoing_only`) — paginated |
 | `POST` | `/api/v1/targets/{id}/shares` | mint a read-only share link; returns the share (token included) |
@@ -291,6 +293,16 @@ Constraints: `period` runs from 60 s to 30 d, `grace` from 0 to 30 d, `max_runti
 
 Provisioning: a single create mints the ping URL immediately; bulk-created heartbeat monitors get theirs within one scheduler refresh (~30 s). Pick `grace` with your deployment in mind: a ping sent while the control plane itself is unreachable is lost, so on single-node self-hosts keep `grace` comfortably above your restart window (the hosted service deploys blue/green, so ping ingest stays up).
 
+### Manual
+
+```jsonc
+{ "type": "manual" }
+```
+
+No probe and no fields: the state is whatever an operator last set. A new manual monitor is `up`. `GET /api/v1/targets/{id}/state` (`targets:read`) returns `{ "status": "down", "note": "carrier reports a trunk outage", "set_at": "...", "set_by": "<user id>" }`, where, until the first set, `set_at` is the creation time and `set_by` is null; `set_by` is null again once the setter's deleted account is purged. `PUT` on the same path (`targets:write`) takes `{ "status": "up" | "degraded" | "down", "note": "..." }` and returns the same shape. `note` is optional, one line of at most 200 characters, and replaces the previous one; an invalid note is `400 INVALID_MANUAL_STATE`. Either route on another kind of monitor is `404 MANUAL_NOT_CONFIGURED`.
+
+A set that changes something writes its result at once, so `down` or `degraded` opens an incident on the incident writer's next pass (about 30 s) and `up` closes it; the scheduler restates the state once a minute after that. A manual monitor needs one bad result, not `alert_confirmations` of them, so create stores `alert_confirmations: 1` whatever the body says and a PATCH to another count is `400 INVALID_ALERT_CONFIG`; its `interval` is 60 s, and a create or PATCH naming any other is `400 INVALID_INTERVAL`. While an incident is open, a worse state raises it (degraded to down) instead of opening another, so status pages follow, and each down or degraded set replaces the incident's cause with its note. Every change is audited as `target.state_set` with the acting user; a set that matches the current state and note changes nothing and is not audited. A paused monitor keeps the state you set and reports it once enabled. Manual monitors reject `test`/`check-now` (`HEARTBEAT_NOT_PROBEABLE`) and region assignment.
+
 ### TLS certificate expiry
 
 ```jsonc
@@ -388,7 +400,7 @@ Use a dedicated low-privilege test account, never a real or admin credential: th
 }
 ```
 
-Server returns the full `Target` including `id` (UUIDv7), `created_at`, `updated_at`, and `write_source`. The assigned regions are read back from `GET /api/v1/targets/{id}/regions` and changed with `PUT` on the same path; a `regions` array that names an unknown or disabled id, or any id on a heartbeat, is `422 REGION_INVALID`, and one wider than the plan allows is `422 QUOTA_EXCEEDED`. A `POST /api/v1/targets/bulk` item takes the same field; an item without it shares the default set.
+Server returns the full `Target` including `id` (UUIDv7), `created_at`, `updated_at`, and `write_source`. The assigned regions are read back from `GET /api/v1/targets/{id}/regions` and changed with `PUT` on the same path; a `regions` array that names an unknown or disabled id, or any id on a heartbeat or manual monitor, is `422 REGION_INVALID`, and one wider than the plan allows is `422 QUOTA_EXCEEDED`. A `POST /api/v1/targets/bulk` item takes the same field; an item without it shares the default set.
 
 A monitor's kind is fixed after creation. A `check` sent on `PATCH` must keep the stored `type`; one whose `type` differs is `400 Bad Request` (`CHECK_KIND_IMMUTABLE`, `field: check.type`), since the monitor keeps its id and would otherwise carry two kinds' results in one history. Create a new monitor to watch something else.
 
@@ -639,14 +651,14 @@ Every 4xx and 5xx response uses one wire shape:
 - `details` carries optional structured context (e.g., `{ "range": "127.0.0.0/8" }` for SSRF rejections).
 - `trace_id` is the W3C `traceparent` when tracing is enabled.
 
-Common codes: `INVALID_URL_SCHEME`, `INVALID_URL_FORMAT`, `SSRF_BLOCKED`, `INVALID_INTERVAL`, `INVALID_TIMEOUT`, `INVALID_TCP_PORT`, `INVALID_TCP_HOST`, `INVALID_PING_HOST`, `INVALID_HEARTBEAT_PARAMS`, `HEARTBEAT_NOT_PROBEABLE`, `INVALID_STATUS_RANGE`, `INVALID_TLS_CERT_PARAMS`, `INVALID_DOMAIN_PARAMS`, `INVALID_FLOW_PARAMS`, `FLOW_CHECKS_DISABLED`, `NO_FLOW_CAPABLE_AGENT`, `SMS_ALERTS_DISABLED`, `INVALID_TLS_CRED_COMBO`, `INVALID_ALERT_CONFIG`, `REDACTION_SENTINEL`, `CHECK_KIND_IMMUTABLE`, `BULK_EMPTY`, `BULK_TOO_LARGE`, `BAD_TIME_RANGE`, `TARGET_NOT_FOUND`, `CHANNEL_NOT_FOUND`, `CHANNEL_NAME_TAKEN`, `CHANNEL_NAME_INVALID`, `CHANNEL_QUOTA_EXCEEDED`, `INVALID_CHANNEL_CONFIG`, `CHANNEL_TEST_FAILED`, `CIRCUIT_OPEN`, `DEPENDENCY_DOWN`, `INTERNAL`.
+Common codes: `INVALID_URL_SCHEME`, `INVALID_URL_FORMAT`, `SSRF_BLOCKED`, `INVALID_INTERVAL`, `INVALID_TIMEOUT`, `INVALID_TCP_PORT`, `INVALID_TCP_HOST`, `INVALID_PING_HOST`, `INVALID_HEARTBEAT_PARAMS`, `HEARTBEAT_NOT_PROBEABLE`, `INVALID_MANUAL_STATE`, `MANUAL_NOT_CONFIGURED`, `INVALID_STATUS_RANGE`, `INVALID_TLS_CERT_PARAMS`, `INVALID_DOMAIN_PARAMS`, `INVALID_FLOW_PARAMS`, `FLOW_CHECKS_DISABLED`, `NO_FLOW_CAPABLE_AGENT`, `SMS_ALERTS_DISABLED`, `INVALID_TLS_CRED_COMBO`, `INVALID_ALERT_CONFIG`, `REDACTION_SENTINEL`, `CHECK_KIND_IMMUTABLE`, `BULK_EMPTY`, `BULK_TOO_LARGE`, `BAD_TIME_RANGE`, `TARGET_NOT_FOUND`, `CHANNEL_NOT_FOUND`, `CHANNEL_NAME_TAKEN`, `CHANNEL_NAME_INVALID`, `CHANNEL_QUOTA_EXCEEDED`, `INVALID_CHANNEL_CONFIG`, `CHANNEL_TEST_FAILED`, `CIRCUIT_OPEN`, `DEPENDENCY_DOWN`, `INTERNAL`.
 
 ### Quota, rate-limit and abuse codes
 
 | Code | HTTP | Meaning |
 |---|---|---|
 | `QUOTA_EXCEEDED` | 422 | A plan quota would be exceeded. `details` carries `quota` (e.g. `max_targets`, `max_members`, `max_public_components`), `current`, `limit`, `plan`. |
-| `MIN_CHECK_INTERVAL` | 422 | Requested check interval is below the effective floor (`max(plan.min_check_interval_secs, kind_min)`), where `kind_min` is 43200 for `domain_expiry`, 3600 for `tls_cert`, 300 for `flow`, 60 for `heartbeat`, and 10 for `http` / `tcp` / `ping` / `dns`. Enforced on create, bulk, **and** PATCH. |
+| `MIN_CHECK_INTERVAL` | 422 | Requested check interval is below the effective floor (`max(plan.min_check_interval_secs, kind_min)`), where `kind_min` is 43200 for `domain_expiry`, 3600 for `tls_cert`, 300 for `flow`, 60 for `heartbeat` and `manual`, and 10 for `http` / `tcp` / `ping` / `dns`. Enforced on create, bulk, **and** PATCH. |
 | `INVITATIONS_LIMIT` | 409 | The org is at its pending-invitation cap. |
 | `RATE_LIMITED` | 429 | A per-minute rate budget was exceeded. `Retry-After` (seconds) is set; `details.scope` names the tier, e.g. `per_account_api_writes`. |
 | `ABUSE_BLOCKED` | 400 | Target blocked by abuse protection. `details.reason` explains. |

@@ -12,12 +12,12 @@ note: |-
   Flagged tables: targets, incidents, incident_updates,
   maintenance_windows, maintenance_window_components, memberships,
   organizations, org_audit_log, domain_expiry_state, heartbeat_monitors,
-  invitations, mcp_audit,
+  manual_monitors, invitations, mcp_audit,
   notification_channels, plan_overrides, quota_events.
 rule:
   any:
     - kind: raw_string_literal
     - kind: string_literal
-  regex: "(?is)\\b(FROM|UPDATE|INTO|DELETE\\s+FROM)\\s+(targets|incidents|incident_updates|maintenance_windows|maintenance_window_components|memberships|organizations|org_audit_log|domain_expiry_state|heartbeat_monitors|invitations|mcp_audit|notification_channels|plan_overrides|quota_events)\\b"
+  regex: "(?is)\\b(FROM|UPDATE|INTO|DELETE\\s+FROM)\\s+(targets|incidents|incident_updates|maintenance_windows|maintenance_window_components|memberships|organizations|org_audit_log|domain_expiry_state|heartbeat_monitors|manual_monitors|invitations|mcp_audit|notification_channels|plan_overrides|quota_events)\\b"
   not:
     regex: "(?i)(\\borg_id\\b|/\\*\\s*SAFE:)"

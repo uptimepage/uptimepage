@@ -1,5 +1,6 @@
 use uuid::Uuid;
 
+use crate::domain::check::MANUAL_EVALUATION_SECS;
 use crate::domain::{
     CheckSpec, OrgId, Target, TargetAlerts, TargetUpdate, min_interval_secs_for_kind,
 };
@@ -171,9 +172,10 @@ impl TargetOps<'_> {
     /// half can arrive alone, so the floor and the heartbeat pairing are judged on
     /// the merge of the request and the stored row. A heartbeat window that shrinks
     /// with no interval sent lowers the stored interval to the new cadence, rather
-    /// than refusing a field the caller never named. A missing target is left for
-    /// the update itself to 404.
-    pub(crate) async fn validate_patch_interval(
+    /// than refusing a field the caller never named. A manual monitor's cadence and
+    /// confirmations are fixed, so a different value is refused rather than stored
+    /// and ignored. A missing target is left for the update itself to 404.
+    pub(crate) async fn validate_patch_schedule(
         &self,
         org: OrgId,
         id: Uuid,
@@ -181,7 +183,9 @@ impl TargetOps<'_> {
         prefetched: Option<&Target>,
     ) -> Result<()> {
         let requested = update.interval.map(|i| i.as_secs() as i64);
-        if requested.is_none() && update.check.is_none() {
+        // 1 is what a manual monitor runs on, so only another count needs the kind.
+        let tunes_confirmations = update.alert_confirmations.is_some_and(|n| n != 1);
+        if requested.is_none() && update.check.is_none() && !tunes_confirmations {
             return Ok(());
         }
         // The row is only worth reading for the half the request leaves out. A high
@@ -193,6 +197,15 @@ impl TargetOps<'_> {
             _ => None,
         };
         let stored = prefetched.or(fetched.as_ref());
+        if matches!(
+            update.check.as_ref().or(stored.map(|t| &t.check)),
+            Some(CheckSpec::Manual(_))
+        ) {
+            return reject_manual_tuning(update);
+        }
+        if requested.is_none() && update.check.is_none() {
+            return Ok(());
+        }
         let Some(requested) = requested.or_else(|| stored.map(|t| t.interval.as_secs() as i64))
         else {
             return Ok(());
@@ -234,4 +247,25 @@ impl TargetOps<'_> {
         }
         validate_heartbeat_cadence(check, interval, effective_floor as u64)
     }
+}
+
+fn reject_manual_tuning(update: &TargetUpdate) -> Result<()> {
+    if update
+        .interval
+        .is_some_and(|i| i.as_secs() != MANUAL_EVALUATION_SECS)
+    {
+        return Err(AppError::bad_request_field(
+            codes::INVALID_INTERVAL,
+            "a manual monitor restates its state once a minute; interval does not apply",
+            "interval",
+        ));
+    }
+    if update.alert_confirmations.is_some_and(|n| n != 1) {
+        return Err(AppError::bad_request_field(
+            codes::INVALID_ALERT_CONFIG,
+            "a manual monitor alerts on the state it is set to; alert_confirmations does not apply",
+            "alert_confirmations",
+        ));
+    }
+    Ok(())
 }

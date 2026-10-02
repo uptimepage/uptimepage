@@ -26,10 +26,6 @@ const BODY_DRAIN_LIMIT: usize = 256 * 1024;
 /// The verdict is already written, so a dropped tail costs output only.
 const BODY_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Shorter than the sink's own retry budget, so a wedged store sheds these
-/// rather than accumulating a task per signal that changed a verdict.
-const PING_RESULT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
-
 /// First half of the token's SHA-256, so GCRA runs before any database work.
 fn token_key(raw: &str) -> u128 {
     let hex = sha256_hex(raw);
@@ -84,7 +80,7 @@ async fn record(state: &AppState, token: String, ping: Ping, body: Body) -> Resp
     if accepted.enabled
         && let Some(result) = ping_result(&accepted, ping)
     {
-        spawn_result_write(state, result);
+        crate::worker::spawn_passive_results(state.result_sink.clone(), vec![result]);
     }
 
     if let Some(sink) = &state.heartbeat_ping_sink {
@@ -129,27 +125,6 @@ fn ping_result(accepted: &PingAccepted, ping: Ping) -> Option<CheckResult> {
         &accepted.state,
         check,
     )
-}
-
-/// Detached: the sink retries a degraded ClickHouse for up to 30s, and the
-/// caller of this route is a cron job holding a `curl` open at the end of its
-/// run. The scheduler reports on its own tick if this never lands.
-fn spawn_result_write(state: &AppState, result: CheckResult) {
-    let sink = state.result_sink.clone();
-    let target_id = result.target_id;
-    tokio::spawn(async move {
-        let write = sink.write_batch(std::slice::from_ref(&result));
-        let outcome = match tokio::time::timeout(PING_RESULT_WRITE_TIMEOUT, write).await {
-            Ok(Ok(())) => return,
-            Ok(Err(err)) => err.to_string(),
-            Err(_) => "timed out".to_string(),
-        };
-        tracing::warn!(
-            target_id = %target_id,
-            error = %outcome,
-            "heartbeat ping result not written; the scheduler reports on its own tick"
-        );
-    });
 }
 
 /// Keeps the first [`BODY_SAMPLE_BYTES`] but reads to the end, so `curl -fsS`
