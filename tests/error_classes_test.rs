@@ -157,25 +157,26 @@ async fn collect_merges_tenants_without_carrying_either_one() {
 /// request handler reaching for it would serve one tenant another's failures.
 #[test]
 fn no_request_path_module_reaches_the_cross_tenant_sweep() {
-    /// Returns the files scanned, so a renamed directory fails loudly instead
+    /// Returns the files scanned, so a renamed path fails loudly instead
     /// of turning the guard into a no-op that passes on an empty walk.
-    fn scan(dir: &std::path::Path, hits: &mut Vec<String>) -> usize {
-        let mut scanned = 0;
-        for entry in std::fs::read_dir(dir).expect("read source dir").flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                scanned += scan(&path, hits);
-            } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
-                scanned += 1;
-                if std::fs::read_to_string(&path)
-                    .expect("read source file")
-                    .contains("error_classes")
-                {
-                    hits.push(path.display().to_string());
-                }
-            }
+    fn scan(path: &std::path::Path, hits: &mut Vec<String>) -> usize {
+        if path.is_dir() {
+            return std::fs::read_dir(path)
+                .expect("read source dir")
+                .flatten()
+                .map(|entry| scan(&entry.path(), hits))
+                .sum();
         }
-        scanned
+        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+            return 0;
+        }
+        if std::fs::read_to_string(path)
+            .expect("read source file")
+            .contains("error_classes")
+        {
+            hits.push(path.display().to_string());
+        }
+        1
     }
 
     let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src"));
@@ -190,6 +191,8 @@ fn no_request_path_module_reaches_the_cross_tenant_sweep() {
         "targets",
         "channels",
         "templates",
+        "target_ops",
+        "maintenance_ops.rs",
     ] {
         let scanned = scan(&root.join(area), &mut hits);
         assert!(scanned > 0, "src/{area} scanned no files");

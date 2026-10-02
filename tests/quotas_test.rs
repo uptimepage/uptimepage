@@ -1913,8 +1913,9 @@ fn every_quota_create_path_is_gated() {
         (
             "src/api/handlers/maintenance.rs",
             "pub async fn create_maintenance(",
-            "vet_new",
+            "maintenance_ops()",
         ),
+        ("src/maintenance_ops.rs", "pub async fn create(", "vet_new"),
         (
             "src/maintenance_ops.rs",
             "pub async fn vet_new(",

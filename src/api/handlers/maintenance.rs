@@ -8,7 +8,6 @@ use crate::api::json::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::AppendHeaders;
-use chrono::Utc;
 use serde::Deserialize;
 use utoipa::IntoParams;
 use uuid::Uuid;
@@ -74,9 +73,8 @@ pub async fn create_maintenance(
     AppendHeaders<[(axum::http::HeaderName, HeaderValue); 1]>,
     Json<MaintenanceWindow>,
 )> {
-    state.maintenance_ops().vet_new(org, &new).await?;
     let mw = state
-        .maintenance_store
+        .maintenance_ops()
         .create(org, new, source, Some(actor))
         .await?;
     let location =
@@ -173,33 +171,16 @@ pub async fn update_maintenance(
     CurrentUser(actor): CurrentUser,
     RequestSource(source): RequestSource,
     Path(id): Path<Uuid>,
-    Json(mut update): Json<MaintenanceWindowUpdate>,
+    Json(update): Json<MaintenanceWindowUpdate>,
 ) -> Result<Json<MaintenanceWindow>> {
-    let now = Utc::now();
-    // The store re-checks that the window has not ended, so an edit that loses
-    // a race with the window ending or being ended reports 404 instead of
-    // reviving it.
     let existing = state.maintenance_store.get(org, id).await?.ok_or_else(|| {
         AppError::not_found(codes::MAINTENANCE_NOT_FOUND, "maintenance window not found")
     })?;
-    state
+    let mw = state
         .maintenance_ops()
-        .vet_update(org, &existing, &mut update, now)
+        .update(org, &existing, update, source, Some(actor))
         .await?;
-    if update.changed_fields().is_empty() {
-        return Ok(Json(existing));
-    }
-    match state
-        .maintenance_store
-        .update(org, id, update, source, Some(actor))
-        .await?
-    {
-        Some(mw) => Ok(Json(mw)),
-        None => Err(AppError::not_found(
-            codes::MAINTENANCE_NOT_FOUND,
-            "maintenance window not found",
-        )),
-    }
+    Ok(Json(mw))
 }
 
 #[utoipa::path(

@@ -1,5 +1,5 @@
-//! What every surface that schedules, edits or cancels a maintenance window
-//! must check the same way. The REST handlers and the MCP tools both call it.
+//! Schedule, edit and cancel maintenance windows under the same rules for the
+//! REST handlers and the MCP tools.
 
 use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
@@ -24,6 +24,17 @@ pub struct MaintenanceOps<'a> {
 }
 
 impl MaintenanceOps<'_> {
+    pub async fn create(
+        &self,
+        org: OrgId,
+        new: NewMaintenanceWindow,
+        source: WriteSource,
+        actor: Option<UserId>,
+    ) -> Result<MaintenanceWindow> {
+        self.vet_new(org, &new).await?;
+        self.store.create(org, new, source, actor).await
+    }
+
     pub async fn vet_new(&self, org: OrgId, new: &NewMaintenanceWindow) -> Result<()> {
         validation::validate_title(&new.title, "title")?;
         validation::validate_description(new.description.as_deref(), "description")?;
@@ -34,6 +45,33 @@ impl MaintenanceOps<'_> {
         self.quotas
             .check_can_create_maintenance_window(org, None)
             .await
+    }
+
+    /// A body that sets nothing returns `existing` unrecorded.
+    pub async fn update(
+        &self,
+        org: OrgId,
+        existing: &MaintenanceWindow,
+        mut update: MaintenanceWindowUpdate,
+        source: WriteSource,
+        actor: Option<UserId>,
+    ) -> Result<MaintenanceWindow> {
+        self.vet_update(org, existing, &mut update, Utc::now())
+            .await?;
+        if update.changed_fields().is_empty() {
+            return Ok(existing.clone());
+        }
+        // The store re-checks that the window has not ended, so losing that
+        // race is a 404 instead of a revived window.
+        self.store
+            .update(org, existing.id, update, source, actor)
+            .await?
+            .ok_or_else(|| {
+                AppError::not_found(
+                    codes::MAINTENANCE_NOT_FOUND,
+                    "maintenance window ended or was cancelled meanwhile",
+                )
+            })
     }
 
     /// An end-now edit is pinned to `now` in `update`.
@@ -75,21 +113,27 @@ impl MaintenanceOps<'_> {
         if self.store.delete(org, id, source, actor).await? {
             return Ok(());
         }
-        let finished = self
-            .store
-            .get(org, id)
-            .await?
-            .is_some_and(|w| w.phase(Utc::now()) == WindowPhase::Completed);
-        if finished {
-            return Err(AppError::unprocessable(
-                codes::MAINTENANCE_COMPLETED,
-                "cannot cancel a completed maintenance window",
-            ));
+        if let Some(window) = self.store.get(org, id).await? {
+            self.vet_cancel(&window, Utc::now())?;
         }
         Err(AppError::not_found(
             codes::MAINTENANCE_NOT_FOUND,
             "maintenance window not found",
         ))
+    }
+
+    pub fn vet_cancel(&self, window: &MaintenanceWindow, now: DateTime<Utc>) -> Result<()> {
+        match window.phase(now) {
+            WindowPhase::Cancelled => Err(AppError::not_found(
+                codes::MAINTENANCE_NOT_FOUND,
+                "maintenance window is already cancelled",
+            )),
+            WindowPhase::Completed => Err(AppError::unprocessable(
+                codes::MAINTENANCE_COMPLETED,
+                "cannot cancel a completed maintenance window",
+            )),
+            WindowPhase::Upcoming | WindowPhase::Active => Ok(()),
+        }
     }
 
     async fn validate_component_ids(&self, org: OrgId, ids: &[Uuid]) -> Result<()> {

@@ -150,18 +150,13 @@ impl McpServer {
         )
         .await?;
 
-        // The prompt can stay open past the window's end or the plan's last slot.
-        self.state
-            .maintenance_ops()
-            .vet_new(auth.org, &new)
-            .await
-            .map_err(window_error)?;
+        // Vets again: the prompt can stay open past the window's end or the plan's last slot.
         let window = self
             .state
-            .maintenance_store
+            .maintenance_ops()
             .create(auth.org, new, WriteSource::Api, Some(auth.user_id))
             .await
-            .map_err(|e| McpToolError::internal(format!("create maintenance: {e}")))?;
+            .map_err(window_error)?;
         Ok(Json(window_view(&window, &names, Utc::now())))
     }
 
@@ -201,26 +196,23 @@ impl McpServer {
         if current.updated_at != existing.updated_at {
             return Err(moved_meanwhile());
         }
-        let (update, still) = self.vetted_patch(auth.org, args, &current, &names).await?;
+        let (update, still) = build_window_patch(args, &current, &names, Utc::now())?;
         if still != changes {
             return Err(moved_meanwhile());
         }
 
         let window = self
             .state
-            .maintenance_store
+            .maintenance_ops()
             .update(
                 auth.org,
-                current.id,
+                &current,
                 update,
                 WriteSource::Api,
                 Some(auth.user_id),
             )
             .await
-            .map_err(|e| McpToolError::internal(format!("update maintenance: {e}")))?
-            .ok_or_else(|| {
-                McpToolError::not_found("maintenance window ended or was cancelled meanwhile")
-            })?;
+            .map_err(window_error)?;
         Ok(Json(MaintenanceUpdateResult {
             window: window_view(&window, &names, Utc::now()),
             changes,
@@ -239,19 +231,10 @@ impl McpServer {
 
         let window = self.load_window(auth.org, &args.id).await?;
         let now = Utc::now();
-        match window.phase(now) {
-            WindowPhase::Cancelled => {
-                return Err(McpToolError::invalid_argument(
-                    "this maintenance window is already cancelled",
-                ));
-            }
-            WindowPhase::Completed => {
-                return Err(McpToolError::invalid_argument(
-                    "cannot cancel a completed maintenance window",
-                ));
-            }
-            WindowPhase::Upcoming | WindowPhase::Active => {}
-        }
+        self.state
+            .maintenance_ops()
+            .vet_cancel(&window, now)
+            .map_err(window_error)?;
 
         let names = self.monitor_names(auth.org).await?;
         let prompt = cancel_prompt(&window, &names, now);
