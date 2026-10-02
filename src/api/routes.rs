@@ -1,7 +1,8 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::extract::DefaultBodyLimit;
+use axum::extract::{DefaultBodyLimit, Extension};
 use axum::http::{HeaderValue, Method, header};
 use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::{get, post};
@@ -48,7 +49,7 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
             crate::request::auth::api_token::middleware,
         ))
         .layer(from_fn_with_state(
-            state.idempotency.clone(),
+            Arc::new(idempotency::IdempotencyCache::new()),
             idempotency::middleware,
         ))
         .layer(DefaultBodyLimit::max(BULK_BODY_LIMIT));
@@ -140,7 +141,8 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
         .route("/tags", get(handlers::tags::list_tags))
         .route(
             "/dashboard/summary",
-            get(handlers::dashboard::dashboard_summary),
+            get(handlers::dashboard::dashboard_summary)
+                .layer(Extension(handlers::dashboard::summary_cache())),
         )
         .route(
             "/maintenance",

@@ -371,7 +371,7 @@ Three regions, split so the polling never disturbs the charts:
    `/api/v1/dashboard/summary` once per cycle, fanning out to both charts
    (one round-trip, not one per chart).
 
-`dashboard_summary` caches its result in `state.dashboard_cache` for 5 s, so
+`dashboard_summary` caches its result per org for 5 s, so
 polling load on Postgres + ClickHouse is bounded to one query set per 5 s
 regardless of how many tabs are open.
 

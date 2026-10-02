@@ -10,7 +10,6 @@ pub mod strict;
 pub mod types;
 
 pub use docs::ApiDoc;
-pub use idempotency::IdempotencyCache;
 pub use json_arc::JsonArc;
 pub use routes::build_router;
 pub use types::{

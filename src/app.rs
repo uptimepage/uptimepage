@@ -6,8 +6,6 @@ use moka::sync::Cache;
 use sqlx::PgPool;
 
 use crate::ad_hoc_dispatch::AdHocDispatch;
-use crate::api::IdempotencyCache;
-use crate::api::types::DashboardSummary;
 use crate::auth::api_tokens::{
     ApiTokenLastUsedDebounce, build_debounce_cache as build_api_token_debounce,
 };
@@ -29,70 +27,6 @@ use crate::storage::{
 };
 use crate::target_ops::TargetOps;
 use crate::worker::WorkerPool;
-
-/// Per-org dashboard summary snapshot. Cached for 5 seconds to absorb the
-/// operator-dashboard polling cadence. Keyed by `OrgId` so a SaaS tenant's
-/// dashboard never reads another tenant's last build.
-pub type DashboardCache = Cache<OrgId, Arc<DashboardSummary>>;
-
-/// Detail-page live snapshot (uptime stats + recent results + last-seen
-/// status). Cached for 5 seconds so the polling cadence (60s baseline +
-/// overdue/manual refreshes arriving in bursts) AND repeat full-page
-/// loads (browser back/forward, multi-tab) collapse to a single CH
-/// round-trip per window. Keyed `(OrgId, target_id, range_key)` so a
-/// tenant never reads another's snapshot and different range tabs don't
-/// share cache. `Arc` keeps clones cheap when the full-page handler
-/// pulls fields out for the surrounding chrome.
-pub type LiveDataCache =
-    Cache<(OrgId, uuid::Uuid, &'static str), Arc<crate::web::views::targets_detail::LiveData>>;
-
-/// Operator-dashboard page snapshot: KPI strip + per-monitor rollup +
-/// sparkline buckets for one (org, range) pair. Distinct from the
-/// `DashboardSummary` API cache above — that one stores the JSON donut
-/// payload at `/dashboard/summary`, this one stores the full V3 HTML
-/// page snapshot. 5s TTL absorbs both the htmx range re-swap and the
-/// auto-refresh poll. `Arc` keeps the cache-hit path a pointer bump
-/// (the snapshot can grow large at 1k+ monitors). Keyed on the static
-/// range key so the four tabs don't share entries.
-pub type DashboardPageCache =
-    Cache<(OrgId, &'static str), Arc<crate::web::views::dashboard::DashboardSnapshot>>;
-
-/// Builder for the 5-second per-org dashboard cache. The moka `sync::Cache`
-/// is cheap to clone (everything inside is `Arc`), so it lives in `AppState`
-/// directly rather than behind another `Arc`.
-fn build_dashboard_cache() -> DashboardCache {
-    Cache::builder()
-        .time_to_live(Duration::from_secs(5))
-        // 1024 distinct orgs holding a ~few-KB summary is bounded enough that
-        // a runaway cache won't eat the heap. Far above any realistic
-        // active-org-set in one process.
-        .max_capacity(1024)
-        .build()
-}
-
-/// Sized for ~10k targets × 4 range presets = 40k slots upper bound.
-/// Far below that in practice (only actively-viewed targets land in
-/// here), but the ceiling caps memory if a crawler hits every target.
-/// Each entry ~5 KB → 40k × 5 KB ≈ 200 MB worst case; a quarter of
-/// that in practice. moka evicts on capacity AND on the 5s TTL.
-fn build_live_data_cache() -> LiveDataCache {
-    Cache::builder()
-        .time_to_live(Duration::from_secs(5))
-        .max_capacity(40_000)
-        .build()
-}
-
-/// Per-(org, range_key) dashboard-page snapshot cache. Each entry is
-/// heavier than a per-target snapshot (one row per monitor + ~60 spark
-/// buckets per monitor), so cap entries lower than `LiveDataCache`:
-/// 1024 orgs × 4 ranges = 4096 max. moka evicts on capacity AND on
-/// the 5s TTL.
-fn build_dashboard_page_cache() -> DashboardPageCache {
-    Cache::builder()
-        .time_to_live(Duration::from_secs(5))
-        .max_capacity(4_096)
-        .build()
-}
 
 /// Per-(org, window-days) incident metrics cache for `/incidents/reports`.
 /// The aggregates are a few index-backed scans; a 30s TTL collapses repeated
@@ -179,14 +113,10 @@ pub struct AppState {
     pub heartbeat_ping_sink: Option<Arc<dyn crate::storage::traits::HeartbeatPingSink>>,
     pub http_clients: Arc<HttpClients>,
     pub worker_pool: Arc<WorkerPool>,
-    pub dashboard_cache: DashboardCache,
-    pub live_data_cache: LiveDataCache,
-    pub dashboard_page_cache: DashboardPageCache,
     pub incident_metrics_cache: IncidentMetricsCache,
     pub region_catalog_cache: RegionCatalogCache,
     pub regions_for_org_cache: RegionsForOrgCache,
     pub nav_pill_cache: NavPillCache,
-    pub idempotency: Arc<IdempotencyCache>,
     pub public_source: Arc<dyn PublicSource>,
     pub maintenance_store: Arc<dyn MaintenanceStore>,
     pub notification_channel_store: Arc<dyn NotificationChannelStore>,
@@ -518,14 +448,10 @@ impl AppState {
             heartbeat_ping_sink: None,
             http_clients,
             worker_pool,
-            dashboard_cache: build_dashboard_cache(),
-            live_data_cache: build_live_data_cache(),
-            dashboard_page_cache: build_dashboard_page_cache(),
             incident_metrics_cache: build_incident_metrics_cache(),
             region_catalog_cache: build_region_catalog_cache(),
             regions_for_org_cache: build_regions_for_org_cache(),
             nav_pill_cache: build_nav_pill_cache(),
-            idempotency: Arc::new(IdempotencyCache::new()),
             public_source,
             maintenance_store,
             notification_channel_store,

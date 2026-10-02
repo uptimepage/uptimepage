@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use askama::Template;
 use askama_web::WebTemplate;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Duration, Utc};
@@ -34,7 +34,9 @@ mod rows;
 mod tests;
 
 pub use charts::StatusSeg;
-pub use load::{LiveData, PingTally, UnconfirmedFailures};
+pub use load::{
+    CustomWindow, LiveData, LiveDataCache, PingTally, UnconfirmedFailures, live_data_cache,
+};
 pub use rows::{
     DetailCheckRows, DetailLive, FlowEvidenceView, FlowRunRow, FlowStepRow, HeartbeatLiveness,
     IncidentRow, KpiTrend, RegionBreakdownRow, ResultRow, UptimeStatsView,
@@ -184,6 +186,7 @@ pub async fn index(
     _auth: AuthedBrowser,
     CurrentOrg(org): CurrentOrg,
     State(state): State<AppState>,
+    Extension(cache): Extension<LiveDataCache>,
     Path(id): Path<Uuid>,
     Query(params): Query<DetailParams>,
 ) -> WebResult<DetailPage> {
@@ -201,11 +204,14 @@ pub async fn index(
     let catalog = state.regions_detailed().await?;
     let live = load_live_data_cached(
         &state,
+        &cache,
         org,
         &target,
         range_key,
-        params.from,
-        params.to,
+        CustomWindow {
+            from: params.from,
+            to: params.to,
+        },
         selected_region.as_deref(),
     )
     .await?;
@@ -499,13 +505,14 @@ fn config_json_with_derived(
 
 /// htmx-polled fragment that re-renders the KPI cards + recent-results
 /// table. Byte-identical to the section the full page initially served
-/// so swap is invisible. Reads from `live_data_cache` (5s TTL); a
+/// so swap is invisible. Reads from the 5s `LiveDataCache`; a
 /// burst of pollers + the full-page handler share the same snapshot.
 /// Custom `from`/`to` query params skip the cache.
 pub async fn live_partial(
     _auth: AuthedBrowser,
     CurrentOrg(org): CurrentOrg,
     State(state): State<AppState>,
+    Extension(cache): Extension<LiveDataCache>,
     Path(id): Path<Uuid>,
     Query(params): Query<DetailParams>,
 ) -> WebResult<Response> {
@@ -523,11 +530,14 @@ pub async fn live_partial(
     let selected_region = params.region;
     let live = load_live_data_cached(
         &state,
+        &cache,
         org,
         &target,
         range_key,
-        params.from,
-        params.to,
+        CustomWindow {
+            from: params.from,
+            to: params.to,
+        },
         selected_region.as_deref(),
     )
     .await?;

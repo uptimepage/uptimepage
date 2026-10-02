@@ -18,7 +18,7 @@
 //! Per-IP abuse protection for this anonymous surface is the reverse proxy's
 //! tier (see `quotas::ratelimit` — that limiter keys on the authenticated
 //! subject, which a share request has none of); app-side, the live region
-//! reuses the shared 5s `live_data_cache` and the chart/timeline reads inherit
+//! reuses the 5s `LiveDataCache` and the chart/timeline reads inherit
 //! the same 90-day window + page-size clamps as the operator API, bounding
 //! per-request cost.
 
@@ -27,7 +27,7 @@ use std::sync::Arc;
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 
@@ -43,10 +43,11 @@ use crate::templates::filters;
 use crate::web::error::{WebError, WebResult};
 use crate::web::robots;
 use crate::web::views::targets_detail::{
-    DEFAULT_RANGE, DetailParams, INCIDENT_DEFAULT_RANGE, INCIDENT_RANGE_KEYS, IncidentRow,
-    KpiTrend, PingTally, RANGE_KEYS, ResultRow, SUBTAB_INCIDENTS, SUBTAB_MONITOR, UptimeStatsView,
-    WindowLabels, badge_status, fmt_error_display, load_incidents_data, load_live_data_cached,
-    ongoing_for_target, read_liveness, resolve_incident_window, resolve_window,
+    CustomWindow, DEFAULT_RANGE, DetailParams, INCIDENT_DEFAULT_RANGE, INCIDENT_RANGE_KEYS,
+    IncidentRow, KpiTrend, LiveDataCache, PingTally, RANGE_KEYS, ResultRow, SUBTAB_INCIDENTS,
+    SUBTAB_MONITOR, UptimeStatsView, WindowLabels, badge_status, fmt_error_display,
+    load_incidents_data, load_live_data_cached, ongoing_for_target, read_liveness,
+    resolve_incident_window, resolve_window,
 };
 use crate::web::views::{RangeOption, build_range_options, describe_check, resolve_range_key};
 
@@ -181,6 +182,7 @@ pub struct ShareIncidentsPage {
 
 pub async fn detail(
     State(state): State<AppState>,
+    Extension(cache): Extension<LiveDataCache>,
     Path(token): Path<String>,
     Query(mut params): Query<DetailParams>,
 ) -> WebResult<ShareDetailPage> {
@@ -203,11 +205,14 @@ pub async fn detail(
     let labels = WindowLabels::new(from, to);
     let live = load_live_data_cached(
         &state,
+        &cache,
         resolved.org,
         &target,
         range_key,
-        params.from,
-        params.to,
+        CustomWindow {
+            from: params.from,
+            to: params.to,
+        },
         None,
     )
     .await?;
@@ -262,9 +267,10 @@ pub async fn detail(
 }
 
 /// htmx-polled live region twin of `targets_detail::live_partial`, scoped to
-/// the share token. Reads the shared 5s `live_data_cache`.
+/// the share token. Reads the shared 5s `LiveDataCache`.
 pub async fn live_partial(
     State(state): State<AppState>,
+    Extension(cache): Extension<LiveDataCache>,
     Path(token): Path<String>,
     Query(mut params): Query<DetailParams>,
 ) -> WebResult<Response> {
@@ -281,11 +287,14 @@ pub async fn live_partial(
         .ok_or_else(share_not_found)?;
     let live = load_live_data_cached(
         &state,
+        &cache,
         resolved.org,
         &target,
         range_key,
-        params.from,
-        params.to,
+        CustomWindow {
+            from: params.from,
+            to: params.to,
+        },
         None,
     )
     .await?;

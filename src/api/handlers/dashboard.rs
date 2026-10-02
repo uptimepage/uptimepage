@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::api::json::Json;
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use chrono::{Duration, Utc};
+use moka::sync::Cache;
 use uuid::Uuid;
 
 use crate::api::types::{DashboardSummary, Last24hSummary, StatusBreakdown, SystemSummary};
@@ -17,6 +18,15 @@ use crate::storage::{TargetFilter, TimeRange};
 use crate::targets::{folded_status, folded_status_policies};
 
 const MAX_ORG_MONITORS: usize = 10_000;
+
+pub type SummaryCache = Cache<OrgId, Arc<DashboardSummary>>;
+
+pub fn summary_cache() -> SummaryCache {
+    Cache::builder()
+        .time_to_live(std::time::Duration::from_secs(5))
+        .max_capacity(1024)
+        .build()
+}
 
 #[utoipa::path(
     get,
@@ -36,9 +46,10 @@ const MAX_ORG_MONITORS: usize = 10_000;
 )]
 pub async fn dashboard_summary(
     State(state): State<AppState>,
+    Extension(cache): Extension<SummaryCache>,
     CurrentOrg(org_id): CurrentOrg,
 ) -> Result<Json<DashboardSummary>> {
-    if let Some(snapshot) = state.dashboard_cache.get(&org_id) {
+    if let Some(snapshot) = cache.get(&org_id) {
         return Ok(Json((*snapshot).clone()));
     }
 
@@ -90,9 +101,7 @@ pub async fn dashboard_summary(
         },
     };
 
-    state
-        .dashboard_cache
-        .insert(org_id, Arc::new(summary.clone()));
+    cache.insert(org_id, Arc::new(summary.clone()));
     Ok(Json(summary))
 }
 

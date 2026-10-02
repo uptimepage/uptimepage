@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
+use moka::sync::Cache;
 use uuid::Uuid;
 
 use crate::app::AppState;
@@ -185,7 +186,7 @@ pub(super) async fn load_flaps(
 }
 
 /// Snapshot of the per-target live region: uptime stats + recent rows +
-/// last-seen status. Cached in `AppState::live_data_cache` for 5s; both
+/// last-seen status. Cached in `LiveDataCache` for 5s; both
 /// the full-page detail view and the htmx live-partial poll read from
 /// it so a burst of either kind collapses to one CH round-trip. Inner
 /// fields are `Arc` so a cache hit clones a pointer instead of the
@@ -223,6 +224,22 @@ pub struct LiveData {
     pub pings: Option<PingTally>,
 }
 
+pub type LiveDataCache = Cache<(OrgId, Uuid, &'static str), Arc<LiveData>>;
+
+pub fn live_data_cache() -> LiveDataCache {
+    // ~10k targets x 4 range presets; only viewed targets land here.
+    Cache::builder()
+        .time_to_live(std::time::Duration::from_secs(5))
+        .max_capacity(40_000)
+        .build()
+}
+
+#[derive(Clone, Copy)]
+pub struct CustomWindow {
+    pub from: Option<DateTime<Utc>>,
+    pub to: Option<DateTime<Utc>>,
+}
+
 /// Cached front door for [`load_live_data`]. Returns a moka-shared
 /// `Arc<LiveData>` keyed on `(org, target_id, range_key)`. Preset
 /// ranges are cached for 5s; ad-hoc `from`/`to` windows skip the cache
@@ -231,13 +248,17 @@ pub struct LiveData {
 /// burst of either request type collapses to a single CH round-trip.
 pub(crate) async fn load_live_data_cached(
     state: &AppState,
+    cache: &LiveDataCache,
     org: OrgId,
     target: &Target,
     range_key: &'static str,
-    custom_from: Option<DateTime<Utc>>,
-    custom_to: Option<DateTime<Utc>>,
+    custom: CustomWindow,
     region: Option<&str>,
 ) -> WebResult<Arc<LiveData>> {
+    let CustomWindow {
+        from: custom_from,
+        to: custom_to,
+    } = custom;
     let target_id = target.id;
     let passive = target.check.is_passive();
     // A region-filtered view skips the shared cache (selection is rare, not
@@ -245,13 +266,13 @@ pub(crate) async fn load_live_data_cached(
     let cacheable = custom_from.is_none() && custom_to.is_none() && region.is_none();
     if cacheable {
         let key = (org, target_id, range_key);
-        if let Some(data) = state.live_data_cache.get(&key) {
+        if let Some(data) = cache.get(&key) {
             return Ok(data);
         }
         let (from, to) = resolve_window(range_key, custom_from, custom_to);
         let data =
             Arc::new(load_live_data(state, org, target_id, from, to, region, passive).await?);
-        state.live_data_cache.insert(key, data.clone());
+        cache.insert(key, data.clone());
         Ok(data)
     } else {
         let (from, to) = resolve_window(range_key, custom_from, custom_to);

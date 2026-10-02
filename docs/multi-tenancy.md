@@ -48,11 +48,11 @@ The outbox table is the load-bearing piece. A naive "DELETE in PG, then DELETE i
 
 ## Per-org caches
 
-`AppState` keeps tenant-derived caches keyed by `OrgId` so one tenant's data cannot leak into another's response:
+Tenant-derived caches are keyed by `OrgId` so one tenant's data cannot leak into another's response:
 
 | Cache | Type | TTL |
 |---|---|---|
-| `dashboard_cache` | `moka::sync::Cache<OrgId, Arc<DashboardSummary>>` | 5 s |
+| `SummaryCache` | `moka::sync::Cache<OrgId, Arc<DashboardSummary>>` | 5 s |
 | `public_status::cache::PageCache` | `moka::future::Cache<StatusPageId, Arc<PageData>>` | 10 s |
 | `PageCache::last_good` | `moka::sync::Cache<StatusPageId, Arc<PageData>>` | retained across `inner`'s TTL eviction for stale-fallback |
 

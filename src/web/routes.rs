@@ -1,4 +1,5 @@
 use axum::Router;
+use axum::extract::Extension;
 use axum::response::Redirect;
 use axum::routing::{get, post};
 use tower_cookies::CookieManagerLayer;
@@ -372,5 +373,7 @@ pub fn routes(state: AppState) -> Router {
     assets::mount_static(r)
         .fallback(error::not_found)
         .layer(CookieManagerLayer::new())
+        .layer(Extension(views::dashboard::dashboard_page_cache()))
+        .layer(Extension(views::targets_detail::live_data_cache()))
         .with_state(state)
 }

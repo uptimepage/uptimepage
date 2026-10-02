@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{Duration, Utc};
+use moka::sync::Cache;
 use uuid::Uuid;
 
 use crate::app::AppState;
@@ -58,21 +59,30 @@ pub(super) async fn active_incidents(
         .collect())
 }
 
+pub type DashboardPageCache = Cache<(OrgId, &'static str), Arc<DashboardSnapshot>>;
+
+pub fn dashboard_page_cache() -> DashboardPageCache {
+    // A page entry holds a row plus ~60 sparkline buckets per monitor: 1024 orgs x 4 ranges.
+    Cache::builder()
+        .time_to_live(std::time::Duration::from_secs(5))
+        .max_capacity(4_096)
+        .build()
+}
+
 /// Cached front door — both `index` and `table_partial` reach the same
 /// `Arc<DashboardSnapshot>` so a tab-spam burst collapses to one CH
 /// round-trip. The cache itself enforces the 5 s TTL.
 pub(super) async fn load_snapshot(
     state: &AppState,
+    cache: &DashboardPageCache,
     org: OrgId,
     range: &'static str,
 ) -> WebResult<Arc<DashboardSnapshot>> {
-    if let Some(snap) = state.dashboard_page_cache.get(&(org, range)) {
+    if let Some(snap) = cache.get(&(org, range)) {
         return Ok(snap);
     }
     let snap = Arc::new(build_snapshot(state, org, range, None).await?);
-    state
-        .dashboard_page_cache
-        .insert((org, range), Arc::clone(&snap));
+    cache.insert((org, range), Arc::clone(&snap));
     Ok(snap)
 }
 

@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use askama::Template;
-use axum::extract::{FromRequestParts, Query, State};
+use axum::extract::{Extension, FromRequestParts, Query, State};
 use axum::http::header;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
@@ -46,6 +46,7 @@ pub use rows::{
     FleetRibbon, FleetRibbonSeg, KpiCardSpec, KpiDelta, StatusCounts, TypeCount,
 };
 
+pub use load::{DashboardPageCache, dashboard_page_cache};
 use load::{active_incidents, build_snapshot, load_snapshot};
 
 pub(crate) const RANGE_KEYS: [&str; 4] = ["24h", "7d", "30d", "90d"];
@@ -121,7 +122,12 @@ pub async fn root(state: State<AppState>, mut parts: Parts) -> Response {
         Ok(c) => c,
         Err(rej) => return rej.into_response(),
     };
-    match index(auth, state, org, user, cookies, params).await {
+    let cache =
+        match Extension::<DashboardPageCache>::from_request_parts(&mut parts, app_state).await {
+            Ok(c) => c,
+            Err(rej) => return rej.into_response(),
+        };
+    match index(auth, state, cache, org, user, cookies, params).await {
         Ok(page) => page.into_response(),
         Err(e) => e.into_response(),
     }
@@ -130,6 +136,7 @@ pub async fn root(state: State<AppState>, mut parts: Parts) -> Response {
 pub async fn index(
     _auth: AuthedBrowser,
     State(state): State<AppState>,
+    Extension(cache): Extension<DashboardPageCache>,
     org: CurrentOrg,
     CurrentUser(viewer): CurrentUser,
     cookies: Cookies,
@@ -146,7 +153,7 @@ pub async fn index(
     let region_ids = state.regions_for_org(org.0).await?;
     let selected_region = resolve_region(params.region, &region_ids);
     let (snapshot, active_incidents) = tokio::try_join!(
-        snapshot_for(&state, org.0, range, selected_region.as_deref()),
+        snapshot_for(&state, &cache, org.0, range, selected_region.as_deref()),
         active_incidents(&state, org.0, viewer),
     )?;
     let catalog = state.regions_detailed().await?;
@@ -304,13 +311,14 @@ fn row_matches_status(row: &DashboardRow, status: &str) -> bool {
 /// rare, not worth widening the cache key).
 async fn snapshot_for(
     state: &AppState,
+    cache: &DashboardPageCache,
     org: OrgId,
     range: &'static str,
     region: Option<&str>,
 ) -> WebResult<Arc<DashboardSnapshot>> {
     match region {
         Some(r) => Ok(Arc::new(build_snapshot(state, org, range, Some(r)).await?)),
-        None => load_snapshot(state, org, range).await,
+        None => load_snapshot(state, cache, org, range).await,
     }
 }
 
@@ -320,6 +328,7 @@ async fn snapshot_for(
 pub async fn table_partial(
     _auth: AuthedBrowser,
     State(state): State<AppState>,
+    Extension(cache): Extension<DashboardPageCache>,
     org: CurrentOrg,
     CurrentUser(viewer): CurrentUser,
     Query(params): Query<DashboardParams>,
@@ -332,7 +341,7 @@ pub async fn table_partial(
     let region_ids = state.regions_for_org(org.0).await?;
     let selected_region = resolve_region(params.region, &region_ids);
     let (snapshot, active_incidents) = tokio::try_join!(
-        snapshot_for(&state, org.0, range, selected_region.as_deref()),
+        snapshot_for(&state, &cache, org.0, range, selected_region.as_deref()),
         active_incidents(&state, org.0, viewer),
     )?;
     let catalog = state.regions_detailed().await?;

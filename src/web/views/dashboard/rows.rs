@@ -78,7 +78,7 @@ pub struct DashboardRow {
     pub spark_baseline_y: u32,
 }
 
-/// What [`load_snapshot`] returns. Held in `AppState::dashboard_cache`
+/// What [`load_snapshot`] returns. Held in `DashboardPageCache`
 /// behind an `Arc` so cache hits are pointer-bumps even when an org has
 /// hundreds of monitors. Inner `Arc`s let the per-page template clone
 /// fields out for the surrounding chrome without re-cloning the table.
