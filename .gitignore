@@ -12,6 +12,8 @@
 # Local agent config
 CLAUDE.md
 claude.md
+/AGENTS.md
+/static/llms.txt
 .claude/
 .agents/
 skills-lock.json
