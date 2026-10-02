@@ -89,6 +89,8 @@
                 submit.disabled = false;
                 return;
             }
+            // Creation changes the org menu even if switching fails.
+            window.smNavCache?.clear();
             const org = await res.json();
             const switched = await fetch("/api/v1/me/active-org", {
                 method: "POST",

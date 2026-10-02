@@ -478,6 +478,17 @@ fn is_public_tenant_path(path: &str) -> bool {
         || PUBLIC_TENANT_PREFIXES.iter().any(|p| path.starts_with(p))
 }
 
+/// A request for a page drawn in the operator app's chrome, never a public one.
+pub fn renders_app_chrome(state: &RequestState, headers: &HeaderMap, path: &str) -> bool {
+    host_surface(state, headers) == HostSurface::Operator && is_app_path(path)
+}
+
+/// `/` is the dashboard on the operator host; the other public tenant paths
+/// are served there too.
+fn is_app_path(path: &str) -> bool {
+    path == "/" || !is_public_tenant_path(path)
+}
+
 /// The transport itself plus its discovery documents: the RFC 9728 / RFC 8414
 /// metadata and the server card are all `/.well-known/` files, public by
 /// definition.
@@ -563,6 +574,23 @@ mod tests {
         cfg.mcp.resource_uri = String::new();
         cfg.public_status.base_domain = String::new();
         assert!(!is_mcp_host(&cfg, "mcp.example.com"));
+    }
+
+    #[test]
+    fn public_paths_never_count_as_app_pages() {
+        for path in ["/", "/targets", "/maintenance/new", "/settings/account"] {
+            assert!(is_app_path(path), "{path}");
+        }
+        for path in [
+            "/status",
+            "/status/incidents/1",
+            "/subscribe/confirm",
+            "/api/public/v1/status",
+            "/static/css/app.css",
+            "/.well-known/security.txt",
+        ] {
+            assert!(!is_app_path(path), "{path}");
+        }
     }
 
     #[test]

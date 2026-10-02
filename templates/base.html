@@ -37,6 +37,7 @@
     <script defer src="{{ "js/ui/popover_pos.js"|asset }}"></script>
     <script defer src="{{ "js/ui/combobox.js"|asset }}"></script>
     <script defer src="{{ "js/ui/localtime.js"|asset }}"></script>
+    <script defer src="{{ "js/ui/nav_cache.js"|asset }}"></script>
     <script defer src="{{ "js/ui/nav_menu.js"|asset }}"></script>
     <script defer src="{{ "js/ui/command_palette.js"|asset }}"></script>
     <script defer src="{{ "js/ui/nav_keys.js"|asset }}"></script>
@@ -69,7 +70,7 @@
             {% if active_tab != "login" && active_tab != "recover" %}
             {# Error/consent pages pass active_tab="" — no nav fetch there. #}
             {% if active_tab != "" %}
-            <span hx-get="/web/partials/nav" hx-trigger="load" hx-swap="outerHTML"></span>
+            <span class="nav-root" data-nav-root hx-get="/web/partials/nav" hx-trigger="load" hx-swap="innerHTML"></span>
             {% endif %}
             <div class="hidden items-center gap-6 lg:flex">
               {% include "nav/_primary_links.html" %}

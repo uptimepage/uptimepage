@@ -23,7 +23,10 @@
 
     // Any of these can change the header — active slug, org menu, incident
     // pill. Cheaper to reload than to patch three places from the client.
-    const reload = () => window.location.reload();
+    const reload = () => {
+        window.smNavCache?.clear();
+        window.location.reload();
+    };
 
     list.addEventListener("click", async (ev) => {
         const toggle = ev.target.closest("[data-org-edit]");

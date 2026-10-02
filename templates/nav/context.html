@@ -1,21 +1,19 @@
-<span class="nav-root">
-    {% if show_switcher %}
-    <div class="monitors-menu" data-navmenu>
-        <button type="button" class="nav-link" data-navmenu-toggle
-                aria-haspopup="menu" aria-expanded="false"
-                aria-label="Switch organization — current: {{ slug }}">
-            <span class="cli-brackets">{{ slug }} ▾</span>
-        </button>
-        <div class="monitors-popover" role="menu" hidden data-navmenu-panel>
-            {% for o in orgs %}
-            <button type="button" class="monitors-popover__item" role="menuitem"
-                    data-org-switch="{{ o.id }}"
-                    {% if o.is_active %}aria-current="true"{% endif %}>{{ o.slug }}</button>
-            {% endfor %}
-        </div>
+{% if show_switcher %}
+<div class="monitors-menu" data-navmenu>
+    <button type="button" class="nav-link" data-navmenu-toggle
+            aria-haspopup="menu" aria-expanded="false"
+            aria-label="Switch organization — current: {{ slug }}">
+        <span class="cli-brackets">{{ slug }} ▾</span>
+    </button>
+    <div class="monitors-popover" role="menu" hidden data-navmenu-panel>
+        {% for o in orgs %}
+        <button type="button" class="monitors-popover__item" role="menuitem"
+                data-org-switch="{{ o.id }}"
+                {% if o.is_active %}aria-current="true"{% endif %}>{{ o.slug }}</button>
+        {% endfor %}
     </div>
-    {% endif %}
-</span>
+</div>
+{% endif %}
 <span id="nav-pill" hx-swap-oob="true">
     {% if open_incidents == 0 %}
     <span class="nav-rail__seg nav-rail__seg--static" title="No open incidents"><span class="nav-rail__led nav-rail__led--ok" aria-hidden="true"></span><span class="nav-rail__label">operational</span></span>

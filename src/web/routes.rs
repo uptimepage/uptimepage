@@ -372,6 +372,10 @@ pub fn routes(state: AppState) -> Router {
 
     assets::mount_static(r)
         .fallback(error::not_found)
+        .layer(axum::middleware::from_fn_with_state(
+            state.request_state(),
+            crate::request::nav_identity::middleware,
+        ))
         .layer(CookieManagerLayer::new())
         .layer(Extension(views::dashboard::dashboard_page_cache()))
         .layer(Extension(views::targets_detail::live_data_cache()))

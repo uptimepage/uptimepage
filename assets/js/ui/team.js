@@ -101,6 +101,7 @@
             if (res.status === 204) {
                 // Leaving the org yourself: the partial would 403 — go home.
                 if (removeBtn && removeBtn.dataset.self !== undefined) {
+                    window.smNavCache?.clear();
                     window.location.href = "/";
                     return;
                 }

@@ -104,3 +104,36 @@ async fn public_surface_request_yields_no_session_set_cookie() {
         }
     }
 }
+
+fn nav_identity_cookie(resp: &axum::response::Response) -> Option<String> {
+    resp.headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|v| v.starts_with("sm_nav_id="))
+        .map(str::to_owned)
+}
+
+/// The nav identity cookie rides operator pages only. A public page sets no
+/// cookie, even for a signed-in visitor.
+#[tokio::test]
+async fn nav_identity_is_stamped_on_app_pages_only() {
+    let app = common::build_test_app_with_web_and_owner(|_| {});
+    let page = |path: &str| {
+        Request::builder()
+            .uri(path)
+            .header("accept", "text/html")
+            .body(Body::empty())
+            .expect("request")
+    };
+
+    let dashboard = app.clone().oneshot(page("/")).await.expect("oneshot");
+    let cookie = nav_identity_cookie(&dashboard).expect("app page stamps the nav identity");
+    assert!(
+        !cookie.to_ascii_lowercase().contains("httponly"),
+        "{cookie}"
+    );
+
+    let status = app.oneshot(page("/status")).await.expect("oneshot");
+    assert_eq!(nav_identity_cookie(&status), None);
+}

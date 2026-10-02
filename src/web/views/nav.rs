@@ -141,6 +141,18 @@ mod tests {
     }
 
     #[test]
+    fn partial_is_wrapper_free_with_every_oob_target() {
+        let html = ctx(0, true).render().unwrap();
+        assert!(!html.contains("nav-root"));
+        for id in ["nav-pill", "nav-avatar", "nav-identity", "billing-notice"] {
+            assert!(
+                html.contains(&format!(r#"id="{id}" hx-swap-oob="true""#)),
+                "missing oob target {id}"
+            );
+        }
+    }
+
+    #[test]
     fn single_org_omits_slug_and_switcher() {
         let html = ctx(0, false).render().unwrap();
         assert!(!html.contains("nav-root__slug"));
