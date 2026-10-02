@@ -5,6 +5,10 @@ use super::args::{
     parse_region_policy, parse_state, parse_uuid, parse_window, requested_fields, requested_region,
     resolve_bindings,
 };
+use super::maintenance::{
+    MaintenancePage, MonitorNames, build_window_patch, cancel_prompt, edit_prompt, monitor_set,
+    schedule_prompt, window_view,
+};
 use super::support::deny_terraform;
 use super::text::{clean_public_text, create_prompt_lines, sanitize_data, sanitize_prompt};
 use super::tools_read::IncidentPage;
@@ -15,7 +19,7 @@ use super::view::{
 };
 use super::*;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{Duration, Utc};
 use serde_json::json;
@@ -29,13 +33,16 @@ use crate::domain::notification_channel::NotificationChannel;
 use crate::domain::public::{IncidentSeverity, IncidentStatusPhase, PublicIncidentUpdate};
 use crate::domain::result::{CheckResult, CheckStatus};
 use crate::domain::target::{NewTarget, RegionIncidentPolicy, Target};
-use crate::domain::{AlertBinding, CheckSpec, ExpectedStatus, FlowStep, TargetAlerts, WriteSource};
+use crate::domain::{
+    AlertBinding, CheckSpec, ExpectedStatus, FlowStep, MaintenanceWindow, NewMaintenanceWindow,
+    TargetAlerts, WriteSource,
+};
 use crate::mcp::audit::Outcome;
 use crate::mcp::cursor;
 use crate::mcp::error::{codes, outcome_for, probe_dispatch_error};
 use crate::mcp::schema::{
-    CheckConfig, FieldChange, MonitorDetail, MonitorUpdateResult, NewCheck, ProbeOutcome,
-    RegionPolicyArg, RegionPolicyMode, UpdateMonitorArgs,
+    CheckConfig, FieldChange, MaintenanceStatus, MonitorDetail, MonitorUpdateResult, NewCheck,
+    ProbeOutcome, RegionPolicyArg, RegionPolicyMode, UpdateMaintenanceArgs, UpdateMonitorArgs,
 };
 use crate::storage::TimeRange;
 use crate::storage::incidents::IncidentBrief;
@@ -397,6 +404,7 @@ fn the_mcp_pages_count_and_name_only_the_tools_this_server_serves() {
                 "unpublish_",
                 "post_",
                 "add_",
+                "cancel_",
             ]
             .iter()
             .any(|p| word.starts_with(p));
@@ -2051,4 +2059,244 @@ fn a_step_that_never_passed_reports_no_ratio() {
         (None, None, None)
     );
     assert_eq!(item.failed, 3);
+}
+
+const API: Uuid = Uuid::from_u128(1);
+const DB: Uuid = Uuid::from_u128(2);
+
+fn monitor_names() -> MonitorNames {
+    HashMap::from([(API, "api".to_string()), (DB, "Database".to_string())])
+}
+
+fn stored_window(starts_in_mins: i64) -> MaintenanceWindow {
+    let now = Utc::now();
+    MaintenanceWindow {
+        id: Uuid::nil(),
+        title: "DB upgrade".into(),
+        description: None,
+        starts_at: now + Duration::minutes(starts_in_mins),
+        ends_at: now + Duration::minutes(starts_in_mins + 60),
+        component_ids: vec![API],
+        suppress_alerts: true,
+        created_at: now,
+        updated_at: now,
+        write_source: WriteSource::Ui,
+        created_by: None,
+        updated_by: None,
+        deleted_at: None,
+        deleted_by: None,
+    }
+}
+
+fn window_args() -> UpdateMaintenanceArgs {
+    UpdateMaintenanceArgs {
+        id: Uuid::nil().to_string(),
+        title: None,
+        description: None,
+        starts_at: None,
+        ends_at: None,
+        end_now: None,
+        monitor_ids: None,
+        suppress_alerts: None,
+    }
+}
+
+#[test]
+fn a_window_patch_reports_every_field_it_moves() {
+    let window = stored_window(30);
+    let new_end = window.ends_at + Duration::minutes(30);
+    let args = UpdateMaintenanceArgs {
+        title: Some("DB upgrade, part 2".into()),
+        ends_at: Some(new_end.to_rfc3339()),
+        monitor_ids: Some(vec![DB.to_string(), API.to_string()]),
+        suppress_alerts: Some(false),
+        ..window_args()
+    };
+    let (update, changes) =
+        build_window_patch(&args, &window, &monitor_names(), Utc::now()).unwrap();
+    let fields: Vec<&str> = changes.iter().map(|c| c.field.as_str()).collect();
+    assert_eq!(
+        fields,
+        vec!["title", "ends_at", "monitor_ids", "suppress_alerts"]
+    );
+    assert_eq!(update.ends_at, Some(new_end));
+    assert_eq!(update.component_ids, Some(vec![DB, API]));
+    assert_eq!(update.suppress_alerts, Some(false));
+    let monitors = &changes[2];
+    assert_eq!(
+        (monitors.from.as_str(), monitors.to.as_str()),
+        ("api", "api, Database")
+    );
+}
+
+#[test]
+fn a_window_value_that_already_matches_is_not_a_change() {
+    let window = stored_window(30);
+    let args = UpdateMaintenanceArgs {
+        title: Some(window.title.clone()),
+        description: Some(String::new()),
+        starts_at: Some(window.starts_at.to_rfc3339()),
+        monitor_ids: Some(vec![API.to_string()]),
+        suppress_alerts: Some(true),
+        ..window_args()
+    };
+    let (update, changes) =
+        build_window_patch(&args, &window, &monitor_names(), Utc::now()).unwrap();
+    assert!(changes.is_empty(), "{changes:?}");
+    assert!(update.changed_fields().is_empty());
+}
+
+#[test]
+fn end_now_ends_only_a_running_window_and_stands_alone() {
+    let now = Utc::now();
+    let names = monitor_names();
+    let end_now = UpdateMaintenanceArgs {
+        end_now: Some(true),
+        ..window_args()
+    };
+
+    let err = build_window_patch(&end_now, &stored_window(30), &names, now).unwrap_err();
+    assert!(
+        err.message.contains("cancel_maintenance"),
+        "{}",
+        err.message
+    );
+
+    let running = stored_window(-10);
+    let (update, changes) = build_window_patch(&end_now, &running, &names, now).unwrap();
+    assert_eq!(update.ends_at, Some(now));
+    assert_eq!(changes[0].field, "ends_at");
+    assert_eq!(changes[0].to, "now");
+
+    let both = UpdateMaintenanceArgs {
+        ends_at: Some((now + Duration::hours(1)).to_rfc3339()),
+        ..end_now
+    };
+    let err = build_window_patch(&both, &running, &names, now).unwrap_err();
+    assert_eq!(err.code, codes::INVALID_ARGUMENT);
+}
+
+#[test]
+fn a_window_covers_monitors_the_org_owns_each_once() {
+    let names = monitor_names();
+    assert!(monitor_set(&[], &names).is_err());
+    let foreign = Uuid::from_u128(9).to_string();
+    let err = monitor_set(&[API.to_string(), foreign], &names).unwrap_err();
+    assert!(err.message.contains("no monitor"), "{}", err.message);
+    let err = monitor_set(&[API.to_string(), API.to_string()], &names).unwrap_err();
+    assert!(err.message.contains("listed twice"), "{}", err.message);
+    assert_eq!(
+        monitor_set(&[DB.to_string(), API.to_string()], &names).unwrap(),
+        vec![DB, API]
+    );
+}
+
+#[test]
+fn a_schedule_prompt_states_paging_and_where_it_is_announced() {
+    let now = Utc::now();
+    let new = NewMaintenanceWindow {
+        title: "DB upgrade".into(),
+        description: Some("Read-only for an hour.".into()),
+        starts_at: now + Duration::hours(2),
+        ends_at: now + Duration::hours(3),
+        component_ids: vec![API, DB],
+        suppress_alerts: true,
+    };
+    let names = monitor_names();
+    let prompt = schedule_prompt(&new, &names, &HashSet::from([DB]), now);
+    for expected in [
+        "Schedule maintenance \"DB upgrade\"?",
+        "(1h, starts in",
+        "monitors: api, Database",
+        "paging: held",
+        "public: shown on your status pages for Database",
+        "description: Read-only for an hour.",
+    ] {
+        assert!(
+            prompt.contains(expected),
+            "{expected:?} missing from {prompt}"
+        );
+    }
+
+    let quiet = NewMaintenanceWindow {
+        suppress_alerts: false,
+        ..new
+    };
+    let prompt = schedule_prompt(&quiet, &names, &HashSet::new(), now);
+    assert!(prompt.contains("paging: not held"), "{prompt}");
+    assert!(prompt.contains("is on a published status page"), "{prompt}");
+}
+
+#[test]
+fn a_cancel_prompt_says_paging_returns_only_for_a_running_held_window() {
+    let now = Utc::now();
+    let names = monitor_names();
+    let running = cancel_prompt(&stored_window(-10), &names, now);
+    assert!(running.contains("(active,"), "{running}");
+    assert!(running.contains("monitors: api"), "{running}");
+    assert!(running.contains("page again"), "{running}");
+    let upcoming = cancel_prompt(&stored_window(30), &names, now);
+    assert!(upcoming.contains("(upcoming,"), "{upcoming}");
+    assert!(!upcoming.contains("page again"), "{upcoming}");
+}
+
+#[test]
+fn a_window_reads_back_its_phase_and_names_its_monitors() {
+    let now = Utc::now();
+    let mut window = stored_window(30);
+    window.component_ids = vec![DB, API];
+    window.description = Some("  ".into());
+    window.deleted_at = Some(now);
+    let view = window_view(&window, &monitor_names(), now);
+    assert_eq!(view.phase, "cancelled");
+    assert!(view.cancelled_at.is_some());
+    assert!(view.description.is_none());
+    let names: Vec<&str> = view.monitors.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, vec!["api", "Database"]);
+}
+
+#[test]
+fn a_maintenance_cursor_round_trips_its_status() {
+    let page = MaintenancePage {
+        status: MaintenanceStatus::Upcoming,
+        offset: 50,
+    };
+    let encoded = cursor::encode_query(&page).unwrap();
+    assert_eq!(
+        cursor::decode_query::<MaintenancePage>(&encoded),
+        Some(page)
+    );
+}
+
+#[test]
+fn an_edit_prompt_names_each_monitor_it_adds_or_drops() {
+    let window = stored_window(30);
+    let names = monitor_names();
+    let args = UpdateMaintenanceArgs {
+        monitor_ids: Some(vec![DB.to_string()]),
+        ..window_args()
+    };
+    let (proposed, changes) = build_window_patch(&args, &window, &names, Utc::now()).unwrap();
+    let prompt = edit_prompt(&window, &proposed, &changes, &names, &HashSet::from([DB]));
+    for expected in [
+        "monitors added: Database",
+        "monitors removed: api",
+        "public: now also shown on your status pages for Database",
+    ] {
+        assert!(
+            prompt.contains(expected),
+            "{expected:?} missing from {prompt}"
+        );
+    }
+}
+
+#[test]
+fn a_past_end_is_refused_rather_than_quietly_becoming_now() {
+    let running = stored_window(-10);
+    let args = UpdateMaintenanceArgs {
+        ends_at: Some((Utc::now() - Duration::minutes(5)).to_rfc3339()),
+        ..window_args()
+    };
+    let err = build_window_patch(&args, &running, &monitor_names(), Utc::now()).unwrap_err();
+    assert!(err.message.contains("end_now"), "{}", err.message);
 }

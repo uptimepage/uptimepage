@@ -86,6 +86,23 @@ async fn create_maintenance_rejects_long_duration() {
 }
 
 #[tokio::test]
+async fn create_maintenance_rejects_a_repeated_component_id() {
+    let app = make_app();
+    let mut body = valid_window();
+    let id = "00000000-0000-0000-0000-000000000001";
+    body["component_ids"] = json!([id, id]);
+    let resp = app
+        .oneshot(json_request("POST", "/api/v1/maintenance", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body_json(resp).await["error"]["code"],
+        "INVALID_COMPONENT_ID"
+    );
+}
+
+#[tokio::test]
 async fn create_maintenance_rejects_unknown_component_ids() {
     let app = make_app();
     let mut body = valid_window();

@@ -4,7 +4,7 @@
 //! [`McpServer::finish`] writes exactly one audit row for the outcome — so
 //! EVERY path (insufficient scope, declined, bad input, not-found, error,
 //! success) is recorded, not just the happy path. The bodies themselves live
-//! in [`super::monitors`] and [`super::incidents`].
+//! in the per-resource modules beside this one.
 
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::service::RequestContext;
@@ -14,12 +14,13 @@ use serde_json::json;
 use crate::mcp::auth::McpAuth;
 use crate::mcp::error::McpToolError;
 use crate::mcp::schema::{
-    AddComponentsArgs, CheckRunResult, ComponentUpdated, ComponentsAdded, CreateMonitorArgs,
-    CreateMonitorsArgs, CreateStatusPageArgs, IncidentActionArgs, IncidentActionResult,
-    IncidentIdArg, IncidentUpdatePosted, IncidentVisibilityResult, MonitorCreated, MonitorIdArg,
+    AddComponentsArgs, CheckRunResult, ComponentUpdated, ComponentsAdded, CreateMaintenanceArgs,
+    CreateMonitorArgs, CreateMonitorsArgs, CreateStatusPageArgs, IncidentActionArgs,
+    IncidentActionResult, IncidentIdArg, IncidentUpdatePosted, IncidentVisibilityResult,
+    MaintenanceIdArg, MaintenanceUpdateResult, MaintenanceWindowView, MonitorCreated, MonitorIdArg,
     MonitorStateResult, MonitorUpdateResult, MonitorsCreated, PostIncidentUpdateArgs,
-    PublishIncidentArgs, StatusPageWritten, UpdateComponentArgs, UpdateMonitorArgs,
-    UpdateStatusPageArgs,
+    PublishIncidentArgs, StatusPageWritten, UpdateComponentArgs, UpdateMaintenanceArgs,
+    UpdateMonitorArgs, UpdateStatusPageArgs,
 };
 
 use super::McpServer;
@@ -50,7 +51,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Pause a monitor (stop its checks until resumed). Asks for confirmation where the client can show a prompt; otherwise runs on the token's scope. Not read-only; idempotent.",
+        description = "Pause a monitor (stop its checks until resumed). For planned work, create_maintenance holds paging instead while the checks keep running. Asks for confirmation where the client can show a prompt; otherwise runs on the token's scope. Not read-only; idempotent.",
         title = "Pause monitor",
         annotations(
             read_only_hint = false,
@@ -392,5 +393,91 @@ impl McpServer {
             result,
         )
         .await
+    }
+
+    #[tool(
+        description = "Schedule a maintenance window for planned work on some monitors. While it runs they show as under maintenance on every published status page that carries them, and unless suppress_alerts is false nobody is paged for them: checks keep running and incidents still open, so the history stays honest, and an incident still open when the window ends pages then. Prefer this over pause_monitor for planned work. Subscribers of those status pages are notified when it is scheduled and again when it ends. Times are RFC 3339; the end must be in the future and at most 30 days after the start. Shows the window, its monitors, whether paging is held and where it is announced, where the client can show a prompt; otherwise runs on the token's scope. Not read-only.",
+        title = "Schedule maintenance",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false
+        )
+    )]
+    async fn create_maintenance(
+        &self,
+        Parameters(args): Parameters<CreateMaintenanceArgs>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<Json<MaintenanceWindowView>, McpToolError> {
+        let auth = McpAuth::from_ctx(&ctx)?;
+        let pool = self.require_pool()?;
+        let result = self.create_maintenance_inner(&ctx, &auth, &args).await;
+        // Title and description are public copy, which the audit never records.
+        let args_json = match &result {
+            Ok(Json(window)) => json!({
+                "id": window.id,
+                "starts_at": window.starts_at,
+                "ends_at": window.ends_at,
+                "monitor_ids": window.monitors.iter().map(|m| &m.id).collect::<Vec<_>>(),
+                "suppress_alerts": window.suppress_alerts,
+            }),
+            Err(_) => json!({
+                "starts_at": args.starts_at,
+                "ends_at": args.ends_at,
+                "monitors": args.monitor_ids.len(),
+            }),
+        };
+        self.finish(pool, &auth, "create_maintenance", args_json, result)
+            .await
+    }
+
+    #[tool(
+        description = "Edit an upcoming or running maintenance window: its title, description, start, end, the monitors it covers (monitor_ids replaces the whole set) or whether it holds their paging. end_now ends a running window at once and keeps it as completed work. A completed or cancelled window is history and is refused. Shows the old and new value of every field before it runs, where the client can show a prompt; otherwise runs on the token's scope. Not read-only.",
+        title = "Edit maintenance",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true
+        )
+    )]
+    async fn update_maintenance(
+        &self,
+        Parameters(args): Parameters<UpdateMaintenanceArgs>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<Json<MaintenanceUpdateResult>, McpToolError> {
+        let auth = McpAuth::from_ctx(&ctx)?;
+        let pool = self.require_pool()?;
+        let result = self.update_maintenance_inner(&ctx, &auth, &args).await;
+        let args_json = match &result {
+            Ok(Json(applied)) => json!({
+                "id": args.id,
+                "changed": applied.changes.iter().map(|c| &c.field).collect::<Vec<_>>(),
+            }),
+            Err(_) => json!({ "id": args.id }),
+        };
+        self.finish(pool, &auth, "update_maintenance", args_json, result)
+            .await
+    }
+
+    #[tool(
+        description = "Cancel a maintenance window that has not ended. It leaves the status pages, stops holding paging, and stays listed under past as a record; subscribers already told about it are not sent a cancellation. To stop a running window early and keep it as completed work, use update_maintenance with end_now instead. Asks for confirmation where the client can show a prompt; otherwise runs on the token's scope. Not read-only.",
+        title = "Cancel maintenance",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true
+        )
+    )]
+    async fn cancel_maintenance(
+        &self,
+        Parameters(args): Parameters<MaintenanceIdArg>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<Json<MaintenanceWindowView>, McpToolError> {
+        let auth = McpAuth::from_ctx(&ctx)?;
+        let pool = self.require_pool()?;
+        let args_json = json!({ "id": args.id });
+        let result = self.cancel_maintenance_inner(&ctx, &auth, &args).await;
+        self.finish(pool, &auth, "cancel_maintenance", args_json, result)
+            .await
     }
 }

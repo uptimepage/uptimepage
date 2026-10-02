@@ -31,9 +31,10 @@ use crate::mcp::schema::{
     ChannelItem, ChannelList, Failure, FlowRunList, FlowStepTrendSummary, FlowWindowArgs,
     GetIncidentMetricsArgs, GetMonitorArgs, GetMonitorHistoryArgs, GetStatusPageArgs, HealthTotals,
     IncidentDetail, IncidentIdArg, IncidentList, IncidentMetricsResult, IncidentWindow,
-    LatencyPoint, ListIncidentsArgs, ListMonitorsArgs, ListStatusPagesArgs, MetricCount,
-    MonitorDetail, MonitorHistory, MonitorList, MonitorListItem, NoisyMonitor, OrgHealth, OrgUsage,
-    Quota, RegionList, StatusPageComponent as McpComponent, StatusPageDetail, StatusPageList,
+    LatencyPoint, ListIncidentsArgs, ListMaintenanceArgs, ListMonitorsArgs, ListStatusPagesArgs,
+    MaintenanceIdArg, MaintenanceList, MaintenanceWindowView, MetricCount, MonitorDetail,
+    MonitorHistory, MonitorList, MonitorListItem, NoisyMonitor, OrgHealth, OrgUsage, Quota,
+    RegionList, StatusPageComponent as McpComponent, StatusPageDetail, StatusPageList,
     StatusPageSummary, TagItem, TagList, VariableList, VariableSummary, WorstMonitor,
 };
 
@@ -55,8 +56,8 @@ const HEALTH_WINDOW_HOURS: i64 = 24;
 /// Cap on `get_org_health.worst` — triage wants the headline failures, not a
 /// dump. The model can page the full set via `list_monitors(state=...)`.
 const WORST_CAP: usize = 8;
-/// Page size for `list_monitors`.
-const PAGE_SIZE: usize = 50;
+/// Page size for every cursor-paginated list.
+pub(super) const PAGE_SIZE: usize = 50;
 /// Upper bound on rows pulled for an in-memory paginated list (monitors,
 /// incidents). Comfortably above any plan's cap; pagination then slices the
 /// fetched set exactly.
@@ -890,6 +891,34 @@ impl McpServer {
             to: range.to.to_rfc3339(),
             next_cursor,
         }))
+    }
+
+    #[tool(
+        description = "List maintenance windows: title, start and end, phase (upcoming, active, completed or cancelled), the monitors each covers, and whether it holds their paging. status narrows to active, upcoming or past (ended or cancelled); the default is all, latest start first. Cursor-paginated. Read-only.",
+        title = "List maintenance windows",
+        annotations(read_only_hint = true)
+    )]
+    async fn list_maintenance(
+        &self,
+        Parameters(args): Parameters<ListMaintenanceArgs>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<Json<MaintenanceList>, McpToolError> {
+        let auth = McpAuth::from_ctx(&ctx)?;
+        self.list_maintenance_inner(&auth, &args).await
+    }
+
+    #[tool(
+        description = "One maintenance window: title, description, start and end, phase, the monitors it covers, and whether it holds their paging. Read-only.",
+        title = "Maintenance window details",
+        annotations(read_only_hint = true)
+    )]
+    async fn get_maintenance(
+        &self,
+        Parameters(args): Parameters<MaintenanceIdArg>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<Json<MaintenanceWindowView>, McpToolError> {
+        let auth = McpAuth::from_ctx(&ctx)?;
+        self.get_maintenance_inner(&auth, &args).await
     }
 
     /// One incident with its full operator-update timeline. Use after

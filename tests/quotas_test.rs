@@ -1909,10 +1909,21 @@ fn every_quota_create_path_is_gated() {
             "pub async fn add_component(",
             "max_public_components",
         ),
+        // REST and MCP both reach the maintenance cap through `vet_new`.
         (
             "src/api/handlers/maintenance.rs",
             "pub async fn create_maintenance(",
+            "vet_new",
+        ),
+        (
+            "src/maintenance_ops.rs",
+            "pub async fn vet_new(",
             "check_can_create_maintenance_window",
+        ),
+        (
+            "src/mcp/server/maintenance.rs",
+            "pub(super) async fn create_maintenance_inner(",
+            "vet_new",
         ),
         (
             "src/api/handlers/invitations.rs",

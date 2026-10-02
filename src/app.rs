@@ -15,6 +15,7 @@ use crate::domain::OrgId;
 use crate::email::EmailSender;
 use crate::http_client::HttpClients;
 use crate::http_outbound::OutboundHttpClient;
+use crate::maintenance_ops::MaintenanceOps;
 use crate::public_status::PublicSource;
 use crate::public_status::publishing::Publishing;
 use crate::quotas::{QuotaService, RateLimitService};
@@ -248,6 +249,13 @@ impl AppState {
             shares: self.monitor_share_store.as_ref(),
             incidents: self.incident_ops_store.as_ref(),
             source: self.public_source.as_ref(),
+        }
+    }
+
+    pub fn maintenance_ops(&self) -> MaintenanceOps<'_> {
+        MaintenanceOps {
+            store: self.maintenance_store.as_ref(),
+            quotas: &self.quotas,
         }
     }
 

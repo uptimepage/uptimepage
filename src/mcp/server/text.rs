@@ -9,10 +9,10 @@ use crate::domain::target::NewTarget;
 use crate::domain::text::is_invisible;
 
 use crate::mcp::error::McpToolError;
-use crate::mcp::schema::{IncidentActionResult, ProbeOutcome};
+use crate::mcp::schema::{FieldChange, IncidentActionResult, ProbeOutcome};
 
 /// Prompt-facing names; `changes` reports the machine names.
-pub(super) fn field_label(field: &str) -> &str {
+fn field_label(field: &str) -> &str {
     match field {
         "interval_secs" => "check interval (seconds)",
         "alert_confirmations" => "failing checks before alerting",
@@ -21,8 +21,27 @@ pub(super) fn field_label(field: &str) -> &str {
         "group_name" => "group",
         "alerts" => "notification channels",
         "region_policy" => "opens an incident on",
+        "starts_at" => "start",
+        "ends_at" => "end",
+        "monitor_ids" => "monitors",
+        "suppress_alerts" => "paging held",
         other => other,
     }
+}
+
+pub(super) fn change_lines(changes: &[FieldChange]) -> String {
+    changes
+        .iter()
+        .map(|c| {
+            format!(
+                "{}: {} → {}",
+                field_label(&c.field),
+                sanitize_prompt(&c.from),
+                sanitize_prompt(&c.to)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Every setting the monitor would be created with. What the prompt leaves out

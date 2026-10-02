@@ -6,7 +6,7 @@ It is another authorized front door to the same stores the web app and [`/api/v1
 
 - **Transport** — Streamable HTTP at `POST/GET /mcp`, served on its own host (`mcp.{DOMAIN}` in production).
 - **Auth** — an org-bound scoped API token (`sm_live_…`), minted either by hand (Settings → API tokens) or by the one-click OAuth 2.1 connector flow.
-- **Surface** — 16 read tools (14 of them under the default grant; `list_notification_channels` needs `channels:read` and `list_variables` needs `variables:read`) + 15 write tools (each scope-gated, confirmed per action where the client can ask, and audited); see [Confirmations](#confirmations).
+- **Surface** — 18 read tools (16 of them under the default grant; `list_notification_channels` needs `channels:read` and `list_variables` needs `variables:read`) + 18 write tools (each scope-gated, confirmed per action where the client can ask, and audited); see [Confirmations](#confirmations).
 
 The server only mounts when enabled (see [Enabling](#enabling)); a deployment that leaves it off never exposes `/mcp`.
 
@@ -16,7 +16,7 @@ All tools return typed `structuredContent`. Customer free text (monitor names, g
 
 ### Read tools
 
-Side-effect-free (`readOnlyHint`). Each requires the scope named in its row: `targets:read`, `status_page:read` and `incidents:read` are in the default grant; `channels:read` and `variables:read` are not.
+Side-effect-free (`readOnlyHint`). Each requires the scope named in its row: `targets:read`, `status_page:read`, `incidents:read` and `maintenance:read` are in the default grant; `channels:read` and `variables:read` are not.
 
 | Tool | Scope | Returns |
 |---|---|---|
@@ -31,6 +31,8 @@ Side-effect-free (`readOnlyHint`). Each requires the scope named in its row: `ta
 | `list_incidents` | `incidents:read` | Incidents with their id, affected monitor, severity, open/resolved times, and latest update phase. Defaults to the currently-open ones; `state: "all"` adds resolved history inside a `from`/`to` window (default: the last 30 days, capped at a year), and `monitor_id` narrows to one monitor. The response repeats the window it actually read, so a clamped request is never reported as the span that was asked for. An incident still running is listed however long ago it opened. Cursor-paginated. |
 | `get_incident` | `incidents:read` | One incident: affected monitor, severity, open/resolved times, error sample, and the full operator-update timeline. |
 | `get_incident_metrics` | `incidents:read` | Incident metrics over a trailing window (default 30 days): MTTA/MTTR, total, counts by severity and state, auto- vs human-resolved, and the noisiest monitors. |
+| `list_maintenance` | `maintenance:read` | Maintenance windows with their title, start and end, phase (`upcoming` / `active` / `completed` / `cancelled`), the monitors each covers, and whether it holds their paging. `status` narrows to `active`, `upcoming` or `past` (ended or cancelled); the default is all, latest start first. Cursor-paginated. |
+| `get_maintenance` | `maintenance:read` | One maintenance window, with its description. |
 | `list_status_pages` | `status_page:read` | The org's status pages: slug, name, public URL, enabled. Cursor-paginated. |
 | `get_status_page` | `status_page:read` | One status page with its components and each linked monitor's current state. |
 | `get_org_usage` | `targets:read` | Which org the connector is bound to (slug and name), and resource usage against plan limits (monitors, status pages, members, components) + key policy values. A token carries one org and cannot switch, so this is the one-call answer to "where am I connected?" — see [Org binding](#org-binding). |
@@ -59,6 +61,9 @@ Not read-only. Each requires its scope **and**, from a client that can show one,
 | `update_monitor` | `targets:write` (+ `channels:read` to rebind channels) | Change how loudly a monitor is watched: `interval_secs`, `alert_confirmations`, `notify_recovery`, `renotify_interval_secs`, `tags`, `group_name`, `region_policy`, `channel_ids`. Nothing else — see [What it will not change](#what-update-monitor-will-not-change). `tags` replaces the whole list and takes at most 50, each at most 50 characters, with no blank and no invisible characters. The confirmation names the monitor and states old → new for every field, and a request whose values already match writes nothing and never prompts. If the monitor moves between the prompt and the approval, the write is refused as `conflict` instead of landing on top of the newer value. Idempotent. |
 | `pause_monitor` | `targets:write` | Stop a monitor's checks until resumed. Idempotent. |
 | `resume_monitor` | `targets:write` | Restart a paused monitor's checks. Idempotent. |
+| `create_maintenance` | `maintenance:write` | Schedule a maintenance window: `title`, optional `description`, `starts_at` and `ends_at` (RFC 3339; the end in the future, at most 30 days after the start), the `monitor_ids` it covers, and `suppress_alerts` (default `true`), the same rules as [`/api/v1/maintenance`](public-status.md#scheduling-maintenance). The confirmation names the covered monitors, says whether their paging is held, and says whether the window is announced: it shows on every published status page carrying one of them, whose subscribers are notified when it is scheduled and when it ends. The gentler alternative to `pause_monitor` for planned work, since checks keep running. |
+| `update_maintenance` | `maintenance:write` | Edit an upcoming or running window: `title`, `description`, `starts_at`, `ends_at`, `monitor_ids` (replaces the whole set) or `suppress_alerts`. `end_now` ends a running window at the server's clock and keeps it as completed work. A completed or cancelled window is history and is refused before anything is asked. Like `update_monitor`, the confirmation states old → new per field, a request that changes nothing writes nothing, and a window that moves while the prompt is open is refused as `conflict`. |
+| `cancel_maintenance` | `maintenance:delete` | Cancel a window that has not ended. It leaves the status pages and stops holding paging, and stays listed under `past` as a record; subscribers already told about it are not sent a cancellation. |
 | `acknowledge_incident` | `incidents:write` | Take ownership of an incident and halt escalation. Internal only: it posts nothing to the public status page. Idempotent. |
 | `resolve_incident` | `incidents:write` | Mark the incident resolved. Internal only, same as acknowledge: the public page is untouched. Idempotent. |
 | `publish_incident` | `incidents:write` | Put an incident on every status page carrying the affected monitor, optionally seeding `public_title` and `public_description`. Subscribers may be notified. Idempotent. |
@@ -156,7 +161,7 @@ It shows:
 
 - **Who and where** — the client name, what it asked for, and where the browser goes after Approve or Deny: the redirect host, or for a loopback or native-scheme callback a note that it stays on this computer. The client registers both its name and that URI, but the code is delivered to the URI, so the page cannot show one destination and send the code to another; a name that does not match the host is the tell.
 - **Organization** — a picker over the orgs the user belongs to, preselecting the one active in the app. The token binds to the org chosen here and to nothing else.
-- **Access level** — three choices: *Read only* (every read scope, including channel names and variable keys), *Manage monitors* (adds `targets:write`, `targets:execute`) and *Full access* (adds `incidents:write`, `status_page:write`). The smallest level that covers the client's `scope` request is preselected, so a connector that asked for nothing lands on read only and one that asked for everything lands on full; the user can move either way. Each level expands to the exact abilities it grants, write abilities marked ⚠, and a warning banner appears whenever the selected level can make changes, stating that a client which cannot show a confirmation prompt will make them without asking each time.
+- **Access level** — three choices: *Read only* (every read scope, including channel names and variable keys), *Manage monitors* (adds `targets:write`, `targets:execute`, `maintenance:write`, `maintenance:delete`) and *Full access* (adds `incidents:write`, `status_page:write`). The smallest level that covers the client's `scope` request is preselected, so a connector that asked for nothing lands on read only and one that asked for everything lands on full; the user can move either way. Each level expands to the exact abilities it grants, write abilities marked ⚠, and a warning banner appears whenever the selected level can make changes, stating that a client which cannot show a confirmation prompt will make them without asking each time.
 - **Connection expires** — a picker (30 / 60 / 90 / 365 days, default 90) that sets the refresh-token (connection) lifetime. There is no "never".
 - **Approve / Deny** — Deny aborts the flow; Approve mints the token for the chosen org at the chosen level and returns the user to the client.
 
@@ -164,21 +169,24 @@ The level the user picks is the grant. The client's request only decides which l
 
 ## Scopes
 
-The connector advertises nine grantable scopes. A request with no `scope` (or only unknown scopes) preselects the **read-only default** on the consent screen; the write scopes are granted only through the *Manage monitors* or *Full access* level the user picks there.
+The connector advertises twelve grantable scopes. A request with no `scope` (or only unknown scopes) preselects the **read-only default** on the consent screen; the write scopes are granted only through the *Manage monitors* or *Full access* level the user picks there.
 
 | Scope | Grants | In default set? |
 |---|---|---|
 | `targets:read` | all read tools over monitors | ✅ |
 | `status_page:read` | status-page read tools | ✅ |
 | `incidents:read` | `list_incidents`, `get_incident`, `get_incident_metrics` | ✅ |
+| `maintenance:read` | `list_maintenance`, `get_maintenance` | ✅ |
 | `channels:read` | `list_notification_channels`, and binding channels on `create_monitor` / `update_monitor` | opt-in |
 | `targets:write` | `create_monitor`, `create_monitors`, `update_monitor`, `pause_monitor`, `resume_monitor` | opt-in |
 | `targets:execute` | `run_check_now`, and the trial probes `create_monitor` / `create_monitors` run | opt-in |
+| `maintenance:write` | `create_maintenance`, `update_maintenance` | opt-in |
+| `maintenance:delete` | `cancel_maintenance` | opt-in |
 | `incidents:write` | `acknowledge_incident`, `resolve_incident`, `publish_incident`, `unpublish_incident`, `post_incident_update` | opt-in |
 | `status_page:write` | `create_status_page`, `update_status_page`, `add_status_page_components`, `update_status_page_component` — **and** the caller must be an owner of the org, the same bar `/api/v1` holds the public brand surface to | opt-in |
 | `variables:read` | `list_variables` — variable keys only, never a value | opt-in |
 
-A granted write scope is what authorises a write. Where the client can show a prompt, every write tool also asks the user to confirm the specific action at call time; that prompt guards against a model acting on its own, not against a client the user should never have approved. The consent screen is where a hostile client, or an over-broad grant to an honest one, is stopped: an aggregator such as Composio requests all nine scopes because that is what the metadata advertises, and the access level picker is where that becomes "manage monitors" instead.
+A granted write scope is what authorises a write. Where the client can show a prompt, every write tool also asks the user to confirm the specific action at call time; that prompt guards against a model acting on its own, not against a client the user should never have approved. The consent screen is where a hostile client, or an over-broad grant to an honest one, is stopped: an aggregator such as Composio requests all twelve scopes because that is what the metadata advertises, and the access level picker is where that becomes "manage monitors" instead.
 
 `variables:write` is deliberately absent. Creating or rotating a variable means carrying its value, which is the one thing this surface will not do; variables are managed in the app or over [`/api/v1`](api.md#operator-endpoints-variables).
 
@@ -196,7 +204,7 @@ Before any write tool acts, the server sends an MCP **elicitation** request desc
 
 ## Audit
 
-Every write-tool invocation writes one row to `mcp_audit`, on **every** path — success, user-declined, scope-denied, bad input, not-found, or server error — recording: `actor_type = mcp`, the token id, the acting user + org, the client software as `name/version` from its `initialize` handshake, prefixed by the OAuth client's registered name when the token came from OAuth (`Composio (mcp/0.1.0)`, since an aggregator reports only its SDK's default name), the tool name, what it acted on, the outcome (`success` / `denied` / `error`), and a detail that leads with the refusal code and adds its reason where there is one (`not_confirmed:declined`, `confirmation_failed:timed_out`, and for `invalid_argument` the rejection text the caller was shown). When a write went ahead without a person answering a prompt, the row says so: `unconfirmed:no_elicitation` or `unconfirmed:client_error:-32601` on a success row, and the same appended after `;` on an error or denied row that got past the gate unasked and then failed, so "did I approve this?" has an answer either way. "What it acted on" is the id for most tools, the created monitor's name, address, interval and bound channels for `create_monitor`, and the old → new pairs for `update_monitor`; a refused call records what identifies the attempt plus, for `invalid_argument`, the rejection text, which may name the value that was refused (a host, a resolver, a region) but never a credential. Customer-facing incident text is never recorded — not a public title, a description, an update `message`, nor an ack/resolve note. The same event is emitted to tracing. Reads are not audit-logged (they're side-effect-free and already rate-limited). Rows are kept for `retention.mcp_audit_days` (2 years by default), then deleted by the daily retention job.
+Every write-tool invocation writes one row to `mcp_audit`, on **every** path — success, user-declined, scope-denied, bad input, not-found, or server error — recording: `actor_type = mcp`, the token id, the acting user + org, the client software as `name/version` from its `initialize` handshake, prefixed by the OAuth client's registered name when the token came from OAuth (`Composio (mcp/0.1.0)`, since an aggregator reports only its SDK's default name), the tool name, what it acted on, the outcome (`success` / `denied` / `error`), and a detail that leads with the refusal code and adds its reason where there is one (`not_confirmed:declined`, `confirmation_failed:timed_out`, and for `invalid_argument` the rejection text the caller was shown). When a write went ahead without a person answering a prompt, the row says so: `unconfirmed:no_elicitation` or `unconfirmed:client_error:-32601` on a success row, and the same appended after `;` on an error or denied row that got past the gate unasked and then failed, so "did I approve this?" has an answer either way. "What it acted on" is the id for most tools, the created monitor's name, address, interval and bound channels for `create_monitor`, the old → new pairs for `update_monitor`, the window's times, monitors and paging for `create_maintenance`, and the names of the changed fields for `update_maintenance`; a refused call records what identifies the attempt plus, for `invalid_argument`, the rejection text, which may name the value that was refused (a host, a resolver, a region) but never a credential. Customer-facing incident text is never recorded — not a public title, a description, an update `message`, nor an ack/resolve note. The same event is emitted to tracing. Reads are not audit-logged (they're side-effect-free and already rate-limited). Rows are kept for `retention.mcp_audit_days` (2 years by default), then deleted by the daily retention job.
 
 ## Enabling
 
@@ -359,6 +367,8 @@ Once connected, drive it in natural language — the client picks the tool:
 - "Am I near any plan limits?" → `get_org_usage`
 - "Run a check on the payments monitor now." → `run_check_now` (asks you to confirm; may alert)
 - "Pause the staging monitor." → `pause_monitor` (asks you to confirm)
+- "We upgrade the database tonight from 22:00 to 23:00 UTC; don't page anyone for it." → `create_maintenance` (asks you to confirm, naming the monitors and the status pages it shows on)
+- "The upgrade is done, end the maintenance." → `update_maintenance(end_now=true)` (asks you to confirm)
 - "Checkout is flapping — make it wait for three failures before paging." → `update_monitor(alert_confirmations=3)` (asks you to confirm, showing 2 → 3)
 - "Stop paging until two regions agree it's down." → `update_monitor(region_policy={mode:"count",count:2})` (asks you to confirm)
 - "Watch https://shop.example.com and page me if it stops returning 200." → `create_monitor` (runs the check once, shows you the result, asks you to confirm)

@@ -25,8 +25,12 @@ use std::time::Duration;
 use tower::ServiceExt;
 use uptimepage::auth::scope::ScopeSet;
 use uptimepage::domain::target::{MAX_TAG_LEN, MAX_TAGS_PER_TARGET};
-use uptimepage::domain::{CheckSpec, ExpectedStatus, NewTarget, OrgId, UserId, WriteSource};
-use uptimepage::storage::{PostgresTargetStore, TargetStore, create_org_with_owner};
+use uptimepage::domain::{
+    CheckSpec, ExpectedStatus, NewMaintenanceWindow, NewTarget, OrgId, UserId, WriteSource,
+};
+use uptimepage::storage::{
+    MaintenanceStore, PgMaintenanceStore, PostgresTargetStore, TargetStore, create_org_with_owner,
+};
 use url::Url;
 use uuid::Uuid;
 
@@ -652,4 +656,203 @@ async fn a_tag_the_shared_validator_rejects_never_reaches_the_prompt() {
 
     let unchanged = store.get(org_a, id).await.unwrap().expect("still there");
     assert!(unchanged.tags.is_empty(), "{:?}", unchanged.tags);
+}
+
+async fn seed_monitor(pool: &PgPool, org: OrgId) -> Uuid {
+    PostgresTargetStore::from_pool(pool.clone(), None)
+        .create(org, secret_monitor(), WriteSource::Ui, i64::MAX, i64::MAX)
+        .await
+        .expect("insert target")
+        .id
+}
+
+async fn seed_window(pool: &PgPool, org: OrgId, target: Uuid) -> Uuid {
+    let now = chrono::Utc::now();
+    PgMaintenanceStore::new(pool.clone())
+        .create(
+            org,
+            NewMaintenanceWindow {
+                title: "secret-window".into(),
+                description: None,
+                starts_at: now + chrono::Duration::hours(1),
+                ends_at: now + chrono::Duration::hours(2),
+                component_ids: vec![target],
+                suppress_alerts: true,
+            },
+            WriteSource::Ui,
+            None,
+        )
+        .await
+        .expect("insert window")
+        .id
+}
+
+fn window_body(title: &str, from_mins: i64, to_mins: i64, target: Uuid) -> Value {
+    let now = chrono::Utc::now();
+    json!({
+        "title": title,
+        "starts_at": (now + chrono::Duration::minutes(from_mins)).to_rfc3339(),
+        "ends_at": (now + chrono::Duration::minutes(to_mins)).to_rfc3339(),
+        "monitor_ids": [target],
+    })
+}
+
+#[tokio::test]
+#[ignore]
+async fn maintenance_tools_cannot_reach_another_orgs_window_or_monitor() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (mcp, org_a, org_b) = connect(&pool).await;
+    let a_target = seed_monitor(&pool, org_a).await;
+    let b_target = seed_monitor(&pool, org_b).await;
+    let a_window = seed_window(&pool, org_a, a_target).await;
+    let b_window = seed_window(&pool, org_b, b_target).await;
+
+    assert_eq!(
+        error_code(&mcp.call("get_maintenance", json!({ "id": a_window })).await),
+        None
+    );
+    for (tool, args) in [
+        ("get_maintenance", json!({ "id": b_window })),
+        (
+            "update_maintenance",
+            json!({ "id": b_window, "title": "taken" }),
+        ),
+        ("cancel_maintenance", json!({ "id": b_window })),
+    ] {
+        assert_eq!(
+            error_code(&mcp.call(tool, args).await).as_deref(),
+            Some("not_found"),
+            "{tool} must not confirm another org's window exists"
+        );
+    }
+    let refused = mcp
+        .call("create_maintenance", window_body("x", 60, 120, b_target))
+        .await;
+    assert_eq!(
+        error_code(&refused).as_deref(),
+        Some("invalid_argument"),
+        "{refused}"
+    );
+
+    let listed = mcp.call("list_maintenance", json!({})).await;
+    let ids: Vec<&str> = listed["result"]["structuredContent"]["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|w| w["id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&a_window.to_string().as_str()));
+    assert!(!ids.contains(&b_window.to_string().as_str()));
+
+    let b = PgMaintenanceStore::new(pool.clone())
+        .get(org_b, b_window)
+        .await
+        .unwrap()
+        .expect("still there");
+    assert_eq!(b.title, "secret-window");
+    assert!(b.deleted_at.is_none());
+}
+
+#[tokio::test]
+#[ignore]
+async fn a_window_is_scheduled_edited_ended_and_cancelled() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (mcp, org_a, _) = connect(&pool).await;
+    let target = seed_monitor(&pool, org_a).await;
+
+    let created = mcp
+        .call(
+            "create_maintenance",
+            window_body("DB upgrade", -5, 60, target),
+        )
+        .await;
+    assert_eq!(error_code(&created), None, "{created}");
+    let window = &created["result"]["structuredContent"];
+    assert_eq!(window["phase"], "active");
+    assert_eq!(window["suppress_alerts"], true);
+    assert_eq!(window["monitors"][0]["id"], target.to_string());
+    let id = window["id"].as_str().expect("id").to_string();
+    assert_eq!(
+        latest_audit_detail(&pool, org_a, "create_maintenance")
+            .await
+            .as_deref(),
+        Some(UNCONFIRMED)
+    );
+
+    let retitled = mcp
+        .call(
+            "update_maintenance",
+            json!({ "id": id, "title": "DB upgrade, part 2" }),
+        )
+        .await;
+    assert_eq!(error_code(&retitled), None, "{retitled}");
+    assert_eq!(
+        retitled["result"]["structuredContent"]["changes"][0]["field"],
+        "title"
+    );
+
+    let ended = mcp
+        .call("update_maintenance", json!({ "id": id, "end_now": true }))
+        .await;
+    assert_eq!(error_code(&ended), None, "{ended}");
+    assert_eq!(
+        ended["result"]["structuredContent"]["window"]["phase"],
+        "completed"
+    );
+    for (tool, args) in [
+        (
+            "update_maintenance",
+            json!({ "id": id, "title": "too late" }),
+        ),
+        ("cancel_maintenance", json!({ "id": id })),
+    ] {
+        assert_eq!(
+            error_code(&mcp.call(tool, args).await).as_deref(),
+            Some("invalid_argument"),
+            "{tool} must refuse a completed window"
+        );
+    }
+
+    let upcoming = mcp
+        .call(
+            "create_maintenance",
+            window_body("Cache flush", 60, 120, target),
+        )
+        .await;
+    let upcoming_id = upcoming["result"]["structuredContent"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("not created: {upcoming}"))
+        .to_string();
+    let early = mcp
+        .call(
+            "update_maintenance",
+            json!({ "id": upcoming_id, "end_now": true }),
+        )
+        .await;
+    assert_eq!(error_code(&early).as_deref(), Some("invalid_argument"));
+
+    let cancelled = mcp
+        .call("cancel_maintenance", json!({ "id": upcoming_id }))
+        .await;
+    assert_eq!(error_code(&cancelled), None, "{cancelled}");
+    assert_eq!(
+        cancelled["result"]["structuredContent"]["phase"],
+        "cancelled"
+    );
+    let row = PgMaintenanceStore::new(pool.clone())
+        .get(org_a, upcoming_id.parse().unwrap())
+        .await
+        .unwrap()
+        .expect("kept as history");
+    assert!(row.deleted_at.is_some());
+    assert_eq!(
+        latest_audit_detail(&pool, org_a, "cancel_maintenance")
+            .await
+            .as_deref(),
+        Some(UNCONFIRMED)
+    );
 }

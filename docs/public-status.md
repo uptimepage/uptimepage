@@ -124,7 +124,7 @@ Validation rules:
 
 A maintenance window is a planned outage. While the window is active, the page renders affected components as `Maintenance` (the truth-table rule is: maintenance dominates outage, so a real failure during the window still classifies as `Maintenance`, not `MajorOutage`). On the 90-day history strip, any day that overlapped a maintenance window renders as a maintenance cell rather than an outage cell.
 
-Open **maintenance** in the top navigation to schedule one. Pick the monitors, a start and an end in your own timezone, and whether to hold paging. Active and upcoming windows are listed first, and completed ones sit under **past** as read-only history. An upcoming window can be edited or cancelled. An active one can be edited or ended now, which moves it to past straight away. Everything the screen does is also available through the API.
+Open **maintenance** in the top navigation to schedule one. Pick the monitors, a start and an end in your own timezone, and whether to hold paging. Active and upcoming windows are listed first, and completed ones sit under **past** as read-only history. An upcoming window can be edited or cancelled. An active one can be edited or ended now, which moves it to past straight away. Everything the screen does is also available through the API and the [MCP server](mcp.md).
 
 Create:
 

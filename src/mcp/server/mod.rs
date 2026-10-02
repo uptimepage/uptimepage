@@ -2,7 +2,8 @@
 //!
 //! Tools map to operator jobs, not tables. The read half lives in
 //! [`tools_read`], the write half in [`tools_write`] (with its bodies in
-//! [`monitors`] and [`incidents`]), and the plumbing they share in [`support`].
+//! [`monitors`], [`incidents`], [`status_pages`] and [`maintenance`]), and the
+//! plumbing they share in [`support`].
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{ServerCapabilities, ServerInfo};
@@ -13,6 +14,7 @@ use crate::error::validation::MAX_MESSAGE;
 
 mod args;
 mod incidents;
+mod maintenance;
 mod monitors;
 mod status_pages;
 mod support;
@@ -65,9 +67,10 @@ impl ServerHandler for McpServer {
         info.server_info.version = env!("CARGO_PKG_VERSION").to_string();
         info.instructions = Some(
             "Tools for one Uptimepage organization's monitors, status pages, and health. \
-             Most tools are read-only; a few perform actions (create a monitor, pause/resume \
-             one, retune how loudly one is watched, run a check, publish an incident, post an \
-             incident update, create or edit a status page and the components on it) and each \
+             Read-only tools report on the org; the rest perform actions (create a monitor, pause/resume \
+             one, retune how loudly one is watched, run a check, schedule, edit or cancel a \
+             maintenance window, publish an incident, post an incident update, create or edit a \
+             status page and the components on it) and each \
              asks the user to confirm before it runs when the client can show a prompt; a \
              client that cannot relay one runs them on the token's scopes alone, and the audit \
              trail records that no prompt was answered. Creating a monitor runs its check once \
@@ -80,6 +83,9 @@ impl ServerHandler for McpServer {
              A status page is created unpublished: add its components, then enable it. Give each \
              component a `public_name` its readers will understand, since a monitor's own name \
              is operator-facing. \
+             For planned work, schedule a maintenance window with `create_maintenance` rather \
+             than pausing monitors: checks keep running, the status page shows the work, and \
+             paging for the covered monitors is held until it ends. \
              An authenticated check is built by referencing an org variable in a header, as \
              `Bearer {{ my_key }}`; `list_variables` names the keys. Never paste a credential \
              into a tool argument: it is refused, and it would persist in the transcript. \

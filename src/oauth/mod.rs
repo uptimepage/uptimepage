@@ -49,6 +49,7 @@ const DEFAULT_SCOPES: &[Scope] = &[
     Scope::TargetsRead,
     Scope::StatusPageRead,
     Scope::IncidentsRead,
+    Scope::MaintenanceRead,
 ];
 
 /// Every scope a connector MAY request. Write scopes are granted only when
@@ -59,11 +60,14 @@ const GRANTABLE_SCOPES: &[Scope] = &[
     Scope::TargetsRead,
     Scope::StatusPageRead,
     Scope::IncidentsRead,
+    Scope::MaintenanceRead,
     // Not in the defaults: a connector that never touches alerting should not
     // be handed the channel inventory.
     Scope::ChannelsRead,
     Scope::TargetsWrite,
     Scope::TargetsExecute,
+    Scope::MaintenanceWrite,
+    Scope::MaintenanceDelete,
     Scope::IncidentsWrite,
     Scope::StatusPageWrite,
     // Keys only; the values are never read on this path.
@@ -83,11 +87,12 @@ pub(super) const ACCESS_LEVELS: &[AccessLevel] = &[
     AccessLevel {
         id: "read",
         label: "Read only",
-        summary: "See monitors, incidents, status pages, channel names and variable keys. Changes nothing.",
+        summary: "See monitors, incidents, maintenance, status pages, channel names and variable keys. Changes nothing.",
         scopes: &[
             Scope::TargetsRead,
             Scope::StatusPageRead,
             Scope::IncidentsRead,
+            Scope::MaintenanceRead,
             Scope::ChannelsRead,
             Scope::VariablesRead,
         ],
@@ -95,15 +100,18 @@ pub(super) const ACCESS_LEVELS: &[AccessLevel] = &[
     AccessLevel {
         id: "monitors",
         label: "Manage monitors",
-        summary: "Also create, pause, retune and check monitors, and bind them to your channels.",
+        summary: "Also create, pause, retune and check monitors, schedule their maintenance, and bind them to your channels.",
         scopes: &[
             Scope::TargetsRead,
             Scope::StatusPageRead,
             Scope::IncidentsRead,
+            Scope::MaintenanceRead,
             Scope::ChannelsRead,
             Scope::VariablesRead,
             Scope::TargetsWrite,
             Scope::TargetsExecute,
+            Scope::MaintenanceWrite,
+            Scope::MaintenanceDelete,
         ],
     },
     AccessLevel {
@@ -409,11 +417,11 @@ mod tests {
     fn grant_scope_defaults_to_full_read_set() {
         assert_eq!(
             grant_scope(None),
-            "targets:read status_page:read incidents:read"
+            "targets:read status_page:read incidents:read maintenance:read"
         );
         assert_eq!(
             grant_scope(Some("")),
-            "targets:read status_page:read incidents:read"
+            "targets:read status_page:read incidents:read maintenance:read"
         );
     }
 
@@ -427,7 +435,7 @@ mod tests {
         // Unknown scopes are dropped → fall back to the read-only default.
         assert_eq!(
             grant_scope(Some("bogus")),
-            "targets:read status_page:read incidents:read"
+            "targets:read status_page:read incidents:read maintenance:read"
         );
     }
 
@@ -461,6 +469,7 @@ mod tests {
             level_covering("targets:execute channels:read").id,
             "monitors"
         );
+        assert_eq!(level_covering("maintenance:delete").id, "monitors");
         assert_eq!(level_covering("incidents:write").id, "full");
         assert_eq!(level_covering("targets:read channels:read").id, "read");
         assert_eq!(level_covering("variables:read").id, "read");

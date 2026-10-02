@@ -758,15 +758,15 @@ async fn consent_grants_the_level_and_org_the_user_picks() {
     );
     assert!(html.contains("Second Org"), "{html}");
     assert!(
-        html.contains(r#"value="read" data-scope="targets:read status_page:read incidents:read channels:read variables:read""#)
+        html.contains(r#"value="read" data-scope="targets:read status_page:read incidents:read maintenance:read channels:read variables:read""#)
     );
-    assert!(html.contains(r#"value="monitors" data-scope="targets:read status_page:read incidents:read channels:read variables:read targets:write targets:execute""#));
+    assert!(html.contains(r#"value="monitors" data-scope="targets:read status_page:read incidents:read maintenance:read channels:read variables:read targets:write targets:execute maintenance:write maintenance:delete""#));
 
     let resp = decide(
         &app,
         &client_id,
         serde_json::json!({
-            "scope": "targets:read status_page:read incidents:read channels:read variables:read targets:write targets:execute",
+            "scope": "targets:read status_page:read incidents:read maintenance:read channels:read variables:read targets:write targets:execute maintenance:write maintenance:delete",
             "org_id": org_b.0,
         }),
     )
@@ -777,6 +777,7 @@ async fn consent_grants_the_level_and_org_the_user_picks() {
     assert_eq!(resp.status(), StatusCode::OK);
     let scope = body_json(resp).await["scope"].as_str().unwrap().to_string();
     assert!(scope.contains("targets:write"), "{scope}");
+    assert!(scope.contains("maintenance:write"), "{scope}");
     assert!(!scope.contains("incidents:write"), "{scope}");
 
     let bound: uuid::Uuid =

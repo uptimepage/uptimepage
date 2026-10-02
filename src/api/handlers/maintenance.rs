@@ -8,27 +8,24 @@ use crate::api::json::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::AppendHeaders;
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::Utc;
 use serde::Deserialize;
 use utoipa::IntoParams;
 use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::{
-    MaintenanceFilter, MaintenanceWindow, MaintenanceWindowUpdate, NewMaintenanceWindow, OrgId,
-    WindowPhase,
+    MaintenanceFilter, MaintenanceWindow, MaintenanceWindowUpdate, NewMaintenanceWindow,
 };
 use crate::error::ApiError;
 use crate::error::codes;
-use crate::error::validation;
 use crate::error::{AppError, Result};
 use crate::pagination::page::{PageEnvelope, PageOfMaintenanceWindow};
 use crate::request::{
     Authorized, CurrentUser, MaintenanceDelete, MaintenanceRead, MaintenanceWrite, RequestSource,
 };
-use crate::storage::{MaintenanceListQuery, MaintenanceStore};
+use crate::storage::MaintenanceListQuery;
 
-const MAX_WINDOW_DAYS: i64 = 30;
 const LIST_LIMIT_DEFAULT: u32 = 50;
 const LIST_LIMIT_MAX: u32 = 200;
 
@@ -77,18 +74,7 @@ pub async fn create_maintenance(
     AppendHeaders<[(axum::http::HeaderName, HeaderValue); 1]>,
     Json<MaintenanceWindow>,
 )> {
-    validation::validate_title(&new.title, "title")?;
-    validation::validate_description(new.description.as_deref(), "description")?;
-    validate_time_range(new.starts_at, new.ends_at)?;
-    require_future_end(new.ends_at)?;
-    validate_component_ids(state.maintenance_store.as_ref(), org, &new.component_ids).await?;
-    // Handler-entry quota check (friendly 422). Maintenance windows are a
-    // singular, low-concurrency create — store-level atomic enforcement is a
-    // tracked follow-up; the headline atomic path is targets.
-    state
-        .quotas
-        .check_can_create_maintenance_window(org, None)
-        .await?;
+    state.maintenance_ops().vet_new(org, &new).await?;
     let mw = state
         .maintenance_store
         .create(org, new, source, Some(actor))
@@ -196,23 +182,12 @@ pub async fn update_maintenance(
     let existing = state.maintenance_store.get(org, id).await?.ok_or_else(|| {
         AppError::not_found(codes::MAINTENANCE_NOT_FOUND, "maintenance window not found")
     })?;
-    reject_closed(existing.phase(now))?;
+    state
+        .maintenance_ops()
+        .vet_update(org, &existing, &mut update, now)
+        .await?;
     if update.changed_fields().is_empty() {
         return Ok(Json(existing));
-    }
-    if let Some(t) = update.title.as_deref() {
-        validation::validate_title(t, "title")?;
-    }
-    validation::validate_description(update.description.as_deref(), "description")?;
-    let ends_now = pin_end_now(&existing, &mut update, now);
-    let starts = update.starts_at.unwrap_or(existing.starts_at);
-    let ends = update.ends_at.unwrap_or(existing.ends_at);
-    validate_time_range(starts, ends)?;
-    if update.ends_at.is_some() && !ends_now {
-        require_future_end(ends)?;
-    }
-    if let Some(ids) = update.component_ids.as_deref() {
-        validate_component_ids(state.maintenance_store.as_ref(), org, ids).await?;
     }
     match state
         .maintenance_store
@@ -251,147 +226,9 @@ pub async fn delete_maintenance(
     RequestSource(source): RequestSource,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode> {
-    if state
-        .maintenance_store
-        .delete(org, id, source, Some(actor))
-        .await?
-    {
-        return Ok(StatusCode::NO_CONTENT);
-    }
-    let finished = state
-        .maintenance_store
-        .get(org, id)
-        .await?
-        .is_some_and(|w| w.phase(Utc::now()) == WindowPhase::Completed);
-    if finished {
-        return Err(AppError::unprocessable(
-            codes::MAINTENANCE_COMPLETED,
-            "cannot cancel a completed maintenance window",
-        ));
-    }
-    Err(AppError::not_found(
-        codes::MAINTENANCE_NOT_FOUND,
-        "maintenance window not found",
-    ))
-}
-
-// ── Validation ──────────────────────────────────────────────────────────
-
-/// A completed or cancelled window is history, so it cannot be edited.
-fn reject_closed(phase: WindowPhase) -> Result<()> {
-    match phase {
-        WindowPhase::Cancelled => Err(AppError::unprocessable(
-            codes::MAINTENANCE_CANCELLED,
-            "cannot edit a cancelled maintenance window",
-        )),
-        WindowPhase::Completed => Err(AppError::unprocessable(
-            codes::MAINTENANCE_COMPLETED,
-            "cannot edit a completed maintenance window",
-        )),
-        WindowPhase::Upcoming | WindowPhase::Active => Ok(()),
-    }
-}
-
-/// An `ends_at` at or before `now` on a running window whose start is left
-/// alone means "stop now": it is replaced by the server's clock instead of the
-/// client's. Returns whether it did.
-fn pin_end_now(
-    existing: &MaintenanceWindow,
-    update: &mut MaintenanceWindowUpdate,
-    now: chrono::DateTime<Utc>,
-) -> bool {
-    let ends_now = existing.phase(now) == WindowPhase::Active
-        && update.ends_at.is_some_and(|ends| ends <= now)
-        && update
-            .starts_at
-            .is_none_or(|starts| starts == existing.starts_at);
-    if ends_now {
-        update.ends_at = Some(now);
-    }
-    ends_now
-}
-
-fn validate_time_range(starts: chrono::DateTime<Utc>, ends: chrono::DateTime<Utc>) -> Result<()> {
-    if ends <= starts {
-        return Err(AppError::bad_request_field(
-            codes::INVALID_TIME_RANGE,
-            "ends_at must be strictly after starts_at",
-            "ends_at",
-        ));
-    }
-    if ends - starts > ChronoDuration::days(MAX_WINDOW_DAYS) {
-        return Err(AppError::bad_request_field(
-            codes::INVALID_DURATION,
-            format!("maintenance window cannot exceed {MAX_WINDOW_DAYS} days"),
-            "ends_at",
-        ));
-    }
-    Ok(())
-}
-
-fn require_future_end(ends: chrono::DateTime<Utc>) -> Result<()> {
-    if ends <= Utc::now() {
-        return Err(AppError::bad_request_field(
-            codes::INVALID_TIME_RANGE,
-            "ends_at must be in the future",
-            "ends_at",
-        ));
-    }
-    Ok(())
-}
-
-async fn validate_component_ids(
-    store: &dyn MaintenanceStore,
-    org: OrgId,
-    ids: &[Uuid],
-) -> Result<()> {
-    if ids.is_empty() {
-        return Ok(());
-    }
-    let known = store.existing_target_ids(org, ids).await?;
-    let unknown: Vec<Uuid> = ids
-        .iter()
-        .copied()
-        .filter(|id| !known.contains(id))
-        .collect();
-    if !unknown.is_empty() {
-        return Err(AppError::bad_request_field(
-            codes::INVALID_COMPONENT_ID,
-            format!("{} component id(s) do not exist", unknown.len()),
-            "component_ids",
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::Duration as ChronoDuration;
-
-    #[test]
-    fn validate_time_range_rejects_zero_duration() {
-        let t = Utc::now();
-        assert!(matches!(
-            validate_time_range(t, t),
-            Err(AppError::BadRequest { code, .. }) if code == codes::INVALID_TIME_RANGE
-        ));
-    }
-
-    #[test]
-    fn validate_time_range_rejects_too_long() {
-        let s = Utc::now();
-        let e = s + ChronoDuration::days(MAX_WINDOW_DAYS + 1);
-        assert!(matches!(
-            validate_time_range(s, e),
-            Err(AppError::BadRequest { code, .. }) if code == codes::INVALID_DURATION
-        ));
-    }
-
-    #[test]
-    fn validate_time_range_accepts_normal_window() {
-        let s = Utc::now();
-        let e = s + ChronoDuration::hours(2);
-        assert!(validate_time_range(s, e).is_ok());
-    }
+    state
+        .maintenance_ops()
+        .cancel(org, id, source, Some(actor))
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }

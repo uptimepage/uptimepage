@@ -18,6 +18,7 @@ pub mod escalation;
 pub mod http_client;
 pub mod http_outbound;
 pub mod jobs;
+pub mod maintenance_ops;
 pub mod marketing;
 pub mod mcp;
 pub mod metric_names;

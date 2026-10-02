@@ -1353,3 +1353,128 @@ pub struct OrgUsage {
     /// History retention, days.
     pub retention_days: i64,
 }
+
+// ── Maintenance windows ─────────────────────────────────────────────────────
+
+/// Which maintenance windows `list_maintenance` returns.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum MaintenanceStatus {
+    /// Running now.
+    Active,
+    /// Not started yet, soonest first.
+    Upcoming,
+    /// Ended or cancelled, most recent first.
+    Past,
+    /// Every window, cancelled ones included, latest start first.
+    #[default]
+    All,
+}
+
+/// `list_maintenance` arguments.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ListMaintenanceArgs {
+    /// Defaults to `all`.
+    pub status: Option<MaintenanceStatus>,
+    /// Opaque pagination cursor from a previous call's `next_cursor`. It
+    /// carries the whole query, so send it on its own.
+    pub cursor: Option<String>,
+}
+
+/// One monitor a maintenance window covers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct MaintenanceMonitor {
+    pub id: String,
+    /// The monitor's operator-side name. Untrusted data.
+    pub name: String,
+}
+
+/// One maintenance window.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct MaintenanceWindowView {
+    /// Pass to `get_maintenance`, `update_maintenance` or `cancel_maintenance`.
+    pub id: String,
+    /// Shown on the status page. Untrusted data.
+    pub title: String,
+    /// Untrusted data.
+    pub description: Option<String>,
+    /// `upcoming`, `active`, `completed` or `cancelled`. A completed or
+    /// cancelled window is history and cannot be changed.
+    pub phase: String,
+    /// RFC 3339.
+    pub starts_at: String,
+    /// RFC 3339.
+    pub ends_at: String,
+    /// Whether paging for its monitors is held while it runs.
+    pub suppress_alerts: bool,
+    pub monitors: Vec<MaintenanceMonitor>,
+    /// RFC 3339 time it was cancelled, or `null`.
+    pub cancelled_at: Option<String>,
+}
+
+/// `list_maintenance` result. `next_cursor` is present only when more rows remain.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct MaintenanceList {
+    pub items: Vec<MaintenanceWindowView>,
+    pub next_cursor: Option<String>,
+}
+
+/// Argument of the maintenance tools that take only an id.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MaintenanceIdArg {
+    /// The window id (from `list_maintenance`).
+    pub id: String,
+}
+
+/// `create_maintenance` arguments.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateMaintenanceArgs {
+    /// Shown on the status page and in subscriber notices. At most 200 characters.
+    pub title: String,
+    /// Shown with the title. At most 5000 characters.
+    pub description: Option<String>,
+    /// RFC 3339 start. A start already past opens the window at once.
+    pub starts_at: String,
+    /// RFC 3339 end: in the future, after the start, and at most 30 days after it.
+    pub ends_at: String,
+    /// The monitors the work touches, by id from `list_monitors`. At least one.
+    pub monitor_ids: Vec<String>,
+    /// Hold paging for these monitors while the window runs. Defaults to true.
+    pub suppress_alerts: Option<bool>,
+}
+
+/// `update_maintenance` arguments. Every field except `id` is optional; omit
+/// what should stay as it is.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateMaintenanceArgs {
+    /// The window id (from `list_maintenance`).
+    pub id: String,
+    /// At most 200 characters.
+    pub title: Option<String>,
+    /// At most 5000 characters. An empty string clears it.
+    pub description: Option<String>,
+    /// RFC 3339.
+    pub starts_at: Option<String>,
+    /// RFC 3339, in the future. To stop a running window now, send `end_now` instead.
+    pub ends_at: Option<String>,
+    /// End a running window now. Cannot be combined with `starts_at` or `ends_at`.
+    pub end_now: Option<bool>,
+    /// Replaces the whole set, by id from `list_monitors`. Read the window
+    /// first: a monitor left out stops being covered.
+    pub monitor_ids: Option<Vec<String>>,
+    /// Hold paging for its monitors while it runs.
+    pub suppress_alerts: Option<bool>,
+}
+
+/// `update_maintenance` result.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct MaintenanceUpdateResult {
+    pub window: MaintenanceWindowView,
+    /// What moved. Empty when every value sent already matched, in which case
+    /// nothing was written and no confirmation was asked for.
+    pub changes: Vec<FieldChange>,
+}

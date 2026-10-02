@@ -32,7 +32,7 @@ use super::args::{
     parse_uuid, resolve_bindings,
 };
 use super::text::{
-    create_prompt_lines, field_label, present_error, sanitize_data, sanitize_prompt,
+    change_lines, create_prompt_lines, present_error, sanitize_data, sanitize_prompt,
 };
 use super::view::{channel_names, check_diagnostic, check_timing};
 
@@ -618,16 +618,7 @@ impl McpServer {
             format!(
                 "Change monitor \"{}\"?\n\n{}",
                 sanitize_prompt(&target.name),
-                changes
-                    .iter()
-                    .map(|c| format!(
-                        "{}: {} → {}",
-                        field_label(&c.field),
-                        sanitize_prompt(&c.from),
-                        sanitize_prompt(&c.to)
-                    ))
-                    .collect::<Vec<_>>()
-                    .join("\n")
+                change_lines(&changes)
             ),
         )
         .await?;

@@ -705,7 +705,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "Which scopes should I paste?",
-                "targets:read status_page:read incidents:read answers every question; channels:read and variables:read add the channel inventory and variable keys. Grant a write scope only once Grok has shown you a confirmation prompt, and note that creating a monitor needs targets:execute next to targets:write. The consent screen lists exactly what is being granted.",
+                "targets:read status_page:read incidents:read maintenance:read answers every question; channels:read and variables:read add the channel inventory and variable keys. Grant a write scope only once Grok has shown you a confirmation prompt, and note that creating a monitor needs targets:execute next to targets:write. The consent screen lists exactly what is being granted.",
             ),
             (
                 "Can I use it with Grok Build instead?",
@@ -715,7 +715,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
         "/mcp-server" => &[
             (
                 "What can an AI assistant actually do with my monitoring over MCP?",
-                "Thirty-one tools. Sixteen read: what is down and since when, each check's full configuration, history region by region with DNS, connect, TLS and first-byte timing split out, browser flow runs step by step, incidents and their metrics, status pages, the channel inventory, variable keys, and usage against your plan. Fifteen write: create one monitor or a batch, run a check now, pause or resume one, retune how loudly it is watched, acknowledge or resolve an incident, publish it to your status page or take it down, post an update, and create or edit a status page and its components.",
+                "Thirty-six tools. Eighteen read: what is down and since when, each check's full configuration, history region by region with DNS, connect, TLS and first-byte timing split out, browser flow runs step by step, incidents and their metrics, maintenance windows, status pages, the channel inventory, variable keys, and usage against your plan. Eighteen write: create one monitor or a batch, run a check now, pause or resume one, retune how loudly it is watched, schedule, edit or cancel a maintenance window, acknowledge or resolve an incident, publish it to your status page or take it down, post an update, and create or edit a status page and its components.",
             ),
             (
                 "Can the AI change my monitoring without asking me?",
@@ -747,7 +747,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "What permissions does the connector ask for?",
-                "The connector can be granted nine of them, and three come by default, all read: targets:read, status_page:read and incidents:read. The other six are never granted unless your client asks for them and you approve the request: channels:read for the notification channel inventory, variables:read for variable keys and never their values, targets:write, targets:execute, incidents:write, and status_page:write, which also needs you to own the org. Approval is for the whole set your client asked for, so check what it wants before you accept it, and a granted write scope is still not enough on its own, because every write asks you to approve that specific action as well. API tokens draw on a wider set of permissions than the connector can ever request.",
+                "The connector can be granted twelve of them, and four come by default, all read: targets:read, status_page:read, incidents:read and maintenance:read. The other eight come only with the access level you pick on the consent screen: channels:read for the notification channel inventory and variables:read for variable keys, never their values, with every level; targets:write, targets:execute, maintenance:write and maintenance:delete with Manage monitors; incidents:write and status_page:write, which also needs you to own the org, with Full access. A granted write scope is what authorises a write: a client that can show a prompt also asks you to approve each action, and one that cannot runs it on the scope alone, so give such a client Read only. API tokens draw on a wider set of permissions than the connector can ever request.",
             ),
             (
                 "Can I self-host the MCP server?",
