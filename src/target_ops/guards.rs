@@ -151,18 +151,28 @@ impl TargetOps<'_> {
         org: OrgId,
         alerts: &TargetAlerts,
     ) -> Result<()> {
-        if alerts.is_empty() {
+        let ids: Vec<Uuid> = alerts.iter().map(|b| b.channel_id).collect();
+        self.verify_channel_ids(org, &ids, "alerts.channel_id")
+            .await
+    }
+
+    /// One batched org-scoped query (mirrors maintenance's
+    /// `validate_component_ids`) instead of N point lookups.
+    pub(crate) async fn verify_channel_ids(
+        &self,
+        org: OrgId,
+        ids: &[Uuid],
+        field: &str,
+    ) -> Result<()> {
+        if ids.is_empty() {
             return Ok(());
         }
-        // One batched org-scoped query (mirrors maintenance's
-        // `validate_component_ids`) instead of N point lookups.
-        let ids: Vec<Uuid> = alerts.iter().map(|b| b.channel_id).collect();
-        let known = self.channels.existing_channel_ids(org, &ids).await?;
+        let known = self.channels.existing_channel_ids(org, ids).await?;
         if let Some(missing) = ids.iter().find(|id| !known.contains(id)) {
             return Err(AppError::bad_request_field(
                 codes::INVALID_ALERT_CONFIG,
                 format!("notification channel {missing} does not exist"),
-                "alerts.channel_id",
+                field,
             ));
         }
         Ok(())

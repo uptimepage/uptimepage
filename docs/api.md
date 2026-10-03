@@ -28,7 +28,7 @@ Documentation pages, blog posts and the homepage also answer `Accept: text/markd
 |--------|------|---------|
 | `POST` | `/api/v1/targets` | create one target |
 | `POST` | `/api/v1/targets/bulk` | bulk-create up to 10,000 targets |
-| `POST` | `/api/v1/targets/bulk-action` | enable / disable / delete / tag-add / tag-remove / set-group on many ids |
+| `POST` | `/api/v1/targets/bulk-action` | enable / disable / delete / tag-add / tag-remove / set-group / set-interval / channel bindings on many ids |
 | `POST` | `/api/v1/targets/test` | run a one-shot check against a `CheckSpec` without persisting |
 | `POST` | `/api/v1/targets/{id}/check-now` | run an immediate check using the target's stored credentials |
 | `GET` | `/api/v1/targets` | list targets (`limit`, `offset`, `tag`, `enabled`, `q`) — paginated |
@@ -851,10 +851,16 @@ Returns every tag currently in use across the caller's targets (enabled or disab
   //   { "type": "tag_add",    "tags": ["frozen"] },
   //   { "type": "tag_remove", "tags": ["frozen"] },
   //   { "type": "set_group",  "group": "tier1" } // null clears the group
+  //   { "type": "set_interval",   "interval": 300 }
+  //   { "type": "channel_add",    "channel_ids": ["..."] }
+  //   { "type": "channel_remove", "channel_ids": ["..."] }
+  //   { "type": "set_channels",   "channel_ids": ["..."] } // [] unbinds every channel
 }
 ```
 
 `tag_add` merges into what each monitor already carries, so a target whose merged list would go over the 50-tag limit is left untouched and reported in `failed` as `TOO_MANY_TAGS`. `tag_remove` is not held to the tag rules, so a tag that predates them can still be cleaned up.
+
+`set_interval` below the plan floor fails the whole request with `422 MIN_CHECK_INTERVAL`, as a single edit does. Above it, a monitor whose kind needs a longer interval keeps its own and is reported in `failed` as `MIN_CHECK_INTERVAL`, and heartbeat and manual monitors, whose cadence follows the ping period or is fixed at a minute, are reported as `INVALID_INTERVAL`. `channel_add` and `set_channels` refuse a channel your org does not have with `400 INVALID_ALERT_CONFIG`; `channel_remove` accepts any id. A channel with a tag rule still notifies the monitors carrying its tags after `channel_remove`, since the rule is not a binding.
 
 ## Idempotency
 

@@ -171,6 +171,144 @@ async fn bulk_action_tag_add_then_remove() {
     assert!(!tags.contains(&"fresh"));
 }
 
+async fn get_target(app: &axum::Router, id: &str) -> Value {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/targets/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    body_json(resp).await
+}
+
+fn failure_code(outcome: &Value, id: &str) -> String {
+    outcome["failed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["id"] == id)
+        .map(|f| f["code"].as_str().unwrap().to_string())
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn bulk_set_interval_skips_the_kinds_that_cannot_take_it() {
+    let app = app();
+    let web = create_target(&app, "web").await;
+    let (status, heartbeat) = post_json(
+        &app,
+        "/api/v1/targets",
+        json!({
+            "name": "nightly",
+            "check": { "type": "heartbeat", "period": 300000, "grace": 300000 },
+            "interval": 60
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let heartbeat = heartbeat["id"].as_str().unwrap().to_string();
+    let (status, cert) = post_json(
+        &app,
+        "/api/v1/targets",
+        json!({
+            "name": "cert",
+            "check": {
+                "type": "tls_cert",
+                "host": "example.com",
+                "port": 443,
+                "warn_days": 14,
+                "critical_days": 3,
+                "timeout": 5000
+            },
+            "interval": 86400
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let cert = cert["id"].as_str().unwrap().to_string();
+    let missing = uuid::Uuid::now_v7().to_string();
+
+    let (status, outcome) = post_json(
+        &app,
+        "/api/v1/targets/bulk-action",
+        json!({
+            "ids": [web, heartbeat, cert, missing],
+            "action": { "type": "set_interval", "interval": 300 }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{outcome}");
+    assert_eq!(outcome["succeeded"], json!([web]));
+    assert_eq!(failure_code(&outcome, &heartbeat), "INVALID_INTERVAL");
+    assert_eq!(failure_code(&outcome, &cert), "MIN_CHECK_INTERVAL");
+    assert_eq!(failure_code(&outcome, &missing), "TARGET_NOT_FOUND");
+
+    assert_eq!(get_target(&app, &web).await["interval"], 300);
+    assert_eq!(get_target(&app, &cert).await["interval"], 86400);
+}
+
+#[tokio::test]
+async fn bulk_channel_actions_add_remove_and_replace_bindings() {
+    let app = app();
+    let a = create_target(&app, "a").await;
+    let b = create_target(&app, "b").await;
+    let mut channels = Vec::new();
+    for name in ["ops", "oncall"] {
+        let (status, channel) = post_json(
+            &app,
+            "/api/v1/notification-channels",
+            json!({ "name": name, "config": { "type": "webhook", "url": "https://example.com/hook" } }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{channel}");
+        channels.push(channel["id"].as_str().unwrap().to_string());
+    }
+    let bound = |target: Value| -> Vec<String> {
+        target["alerts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["channel_id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let bulk = |action: Value| {
+        post_json(
+            &app,
+            "/api/v1/targets/bulk-action",
+            json!({ "ids": [a, b], "action": action }),
+        )
+    };
+
+    let (status, outcome) = bulk(
+        json!({ "type": "channel_add", "channel_ids": [channels[0], channels[1], channels[0]] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{outcome}");
+    assert_eq!(outcome["succeeded"].as_array().unwrap().len(), 2);
+    assert_eq!(bound(get_target(&app, &a).await), channels);
+
+    let (status, _) = bulk(json!({ "type": "channel_remove", "channel_ids": [channels[0]] })).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bound(get_target(&app, &b).await), vec![channels[1].clone()]);
+
+    let (status, _) = bulk(json!({ "type": "set_channels", "channel_ids": [] })).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(bound(get_target(&app, &a).await).is_empty());
+
+    let stranger = uuid::Uuid::now_v7().to_string();
+    let (status, err) = bulk(json!({ "type": "channel_add", "channel_ids": [stranger] })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(err["error"]["code"], "INVALID_ALERT_CONFIG");
+    assert_eq!(err["error"]["field"], "action.channel_ids");
+
+    let (status, err) = bulk(json!({ "type": "channel_remove", "channel_ids": [] })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(err["error"]["code"], "INVALID_ALERT_CONFIG");
+}
+
 #[tokio::test]
 async fn tags_endpoint_reports_aggregate_counts() {
     let app = app();

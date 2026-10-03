@@ -1,7 +1,9 @@
 //! The form's own model: the whole monitor form as the template reads it, plus
 //! every dropdown and picker it offers.
 
-use crate::domain::{CheckSpec, RegionIncidentPolicy};
+use crate::domain::{
+    CheckSpec, FAST_INTERVAL_PRESETS, RegionIncidentPolicy, SLOW_INTERVAL_PRESETS,
+};
 
 use super::fields::{
     DnsFields, DomainExpiryFields, FlowFields, HeartbeatFields, HttpFields, PingFields, TcpFields,
@@ -265,15 +267,12 @@ impl FormModel {
 
     /// Check-interval presets for http/tcp/ping/dns, filtered by the plan floor.
     pub fn interval_options_fast(&self) -> Vec<IntervalChoice> {
-        self.interval_group(
-            &[30, 60, 120, 300, 600, 900, 1_800, 3_600],
-            !self.slow_kind(),
-        )
+        self.interval_group(&FAST_INTERVAL_PRESETS, !self.slow_kind())
     }
 
     /// Check-interval presets for tls_cert/domain_expiry.
     pub fn interval_options_slow(&self) -> Vec<IntervalChoice> {
-        self.interval_group(&[21_600, 43_200, 86_400], self.slow_kind())
+        self.interval_group(&SLOW_INTERVAL_PRESETS, self.slow_kind())
     }
 
     /// An off-preset stored value is preserved as its own option in the

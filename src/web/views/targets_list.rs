@@ -11,16 +11,19 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::metrics::DashboardMetrics;
-use crate::domain::{CheckStatus, OrgId, Target, uptime_pct_from_downtime};
+use crate::domain::{
+    CheckStatus, FAST_INTERVAL_PRESETS, OrgId, SLOW_INTERVAL_PRESETS, Target,
+    uptime_pct_from_downtime,
+};
 use crate::request::{AuthedBrowser, CurrentOrg};
 use crate::storage::TimeRange;
 use crate::storage::orgs::list_members;
 use crate::storage::traits::{TargetFilter, TargetSort};
 use crate::templates::filters;
-use crate::templates::format::humanize_duration;
+use crate::templates::format::{exact_duration, humanize_duration};
 use crate::web::avatar::{avatar_color, initials_from};
 use crate::web::error::WebResult;
-use crate::web::views::{PageSizeLink, PagerLink, describe_check};
+use crate::web::views::{PageSizeLink, PagerLink, channel_kind_label, describe_check};
 
 const DEFAULT_LIMIT: usize = 50;
 const MAX_LIMIT: usize = 200;
@@ -146,6 +149,36 @@ pub struct GroupOption {
     pub selected: bool,
 }
 
+/// Choices for the bulk bar's interval and channel dialogs. They sit outside
+/// the rows an htmx refresh swaps, so only the full page loads them.
+#[derive(Default)]
+pub struct BulkPickers {
+    pub fast_intervals: Vec<IntervalPreset>,
+    pub slow_intervals: Vec<IntervalPreset>,
+    /// `None` when the channel list could not be read.
+    pub channels: Option<Vec<BulkChannel>>,
+}
+
+impl BulkPickers {
+    /// Whether the channel dialog has anything to apply.
+    pub fn has_channels(&self) -> bool {
+        self.channels.as_ref().is_some_and(|c| !c.is_empty())
+    }
+}
+
+pub struct IntervalPreset {
+    pub secs: u64,
+    pub label: String,
+}
+
+pub struct BulkChannel {
+    pub id: Uuid,
+    pub name: String,
+    pub kind: &'static str,
+    /// The channel's tag rule, joined for display; empty when it has none.
+    pub rule_tags: String,
+}
+
 #[derive(Template, WebTemplate)]
 #[template(path = "targets/list.html")]
 pub struct ListPage {
@@ -175,6 +208,7 @@ pub struct ListPage {
     pub kind: String,
     pub sort: &'static str,
     pub onboarding: bool,
+    pub pickers: BulkPickers,
 }
 
 #[derive(Template, WebTemplate)]
@@ -214,8 +248,52 @@ pub async fn index(
     State(state): State<AppState>,
     Query(params): Query<ListParams>,
 ) -> WebResult<ListPage> {
-    let page = build_page(&state, org, &params).await?;
+    let (page, pickers) = tokio::join!(build_page(&state, org, &params), bulk_pickers(&state, org));
+    let mut page = page?;
+    page.pickers = pickers;
     Ok(page)
+}
+
+/// Infallible: the list must render even when a picker cannot load. The API
+/// still enforces the plan floor and the channel check behind the dialogs.
+async fn bulk_pickers(state: &AppState, org: OrgId) -> BulkPickers {
+    let (plan, channels) = tokio::join!(
+        state.quotas.limit_for_org(org),
+        state.notification_channel_store.list(org),
+    );
+    let floor = match plan {
+        Ok(plan) => u64::try_from(plan.min_check_interval_secs).unwrap_or(0),
+        Err(e) => {
+            tracing::warn!(error = %e, "bulk interval picker: plan lookup failed");
+            0
+        }
+    };
+    let channels = channels
+        .inspect_err(|e| tracing::warn!(error = %e, "bulk channel picker: channel list failed"))
+        .ok();
+    let presets = |secs: &[u64]| -> Vec<IntervalPreset> {
+        secs.iter()
+            .filter(|s| **s >= floor)
+            .map(|&secs| IntervalPreset {
+                secs,
+                label: exact_duration(secs),
+            })
+            .collect()
+    };
+    BulkPickers {
+        fast_intervals: presets(&FAST_INTERVAL_PRESETS),
+        slow_intervals: presets(&SLOW_INTERVAL_PRESETS),
+        channels: channels.map(|list| {
+            list.into_iter()
+                .map(|c| BulkChannel {
+                    id: c.id,
+                    name: c.name,
+                    kind: channel_kind_label(c.kind),
+                    rule_tags: c.auto_bind_tags.join(", "),
+                })
+                .collect()
+        }),
+    }
 }
 
 pub async fn list_partial(
@@ -539,6 +617,7 @@ async fn build_page(state: &AppState, org: OrgId, params: &ListParams) -> WebRes
         kind,
         sort: sort_key(sort),
         onboarding,
+        pickers: BulkPickers::default(),
     })
 }
 
@@ -950,6 +1029,7 @@ mod tests {
             kind: String::new(),
             sort: "recent",
             onboarding: true,
+            pickers: BulkPickers::default(),
         };
         let html = page.render().unwrap();
         assert!(html.contains("nothing to watch yet."));
@@ -999,6 +1079,7 @@ mod tests {
             kind: String::new(),
             sort: "recent",
             onboarding: false,
+            pickers: BulkPickers::default(),
         };
         let html = page.render().unwrap();
         // Askama escapes `&` to the numeric reference `&#38;`.
@@ -1043,6 +1124,7 @@ mod tests {
             kind: String::new(),
             sort: "recent",
             onboarding: false,
+            pickers: BulkPickers::default(),
         };
         let html = page.render().unwrap();
         let rows_at = html.find(r#"id="target-rows""#).expect("swap region");
@@ -1097,6 +1179,7 @@ mod tests {
             kind: String::new(),
             sort: "recent",
             onboarding: false,
+            pickers: BulkPickers::default(),
         };
         let html = page.render().unwrap();
         assert!(html.contains("flapping-chip"));
@@ -1143,6 +1226,7 @@ mod tests {
             kind: String::new(),
             sort: "recent",
             onboarding: false,
+            pickers: BulkPickers::default(),
         };
         let html = page.render().unwrap();
         assert!(

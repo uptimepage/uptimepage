@@ -1,0 +1,74 @@
+{% macro interval_rail(options) %}
+{% if !options.is_empty() %}
+<div class="sm-rail sm-rail--wide">
+  {% for o in options %}
+  <label class="sm-rail__seg">
+    <input type="radio" name="interval" value="{{ o.secs }}" class="sr-only">
+    {{ o.label }}
+  </label>
+  {% endfor %}
+</div>
+{% endif %}
+{% endmacro %}
+
+<dialog id="bulk-interval" class="monitors-bulk-dialog w-full max-w-lg p-0" aria-labelledby="bulk-interval-title">
+  <form method="dialog" class="space-y-4 p-6">
+    <h2 id="bulk-interval-title" class="text-lg font-semibold">Check interval</h2>
+    <p class="text-sm text-muted">Applies to the <span data-bulk-dialog-count></span> you selected. Heartbeat and manual monitors keep their own cadence, and so does a monitor whose kind needs a longer interval.</p>
+    <div class="space-y-2" role="radiogroup" aria-label="Check interval">
+      {% call interval_rail(pickers.fast_intervals) %}{% endcall %}
+      {% call interval_rail(pickers.slow_intervals) %}{% endcall %}
+    </div>
+    <div class="flex items-center justify-end gap-2 pt-2">
+      <button type="button" data-bulk-dialog-cancel class="btn-ghost px-3 py-1.5 text-sm font-medium">cancel</button>
+      <button type="submit" class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">apply</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="bulk-channels" class="monitors-bulk-dialog w-full max-w-lg p-0" aria-labelledby="bulk-channels-title">
+  <form method="dialog" class="space-y-4 p-6">
+    <h2 id="bulk-channels-title" class="text-lg font-semibold">Notification channels</h2>
+    <p class="text-sm text-muted">Applies to the <span data-bulk-dialog-count></span> you selected.</p>
+    {% if let Some(channels) = pickers.channels %}
+    {% if channels.is_empty() %}
+    <p class="font-mono text-xs text-quiet">
+      # no channels configured —
+      <a href="/settings/notifications/new" class="underline decoration-dotted hover:text-body">add one</a>
+    </p>
+    {% else %}
+    <div class="sm-rail sm-rail--wide" role="radiogroup" aria-label="Change">
+      <label class="sm-rail__seg">
+        <input type="radio" name="mode" value="channel_add" class="sr-only" checked>
+        add
+      </label>
+      <label class="sm-rail__seg">
+        <input type="radio" name="mode" value="channel_remove" class="sr-only">
+        remove
+      </label>
+      <label class="sm-rail__seg">
+        <input type="radio" name="mode" value="set_channels" class="sr-only">
+        replace
+      </label>
+    </div>
+    <div class="flex flex-wrap gap-1.5" role="group" aria-label="Channels">
+      {% for c in channels %}
+      <label class="scope-token">
+        <input type="checkbox" name="channel_id" value="{{ c.id }}" class="sr-only">
+        {{ c.kind }}:{{ c.name }}{% if !c.rule_tags.is_empty() %}<span class="cli-brackets ml-1 font-normal" title="Tag rule: {{ c.rule_tags }}">by tag</span>{% endif %}
+      </label>
+      {% endfor %}
+    </div>
+    <p class="text-xs text-muted">Replace with nothing ticked unbinds every channel. A channel marked <span class="cli-brackets">by tag</span> still notifies monitors carrying its tags, bound or not.</p>
+    {% endif %}
+    {% else %}
+    <p class="font-mono text-xs text-quiet"># channels could not load — reload the page to try again</p>
+    {% endif %}
+    <div class="flex items-center justify-end gap-2 pt-2">
+      <button type="button" data-bulk-dialog-cancel class="btn-ghost px-3 py-1.5 text-sm font-medium">cancel</button>
+      {% if pickers.has_channels() %}
+      <button type="submit" class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">apply</button>
+      {% endif %}
+    </div>
+  </form>
+</dialog>

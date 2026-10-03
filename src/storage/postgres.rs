@@ -23,7 +23,10 @@ use crate::storage::accounts;
 use crate::storage::count_sql;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock};
 use crate::storage::postgres_secrets::{decrypt_in_place, encrypt_in_place};
-use crate::storage::traits::{RegionOption, TagAddOutcome, TargetFilter, TargetSort, TargetStore};
+use crate::storage::traits::{
+    ChannelEdit, IntervalOutcome, RegionOption, TagAddOutcome, TargetFilter, TargetSort,
+    TargetStore,
+};
 
 /// Org-scoped Postgres-backed target store. Every query binds the `org`
 /// passed by the caller (resolved from the request's `CurrentOrg`) so reads,
@@ -1209,6 +1212,93 @@ impl TargetStore for PostgresTargetStore {
         .fetch_all(&self.pool)
         .await
         .context("bulk set_group")?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
+    async fn set_interval(
+        &self,
+        org: OrgId,
+        ids: &[Uuid],
+        interval: std::time::Duration,
+        skip_kinds: &[&str],
+    ) -> Result<IntervalOutcome> {
+        if ids.is_empty() {
+            return Ok(IntervalOutcome::default());
+        }
+        let rows: Vec<(Uuid, String, bool)> = sqlx::query_as(
+            r#"WITH candidates AS (
+                 SELECT id, kind FROM targets WHERE id = ANY($1) AND org_id = $3
+               ),
+               applied AS (
+                 UPDATE targets t SET interval_secs = $2, updated_at = now()
+                 FROM candidates c
+                 WHERE t.id = c.id AND t.org_id = $3 AND NOT (c.kind = ANY($4))
+                 RETURNING t.id
+               )
+               SELECT id, kind, id IN (SELECT id FROM applied) FROM candidates"#,
+        )
+        .bind(ids)
+        .bind(interval.as_secs() as i32)
+        .bind(org.0)
+        .bind(skip_kinds)
+        .fetch_all(&self.pool)
+        .await
+        .context("bulk set_interval")?;
+        let mut outcome = IntervalOutcome::default();
+        for (id, kind, applied) in rows {
+            if applied {
+                outcome.updated.push(id);
+            } else {
+                outcome.skipped.push((id, kind));
+            }
+        }
+        Ok(outcome)
+    }
+
+    async fn edit_channels(
+        &self,
+        org: OrgId,
+        ids: &[Uuid],
+        edit: ChannelEdit<'_>,
+    ) -> Result<Vec<Uuid>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Add and remove read `alerts` off the row they update, so a concurrent
+        // edit is re-applied to the list it left behind rather than overwritten.
+        let set = match edit {
+            ChannelEdit::Add(_) => {
+                r#"alerts || COALESCE((
+                     SELECT jsonb_agg(jsonb_build_object('channel_id', c::text) ORDER BY n)
+                     FROM unnest($2::uuid[]) WITH ORDINALITY AS u(c, n)
+                     WHERE NOT alerts @> jsonb_build_array(
+                         jsonb_build_object('channel_id', c::text))
+                   ), '[]'::jsonb)"#
+            }
+            ChannelEdit::Remove(_) => {
+                r#"COALESCE((
+                     SELECT jsonb_agg(e ORDER BY n)
+                     FROM jsonb_array_elements(alerts) WITH ORDINALITY AS a(e, n)
+                     WHERE NOT (e->>'channel_id' = ANY($2::uuid[]::text[]))
+                   ), '[]'::jsonb)"#
+            }
+            ChannelEdit::Replace(_) => {
+                r#"(SELECT COALESCE(
+                       jsonb_agg(jsonb_build_object('channel_id', c::text) ORDER BY n),
+                       '[]'::jsonb)
+                    FROM unnest($2::uuid[]) WITH ORDINALITY AS u(c, n))"#
+            }
+        };
+        let rows: Vec<(Uuid,)> = sqlx::query_as(&format!(
+            "UPDATE targets SET alerts = {set}, updated_at = now() \
+             WHERE id = ANY($1) AND org_id = $3 RETURNING id"
+        ))
+        .bind(ids)
+        .bind(edit.channels())
+        .bind(org.0)
+        .fetch_all(&self.pool)
+        .await
+        .context("bulk edit_channels")?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 

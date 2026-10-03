@@ -9,13 +9,14 @@ use crate::domain::metrics::{
 };
 use crate::domain::target::MAX_TAGS_PER_TARGET;
 use crate::domain::{
-    CheckResult, CheckStatus, NewTarget, NewTargetWithRegions, OrgId, Target, TargetUpdate, UserId,
-    WriteSource,
+    AlertBinding, CheckResult, CheckStatus, NewTarget, NewTargetWithRegions, OrgId, Target,
+    TargetUpdate, UserId, WriteSource,
 };
 use crate::error::Result;
 use crate::storage::traits::{
-    ClampedRange, RegionFlaps, RegionLatestStatus, RegionOption, ResultSink, ResultsStore,
-    TagAddOutcome, TargetFilter, TargetStore, TimeRange, UptimeStats, rollup_bucket_secs,
+    ChannelEdit, ClampedRange, IntervalOutcome, RegionFlaps, RegionLatestStatus, RegionOption,
+    ResultSink, ResultsStore, TagAddOutcome, TargetFilter, TargetStore, TimeRange, UptimeStats,
+    rollup_bucket_secs,
 };
 
 #[derive(Default)]
@@ -1125,6 +1126,65 @@ impl TargetStore for InMemoryTargetStore {
                 t.updated_at = now;
                 hit.push(t.id);
             }
+        }
+        Ok(hit)
+    }
+
+    async fn set_interval(
+        &self,
+        _org: OrgId,
+        ids: &[Uuid],
+        interval: std::time::Duration,
+        skip_kinds: &[&str],
+    ) -> Result<IntervalOutcome> {
+        let mut guard = self.targets.lock();
+        let now = Utc::now();
+        let mut outcome = IntervalOutcome::default();
+        for t in guard.iter_mut().filter(|t| ids.contains(&t.id)) {
+            let kind = t.check.kind();
+            if skip_kinds.contains(&kind) {
+                outcome.skipped.push((t.id, kind.to_owned()));
+                continue;
+            }
+            t.interval = interval;
+            t.updated_at = now;
+            outcome.updated.push(t.id);
+        }
+        Ok(outcome)
+    }
+
+    async fn edit_channels(
+        &self,
+        _org: OrgId,
+        ids: &[Uuid],
+        edit: ChannelEdit<'_>,
+    ) -> Result<Vec<Uuid>> {
+        let channels = edit.channels();
+        let mut guard = self.targets.lock();
+        let now = Utc::now();
+        let mut hit = Vec::new();
+        for t in guard.iter_mut().filter(|t| ids.contains(&t.id)) {
+            let bindings = &mut t.alerts.0;
+            match edit {
+                ChannelEdit::Add(_) => {
+                    for &channel_id in &channels {
+                        if !bindings.iter().any(|b| b.channel_id == channel_id) {
+                            bindings.push(AlertBinding { channel_id });
+                        }
+                    }
+                }
+                ChannelEdit::Remove(_) => {
+                    bindings.retain(|b| !channels.contains(&b.channel_id));
+                }
+                ChannelEdit::Replace(_) => {
+                    *bindings = channels
+                        .iter()
+                        .map(|&channel_id| AlertBinding { channel_id })
+                        .collect();
+                }
+            }
+            t.updated_at = now;
+            hit.push(t.id);
         }
         Ok(hit)
     }

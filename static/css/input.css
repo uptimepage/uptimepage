@@ -240,7 +240,8 @@
     dialog#sm-prompt-modal,
     dialog#sm-share-modal,
     dialog#sm-command-palette,
-    dialog#delete-modal {
+    dialog#delete-modal,
+    dialog.monitors-bulk-dialog {
         background: var(--theme-surface-elev);
         color: var(--theme-text);
         border: 1px solid var(--theme-line);
@@ -251,7 +252,8 @@
     dialog#sm-prompt-modal::backdrop,
     dialog#sm-share-modal::backdrop,
     dialog#sm-command-palette::backdrop,
-    dialog#delete-modal::backdrop {
+    dialog#delete-modal::backdrop,
+    dialog.monitors-bulk-dialog::backdrop {
         background: color-mix(in oklch, var(--theme-ink) 55%, transparent);
     }
 

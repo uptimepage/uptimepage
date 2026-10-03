@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use crate::api::json::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
@@ -15,6 +17,7 @@ use crate::auth::scope::Scope;
 use crate::domain::agent_wire::DispatchKind;
 use crate::domain::{
     CheckResult, CheckSpec, NewTarget, NewTargetWithRegions, OrgId, Target, TargetUpdate,
+    min_interval_secs_for_kind,
 };
 use crate::error::ApiError;
 use crate::error::codes;
@@ -26,8 +29,10 @@ use crate::request::{
     TargetsWrite, TokenScopes,
 };
 use crate::storage::TargetFilter;
+use crate::storage::traits::ChannelEdit;
 use crate::target_ops::SetManualState;
 use crate::targets::{HeartbeatInfo, heartbeat_info, heartbeat_info_from};
+use crate::templates::format::exact_duration;
 
 const BULK_MAX: usize = 10_000;
 const LIST_LIMIT_DEFAULT: usize = 50;
@@ -816,7 +821,7 @@ pub async fn bulk_create(
     post,
     path = "/api/v1/targets/bulk-action",
     tag = "targets",
-    summary = "Apply enable/disable/delete/tag-add/tag-remove to many targets",
+    summary = "Apply one action to many targets: pause, resume, delete, tags, group, interval or channels",
     description = "Partial failure is allowed — the response lists which ids succeeded and which failed and why. Up to 10 000 ids per request.",
     request_body(content = BulkActionRequest, example = json!({
         "ids": ["01h7m8z4n6v0e1m7v7y6x8x8x8"],
@@ -829,6 +834,7 @@ pub async fn bulk_create(
         })),
         (status = 400, description = "Malformed request (e.g., empty ids, unknown action)", body = ApiError),
         (status = 413, body = ApiError),
+        (status = 422, description = "MIN_CHECK_INTERVAL: `set_interval` below the plan floor", body = ApiError),
     ),
 )]
 pub async fn bulk_action(
@@ -855,7 +861,7 @@ pub async fn bulk_action(
         ));
     }
 
-    let mut over_cap: Vec<Uuid> = Vec::new();
+    let mut refused: HashMap<Uuid, (&'static str, String)> = HashMap::new();
     let succeeded = match &req.action {
         BulkAction::Enable {} => {
             state
@@ -899,7 +905,16 @@ pub async fn bulk_action(
             }
             let tags = normalize_tags(tags)?;
             let outcome = state.target_store.add_tags(org, &req.ids, &tags).await?;
-            over_cap = outcome.over_cap;
+            let message = format!(
+                "adding these would take it past the {} tag limit",
+                crate::domain::target::MAX_TAGS_PER_TARGET
+            );
+            refused.extend(
+                outcome
+                    .over_cap
+                    .into_iter()
+                    .map(|id| (id, (codes::TOO_MANY_TAGS, message.clone()))),
+            );
             outcome.updated
         }
         // Not normalized: removal is how a tag that predates the rules gets
@@ -923,36 +938,132 @@ pub async fn bulk_action(
                 .set_group(org, &req.ids, normalized)
                 .await?
         }
+        BulkAction::SetInterval { interval } => {
+            let interval = bulk_interval(&state, org, *interval).await?;
+            let reasons: HashMap<&str, (&'static str, String)> = CheckSpec::ALL_KINDS
+                .iter()
+                .filter_map(|kind| interval_skip_reason(kind, interval).map(|r| (*kind, r)))
+                .collect();
+            let skip_kinds: Vec<&str> = reasons.keys().copied().collect();
+            let outcome = state
+                .target_store
+                .set_interval(org, &req.ids, interval, &skip_kinds)
+                .await?;
+            refused.extend(
+                outcome
+                    .skipped
+                    .into_iter()
+                    .filter_map(|(id, kind)| reasons.get(kind.as_str()).map(|r| (id, r.clone()))),
+            );
+            outcome.updated
+        }
+        BulkAction::ChannelAdd { channel_ids } => {
+            require_channels(channel_ids, "channel_add")?;
+            state
+                .target_ops()
+                .verify_channel_ids(org, channel_ids, "action.channel_ids")
+                .await?;
+            state
+                .target_store
+                .edit_channels(org, &req.ids, ChannelEdit::Add(channel_ids))
+                .await?
+        }
+        // Not verified: unbinding a channel that is already gone is a no-op.
+        BulkAction::ChannelRemove { channel_ids } => {
+            require_channels(channel_ids, "channel_remove")?;
+            state
+                .target_store
+                .edit_channels(org, &req.ids, ChannelEdit::Remove(channel_ids))
+                .await?
+        }
+        BulkAction::SetChannels { channel_ids } => {
+            state
+                .target_ops()
+                .verify_channel_ids(org, channel_ids, "action.channel_ids")
+                .await?;
+            state
+                .target_store
+                .edit_channels(org, &req.ids, ChannelEdit::Replace(channel_ids))
+                .await?
+        }
     };
 
     // Sets, not scans: `ids` runs to BULK_MAX and both lookups are per id.
-    let done: std::collections::HashSet<Uuid> = succeeded.iter().copied().collect();
-    let over_cap: std::collections::HashSet<Uuid> = over_cap.into_iter().collect();
+    let done: HashSet<Uuid> = succeeded.iter().copied().collect();
     let failed: Vec<BulkActionFailure> = req
         .ids
         .iter()
         .filter(|id| !done.contains(id))
         .map(|id| {
-            if over_cap.contains(id) {
-                BulkActionFailure {
-                    id: *id,
-                    code: codes::TOO_MANY_TAGS,
-                    message: format!(
-                        "adding these would take it past the {} tag limit",
-                        crate::domain::target::MAX_TAGS_PER_TARGET
-                    ),
-                }
-            } else {
-                BulkActionFailure {
-                    id: *id,
-                    code: codes::TARGET_NOT_FOUND,
-                    message: "target not found".into(),
-                }
+            let (code, message) = refused
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| (codes::TARGET_NOT_FOUND, "target not found".into()));
+            BulkActionFailure {
+                id: *id,
+                code,
+                message,
             }
         })
         .collect();
 
     Ok(Json(BulkActionResponse { succeeded, failed }))
+}
+
+/// The plan floor binds the whole request, as on a single edit; the per-kind
+/// floors only skip the monitors they cover.
+async fn bulk_interval(state: &AppState, org: OrgId, secs: u32) -> Result<std::time::Duration> {
+    if i32::try_from(secs).is_err() {
+        return Err(AppError::bad_request_field(
+            codes::INVALID_INTERVAL,
+            format!("interval must be at most {}s", i32::MAX),
+            "action.interval",
+        ));
+    }
+    let plan = state.quotas.limit_for_org(org).await?;
+    let plan_min = i64::from(plan.min_check_interval_secs);
+    if i64::from(secs) < plan_min {
+        return Err(AppError::min_check_interval(
+            i64::from(secs),
+            plan_min,
+            plan.id.clone(),
+        ));
+    }
+    Ok(std::time::Duration::from_secs(u64::from(secs)))
+}
+
+/// Why a monitor of `kind` keeps its interval, or `None` when it takes this one.
+fn interval_skip_reason(
+    kind: &str,
+    interval: std::time::Duration,
+) -> Option<(&'static str, String)> {
+    if let Some(reason) = CheckSpec::passive_reason_for(kind) {
+        return Some((
+            codes::INVALID_INTERVAL,
+            format!("{reason}, so they keep their own cadence"),
+        ));
+    }
+    let floor = min_interval_secs_for_kind(kind);
+    (interval.as_secs() < floor).then(|| {
+        (
+            codes::MIN_CHECK_INTERVAL,
+            format!(
+                "{kind} monitors need an interval of at least {}",
+                exact_duration(floor)
+            ),
+        )
+    })
+}
+
+fn require_channels(ids: &[Uuid], action: &str) -> Result<()> {
+    if ids.is_empty() {
+        return Err(AppError::bad_request_field(
+            codes::INVALID_ALERT_CONFIG,
+            format!("{action} requires at least one channel"),
+            "action.channel_ids",
+        ));
+    }
+    Ok(())
 }
 
 #[utoipa::path(

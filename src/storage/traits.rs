@@ -22,6 +22,32 @@ pub struct TagAddOutcome {
     pub over_cap: Vec<Uuid>,
 }
 
+/// Which targets a bulk interval change set, and the kind of each one it left
+/// alone.
+#[derive(Debug, Default)]
+pub struct IntervalOutcome {
+    pub updated: Vec<Uuid>,
+    pub skipped: Vec<(Uuid, String)>,
+}
+
+/// How a bulk edit changes each target's channel bindings.
+#[derive(Debug, Clone, Copy)]
+pub enum ChannelEdit<'a> {
+    Add(&'a [Uuid]),
+    Remove(&'a [Uuid]),
+    Replace(&'a [Uuid]),
+}
+
+impl ChannelEdit<'_> {
+    /// The named channels, each once, in the order first named: a duplicate
+    /// binding would page the same channel twice.
+    pub fn channels(&self) -> Vec<Uuid> {
+        let (Self::Add(ids) | Self::Remove(ids) | Self::Replace(ids)) = self;
+        let mut seen = HashSet::new();
+        ids.iter().copied().filter(|id| seen.insert(*id)).collect()
+    }
+}
+
 #[async_trait]
 pub trait ResultSink: Send + Sync {
     async fn write_batch(&self, results: &[CheckResult]) -> Result<()>;
@@ -227,6 +253,23 @@ pub trait TargetStore: Send + Sync {
     /// Sets every named target's `group_name` to `group` (None clears).
     /// Returns the set that existed.
     async fn set_group(&self, org: OrgId, ids: &[Uuid], group: Option<&str>) -> Result<Vec<Uuid>>;
+    /// Sets every named target's interval, except those whose check kind is in
+    /// `skip_kinds`, which come back in `skipped`.
+    async fn set_interval(
+        &self,
+        org: OrgId,
+        ids: &[Uuid],
+        interval: std::time::Duration,
+        skip_kinds: &[&str],
+    ) -> Result<IntervalOutcome>;
+    /// Applies `edit` to every named target's bindings. Returns the set that
+    /// existed.
+    async fn edit_channels(
+        &self,
+        org: OrgId,
+        ids: &[Uuid],
+        edit: ChannelEdit<'_>,
+    ) -> Result<Vec<Uuid>>;
     /// Liveness probe for `/readyz` — connection-level, not tenant data.
     async fn ping(&self) -> Result<()>;
     /// Distinct regions this org's targets are assigned to, sorted, for the

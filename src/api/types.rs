@@ -68,6 +68,25 @@ pub enum BulkAction {
     SetGroup {
         group: Option<String>,
     },
+    /// Set every target's check interval, in seconds. Kinds that have no
+    /// interval or need a longer one are left alone and listed in `failed`.
+    SetInterval {
+        interval: u32,
+    },
+    /// Bind each channel to every target that is not bound to it yet.
+    ChannelAdd {
+        channel_ids: Vec<Uuid>,
+    },
+    /// Unbind each channel from every target.
+    ChannelRemove {
+        channel_ids: Vec<Uuid>,
+    },
+    /// Replace every target's bindings with exactly these channels. An empty
+    /// list unbinds every channel; a channel's tag rule still covers the
+    /// targets carrying its tags.
+    SetChannels {
+        channel_ids: Vec<Uuid>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]

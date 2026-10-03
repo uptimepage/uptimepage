@@ -1,7 +1,7 @@
 //! Live-PG coverage for the targets store: the `kind` filter + `count_by_kind`
 //! pushdown (the generated `kind` column drives the SQL filter, and chip
-//! tallies are org-wide, not page-scoped), who an update credits, and the tag
-//! cap on a server-side merge.
+//! tallies are org-wide, not page-scoped), who an update credits, the tag
+//! cap on a server-side merge, and the bulk interval and channel edits.
 
 mod common;
 
@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use uptimepage::domain::target::MAX_TAGS_PER_TARGET;
 use uptimepage::domain::{CheckSpec, ExpectedStatus, NewTarget, OrgId, TcpCheck, WriteSource};
+use uptimepage::storage::traits::ChannelEdit;
 use uptimepage::storage::{PostgresTargetStore, TargetFilter, TargetStore, create_org_with_owner};
 use url::Url;
 use uuid::Uuid;
@@ -407,6 +408,168 @@ async fn a_bulk_tag_add_stops_at_the_cap_and_says_which_monitor_was_full() {
         .await
         .unwrap();
     assert_eq!(outcome.updated, vec![crowded]);
+
+    common::drop_test_db(&name).await;
+}
+
+/// The skip list is applied in the statement, so a skipped kind keeps its
+/// interval and comes back named; a foreign org's id is neither.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_bulk_interval_skips_the_named_kinds() {
+    let Some((db, name)) = common::fresh_test_db("targets_bulk_interval").await else {
+        return;
+    };
+    let pool = common::open_test_pool(&db).await;
+    MIGRATOR.run(&pool).await.unwrap();
+
+    let user = common::make_user(&pool, "iv").await;
+    let org = create_org_with_owner(&pool, user, &common::unique_slug("iv"), "Co")
+        .await
+        .unwrap()
+        .unwrap();
+    let stranger = common::make_user(&pool, "iv2").await;
+    let other = create_org_with_owner(&pool, stranger, &common::unique_slug("iv2"), "Other")
+        .await
+        .unwrap()
+        .unwrap();
+    let store = PostgresTargetStore::from_pool(pool.clone(), None);
+
+    let http = || {
+        CheckSpec::Http(common::default_http_check(
+            Url::parse("https://example.com/").unwrap(),
+            ExpectedStatus::Exact(200),
+        ))
+    };
+    let tcp = CheckSpec::Tcp(TcpCheck {
+        host: "db.example.com".into(),
+        port: 5432,
+        timeout: Duration::from_secs(3),
+    });
+    let web = seed(&store, org.id, "web", http(), None).await;
+    let db_port = seed(&store, org.id, "db", tcp, None).await;
+    let foreign = seed(&store, other.id, "foreign", http(), None).await;
+
+    let outcome = store
+        .set_interval(
+            org.id,
+            &[web, db_port, foreign],
+            Duration::from_secs(300),
+            &["tcp"],
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome.updated, vec![web]);
+    assert_eq!(outcome.skipped, vec![(db_port, "tcp".to_string())]);
+
+    let interval = |org: OrgId, id: Uuid| {
+        let store = &store;
+        async move { store.get(org, id).await.unwrap().unwrap().interval }
+    };
+    assert_eq!(interval(org.id, web).await, Duration::from_secs(300));
+    assert_eq!(interval(org.id, db_port).await, Duration::from_secs(30));
+    assert_eq!(interval(other.id, foreign).await, Duration::from_secs(30));
+
+    common::drop_test_db(&name).await;
+}
+
+/// Add keeps what is bound and binds a channel once however often it is
+/// named, remove leaves the rest in order, and replace with nothing unbinds
+/// every channel.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_bulk_channel_edit_merges_into_each_monitors_bindings() {
+    let Some((db, name)) = common::fresh_test_db("targets_bulk_channels").await else {
+        return;
+    };
+    let pool = common::open_test_pool(&db).await;
+    MIGRATOR.run(&pool).await.unwrap();
+
+    let user = common::make_user(&pool, "ch").await;
+    let org = create_org_with_owner(&pool, user, &common::unique_slug("ch"), "Co")
+        .await
+        .unwrap()
+        .unwrap();
+    let store = PostgresTargetStore::from_pool(pool.clone(), None);
+    let http = || {
+        CheckSpec::Http(common::default_http_check(
+            Url::parse("https://example.com/").unwrap(),
+            ExpectedStatus::Exact(200),
+        ))
+    };
+    let [slack, pager, email] = [Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7()];
+    let bound = seed(&store, org.id, "bound", http(), None).await;
+    let bare = seed(&store, org.id, "bare", http(), None).await;
+    store
+        .edit_channels(org.id, &[bound], ChannelEdit::Replace(&[slack]))
+        .await
+        .unwrap();
+
+    let channels = |id: Uuid| {
+        let store = &store;
+        async move {
+            store
+                .get(org.id, id)
+                .await
+                .unwrap()
+                .unwrap()
+                .alerts
+                .iter()
+                .map(|b| b.channel_id)
+                .collect::<Vec<_>>()
+        }
+    };
+
+    let hit = store
+        .edit_channels(org.id, &[bound, bare], ChannelEdit::Add(&[slack, pager]))
+        .await
+        .unwrap();
+    assert_eq!(hit.len(), 2);
+    assert_eq!(channels(bound).await, vec![slack, pager]);
+    assert_eq!(channels(bare).await, vec![slack, pager]);
+
+    store
+        .edit_channels(org.id, &[bound], ChannelEdit::Add(&[email, email]))
+        .await
+        .unwrap();
+    store
+        .edit_channels(org.id, &[bound, bare], ChannelEdit::Remove(&[pager]))
+        .await
+        .unwrap();
+    assert_eq!(channels(bound).await, vec![slack, email]);
+    assert_eq!(channels(bare).await, vec![slack]);
+
+    let stranger = common::make_user(&pool, "ch2").await;
+    let other = create_org_with_owner(&pool, stranger, &common::unique_slug("ch2"), "Other")
+        .await
+        .unwrap()
+        .unwrap();
+    let foreign = seed(&store, other.id, "foreign", http(), None).await;
+    store
+        .edit_channels(other.id, &[foreign], ChannelEdit::Replace(&[slack]))
+        .await
+        .unwrap();
+
+    let hit = store
+        .edit_channels(org.id, &[bound, bare, foreign], ChannelEdit::Replace(&[]))
+        .await
+        .unwrap();
+    assert_eq!(
+        hit.len(),
+        2,
+        "a foreign org's monitor is not this org's to edit"
+    );
+    assert!(channels(bound).await.is_empty());
+    assert!(channels(bare).await.is_empty());
+    let untouched = store.get(other.id, foreign).await.unwrap().unwrap();
+    assert_eq!(
+        untouched
+            .alerts
+            .iter()
+            .map(|b| b.channel_id)
+            .collect::<Vec<_>>(),
+        vec![slack]
+    );
 
     common::drop_test_db(&name).await;
 }

@@ -281,6 +281,37 @@ async fn sub_minimum_interval_rejected_on_create() {
     assert_eq!(b["error"]["code"], "MIN_CHECK_INTERVAL");
 }
 
+/// The plan floor binds the value itself, so a bulk change below it fails
+/// whole rather than skipping every monitor one by one.
+#[tokio::test]
+async fn sub_minimum_interval_rejected_on_bulk_action() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (app, _org) = build_test_app_with_pg_store(pool, |_| {}).await;
+    let resp = post_target(&app, &format!("bulk-{}", Uuid::now_v7()), 180).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created = body_json(resp).await;
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/targets/bulk-action")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "ids": [created["id"]],
+                        "action": { "type": "set_interval", "interval": 59 }
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body_json(resp).await["error"]["code"], "MIN_CHECK_INTERVAL");
+}
+
 /// The refusal names the plan the org is actually on. It carried the literal
 /// "free" for every org, so a paying customer was told to upgrade to the plan
 /// they had already left.

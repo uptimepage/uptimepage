@@ -64,9 +64,14 @@ impl CheckSpec {
 
     /// Why a passive kind has nothing to probe, for the errors that refuse one.
     pub fn passive_reason(&self) -> Option<&'static str> {
-        match self {
-            CheckSpec::Heartbeat(_) => Some("heartbeat monitors receive pings from your systems"),
-            CheckSpec::Manual(_) => Some("manual monitors are set by hand"),
+        Self::passive_reason_for(self.kind())
+    }
+
+    /// [`Self::passive_reason`] for a stored kind tag.
+    pub fn passive_reason_for(kind: &str) -> Option<&'static str> {
+        match kind {
+            "heartbeat" => Some("heartbeat monitors receive pings from your systems"),
+            "manual" => Some("manual monitors are set by hand"),
             _ => None,
         }
     }
@@ -126,6 +131,11 @@ pub fn min_interval_secs_for_kind(kind: &str) -> u64 {
         _ => 10,
     }
 }
+
+/// Check-interval picker presets: the fast group for probes, the slow one for
+/// certificate and registration expiry.
+pub const FAST_INTERVAL_PRESETS: [u64; 8] = [30, 60, 120, 300, 600, 900, 1_800, 3_600];
+pub const SLOW_INTERVAL_PRESETS: [u64; 3] = [21_600, 43_200, 86_400];
 
 /// Smallest preset the picker offers and where a new monitor opens. Both sit
 /// at or above [`min_interval_secs_for_kind`], which stays the hard limit so a
