@@ -37,6 +37,7 @@ DAYS="${DAYS:-14}"
 
 pg() { docker exec -i "$PG_CONTAINER" psql -U monitor -d monitor -v ON_ERROR_STOP=1 "$@"; }
 ch() { docker exec -i "$CH_CONTAINER" clickhouse-client "$@"; }
+source "$(dirname "${BASH_SOURCE[0]}")/lib/seed-purge.sh"
 
 if ! pg -tAc "SELECT 1 FROM organizations WHERE slug='${SLUG}'" | grep -q 1; then
   echo "error: org '${SLUG}' missing — run 'just dev-login' (or SLUG=… just dev-login) first" >&2
@@ -109,9 +110,8 @@ if [[ -z "$REGION" ]]; then
 fi
 echo "    monitor ${TARGET} in ${REGION}"
 
-echo "==> ClickHouse: wipe prior rows for this monitor"
-ch -q "ALTER TABLE monitor.flow_runs DELETE WHERE target_id = toUUID('${TARGET}') SETTINGS mutations_sync=1"
-ch -q "ALTER TABLE monitor.check_results DELETE WHERE target_id = toUUID('${TARGET}') SETTINGS mutations_sync=1"
+echo "==> ClickHouse: wipe rows for this monitor and for any prior run"
+reset_seeded_history "$ORG" seed-flow
 
 # One expression, reused by every insert below: the step timings, with
 # `assert_url` climbing as `number` shrinks (i.e. as the run gets more recent).

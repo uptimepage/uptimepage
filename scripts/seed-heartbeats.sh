@@ -35,6 +35,7 @@ DAYS="${DAYS:-14}"
 
 pg() { docker exec -i "$PG_CONTAINER" psql -U monitor -d monitor -v ON_ERROR_STOP=1 "$@"; }
 ch() { docker exec -i "$CH_CONTAINER" clickhouse-client "$@"; }
+source "$(dirname "${BASH_SOURCE[0]}")/lib/seed-purge.sh"
 
 # A slug is only unique among live orgs, so a soft-deleted one can share it.
 ORG=$(pg -tAc "SELECT id FROM organizations WHERE slug='${SLUG}' AND deleted_at IS NULL")
@@ -50,10 +51,6 @@ UPDATE plans SET max_targets = GREATEST(max_targets, 60)
               JOIN organizations o ON o.account_id = a.id
              WHERE o.id = '${ORG}');
 SQL
-
-# Read the previous run's ids before the delete takes them away, or its
-# ClickHouse rows outlive every target that could explain them.
-PRIOR=$(pg -tAc "SELECT id FROM targets WHERE org_id = '${ORG}' AND tags @> ARRAY['seed-heartbeat']")
 
 echo "==> Postgres: (re)create the seeded heartbeat monitors"
 pg <<SQL
@@ -145,10 +142,7 @@ FAIL_AT=$(pg -tAc "SELECT extract(epoch FROM last_fail_at)::bigint FROM heartbea
 START_AT=$(pg -tAc "SELECT extract(epoch FROM last_start_at)::bigint FROM heartbeat_monitors WHERE target_id='${RUNNING}'")
 
 echo "==> ClickHouse: wipe rows for these monitors and for any prior run"
-for t in $PRIOR "$HEALTHY" "$TIGHT" "$LOOSE" "$FAILED" "$RUNNING" "$THIN"; do
-  ch -q "ALTER TABLE monitor.heartbeat_pings DELETE WHERE target_id = toUUID('${t}') SETTINGS mutations_sync=1"
-  ch -q "ALTER TABLE monitor.check_results DELETE WHERE target_id = toUUID('${t}') SETTINGS mutations_sync=1"
-done
+reset_seeded_history "$ORG" seed-heartbeat
 
 # `number` walks backwards from the monitor's last success, so 0 is the newest.
 successes() { # target, gap minutes, count, offset minutes of the newest

@@ -35,6 +35,7 @@ FAIL_EVERY="${FAIL_EVERY:-5}"
 
 pg() { docker exec -i "$PG_CONTAINER" psql -U monitor -d monitor -v ON_ERROR_STOP=1 "$@"; }
 ch() { docker exec -i "$CH_CONTAINER" clickhouse-client "$@"; }
+source "$(dirname "${BASH_SOURCE[0]}")/lib/seed-purge.sh"
 
 # A slug is only unique among live orgs, so a soft-deleted one can share it.
 ORG=$(pg -tAc "SELECT id FROM organizations WHERE slug='${SLUG}' AND deleted_at IS NULL")
@@ -59,10 +60,6 @@ if (( ${#REGIONS[@]} == 0 )); then
 fi
 echo "    regions: ${REGIONS[*]}"
 REGION_LIST=$(printf "'%s'," "${REGIONS[@]}"); REGION_LIST="${REGION_LIST%,}"
-
-# Read the previous run's ids before the delete takes them away, or its
-# ClickHouse rows outlive every target that could explain them.
-PRIOR=$(pg -tAc "SELECT id FROM targets WHERE org_id = '${ORG}' AND tags @> ARRAY['seed-flap']")
 
 echo "==> Postgres: (re)create the flapping monitor and its control"
 pg <<SQL
@@ -116,9 +113,7 @@ BLOCKED=$(id_of flap-blocked)
 CLEAN=$(id_of flap-clean)
 
 echo "==> ClickHouse: wipe rows for these monitors and for any prior run"
-for t in $PRIOR "$BLOCKED" "$CLEAN"; do
-  ch -q "ALTER TABLE monitor.check_results DELETE WHERE target_id = toUUID('${t}') SETTINGS mutations_sync=1"
-done
+reset_seeded_history "$ORG" seed-flap
 
 SAMPLES=$(( HOURS * 60 ))
 

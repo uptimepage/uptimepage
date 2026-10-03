@@ -15,7 +15,7 @@
 #     all-NULL-phase path is exercised
 #
 # Idempotent: the target is tagged `seed-latency` and its rows are wiped (PG +
-# CH) before re-insert. CH wipe uses a synchronous mutation (small data).
+# CH) before re-insert, along with the CH rows of any monitor the org no longer has.
 #
 # Env overrides:
 #   SLUG          org slug to seed onto       (default: devorg)
@@ -36,6 +36,7 @@ BASE_DOMAIN="${BASE_DOMAIN:-lvh.me}"
 
 pg() { docker exec -i "$PG_CONTAINER" psql -U monitor -d monitor -v ON_ERROR_STOP=1 "$@"; }
 ch() { docker exec -i "$CH_CONTAINER" clickhouse-client "$@"; }
+source "$(dirname "${BASH_SOURCE[0]}")/lib/seed-purge.sh"
 
 if ! pg -tAc "SELECT 1 FROM organizations WHERE slug='${SLUG}'" | grep -q 1; then
   echo "error: org '${SLUG}' missing — run 'just dev-login' (or SLUG=… just dev-login) first" >&2
@@ -75,13 +76,8 @@ resolve_tid() {
 TID=$(resolve_tid lat-demo)
 TID_SHORT=$(resolve_tid lat-demo-short)
 
-echo "==> ClickHouse: wipe prior rows for both targets"
-ch -mn <<SQL
-ALTER TABLE monitor.check_results
-  DELETE WHERE org_id = toUUID('${ORG}')
-    AND target_id IN (toUUID('${TID}'), toUUID('${TID_SHORT}'))
-  SETTINGS mutations_sync = 1;
-SQL
+echo "==> ClickHouse: wipe rows for these monitors and for any prior run"
+reset_seeded_history "$ORG" seed-latency
 
 echo "==> ClickHouse: 30d dense history (~8640 'up' samples, 5-min cadence, with phases)"
 # number = samples-ago; number=0 is "now". A 5-min step over 30 days needs

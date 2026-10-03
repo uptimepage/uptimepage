@@ -59,6 +59,7 @@ RESET_CH="${RESET_CH:-1}"
 
 pg() { docker exec -i "$PG_CONTAINER" psql -U monitor -d monitor -v ON_ERROR_STOP=1 "$@"; }
 ch() { docker exec -i "$CH_CONTAINER" clickhouse-client "$@"; }
+source "$(dirname "${BASH_SOURCE[0]}")/lib/seed-purge.sh"
 
 if ! pg -tAc "SELECT 1 FROM organizations WHERE slug='${SLUG}'" | grep -q 1; then
   echo "error: org '${SLUG}' missing — run 'just dev-login' (or SLUG=… just dev-login) first" >&2
@@ -817,14 +818,8 @@ WHERE i.org_id = '${ORG}'::uuid AND i.target_id = '${T_TCP}'::uuid AND i.state =
 SQL
 
 if [ "$RESET_CH" = "1" ]; then
-  echo "==> ClickHouse: purging existing rows for fixture targets"
-  # Every tid below was length-validated post-`read -r`; an empty tid here
-  # would build `toUUID('')` and either abort the loop mid-purge (modern CH)
-  # or — on older CH — purge the zero-UUID partition.
-  for tid in "${VISIBLE_TARGETS[@]}" "$T_SEARCH" "$T_PAUSED" "$T_PAY" "$T_ADMIN" \
-             "$T_TCP" "$T_DNS" "$T_TLS" "$T_DOMAIN"; do
-    ch -q "ALTER TABLE monitor.check_results DELETE WHERE target_id=toUUID('${tid}') SETTINGS mutations_sync=1"
-  done
+  echo "==> ClickHouse: wipe rows for the fixture targets and any prior run"
+  reset_seeded_history "$ORG" seed-fixtures
 fi
 
 echo "==> ClickHouse: 90d baseline history for visible monitors (per-target divergent shape)"

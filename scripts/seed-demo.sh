@@ -13,7 +13,7 @@
 #   PG_CONTAINER  postgres container name     (default: uptimepage-postgres-1)
 #   CH_CONTAINER  clickhouse container name   (default: uptimepage-clickhouse-1)
 #   BASE_DOMAIN   for the printed URL         (default: lvh.me)
-#   RESET_CH      1 = purge org's CH rows first (default: 0)
+#   RESET_CH      1 = clear prior runs' CH rows first (default: 0)
 #
 # Requires the stack already up. SaaS mode → page at
 # {slug}.{BASE_DOMAIN}; self-host → {BASE_DOMAIN}/status.
@@ -27,6 +27,7 @@ RESET_CH="${RESET_CH:-0}"
 
 pg() { docker exec -i "$PG_CONTAINER" psql -U monitor -d monitor -v ON_ERROR_STOP=1 "$@"; }
 ch() { docker exec -i "$CH_CONTAINER" clickhouse-client "$@"; }
+source "$(dirname "${BASH_SOURCE[0]}")/lib/seed-purge.sh"
 
 echo "==> Postgres: org '$SLUG' + components + incident"
 pg <<SQL
@@ -89,8 +90,8 @@ read -r API WEB DB < <(pg -Atc \
      FROM targets WHERE org_id='${ORG}' AND tags @> ARRAY['seed-demo'];")
 
 if [ "$RESET_CH" = "1" ]; then
-  echo "==> ClickHouse: purging existing rows for org"
-  ch -q "ALTER TABLE monitor.check_results DELETE WHERE org_id=toUUID('${ORG}') SETTINGS mutations_sync=1"
+  echo "==> ClickHouse: wipe rows for the demo monitors and any prior run"
+  reset_seeded_history "$ORG" seed-demo
 fi
 
 echo "==> ClickHouse: 90d history (API/Web all-up, DB 2d major outage)"
