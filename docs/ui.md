@@ -16,7 +16,7 @@ The cards give you overall uptime, response time, check volume, and the current 
 
 Opening a monitor gives you its detail view: current status, uptime figures, response-time percentiles, a breakdown of where the time goes (DNS, connect, TLS, first byte), recent check results, and the incident history. Four time ranges (1 hour, 24 hours, 7 days, 30 days) switch the whole page at once, and if the monitor runs in several regions you can filter any chart down to one of them.
 
-**Add monitor** takes a URL, an interval, and the regions to check from. HTTP is the default; [Monitor types](monitor-types.md) covers the other seven. Two sections are worth a look before you save:
+**Add monitor** takes a URL, an interval, and the regions to check from. HTTP is the default; [Monitor types](monitor-types.md) covers the other eight. Two sections are worth a look before you save:
 
 - **Detection** decides when a failure counts. Set how many consecutive failures open an incident, and how many regions have to agree. See [Probe regions](hosted/regions.md) for what the region policies mean.
 - **Notifications** binds the alert channels for this monitor, sets how often to remind you while it stays down, and whether recovery is announced. It only appears once your org has at least one channel.

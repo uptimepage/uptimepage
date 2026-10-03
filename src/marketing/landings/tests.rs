@@ -160,10 +160,11 @@ fn check_type_copy_matches_the_surface_it_describes() {
         "ping",
         "heartbeat",
         "flow",
+        "manual",
     ];
     // Declarable through the REST API but not through Terraform. Empty since
-    // provider v0.5.2 shipped ping and heartbeat, so the provider now covers
-    // every kind: a page may name all of KINDS. Kept rather than deleted
+    // provider v0.13.0 shipped manual, so the provider covers every kind: a
+    // page may name all of KINDS. Kept rather than deleted
     // because the next kind lands in the API first, and this is where it is
     // held back from the page until the provider catches up.
     const NOT_IN_PROVIDER: &[&str] = &[];

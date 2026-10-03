@@ -779,7 +779,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "What can I declare in Terraform?",
-                "Monitors with HTTP, TCP, DNS, TLS, domain, ping, heartbeat or flow checks, public status pages and their components, and notification channels: the same things you change in the dashboard.",
+                "Monitors with HTTP, TCP, DNS, TLS, domain, ping, heartbeat or flow checks, manual monitors, public status pages and their components, and notification channels: the same things you change in the dashboard.",
             ),
             (
                 "Do I need the hosted service?",

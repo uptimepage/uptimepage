@@ -1,6 +1,6 @@
 # Monitor types
 
-Eight kinds of check, each answering a different question, plus a manual monitor for what no check can judge. Picking the right one matters more than tuning it afterwards: a monitor that watches the wrong layer either misses the outage or pages you for something that was never broken.
+Nine kinds of monitor: eight checks that each answer a different question, and a manual monitor for what no check can judge. Picking the right one matters more than tuning it afterwards: a monitor that watches the wrong layer either misses the outage or pages you for something that was never broken.
 
 The exact payload for each is in [REST API](api.md#check-specs). This page is about which to reach for.
 
@@ -116,7 +116,7 @@ curl -X PUT "$BASE/api/v1/targets/$ID/state" \
 
 From there it behaves like any other monitor. Down or degraded opens an incident within about 30 seconds and pages the channels bound to it, unless a maintenance window holds paging. Its status pages show a major outage or degraded performance, and up closes the incident. There is no confirmation count to wait out, because the person who set the state already confirmed it. Moving from degraded to down raises the open incident rather than opening a second one. The time it spends down counts against uptime like any other monitor's.
 
-The optional note, one line of at most 200 characters, becomes the incident's cause, so write it for whoever gets paged. Each set replaces the previous note, and while an incident is open a new note replaces its cause too. The monitor's page shows when the current state was set and which member set it, every change is recorded with who made it, and setting the state a monitor already has changes nothing.
+The optional note, one line of at most 200 characters, becomes the incident's cause, so write it for whoever gets paged. Each set replaces the previous note, and while an incident is open a new note replaces its cause too. The monitor's page shows when the current state was set and which member set it, every change is recorded with who made it, and setting the same state with the same note again changes nothing.
 
 A paused manual monitor keeps a state you set and reports it once you enable it again. Test and check-now do not apply, and it never runs on regional probes.
 
@@ -262,7 +262,7 @@ Durations are kept longer than the captured pages are — see [Quotas and limits
 
 ## Intervals
 
-Every kind has a floor, and your plan sets its own on top. The effective minimum is whichever is higher. The floor is what the API accepts; the suggestion is what the form opens at, and what most people should run.
+Every kind has a floor, and your plan sets its own on top. The effective minimum is whichever is higher, except for a manual monitor, which probes nothing and always runs at exactly 60 seconds. The floor is what the API accepts; the suggestion is what the form opens at, and what most people should run.
 
 | Kind | Floor | Suggested |
 |---|---|---|

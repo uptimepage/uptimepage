@@ -22,7 +22,7 @@ Four plans ship seeded: `free`, `founding` (a more generous free tier granted to
 |---|---|---|---|---|---|
 | `max_orgs` | 1 | 3 | 5 | 10 | Organizations the account may hold. They share every other quota on this table |
 | `max_targets` | 20 | 50 | 50 | 150 | Monitored targets across the account's orgs |
-| `min_check_interval_secs` | 180 | 60 | 60 | 30 | Plan-side floor on a target's check interval. The effective floor is `max(this, kind_min)` — `kind_min` is 43200 for `domain_expiry`, 3600 for `tls_cert`, 300 for `flow`, 60 for `heartbeat`, and 10 for `http` / `tcp` / `dns` / `ping`. |
+| `min_check_interval_secs` | 180 | 60 | 60 | 30 | Plan-side floor on a target's check interval. The effective floor is `max(this, kind_min)` — `kind_min` is 43200 for `domain_expiry`, 3600 for `tls_cert`, 300 for `flow`, 60 for `heartbeat`, and 10 for `http` / `tcp` / `dns` / `ping`. A `manual` monitor skips this floor and takes exactly 60. |
 | `retention_days` | 30 | 90 | 90 | 395 | History window the UI and API will read |
 | `raw_days` | 30 | 30 | 30 | 30 | Per-check detail retention, stamped onto each ClickHouse row at write time |
 | `evidence_days` | 7 | 7 | 7 | 7 | How long a failed browser-flow run keeps the page it captured. Clamped to `raw_days`, since the run it explains goes then |
@@ -122,7 +122,8 @@ be edited below it. The floor is `max(plan.min_check_interval_secs, kind_min)`:
 the per-kind value (43200 for `domain_expiry`, 3600 for `tls_cert`, 300 for
 `flow`, 60 for `heartbeat`, 10 for the rest) applies regardless of plan tier —
 polling an expiry probe faster yields no signal, and `domain_expiry` reads
-RDAP, which rate-limits by source address.
+RDAP, which rate-limits by source address. A `manual` monitor is the exception:
+it probes nothing, so no plan floor applies, and its interval is exactly 60.
 
 The write is not the last word. A plan can move under a monitor that already
 exists, and refusing the next edit would not slow a monitor already running

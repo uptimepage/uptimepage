@@ -63,7 +63,7 @@ resource "uptimepage_target" "api" {
 
 | Name | Kind | Manages |
 |---|---|---|
-| `uptimepage_target` | resource | Monitors — `http`, `tcp`, `ping`, `heartbeat`, `tls_cert`, `domain_expiry`, `dns`, `flow` checks. On a self-hosted install, applying a `flow` needs `max_flow_checks` raised on the plan first ([monitor types](monitor-types.md#flow)) |
+| `uptimepage_target` | resource | Monitors: `http`, `tcp`, `ping`, `heartbeat`, `tls_cert`, `domain_expiry`, `dns`, `flow` checks, and `manual` monitors (provider 0.13.0 and later), whose state is set in the app and never read into config. On a self-hosted install, applying a `flow` needs `max_flow_checks` raised on the plan first ([monitor types](monitor-types.md#flow)) |
 | `uptimepage_notification_channel` | resource | Alert destinations — `webhook`, `slack`, `discord`, `msteams`, `google_chat`, `mattermost`, `telegram`, `whatsapp`, `email`, `pagerduty`, `ntfy`, `gotify`, `pushover`, `sms`. The one-tap `telegram_app`, `whatsapp_app`, `slack_app` and `discord_app` kinds are not manageable: their configs are minted by the link, Add to Slack and Add to Discord flows and the API refuses to create them from request bodies (`CHANNEL_KIND_MANAGED`) |
 | `uptimepage_status_page` | resource | Public status pages — slug, operator and display names, enabled state, and the branding a visitor sees: about text, brand colour, style, logo, status URL, and whether the powered-by mark shows |
 | `uptimepage_status_page_component` | resource | What a page publishes — one monitor placed on one page, with its public name, description, group and sort order. The public name is separate from the monitor's internal one |

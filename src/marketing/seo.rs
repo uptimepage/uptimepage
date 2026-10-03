@@ -34,7 +34,7 @@ const ORG_SAME_AS: &[&str] = &[
 pub(super) const LLMS_FACTS: &[(&str, &str)] = &[
     (
         "Check types",
-        "HTTP/HTTPS, TCP, DNS, TLS certificate, domain expiry, ICMP ping, cron-job heartbeat, scripted browser login flow",
+        "HTTP/HTTPS, TCP, DNS, TLS certificate, domain expiry, ICMP ping, cron-job heartbeat, scripted browser login flow, manual (state set by an operator)",
     ),
     (
         "Check interval",

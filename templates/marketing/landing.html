@@ -335,9 +335,9 @@
        flipped; without JS it stays a plain horizontal scroller. #}
     <section id="checks" class="space-y-8">
         <header class="mx-auto max-w-2xl space-y-3 text-center">
-            <h2 class="mk-h2">Eight ways to ask <em class="mk-h2-em">is it up</em>.</h2>
+            <h2 class="mk-h2">Nine ways to ask <em class="mk-h2-em">is it up</em>.</h2>
             <p class="mk-body">
-                One monitor list, eight kinds of check. Each one carries the
+                One monitor list, nine kinds of check. Each one carries the
                 same alerts, the same incidents, and the same status page.
             </p>
         </header>
@@ -566,6 +566,34 @@
                                 </p>
                                 <p class="mk-tape__pitch"><b>Login forms break more often than servers do.</b> A real browser walks yours on schedule, pages you when a step dies, and charts how long each step takes so you see one drifting before it breaks.</p>
                                 <a class="mk-tape__docs" href="/docs/monitor-types#flow" data-umami-event="tape-click" data-umami-event-kind="flow">read the flow docs</a>
+                            </div>
+                        </div>
+                    </li>
+                    <li class="mk-tape__cell">
+                        <div class="mk-tape__flip">
+                            <div class="mk-tape__face mk-tape__face--front">
+                                <p class="mk-tape__head">
+                                    <button type="button" class="mk-tape__link" data-tape-flip aria-expanded="false" aria-label="about manual monitors" data-umami-event="tape-flip" data-umami-event-kind="manual"><span class="mk-tape__kind">manual</span></button>
+                                    <span class="mk-tape__verdict">up</span>
+                                </p>
+                                <div class="mk-tape__body">
+                                    <p class="mk-tape__line mk-tape__line--cmd">sip trunks &middot; set by hand</p>
+                                    <p class="mk-tape__line mk-tape__line--out">up &middot; "both trunks on the primary carrier"</p>
+                                    <svg class="mk-tape__spark" viewBox="0 0 160 22" preserveAspectRatio="none" aria-hidden="true">
+                                        <path class="mk-tape__spark-fill" d="M0 16 H160 V22 H0 Z"></path>
+                                        <path class="mk-tape__spark-line" d="M0 16 H160"></path>
+                                    </svg>
+                                    <p class="mk-tape__span" aria-hidden="true"><span>24h ago</span><b>100% uptime</b><span>now</span></p>
+                                    <p class="mk-tape__line mk-tape__line--meta">no probe. you set it to up, degraded or down, and it pages like any check.</p>
+                                </div>
+                            </div>
+                            <div class="mk-tape__face mk-tape__face--back">
+                                <p class="mk-tape__head">
+                                    <button type="button" class="mk-tape__link" data-tape-flip aria-label="back to the manual sample"><span class="mk-tape__kind">manual</span></button>
+                                    <span class="mk-tape__verdict">docs</span>
+                                </p>
+                                <p class="mk-tape__pitch"><b>Some outages only the people running a service can see.</b> Mark a SIP trunk or a carrier link down with a note, and the incident, the paging and the status page follow like any other check.</p>
+                                <a class="mk-tape__docs" href="/docs/monitor-types#manual" data-umami-event="tape-click" data-umami-event-kind="manual">read the manual docs</a>
                             </div>
                         </div>
                     </li>

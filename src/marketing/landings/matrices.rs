@@ -7,6 +7,7 @@ use super::model::{Matrix, MatrixRow};
 /// Our column of every "fastest interval" row: Founding and Pro floor at 60s, Team at
 /// 30s, a self-hosted install at 10s.
 const OUR_FASTEST_INTERVAL: &str = "60s free · 30s Team · 10s self-hosted";
+const OUR_CHECK_TYPES: &str = "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow · manual";
 
 /// Decision matrix for `/open-source-uptime-monitoring`, verified July 2026
 /// against each project's repo and docs. Uptime Kuma is the search default,
@@ -53,7 +54,7 @@ static OPEN_SOURCE_MONITOR_MATRIX: Matrix = Matrix {
             label: "check kinds",
             cells: &[
                 (
-                    "HTTP, TCP, DNS, TLS, domain expiry, ping, heartbeat, browser flow",
+                    "HTTP, TCP, DNS, TLS, domain expiry, ping, heartbeat, browser flow, manual",
                     "yes",
                 ),
                 ("HTTP, TCP, DNS, ping, push, browser, and more", "yes"),
@@ -144,12 +145,9 @@ static SELF_HOSTED_MATRIX: Matrix = Matrix {
         MatrixRow {
             label: "check types",
             cells: &[
-                (
-                    "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
-                    "",
-                ),
+                (OUR_CHECK_TYPES, ""),
                 ("HTTP · TCP · ICMP", ""),
-                ("HTTP GET", ""),
+                ("HTTP GET · manual", ""),
                 ("HTTP · TCP · UDP · ICMP · gRPC", ""),
             ],
         },
@@ -291,7 +289,7 @@ static MONITORING_MATRIX: Matrix = Matrix {
         MatrixRow {
             label: "check breadth",
             cells: &[
-                ("HTTP·TCP·DNS·TLS·domain·ping·heartbeat·flow", ""),
+                ("HTTP·TCP·DNS·TLS·domain·ping·heartbeat·flow·manual", ""),
                 ("31 types", "yes"),
                 ("HTTP·TCP·DNS", ""),
                 ("25+ types", "yes"),
@@ -476,13 +474,7 @@ static UPTIME_KUMA_MATRIX: Matrix = Matrix {
         },
         MatrixRow {
             label: "check types",
-            cells: &[
-                (
-                    "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
-                    "",
-                ),
-                ("31 types", "yes"),
-            ],
+            cells: &[(OUR_CHECK_TYPES, ""), ("31 types", "yes")],
         },
         MatrixRow {
             label: "ping / ICMP",
@@ -556,13 +548,7 @@ static ONEUPTIME_MATRIX: Matrix = Matrix {
         },
         MatrixRow {
             label: "check types",
-            cells: &[
-                (
-                    "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
-                    "",
-                ),
-                ("25+ types", "yes"),
-            ],
+            cells: &[(OUR_CHECK_TYPES, ""), ("25+ types", "yes")],
         },
         MatrixRow {
             label: "ping / ICMP",
@@ -635,13 +621,7 @@ static UPTIMEROBOT_MATRIX: Matrix = Matrix {
         },
         MatrixRow {
             label: "check types",
-            cells: &[
-                (
-                    "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
-                    "",
-                ),
-                ("HTTP · TCP · ping · keyword", ""),
-            ],
+            cells: &[(OUR_CHECK_TYPES, ""), ("HTTP · TCP · ping · keyword", "")],
         },
         MatrixRow {
             label: "ping / ICMP",
@@ -717,10 +697,7 @@ static BETTER_STACK_MATRIX: Matrix = Matrix {
         MatrixRow {
             label: "check types",
             cells: &[
-                (
-                    "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
-                    "",
-                ),
+                (OUR_CHECK_TYPES, ""),
                 ("HTTP · TCP · UDP · DNS · mail · ping", "yes"),
             ],
         },
@@ -792,10 +769,7 @@ static PINGDOM_MATRIX: Matrix = Matrix {
         MatrixRow {
             label: "check types",
             cells: &[
-                (
-                    "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
-                    "",
-                ),
+                (OUR_CHECK_TYPES, ""),
                 ("HTTP · TCP · UDP · DNS · ping · mail", "yes"),
             ],
         },
@@ -856,13 +830,7 @@ static STATUSPAGE_MATRIX: Matrix = Matrix {
         },
         MatrixRow {
             label: "check types",
-            cells: &[
-                (
-                    "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
-                    "",
-                ),
-                ("none native", "no"),
-            ],
+            cells: &[(OUR_CHECK_TYPES, ""), ("manual component status", "part")],
         },
         MatrixRow {
             label: "auto incidents from checks",
@@ -947,10 +915,7 @@ static OPENSTATUS_KUMA_MATRIX: Matrix = Matrix {
             cells: &[
                 ("HTTP · TCP · DNS, more in schema", ""),
                 ("31 incl. DBs · MQTT · browser", ""),
-                (
-                    "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
-                    "",
-                ),
+                (OUR_CHECK_TYPES, ""),
             ],
         },
         MatrixRow {
@@ -1046,10 +1011,7 @@ static KUMA_ZABBIX_MATRIX: Matrix = Matrix {
             cells: &[
                 ("31 types incl. DBs · MQTT · browser", ""),
                 ("web scenarios + simple checks", ""),
-                (
-                    "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
-                    "",
-                ),
+                (OUR_CHECK_TYPES, ""),
             ],
         },
         MatrixRow {
@@ -1148,10 +1110,7 @@ static KUMA_GATUS_MATRIX: Matrix = Matrix {
             cells: &[
                 ("31 incl. DBs · MQTT · browser", ""),
                 ("11 protocols incl. gRPC · SSH · WebSocket", ""),
-                (
-                    "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
-                    "",
-                ),
+                (OUR_CHECK_TYPES, ""),
             ],
         },
         MatrixRow {
@@ -1253,10 +1212,7 @@ static KUMA_UPPTIME_MATRIX: Matrix = Matrix {
             cells: &[
                 ("31 incl. DBs · MQTT · browser", ""),
                 ("HTTP · tcp-ping", ""),
-                (
-                    "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
-                    "",
-                ),
+                (OUR_CHECK_TYPES, ""),
             ],
         },
         MatrixRow {
@@ -1371,10 +1327,7 @@ static KUMA_ONEUPTIME_MATRIX: Matrix = Matrix {
             cells: &[
                 ("31 incl. DBs · MQTT · browser", ""),
                 ("25+ types", ""),
-                (
-                    "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
-                    "",
-                ),
+                (OUR_CHECK_TYPES, ""),
             ],
         },
         MatrixRow {
@@ -1465,10 +1418,7 @@ static KUMA_KENER_MATRIX: Matrix = Matrix {
             cells: &[
                 ("31 incl. DBs · MQTT · browser", ""),
                 ("12 incl. gRPC · SQL · heartbeat · GameDig", ""),
-                (
-                    "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
-                    "",
-                ),
+                (OUR_CHECK_TYPES, ""),
             ],
         },
         MatrixRow {
@@ -1543,10 +1493,7 @@ static PINGDOM_STATUSCAKE_MATRIX: Matrix = Matrix {
             cells: &[
                 ("HTTP · TCP · ping · DNS · UDP · mail", ""),
                 ("HTTP · TCP · DNS · SSH · SMTP · ping · push", ""),
-                (
-                    "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
-                    "",
-                ),
+                (OUR_CHECK_TYPES, ""),
             ],
         },
         MatrixRow {
@@ -1636,10 +1583,7 @@ static KUMA_HEALTHCHECKS_MATRIX: Matrix = Matrix {
             cells: &[
                 ("31 incl. DBs · MQTT · browser", ""),
                 ("inbound pings only", "no"),
-                (
-                    "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
-                    "",
-                ),
+                (OUR_CHECK_TYPES, ""),
             ],
         },
         MatrixRow {
@@ -1867,10 +1811,7 @@ static OPENSTATUS_GATUS_MATRIX: Matrix = Matrix {
             cells: &[
                 ("HTTP · TCP · DNS in the OSS checker", "part"),
                 ("11 protocols + domain expiry", "yes"),
-                (
-                    "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
-                    "",
-                ),
+                (OUR_CHECK_TYPES, ""),
             ],
         },
         MatrixRow {
@@ -1976,10 +1917,7 @@ static BLACKBOX_KUMA_MATRIX: Matrix = Matrix {
             cells: &[
                 ("http · tcp · dns · icmp · grpc · unix", "yes"),
                 ("31 types", "yes"),
-                (
-                    "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow",
-                    "",
-                ),
+                (OUR_CHECK_TYPES, ""),
             ],
         },
         MatrixRow {

@@ -1,6 +1,6 @@
 # uptimepage
 
-Async Rust service that runs eight kinds of check against a configurable set of targets: HTTP, TCP, DNS, TLS certificate, domain expiry, ICMP ping, inbound cron-job heartbeats, and scripted browser flows. It applies per-host circuit breaking, batches results, and ships them to durable storage. Targets persist in PostgreSQL; check results land in ClickHouse for high-cardinality time-series queries. Exposes a REST API for target CRUD and result queries, a server-rendered operator UI on the same port, and Prometheus metrics on a separate port.
+Async Rust service that runs eight kinds of check against a configurable set of targets: HTTP, TCP, DNS, TLS certificate, domain expiry, ICMP ping, inbound cron-job heartbeats, and scripted browser flows, plus manual monitors whose state an operator sets. It applies per-host circuit breaking, batches results, and ships them to durable storage. Targets persist in PostgreSQL; check results land in ClickHouse for high-cardinality time-series queries. Exposes a REST API for target CRUD and result queries, a server-rendered operator UI on the same port, and Prometheus metrics on a separate port.
 
 Built on Rust 1.95 (edition 2024), Tokio, Axum, hyper-util (custom phase-timing connector + tokio-rustls), sqlx, and the official `clickhouse` crate. UI layer uses askama 0.16 + HTMX 2 + Tailwind 4 + ECharts 6, all served from the same binary. Designed for low-overhead checks at ~50k concurrent in-flight.
 

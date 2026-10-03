@@ -6,7 +6,7 @@ For an interactive companion to this page, open the [flow map](/architecture): p
 
 ## Goals
 
-- Run periodic checks of eight kinds (HTTP, TCP, ping, heartbeat, DNS, TLS certificate, domain expiry, browser flow) against an arbitrary, mutable set of targets. See [Monitor types](monitor-types.md).
+- Run periodic checks of eight kinds (HTTP, TCP, ping, heartbeat, DNS, TLS certificate, domain expiry, browser flow) against an arbitrary, mutable set of targets, plus manual monitors whose state an operator sets. See [Monitor types](monitor-types.md).
 - Keep every tenant's data isolated by construction, not by convention. See [Multi-tenancy](multi-tenancy.md).
 - Turn a run of failing checks into a confirmed incident, page the right people, and publish a customer-facing status surface. See [Incident management](incidents.md) and [Public status page](public-status.md).
 - Attribute every result to the region that produced it, so a deployment can probe from many locations with no coordination. See [Multi-region probes](multi-region.md).
@@ -63,7 +63,7 @@ src/
 │                     heap, gauge sampler
 ├── worker/           worker pool + per-host circuit breaker + host throttle +
 │                     one executor per check kind (http/tcp/ping/heartbeat/dns/
-│                     tls_cert/domain_expiry/flow)
+│                     tls_cert/domain_expiry/flow/manual)
 ├── http_client/      poolless probe client: phase-timing connector, DNS cache,
 │                     SSRF-guarded dial for the raw-socket checks
 ├── pipeline/         result batcher (size + timeout flush, bounded, counted drops)
@@ -133,10 +133,10 @@ Scheduler        single-driver min-heap keyed by next-due instant; jittered tick
    │             paused/deleted targets tombstoned in the heap and reaped lazily
    │ dispatch
    ▼
-WorkerPool       heartbeat fast path, then in-flight guard, semaphore, circuit
+WorkerPool       passive fast path, then in-flight guard, semaphore, circuit
    │             breaker, per-tenant host throttle; each gate that drops work counts it
    │             ├── http / tcp / ping / dns / tls_cert / domain_expiry / flow executors
-   │             └── heartbeat (passive dead-man, evaluated inline)
+   │             └── heartbeat + manual (passive, evaluated inline)
    │ CheckResult on a bounded mpsc channel
    ▼
 ResultBatcher    flush on size or timeout; buffer bounded, oldest dropped on overflow,

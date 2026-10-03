@@ -1578,7 +1578,7 @@ async fn architecture_serves_the_map_content_as_html() {
     );
 }
 
-/// A count rather than a list: all eight kinds do not fit the length a search
+/// A count rather than a list: all nine kinds do not fit the length a search
 /// snippet survives. Lives here because `src/marketing/` may not reach
 /// `crate::domain`.
 #[test]
@@ -1586,10 +1586,7 @@ fn the_site_description_counts_every_check_kind() {
     const WORDS: [&str; 9] = [
         "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
     ];
-    let real = CheckSpec::ALL_KINDS
-        .iter()
-        .filter(|k| **k != "manual")
-        .count();
+    let real = CheckSpec::ALL_KINDS.len();
     let text = META_DESCRIPTION.to_lowercase();
     let (claimed, word) = WORDS
         .iter()

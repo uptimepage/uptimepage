@@ -83,7 +83,7 @@ const FAQS: &[(&str, &str)] = &[
         "What kinds of monitors are supported?",
         "HTTP/HTTPS, TCP port, DNS lookup, ICMP ping, cron-job heartbeat, TLS-certificate \
          and domain expiry, and a browser login flow that signs in for real and charts how \
-         long each step takes. Per-monitor headers, basic-auth, bearer tokens, expected \
+         long each step takes, plus manual monitors whose state you set by hand. Per-monitor headers, basic-auth, bearer tokens, expected \
          status code, content-match, TLS verification, follow-redirects rules.",
     ),
     (

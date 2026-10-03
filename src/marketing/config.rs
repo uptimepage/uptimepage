@@ -25,7 +25,7 @@ pub const TAGLINE: &str = "Uptime monitoring, public status pages and on-call in
 
 /// `<meta name="description">` + OG `og:description`. Sized to Google's
 /// 110–160 char sweet spot so search snippets don't truncate mid-sentence.
-pub const META_DESCRIPTION: &str = "Uptime monitoring, public status pages and on-call in one tool. Eight check types including HTTP, DNS, cron and browser logins. Start free, no card.";
+pub const META_DESCRIPTION: &str = "Uptime monitoring, public status pages and on-call in one tool. Nine check types including HTTP, DNS, cron and browser logins. Start free, no card.";
 
 /// Automation surfaces on their own prod hosts — not derived from
 /// `canonical_origin` (separate hostnames), so authored absolute.
