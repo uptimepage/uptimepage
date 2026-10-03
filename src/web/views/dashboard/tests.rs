@@ -5,6 +5,7 @@ use chrono::Duration;
 use crate::domain::metrics::{DashboardSparkBucket, FleetRibbonBucket, PriorPeriodSummary};
 use crate::domain::{ActorType, IncidentAcknowledgement, IncidentSeverity, UserId};
 use crate::storage::IncidentBrief;
+use crate::templates::format::fmt_ts;
 
 use super::charts::*;
 use super::*;
@@ -54,7 +55,7 @@ fn sample_row(name: &str, status: &'static str) -> DashboardRow {
 }
 
 fn sample_ribbon() -> FleetRibbon {
-    build_fleet_ribbon(&[], snapped_from(), &HashMap::new())
+    build_fleet_ribbon(&[], ribbon_now(), &HashMap::new())
 }
 
 fn sample_page() -> DashboardPage {
@@ -638,17 +639,73 @@ fn ribbon_class_partitions_by_uptime() {
     assert_eq!(ribbon_class(0.0), "maj");
 }
 
-fn snapped_from() -> DateTime<Utc> {
-    snap_to_bucket(
-        Utc::now() - Duration::hours(RIBBON_HOURS),
-        RIBBON_BUCKET_SECONDS,
-    )
+/// Four minutes into a half hour, so the last cell is partial.
+fn ribbon_now() -> DateTime<Utc> {
+    DateTime::from_timestamp(RIBBON_BUCKET_SECONDS as i64 * 1000 + 240, 0).unwrap()
+}
+
+#[test]
+fn ribbon_from_ends_the_window_on_the_current_half_hour() {
+    let bucket = RIBBON_BUCKET_SECONDS as i64;
+    let from = ribbon_from(ribbon_now());
+    assert_eq!(from.timestamp() % bucket, 0, "grid-aligned");
+    let last_start = from.timestamp() + (RIBBON_BUCKETS as i64 - 1) * bucket;
+    assert_eq!(
+        last_start,
+        bucket * 1000,
+        "last cell is the half hour holding now"
+    );
+}
+
+#[test]
+fn build_fleet_ribbon_counts_the_current_half_hour_and_clamps_its_end() {
+    let bucket = RIBBON_BUCKET_SECONDS as i64;
+    let now = ribbon_now();
+    let from = ribbon_from(now);
+    let rows = vec![FleetRibbonBucket {
+        bucket_ts: bucket * 1000,
+        samples: 10,
+        up: 10,
+        down_targets: vec![],
+    }];
+    let r = build_fleet_ribbon(&rows, now, &HashMap::new());
+    let last = r.segs.last().unwrap();
+    assert_eq!(last.class, "op");
+    assert_eq!(
+        last.from_iso,
+        fmt_ts(DateTime::from_timestamp(bucket * 1000, 0).unwrap())
+    );
+    assert_eq!(last.to_iso, fmt_ts(now), "partial cell ends at now");
+    assert_eq!(r.segs[0].from_iso, fmt_ts(from));
+    assert_eq!(
+        r.segs[0].to_iso,
+        fmt_ts(from + Duration::seconds(bucket)),
+        "full cell spans the whole bucket"
+    );
+}
+
+#[test]
+fn ribbon_cells_carry_iso_bounds_for_the_local_tooltip() {
+    let ribbon = ribbon_one_down();
+    let drill = &ribbon.segs[0];
+    let drill_ts = format!(r#"data-tip-ts="{}""#, drill.from_iso);
+    let drill_to = format!(r#"data-tip-to="{}""#, drill.to_iso);
+    let plain = &ribbon.segs[1];
+    let plain_attrs = format!(
+        r#"data-tip-ts="{}" data-tip-to="{}""#,
+        plain.from_iso, plain.to_iso
+    );
+    let mut page = sample_page();
+    page.ribbon = ribbon;
+    let html = page.render().unwrap();
+    assert!(html.contains(&drill_ts), "drill cell start");
+    assert!(html.contains(&drill_to), "drill cell end");
+    assert!(html.contains(&plain_attrs), "plain cell range");
 }
 
 #[test]
 fn build_fleet_ribbon_emits_48_segs_when_empty() {
-    let from = snapped_from();
-    let r = build_fleet_ribbon(&[], from, &HashMap::new());
+    let r = build_fleet_ribbon(&[], ribbon_now(), &HashMap::new());
     assert_eq!(r.segs.len(), RIBBON_BUCKETS);
     assert!(r.segs.iter().all(|s| s.class == "none"));
     assert_eq!(r.uptime_label, "—");
@@ -656,7 +713,8 @@ fn build_fleet_ribbon_emits_48_segs_when_empty() {
 
 #[test]
 fn build_fleet_ribbon_classifies_rows_into_slots() {
-    let from = snapped_from();
+    let now = ribbon_now();
+    let from = ribbon_from(now);
     let from_ts = from.timestamp();
     let bucket = RIBBON_BUCKET_SECONDS as i64;
     let rows = vec![
@@ -679,7 +737,7 @@ fn build_fleet_ribbon_classifies_rows_into_slots() {
             down_targets: vec![],
         },
     ];
-    let r = build_fleet_ribbon(&rows, from, &HashMap::new());
+    let r = build_fleet_ribbon(&rows, now, &HashMap::new());
     assert_eq!(r.segs[0].class, "op");
     assert_eq!(r.segs[1].class, "deg");
     assert_eq!(r.segs[2].class, "maj");
@@ -691,7 +749,8 @@ fn build_fleet_ribbon_classifies_rows_into_slots() {
 
 #[test]
 fn build_fleet_ribbon_drops_out_of_window_rows() {
-    let from = snapped_from();
+    let now = ribbon_now();
+    let from = ribbon_from(now);
     let from_ts = from.timestamp();
     // Storage `WHERE minute >= from AND minute < to` should already
     // filter these, but the view layer drops them defensively so a
@@ -716,21 +775,22 @@ fn build_fleet_ribbon_drops_out_of_window_rows() {
             down_targets: vec![],
         },
     ];
-    let r = build_fleet_ribbon(&rows, from, &HashMap::new());
+    let r = build_fleet_ribbon(&rows, now, &HashMap::new());
     assert!(r.segs.iter().all(|s| s.class == "none"));
     assert_eq!(r.uptime_label, "—");
 }
 
 #[test]
 fn build_fleet_ribbon_handles_all_down_slot() {
-    let from = snapped_from();
+    let now = ribbon_now();
+    let from = ribbon_from(now);
     let rows = vec![FleetRibbonBucket {
         bucket_ts: from.timestamp(),
         samples: 50,
         up: 0,
         down_targets: vec![],
     }];
-    let r = build_fleet_ribbon(&rows, from, &HashMap::new());
+    let r = build_fleet_ribbon(&rows, now, &HashMap::new());
     assert_eq!(r.segs[0].class, "maj");
     assert_eq!(r.segs[0].stat, "0.0%");
     assert_eq!(r.uptime_label, "0.00%");
@@ -741,7 +801,8 @@ fn build_fleet_ribbon_sums_multiple_rows_in_same_slot() {
     // Storage emits one row per CH bucket so this shouldn't happen,
     // but the +=-into-fixed-array contract is the whole point of the
     // stack array — pin it.
-    let from = snapped_from();
+    let now = ribbon_now();
+    let from = ribbon_from(now);
     let rows = vec![
         FleetRibbonBucket {
             bucket_ts: from.timestamp(),
@@ -756,14 +817,15 @@ fn build_fleet_ribbon_sums_multiple_rows_in_same_slot() {
             down_targets: vec![],
         },
     ];
-    let r = build_fleet_ribbon(&rows, from, &HashMap::new());
+    let r = build_fleet_ribbon(&rows, now, &HashMap::new());
     assert_eq!(r.segs[0].class, "deg"); // 96/100 → 96 % → deg
     assert_eq!(r.uptime_label, "96.00%");
 }
 
 #[test]
 fn build_fleet_ribbon_previews_capped_down_names() {
-    let from = snapped_from();
+    let now = ribbon_now();
+    let from = ribbon_from(now);
     let ids: Vec<Uuid> = (0..8).map(|_| Uuid::new_v4()).collect();
     let names: HashMap<Uuid, String> = ids
         .iter()
@@ -776,7 +838,7 @@ fn build_fleet_ribbon_previews_capped_down_names() {
         up: 60,
         down_targets: ids.clone(),
     }];
-    let r = build_fleet_ribbon(&rows, from, &names);
+    let r = build_fleet_ribbon(&rows, now, &names);
     let seg = &r.segs[0];
     assert_eq!(
         &*seg.down_targets,
@@ -790,7 +852,8 @@ fn build_fleet_ribbon_previews_capped_down_names() {
 }
 
 fn ribbon_one_down() -> FleetRibbon {
-    let from = snapped_from();
+    let now = ribbon_now();
+    let from = ribbon_from(now);
     let id = Uuid::new_v4();
     let mut names = HashMap::new();
     names.insert(id, "api".to_string());
@@ -800,7 +863,7 @@ fn ribbon_one_down() -> FleetRibbon {
         up: 4,
         down_targets: vec![id],
     }];
-    build_fleet_ribbon(&rows, from, &names)
+    build_fleet_ribbon(&rows, now, &names)
 }
 
 #[test]
@@ -824,11 +887,15 @@ fn ribbon_drill_cell_toggles_off_when_active() {
     let bucket = ribbon.segs[0].bucket_ts;
     let mut page = sample_page();
     page.ribbon = ribbon;
-    page.drill = Some(DrillChip {
-        down_at: bucket,
-        label: "00:00".into(),
-    });
+    page.drill = Some(DrillChip { down_at: bucket });
     let html = page.render().unwrap();
+    assert!(
+        html.contains(&format!(
+            r#"<time data-tz="at" datetime="{}">"#,
+            fmt_ts(DateTime::from_timestamp(bucket, 0).unwrap())
+        )),
+        "chip time follows the viewer's timezone"
+    );
     assert!(
         html.contains("dashboard-ribbon__seg--active"),
         "active cell is ringed"

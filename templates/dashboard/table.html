@@ -53,6 +53,7 @@
     </span>
     {% endif %}
     {% if let Some(c) = drill %}
+    {% let at = c.at() %}
     <span class="mx-1">·</span>
     <a class="dashboard-drill-chip"
        role="button"
@@ -62,7 +63,7 @@
        hx-select="#dashboard-table"
        hx-swap="outerHTML"
        hx-push-url="true"
-       hx-trigger="click, keyup[key=='Enter']">down {{ c.label }} <span aria-hidden="true">✕</span><span class="sr-only">clear filter</span></a>
+       hx-trigger="click, keyup[key=='Enter']">down <time data-tz="at" datetime="{{ at|iso_ts }}">{{ at|human_ts }}</time> <span aria-hidden="true">✕</span><span class="sr-only">clear filter</span></a>
     {% endif %}
   </p>
 

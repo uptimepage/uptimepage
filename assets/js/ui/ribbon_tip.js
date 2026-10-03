@@ -35,8 +35,7 @@
     // Bucket window in the visitor's timezone from the ISO bucket bounds;
     // multi-day ranges (the ribbon carries data-tip-date) include the date so
     // thirty "12:00" cells stay distinguishable. Falls back to the server's
-    // UTC data-tip-time when the ISO attrs or Intl are missing (fleet rail
-    // cells carry no data-tip-ts and keep their old label).
+    // UTC data-tip-time when the ISO attrs or Intl are missing.
     function tipLabel(seg) {
         var iso = seg.getAttribute("data-tip-ts");
         var fmt = window.smLocalFmt;
@@ -44,11 +43,14 @@
             var from = new Date(iso);
             if (!isNaN(from.getTime())) {
                 var withDate = !!seg.closest("[data-tip-date]");
-                var start = withDate ? fmt.dayTime(from) : fmt.time(from);
+                var fromTime = fmt.time(from);
+                var start = withDate ? fmt.dayTime(from) : fromTime;
                 var to = new Date(seg.getAttribute("data-tip-to") || "");
                 if (isNaN(to.getTime()) || to.getTime() <= from.getTime()) return start;
-                var end = withDate && !sameLocalDay(from, to) ? fmt.dayTime(to) : fmt.time(to);
-                return start + " – " + end;
+                var endTime = fmt.time(to);
+                // A last cell clamped to now moments after it began.
+                if (to.getTime() - from.getTime() < 60000 && endTime === fromTime) return start;
+                return start + " – " + (withDate && !sameLocalDay(from, to) ? fmt.dayTime(to) : endTime);
             }
         }
         return seg.getAttribute("data-tip-time") || "";

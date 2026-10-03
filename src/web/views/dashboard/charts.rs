@@ -9,6 +9,7 @@ use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
 use crate::domain::metrics::{DashboardSparkBucket, FleetRibbonBucket, PriorPeriodSummary};
+use crate::templates::format::fmt_ts;
 
 use super::*;
 
@@ -266,14 +267,14 @@ pub(super) fn checks_delta(
 /// Map CH ribbon rows → fixed-length 48-seg view. Buckets the storage
 /// layer omitted (no samples) become `none`. Aggregate uptime label is
 /// computed from the same sample totals so the displayed % matches the
-/// segs the operator sees. `from` must already be bucket-aligned (see
-/// `snap_to_bucket`) so labels line up with the CH `toStartOfInterval`
-/// grid.
+/// segs the operator sees. Cells sit on the `ribbon_from(now)` grid so they
+/// line up with the CH `toStartOfInterval` buckets.
 pub(super) fn build_fleet_ribbon(
     rows: &[FleetRibbonBucket],
-    from: DateTime<Utc>,
+    now: DateTime<Utc>,
     names: &HashMap<Uuid, String>,
 ) -> FleetRibbon {
+    let from = ribbon_from(now);
     let from_ts = from.timestamp();
     let bucket = RIBBON_BUCKET_SECONDS as i64;
     let mut filled: [(u64, u64); RIBBON_BUCKETS] = [(0, 0); RIBBON_BUCKETS];
@@ -299,6 +300,7 @@ pub(super) fn build_fleet_ribbon(
     let mut segs: Vec<FleetRibbonSeg> = Vec::with_capacity(RIBBON_BUCKETS);
     for (i, (samples, up)) in filled.iter().enumerate() {
         let slot_start = from + Duration::seconds(i as i64 * bucket);
+        let slot_end = (slot_start + Duration::seconds(bucket)).min(now);
         let down = std::mem::take(&mut down_by_slot[i]);
         let (class, stat) = if *samples == 0 {
             ("none", "no data".to_string())
@@ -314,6 +316,8 @@ pub(super) fn build_fleet_ribbon(
         segs.push(FleetRibbonSeg {
             class,
             time: slot_start.format("%H:%M").to_string(),
+            from_iso: fmt_ts(slot_start),
+            to_iso: fmt_ts(slot_end),
             stat,
             down_preview: Arc::from(down_preview.into_boxed_slice()),
             bucket_ts: from_ts + i as i64 * bucket,
@@ -324,6 +328,13 @@ pub(super) fn build_fleet_ribbon(
         segs: Arc::from(segs.into_boxed_slice()),
         uptime_label: pct_label(total_samples, total_up),
     }
+}
+
+/// Start of the ribbon window: the last cell is the half hour holding `now`.
+pub(super) fn ribbon_from(now: DateTime<Utc>) -> DateTime<Utc> {
+    let bucket = i64::from(RIBBON_BUCKET_SECONDS);
+    snap_to_bucket(now, RIBBON_BUCKET_SECONDS)
+        - Duration::seconds((RIBBON_BUCKETS as i64 - 1) * bucket)
 }
 
 /// Round `t` down to the nearest `bucket_seconds` boundary so the

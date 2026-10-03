@@ -139,11 +139,14 @@ pub struct StatusCounts {
 
 /// One cell of the 48-seg fleet ribbon. A non-empty `down_targets` makes the
 /// cell a drill link (`bucket_ts` is its `down_at` value); `down_preview` caps
-/// the tooltip's names while the drill keeps the full set.
+/// the tooltip's names while the drill keeps the full set. `time` is the UTC
+/// fallback for the `from_iso`/`to_iso` range.
 #[derive(Clone)]
 pub struct FleetRibbonSeg {
     pub class: &'static str,
     pub time: String,
+    pub from_iso: String,
+    pub to_iso: String,
     pub stat: String,
     pub down_preview: Arc<[String]>,
     pub bucket_ts: i64,
@@ -153,7 +156,7 @@ pub struct FleetRibbonSeg {
 #[derive(Clone)]
 pub struct FleetRibbon {
     pub segs: Arc<[FleetRibbonSeg]>,
-    /// Aggregate uptime label across the full 24h window ("99.71%" or "—").
+    /// Aggregate uptime label across all cells ("99.71%" or "—").
     pub uptime_label: String,
 }
 

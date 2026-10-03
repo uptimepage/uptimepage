@@ -18,7 +18,7 @@ use crate::web::views::incidents::members_map;
 use super::charts::{
     ACTIVE_INCIDENTS_LIMIT, TYPE_CHIP_ORDER, avg_response_label, build_fleet_ribbon,
     build_kpi_cards, build_type_counts, fleet_sparks, format_count, group_sparks, pct_label,
-    range_span, snap_to_bucket, tally_status,
+    range_span, ribbon_from, tally_status,
 };
 use super::*;
 
@@ -96,10 +96,6 @@ pub(super) async fn build_snapshot(
     let from = to - range_span(range);
     let time_range = TimeRange { from, to };
     let spark_from = to - Duration::minutes(SPARK_MINUTES);
-    // Snap to a bucket boundary so the CH-side `toStartOfInterval` grid
-    // aligns 1:1 with the labels we render. Without this `from = now -
-    // 24h` is mid-bucket and the tooltips drift by up to 29 minutes.
-    let ribbon_from = snap_to_bucket(to - Duration::hours(RIBBON_HOURS), RIBBON_BUCKET_SECONDS);
 
     // Region view lists only targets that run there — otherwise off-region
     // monitors fill the page (showing "—") and the ROW_LIMIT truncates the
@@ -130,7 +126,7 @@ pub(super) async fn build_snapshot(
         state.results_store.last_n_summary(org, time_range, region),
         state
             .results_store
-            .fleet_ribbon(org, ribbon_from, to, RIBBON_BUCKET_SECONDS, region),
+            .fleet_ribbon(org, ribbon_from(to), to, RIBBON_BUCKET_SECONDS, region),
         state
             .results_store
             .prior_period_summary(org, time_range, region),
@@ -266,7 +262,7 @@ pub(super) async fn build_snapshot(
     );
 
     let matches = rows.len();
-    let ribbon = build_fleet_ribbon(&ribbon_rows, ribbon_from, &target_names);
+    let ribbon = build_fleet_ribbon(&ribbon_rows, to, &target_names);
     Ok(DashboardSnapshot {
         rows: Arc::from(rows.into_boxed_slice()),
         kpi_cards: Arc::from(kpi_cards.into_boxed_slice()),

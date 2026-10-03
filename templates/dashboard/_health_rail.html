@@ -39,15 +39,17 @@
     <div class="dashboard-ribbon" role="group" aria-label="Fleet uptime over the last 24 hours; select a dip to filter the monitors below">
       {% for seg in ribbon.segs.iter() %}
       {% if seg.down_targets.is_empty() %}
-      <span class="dashboard-ribbon__seg dashboard-ribbon__seg--{{ seg.class }}" data-tip-time="{{ seg.time }}" data-tip-stat="{{ seg.stat }}" aria-hidden="true"></span>
+      <span class="dashboard-ribbon__seg dashboard-ribbon__seg--{{ seg.class }}" data-tip-time="{{ seg.time }}" data-tip-ts="{{ seg.from_iso }}" data-tip-to="{{ seg.to_iso }}" data-tip-stat="{{ seg.stat }}" aria-hidden="true"></span>
       {% else %}
       <button type="button"
               class="dashboard-ribbon__seg dashboard-ribbon__seg--{{ seg.class }} dashboard-ribbon__seg--drill{% if let Some(c) = drill %}{% if c.down_at == seg.bucket_ts %} dashboard-ribbon__seg--active{% endif %}{% endif %}"
               data-tip-time="{{ seg.time }}"
+              data-tip-ts="{{ seg.from_iso }}"
+              data-tip-to="{{ seg.to_iso }}"
               data-tip-stat="{{ seg.stat }}"
               data-tip-count="{{ seg.down_targets.len() }}"
               aria-pressed="{% if let Some(c) = drill %}{% if c.down_at == seg.bucket_ts %}true{% else %}false{% endif %}{% else %}false{% endif %}"
-              aria-label="{{ seg.time }} {{ seg.stat }}, {{ seg.down_targets.len() }} monitor{% if seg.down_targets.len() != 1 %}s{% endif %} down — toggle filter"
+              aria-label="{{ seg.time }} UTC {{ seg.stat }}, {{ seg.down_targets.len() }} monitor{% if seg.down_targets.len() != 1 %}s{% endif %} down — toggle filter"
               hx-get="/?range={{ range }}{% if let Some(c) = drill %}{% if c.down_at != seg.bucket_ts %}&down_at={{ seg.bucket_ts }}{% endif %}{% else %}&down_at={{ seg.bucket_ts }}{% endif %}{% if let Some(r) = selected_region %}&region={{ r }}{% endif %}{% if let Some(s) = selected_status %}&status={{ s }}{% endif %}{% if let Some(k) = selected_kind %}&type={{ k }}{% endif %}"
               hx-target="#dashboard-table"
               hx-select="#dashboard-table"

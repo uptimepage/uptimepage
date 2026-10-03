@@ -22,7 +22,7 @@
             data-tip-ts="{{ seg.from_iso }}"
             data-tip-to="{{ seg.to_iso }}"
             data-tip-stat="{{ seg.stat }}"
-            aria-label="{{ seg.time }} · {{ seg.stat }} — show checks in this window"></button>
+            aria-label="{{ seg.time }} UTC · {{ seg.stat }} — show checks in this window"></button>
     {% else %}
     <span class="dashboard-ribbon__seg dashboard-ribbon__seg--{{ seg.class }}" data-tip-time="{{ seg.time }}" data-tip-ts="{{ seg.from_iso }}" data-tip-to="{{ seg.to_iso }}" data-tip-stat="{{ seg.stat }}" data-total="{{ seg.total }}" data-bad="{{ seg.bad }}" aria-hidden="true"></span>
     {% endif %}

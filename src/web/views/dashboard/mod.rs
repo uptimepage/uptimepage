@@ -70,9 +70,9 @@ pub(crate) const FILTER_ANY: &str = "any";
 /// fresh 1 h trace per monitor.
 const SPARK_MINUTES: i64 = 60;
 const SPARK_BUCKETS: usize = SPARK_MINUTES as usize;
-/// Fixed fleet ribbon: 24 h split into 48 × 30-minute cells. Window is
-/// independent of the selected range so the ribbon always reads as
-/// "last 24 h fleet health" regardless of the table's rollup span.
+/// Fixed fleet ribbon: 48 × 30-minute cells, the last one the half hour in
+/// progress. Window is independent of the selected range so the ribbon always
+/// reads as "last 24 h fleet health" regardless of the table's rollup span.
 const RIBBON_HOURS: i64 = 24;
 const RIBBON_BUCKETS: usize = 48;
 const RIBBON_BUCKET_SECONDS: u32 = (RIBBON_HOURS as u32 * 3600) / RIBBON_BUCKETS as u32;
@@ -209,7 +209,12 @@ pub(crate) fn resolve_region(requested: Option<String>, regions: &[String]) -> O
 #[derive(Clone)]
 pub struct DrillChip {
     pub down_at: i64,
-    pub label: String,
+}
+
+impl DrillChip {
+    pub fn at(&self) -> DateTime<Utc> {
+        DateTime::from_timestamp(self.down_at, 0).unwrap_or_default()
+    }
 }
 
 /// A ribbon-cell drill resolved against the cached snapshot: the chip plus the
@@ -226,11 +231,8 @@ fn resolve_drill(snapshot: &DashboardSnapshot, down_at: i64) -> Option<Drill> {
         .segs
         .iter()
         .find(|s| s.bucket_ts == down_at && !s.down_targets.is_empty())?;
-    let label = DateTime::<Utc>::from_timestamp(down_at, 0)?
-        .format("%H:%M")
-        .to_string();
     Some(Drill {
-        chip: DrillChip { down_at, label },
+        chip: DrillChip { down_at },
         down: seg.down_targets.iter().map(Uuid::to_string).collect(),
     })
 }
