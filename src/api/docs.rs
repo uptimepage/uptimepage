@@ -217,7 +217,7 @@ use crate::storage::UptimeStats;
             crate::domain::ManualCheck,
             crate::domain::ManualStatus,
             crate::domain::ManualState,
-            crate::targets::SetManualState,
+            crate::target_ops::SetManualState,
             TlsCertCheck,
             DomainExpiryCheck,
             DnsCheck,

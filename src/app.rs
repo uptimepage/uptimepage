@@ -26,7 +26,7 @@ use crate::storage::{
     Actor, IncidentNarrationStore, LifecycleOutcome, MaintenanceStore, NotificationChannelStore,
     ResultSink, ResultsStore, TargetStore,
 };
-use crate::target_ops::TargetOps;
+use crate::target_ops::{ManualOps, TargetOps};
 use crate::worker::WorkerPool;
 
 /// Per-(org, window-days) incident metrics cache for `/incidents/reports`.
@@ -264,8 +264,8 @@ impl AppState {
         }
     }
 
-    pub fn manual_ops(&self) -> crate::targets::ManualOps<'_> {
-        crate::targets::ManualOps {
+    pub fn manual_ops(&self) -> ManualOps<'_> {
+        ManualOps {
             targets: self.target_store.as_ref(),
             store: self.manual_store.as_ref(),
             runtime: &self.manual_runtime,

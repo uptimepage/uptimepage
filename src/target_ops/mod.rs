@@ -1,9 +1,12 @@
-//! What every surface that creates a monitor or probes one interactively must
-//! do the same way. The REST handlers and the MCP tools both call it, so a
-//! guard added here is on every front door at once.
+//! What every surface that creates a monitor, probes one interactively or sets
+//! a manual monitor's state must do the same way. The REST handlers and the MCP
+//! tools both call it, so a guard added here is on every front door at once.
 
 mod guards;
+mod manual;
 mod probe;
+
+pub use manual::{ManualOps, SetManualState, vet_note};
 
 use uuid::Uuid;
 

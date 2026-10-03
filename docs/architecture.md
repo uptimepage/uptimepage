@@ -91,7 +91,8 @@ src/
 ├── mcp/              in-process MCP server (typed, authorized, audited tools)
 ├── oauth/            OAuth 2.1 authorization server backing the MCP connector
 ├── channels/         notification-channel create/repair shared by the API and the UI
-├── target_ops/       monitor create and interactive probe shared by the API and MCP
+├── target_ops/       monitor create, interactive probe and manual state, shared by the
+│                     API and MCP
 ├── maintenance_ops.rs  maintenance window rules shared by the API and MCP
 ├── analytics.rs      sign-in funnel events for Umami
 ├── marketing/        apex/www/blog/docs/landing pages; no storage or tenancy imports

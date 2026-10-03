@@ -11,11 +11,11 @@ use crate::domain::notification_channel::NotificationChannel;
 use crate::domain::target::{NewTarget, TargetUpdate};
 use crate::domain::{CheckSpec, TargetAlerts, WriteSource};
 use crate::quotas::ratelimit::RateLimitCategory;
+use crate::target_ops::vet_note;
 use crate::targets::validate::{
     validate_alert_confirmations, validate_group_name, validate_region_policy,
     validate_renotify_interval,
 };
-use crate::targets::vet_note;
 use crate::web::views::describe_check;
 
 use crate::mcp::auth::McpAuth;

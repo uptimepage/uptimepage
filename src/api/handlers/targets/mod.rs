@@ -26,7 +26,8 @@ use crate::request::{
     TargetsWrite, TokenScopes,
 };
 use crate::storage::TargetFilter;
-use crate::targets::{HeartbeatInfo, SetManualState, heartbeat_info, heartbeat_info_from};
+use crate::target_ops::SetManualState;
+use crate::targets::{HeartbeatInfo, heartbeat_info, heartbeat_info_from};
 
 const BULK_MAX: usize = 10_000;
 const LIST_LIMIT_DEFAULT: usize = 50;
