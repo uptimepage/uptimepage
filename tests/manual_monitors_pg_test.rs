@@ -320,6 +320,25 @@ async fn escalation_marks_an_open_incident_down_live_pg() {
         Some("marked down"),
         "an incident already down is left alone"
     );
+    let notes: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT kind, actor_type, message FROM incident_events WHERE incident_id = $1",
+    )
+    .bind(id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(notes.len(), 1, "one note for the one escalation: {notes:?}");
+    assert_eq!(
+        (notes[0].0.as_str(), notes[0].1.as_str()),
+        ("note", "system")
+    );
+    assert!(
+        notes[0]
+            .2
+            .as_deref()
+            .is_some_and(|m| m.contains("raised to down")),
+        "{notes:?}"
+    );
 
     cleanup(&pool, &[org_a], &[user_a]).await;
 }

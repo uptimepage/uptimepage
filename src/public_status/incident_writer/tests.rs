@@ -1493,6 +1493,47 @@ fn escalation_diagnostics_require_quorum_and_keep_region_agreement() {
     }
 }
 
+/// Escalation takes the quorum an opening needs: one region going hard down
+/// while the others recover is not an outage the policy would call.
+#[test]
+fn one_region_below_quorum_does_not_escalate() {
+    let base = Utc.with_ymd_and_hms(2026, 5, 13, 12, 0, 0).unwrap();
+    let t = Uuid::now_v7();
+    let regions = ["eu-helsinki", "us-east", "apac-sg"];
+    let mut open = open_at(t, base, CheckStatus::Degraded);
+    open.regions_down = regions.iter().map(|r| r.to_string()).collect();
+    let down = |n: usize| -> Vec<(String, Vec<CheckResult>)> {
+        regions
+            .iter()
+            .enumerate()
+            .map(|(i, region)| {
+                let last = if i < n {
+                    CheckStatus::Down
+                } else {
+                    CheckStatus::Up
+                };
+                (
+                    region.to_string(),
+                    vec![
+                        result(t, ts(base, 0), CheckStatus::Degraded),
+                        result(t, ts(base, 60), CheckStatus::Degraded),
+                        result(t, ts(base, 120), last),
+                    ],
+                )
+            })
+            .collect()
+    };
+    assert_eq!(
+        decide_multi(t, std::slice::from_ref(&open), &down(1), 2, 2),
+        vec![],
+        "one recovery check closes nothing, and one region escalates nothing"
+    );
+    assert!(matches!(
+        decide_multi(t, std::slice::from_ref(&open), &down(2), 2, 2).as_slice(),
+        [Action::Escalate { .. }]
+    ));
+}
+
 /// An error is as often our probe as the service, so it never turns a
 /// degraded incident into an outage.
 #[test]

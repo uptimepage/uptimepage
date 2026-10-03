@@ -101,6 +101,7 @@ fn sample_page() -> DetailPage {
         coverage: None,
         interval_s: 60,
         enabled: true,
+        plan_held: false,
         tags: vec!["prod".into()],
         managed_by: None,
         share_count: 0,
@@ -196,6 +197,29 @@ fn a_manual_card_names_who_set_the_state() {
     assert!(
         !html.contains("</time> by "),
         "a former member is not named"
+    );
+}
+
+/// A held monitor writes no result, so the card says a set waits for the plan,
+/// and for the enable too when it is also paused.
+#[test]
+fn a_held_manual_card_says_a_change_waits_for_the_plan() {
+    let mut p = sample_page();
+    p.kind = "MANUAL";
+    p.manual = Some(crate::domain::ManualState::initial(chrono::Utc::now()));
+    p.plan_held = true;
+    let html = p.render().unwrap();
+    assert!(
+        html.contains("Held:</span> your plan no longer covers"),
+        "{html}"
+    );
+    assert!(!html.contains("Paused:"));
+
+    p.enabled = false;
+    let html = p.render().unwrap();
+    assert!(
+        html.contains("Held and paused:</span> a change is kept and takes effect once your plan covers this monitor and you enable it"),
+        "{html}"
     );
 }
 

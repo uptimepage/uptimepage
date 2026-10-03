@@ -73,7 +73,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Set the state of a manual monitor: up, degraded or down. A manual monitor has no probe; its state is whatever an operator last set, for a service only people can judge, such as a SIP trunk, a carrier link or a partner's back office. Down or degraded opens an incident within about 30 seconds, which pages the monitor's channels unless a maintenance window holds it, and shows on its status pages as a major outage or degraded performance; up closes the incident. The note becomes the incident's cause, so make it a reason a responder can act on. Refused for any other kind of monitor. Asks for confirmation where the client can show a prompt; otherwise runs on the token's scope. Not read-only; idempotent.",
+        description = "Set the state of a manual monitor: up, degraded or down. A manual monitor has no probe; its state is whatever an operator last set, for a service only people can judge, such as a SIP trunk, a carrier link or a partner's back office. Down or degraded opens an incident within about 30 seconds, which pages the monitor's channels unless a maintenance window holds it, and shows on its status pages as a major outage or degraded performance; up closes the incident. A paused monitor, or one the plan no longer covers, keeps the state and acts on it once it runs again. The note becomes the incident's cause, so make it a reason a responder can act on. Refused for any other kind of monitor. Asks for confirmation where the client can show a prompt; otherwise runs on the token's scope. Not read-only; idempotent.",
         title = "Set manual monitor state",
         annotations(
             read_only_hint = false,

@@ -6,10 +6,13 @@ use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-use crate::domain::{CheckStatus, OrgId};
+use crate::domain::{ActorType, CheckStatus, IncidentEventKind, OrgId};
 use crate::error::Result;
 
 use super::{IncidentStore, NewOpenIncident, OpenIncident};
+
+/// The timeline entry an escalation leaves, so the incident shows when it got worse.
+const ESCALATED_NOTE: &str = "raised to down: the monitor is confirmed down";
 
 pub struct PgIncidentStore {
     pool: PgPool,
@@ -295,14 +298,21 @@ impl IncidentStore for PgIncidentStore {
         error_sample: Option<String>,
     ) -> Result<()> {
         sqlx::query(
-            "UPDATE incidents SET status_at_start = 'down', \
-                    error_sample = COALESCE($3, error_sample), updated_at = now() \
-             WHERE id = $1 AND org_id = $2 AND ended_at IS NULL \
-               AND status_at_start <> 'down'",
+            "WITH raised AS ( \
+                 UPDATE incidents SET status_at_start = 'down', \
+                        error_sample = COALESCE($3, error_sample), updated_at = now() \
+                 WHERE id = $1 AND org_id = $2 AND ended_at IS NULL \
+                   AND origin = 'monitor' AND status_at_start <> 'down' \
+                 RETURNING id, org_id) \
+             INSERT INTO incident_events (org_id, incident_id, kind, actor_type, message) \
+             SELECT org_id, id, $4, $5, $6 FROM raised",
         )
         .bind(incident_id)
         .bind(org.0)
         .bind(error_sample)
+        .bind(IncidentEventKind::Note.as_db_str())
+        .bind(ActorType::System.as_db_str())
+        .bind(ESCALATED_NOTE)
         .execute(&self.pool)
         .await
         .context("incident escalate")?;

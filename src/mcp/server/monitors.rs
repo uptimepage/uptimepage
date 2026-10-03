@@ -8,7 +8,7 @@ use rmcp::service::RequestContext;
 
 use crate::auth::scope::Scope;
 use crate::domain::notification_channel::NotificationChannel;
-use crate::domain::target::{NewTarget, TargetUpdate};
+use crate::domain::target::{NewTarget, Target, TargetUpdate};
 use crate::domain::{CheckSpec, TargetAlerts, WriteSource};
 use crate::quotas::ratelimit::RateLimitCategory;
 use crate::target_ops::vet_note;
@@ -216,7 +216,7 @@ impl McpServer {
         if current.matches(status, &note) {
             return Ok(Json(manual_state_set(id, current, false)));
         }
-        let effect = manual_set_effect(target.enabled, current.status, status);
+        let effect = manual_set_effect(&target, current.status, status);
         let shown_note = note
             .as_deref()
             .map(|n| format!(" Note: \"{}\".", sanitize_prompt(n)))
@@ -241,7 +241,9 @@ impl McpServer {
             .await
             .map_err(|e| McpToolError::internal(format!("manual state: {e}")))?;
         // Every set moves `set_at`; who made the last one is not the state.
-        if state_now.set_at != current.set_at || target_now.enabled != target.enabled {
+        if state_now.set_at != current.set_at
+            || manual_set_effect(&target_now, current.status, status) != effect
+        {
             return Err(McpToolError::new(
                 codes::CONFLICT,
                 "monitor changed while the change was being confirmed; read it again and retry",
@@ -748,12 +750,19 @@ fn manual_state_set(
 /// What a set will do, said before it is approved. Incidents only ever get
 /// worse while open, so a softer bad state changes the cause, not the outage.
 pub(super) fn manual_set_effect(
-    enabled: bool,
+    target: &Target,
     from: crate::domain::ManualStatus,
     to: crate::domain::ManualStatus,
 ) -> &'static str {
     use crate::domain::ManualStatus::{Degraded, Down, Up};
-    if !enabled {
+    let held = target.plan_hold_at.is_some();
+    if held && !target.enabled {
+        return "The plan no longer covers this monitor and it is paused: the state is kept and takes effect once the plan covers it and it is enabled.";
+    }
+    if held {
+        return "The plan no longer covers this monitor: the state is kept and takes effect once it does.";
+    }
+    if !target.enabled {
         return "The monitor is paused: the state is kept and takes effect once it is enabled.";
     }
     match (from, to) {

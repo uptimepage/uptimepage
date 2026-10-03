@@ -2306,10 +2306,30 @@ fn a_past_end_is_refused_rather_than_quietly_becoming_now() {
 fn the_manual_prompt_states_the_real_effect() {
     use super::monitors::manual_set_effect as effect;
     use crate::domain::ManualStatus::{Degraded, Down, Up};
-    assert!(effect(true, Up, Down).contains("opens an incident"));
-    assert!(effect(true, Degraded, Down).contains("becomes an outage"));
-    assert!(effect(true, Down, Degraded).contains("stays an outage"));
-    assert!(effect(true, Down, Down).contains("note becomes the cause"));
-    assert!(effect(true, Down, Up).contains("closes"));
-    assert!(effect(false, Up, Down).contains("paused"));
+    let live = stored_monitor();
+    assert!(effect(&live, Up, Down).contains("opens an incident"));
+    assert!(effect(&live, Degraded, Down).contains("becomes an outage"));
+    assert!(effect(&live, Down, Degraded).contains("stays an outage"));
+    assert!(effect(&live, Down, Down).contains("note becomes the cause"));
+    assert!(effect(&live, Down, Up).contains("closes"));
+    let paused = Target {
+        enabled: false,
+        ..stored_monitor()
+    };
+    assert!(effect(&paused, Up, Down).contains("paused"));
+    let held = Target {
+        plan_hold_at: Some(Utc::now()),
+        ..stored_monitor()
+    };
+    let text = effect(&held, Up, Down);
+    assert!(
+        text.contains("plan no longer covers") && !text.contains("paused"),
+        "{text}"
+    );
+    let both = Target {
+        enabled: false,
+        ..held
+    };
+    let text = effect(&both, Up, Down);
+    assert!(text.contains("plan covers it and it is enabled"), "{text}");
 }

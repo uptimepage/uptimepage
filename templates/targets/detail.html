@@ -64,7 +64,7 @@
       {{ current }} since <time datetime="{{ m.set_at|iso_ts }}" data-tz="exact">{{ m.set_at|human_ts }}</time>{% if let Some(who) = manual_set_by %} by {{ who }}{% endif %}{% if let Some(n) = m.note %}: <span class="text-body">{{ n }}</span>{% endif %}.
       Each press replaces the note with what is typed here, so press the current
       state to reword it.
-      {% if !enabled %}<span class="hl">Paused:</span> a change is kept and takes effect when you enable the monitor.{% endif %}
+      {% if plan_held && !enabled %}<span class="hl">Held and paused:</span> a change is kept and takes effect once your plan covers this monitor and you enable it.{% else if plan_held %}<span class="hl">Held:</span> your plan no longer covers this monitor, so a change is kept and takes effect once it does.{% else if !enabled %}<span class="hl">Paused:</span> a change is kept and takes effect when you enable the monitor.{% endif %}
     </p>
   </section>
   {% endif %}

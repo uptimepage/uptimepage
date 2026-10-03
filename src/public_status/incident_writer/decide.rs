@@ -147,8 +147,10 @@ pub fn decide_multi(
                 });
             }
             // Only to down: an error is as often our probe as the service, so
-            // it never turns a degraded incident into an outage.
-            if inc.worst_status != CheckStatus::Down
+            // it never turns a degraded incident into an outage. Judged as an
+            // opening is: the quorum confirms a failure, the worst sets its status.
+            if bad.len() >= quorum
+                && inc.worst_status != CheckStatus::Down
                 && worst_status(&bad) == Some(CheckStatus::Down)
             {
                 actions.push(Action::Escalate {

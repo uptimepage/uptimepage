@@ -10,7 +10,7 @@ Some services can only be judged by the people running them: a SIP trunk, a carr
 
 **Like any other monitor.** Down or degraded opens an incident within about 30 seconds and pages its channels, unless a maintenance window holds paging. Status pages show a major outage or degraded performance, and up closes the incident. There is no confirmation count to wait out, because the person who set the state already confirmed it. Downtime counts against uptime, and the monitor counts toward your monitor limit.
 
-**Who and when.** The monitor page shows when the current state was set and which member set it. Every change is recorded with who made it, and setting the same state with the same note again changes nothing. A paused manual monitor keeps the state you set and reports it once you enable it.
+**Who and when.** The monitor page shows when the current state was set and which member set it. Every change is recorded with who made it, and setting the same state with the same note again changes nothing. A manual monitor that is paused, or that your plan no longer covers, keeps the state you set and reports it once it runs again.
 
 **Access.** Reading the state needs `targets:read` and setting it needs `targets:write`, so existing tokens and MCP connections with those scopes can use it now.
 

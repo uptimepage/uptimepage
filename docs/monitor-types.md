@@ -118,7 +118,7 @@ From there it behaves like any other monitor. Down or degraded opens an incident
 
 The optional note, one line of at most 200 characters, becomes the incident's cause, so write it for whoever gets paged. Each set replaces the previous note, and while an incident is open a new note replaces its cause too. The monitor's page shows when the current state was set and which member set it, every change is recorded with who made it, and setting the same state with the same note again changes nothing.
 
-A paused manual monitor keeps a state you set and reports it once you enable it again. Test and check-now do not apply, and it never runs on regional probes.
+A manual monitor that is paused, or that your plan no longer covers, keeps a state you set and reports it once it runs again. Test and check-now do not apply, and it never runs on regional probes.
 
 ## TLS certificate
 

@@ -128,6 +128,8 @@ pub struct DetailPage {
     pub address: String,
     pub interval_s: u64,
     pub enabled: bool,
+    /// Over the plan's caps, so not checked until the plan covers it again.
+    pub plan_held: bool,
     pub tags: Vec<String>,
     /// `terraform`/`api` chip for externally-managed monitors; `None` (UI) hides it.
     pub managed_by: Option<&'static str>,
@@ -384,6 +386,7 @@ pub async fn index(
         address,
         interval_s: target.interval.as_secs(),
         enabled: target.enabled,
+        plan_held: target.plan_hold_at.is_some(),
         tags: target.tags,
         managed_by: target.write_source.managed_label(),
         share_count,

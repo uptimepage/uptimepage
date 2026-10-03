@@ -81,8 +81,8 @@ pub trait IncidentStore: Send + Sync {
     /// A union, so two writers widening at once both land.
     async fn widen(&self, org: OrgId, incident_id: Uuid, regions: &[String]) -> Result<()>;
     /// Mark a still-open incident down, with the cause of the failure that
-    /// took it there when there is one. Never lowers it, so two writers
-    /// escalating at once both land.
+    /// took it there when there is one, and note it on the timeline. Never
+    /// lowers it, so two writers escalating at once leave one note.
     async fn escalate(
         &self,
         org: OrgId,
