@@ -25,6 +25,8 @@ pub struct BrandingView {
     pub brand_text: &'static str,
     pub logo_url: Option<String>,
     pub show_powered_by: bool,
+    /// The Licenses and Source code footer links. See [`enforce_source_links`].
+    pub show_source_links: bool,
     pub style: &'static str,
     /// Where the status page lives on this host: every self-link and its
     /// canonical URL use it. See [`status_home`].
@@ -87,6 +89,7 @@ impl BrandingView {
                 .as_deref()
                 .map(|h| format!("{LOGO_ROUTE}?v={h}")),
             show_powered_by: o.branding.show_powered_by(cfg.default_show_powered_by),
+            show_source_links: true,
             style: o.branding.public_style.as_str(),
             home,
             hide_from_search: o.branding.public_hide_from_search,
@@ -146,6 +149,8 @@ pub(super) async fn resolve_branding(
         state.cfg.marketing.enabled,
         white_label,
     );
+    view.show_source_links =
+        enforce_source_links(state.cfg.marketing.enabled, view.show_powered_by);
     view.follow_website_link = enforce_follow_link(
         state.cfg.marketing.enabled,
         white_label,
@@ -170,6 +175,13 @@ pub(super) fn status_home(state: &AppState, headers: &HeaderMap) -> &'static str
 /// white-label plans keep the stored preference.
 pub(super) fn enforce_powered_by(stored: bool, saas: bool, white_label: bool) -> bool {
     if saas && !white_label { true } else { stored }
+}
+
+/// The links go with the enforced badge on SaaS. A self-host operator running
+/// modified code owes its network users the source (AGPL-3.0 section 13), so
+/// the toggle never removes them there.
+pub(super) fn enforce_source_links(saas: bool, show_powered_by: bool) -> bool {
+    !saas || show_powered_by
 }
 
 /// Hosted signup is open, so a followed link needs a plan that sells

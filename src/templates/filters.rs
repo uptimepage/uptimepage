@@ -33,9 +33,20 @@ mod static_refs {
         Ok(SOURCE_URL.as_str())
     }
 
+    /// Short form for display; [`source_url`] keeps the full commit.
     #[askama::filter_fn]
     pub fn source_commit(_: &str, _: &dyn askama::Values) -> askama::Result<&'static str> {
-        Ok(env!("SM_SOURCE_COMMIT"))
+        Ok(short_commit(env!("SM_SOURCE_COMMIT")))
+    }
+
+    /// CI bakes the full `$GITHUB_SHA`; a local build already has 12. Any
+    /// other override, such as a tag, prints as given.
+    fn short_commit(commit: &str) -> &str {
+        if commit.len() > 12 && commit.bytes().all(|b| b.is_ascii_hexdigit()) {
+            &commit[..12]
+        } else {
+            commit
+        }
     }
 
     /// Product documentation. Absolute and upstream on purpose: docs are
@@ -96,6 +107,22 @@ mod static_refs {
     #[askama::filter_fn]
     pub fn billing_ui(_: &str, _: &dyn askama::Values) -> askama::Result<bool> {
         Ok(*BILLING_UI.get().unwrap_or(&false))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::short_commit;
+
+        #[test]
+        fn short_commit_trims_a_full_sha_and_keeps_shorter_ones() {
+            assert_eq!(
+                short_commit("1a84ee1a5f0c2b7d9e3a4c6b8d0f1e2a3b4c5d6e"),
+                "1a84ee1a5f0c"
+            );
+            assert_eq!(short_commit("1a84ee1a5f0c"), "1a84ee1a5f0c");
+            assert_eq!(short_commit("v0.13.0-acme.1"), "v0.13.0-acme.1");
+            assert_eq!(short_commit(""), "");
+        }
     }
 }
 

@@ -43,8 +43,7 @@
         {% if branding.show_powered_by %}Powered by <a href="https://uptimepage.dev" class="hover:text-body">uptimepage</a> · {% endif %}
         <a href="{{ view.rss_url }}" class="hover:text-body">RSS</a> ·
         Updated <time datetime="{{ view.generated_at|iso_ts }}" data-tz>{{ view.generated_at|human_ts }}</time>
-        · <a href="https://github.com/uptimepage/uptimepage/blob/main/THIRD-PARTY-LICENSES.md" class="hover:text-body" rel="noopener" target="_blank">Licenses</a>
-        · {% include "_source.html" %}
+        {% include "public/_source_links.html" %}
     </footer>
 </body>
 </html>

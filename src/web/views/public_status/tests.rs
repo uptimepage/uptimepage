@@ -28,6 +28,14 @@ fn powered_by_forced_for_saas_non_white_label() {
     assert!(!enforce_powered_by(false, false, false));
 }
 
+#[test]
+fn source_links_follow_the_badge_only_on_saas() {
+    assert!(enforce_source_links(true, true));
+    assert!(!enforce_source_links(true, false));
+    assert!(enforce_source_links(false, true));
+    assert!(enforce_source_links(false, false));
+}
+
 fn sample_page() -> PublicStatusPage {
     PublicStatusPage {
         overall: OverallStatus {
@@ -643,6 +651,43 @@ fn powered_by_shown_by_default() {
     assert!(
         html.contains(r#"<a href="https://uptimepage.dev" class="hover:text-body">uptimepage</a>"#)
     );
+}
+
+#[test]
+fn footer_source_links_follow_their_flag() {
+    let branding = |show_source_links| BrandingView {
+        show_source_links,
+        ..sample_branding()
+    };
+    let status = |b: BrandingView| {
+        StatusFullPage {
+            view: build_view(&sample_page(), &[], &Default::default()),
+            branding: b,
+            og: OgMeta::default(),
+        }
+        .render()
+        .unwrap()
+    };
+    let incident = |b: BrandingView| {
+        let inc = fake_incident(Utc::now() - ChronoDuration::hours(2), 8, "Blip");
+        IncidentDetailPage {
+            branding: b,
+            incident: IncidentDetailView::from_incident(&inc, Utc::now()),
+            generated_at: Utc::now(),
+            rss_url: RSS_URL,
+            og: OgMeta::default(),
+        }
+        .render()
+        .unwrap()
+    };
+    for render in [&status as &dyn Fn(BrandingView) -> String, &incident] {
+        let html = render(branding(true));
+        assert!(html.contains(">Licenses</a>"));
+        assert!(html.contains("Source code (AGPL-3.0)"));
+        let html = render(branding(false));
+        assert!(!html.contains(">Licenses</a>"));
+        assert!(!html.contains("Source code (AGPL-3.0)"));
+    }
 }
 
 // PRE-MORTEM PM #6: a relaxed DB/app validator must not let a crafted

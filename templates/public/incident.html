@@ -112,6 +112,7 @@
         {% if branding.show_powered_by %}Powered by <a href="https://uptimepage.dev" class="hover:text-body">uptimepage</a> · {% endif %}
         <a href="{{ rss_url }}" class="hover:text-body">RSS</a> ·
         Updated <time datetime="{{ generated_at|iso_ts }}" data-tz>{{ generated_at|human_ts }}</time>
+        {% include "public/_source_links.html" %}
     </footer>
 </body>
 </html>
