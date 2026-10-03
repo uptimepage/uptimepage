@@ -1052,3 +1052,51 @@ async fn a_pending_heartbeat_with_results_shows_them_on_every_surface() {
         );
     }
 }
+
+/// The monitors list reads a 30-day rollup at hour grain, so "Last check" has
+/// to come from the newest raw result, not the start of that result's bucket.
+#[tokio::test]
+async fn monitors_list_shows_the_last_check_to_the_second() {
+    use chrono::{DurationRound, TimeDelta};
+
+    let state = common::build_test_app_state(|_| {});
+    let sink = state.result_sink.clone();
+    let router = common::with_session(
+        uptimepage::build_app_router(state, tokio_util::sync::CancellationToken::new()),
+        common::test_user_id(),
+        Some(common::test_org_id()),
+        Some("test-owner-session"),
+    );
+
+    let id = create_http_target(&router, "last-check").await;
+    let checked_at = chrono::Utc::now()
+        .duration_trunc(TimeDelta::minutes(1))
+        .unwrap()
+        - TimeDelta::seconds(97);
+    sink.write_batch(&[uptimepage::domain::CheckResult {
+        target_id: id.parse().expect("target id"),
+        org_id: common::test_org_id().0,
+        timestamp: checked_at,
+        status: uptimepage::domain::CheckStatus::Up,
+        duration_ms: 12,
+        dns_ms: None,
+        connect_ms: None,
+        tls_ms: None,
+        ttfb_ms: None,
+        response_code: Some(200),
+        response_size: None,
+        diagnostic: None,
+        error: None,
+    }])
+    .await
+    .expect("seed a stored result");
+
+    let resp = router
+        .oneshot(Request::get("/targets").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let html = body_text(resp).await;
+    let expected = format!("datetime=\"{}\"", checked_at.format("%Y-%m-%dT%H:%M:%SZ"));
+    assert!(html.contains(&expected), "last check renders {expected}");
+}

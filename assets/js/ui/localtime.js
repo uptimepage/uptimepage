@@ -1,5 +1,5 @@
 // Renders every <time data-tz datetime="<UTC ISO8601>"> in the visitor's own
-// browser timezone. Two modes, chosen per element:
+// browser timezone. The mode is chosen per element:
 //   data-tz           — relative label for recency glances ("Just now",
 //                        "2 mins ago", "Today at 2:30 PM"), absolute date once
 //                        older. For summaries where "how recent" is the point.
@@ -11,7 +11,10 @@
 //                        "until …" ("today at 6:00 PM", "tomorrow at 9:00
 //                        AM", "Mon at 9:00 AM", then the date). For instants
 //                        near now or ahead of it, where "ago" would misread.
-// The title tooltip always carries the full local timestamp with zone name.
+//   data-tz="date"    — the day alone ("Today", "Yesterday", then the date),
+//                        tooltip included. For an instant known only to the
+//                        hour, where a clock time would be made up.
+// The title tooltip otherwise carries the full local timestamp with zone name.
 //
 // The server emits a UTC fallback as the element's text, so the page is fully
 // readable without JavaScript; this script only upgrades it. Relative labels
@@ -31,7 +34,7 @@
         return undefined;
     }
 
-    var timeFmt, timeSecFmt, dateFmt, dateYearFmt, dayTimeFmt, dayTimeYearFmt, weekdayFmt, exactFmt, fullFmt;
+    var timeFmt, timeSecFmt, dateFmt, dateYearFmt, dayTimeFmt, dayTimeYearFmt, weekdayFmt, exactFmt, fullDateFmt, fullFmt;
     try {
         // hourCycle is one of the few component options allowed alongside
         // timeStyle; undefined leaves the locale default untouched.
@@ -44,6 +47,7 @@
         dayTimeYearFmt = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hourCycle: hc });
         weekdayFmt = new Intl.DateTimeFormat(undefined, { weekday: "short" });
         exactFmt = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium", hourCycle: hc });
+        fullDateFmt = new Intl.DateTimeFormat(undefined, { dateStyle: "full" });
         fullFmt = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "long", hourCycle: hc });
     } catch (_) { /* Intl unavailable: leave server text untouched */ }
 
@@ -85,6 +89,18 @@
             : dayTimeYearFmt.format(then);
     }
 
+    function dateLabel(then, now) {
+        return then.getFullYear() === now.getFullYear()
+            ? dateFmt.format(then)
+            : dateYearFmt.format(then);
+    }
+
+    function dayLabel(then, now) {
+        if (sameDay(then, now)) return "Today";
+        if (sameDay(then, shiftDays(now, -1))) return "Yesterday";
+        return dateLabel(then, now);
+    }
+
     function relativeLabel(then, now) {
         var elapsedSec = Math.round((now.getTime() - then.getTime()) / 1000);
         // Clock skew or pending writes can put an instant slightly ahead.
@@ -93,8 +109,7 @@
         if (mins < 60) return mins + (mins === 1 ? " min ago" : " mins ago");
         if (sameDay(then, now)) return "Today at " + timeFmt.format(then);
         if (sameDay(then, shiftDays(now, -1))) return "Yesterday at " + timeFmt.format(then);
-        if (then.getFullYear() === now.getFullYear()) return dateFmt.format(then);
-        return dateYearFmt.format(then);
+        return dateLabel(then, now);
     }
 
     function decorate(root) {
@@ -107,10 +122,11 @@
             var el = nodes[i];
             var then = new Date(el.getAttribute("datetime"));
             if (isNaN(then.getTime())) continue;
-            var full = fullFmt.format(then);
             var mode = el.getAttribute("data-tz");
+            var full = mode === "date" ? fullDateFmt.format(then) : fullFmt.format(then);
             el.textContent = mode === "exact" ? exactFmt.format(then)
                 : mode === "at" ? atLabel(then, now)
+                : mode === "date" ? dayLabel(then, now)
                 : relativeLabel(then, now);
             // Visible relative text loses the precise instant; keep the full
             // local timestamp reachable to assistive tech and on hover.

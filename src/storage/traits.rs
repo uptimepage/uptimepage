@@ -549,6 +549,15 @@ pub trait ResultsStore: Send + Sync {
         range: TimeRange,
         region: Option<&str>,
     ) -> Result<Vec<DashboardMetrics>>;
+    /// Newest raw result timestamp per monitor since `since`, at check
+    /// precision. No upper bound, so a result from an agent whose clock runs
+    /// ahead still counts. Monitors with no result since then are absent.
+    async fn last_check_times(
+        &self,
+        org: OrgId,
+        target_ids: &[Uuid],
+        since: DateTime<Utc>,
+    ) -> Result<HashMap<Uuid, DateTime<Utc>>>;
     /// Each region's latest verdict, to fold against the monitor's policy. A
     /// region with no samples in `range` is absent, and so out of the quorum
     /// denominator.

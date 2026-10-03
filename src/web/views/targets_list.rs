@@ -1,13 +1,11 @@
-//! Operator Monitors page. Four round-trips per request: PG `list`, one
-//! batched CH `dashboard_rollup`, PG confirmed downtime, PG `list_members`
-//! for owners.
+//! Operator Monitors page.
 
 use std::collections::HashMap;
 
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::extract::{Query, State};
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -27,6 +25,10 @@ use crate::web::views::{PageSizeLink, PagerLink, describe_check};
 const DEFAULT_LIMIT: usize = 50;
 const MAX_LIMIT: usize = 200;
 const UPTIME_WINDOW_DAYS: i64 = 30;
+/// Raw results read for the exact last check. The glance label shows a clock
+/// time only for today and yesterday; older checks fall back to the hourly
+/// 30d rollup, where the label shows just the date.
+const LAST_CHECK_LOOKBACK_HOURS: i64 = 48;
 const UNGROUPED_LABEL: &str = "Ungrouped";
 const TYPE_CHIPS: &[&str] = &[
     "HTTP",
@@ -89,10 +91,8 @@ pub struct MonitorRow {
     pub group_name: Option<String>,
     pub last_status: &'static str,
     pub status_class: &'static str,
-    /// UTC instant of the last check; `None` when no samples. Drives the
-    /// client-side local-time rewrite; `last_check_label` is the no-JS fallback.
-    pub last_check_at: Option<chrono::DateTime<Utc>>,
-    pub last_check_label: String,
+    /// `None` when no samples.
+    pub last_check: Option<LastCheckCell>,
     pub uptime_30d_label: String,
     pub owner: Option<OwnerView>,
     /// `terraform`/`api` chip for externally-managed monitors; `None` (UI) hides it.
@@ -334,14 +334,16 @@ async fn build_page(state: &AppState, org: OrgId, params: &ListParams) -> WebRes
         to: now,
     };
     let window_secs = (range.to - range.from).num_seconds();
-    let (metrics_by_target, folded_status, downtime_by_target): (
-        HashMap<Uuid, DashboardMetrics>,
-        HashMap<Uuid, CheckStatus>,
-        HashMap<Uuid, i64>,
-    ) = if targets.is_empty() {
-        (HashMap::new(), HashMap::new(), HashMap::new())
+    let PageReads {
+        metrics_by_target,
+        folded_status,
+        downtime_by_target,
+        last_checks,
+    } = if targets.is_empty() {
+        PageReads::default()
     } else {
-        let (rollup, folded, downtime) = tokio::join!(
+        let ids: Vec<Uuid> = targets.iter().map(|t| t.id).collect();
+        let (rollup, folded, downtime, last_checks) = tokio::join!(
             state.results_store.dashboard_rollup(org, range, None),
             crate::targets::folded_status(
                 state.results_store.as_ref(),
@@ -352,12 +354,21 @@ async fn build_page(state: &AppState, org: OrgId, params: &ListParams) -> WebRes
             state
                 .incident_narration_store
                 .confirmed_downtime_by_target(org, range),
+            state.results_store.last_check_times(
+                org,
+                &ids,
+                now - ChronoDuration::hours(LAST_CHECK_LOOKBACK_HOURS)
+            ),
         );
-        (
-            rollup?.into_iter().map(|m| (m.target_id, m)).collect(),
-            folded,
-            downtime?,
-        )
+        PageReads {
+            metrics_by_target: rollup?.into_iter().map(|m| (m.target_id, m)).collect(),
+            folded_status: folded,
+            downtime_by_target: downtime?,
+            last_checks: last_checks.unwrap_or_else(|err| {
+                tracing::warn!(error = %err, "last check times unavailable, showing the rollup's");
+                HashMap::new()
+            }),
+        }
     };
 
     let members = match state.db.as_ref() {
@@ -404,13 +415,20 @@ async fn build_page(state: &AppState, org: OrgId, params: &ListParams) -> WebRes
             downtime_by_target.get(&t.id).copied().unwrap_or(0),
             window_secs,
         );
+        let last_check = match last_checks.get(&t.id) {
+            Some(&at) => Some(LastCheckCell::result(at, now)),
+            None => metrics
+                .and_then(|m| m.last_minute_ts)
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0))
+                .map(LastCheckCell::rollup),
+        };
         let row = build_row(
             &t,
             metrics,
             folded_status.get(&t.id).copied(),
             uptime_30d_label,
+            last_check,
             &owner_lookup,
-            now,
             &flapping,
         );
         if !row.enabled {
@@ -578,13 +596,48 @@ fn uptime_label(
     }
 }
 
+/// The "Last check" cell. A raw result is known to the second; the hourly
+/// rollup only to the start of its bucket, so that one prints the day alone.
+pub struct LastCheckCell {
+    pub at: DateTime<Utc>,
+    pub day_only: bool,
+    /// The no-JS fallback.
+    pub label: String,
+}
+
+impl LastCheckCell {
+    fn result(at: DateTime<Utc>, now: DateTime<Utc>) -> Self {
+        Self {
+            at,
+            day_only: false,
+            label: relative_ago(now - at),
+        }
+    }
+
+    fn rollup(bucket: DateTime<Utc>) -> Self {
+        Self {
+            at: bucket,
+            day_only: true,
+            label: bucket.format("%b %-d").to_string(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct PageReads {
+    metrics_by_target: HashMap<Uuid, DashboardMetrics>,
+    folded_status: HashMap<Uuid, CheckStatus>,
+    downtime_by_target: HashMap<Uuid, i64>,
+    last_checks: HashMap<Uuid, DateTime<Utc>>,
+}
+
 fn build_row(
     t: &Target,
     metrics: Option<&DashboardMetrics>,
     folded: Option<CheckStatus>,
     uptime_30d_label: String,
+    last_check: Option<LastCheckCell>,
     owner_lookup: &HashMap<Uuid, MemberLite>,
-    now: chrono::DateTime<Utc>,
     flapping: &std::collections::HashSet<Uuid>,
 ) -> MonitorRow {
     let (kind, address) = describe_check(&t.check);
@@ -603,13 +656,6 @@ fn build_row(
     let class = status_while_watched(class, t.plan_hold_at.is_some());
     let last_status = class;
     let status_class = class;
-
-    let last_check_at = metrics
-        .and_then(|m| m.last_minute_ts)
-        .and_then(|ts| chrono::DateTime::<Utc>::from_timestamp(ts, 0));
-    let last_check_label = last_check_at
-        .map(|then| relative_ago(now - then))
-        .unwrap_or_else(|| "—".into());
 
     let owner = t.owner_user_id.and_then(|id| {
         owner_lookup.get(&id).map(|m| OwnerView {
@@ -630,8 +676,7 @@ fn build_row(
         group_name: t.group_name.clone(),
         last_status,
         status_class,
-        last_check_at,
-        last_check_label,
+        last_check,
         uptime_30d_label,
         owner,
         managed_by: t.write_source.managed_label(),
@@ -804,14 +849,26 @@ mod tests {
             group_name: group.map(str::to_owned),
             last_status: status,
             status_class: status_class_for(status),
-            last_check_at: None,
-            last_check_label: "3s ago".into(),
+            last_check: None,
             uptime_30d_label: "99.94%".into(),
             owner: None,
             managed_by: None,
             flapping: false,
             plan_held: false,
         }
+    }
+
+    #[test]
+    fn a_rollup_last_check_claims_only_its_day() {
+        let bucket = "2026-09-30T14:00:00Z".parse().unwrap();
+        let cell = LastCheckCell::rollup(bucket);
+        assert!(cell.day_only, "the bucket start is not when the check ran");
+        assert_eq!(cell.label, "Sep 30");
+
+        let at = "2026-09-30T14:47:12Z".parse().unwrap();
+        let cell = LastCheckCell::result(at, at + ChronoDuration::seconds(97));
+        assert!(!cell.day_only);
+        assert_eq!(cell.label, "1m ago");
     }
 
     #[test]
@@ -907,7 +964,12 @@ mod tests {
             total: 1,
             worst_status: "up",
             avg_uptime_label: "99.99%".into(),
-            rows: vec![row("api", Some("API & Web"), "up", true)],
+            rows: vec![MonitorRow {
+                last_check: Some(LastCheckCell::rollup(
+                    "2026-09-30T14:00:00Z".parse().unwrap(),
+                )),
+                ..row("api", Some("API & Web"), "up", true)
+            }],
         };
         let page = ListPage {
             active_tab: "targets",
@@ -941,6 +1003,7 @@ mod tests {
         let html = page.render().unwrap();
         // Askama escapes `&` to the numeric reference `&#38;`.
         assert!(html.contains("API &#38; Web"));
+        assert!(html.contains(r#"datetime="2026-09-30T14:00:00Z" data-tz="date">Sep 30</time>"#));
         assert!(html.contains("api"));
         assert!(html.contains("99.99%"));
         // Per-row uptime is also rendered.

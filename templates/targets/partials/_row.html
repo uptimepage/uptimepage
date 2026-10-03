@@ -32,7 +32,7 @@
     {% endfor %}
   </span>
   <span class="monitors-row__last">
-    {% if let Some(ts) = row.last_check_at %}<time class="monitors-row__num" datetime="{{ ts|iso_ts }}" data-tz>{{ row.last_check_label }}</time>{% else %}<span class="monitors-row__num">{{ row.last_check_label }}</span>{% endif %}
+    {% if let Some(lc) = row.last_check %}<time class="monitors-row__num" datetime="{{ lc.at|iso_ts }}" data-tz{% if lc.day_only %}="date"{% endif %}>{{ lc.label }}</time>{% else %}<span class="monitors-row__num">—</span>{% endif %}
   </span>
   <span class="monitors-row__uptime">
     <span class="monitors-row__uptime-val{% if row.status_class == "down" || row.status_class == "error" %} monitors-row__uptime-val--bad{% else if row.status_class == "degraded" %} monitors-row__uptime-val--warn{% endif %}">{{ row.uptime_30d_label }}</span>

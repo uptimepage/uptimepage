@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -888,6 +889,47 @@ impl ResultsStore for ClickhouseResultsStore {
                     last_minute_ts: (r.last_minute_ts > 0).then_some(r.last_minute_ts as i64),
                 }
             })
+            .collect())
+    }
+
+    async fn last_check_times(
+        &self,
+        org: OrgId,
+        target_ids: &[Uuid],
+        since: DateTime<Utc>,
+    ) -> Result<HashMap<Uuid, DateTime<Utc>>> {
+        #[derive(Row, Deserialize)]
+        struct LastRow {
+            #[serde(with = "clickhouse::serde::uuid")]
+            target_id: Uuid,
+            last_ts: u32,
+        }
+        if target_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        // Typed ids, so the literal list is injection-safe; it hits the
+        // (org_id, target_id, ...) sort key instead of reading the whole org.
+        let id_list = target_ids
+            .iter()
+            .map(|t| format!("'{t}'"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let rows: Vec<LastRow> = self
+            .client
+            .query(&format!(
+                "SELECT target_id, toUInt32(max(timestamp)) AS last_ts FROM {TABLE} \
+                 WHERE org_id = ? AND target_id IN ({id_list}) \
+                 AND timestamp >= fromUnixTimestamp(?) \
+                 GROUP BY target_id"
+            ))
+            .bind(org.0)
+            .bind(since.timestamp())
+            .fetch_all::<LastRow>()
+            .await
+            .context("clickhouse last_check_times")?;
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.target_id, from_unix_secs(r.last_ts)))
             .collect())
     }
 

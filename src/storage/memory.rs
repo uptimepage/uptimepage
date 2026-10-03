@@ -229,6 +229,27 @@ impl ResultsStore for InMemorySink {
         Ok(out)
     }
 
+    async fn last_check_times(
+        &self,
+        _org: OrgId,
+        target_ids: &[Uuid],
+        since: DateTime<Utc>,
+    ) -> Result<std::collections::HashMap<Uuid, DateTime<Utc>>> {
+        let guard = self.results.lock();
+        let mut latest: std::collections::HashMap<Uuid, DateTime<Utc>> =
+            std::collections::HashMap::new();
+        for r in guard.iter() {
+            if r.timestamp < since || !target_ids.contains(&r.target_id) {
+                continue;
+            }
+            latest
+                .entry(r.target_id)
+                .and_modify(|cur| *cur = (*cur).max(r.timestamp))
+                .or_insert(r.timestamp);
+        }
+        Ok(latest)
+    }
+
     async fn latest_status_by_region(
         &self,
         _org: OrgId,

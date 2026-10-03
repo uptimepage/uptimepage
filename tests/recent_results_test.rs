@@ -1,7 +1,7 @@
-//! ClickHouse integration test for the batched multi-target results read that
-//! backs the incident writer. Exercises the real `target_id IN (...)` query,
-//! the per-`(target, region)` cap, region tagging, and the `(org, target)`
-//! pair filter.
+//! ClickHouse integration tests for the multi-target raw results reads: the
+//! batched read behind the incident writer (`target_id IN (...)`, the
+//! per-`(target, region)` cap, region tagging, the `(org, target)` pair
+//! filter) and the monitors list's last check times.
 //!
 //! Skipped by default. Requires a ClickHouse the migrations have run against:
 //!
@@ -305,4 +305,80 @@ async fn list_failures_by_region_drops_up_and_scopes_region() {
         .expect("page 2");
     assert_eq!(p1.len(), 2);
     assert_eq!(p2.len(), 1);
+}
+
+#[tokio::test]
+#[ignore = "requires ClickHouse (CLICKHOUSE_URL)"]
+async fn last_check_times_take_the_newest_result_across_regions() {
+    let Some(ch) = common::ch_client_from_env().await else {
+        eprintln!("skipped: CLICKHOUSE_URL not set");
+        return;
+    };
+    let sink_eu = ClickhouseResultSink::new(
+        ch.clone(),
+        "eu".into(),
+        "agent-eu".into(),
+        OrgTtlDays::new(),
+    );
+    let sink_us = ClickhouseResultSink::new(
+        ch.clone(),
+        "us".into(),
+        "agent-us".into(),
+        OrgTtlDays::new(),
+    );
+    let store = ClickhouseResultsStore::from_client(ch);
+
+    let org = Uuid::now_v7();
+    let other_org = Uuid::now_v7();
+    let fresh = Uuid::now_v7();
+    let ahead = Uuid::now_v7();
+    let stale = Uuid::now_v7();
+    let unlisted = Uuid::now_v7();
+    let foreign = Uuid::now_v7();
+    let now = Utc::now();
+    let ago = |s: i64| now - Duration::seconds(s);
+
+    sink_eu
+        .write_batch(&[
+            result(fresh, org, ago(400)),
+            result(fresh, org, ago(95)),
+            result(ahead, org, now + Duration::seconds(3)),
+            result(stale, org, ago(7200)),
+            result(unlisted, org, ago(5)),
+            result(foreign, other_org, ago(5)),
+        ])
+        .await
+        .expect("seed eu");
+    sink_us
+        .write_batch(&[result(fresh, org, ago(37))])
+        .await
+        .expect("seed us");
+
+    let last = store
+        .last_check_times(OrgId(org), &[fresh, ahead, stale, foreign], ago(3600))
+        .await
+        .expect("last check times");
+
+    assert_eq!(
+        last.get(&fresh).map(|t| t.timestamp()),
+        Some(ago(37).timestamp()),
+        "newest result wins across regions, at second precision"
+    );
+    assert_eq!(
+        last.get(&ahead).map(|t| t.timestamp()),
+        Some((now + Duration::seconds(3)).timestamp()),
+        "a result from an agent clock running ahead still counts"
+    );
+    assert!(
+        !last.contains_key(&stale),
+        "a check before the window is absent"
+    );
+    assert!(
+        !last.contains_key(&unlisted),
+        "a monitor not asked for is absent"
+    );
+    assert!(
+        !last.contains_key(&foreign),
+        "another org's monitor is absent"
+    );
 }
