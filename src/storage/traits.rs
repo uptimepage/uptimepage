@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
@@ -527,18 +527,29 @@ pub trait ResultsStore: Send + Sync {
         range: ClampedRange,
         region: Option<&str>,
     ) -> Result<UptimeStats>;
-    /// Aggregate uptime, response, and incident count across all targets
-    /// in `range`. Returns `(checks_total, checks_up, avg_ms,
-    /// incident_count)`. `avg_ms` is the true sample-weighted mean —
-    /// must come from the same source as `checks_total`/`checks_up` so
-    /// the dashboard's Δ-vs-prior comparison doesn't mix raw and
-    /// per-target-rounded numbers.
+    /// Aggregate uptime and response across all targets in `range`. Returns
+    /// `(checks_total, checks_up, avg_ms)`. `avg_ms` is the true
+    /// sample-weighted mean — must come from the same source as
+    /// `checks_total`/`checks_up` so the dashboard's Δ-vs-prior comparison
+    /// doesn't mix raw and per-target-rounded numbers.
     async fn last_n_summary(
         &self,
         org: OrgId,
         range: TimeRange,
         region: Option<&str>,
-    ) -> Result<(u64, u64, u32, u64)>;
+    ) -> Result<(u64, u64, u32)>;
+    /// Runs of consecutive failed checks per monitor in `region` over `range`,
+    /// summed across the org. Raw: a single failed check is a run, whether or
+    /// not it opened an incident.
+    async fn failure_streaks(&self, org: OrgId, range: TimeRange, region: &str) -> Result<u64>;
+    /// Monitors with at least one check in `[from, to)`, from the
+    /// `check_results_1m` rollup.
+    async fn sampled_targets(
+        &self,
+        org: OrgId,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<HashSet<Uuid>>;
     /// Per-monitor rollup for the operator dashboard table. One row per
     /// target with samples/up/p50/p95/last_status in `range`. Targets
     /// with no samples are omitted; the caller joins the result with the

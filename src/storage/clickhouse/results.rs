@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -699,7 +699,7 @@ impl ResultsStore for ClickhouseResultsStore {
         org: OrgId,
         range: TimeRange,
         region: Option<&str>,
-    ) -> Result<(u64, u64, u32, u64)> {
+    ) -> Result<(u64, u64, u32)> {
         #[derive(Row, Deserialize)]
         struct Counts {
             total: u64,
@@ -726,30 +726,35 @@ impl ResultsStore for ClickhouseResultsStore {
             .fetch_one::<Counts>()
             .await
             .context("clickhouse last_n_summary counts")?;
+        let avg_ms = if counts.avg_ms.is_finite() {
+            counts.avg_ms.round().clamp(0.0, u32::MAX as f64) as u32
+        } else {
+            0
+        };
+        Ok((counts.total, counts.up, avg_ms))
+    }
 
+    async fn failure_streaks(&self, org: OrgId, range: TimeRange, region: &str) -> Result<u64> {
         // Pull the entire range in one query ordered by (target_id, timestamp).
         // Coalesce per-target client-side; avoids one round-trip per target.
-        let mut rq = self
+        let rows: Vec<IncidentRow> = self
             .client
             .query(&format!(
                 "SELECT target_id, timestamp, status, error FROM {TABLE} \
-                 WHERE org_id = ? {region_pred} \
+                 WHERE org_id = ? AND region = ? \
                  AND timestamp >= fromUnixTimestamp(?) \
                  AND timestamp < fromUnixTimestamp(?) \
                  ORDER BY target_id ASC, timestamp ASC"
             ))
-            .bind(org.0);
-        if let Some(r) = region {
-            rq = rq.bind(r);
-        }
-        let rows: Vec<IncidentRow> = rq
+            .bind(org.0)
+            .bind(region)
             .bind(range.from.timestamp())
             .bind(range.to.timestamp())
             .fetch_all::<IncidentRow>()
             .await
-            .context("clickhouse last_n_summary rows")?;
+            .context("clickhouse failure_streaks")?;
 
-        let mut incidents = 0u64;
+        let mut streaks = 0u64;
         let mut group: Vec<IncidentRow> = Vec::new();
         let mut current_target: Option<Uuid> = None;
         for row in rows {
@@ -757,7 +762,7 @@ impl ResultsStore for ClickhouseResultsStore {
                 Some(t) if t == row.target_id => group.push(row),
                 _ => {
                     if let Some(t) = current_target.take() {
-                        incidents +=
+                        streaks +=
                             coalesce_from_incident_rows(t, std::mem::take(&mut group)).len() as u64;
                     }
                     current_target = Some(row.target_id);
@@ -766,14 +771,34 @@ impl ResultsStore for ClickhouseResultsStore {
             }
         }
         if let Some(t) = current_target {
-            incidents += coalesce_from_incident_rows(t, group).len() as u64;
+            streaks += coalesce_from_incident_rows(t, group).len() as u64;
         }
-        let avg_ms = if counts.avg_ms.is_finite() {
-            counts.avg_ms.round().clamp(0.0, u32::MAX as f64) as u32
-        } else {
-            0
-        };
-        Ok((counts.total, counts.up, avg_ms, incidents))
+        Ok(streaks)
+    }
+
+    async fn sampled_targets(
+        &self,
+        org: OrgId,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<HashSet<Uuid>> {
+        #[derive(Row, Deserialize)]
+        struct Sampled {
+            #[serde(with = "clickhouse::serde::uuid")]
+            target_id: Uuid,
+        }
+        let q = self
+            .client
+            .query(&format!(
+                "SELECT DISTINCT target_id FROM check_results_1m \
+                 WHERE org_id = ? AND {MINUTE_WINDOW}"
+            ))
+            .bind(org.0);
+        let rows: Vec<Sampled> = bind_minute_window(q, from, to)
+            .fetch_all::<Sampled>()
+            .await
+            .context("clickhouse sampled_targets")?;
+        Ok(rows.into_iter().map(|r| r.target_id).collect())
     }
 
     async fn uptime(

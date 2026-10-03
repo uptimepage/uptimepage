@@ -4,7 +4,7 @@ use chrono::Duration;
 
 use crate::domain::metrics::{DashboardSparkBucket, FleetRibbonBucket, PriorPeriodSummary};
 use crate::domain::{ActorType, IncidentAcknowledgement, IncidentSeverity, UserId};
-use crate::storage::IncidentBrief;
+use crate::storage::{IncidentBrief, IncidentSpan, TimeRange};
 use crate::templates::format::fmt_ts;
 
 use super::charts::*;
@@ -16,6 +16,7 @@ fn sample_kpis() -> DashboardKpis {
         avg_response_ms_label: "142 ms".into(),
         checks_label: "17.3k".into(),
         checks_successful_label: "17.0k successful".into(),
+        incidents_label: "Incidents",
         incidents: 3,
     }
 }
@@ -55,7 +56,7 @@ fn sample_row(name: &str, status: &'static str) -> DashboardRow {
 }
 
 fn sample_ribbon() -> FleetRibbon {
-    build_fleet_ribbon(&[], ribbon_now(), &HashMap::new())
+    build_fleet_ribbon(&[], ribbon_now(), &HashMap::new(), None)
 }
 
 fn sample_page() -> DashboardPage {
@@ -188,6 +189,7 @@ fn onboarding_state_skips_table() {
         avg_response_ms_label: "—".into(),
         checks_label: "0".into(),
         checks_successful_label: "0 successful".into(),
+        incidents_label: "Incidents",
         incidents: 0,
     };
     let page = DashboardPage {
@@ -668,7 +670,7 @@ fn build_fleet_ribbon_counts_the_current_half_hour_and_clamps_its_end() {
         up: 10,
         down_targets: vec![],
     }];
-    let r = build_fleet_ribbon(&rows, now, &HashMap::new());
+    let r = build_fleet_ribbon(&rows, now, &HashMap::new(), None);
     let last = r.segs.last().unwrap();
     assert_eq!(last.class, "op");
     assert_eq!(
@@ -705,7 +707,7 @@ fn ribbon_cells_carry_iso_bounds_for_the_local_tooltip() {
 
 #[test]
 fn build_fleet_ribbon_emits_48_segs_when_empty() {
-    let r = build_fleet_ribbon(&[], ribbon_now(), &HashMap::new());
+    let r = build_fleet_ribbon(&[], ribbon_now(), &HashMap::new(), None);
     assert_eq!(r.segs.len(), RIBBON_BUCKETS);
     assert!(r.segs.iter().all(|s| s.class == "none"));
     assert_eq!(r.uptime_label, "—");
@@ -737,7 +739,7 @@ fn build_fleet_ribbon_classifies_rows_into_slots() {
             down_targets: vec![],
         },
     ];
-    let r = build_fleet_ribbon(&rows, now, &HashMap::new());
+    let r = build_fleet_ribbon(&rows, now, &HashMap::new(), None);
     assert_eq!(r.segs[0].class, "op");
     assert_eq!(r.segs[1].class, "deg");
     assert_eq!(r.segs[2].class, "maj");
@@ -775,7 +777,7 @@ fn build_fleet_ribbon_drops_out_of_window_rows() {
             down_targets: vec![],
         },
     ];
-    let r = build_fleet_ribbon(&rows, now, &HashMap::new());
+    let r = build_fleet_ribbon(&rows, now, &HashMap::new(), None);
     assert!(r.segs.iter().all(|s| s.class == "none"));
     assert_eq!(r.uptime_label, "—");
 }
@@ -790,7 +792,7 @@ fn build_fleet_ribbon_handles_all_down_slot() {
         up: 0,
         down_targets: vec![],
     }];
-    let r = build_fleet_ribbon(&rows, now, &HashMap::new());
+    let r = build_fleet_ribbon(&rows, now, &HashMap::new(), None);
     assert_eq!(r.segs[0].class, "maj");
     assert_eq!(r.segs[0].stat, "0.0%");
     assert_eq!(r.uptime_label, "0.00%");
@@ -817,7 +819,7 @@ fn build_fleet_ribbon_sums_multiple_rows_in_same_slot() {
             down_targets: vec![],
         },
     ];
-    let r = build_fleet_ribbon(&rows, now, &HashMap::new());
+    let r = build_fleet_ribbon(&rows, now, &HashMap::new(), None);
     assert_eq!(r.segs[0].class, "deg"); // 96/100 → 96 % → deg
     assert_eq!(r.uptime_label, "96.00%");
 }
@@ -838,7 +840,7 @@ fn build_fleet_ribbon_previews_capped_down_names() {
         up: 60,
         down_targets: ids.clone(),
     }];
-    let r = build_fleet_ribbon(&rows, now, &names);
+    let r = build_fleet_ribbon(&rows, now, &names, None);
     let seg = &r.segs[0];
     assert_eq!(
         &*seg.down_targets,
@@ -849,6 +851,254 @@ fn build_fleet_ribbon_previews_capped_down_names() {
     assert_eq!(seg.down_preview.len(), DOWN_PREVIEW, "preview capped");
     assert_eq!(&seg.down_preview[0], "svc0");
     assert_eq!(&seg.down_preview[5], "svc5");
+    assert_eq!(seg.who, "8 monitors with failed checks");
+}
+
+fn span(target_id: Uuid, from: DateTime<Utc>, mins: i64, status: &str) -> IncidentSpan {
+    IncidentSpan {
+        target_id,
+        started_at: from,
+        ended_at: Some(from + Duration::minutes(mins)),
+        origin: "monitor".into(),
+        severity: IncidentSeverity::Major,
+        status_at_start: status.into(),
+    }
+}
+
+fn declared(target_id: Uuid, from: DateTime<Utc>, mins: i64) -> IncidentSpan {
+    IncidentSpan {
+        origin: "manual".into(),
+        ..span(target_id, from, mins, "down")
+    }
+}
+
+fn last_day(now: DateTime<Utc>) -> TimeRange {
+    TimeRange {
+        from: now - Duration::hours(RIBBON_HOURS),
+        to: now,
+    }
+}
+
+fn checked(samples: u64, up: u64, at: i64, dipped: Vec<Uuid>) -> FleetRibbonBucket {
+    FleetRibbonBucket {
+        bucket_ts: at,
+        samples,
+        up,
+        down_targets: dipped,
+    }
+}
+
+#[test]
+fn confirmed_ribbon_paints_incidents_not_failed_checks() {
+    let now = ribbon_now();
+    let from = ribbon_from(now);
+    let at = |i: i64| from + Duration::seconds(i * RIBBON_BUCKET_SECONDS as i64);
+    let (flaky, api, slow, manual) = (
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+    );
+    let rows = vec![
+        checked(400, 397, at(0).timestamp(), vec![flaky]),
+        checked(400, 380, at(1).timestamp(), vec![api, flaky]),
+        checked(400, 400, at(2).timestamp(), vec![]),
+        checked(400, 400, at(4).timestamp(), vec![]),
+    ];
+    let mut declared = span(manual, at(4), 10, "down");
+    declared.origin = "manual".into();
+    declared.severity = IncidentSeverity::Minor;
+    let confirmed = ConfirmedRibbon {
+        window: last_day(now),
+        spans: vec![
+            span(api, at(1) + Duration::minutes(5), 20, "down"),
+            span(slow, at(2), 10, "degraded"),
+            span(api, at(3), 5, "down"),
+            declared,
+        ],
+        sampled: [flaky, api, slow].into_iter().collect(),
+    };
+    let r = build_fleet_ribbon(&rows, now, &HashMap::new(), Some(&confirmed));
+
+    let blip = &r.segs[0];
+    assert_eq!(
+        (blip.class, blip.blip, blip.stat.as_str()),
+        ("op", true, "no downtime"),
+        "failed checks alone stay green, marked"
+    );
+    assert_eq!(&*blip.down_targets, &[flaky], "still drills to who failed");
+    assert_eq!(blip.who, "1 monitor with failed checks");
+    assert_eq!((blip.total, blip.bad), (400, 3));
+
+    let outage = &r.segs[1];
+    assert_eq!((outage.class, outage.blip), ("maj", false));
+    assert_eq!(outage.stat, "1 incident");
+    assert_eq!(
+        &*outage.down_targets,
+        &[api],
+        "drill names the incident's monitor"
+    );
+    assert_eq!(outage.who, "1 monitor with an incident");
+
+    assert_eq!(r.segs[2].class, "deg", "a degraded incident is yellow");
+    assert_eq!(
+        r.segs[3].class, "deg",
+        "a short outage is amber, even in a cell with no checks"
+    );
+    assert_eq!(
+        r.segs[4].class, "deg",
+        "a minor declaration reads as degraded"
+    );
+    assert_eq!(r.segs[5].class, "none");
+}
+
+#[test]
+fn ribbon_renders_the_blip_mark_and_who_failed() {
+    let now = ribbon_now();
+    let from = ribbon_from(now);
+    let id = Uuid::new_v4();
+    let rows = vec![checked(10, 9, from.timestamp(), vec![id])];
+    let confirmed = ConfirmedRibbon {
+        window: last_day(now),
+        spans: Vec::new(),
+        sampled: [id].into_iter().collect(),
+    };
+    let mut page = sample_page();
+    page.ribbon = build_fleet_ribbon(&rows, now, &HashMap::new(), Some(&confirmed));
+    let html = page.render().unwrap();
+    assert!(html.contains("dashboard-ribbon__seg--op dashboard-ribbon__seg--blip"));
+    assert!(html.contains(r#"data-tip-who="1 monitor with failed checks""#));
+    assert!(html.contains(r#"data-total="10""#) && html.contains(r#"data-bad="1""#));
+    assert!(html.contains("no downtime, 1 monitor with failed checks — toggle filter"));
+    assert!(
+        html.contains("data-tip-fleet"),
+        "fleet tooltips skip per-monitor impact"
+    );
+}
+
+#[test]
+fn confirmed_ribbon_skips_an_incident_that_ended_as_the_cell_began() {
+    let now = ribbon_now();
+    let from = ribbon_from(now);
+    let cell = from + Duration::seconds(RIBBON_BUCKET_SECONDS as i64);
+    let id = Uuid::new_v4();
+    let rows = vec![checked(10, 10, cell.timestamp(), vec![])];
+    let confirmed = ConfirmedRibbon {
+        window: last_day(now),
+        spans: vec![span(id, cell - Duration::minutes(20), 20, "down")],
+        sampled: [id].into_iter().collect(),
+    };
+    let r = build_fleet_ribbon(&rows, now, &HashMap::new(), Some(&confirmed));
+    assert_eq!(r.segs[0].class, "maj");
+    assert_eq!(r.segs[1].class, "op");
+}
+
+#[test]
+fn outage_is_red_once_one_monitor_was_down_half_the_cell() {
+    let now = ribbon_now();
+    let from = ribbon_from(now);
+    let at = |i: i64| from + Duration::seconds(i * RIBBON_BUCKET_SECONDS as i64);
+    let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+    let last = RIBBON_BUCKETS as i64 - 1;
+    let mut ongoing = span(b, at(last) + Duration::minutes(1), 0, "down");
+    ongoing.ended_at = None;
+    let confirmed = ConfirmedRibbon {
+        window: last_day(now),
+        spans: vec![
+            span(a, at(0) + Duration::minutes(2), 3, "down"),
+            // Ten minutes into cell 2 until 25 into cell 3: neither covered whole,
+            // both mostly down.
+            span(a, at(2) + Duration::minutes(10), 45, "down"),
+            // Two monitors at ten minutes each is no one monitor at fifteen.
+            span(a, at(5), 10, "down"),
+            span(b, at(5) + Duration::minutes(15), 10, "down"),
+            // Two short outages on one monitor add up.
+            span(b, at(7), 8, "down"),
+            span(b, at(7) + Duration::minutes(20), 8, "down"),
+            // The current cell is four minutes old: three of them down is most of it.
+            ongoing,
+        ],
+        sampled: [a, b].into_iter().collect(),
+    };
+    let r = build_fleet_ribbon(&[], now, &HashMap::new(), Some(&confirmed));
+    assert_eq!(
+        r.segs[0].class, "deg",
+        "3 of 30 minutes is a partial outage"
+    );
+    assert_eq!(r.segs[2].class, "maj");
+    assert_eq!(r.segs[3].class, "maj");
+    assert_eq!(r.segs[5].class, "deg");
+    assert_eq!(r.segs[5].stat, "2 incidents");
+    assert_eq!(r.segs[5].who, "2 monitors with incidents");
+    assert_eq!(r.segs[7].class, "maj");
+    assert_eq!(r.segs[last as usize].class, "maj");
+}
+
+#[test]
+fn confirmed_ribbon_label_pools_checked_monitors_downtime() {
+    let now = ribbon_now();
+    let (down, healthy, paused) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let confirmed = ConfirmedRibbon {
+        window: last_day(now),
+        spans: vec![
+            span(down, now - Duration::hours(2), 60, "down"),
+            // Started before the 24h window: only its in-window part counts.
+            span(down, now - Duration::hours(25), 120, "down"),
+            // Paused mid-incident: no checks, still down.
+            span(paused, now - Duration::hours(6), 360, "down"),
+        ],
+        sampled: [down, healthy].into_iter().collect(),
+    };
+    let r = build_fleet_ribbon(&[], now, &HashMap::new(), Some(&confirmed));
+    // 2h + 6h of downtime over three monitors' 24h.
+    assert_eq!(r.uptime_label, "88.89%");
+
+    let none_checked = ConfirmedRibbon {
+        window: last_day(now),
+        spans: Vec::new(),
+        sampled: Default::default(),
+    };
+    let r = build_fleet_ribbon(&[], now, &HashMap::new(), Some(&none_checked));
+    assert_eq!(r.uptime_label, "—");
+}
+
+#[test]
+fn overlapping_incidents_on_one_monitor_count_once() {
+    let now = ribbon_now();
+    let from = ribbon_from(now);
+    let id = Uuid::new_v4();
+    let confirmed = ConfirmedRibbon {
+        window: last_day(now),
+        spans: vec![
+            span(id, from + Duration::minutes(5), 10, "down"),
+            declared(id, from + Duration::minutes(5), 10),
+        ],
+        sampled: [id].into_iter().collect(),
+    };
+    let r = build_fleet_ribbon(&[], now, &HashMap::new(), Some(&confirmed));
+    let cell = &r.segs[0];
+    assert_eq!(
+        cell.class, "deg",
+        "10 minutes down, however many incidents say so"
+    );
+    assert_eq!(cell.stat, "2 incidents");
+    assert_eq!(cell.who, "1 monitor with incidents");
+}
+
+#[test]
+fn incident_hint_follows_the_count_it_shows() {
+    let zero = PriorPeriodSummary::default();
+    let mut kpis = sample_kpis();
+    kpis.incidents_label = "Failure streaks";
+    let cards = build_kpi_cards(
+        &kpis,
+        "24h",
+        "17.0k successful".into(),
+        &zero,
+        &zero,
+        &FleetSparks::default(),
+    );
+    assert!(cards[0].hint_html.starts_with("Failure streaks · 24h:"));
 }
 
 fn ribbon_one_down() -> FleetRibbon {
@@ -863,7 +1113,7 @@ fn ribbon_one_down() -> FleetRibbon {
         up: 4,
         down_targets: vec![id],
     }];
-    build_fleet_ribbon(&rows, now, &names)
+    build_fleet_ribbon(&rows, now, &names, None)
 }
 
 #[test]

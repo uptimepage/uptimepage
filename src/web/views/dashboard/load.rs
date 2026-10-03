@@ -3,22 +3,22 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use moka::sync::Cache;
 use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::metrics::{DashboardMetrics, PriorPeriodSummary};
-use crate::domain::{CheckStatus, OrgId, UserId, uptime_pct_from_downtime};
+use crate::domain::{CheckStatus, OrgId, UserId};
 use crate::storage::{IncidentBriefFilter, TargetFilter, TimeRange};
 use crate::web::error::WebResult;
 use crate::web::views::describe_check;
 use crate::web::views::incidents::members_map;
 
 use super::charts::{
-    ACTIVE_INCIDENTS_LIMIT, TYPE_CHIP_ORDER, avg_response_label, build_fleet_ribbon,
-    build_kpi_cards, build_type_counts, fleet_sparks, format_count, group_sparks, pct_label,
-    range_span, ribbon_from, tally_status,
+    ACTIVE_INCIDENTS_LIMIT, ConfirmedRibbon, TYPE_CHIP_ORDER, avg_response_label,
+    build_fleet_ribbon, build_kpi_cards, build_type_counts, fleet_sparks, fleet_uptime_pct,
+    format_count, group_sparks, pct_label, range_span, ribbon_from, tally_status,
 };
 use super::*;
 
@@ -86,6 +86,34 @@ pub(super) async fn load_snapshot(
     Ok(snap)
 }
 
+/// The all-regions ribbon's incidents and checked monitors over the last 24
+/// hours. A region view paints from raw checks, so it reads neither.
+async fn confirmed_ribbon(
+    state: &AppState,
+    org: OrgId,
+    to: DateTime<Utc>,
+    region: Option<&str>,
+) -> crate::error::Result<Option<ConfirmedRibbon>> {
+    if region.is_some() {
+        return Ok(None);
+    }
+    let window = TimeRange {
+        from: to - Duration::hours(RIBBON_HOURS),
+        to,
+    };
+    let (spans, sampled) = tokio::try_join!(
+        state.incident_narration_store.downtime_spans(org, window),
+        state
+            .results_store
+            .sampled_targets(org, window.from, window.to),
+    )?;
+    Ok(Some(ConfirmedRibbon {
+        window,
+        spans,
+        sampled,
+    }))
+}
+
 pub(super) async fn build_snapshot(
     state: &AppState,
     org: OrgId,
@@ -111,8 +139,10 @@ pub(super) async fn build_snapshot(
         mut targets,
         rollup,
         spark_rows,
-        (checks_total, checks_up, avg_ms_current, incidents),
+        (checks_total, checks_up, avg_ms_current),
+        incidents,
         ribbon_rows,
+        ribbon_confirmed,
         prior,
         downtime_by_target,
     ) = tokio::try_join!(
@@ -124,9 +154,26 @@ pub(super) async fn build_snapshot(
             .results_store
             .dashboard_sparkline(org, spark_from, to, region),
         state.results_store.last_n_summary(org, time_range, region),
+        async {
+            match region {
+                None => {
+                    state
+                        .incident_narration_store
+                        .count_overlapping(org, time_range)
+                        .await
+                }
+                Some(r) => {
+                    state
+                        .results_store
+                        .failure_streaks(org, time_range, r)
+                        .await
+                }
+            }
+        },
         state
             .results_store
             .fleet_ribbon(org, ribbon_from(to), to, RIBBON_BUCKET_SECONDS, region),
+        confirmed_ribbon(state, org, to, region),
         state
             .results_store
             .prior_period_summary(org, time_range, region),
@@ -144,11 +191,16 @@ pub(super) async fn build_snapshot(
         targets.truncate(ROW_LIMIT);
     }
 
-    // Only dipped monitors are named in the ribbon tooltip, so clone names for
-    // those ids alone rather than the whole (healthy) fleet on every build.
+    // Only monitors that dipped or had an incident are named in the ribbon
+    // tooltip, so clone names for those ids alone rather than the whole fleet.
     let down_ids: std::collections::HashSet<Uuid> = ribbon_rows
         .iter()
         .flat_map(|r| r.down_targets.iter().copied())
+        .chain(
+            ribbon_confirmed
+                .iter()
+                .flat_map(|c| c.spans.iter().map(|s| s.target_id)),
+        )
         .collect();
     let target_names: HashMap<Uuid, String> = targets
         .iter()
@@ -224,32 +276,32 @@ pub(super) async fn build_snapshot(
         checks_up,
         avg_ms: avg_ms_current,
     };
-    // Time-weighted over sampled monitors so the fleet KPI matches the rows.
-    let fleet_uptime_label = if confirmed {
-        let mut total_down = 0i64;
-        let mut sampled = 0i64;
-        for (id, m) in &metrics_by_target {
-            if m.samples > 0 {
-                sampled += 1;
-                total_down += downtime_by_target.get(id).copied().unwrap_or(0);
-            }
-        }
-        if sampled > 0 {
-            format!(
-                "{:.2}%",
-                uptime_pct_from_downtime(total_down, window_secs * sampled)
-            )
-        } else {
-            pct_label(checks_total, checks_up)
-        }
-    } else {
-        pct_label(checks_total, checks_up)
-    };
+    // Time-weighted over sampled monitors, plus any with downtime and no
+    // checks, so the fleet KPI matches the rows.
+    let fleet_uptime_label = confirmed
+        .then(|| {
+            let sampled = metrics_by_target
+                .iter()
+                .filter(|(_, m)| m.samples > 0)
+                .map(|(id, _)| *id)
+                .collect();
+            fleet_uptime_pct(&sampled, &downtime_by_target, window_secs)
+        })
+        .flatten()
+        .map_or_else(
+            || pct_label(checks_total, checks_up),
+            |p| format!("{p:.2}%"),
+        );
     let kpis = DashboardKpis {
         uptime_pct_label: fleet_uptime_label,
         avg_response_ms_label: avg_response_label(avg_ms_current, checks_total),
         checks_label: format_count(checks_total),
         checks_successful_label: checks_successful_label.clone(),
+        incidents_label: if confirmed {
+            "Incidents"
+        } else {
+            "Failure streaks"
+        },
         incidents,
     };
     let kpi_cards = build_kpi_cards(
@@ -262,7 +314,7 @@ pub(super) async fn build_snapshot(
     );
 
     let matches = rows.len();
-    let ribbon = build_fleet_ribbon(&ribbon_rows, to, &target_names);
+    let ribbon = build_fleet_ribbon(&ribbon_rows, to, &target_names, ribbon_confirmed.as_ref());
     Ok(DashboardSnapshot {
         rows: Arc::from(rows.into_boxed_slice()),
         kpi_cards: Arc::from(kpi_cards.into_boxed_slice()),

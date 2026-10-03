@@ -95,8 +95,7 @@
             seg.getAttribute("data-tip-stat") || ""));
         t.appendChild(head);
 
-        // Detail-ribbon cells carry per-bucket check counts; the fleet rail
-        // doesn't and keeps its monitors-down list below instead.
+        // Per-bucket check counts; the fleet rail adds its monitor list below.
         if (seg.hasAttribute("data-total")) {
             var total = parseInt(seg.getAttribute("data-total") || "0", 10);
             var bad = parseInt(seg.getAttribute("data-bad") || "0", 10);
@@ -109,7 +108,8 @@
                 kv(body, "checks",
                     bad.toLocaleString() + " of " + total.toLocaleString() + " failing",
                     "sm-ribbon-tip__val--bad");
-                var dt = downtimeLabel(seg, total, bad);
+                // A failing share of a whole fleet's checks is no one's downtime.
+                var dt = seg.closest("[data-tip-fleet]") ? null : downtimeLabel(seg, total, bad);
                 if (dt) kv(body, "impact", dt);
             }
             if (seg.hasAttribute("data-ribbon-drill")) {
@@ -120,10 +120,7 @@
 
         var count = parseInt(seg.getAttribute("data-tip-count") || "0", 10);
         if (count > 0) {
-            t.appendChild(el(
-                "sm-ribbon-tip__count",
-                count + (count === 1 ? " monitor down" : " monitors down")
-            ));
+            t.appendChild(el("sm-ribbon-tip__count", seg.getAttribute("data-tip-who") || ""));
 
             var names = seg.querySelectorAll(".ribbon-seg-names > i");
             if (names.length) {

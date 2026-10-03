@@ -3910,6 +3910,10 @@
     .dashboard-ribbon__seg--op   { background: var(--theme-state-ok-strong); }
     .dashboard-ribbon__seg--deg  { background: var(--theme-state-warn-strong); }
     .dashboard-ribbon__seg--maj  { background: var(--theme-state-bad-strong); }
+    /* Checks failed without opening an incident: a notch on the green, not a colour. */
+    .dashboard-ribbon__seg--blip {
+        background-image: linear-gradient(var(--theme-state-warn-strong) 0 2px, transparent 2px);
+    }
     .dashboard-ribbon__seg--none {
         background-image: repeating-linear-gradient(
             -45deg,

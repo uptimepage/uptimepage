@@ -833,6 +833,8 @@ Returns every tag currently in use across the caller's targets (enabled or disab
 }
 ```
 
+`last_24h.incidents` counts incidents open at any point in the last 24 hours, monitor-opened and declared alike, the same ones the incidents list shows. `uptime_pct` beside it is the share of checks that came back up.
+
 `current_status` counts each monitor once, so its five buckets sum to `targets.total`. A monitor with no readable result in the last 24 hours counts as `unknown`. The state is folded across probe regions under the monitor's region policy, matching the console and the MCP tools: failing regions below the monitor's quorum count as `degraded`, not `down`. See [Multi-region probes](multi-region.md#incident-detection-across-regions).
 
 ## On-demand operations

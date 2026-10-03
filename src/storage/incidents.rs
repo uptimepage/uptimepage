@@ -34,6 +34,27 @@ pub struct IncidentBrief {
     pub latest_update: Option<PublicIncidentUpdate>,
 }
 
+/// One downtime incident's span on a monitor, slim enough to paint a timeline.
+/// `origin`, `severity` and `status_at_start` are what an impact is read from.
+#[derive(Debug, Clone)]
+pub struct IncidentSpan {
+    pub target_id: Uuid,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub origin: String,
+    pub severity: IncidentSeverity,
+    pub status_at_start: String,
+}
+
+impl IncidentSpan {
+    /// The part of `range` this incident covers; `None` when it covers none.
+    pub fn clip(&self, range: TimeRange) -> Option<TimeRange> {
+        let from = self.started_at.max(range.from);
+        let to = self.ended_at.unwrap_or(range.to).min(range.to);
+        (from < to).then_some(TimeRange { from, to })
+    }
+}
+
 /// Which slice of an org's incidents [`IncidentNarrationStore::list_briefs`]
 /// returns. `range: None` is unbounded — the open-incident callers don't need a
 /// window and shouldn't have to invent one.
@@ -118,6 +139,11 @@ pub trait IncidentNarrationStore: Send + Sync {
         org: OrgId,
         range: TimeRange,
     ) -> Result<HashMap<Uuid, i64>>;
+    /// Incidents of any origin open at some point in `range`.
+    async fn count_overlapping(&self, org: OrgId, range: TimeRange) -> Result<u64>;
+    /// The incidents [`Self::confirmed_downtime_by_target`] sums, overlapping
+    /// `range`, oldest first.
+    async fn downtime_spans(&self, org: OrgId, range: TimeRange) -> Result<Vec<IncidentSpan>>;
 }
 
 // ── Postgres impl ────────────────────────────────────────────────────────
@@ -509,6 +535,58 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
         .map_err(|e| anyhow::anyhow!("confirmed_downtime_by_target: {e}"))?;
         Ok(rows.into_iter().collect())
     }
+
+    async fn count_overlapping(&self, org: OrgId, range: TimeRange) -> Result<u64> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM incidents \
+             WHERE org_id = $1 AND started_at < $3 AND (ended_at IS NULL OR ended_at >= $2)",
+        )
+        .bind(org.0)
+        .bind(range.from)
+        .bind(range.to)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("count_overlapping incidents: {e}"))?;
+        Ok(n.max(0) as u64)
+    }
+
+    async fn downtime_spans(&self, org: OrgId, range: TimeRange) -> Result<Vec<IncidentSpan>> {
+        let rows: Vec<IncidentSpanRow> = sqlx::query_as(
+            r#"SELECT target_id, started_at, ended_at, origin, severity, status_at_start
+               FROM incidents
+               WHERE org_id = $1 AND target_id IS NOT NULL AND started_at < $3
+                 AND (ended_at IS NULL OR ended_at >= $2)
+                 AND counts_as_downtime
+               ORDER BY started_at"#,
+        )
+        .bind(org.0)
+        .bind(range.from)
+        .bind(range.to)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("downtime_spans: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| IncidentSpan {
+                target_id: r.target_id,
+                started_at: r.started_at,
+                ended_at: r.ended_at,
+                origin: r.origin,
+                severity: IncidentSeverity::from_db_str(&r.severity),
+                status_at_start: r.status_at_start,
+            })
+            .collect())
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct IncidentSpanRow {
+    target_id: Uuid,
+    started_at: DateTime<Utc>,
+    ended_at: Option<DateTime<Utc>>,
+    origin: String,
+    severity: String,
+    status_at_start: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -741,6 +819,39 @@ impl IncidentNarrationStore for InMemoryIncidentNarrationStore {
                 *out.entry(target_id).or_default() += (end - start).num_seconds().max(0);
             }
         }
+        Ok(out)
+    }
+    async fn count_overlapping(&self, _org: OrgId, range: TimeRange) -> Result<u64> {
+        Ok(self
+            .inner
+            .lock()
+            .incidents
+            .iter()
+            .filter(|i| i.started_at < range.to && i.ended_at.is_none_or(|e| e >= range.from))
+            .count() as u64)
+    }
+
+    async fn downtime_spans(&self, _org: OrgId, range: TimeRange) -> Result<Vec<IncidentSpan>> {
+        let mut out: Vec<IncidentSpan> = self
+            .inner
+            .lock()
+            .incidents
+            .iter()
+            .filter(|i| i.counts_as_downtime)
+            .filter(|i| i.started_at < range.to && i.ended_at.is_none_or(|e| e >= range.from))
+            .filter_map(|i| {
+                Some(IncidentSpan {
+                    target_id: i.target_id?,
+                    started_at: i.started_at,
+                    ended_at: i.ended_at,
+                    // The in-memory incident keeps no origin, so each reads as monitor-opened.
+                    origin: "monitor".into(),
+                    severity: i.severity,
+                    status_at_start: i.status.as_str().into(),
+                })
+            })
+            .collect();
+        out.sort_by_key(|s| s.started_at);
         Ok(out)
     }
 }

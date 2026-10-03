@@ -99,6 +99,9 @@ pub struct DashboardKpis {
     pub avg_response_ms_label: String,
     pub checks_label: String,
     pub checks_successful_label: String,
+    /// What `incidents` counts: confirmed incidents, or a region view's raw
+    /// failure streaks.
+    pub incidents_label: &'static str,
     pub incidents: u64,
 }
 
@@ -139,15 +142,20 @@ pub struct StatusCounts {
 
 /// One cell of the 48-seg fleet ribbon. A non-empty `down_targets` makes the
 /// cell a drill link (`bucket_ts` is its `down_at` value); `down_preview` caps
-/// the tooltip's names while the drill keeps the full set. `time` is the UTC
-/// fallback for the `from_iso`/`to_iso` range.
+/// the tooltip's names while the drill keeps the full set and `who` says what
+/// they share. `time` is the UTC fallback for the `from_iso`/`to_iso` range.
 #[derive(Clone)]
 pub struct FleetRibbonSeg {
     pub class: &'static str,
+    /// Checks failed in the cell without opening an incident.
+    pub blip: bool,
     pub time: String,
     pub from_iso: String,
     pub to_iso: String,
     pub stat: String,
+    pub total: u64,
+    pub bad: u64,
+    pub who: String,
     pub down_preview: Arc<[String]>,
     pub bucket_ts: i64,
     pub down_targets: Arc<[Uuid]>,

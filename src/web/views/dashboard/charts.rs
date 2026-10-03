@@ -1,7 +1,7 @@
 //! Derived numbers for the dashboard: KPI cards and their deltas, the fleet
 //! ribbon, and the sparkline paths.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
@@ -9,6 +9,9 @@ use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
 use crate::domain::metrics::{DashboardSparkBucket, FleetRibbonBucket, PriorPeriodSummary};
+use crate::domain::{IncidentImpact, uptime_pct_from_downtime};
+use crate::public_status::overall_status::stored_incident_impact;
+use crate::storage::{IncidentSpan, TimeRange};
 use crate::templates::format::fmt_ts;
 
 use super::*;
@@ -113,7 +116,8 @@ pub(super) fn build_kpi_cards(
     sparks: &FleetSparks,
 ) -> Vec<KpiCardSpec> {
     let incidents_html = format!(
-        r#"Incidents · {range}: <span class="{cls}">{n}</span>"#,
+        r#"{label} · {range}: <span class="{cls}">{n}</span>"#,
+        label = kpis.incidents_label,
         cls = if kpis.incidents > 0 {
             "metric-alert"
         } else {
@@ -264,15 +268,67 @@ pub(super) fn checks_delta(
     Some(signed_delta(Polarity::Neutral, diff as f64, body))
 }
 
+/// What the all-regions ribbon paints from: the downtime incidents over
+/// `window` (the last 24 hours) and the monitors checked in it.
+pub(super) struct ConfirmedRibbon {
+    pub(super) window: TimeRange,
+    pub(super) spans: Vec<IncidentSpan>,
+    pub(super) sampled: HashSet<Uuid>,
+}
+
+/// Fleet uptime: confirmed downtime pooled against the window across the
+/// checked monitors and any with downtime, such as one paused mid-incident.
+/// `None` when there are neither.
+pub(super) fn fleet_uptime_pct(
+    checked: &HashSet<Uuid>,
+    downtime: &HashMap<Uuid, i64>,
+    window_secs: i64,
+) -> Option<f64> {
+    let monitors = checked.len() + downtime.keys().filter(|id| !checked.contains(id)).count();
+    let down: i64 = downtime.values().sum();
+    (monitors > 0).then(|| uptime_pct_from_downtime(down, window_secs * monitors as i64))
+}
+
+/// Downtime per monitor inside `window`, overlapping incidents on one monitor
+/// counted once.
+fn downtime_by_target<'a>(
+    spans: impl IntoIterator<Item = &'a IncidentSpan>,
+    window: TimeRange,
+) -> HashMap<Uuid, i64> {
+    let mut parts: HashMap<Uuid, Vec<TimeRange>> = HashMap::new();
+    for s in spans {
+        if let Some(part) = s.clip(window) {
+            parts.entry(s.target_id).or_default().push(part);
+        }
+    }
+    parts
+        .into_iter()
+        .map(|(id, mut ranges)| {
+            ranges.sort_by_key(|r| r.from);
+            let (mut secs, mut reached) = (0, window.from);
+            for r in ranges {
+                let from = r.from.max(reached);
+                if r.to > from {
+                    secs += (r.to - from).num_seconds();
+                    reached = r.to;
+                }
+            }
+            (id, secs)
+        })
+        .collect()
+}
+
 /// Map CH ribbon rows → fixed-length 48-seg view. Buckets the storage
-/// layer omitted (no samples) become `none`. Aggregate uptime label is
-/// computed from the same sample totals so the displayed % matches the
-/// segs the operator sees. Cells sit on the `ribbon_from(now)` grid so they
-/// line up with the CH `toStartOfInterval` buckets.
+/// layer omitted (no samples) become `none`. With `confirmed` a cell is
+/// coloured by the incidents overlapping it and the label is the fleet's
+/// confirmed uptime; without (a region view) both come from the raw check
+/// ratio. Cells sit on the `ribbon_from(now)` grid so they line up with the
+/// CH `toStartOfInterval` buckets.
 pub(super) fn build_fleet_ribbon(
     rows: &[FleetRibbonBucket],
     now: DateTime<Utc>,
     names: &HashMap<Uuid, String>,
+    confirmed: Option<&ConfirmedRibbon>,
 ) -> FleetRibbon {
     let from = ribbon_from(now);
     let from_ts = from.timestamp();
@@ -298,35 +354,147 @@ pub(super) fn build_fleet_ribbon(
         total_up += r.up;
     }
     let mut segs: Vec<FleetRibbonSeg> = Vec::with_capacity(RIBBON_BUCKETS);
-    for (i, (samples, up)) in filled.iter().enumerate() {
+    for (i, &(samples, up)) in filled.iter().enumerate() {
         let slot_start = from + Duration::seconds(i as i64 * bucket);
         let slot_end = (slot_start + Duration::seconds(bucket)).min(now);
-        let down = std::mem::take(&mut down_by_slot[i]);
-        let (class, stat) = if *samples == 0 {
-            ("none", "no data".to_string())
-        } else {
-            let pct = (*up as f64 / *samples as f64) * 100.0;
-            (ribbon_class(pct), format!("{pct:.1}%"))
+        let dipped = std::mem::take(&mut down_by_slot[i]);
+        let paint = match confirmed {
+            Some(c) => confirmed_paint(&c.spans, slot_start, slot_end, samples, up, dipped),
+            None => raw_paint(samples, up, dipped),
         };
-        let down_preview: Vec<String> = down
+        let down_preview: Vec<String> = paint
+            .drill
             .iter()
             .take(DOWN_PREVIEW)
             .map(|id| names.get(id).cloned().unwrap_or_else(|| "unknown".into()))
             .collect();
         segs.push(FleetRibbonSeg {
-            class,
+            class: paint.class,
+            blip: paint.blip,
             time: slot_start.format("%H:%M").to_string(),
             from_iso: fmt_ts(slot_start),
             to_iso: fmt_ts(slot_end),
-            stat,
+            stat: paint.stat,
+            total: samples,
+            bad: samples.saturating_sub(up),
+            who: who(paint.drill.len(), paint.incidents),
             down_preview: Arc::from(down_preview.into_boxed_slice()),
             bucket_ts: from_ts + i as i64 * bucket,
-            down_targets: Arc::from(down.into_boxed_slice()),
+            down_targets: Arc::from(paint.drill.into_boxed_slice()),
         });
     }
+    let uptime_label = match confirmed {
+        Some(c) => {
+            // Summed per incident, as the Uptime card's figure is.
+            let mut downtime: HashMap<Uuid, i64> = HashMap::new();
+            for s in &c.spans {
+                if let Some(part) = s.clip(c.window) {
+                    *downtime.entry(s.target_id).or_default() +=
+                        (part.to - part.from).num_seconds();
+                }
+            }
+            let window_secs = (c.window.to - c.window.from).num_seconds();
+            fleet_uptime_pct(&c.sampled, &downtime, window_secs)
+                .map_or_else(|| "—".into(), |p| format!("{p:.2}%"))
+        }
+        None => pct_label(total_samples, total_up),
+    };
     FleetRibbon {
         segs: Arc::from(segs.into_boxed_slice()),
-        uptime_label: pct_label(total_samples, total_up),
+        uptime_label,
+    }
+}
+
+struct CellPaint {
+    class: &'static str,
+    /// Failed checks that opened no incident.
+    blip: bool,
+    stat: String,
+    /// The monitors a click filters to: those in an incident, else those with
+    /// failed checks.
+    drill: Vec<Uuid>,
+    incidents: usize,
+}
+
+fn raw_paint(samples: u64, up: u64, dipped: Vec<Uuid>) -> CellPaint {
+    let (class, stat) = if samples == 0 {
+        ("none", "no data".to_string())
+    } else {
+        let pct = (up as f64 / samples as f64) * 100.0;
+        (ribbon_class(pct), format!("{pct:.1}%"))
+    };
+    CellPaint {
+        class,
+        blip: false,
+        stat,
+        drill: dipped,
+        incidents: 0,
+    }
+}
+
+/// An incident is positive evidence, so it paints a cell with no checks too.
+/// Red takes one monitor down for at least half the cell (so far, for the
+/// current one); a shorter outage or a degraded incident is amber.
+fn confirmed_paint(
+    spans: &[IncidentSpan],
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    samples: u64,
+    up: u64,
+    dipped: Vec<Uuid>,
+) -> CellPaint {
+    let cell = TimeRange { from, to };
+    let hits: Vec<&IncidentSpan> = spans.iter().filter(|s| s.clip(cell).is_some()).collect();
+    if hits.is_empty() {
+        let (class, stat) = if samples == 0 {
+            ("none", "no data")
+        } else {
+            ("op", "no downtime")
+        };
+        return CellPaint {
+            class,
+            blip: up < samples,
+            stat: stat.into(),
+            drill: dipped,
+            incidents: 0,
+        };
+    }
+    // Partial and major outages count alike, so the region split is not read.
+    let outages = hits.iter().copied().filter(|s| {
+        stored_incident_impact(&s.origin, s.severity, &s.status_at_start, None)
+            != IncidentImpact::Degraded
+    });
+    let cell_secs = (to - from).num_seconds();
+    let red = downtime_by_target(outages, cell)
+        .values()
+        .any(|&secs| secs * 2 >= cell_secs);
+    let mut seen = HashSet::with_capacity(hits.len());
+    let drill: Vec<Uuid> = hits
+        .iter()
+        .map(|s| s.target_id)
+        .filter(|id| seen.insert(*id))
+        .collect();
+    CellPaint {
+        class: if red { "maj" } else { "deg" },
+        blip: false,
+        stat: match hits.len() {
+            1 => "1 incident".into(),
+            n => format!("{n} incidents"),
+        },
+        drill,
+        incidents: hits.len(),
+    }
+}
+
+/// `incidents` is 0 when the cell's monitors only failed checks.
+fn who(monitors: usize, incidents: usize) -> String {
+    match (monitors, incidents) {
+        (0, _) => String::new(),
+        (1, 0) => "1 monitor with failed checks".into(),
+        (n, 0) => format!("{n} monitors with failed checks"),
+        (1, 1) => "1 monitor with an incident".into(),
+        (1, _) => "1 monitor with incidents".into(),
+        (n, _) => format!("{n} monitors with incidents"),
     }
 }
 

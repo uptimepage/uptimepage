@@ -59,7 +59,7 @@ pub async fn dashboard_summary(
         to: now,
     };
 
-    let (targets, monitors, rollup, (checks_total, checks_up, _avg_ms, incidents)) = tokio::try_join!(
+    let (targets, monitors, rollup, (checks_total, checks_up, _avg_ms), incidents) = tokio::try_join!(
         state.target_store.summary(org_id),
         state.target_store.list(
             org_id,
@@ -71,6 +71,9 @@ pub async fn dashboard_summary(
         ),
         state.results_store.dashboard_rollup(org_id, range, None),
         state.results_store.last_n_summary(org_id, range, None),
+        state
+            .incident_narration_store
+            .count_overlapping(org_id, range),
     )?;
     let current_status = status_breakdown(&state, org_id, range, &monitors, rollup).await;
 

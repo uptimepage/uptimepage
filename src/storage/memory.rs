@@ -547,13 +547,11 @@ impl ResultsStore for InMemorySink {
         _org: OrgId,
         range: TimeRange,
         _region: Option<&str>,
-    ) -> Result<(u64, u64, u32, u64)> {
+    ) -> Result<(u64, u64, u32)> {
         let guard = self.results.lock();
         let mut total = 0u64;
         let mut up = 0u64;
         let mut sum_ms: u64 = 0;
-        let mut by_target: std::collections::HashMap<Uuid, Vec<&CheckResult>> =
-            std::collections::HashMap::new();
         for r in guard.iter() {
             if r.timestamp < range.from || r.timestamp >= range.to {
                 continue;
@@ -563,26 +561,50 @@ impl ResultsStore for InMemorySink {
             if r.status == CheckStatus::Up {
                 up += 1;
             }
-            by_target.entry(r.target_id).or_default().push(r);
         }
         let avg_ms = sum_ms
             .checked_div(total)
             .map_or(0, |v| v.min(u32::MAX as u64) as u32);
-        let mut incidents = 0u64;
-        for results in by_target.values_mut() {
-            results.sort_by_key(|r| r.timestamp);
-            let mut in_incident = false;
-            for r in results.iter() {
-                let bad = matches!(r.status, CheckStatus::Down | CheckStatus::Error);
-                if bad && !in_incident {
-                    incidents += 1;
-                    in_incident = true;
-                } else if !bad {
-                    in_incident = false;
-                }
+        Ok((total, up, avg_ms))
+    }
+
+    async fn failure_streaks(&self, _org: OrgId, range: TimeRange, _region: &str) -> Result<u64> {
+        let guard = self.results.lock();
+        let mut by_target: std::collections::HashMap<Uuid, Vec<&CheckResult>> =
+            std::collections::HashMap::new();
+        for r in guard.iter() {
+            if r.timestamp >= range.from && r.timestamp < range.to {
+                by_target.entry(r.target_id).or_default().push(r);
             }
         }
-        Ok((total, up, avg_ms, incidents))
+        let mut streaks = 0u64;
+        for results in by_target.values_mut() {
+            results.sort_by_key(|r| r.timestamp);
+            let mut in_streak = false;
+            for r in results.iter() {
+                let bad = matches!(r.status, CheckStatus::Down | CheckStatus::Error);
+                if bad && !in_streak {
+                    streaks += 1;
+                }
+                in_streak = bad;
+            }
+        }
+        Ok(streaks)
+    }
+
+    async fn sampled_targets(
+        &self,
+        _org: OrgId,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<std::collections::HashSet<Uuid>> {
+        Ok(self
+            .results
+            .lock()
+            .iter()
+            .filter(|r| r.timestamp >= from && r.timestamp < to)
+            .map(|r| r.target_id)
+            .collect())
     }
 }
 

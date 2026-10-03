@@ -102,4 +102,18 @@ async fn fleet_ribbon_collects_and_decodes_down_targets() {
         !down.contains(&healthy),
         "a fully-up monitor never appears in down_targets: {down:?}"
     );
+
+    let sampled = store
+        .sampled_targets(
+            OrgId(org),
+            base - Duration::minutes(1),
+            base + Duration::minutes(5),
+        )
+        .await
+        .expect("sampled_targets query");
+    assert_eq!(
+        sampled,
+        [healthy, dipped].into_iter().collect(),
+        "every checked monitor, healthy or not"
+    );
 }

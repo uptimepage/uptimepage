@@ -21,6 +21,7 @@ pub struct Last24hSummary {
     pub checks_up: u64,
     #[schema(example = 99.94)]
     pub uptime_pct: f64,
+    /// Incidents open at any point in the last 24 hours.
     pub incidents: u64,
 }
 

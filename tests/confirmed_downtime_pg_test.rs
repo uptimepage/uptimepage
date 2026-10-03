@@ -216,3 +216,66 @@ async fn a_monitor_opened_incident_cannot_be_excluded_pg() {
         .expect("downtime rollup");
     assert_eq!(map.get(&target_id).copied(), Some(600));
 }
+
+/// The dashboard counts every incident but paints only what dents uptime.
+#[tokio::test]
+#[ignore]
+async fn count_overlapping_counts_every_incident_spans_only_downtime_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, _user, target_id) = seed(&pool, "cdtspan").await;
+    for sql in [
+        "INSERT INTO incidents (org_id, target_id, started_at, ended_at, status_at_start, \
+                                check_count, state, visibility, origin) \
+         VALUES ($1, $2, now() - interval '40 minute', now() - interval '30 minute', \
+                 'degraded', 3, 'resolved', 'public', 'monitor')",
+        "INSERT INTO incidents (org_id, target_id, started_at, status_at_start, \
+                                check_count, state, visibility, origin, counts_as_downtime) \
+         VALUES ($1, $2, now() - interval '20 minute', 'down', 1, 'triggered', \
+                 'internal', 'manual', false)",
+        "INSERT INTO incidents (org_id, target_id, started_at, ended_at, status_at_start, \
+                                check_count, state, visibility, origin) \
+         VALUES ($1, $2, now() - interval '3 hour', now() - interval '2 hour', \
+                 'down', 3, 'resolved', 'public', 'monitor')",
+    ] {
+        sqlx::query(sql)
+            .bind(org.0)
+            .bind(target_id)
+            .execute(&pool)
+            .await
+            .expect("insert incident");
+    }
+    sqlx::query(
+        "INSERT INTO incidents (org_id, target_id, started_at, status_at_start, \
+                                check_count, state, visibility, origin) \
+         VALUES ($1, NULL, now() - interval '10 minute', 'down', 1, 'triggered', \
+                 'internal', 'manual')",
+    )
+    .bind(org.0)
+    .execute(&pool)
+    .await
+    .expect("insert target-less incident");
+
+    let store = PgIncidentNarrationStore::new(pool.clone());
+    let now = chrono::Utc::now();
+    let range = TimeRange {
+        from: now - chrono::Duration::hours(1),
+        to: now,
+    };
+    assert_eq!(
+        store.count_overlapping(org, range).await.expect("count"),
+        3,
+        "monitor, declared and target-less incidents in the hour; not the older one"
+    );
+    let spans = store.downtime_spans(org, range).await.expect("spans");
+    assert_eq!(
+        spans.len(),
+        1,
+        "only the monitor incident counts as downtime"
+    );
+    assert_eq!(spans[0].target_id, target_id);
+    assert_eq!(spans[0].origin, "monitor");
+    assert_eq!(spans[0].status_at_start, "degraded");
+    assert!(spans[0].ended_at.is_some());
+}

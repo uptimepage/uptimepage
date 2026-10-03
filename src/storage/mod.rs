@@ -72,7 +72,7 @@ pub use incident_ops::{
 };
 pub use incidents::{
     InMemoryIncidentNarrationStore, IncidentBrief, IncidentBriefFilter, IncidentNarrationStore,
-    PgIncidentNarrationStore,
+    IncidentSpan, PgIncidentNarrationStore,
 };
 pub use linked_apps::{InMemoryLinkedAppStore, LinkedAppStore, PgLinkedAppStore};
 pub use maintenance::suppressing_window_sql;
