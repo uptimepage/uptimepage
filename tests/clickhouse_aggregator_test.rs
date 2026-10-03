@@ -346,10 +346,7 @@ async fn detail_link_renders_only_for_a_live_share() {
         let page_id = seed_page_with_target(&pool, org_id, target_id).await;
         let pages = PgStatusPageStore::new(pool.clone());
         let shares = PgMonitorShareStore::new(pool.clone(), None);
-        let cfg = AggregatorConfig {
-            app_base_url: "https://app.example.com".into(),
-            ..AggregatorConfig::default()
-        };
+        let cfg = AggregatorConfig::default();
         let detail_url = |page: &uptimepage::domain::PublicStatusPage| {
             page.groups
                 .iter()
@@ -402,7 +399,7 @@ async fn detail_link_renders_only_for_a_live_share() {
         let (page, _, _, _) = agg.build(page_id, org_id).await.expect("build");
         assert_eq!(
             detail_url(&page),
-            Some(format!("https://app.example.com/m/{}", created.token)),
+            Some(format!("/m/{}", created.token)),
             "opted-in component links at the share token"
         );
 

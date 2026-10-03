@@ -49,9 +49,6 @@ pub struct AggregatorConfig {
     pub recent_incidents_days: u32,
     pub max_recent_incidents: u32,
     pub upcoming_maintenance_horizon: ChronoDuration,
-    /// Operator origin serving `/m/{token}` — a subdomain page is on another
-    /// host, so the link must be absolute. Empty = same-host relative.
-    pub app_base_url: String,
 }
 
 impl Default for AggregatorConfig {
@@ -62,7 +59,6 @@ impl Default for AggregatorConfig {
             recent_incidents_days: 30,
             max_recent_incidents: 50,
             upcoming_maintenance_horizon: ChronoDuration::days(7),
-            app_base_url: String::new(),
         }
     }
 }
@@ -335,9 +331,7 @@ impl OrgAggregator {
                     .share_token_enc
                     .as_deref()
                     .and_then(|sealed| capability_token::open(sealed, self.cipher.as_deref()))
-                    .map(|token| {
-                        format!("{}/m/{token}", self.cfg.app_base_url.trim_end_matches('/'))
-                    }),
+                    .map(|token| format!("/m/{token}")),
             })
             .collect())
     }

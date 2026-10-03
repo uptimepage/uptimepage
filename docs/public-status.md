@@ -55,6 +55,8 @@ Ticking **Detail link** adds an *uptime history* link beside the component, poin
 
 It is off by default, and deliberately so: the detail view is a different disclosure decision from the status strip, and a wider one. Credentials, headers and request bodies are masked, but that view publishes the monitor's **real name, its checked address and its tags** — the per-page `public_name` alias does not apply there. If you renamed a component to hide what it points at, this tick undoes that. Publishing a monitor's *status* and publishing its *history, timings and address* are separate decisions.
 
+The detail view opens on the page's own address, its subdomain or custom domain, in the page's branding: logo, display name, brand colour, style, and the powered-by footer only when the page shows it. That host answers only for the detail links its own page shows; any other share link is a 404 there. A page's link opened on the app host redirects to the page. A share link minted from the monitor itself keeps the app's layout.
+
 ```bash
 curl -X PATCH https://app.uptimepage.dev/api/v1/status-pages/$PAGE_ID/components/$TARGET_ID \
   -H "Authorization: Bearer $UPTIMEPAGE_TOKEN" \

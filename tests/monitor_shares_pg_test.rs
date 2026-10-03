@@ -13,12 +13,13 @@ mod common;
 use std::time::Duration;
 
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{Request, StatusCode, header};
 use chrono::Utc;
 use tower::ServiceExt;
 use uptimepage::domain::{
     CheckSpec, CreatedShare, ExpectedStatus, NewMonitorShare, NewStatusPage,
-    NewStatusPageComponent, NewTarget, OrgId, UserId, WriteSource,
+    NewStatusPageComponent, NewTarget, OrgId, PublicOrgBranding, StatusPageComponentUpdate,
+    StatusPageUpdate, UserId, WriteSource,
 };
 use uptimepage::storage::{
     CreateShareOutcome, MonitorShareStore, PgMonitorShareStore, PgStatusPageStore,
@@ -27,8 +28,8 @@ use uptimepage::storage::{
 use uuid::Uuid;
 
 use common::{
-    build_saas_router_with_pg_targets, default_http_check, make_user, pg_pool_from_env,
-    test_cipher, unique_slug, with_session,
+    SAAS_BASE_DOMAIN, build_saas_router_with_pg_targets, default_http_check, make_user,
+    pg_pool_from_env, test_cipher, unique_slug, with_session,
 };
 
 fn share(label: Option<&str>) -> NewMonitorShare {
@@ -553,4 +554,172 @@ async fn deleted_target_cascades_and_cross_org_create_is_rejected_live_pg() {
     );
 
     cleanup(&pool, &[org_a, org_b], &[user_a, user_b]).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL — run via DATABASE_URL=... cargo test -- --ignored"]
+async fn a_page_link_opens_in_its_page_chrome_on_its_page_host_live_pg() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (org, other_org, user, other_user) = two_orgs(&pool, "ms-brand").await;
+    let shares = PgMonitorShareStore::new(pool.clone(), None);
+    let pages = PgStatusPageStore::new(pool.clone());
+    let t = make_target(&pool, org, "api-internal").await;
+    let slug = unique_slug("brand");
+    let page = pages
+        .create(
+            org,
+            NewStatusPage {
+                slug: slug.clone(),
+                name: "P".into(),
+                enabled: true,
+            },
+            WriteSource::Ui,
+            i64::MAX,
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    pages
+        .update(
+            org,
+            page.id,
+            StatusPageUpdate {
+                branding: Some(PublicOrgBranding {
+                    public_display_name: Some("Acme Cloud".into()),
+                    public_brand_color: Some("#123456".into()),
+                    ..PublicOrgBranding::default()
+                }),
+                ..Default::default()
+            },
+            WriteSource::Ui,
+        )
+        .await
+        .unwrap()
+        .expect("page");
+    pages
+        .add_component(
+            org,
+            page.id,
+            NewStatusPageComponent {
+                target_id: t,
+                public_name: None,
+                public_description: None,
+                public_group: None,
+                sort_order: 0,
+                detail_link_enabled: true,
+            },
+            i64::MAX,
+            None,
+        )
+        .await
+        .unwrap();
+    let page_link = mk_share(&shares, org, t, share(None)).await;
+    pages
+        .attach_share(org, page.id, t, None, page_link.share.id)
+        .await
+        .unwrap();
+    let monitor_link = mk_share(&shares, org, t, share(Some("ops"))).await;
+
+    let found = |o: OrgId, s| {
+        let pages = &pages;
+        async move { pages.page_for_share(o, s).await.unwrap().map(|p| p.id) }
+    };
+    assert_eq!(found(org, page_link.share.id).await, Some(page.id));
+    assert_eq!(found(other_org, page_link.share.id).await, None);
+    assert_eq!(found(org, monitor_link.share.id).await, None);
+
+    let router = build_saas_router_with_pg_targets(pool.clone()).await;
+    let page_host = format!("{slug}.{SAAS_BASE_DOMAIN}");
+    let get_on = |host: String, path: String| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::get(path)
+                        .header(header::HOST, host)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+
+    let resp = get_on(page_host.clone(), format!("/m/{}", page_link.token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 4 << 20)
+        .await
+        .unwrap();
+    let html = String::from_utf8_lossy(&body);
+    assert!(html.contains("<title>api-internal · Acme Cloud Status</title>"));
+    assert!(html.contains("--brand-color: #123456;"));
+    assert!(html.contains("Powered by"), "a free plan keeps the badge");
+    assert!(!html.contains("shared · read-only"));
+
+    assert_eq!(
+        get_on(page_host.clone(), format!("/m/{}", monitor_link.token))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    let moved = get_on(
+        format!("app.{SAAS_BASE_DOMAIN}"),
+        format!("/m/{}", page_link.token),
+    )
+    .await;
+    assert_eq!(moved.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(
+        moved.headers()[header::LOCATION],
+        format!("https://{page_host}/m/{}", page_link.token).as_str()
+    );
+
+    pages
+        .update_component(
+            org,
+            page.id,
+            t,
+            StatusPageComponentUpdate {
+                detail_link_enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(found(org, page_link.share.id).await, None, "unticked");
+    pages
+        .update_component(
+            org,
+            page.id,
+            t,
+            StatusPageComponentUpdate {
+                detail_link_enabled: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    pages
+        .update(
+            org,
+            page.id,
+            StatusPageUpdate {
+                enabled: Some(false),
+                ..Default::default()
+            },
+            WriteSource::Ui,
+        )
+        .await
+        .unwrap();
+    assert_eq!(found(org, page_link.share.id).await, None, "page disabled");
+    sqlx::query("UPDATE status_pages SET enabled = true, plan_hold_at = now() WHERE id = $1")
+        .bind(page.id.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(found(org, page_link.share.id).await, None, "page held");
+
+    cleanup(&pool, &[org, other_org], &[user, other_user]).await;
 }

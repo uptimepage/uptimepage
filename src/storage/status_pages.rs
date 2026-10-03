@@ -161,6 +161,12 @@ pub trait StatusPageStore: Send + Sync {
     /// Targets a live public page shows: on an enabled page the plan still
     /// covers, and not held themselves.
     async fn published_target_ids(&self, org: OrgId) -> Result<HashSet<Uuid>>;
+
+    /// The live page that shows `share` as a component's detail link: ticked,
+    /// on an enabled page the plan still covers. `None` for a link minted from
+    /// the monitor itself.
+    async fn page_for_share(&self, org: OrgId, share: MonitorShareId)
+    -> Result<Option<StatusPage>>;
 }
 
 pub struct PgStatusPageStore {
@@ -706,6 +712,27 @@ impl StatusPageStore for PgStatusPageStore {
         .map_err(db_err)?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
+
+    async fn page_for_share(
+        &self,
+        org: OrgId,
+        share: MonitorShareId,
+    ) -> Result<Option<StatusPage>> {
+        let row: Option<PageRow> = sqlx::query_as(&format!(
+            "SELECT {PAGE_COLUMNS} FROM status_pages \
+             WHERE org_id = $1 AND enabled AND plan_hold_at IS NULL \
+               AND EXISTS (SELECT 1 FROM status_page_components spc \
+                           WHERE spc.status_page_id = status_pages.id AND spc.org_id = $1 \
+                             AND spc.share_id = $2 AND spc.detail_link_enabled) \
+             LIMIT 1"
+        ))
+        .bind(org.0)
+        .bind(share.0)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(row.map(PageRow::into_page))
+    }
 }
 
 fn db_err(e: sqlx::Error) -> AppError {
@@ -1094,6 +1121,24 @@ impl StatusPageStore for InMemoryStatusPageStore {
             .filter(|c| c.org == org && live.contains(&c.page))
             .map(|c| c.target_id)
             .collect())
+    }
+
+    async fn page_for_share(
+        &self,
+        org: OrgId,
+        share: MonitorShareId,
+    ) -> Result<Option<StatusPage>> {
+        let st = self.inner.lock().unwrap();
+        Ok(st
+            .components
+            .iter()
+            .filter(|c| c.org == org && c.share_id == Some(share) && c.detail_link_enabled)
+            .find_map(|c| {
+                st.pages
+                    .iter()
+                    .find(|p| p.id == c.page && p.enabled && p.plan_hold_at.is_none())
+            })
+            .cloned())
     }
 }
 

@@ -19,7 +19,7 @@ Minting a link returns a 256-bit random token; the URL is `/m/{token}`. The toke
 
 The link is **re-copyable**, like a Google Docs or Dropbox share link: open the Share modal (or the list endpoint) any time to copy the same URL again. Lost the chat you posted it in? Copy it again — you only get a new token when you revoke and create one.
 
-A [status page](public-status.md) can mint one for you: ticking a component's **Detail link** creates a share for that monitor and points the component name at it. Those mints skip the caps below, and carry no label — the list shows which pages use a link, read live from the binding, so a renamed page never leaves a stale label behind. Revoking such a link here removes the link from the page but leaves the component on it.
+A [status page](public-status.md) can mint one for you: ticking a component's **Detail link** creates a share for that monitor and points the component name at it. Those mints skip the caps below, and carry no label — the list shows which pages use a link, read live from the binding, so a renamed page never leaves a stale label behind. Revoking such a link here removes the link from the page but leaves the component on it. Such a link opens on the page's own host, in the page's branding.
 
 Limits come from the org's plan (`plans` columns, overridable per-org): the free (Standard) plan allows **1 active link per monitor** and shares on at most **2 distinct monitors** per org. Revoke a link to free a slot.
 

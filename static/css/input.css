@@ -389,7 +389,8 @@
     }
     /* Kill the scanline overlay on public-shell + app-shell when classic
        is active. CRT atmosphere is the CLI register's signature. */
-    .theme-classic.public-shell::before { content: none; }
+    .theme-classic.public-shell::before,
+    .theme-classic .app-shell::before { content: none; }
 
     /* Soft corners + thicker accent borders restore the original
        "rounded-2xl border-2" look on the public status banner + callouts;

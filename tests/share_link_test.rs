@@ -5,22 +5,25 @@
 //! login. Covers: the read-only detail/incidents pages render; the check config
 //! is shown with credentials redacted to `***`; bad / revoked / expired tokens
 //! all 404 (uniform, no enumeration); a token for one monitor never yields
-//! another's data; no write method is accepted under `/m/`; and the head-less
-//! sub-resources carry the crawl directive the page states in its own head.
+//! another's data; no write method is accepted under `/m/`; the head-less
+//! sub-resources carry the crawl directive the page states in its own head; and
+//! a status page's host answers only for that page's own detail links.
 
 mod common;
 
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{Request, StatusCode, header};
 use chrono::Utc;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use uptimepage::app::AppState;
+use uptimepage::custom_domains::CustomDomainRow;
 use uptimepage::domain::{
     CheckSpec, CheckStatus, CreatedShare, ExpectedStatus, Incident, IncidentSeverity,
-    NewMonitorShare, NewTarget, OrgId, UserId, WriteSource,
+    NewMonitorShare, NewStatusPage, NewStatusPageComponent, NewTarget, OrgId, PageRef,
+    StatusPageComponentUpdate, StatusPageId, UserId, WriteSource,
 };
 use uptimepage::storage::{
     CreateShareOutcome, InMemoryIncidentNarrationStore, MonitorShareStore, TargetStore,
@@ -346,5 +349,237 @@ async fn no_write_method_under_m() {
         ),
         "POST /m/{{token}} must be rejected, got {}",
         resp.status()
+    );
+}
+
+const APP_HOST: &str = "app.example.com";
+const PAGE_HOST: &str = "status.acme.test";
+const OTHER_PAGE_HOST: &str = "status.other.test";
+
+struct PageLinks {
+    router: axum::Router,
+    state: AppState,
+    page: StatusPageId,
+    target: Uuid,
+    page_link: String,
+    other_page_link: String,
+    monitor_link: String,
+}
+
+/// A SaaS deploy with two pages on custom domains, each showing one monitor's
+/// detail link, plus a link minted from the first monitor itself.
+async fn saas_page_links() -> PageLinks {
+    let state = build_test_app_state(|cfg| {
+        cfg.tenancy.path_based_public_routes = false;
+        cfg.tenancy.subdomain_public_routes = true;
+        cfg.public_status.base_domain = "example.com".into();
+        cfg.auth.public_base_url = format!("https://{APP_HOST}");
+        cfg.marketing.enabled = false;
+    });
+    let (page, target, page_link) = page_with_link(&state, "acme").await;
+    let (other_page, _, other_page_link) = page_with_link(&state, "other").await;
+    state.custom_domains.install(vec![
+        domain_row(PAGE_HOST, page, "acme"),
+        domain_row(OTHER_PAGE_HOST, other_page, "other"),
+    ]);
+    let monitor_link = mk_share(
+        &*state.monitor_share_store,
+        org(),
+        target,
+        NewMonitorShare::default(),
+    )
+    .await
+    .token;
+    let router = uptimepage::build_app_router(state.clone(), CancellationToken::new());
+    PageLinks {
+        router,
+        state,
+        page,
+        target,
+        page_link,
+        other_page_link,
+        monitor_link,
+    }
+}
+
+fn domain_row(domain: &str, page: StatusPageId, slug: &str) -> CustomDomainRow {
+    CustomDomainRow {
+        domain: domain.into(),
+        page: PageRef { page, org: org() },
+        slug: slug.into(),
+        activated: true,
+    }
+}
+
+async fn page_with_link(state: &AppState, slug: &str) -> (StatusPageId, Uuid, String) {
+    let target = make_target(&*state.target_store, org(), slug, false).await;
+    let page = state
+        .status_page_store
+        .create(
+            org(),
+            NewStatusPage {
+                slug: slug.into(),
+                name: slug.into(),
+                enabled: true,
+            },
+            WriteSource::Ui,
+            i64::MAX,
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    state
+        .status_page_store
+        .add_component(
+            org(),
+            page.id,
+            NewStatusPageComponent {
+                target_id: target,
+                public_name: None,
+                public_description: None,
+                public_group: None,
+                sort_order: 0,
+                detail_link_enabled: true,
+            },
+            i64::MAX,
+            None,
+        )
+        .await
+        .unwrap();
+    let share = mk_share(
+        &*state.monitor_share_store,
+        org(),
+        target,
+        NewMonitorShare::default(),
+    )
+    .await;
+    assert!(
+        state
+            .status_page_store
+            .attach_share(org(), page.id, target, None, share.share.id)
+            .await
+            .unwrap()
+    );
+    (page.id, target, share.token)
+}
+
+async fn get_on(router: &axum::Router, host: &str, path: &str) -> axum::response::Response {
+    router
+        .clone()
+        .oneshot(
+            Request::get(path)
+                .header(header::HOST, host)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_page_host_serves_its_own_detail_link() {
+    let links = saas_page_links().await;
+    for path in [
+        format!("/m/{}", links.page_link),
+        format!("/m/{}/incidents", links.page_link),
+        format!("/m/{}/live", links.page_link),
+        format!("/m/{}/latency", links.page_link),
+        format!("/m/{}/results", links.page_link),
+    ] {
+        let resp = get_on(&links.router, PAGE_HOST, &path).await;
+        assert_eq!(resp.status(), StatusCode::OK, "{path} on its page's host");
+        assert_eq!(
+            resp.headers()[header::CACHE_CONTROL],
+            "no-store",
+            "{path} must stay out of a page host's shared caches"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_page_host_answers_for_no_other_link() {
+    let links = saas_page_links().await;
+    for token in [&links.other_page_link, &links.monitor_link] {
+        for path in [
+            format!("/m/{token}"),
+            format!("/m/{token}/incidents"),
+            format!("/m/{token}/live"),
+            format!("/m/{token}/latency"),
+            format!("/m/{token}/results"),
+        ] {
+            assert_eq!(
+                get_on(&links.router, PAGE_HOST, &path).await.status(),
+                StatusCode::NOT_FOUND,
+                "{path} must not resolve on another page's host"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_page_link_on_the_app_host_moves_to_its_page() {
+    let links = saas_page_links().await;
+    for path in [
+        format!("/m/{}?range=7d", links.page_link),
+        format!("/m/{}/incidents", links.page_link),
+    ] {
+        let resp = get_on(&links.router, APP_HOST, &path).await;
+        assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT, "{path}");
+        assert_eq!(
+            resp.headers()[header::LOCATION],
+            format!("https://{PAGE_HOST}{path}").as_str()
+        );
+    }
+    // An open tab's polls keep answering where they are.
+    assert_eq!(
+        get_on(
+            &links.router,
+            APP_HOST,
+            &format!("/m/{}/live", links.page_link)
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        get_on(
+            &links.router,
+            APP_HOST,
+            &format!("/m/{}", links.monitor_link)
+        )
+        .await
+        .status(),
+        StatusCode::OK,
+        "a link minted from the monitor keeps the app host"
+    );
+}
+
+#[tokio::test]
+async fn unticking_the_detail_link_takes_it_off_the_page_host() {
+    let links = saas_page_links().await;
+    links
+        .state
+        .status_page_store
+        .update_component(
+            org(),
+            links.page,
+            links.target,
+            StatusPageComponentUpdate {
+                detail_link_enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let path = format!("/m/{}", links.page_link);
+    assert_eq!(
+        get_on(&links.router, PAGE_HOST, &path).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get_on(&links.router, APP_HOST, &path).await.status(),
+        StatusCode::OK,
+        "the token itself lives on until revoked"
     );
 }

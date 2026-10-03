@@ -15,6 +15,11 @@
 //! token, or a since-deleted monitor, all return the same opaque 404 — no
 //! enumeration signal.
 //!
+//! A status page's detail link is served on that page's own host, drawn in
+//! its chrome; that host answers for no other link, so it can never front
+//! another tenant's monitor. Opened on the operator host of a deploy that gives
+//! each page a host, it redirects there.
+//!
 //! Per-IP abuse protection for this anonymous surface is the reverse proxy's
 //! tier (see `quotas::ratelimit` — that limiter keys on the authenticated
 //! subject, which a share request has none of); app-side, the live region
@@ -28,20 +33,24 @@ use askama::Template;
 use askama_web::WebTemplate;
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
-use axum::http::header;
-use axum::response::{IntoResponse, Response};
+use axum::http::{HeaderMap, HeaderValue, Uri, header};
+use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::api::types::LatencySeries;
 use crate::app::AppState;
-use crate::domain::ResolvedShare;
+use crate::domain::{PageRef, ResolvedShare};
 use crate::error::AppError;
 use crate::error::codes;
+use crate::error::public::PublicAppError;
+use crate::public_status::urls::page_origin;
+use crate::request::host::{is_subdomain_public_request, resolve_status_page};
 use crate::request::range::{RangeQuery, latency_bucket_seconds};
 use crate::security::redaction::redact_check_for_public;
 use crate::storage::TimeRange;
 use crate::templates::filters;
-use crate::web::error::{WebError, WebResult};
+use crate::web::error::WebResult;
 use crate::web::robots;
+use crate::web::views::public_status::{BrandingView, resolve_branding};
 use crate::web::views::targets_detail::{
     CustomWindow, DEFAULT_RANGE, DetailParams, INCIDENT_DEFAULT_RANGE, INCIDENT_RANGE_KEYS,
     IncidentRow, KpiTrend, LiveDataCache, PingTally, RANGE_KEYS, ResultRow, SUBTAB_INCIDENTS,
@@ -51,14 +60,124 @@ use crate::web::views::targets_detail::{
 };
 use crate::web::views::{RangeOption, build_range_options, describe_check, resolve_range_key};
 
+/// Where a share is opened, relative to the page showing it as a detail link.
+enum Placement {
+    /// On that page's own host.
+    Page { page: PageRef, name: String },
+    /// A page's link on the operator host; the page lives at this origin.
+    Elsewhere(String),
+    /// A link minted from the monitor, or one whose page no host here serves.
+    App,
+}
+
+/// A share page view: rendered, in a page's chrome or the app's, or sent to
+/// its page's host.
+enum Opened {
+    Render(ResolvedShare, Option<BrandingView>),
+    Moved(Response),
+}
+
 /// Resolve a presented token to its monitor, or a uniform 404. The one
 /// cross-tenant-by-design lookup; every read past it uses the returned org.
-async fn resolve_share(state: &AppState, token: &str) -> WebResult<ResolvedShare> {
-    state
+async fn find_share(state: &AppState, token: &str) -> WebResult<ResolvedShare> {
+    Ok(state
         .monitor_share_store
         .resolve_active(token)
         .await?
-        .ok_or_else(|| WebError::from(share_not_found()))
+        .ok_or_else(share_not_found)?)
+}
+
+/// The share behind a page's poll or chart fetch. A page host answers only for
+/// its own page's detail links.
+async fn resolve_share(
+    state: &AppState,
+    headers: &HeaderMap,
+    token: &str,
+) -> WebResult<ResolvedShare> {
+    let share = find_share(state, token).await?;
+    if is_subdomain_public_request(&state.request_state(), headers) {
+        place(state, headers, &share).await?;
+    }
+    Ok(share)
+}
+
+/// The share behind a page view, with the chrome it renders in.
+async fn open_share(
+    state: &AppState,
+    headers: &HeaderMap,
+    uri: &Uri,
+    token: &str,
+) -> WebResult<Opened> {
+    let share = find_share(state, token).await?;
+    Ok(match place(state, headers, &share).await? {
+        Placement::Page { page, name } => {
+            let brand = resolve_branding(state, headers, page.org, page.page, &name).await;
+            Opened::Render(share, Some(brand))
+        }
+        Placement::Elsewhere(origin) => {
+            let path = uri.path_and_query().map_or(uri.path(), |pq| pq.as_str());
+            Opened::Moved(Redirect::temporary(&format!("{origin}{path}")).into_response())
+        }
+        Placement::App => Opened::Render(share, None),
+    })
+}
+
+/// On a page host, anything but [`Placement::Page`] is a 404.
+async fn place(
+    state: &AppState,
+    headers: &HeaderMap,
+    share: &ResolvedShare,
+) -> WebResult<Placement> {
+    let request = state.request_state();
+    let tenancy = &state.cfg.tenancy;
+    let on_page_host = is_subdomain_public_request(&request, headers);
+    let page = state
+        .status_page_store
+        .page_for_share(share.org, share.share_id)
+        .await?;
+    // A path-based deploy serves its page on the operator host itself.
+    let host_page = if page.is_some()
+        && (on_page_host || (tenancy.path_based_public_routes && !tenancy.subdomain_public_routes))
+    {
+        match resolve_status_page(&request, headers).await {
+            Ok(host) => Some(host),
+            Err(PublicAppError::NotFound) => None,
+            Err(err) if on_page_host => return Err(AppError::Other(anyhow::anyhow!(err)).into()),
+            // The operator host still serves every link in its own chrome.
+            Err(err) => {
+                tracing::warn!(error = %err, "share: page lookup failed; rendering in app chrome");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    Ok(match (page, host_page) {
+        (Some(page), Some(host)) if host.page == page.id => Placement::Page {
+            page: host,
+            name: page.name,
+        },
+        _ if on_page_host => return Err(share_not_found().into()),
+        (Some(page), _) if tenancy.subdomain_public_routes => {
+            let domain = state.custom_domains.published(page.id);
+            Placement::Elsewhere(page_origin(
+                &state.cfg.public_status.base_domain,
+                &state.cfg.auth.public_base_url,
+                &page.slug,
+                domain.as_deref(),
+                true,
+            ))
+        }
+        _ => Placement::App,
+    })
+}
+
+/// Kept out of shared caches: a page host's edge marks responses public by
+/// default, and a revoked token has to stop answering at once.
+fn uncached(mut resp: Response) -> Response {
+    resp.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    resp
 }
 
 fn share_not_found() -> AppError {
@@ -131,6 +250,8 @@ pub struct ShareDetailPage {
     pub show_guidance: bool,
     /// Monitor runs from more than one region; the charts merge them.
     pub all_regions: bool,
+    /// The status page this view is drawn for; `None` = the app's own chrome.
+    pub brand: Option<BrandingView>,
 }
 
 #[derive(Template, WebTemplate)]
@@ -178,16 +299,23 @@ pub struct ShareIncidentsPage {
     pub selected_region: Option<String>,
     /// Always `None`: a share link is a status view, not a diagnosis.
     pub unconfirmed: Option<crate::web::views::targets_detail::UnconfirmedFailures>,
+    /// The status page this view is drawn for; `None` = the app's own chrome.
+    pub brand: Option<BrandingView>,
 }
 
 pub async fn detail(
     State(state): State<AppState>,
     Extension(cache): Extension<LiveDataCache>,
     Path(token): Path<String>,
+    uri: Uri,
+    headers: HeaderMap,
     Query(mut params): Query<DetailParams>,
-) -> WebResult<ShareDetailPage> {
+) -> WebResult<Response> {
     clamp_window(&mut params);
-    let resolved = resolve_share(&state, &token).await?;
+    let (resolved, brand) = match open_share(&state, &headers, &uri, &token).await? {
+        Opened::Render(share, brand) => (share, brand),
+        Opened::Moved(to) => return Ok(to),
+    };
     record_view(&state, resolved.share_id);
     let mut target = state
         .target_store
@@ -234,36 +362,40 @@ pub async fn detail(
         read_liveness(&state, resolved.org, &target).await.as_ref(),
     );
 
-    Ok(ShareDetailPage {
-        token,
-        subtab: SUBTAB_MONITOR,
-        ongoing_count,
-        name: target.name,
-        kind,
-        address,
-        interval_s: target.interval.as_secs(),
-        enabled: target.enabled,
-        tags: target.tags,
-        last_status,
-        last_at_iso: Arc::clone(&live.last_at_iso),
-        uptime: Arc::clone(&live.uptime),
-        pings: live.pings,
-        kpi: Arc::clone(&live.kpi),
-        results: Arc::clone(&live.result_rows),
-        results_has_more: live.results_has_more,
-        config_json,
-        range: range_key,
-        range_options: build_range_options(range_key, &RANGE_KEYS),
-        range_base_path,
-        from_iso: labels.from_iso,
-        to_iso: labels.to_iso,
-        from_human: labels.from_human,
-        to_human: labels.to_human,
-        selected_region: None,
-        show_region: false,
-        show_guidance: false,
-        all_regions,
-    })
+    Ok(uncached(
+        ShareDetailPage {
+            token,
+            subtab: SUBTAB_MONITOR,
+            ongoing_count,
+            name: target.name,
+            kind,
+            address,
+            interval_s: target.interval.as_secs(),
+            enabled: target.enabled,
+            tags: target.tags,
+            last_status,
+            last_at_iso: Arc::clone(&live.last_at_iso),
+            uptime: Arc::clone(&live.uptime),
+            pings: live.pings,
+            kpi: Arc::clone(&live.kpi),
+            results: Arc::clone(&live.result_rows),
+            results_has_more: live.results_has_more,
+            config_json,
+            range: range_key,
+            range_options: build_range_options(range_key, &RANGE_KEYS),
+            range_base_path,
+            from_iso: labels.from_iso,
+            to_iso: labels.to_iso,
+            from_human: labels.from_human,
+            to_human: labels.to_human,
+            selected_region: None,
+            show_region: false,
+            show_guidance: false,
+            all_regions,
+            brand,
+        }
+        .into_response(),
+    ))
 }
 
 /// htmx-polled live region twin of `targets_detail::live_partial`, scoped to
@@ -272,10 +404,11 @@ pub async fn live_partial(
     State(state): State<AppState>,
     Extension(cache): Extension<LiveDataCache>,
     Path(token): Path<String>,
+    headers: HeaderMap,
     Query(mut params): Query<DetailParams>,
 ) -> WebResult<Response> {
     clamp_window(&mut params);
-    let resolved = resolve_share(&state, &token).await?;
+    let resolved = resolve_share(&state, &headers, &token).await?;
     let range_key = resolve_range_key(params.range.as_deref(), &RANGE_KEYS, DEFAULT_RANGE);
     // Monitor gone (cascade-deleted with its share between resolve and now) →
     // uniform 404, so the poll stops rather than rendering a dead region. Read
@@ -336,10 +469,15 @@ pub async fn live_partial(
 pub async fn incidents(
     State(state): State<AppState>,
     Path(token): Path<String>,
+    uri: Uri,
+    headers: HeaderMap,
     Query(mut params): Query<DetailParams>,
-) -> WebResult<ShareIncidentsPage> {
+) -> WebResult<Response> {
     clamp_window(&mut params);
-    let resolved = resolve_share(&state, &token).await?;
+    let (resolved, brand) = match open_share(&state, &headers, &uri, &token).await? {
+        Opened::Render(share, brand) => (share, brand),
+        Opened::Moved(to) => return Ok(to),
+    };
     record_view(&state, resolved.share_id);
     let mut target = state
         .target_store
@@ -367,31 +505,35 @@ pub async fn incidents(
         read_liveness(&state, resolved.org, &target).await.as_ref(),
     );
 
-    Ok(ShareIncidentsPage {
-        token,
-        subtab: SUBTAB_INCIDENTS,
-        ongoing_count: data.ongoing_count,
-        name: target.name,
-        kind,
-        address,
-        interval_s: target.interval.as_secs(),
-        enabled: target.enabled,
-        tags: target.tags,
-        last_status,
-        last_at_iso: data.last_at_iso,
-        incidents: data.rows,
-        incidents_has_more: data.has_more,
-        results_base,
-        range: range_key,
-        range_options: build_range_options(range_key, &INCIDENT_RANGE_KEYS),
-        range_base_path,
-        from_iso: labels.from_iso,
-        to_iso: labels.to_iso,
-        from_human: labels.from_human,
-        to_human: labels.to_human,
-        selected_region: None,
-        unconfirmed: None,
-    })
+    Ok(uncached(
+        ShareIncidentsPage {
+            token,
+            subtab: SUBTAB_INCIDENTS,
+            ongoing_count: data.ongoing_count,
+            name: target.name,
+            kind,
+            address,
+            interval_s: target.interval.as_secs(),
+            enabled: target.enabled,
+            tags: target.tags,
+            last_status,
+            last_at_iso: data.last_at_iso,
+            incidents: data.rows,
+            incidents_has_more: data.has_more,
+            results_base,
+            range: range_key,
+            range_options: build_range_options(range_key, &INCIDENT_RANGE_KEYS),
+            range_base_path,
+            from_iso: labels.from_iso,
+            to_iso: labels.to_iso,
+            from_human: labels.from_human,
+            to_human: labels.to_human,
+            selected_region: None,
+            unconfirmed: None,
+            brand,
+        }
+        .into_response(),
+    ))
 }
 
 /// Token-scoped twin of `results::latency` — the JSON the detail charts fetch.
@@ -407,9 +549,10 @@ fn noindexed<T: IntoResponse>(body: T) -> Response {
 pub async fn latency(
     State(state): State<AppState>,
     Path(token): Path<String>,
+    headers: HeaderMap,
     Query(q): Query<RangeQuery>,
 ) -> WebResult<Response> {
-    let resolved = resolve_share(&state, &token).await?;
+    let resolved = resolve_share(&state, &headers, &token).await?;
     let range = state
         .quotas
         .clamp_history(resolved.org, q.resolve_uncapped()?)
@@ -425,10 +568,10 @@ pub async fn latency(
             None,
         )
         .await?;
-    Ok(noindexed(Json(LatencySeries {
+    Ok(uncached(noindexed(Json(LatencySeries {
         buckets,
         bucket_seconds,
-    })))
+    }))))
 }
 
 /// One check result as the public timeline drawer sees it. A deliberately
@@ -452,9 +595,10 @@ struct ShareResultRow {
 pub async fn results(
     State(state): State<AppState>,
     Path(token): Path<String>,
+    headers: HeaderMap,
     Query(q): Query<RangeQuery>,
 ) -> WebResult<Response> {
-    let resolved = resolve_share(&state, &token).await?;
+    let resolved = resolve_share(&state, &headers, &token).await?;
     let range = state.quotas.clamp_raw(resolved.org, q.resolve()?).await?;
     let limit = q.limit();
     let rows = state
@@ -478,7 +622,9 @@ pub async fn results(
             error: r.error.as_deref().map(fmt_error_display),
         })
         .collect();
-    Ok(noindexed(Json(serde_json::json!({ "items": items }))))
+    Ok(uncached(noindexed(Json(
+        serde_json::json!({ "items": items }),
+    ))))
 }
 
 #[cfg(test)]
@@ -536,7 +682,64 @@ mod tests {
             show_region: false,
             show_guidance: false,
             all_regions,
+            brand: None,
         }
+    }
+
+    fn brand(show_powered_by: bool) -> BrandingView {
+        BrandingView {
+            display_name: "Acme".into(),
+            about_html: None,
+            brand_color: "#123456".into(),
+            brand_text: "#ffffff",
+            logo_url: None,
+            show_powered_by,
+            show_source_links: show_powered_by,
+            style: "dark",
+            home: "/",
+            hide_from_search: false,
+            website_url: None,
+            follow_website_link: false,
+        }
+    }
+
+    #[test]
+    fn a_page_link_wears_the_page_chrome() {
+        let mut p = share_page(false);
+        p.brand = Some(brand(true));
+        let html = p.render().unwrap();
+        assert!(html.contains("<title>api · Acme Status</title>"));
+        assert!(html.contains(r#"<html lang="en" class="theme-dark">"#));
+        assert!(html.contains("--brand-color: #123456;"));
+        assert!(html.contains(">← Back to status</a>"));
+        assert!(html.contains("data-subscribe-open"));
+        assert!(html.contains("Powered by"));
+        assert!(!html.contains("Uptimepage — home"));
+        assert!(!html.contains("shared · read-only"));
+        assert!(!html.contains("Monitored with"));
+        // A page host's CSP refuses inline scripts.
+        assert!(!html.contains("<script>"));
+    }
+
+    #[test]
+    fn a_white_label_page_link_says_nothing_of_uptimepage() {
+        let mut p = share_page(false);
+        p.brand = Some(brand(false));
+        let html = p.render().unwrap();
+        assert!(!html.contains("Powered by"));
+        assert!(!html.contains("Licenses"));
+        assert!(!html.contains("Uptimepage"));
+    }
+
+    #[test]
+    fn a_monitor_link_keeps_the_app_chrome() {
+        let html = share_page(false).render().unwrap();
+        assert!(html.contains("<title>api · Uptimepage</title>"));
+        assert!(html.contains("Uptimepage — home"));
+        assert!(html.contains("shared · read-only"));
+        assert!(html.contains("Monitored with"));
+        assert!(!html.contains("Back to status"));
+        assert!(!html.contains("--brand-color"));
     }
 
     #[test]

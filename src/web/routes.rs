@@ -67,8 +67,9 @@ pub fn routes(state: AppState) -> Router {
         )
         // Public capability links: a token grants read-only access to one
         // monitor's detail view. Unauthenticated by design; the token resolves
-        // to its org. Always mounted (not gated on public_routes_active) — share
-        // links live on the operator app host, not the per-tenant status hosts.
+        // to its org. Always mounted (not gated on public_routes_active): the
+        // operator host serves every link, a status page's host only the
+        // detail links that page shows.
         .route("/m/{token}", get(views::share::detail))
         .route("/m/{token}/incidents", get(views::share::incidents))
         .route("/m/{token}/live", get(views::share::live_partial))

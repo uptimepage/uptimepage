@@ -470,8 +470,15 @@ const PUBLIC_TENANT_EXACT: &[&str] = &["/", "/status", "/subscribe", "/.well-kno
 /// `/robots.txt` or `/sitemap.xml` by design — tenant pages aren't
 /// crawl targets, and the public-status template emits its own meta.
 /// No general `/.well-known/*` — only `security.txt` is allow-listed,
-/// ACME challenges run on the apex/`app.{base}` host.
-const PUBLIC_TENANT_PREFIXES: &[&str] = &["/status/", "/subscribe/", "/api/public/v1/", "/static/"];
+/// ACME challenges run on the apex/`app.{base}` host. `/m/` answers only
+/// for the host's own page's detail links (`web::views::share`).
+const PUBLIC_TENANT_PREFIXES: &[&str] = &[
+    "/status/",
+    "/subscribe/",
+    "/api/public/v1/",
+    "/static/",
+    "/m/",
+];
 
 fn is_public_tenant_path(path: &str) -> bool {
     PUBLIC_TENANT_EXACT.contains(&path)
@@ -588,6 +595,7 @@ mod tests {
             "/api/public/v1/status",
             "/static/css/app.css",
             "/.well-known/security.txt",
+            "/m/token",
         ] {
             assert!(!is_app_path(path), "{path}");
         }

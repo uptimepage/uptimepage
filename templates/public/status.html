@@ -11,13 +11,7 @@
     <link rel="apple-touch-icon" href="{{ "img/apple-touch-icon.png"|asset }}">
     <link rel="alternate" type="application/rss+xml" title="Incidents (RSS)" href="{{ view.rss_url }}">
     <link rel="stylesheet" href="{{ "css/app.css"|asset }}">
-    <style>
-        /* Re-validated by `safe_brand_color` — safe to interpolate. */
-        :root {
-            --brand-color: {{ branding.brand_color }};
-            --brand-text: {{ branding.brand_text }};
-        }
-    </style>
+    {% include "public/_brand_style.html" %}
     <script defer src="{{ "js/htmx.min.js"|asset }}"></script>
     <script defer src="{{ "js/ui/polling.js"|asset }}"></script>
     <script defer src="{{ "js/ui/localtime.js"|asset }}"></script>
@@ -40,7 +34,7 @@
     </main>
 
     <footer class="mx-auto max-w-3xl px-4 py-8 text-xs text-quiet">
-        {% if branding.show_powered_by %}Powered by <a href="https://uptimepage.dev" class="hover:text-body">uptimepage</a> · {% endif %}
+        {% include "public/_powered_by.html" %}
         <a href="{{ view.rss_url }}" class="hover:text-body">RSS</a> ·
         Updated <time datetime="{{ view.generated_at|iso_ts }}" data-tz>{{ view.generated_at|human_ts }}</time>
         {% include "public/_source_links.html" %}

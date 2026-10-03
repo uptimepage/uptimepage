@@ -1,23 +1,30 @@
 {# Read-only public shell for a shared single monitor (/m/{token}). A
    deliberately separate layout from base.html: it carries NO operator nav,
    auth chrome, or write controls, so a public capability link can never reach
-   an action surface. noindex keeps shared links out of search engines. #}
+   an action surface. noindex keeps shared links out of search engines. A
+   status page's detail link draws in that page's chrome (`brand`). #}
+{% let rss_url = crate::web::views::public_status::RSS_URL %}
 <!doctype html>
-<html lang="en">
+<html lang="en"{% if let Some(branding) = brand %} class="theme-{{ branding.style }}"{% endif %}>
 <head>
+    {% if brand.is_none() %}
     <script>
       document.documentElement.classList.add('sm-fresh-load');
       addEventListener('load', () => setTimeout(
         () => document.documentElement.classList.remove('sm-fresh-load'), 900));
     </script>
+    {% endif %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex, nofollow">
-    <title>{% block title %}Shared monitor · Uptimepage{% endblock %}</title>
+    <title>{% block title %}Shared monitor{% endblock %} · {% if let Some(branding) = brand %}{{ branding.status_title() }}{% else %}Uptimepage{% endif %}</title>
     <link rel="icon" type="image/svg+xml" href="{{ "img/favicon.svg"|asset }}">
     <link rel="icon" type="image/png" sizes="32x32" href="{{ "img/favicon.png"|asset }}">
     <link rel="apple-touch-icon" href="{{ "img/apple-touch-icon.png"|asset }}">
     <link rel="stylesheet" href="{{ "css/app.css"|asset }}">
+    {% if let Some(branding) = brand %}
+    {% include "public/_brand_style.html" %}
+    {% endif %}
     <script defer src="{{ "js/htmx.min.js"|asset }}"></script>
     <script defer src="{{ "js/ui/polling.js"|asset }}"></script>
     <script defer src="{{ "js/ui/localtime.js"|asset }}"></script>
@@ -27,17 +34,37 @@
        class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:rounded focus:bg-[color:var(--theme-surface-elev)] focus:px-3 focus:py-2 focus:text-sm focus:ring-2 focus:ring-[color:var(--theme-ink)]">
         Skip to main content
     </a>
+    {% if let Some(branding) = brand %}
+    <header style="background-color: var(--brand-color)">
+        <div class="container mx-auto flex items-center justify-between px-4 py-5">
+            {% include "public/_brand_bar.html" %}
+        </div>
+    </header>
+    {% include "public/_subscribe_dialog.html" %}
+    {% else %}
     <header class="border-b border-[color:var(--theme-line)] bg-[color:var(--theme-surface)]">
         <div class="container mx-auto flex items-center gap-3 px-4 py-3">
             {% include "_nav_brand.html" %}
             <span class="status-badge status-badge--tag">shared · read-only</span>
         </div>
     </header>
+    {% endif %}
     <main id="main-content" tabindex="-1" class="container mx-auto px-4 py-6">
+        {% if let Some(branding) = brand %}
+        <p class="mb-4 text-sm">
+            <a href="{{ branding.home }}" class="text-quiet hover:text-body">← Back to status</a>
+        </p>
+        {% endif %}
         {% block content %}{% endblock %}
     </main>
     <footer class="container mx-auto px-4 py-4 text-xs text-quiet">
+        {% if let Some(branding) = brand %}
+        {% include "public/_powered_by.html" %}
+        <a href="{{ rss_url }}" class="hover:text-body">RSS</a>
+        {% include "public/_source_links.html" %}
+        {% else %}
         Monitored with <a href="/" class="hover:text-body">uptimepage</a>.
+        {% endif %}
     </footer>
 </body>
 </html>

@@ -58,8 +58,10 @@ pub struct PublicComponent {
     #[serde(default)]
     #[schema(nullable = true)]
     pub uptime_pct: Option<f64>,
+    /// Path of the component's read-only detail view on the page's own host,
+    /// when the page links one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = true)]
+    #[schema(nullable = true, example = "/m/3q2xW9")]
     pub detail_url: Option<String>,
 }
 

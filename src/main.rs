@@ -393,10 +393,7 @@ async fn main() -> Result<()> {
     );
     drop(result_tx);
 
-    let aggregator_cfg = AggregatorConfig {
-        app_base_url: cfg.auth.public_base_url.clone(),
-        ..AggregatorConfig::default()
-    };
+    let aggregator_cfg = AggregatorConfig::default();
     let aggregator = Arc::new(OrgAggregator::new(
         pg_pool.clone(),
         ch_client_for_public,

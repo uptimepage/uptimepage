@@ -102,7 +102,7 @@ impl BrandingView {
 /// Loads the org's branding for a rendered page. A missing row, missing DB
 /// handle, or query error degrades to defaults keyed off `fallback_name` —
 /// the status page must still render if branding can't be read.
-pub(super) async fn resolve_branding(
+pub async fn resolve_branding(
     state: &AppState,
     headers: &HeaderMap,
     org: OrgId,

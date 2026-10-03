@@ -1,21 +1,6 @@
 <header style="background-color: var(--brand-color)">
     <div class="mx-auto flex max-w-3xl items-center justify-between px-4 py-5">
-        <a href="{{ branding.brand_href() }}"{% if let Some(rel) = branding.brand_rel() %} rel="{{ rel }}"{% endif %}
-           class="flex items-center gap-3 text-lg font-semibold tracking-tight text-brand">
-            {% if let Some(logo) = branding.logo_url %}
-                <img src="{{ logo }}" alt="{{ branding.display_name }}" class="h-8 w-auto">
-            {% else %}
-                {{ branding.display_name }}
-            {% endif %}
-        </a>
-        <div class="flex items-center gap-3">
-            <button type="button" data-subscribe-open
-                    class="rounded-full border border-brand-soft px-4 py-2.5 text-sm text-brand transition-[border-color,scale] hover:border-brand motion-safe:active:scale-[0.96]">
-                Subscribe to updates
-            </button>
-            <a href="{{ rss_url }}" class="text-sm text-brand-soft hover:text-brand"
-               aria-label="Subscribe to incident updates via RSS">RSS</a>
-        </div>
+        {% include "public/_brand_bar.html" %}
     </div>
 </header>
 {% include "public/_subscribe_dialog.html" %}

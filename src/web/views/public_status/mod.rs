@@ -31,16 +31,17 @@ mod og;
 mod tests;
 mod view;
 
-pub use branding::{BrandingView, render_about, safe_brand_color, safe_brand_text_for};
+pub use branding::{
+    BrandingView, render_about, resolve_branding, safe_brand_color, safe_brand_text_for,
+};
 pub use og::OgMeta;
 pub use view::{
     ComponentView, DayCell, GroupView, IncidentDetailView, IncidentHeader, IncidentSummary,
-    IncidentUpdateView, MaintenanceView, StatusView,
+    IncidentUpdateView, MaintenanceView, RSS_URL, StatusView,
 };
 
-use branding::resolve_branding;
 use og::build_og_meta;
-use view::{RSS_URL, build_incident_summary, build_view};
+use view::{build_incident_summary, build_view};
 
 /// Default page size for the archive view. Small enough that each render is
 /// snappy on the unauthenticated, edge-cached path; the keyset cursor walks
