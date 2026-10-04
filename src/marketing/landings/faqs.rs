@@ -22,6 +22,7 @@ pub(super) const FAQ_PATHS: &[&str] = &[
     "/open-source-status-page",
     "/open-source-uptime-monitoring",
     "/cron-job-monitoring",
+    "/wordpress-site-monitoring",
     "/on-call-scheduling",
     "/white-label-uptime-monitoring",
     "/uptime-monitoring-for-developers",
@@ -440,6 +441,36 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             (
                 "What happens if the ping URL leaks?",
                 "Rotate it from the monitor page or the API. Anyone holding the URL can mark the job healthy, which means they can keep a real outage invisible. Rotation keeps the monitor's incidents, history, share links and status-page placement. The old URL keeps working for 24 hours by default so nothing goes silently quiet, and you can end that overlap immediately when the URL really leaked.",
+            ),
+        ],
+        "/wordpress-site-monitoring" => &[
+            (
+                "How do I monitor a WordPress site?",
+                "Add two HTTP checks: one on the homepage and one on a page the cache skips, such as /wp-login.php. The homepage shows what visitors get, and the uncached page shows whether PHP and the database still work behind the cache. Add TLS and domain-expiry checks and a heartbeat for WP-Cron. Nothing is installed on the site.",
+            ),
+            (
+                "Do I need to install a WordPress plugin?",
+                "No. Every check runs from Uptimepage's probes against the public site, so nothing is added to WordPress and nothing stops reporting when WordPress breaks. The only changes you might make are on the server, a cron line and one line in wp-config.php, if you want WP-Cron watched by a heartbeat.",
+            ),
+            (
+                "Will checks every 60 seconds slow the site down?",
+                "No. A check fetches the HTML of one page, without images, scripts or styles, once a minute from each probe region. Even on the uncached page, where each check runs PHP, that is far below the normal traffic of a live site. HTTP checks do not run JavaScript, so they do not appear in Google Analytics. A browser flow runs the page's scripts like a visitor, so its runs can appear there.",
+            ),
+            (
+                "A security plugin or firewall blocks the checks. What now?",
+                "For HTTP checks, let requests through by User-Agent: match requests whose User-Agent contains uptimepage/. Limit the exception to the URLs you monitor, because anyone can send that header. Probe IP addresses can change without notice, so an IP allowlist will break. Browser flows send a different User-Agent and submit forms, so a rule written for HTTP checks does not cover them. The bot page, linked below, has more detail.",
+            ),
+            (
+                "Can it check that logging in to wp-admin still works?",
+                "Yes, with a browser flow check. It opens the login page, fills the form and waits for a page only a signed-in user sees. Use a Subscriber account made for the check, never an admin, and keep its password in a secret variable so the monitor stores a reference instead of the password. Flow checks are counted per plan.",
+            ),
+            (
+                "Can it monitor a WooCommerce checkout?",
+                "Yes, with a browser flow check that adds a product to the cart and opens the checkout. It stops before payment, so it takes no money and sends no order emails.",
+            ),
+            (
+                "Can a client get their own status page?",
+                "Yes. A status page shows only the monitors you put on it, so a client sees their own sites and nothing else, under their logo and colours. The number of status pages depends on the plan.",
             ),
         ],
         "/white-label-uptime-monitoring" => &[

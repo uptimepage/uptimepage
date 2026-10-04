@@ -94,7 +94,7 @@ pub const LANDINGS: &[Landing] = &[
     Landing {
         path: "/status-page-for-agencies",
         created: "2026-06-16",
-        lastmod: "2026-10-02",
+        lastmod: "2026-10-04",
         title: "Status Pages for Agencies & Client Sites",
         eyebrow: "for agencies",
         h1: "One account. A branded status page for every client.",
@@ -161,6 +161,10 @@ pub const LANDINGS: &[Landing] = &[
             ResourceLink {
                 label: "White-label status pages",
                 href: "/white-label-uptime-monitoring",
+            },
+            ResourceLink {
+                label: "Monitoring client WordPress sites",
+                href: "/wordpress-site-monitoring",
             },
             ResourceLink {
                 label: "11 Statuspage alternatives, compared",
@@ -586,7 +590,7 @@ docker compose up -d"#,
     Landing {
         path: "/cron-job-monitoring",
         created: "2026-08-27",
-        lastmod: "2026-10-03",
+        lastmod: "2026-10-04",
         title: "Cron Job Monitoring and Heartbeat Checks",
         eyebrow: "heartbeat checks",
         h1: "Find out when a scheduled job stops running",
@@ -681,6 +685,126 @@ tail -c 4000 backup.log | curl -fsS --data-binary @- "$URL/$code""#,
             ResourceLink {
                 label: "Monitoring as code",
                 href: "/terraform-uptime-monitoring",
+            },
+            ResourceLink {
+                label: "WP-Cron on a heartbeat",
+                href: "/wordpress-site-monitoring",
+            },
+        ],
+        cta: "Start free",
+    },
+    Landing {
+        path: "/wordpress-site-monitoring",
+        created: "2026-10-04",
+        lastmod: "2026-10-04",
+        title: "Monitor Your WordPress Site: Uptime, Cron, SSL",
+        eyebrow: "wordpress monitoring",
+        h1: "Monitor every WordPress site you run",
+        meta_description: "Monitor your WordPress site with no plugin: 60s checks that see past the page cache, WP-Cron heartbeats, SSL and domain expiry alerts. Free to start.",
+        lede: "Nothing to install on the site. Uptimepage checks each WordPress site from outside, on a page its cache cannot answer for, and tells you in Slack or by email when something breaks it, usually before the site's owner has noticed.",
+        features: &[
+            Feature {
+                label: "Plugin to install",
+                value: "none, checks run from outside",
+            },
+            Feature {
+                label: "Check interval",
+                value: "every 60s",
+            },
+            Feature {
+                label: "Alert channels",
+                value: "email, Slack, Telegram, webhooks + more",
+            },
+            Feature {
+                label: "WP-Cron",
+                value: "heartbeat from a system cron",
+            },
+            Feature {
+                label: "Expiry warnings",
+                value: "SSL certificate and domain",
+            },
+            Feature {
+                label: "Price to start",
+                value: "free, no card",
+            },
+        ],
+        sections: &[
+            Section {
+                heading: "Check a page the cache cannot answer for",
+                body: "Most WordPress sites have a page cache in front of PHP, from a plugin, the host or a CDN. That is good for visitors and bad for monitoring: the cache can keep serving the homepage while PHP has crashed and the database is unreachable, so a check on the homepage stays green through the whole outage. Keep the homepage check, because it is what visitors see, and add one on a page the cache skips, such as /wp-login.php. That page cannot render without PHP and the database, so when it fails, WordPress has failed. If a security plugin moved the login URL, or the page sits behind a password or a bot challenge, use any other page your cache excludes.",
+            },
+            Section {
+                heading: "A 200 does not prove it is your site",
+                body: "A blank page can come back as 200. So can the parking page a registrar puts up after a missed renewal, or a hacked site redirecting to someone else's. Give the check a phrase that only your real page contains, such as the site name in the footer, and a response without it counts as down whatever its status code.",
+            },
+            Section {
+                heading: "Updates run when you are not watching",
+                body: "Since WordPress 5.5, plugins and themes can update themselves, and background updates run twice a day whether anyone is watching or not. Since 6.6, WordPress rolls back a plugin update that causes a fatal error. An update that breaks a page without a fatal error stays live, and the body check or a browser flow is what notices it. On a monitor checked from several regions, a blip seen from one region alone pages nobody by default, so the alert you get is about the site and not about a bad network path. When you update by hand, schedule a maintenance window first and alerts for that site hold until it ends.",
+            },
+            Section {
+                heading: "A shop that loads but cannot sell",
+                body: "On a WooCommerce store, the homepage and the product pages can load fine while an update, a payment plugin or a theme change has broken the cart or the checkout. A browser flow check walks the path a buyer takes, as often as every five minutes: it opens a product, adds it to the cart, goes to the checkout and confirms the Place order button is there. Pick a product with stock management off, because the block checkout holds the cart's stock for a few minutes each time it loads. When a step fails, the result names that step, so you know it is the checkout and not the whole site. How many flow checks you get depends on the plan.",
+            },
+            Section {
+                heading: "WP-Cron waits for visitors",
+                body: "Scheduled posts, backup plugins and WooCommerce's background jobs all wait for WP-Cron, and WP-Cron only starts when a visit loads WordPress. Visits the page cache answers never load it, so a cached site runs WP-Cron only on the visits that miss the cache. Sites that switch it off with DISABLE_WP_CRON depend on a system cron instead, and that line is easy to lose in a server move. Either way nothing errors. The first sign is a post marked \"Missed schedule\" or a backup folder that stopped growing weeks ago. A heartbeat check turns that silence into an alert: run WP-Cron from the system cron, ping the heartbeat URL after it, and when the pings stop, you hear about it.",
+            },
+            Section {
+                heading: "Certificates and domains run out quietly",
+                body: "Let's Encrypt renewal tends to break after a DNS change or a server move, and nobody notices until browsers show a warning. Client domains often sit in the client's own registrar account, paid with a card that expired last year. A TLS check warns before the certificate runs out. Set the warning a few days below the point where your renewal runs, so a normal renewal stays quiet and only a failed one reaches you. A domain-expiry check warns 30 days before the registration ends, which leaves time to call the client.",
+            },
+            Section {
+                heading: "Status pages your clients can open",
+                body: "A client can get a branded status page with only their own sites on it. Incidents post to it as checks fail, so when a client asks what happened last night, you send a link.",
+            },
+            Section {
+                heading: "A client list without a form per site",
+                body: "The form is fine for the first few sites. For a whole client list, the Terraform provider, the REST API and the MCP server create the monitors in one pass, with the same checks and alert channels on each, and with Terraform the list lives in a file you can review.",
+            },
+        ],
+        code: Some(CodeSample {
+            caption: "A crontab for the user that owns the site. Set the heartbeat period to the cron interval, here 5 minutes, with a 5 minute grace",
+            body: r#"# First add to wp-config.php: define( 'DISABLE_WP_CRON', true );
+# Run as the site's user, not root: WP-CLI refuses to run as root.
+URL=https://app.uptimepage.dev/ping/your-token
+*/5 * * * * cd /var/www/example.com && /usr/local/bin/wp cron event run --due-now --quiet; curl -fsS -o /dev/null "$URL/$?"
+
+# Shared hosting with no WP-CLI: put this in the host's cron box instead,
+# at the shortest interval the host allows, and match the heartbeat period to it.
+# curl -fsS -o /dev/null "https://example.com/wp-cron.php?doing_wp_cron" && curl -fsS -o /dev/null https://app.uptimepage.dev/ping/your-token"#,
+        }),
+        resources: &[
+            ResourceLink {
+                label: "Status pages for agencies",
+                href: "/status-page-for-agencies",
+            },
+            ResourceLink {
+                label: "Cron job monitoring",
+                href: "/cron-job-monitoring",
+            },
+            ResourceLink {
+                label: "Browser login monitoring",
+                href: "/browser-login-monitoring",
+            },
+            ResourceLink {
+                label: "All nine check types",
+                href: "/docs/monitor-types",
+            },
+            ResourceLink {
+                label: "Your domain can expire while your monitor stays green",
+                href: "/blog/domain-expired-but-site-still-up",
+            },
+            ResourceLink {
+                label: "SSL certificate checker",
+                href: "/tools/ssl-certificate-checker",
+            },
+            ResourceLink {
+                label: "Allowlisting the probe",
+                href: "/bot",
+            },
+            ResourceLink {
+                label: "Free pricing",
+                href: "/pricing",
             },
         ],
         cta: "Start free",

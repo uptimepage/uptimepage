@@ -1,5 +1,5 @@
 {% let nav_product = canonical_url.contains("/on-call-scheduling") %}
-{% let nav_solutions = canonical_url.contains("/status-page-for-") || canonical_url.contains("/uptime-monitoring-for-developers") || canonical_url.contains("/white-label-uptime-monitoring") || canonical_url.contains("/open-source-status-page") %}
+{% let nav_solutions = canonical_url.contains("/status-page-for-") || canonical_url.contains("/uptime-monitoring-for-developers") || canonical_url.contains("/white-label-uptime-monitoring") || canonical_url.contains("/open-source-status-page") || canonical_url.contains("/wordpress-site-monitoring") %}
 {% let nav_compare = canonical_url.contains("/vs/") || canonical_url.contains("/compare/") || canonical_url.contains("/open-source-uptime-monitoring") %}
 {% let nav_resources = canonical_url.contains("/docs") || canonical_url.contains("/blog") || canonical_url.contains("/tools") || canonical_url.contains("/mcp-server") || canonical_url.contains("/terraform-uptime-monitoring") || canonical_url.contains("/terraform-status-page") || canonical_url.contains("/about") %}
 {% let nav_pricing = canonical_url.ends_with("/pricing") %}
@@ -46,6 +46,10 @@
             <a href="/uptime-monitoring-for-developers" class="mk-mega__item">
                 <span class="mk-mega__item-title">for developers</span>
                 <span class="mk-mega__item-desc">api, terraform, mcp</span>
+            </a>
+            <a href="/wordpress-site-monitoring" class="mk-mega__item">
+                <span class="mk-mega__item-title">for wordpress</span>
+                <span class="mk-mega__item-desc">sites, wp-cron, checkout</span>
             </a>
         </div>
         <div class="mk-mega__col">
