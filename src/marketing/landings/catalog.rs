@@ -731,7 +731,7 @@ tail -c 4000 backup.log | curl -fsS --data-binary @- "$URL/$code""#,
         sections: &[
             Section {
                 heading: "Check a page the cache cannot answer for",
-                body: "Most WordPress sites have a page cache in front of PHP, from a plugin, the host or a CDN. That is good for visitors and bad for monitoring: the cache can keep serving the homepage while PHP has crashed and the database is unreachable, so a check on the homepage stays green through the whole outage. Keep the homepage check, because it is what visitors see, and add one on a page the cache skips, such as /wp-login.php. That page cannot render without PHP and the database, so when it fails, WordPress has failed. If a security plugin moved the login URL, or the page sits behind a password or a bot challenge, use any other page your cache excludes.",
+                body: "Most WordPress sites have a page cache in front of PHP, from a plugin, the host or a CDN. That is good for visitors and bad for monitoring: the cache can keep serving the homepage while PHP has crashed and the database is unreachable, so a check on the homepage stays green through the whole outage. Keep the homepage check, because it is what visitors see, and add one on a page the cache skips, such as /wp-json/, the REST API index. It cannot answer without PHP and the database, so when it fails, WordPress has failed. If a security plugin closes the REST API to visitors, it answers 401 or 403, which still proves PHP and the database work, so set the check to expect that code. Some cache plugins and hosts cache it too; if yours does, use any other page your cache excludes.",
             },
             Section {
                 heading: "A 200 does not prove it is your site",

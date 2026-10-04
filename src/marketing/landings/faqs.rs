@@ -446,7 +446,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
         "/wordpress-site-monitoring" => &[
             (
                 "How do I monitor a WordPress site?",
-                "Add two HTTP checks: one on the homepage and one on a page the cache skips, such as /wp-login.php. The homepage shows what visitors get, and the uncached page shows whether PHP and the database still work behind the cache. Add TLS and domain-expiry checks and a heartbeat for WP-Cron. Nothing is installed on the site.",
+                "Add two HTTP checks: one on the homepage and one on a page the cache skips, such as /wp-json/, the REST API index. The homepage shows what visitors get, and the uncached page shows whether PHP and the database still work behind the cache. Add TLS and domain-expiry checks and a heartbeat for WP-Cron. Nothing is installed on the site.",
             ),
             (
                 "Do I need to install a WordPress plugin?",
@@ -459,10 +459,6 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             (
                 "A security plugin or firewall blocks the checks. What now?",
                 "For HTTP checks, let requests through by User-Agent: match requests whose User-Agent contains uptimepage/. Limit the exception to the URLs you monitor, because anyone can send that header. Probe IP addresses can change without notice, so an IP allowlist will break. Browser flows send a different User-Agent and submit forms, so a rule written for HTTP checks does not cover them. The bot page, linked below, has more detail.",
-            ),
-            (
-                "Can it check that logging in to wp-admin still works?",
-                "Yes, with a browser flow check. It opens the login page, fills the form and waits for a page only a signed-in user sees. Use a Subscriber account made for the check, never an admin, and keep its password in a secret variable so the monitor stores a reference instead of the password. Flow checks are counted per plan.",
             ),
             (
                 "Can it monitor a WooCommerce checkout?",
