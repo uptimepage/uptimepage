@@ -1,7 +1,7 @@
 +++
 title = "Do I need an uptime monitor? Count what downtime costs you"
 date = "2026-07-22"
-updated = "2026-09-05"
+updated = "2026-10-04"
 slug = "do-i-need-an-uptime-monitor"
 excerpt = "An uptime monitor is cheap. One outage you find out about from a customer is not. How to price your own downtime, and what to watch besides the homepage."
 tags = ["uptime", "monitoring", "downtime", "reliability"]
@@ -113,7 +113,7 @@ Read the public registration date with the [domain expiry checker](/tools/domain
 
 If two lookups disagree, [compare DNS resolver answers](/blog/why-dns-returns-different-ip-addresses) before changing the record again. Different CDN addresses can both be correct.
 
-**A background job dies silently.** The nightly backup, the invoice generator, the queue worker. Nothing throws an error, the process just stopped, and you find out weeks later when you actually need the backup. Probing from outside cannot catch this, because there is nothing to probe. A heartbeat check works the other way round. The job calls a URL every time it finishes, and the monitor alerts you when that call does not arrive on time. There is a longer version of this failure, with sources, in [why a cron job can fail for months without telling you](/blog/cron-jobs-fail-silently).
+**A background job dies silently.** The nightly backup, the invoice generator, the queue worker. Nothing throws an error, the process just stopped, and you find out weeks later when you actually need the backup. Probing from outside cannot catch this, because there is nothing to probe. A heartbeat check works the other way round. The job calls a URL every time it finishes, and the monitor alerts you when that call does not arrive on time. There is a longer version of this failure, with sources, in [why a cron job can fail for months without telling you](/blog/cron-jobs-fail-silently). On WordPress the scheduler itself waits for visitors, which is why posts end up marked ["Missed schedule"](/blog/wordpress-missed-schedule).
 
 **The login form breaks.** Every endpoint answers, every status code is 200, and the button does nothing because a JavaScript bundle failed to load. A browser flow check runs the real steps in a real browser, types the password, and tells you the user journey is broken.
 

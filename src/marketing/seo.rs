@@ -52,6 +52,10 @@ pub(super) const LLMS_FACTS: &[(&str, &str)] = &[
         "Status page",
         "branded (logo + colour) on your own subdomain, or your own domain on Pro and Team",
     ),
+    (
+        "WordPress",
+        "monitored from outside with no plugin: an HTTP check on the homepage plus one on an uncached page such as /wp-json/, a heartbeat for WP-Cron run from a system cron, a browser flow through a WooCommerce cart and checkout, TLS and domain-expiry checks",
+    ),
     ("Public history", "90 days"),
     (
         "Incidents",

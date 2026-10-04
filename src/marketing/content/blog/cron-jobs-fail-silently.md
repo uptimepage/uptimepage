@@ -1,7 +1,7 @@
 +++
 title = "Your cron job can fail for months and nothing will tell you"
 date = "2026-08-26"
-updated = "2026-08-27"
+updated = "2026-10-04"
 slug = "cron-jobs-fail-silently"
 excerpt = "A scheduled job that stops running produces no error and no alert. GitLab's nightly backup failed for months before anyone noticed. Why, with sources."
 tags = ["cron", "heartbeat", "monitoring", "backups", "reliability"]
@@ -116,6 +116,8 @@ Two schedulers, or a retry stacking on top of a slow run. You get duplicate invo
 ### The job ran, but hours late
 
 A queue backed up, a lock was held too long, a flexible time window drifted. The nightly report lands at 11am instead of 6am, and everything downstream that assumed fresh data has been serving yesterday's numbers all morning. No alert fires, because the job did eventually succeed.
+
+WordPress has this failure built in. WP-Cron only runs when a visit loads WordPress, so on a quiet site a post due at 06:00 waits for the first visitor, and the admin marks it ["Missed schedule"](/blog/wordpress-missed-schedule).
 
 ### The job failed and the alert never arrived
 

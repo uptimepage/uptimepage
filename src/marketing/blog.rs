@@ -779,6 +779,7 @@ mod tests {
         "cron-jobs-fail-silently",
         "uptime-kuma-rest-api",
         "best-open-source-status-pages",
+        "wordpress-missed-schedule",
     ];
 
     #[test]

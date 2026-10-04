@@ -128,6 +128,10 @@ pub const LANDINGS: &[Landing] = &[
                 body: "Add each client site as a monitor, group them by client, and see the whole roster’s health in one dashboard. When something goes red you know which client, which site and since when, without logging into five different tools. Switch a monitor public and that client has a branded status page, no extra setup.",
             },
             Section {
+                heading: "WordPress client sites",
+                body: "If your clients run WordPress, a check on the homepage alone can stay green behind a page cache while PHP or the database is down. A second check on /wp-json/ sees past the cache, and a heartbeat tells you when WP-Cron stops. On a WooCommerce shop, a browser flow can also walk the checkout. None of it needs a plugin on the client's site.",
+            },
+            Section {
                 heading: "You know before the client calls",
                 body: "The call every agency dreads starts with \"our site is down, did you know?\" Monitoring answers it before it happens: the check fails, the alert lands in your Slack or inbox, and the incident is already on the client’s status page with a timestamp. By the time the client looks, the page shows you were on it minutes ago. That timeline is the difference between looking asleep and looking like a retainer well spent.",
             },
@@ -789,6 +793,10 @@ URL=https://app.uptimepage.dev/ping/your-token
             ResourceLink {
                 label: "All nine check types",
                 href: "/docs/monitor-types",
+            },
+            ResourceLink {
+                label: "WordPress missed schedule: why it happens",
+                href: "/blog/wordpress-missed-schedule",
             },
             ResourceLink {
                 label: "Your domain can expire while your monitor stays green",
