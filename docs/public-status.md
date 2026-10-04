@@ -196,7 +196,7 @@ Every window records who scheduled it (`created_by`), who changed it last (`upda
 
 ## Language
 
-Each page has a language: English by default, or German. Set it under **Language** in the page editor, or with `PATCH /api/v1/status-pages/{id}` and `{"public_locale": "de"}` (see [Page identity and branding](per-org-status.md#page-identity-and-branding)); `en` switches back.
+Each page has a language: English by default, or German. Set it under **Language** in the page editor, with `PATCH /api/v1/status-pages/{id}` and `{"public_locale": "de"}` (see [Page identity and branding](per-org-status.md#page-identity-and-branding)), or with `locale` on [`uptimepage_status_page`](terraform.md); `en` switches back.
 
 The language covers what the page writes itself: status labels, headings and buttons, dates and durations, the title of an incident you never named, the status badge, the RSS feed's own title, the subscribe flow, and the confirmation, incident and maintenance emails sent to subscribers. Times in those emails stay in UTC. Text you write is shown as written: page, component and group names, the about text, incident titles and updates, and maintenance windows.
 

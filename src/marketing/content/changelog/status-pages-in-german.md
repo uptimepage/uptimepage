@@ -12,4 +12,6 @@ Each status page now has a language. English stays the default, and German is th
 
 **One language per page.** A page with two audiences is two pages, each with its own subscribers.
 
-Docs: [public status page](/docs/public-status#language), [per-org status pages](/docs/per-org-status).
+**Terraform.** Provider 0.14.0 sets the page language with `locale` on `uptimepage_status_page`. Leave it out to choose the language in the console instead. Removing the line keeps the language it set, so set `en` to switch back.
+
+Docs: [public status page](/docs/public-status#language), [per-org status pages](/docs/per-org-status), [Terraform](/docs/terraform).
