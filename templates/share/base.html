@@ -4,6 +4,7 @@
    an action surface. noindex keeps shared links out of search engines. A
    status page's detail link draws in that page's chrome (`brand`). #}
 {% let rss_url = crate::web::views::public_status::RSS_URL %}
+{% let tr = crate::i18n::Tr::default() %}
 <!doctype html>
 <html lang="en"{% if let Some(branding) = brand %} class="theme-{{ branding.style }}"{% endif %}>
 <head>

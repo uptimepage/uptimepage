@@ -26,7 +26,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::config::PublicStatusConfig;
-use crate::domain::{PublicStatusPage, StatusPageId};
+use crate::domain::{Locale, PublicStatusPage, StatusPageId};
 
 /// 90-day incident reference used only by the HTML popover matcher.
 /// Slim by design — full-detail incidents live on `PublicStatusPage`.
@@ -48,8 +48,15 @@ pub struct PageData {
     pub page: Arc<PublicStatusPage>,
     pub history_markers: Arc<Vec<HistoryIncidentMarker>>,
     pub component_names: Arc<HashMap<Uuid, String>>,
-    /// Cached here so the feed, badge and JSON routes need no query of their own.
+    pub settings: PageSettings,
+}
+
+/// Cached with the snapshot so the feed, badge, JSON and fragment routes need
+/// no query of their own.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PageSettings {
     pub hide_from_search: bool,
+    pub locale: Locale,
 }
 
 impl From<PublicStatusPage> for PageData {
@@ -58,7 +65,7 @@ impl From<PublicStatusPage> for PageData {
             page: Arc::new(page),
             history_markers: Arc::new(Vec::new()),
             component_names: Arc::new(HashMap::new()),
-            hide_from_search: false,
+            settings: PageSettings::default(),
         }
     }
 }
@@ -68,22 +75,22 @@ impl
         PublicStatusPage,
         Vec<HistoryIncidentMarker>,
         HashMap<Uuid, String>,
-        bool,
+        PageSettings,
     )> for PageData
 {
     fn from(
-        (page, markers, names, hide_from_search): (
+        (page, markers, names, settings): (
             PublicStatusPage,
             Vec<HistoryIncidentMarker>,
             HashMap<Uuid, String>,
-            bool,
+            PageSettings,
         ),
     ) -> Self {
         Self {
             page: Arc::new(page),
             history_markers: Arc::new(markers),
             component_names: Arc::new(names),
-            hide_from_search,
+            settings,
         }
     }
 }

@@ -23,8 +23,8 @@ use uuid::Uuid;
 
 use common::build_test_app_with_public_source;
 use uptimepage::domain::{
-    ComponentHistoryResponse, IncidentImpact, IncidentSeverity, IncidentStatusPhase, PageRef,
-    PublicIncident, PublicIncidentUpdate, PublicMaintenanceList, PublicStatusPage,
+    ComponentHistoryResponse, IncidentImpact, IncidentSeverity, IncidentStatusPhase, Locale,
+    PageRef, PublicIncident, PublicIncidentUpdate, PublicMaintenanceList, PublicStatusPage,
 };
 use uptimepage::error::public::PublicAppError;
 use uptimepage::pagination::CursorPage;
@@ -115,7 +115,7 @@ impl PublicSource for TwoIncidentSource {
             .list_incidents(page, IncidentListQuery::default())
             .await?
             .items;
-        Ok(build_rss("uptimepage", links, &items))
+        Ok(build_rss("uptimepage", links, Locale::En, &items))
     }
 }
 

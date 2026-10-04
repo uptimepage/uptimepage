@@ -6,7 +6,8 @@ use thiserror::Error;
 
 use super::templates;
 pub use super::templates::incident_alert::IncidentAlert;
-use crate::domain::Landing;
+use crate::domain::{Landing, Locale};
+use crate::i18n::Tr;
 
 pub type EmailResult<T> = Result<T, EmailError>;
 
@@ -97,6 +98,7 @@ pub enum EmailTemplate {
     /// Confirms a public status-page subscription (double opt-in) before any
     /// update is delivered to the address.
     SubscriberConfirm {
+        locale: Locale,
         page_name: String,
         confirm_url: String,
         expires_hours: u32,
@@ -104,6 +106,7 @@ pub enum EmailTemplate {
     },
     /// A public incident update delivered to a confirmed subscriber.
     SubscriberIncident {
+        locale: Locale,
         page_name: String,
         incident_title: String,
         phase: String,
@@ -148,6 +151,7 @@ pub enum EmailTemplate {
     /// A maintenance-window announcement or completion for a confirmed
     /// subscriber. `phase` is `scheduled` or `completed`.
     SubscriberMaintenance {
+        locale: Locale,
         page_name: String,
         title: String,
         description: Option<String>,
@@ -299,11 +303,13 @@ impl EmailTemplate {
                 templates::incident_alert::render(site_name, alert)
             }
             EmailTemplate::SubscriberConfirm {
+                locale,
                 page_name,
                 confirm_url,
                 expires_hours,
                 unsubscribe_url,
             } => templates::subscriber_confirm::render(
+                Tr::new(*locale),
                 site_name,
                 page_name,
                 confirm_url,
@@ -311,6 +317,7 @@ impl EmailTemplate {
                 unsubscribe_url,
             ),
             EmailTemplate::SubscriberIncident {
+                locale,
                 page_name,
                 incident_title,
                 phase,
@@ -318,6 +325,7 @@ impl EmailTemplate {
                 incident_url,
                 unsubscribe_url,
             } => templates::subscriber_incident::render(
+                Tr::new(*locale),
                 page_name,
                 incident_title,
                 phase,
@@ -350,6 +358,7 @@ impl EmailTemplate {
                 },
             ),
             EmailTemplate::SubscriberMaintenance {
+                locale,
                 page_name,
                 title,
                 description,
@@ -359,6 +368,7 @@ impl EmailTemplate {
                 page_url,
                 unsubscribe_url,
             } => templates::subscriber_maintenance::render(
+                Tr::new(*locale),
                 page_name,
                 title,
                 description.as_deref(),
@@ -610,6 +620,7 @@ mod tests {
     #[test]
     fn subscriber_confirm_offers_one_click_unsubscribe() {
         let confirm = EmailTemplate::SubscriberConfirm {
+            locale: Locale::En,
             page_name: "Acme".into(),
             confirm_url: "https://acme/subscribe/confirm?token=x".into(),
             expires_hours: 24,

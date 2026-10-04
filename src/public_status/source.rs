@@ -15,11 +15,11 @@ use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 use crate::domain::{
-    ComponentHistoryResponse, IncidentSeverity, IncidentStatusPhase, OrgId, PageRef,
+    ComponentHistoryResponse, IncidentSeverity, IncidentStatusPhase, Locale, OrgId, PageRef,
     PublicIncident, PublicIncidentUpdate, PublicMaintenanceList, PublicStatusPage,
-    public::auto_incident_title,
 };
 use crate::error::public::PublicAppError;
+use crate::i18n::Tr;
 use crate::pagination::cursor::IncidentCursor;
 use crate::pagination::page::CursorPage;
 
@@ -70,6 +70,11 @@ pub trait PublicSource: Send + Sync {
     /// Answered from the same cached snapshot the render uses.
     async fn hide_from_search(&self, _page: PageRef) -> bool {
         false
+    }
+
+    /// Answered from the cached snapshot, without a query of its own.
+    async fn locale(&self, _page: PageRef) -> Locale {
+        Locale::default()
     }
 
     async fn component_history(
@@ -163,7 +168,14 @@ impl PublicSource for OrgPublicSource {
         // An unreadable snapshot reads as hidden.
         self.cached(page)
             .await
-            .map_or(true, |data| data.hide_from_search)
+            .map_or(true, |data| data.settings.hide_from_search)
+    }
+
+    async fn locale(&self, page: PageRef) -> Locale {
+        self.cached(page)
+            .await
+            .map(|data| data.settings.locale)
+            .unwrap_or_default()
     }
 
     async fn component_history(
@@ -188,7 +200,8 @@ impl PublicSource for OrgPublicSource {
     ) -> Result<CursorPage<PublicIncident>, PublicAppError> {
         // The page's component set + per-page names, reused from the cached
         // page snapshot.
-        let names = self.cached(page).await?.component_names.clone();
+        let data = self.cached(page).await?;
+        let names = data.component_names.clone();
         let component_ids: Vec<Uuid> = names.keys().copied().collect();
 
         let since = Utc::now() - ChronoDuration::days(self.rss_lookback_days as i64);
@@ -249,7 +262,8 @@ impl PublicSource for OrgPublicSource {
             None
         };
 
-        let incidents = self.hydrate(page.org, kept, &names).await?;
+        let tr = Tr::new(data.settings.locale);
+        let incidents = self.hydrate(page.org, kept, &names, tr).await?;
         Ok(CursorPage::new(incidents, next_cursor))
     }
 
@@ -258,7 +272,8 @@ impl PublicSource for OrgPublicSource {
         page: PageRef,
         id: Uuid,
     ) -> Result<PublicIncident, PublicAppError> {
-        let names = self.cached(page).await?.component_names.clone();
+        let data = self.cached(page).await?;
+        let names = data.component_names.clone();
         let component_ids: Vec<Uuid> = names.keys().copied().collect();
         let row: Option<IncidentRow> = sqlx::query_as::<_, IncidentRow>(&format!(
             r#"SELECT i.id, i.target_id,
@@ -282,7 +297,8 @@ impl PublicSource for OrgPublicSource {
         .map_err(PublicAppError::Internal)?;
 
         let row = row.ok_or(PublicAppError::NotFound)?;
-        let mut hydrated = self.hydrate(page.org, vec![row], &names).await?;
+        let tr = Tr::new(data.settings.locale);
+        let mut hydrated = self.hydrate(page.org, vec![row], &names, tr).await?;
         let mut incident = hydrated.pop().ok_or(PublicAppError::NotFound)?;
         incident.postmortem = self.published_postmortem(page.org, id).await?;
         Ok(incident)
@@ -307,7 +323,8 @@ impl PublicSource for OrgPublicSource {
             ongoing_only: false,
         };
         let listed = self.list_incidents(page, q).await?;
-        Ok(build_rss(&self.site_name, links, &listed.items))
+        let locale = self.locale(page).await;
+        Ok(build_rss(&self.site_name, links, locale, &listed.items))
     }
 
     async fn invalidate(&self, page: crate::domain::StatusPageId) {
@@ -321,6 +338,7 @@ impl OrgPublicSource {
         org: OrgId,
         rows: Vec<IncidentRow>,
         names: &HashMap<Uuid, String>,
+        tr: Tr,
     ) -> Result<Vec<PublicIncident>, PublicAppError> {
         if rows.is_empty() {
             return Ok(Vec::new());
@@ -363,7 +381,7 @@ impl OrgPublicSource {
                 let title = r
                     .public_title
                     .clone()
-                    .unwrap_or_else(|| auto_incident_title(&component_name, &r.status_at_start));
+                    .unwrap_or_else(|| tr.auto_incident_title(&component_name, &r.status_at_start));
                 let severity = IncidentSeverity::from_db_str(&r.severity);
                 PublicIncident {
                     id: r.id,
@@ -474,16 +492,24 @@ pub struct FeedLinks<'a> {
 
 /// Minimal RSS 2.0 builder — keeps us free of an extra crate just to emit
 /// a few dozen lines of XML. Items are the most recent public incidents.
-pub fn build_rss(site_name: &str, links: FeedLinks<'_>, items: &[PublicIncident]) -> String {
+pub fn build_rss(
+    site_name: &str,
+    links: FeedLinks<'_>,
+    locale: Locale,
+    items: &[PublicIncident],
+) -> String {
     let base_url = links.origin.trim_end_matches('/');
     let now = Utc::now().to_rfc2822();
+    let tr = Tr::new(locale);
     let mut out = String::with_capacity(512 + items.len() * 256);
     out.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
     out.push_str("\n<rss version=\"2.0\"><channel>");
     out.push_str(&format!(
-        "<title>{}</title><link>{}</link><description>Operational status</description><lastBuildDate>{}</lastBuildDate>",
-        xml_escape(&format!("{} Incidents", super::status_title(site_name))),
+        "<title>{}</title><link>{}</link><description>{}</description><language>{}</language><lastBuildDate>{}</lastBuildDate>",
+        xml_escape(&tr.t_args("rss-title", [("page", super::status_title(site_name).into())])),
         xml_escape(links.page.trim_end_matches('/')),
+        xml_escape(&tr.t("rss-description")),
+        tr.lang(),
         now,
     ));
     for i in items {
@@ -496,7 +522,7 @@ pub fn build_rss(site_name: &str, links: FeedLinks<'_>, items: &[PublicIncident]
         let body: String = i
             .updates
             .iter()
-            .map(|u| format!("[{}] {}", phase_label(u.phase), u.message))
+            .map(|u| format!("[{}] {}", tr.t(phase_id(u.phase)), u.message))
             .collect::<Vec<_>>()
             .join(" \n");
         out.push_str("<item>");
@@ -515,13 +541,13 @@ pub fn build_rss(site_name: &str, links: FeedLinks<'_>, items: &[PublicIncident]
     out
 }
 
-fn phase_label(p: IncidentStatusPhase) -> &'static str {
+fn phase_id(p: IncidentStatusPhase) -> &'static str {
     match p {
-        IncidentStatusPhase::Investigating => "investigating",
-        IncidentStatusPhase::Identified => "identified",
-        IncidentStatusPhase::Monitoring => "monitoring",
-        IncidentStatusPhase::Resolved => "resolved",
-        IncidentStatusPhase::Postmortem => "postmortem",
+        IncidentStatusPhase::Investigating => "rss-phase-investigating",
+        IncidentStatusPhase::Identified => "rss-phase-identified",
+        IncidentStatusPhase::Monitoring => "rss-phase-monitoring",
+        IncidentStatusPhase::Resolved => "rss-phase-resolved",
+        IncidentStatusPhase::Postmortem => "rss-phase-postmortem",
     }
 }
 
@@ -602,7 +628,7 @@ impl PublicSource for NoopPublicSource {
         _page: PageRef,
         links: FeedLinks<'_>,
     ) -> Result<String, PublicAppError> {
-        Ok(build_rss(&self.site_name, links, &[]))
+        Ok(build_rss(&self.site_name, links, Locale::default(), &[]))
     }
 }
 
@@ -620,12 +646,22 @@ mod tests {
 
     #[test]
     fn rss_skeleton_well_formed_with_no_items() {
-        let xml = build_rss("Site", links("https://example.com"), &[]);
+        let xml = build_rss("Site", links("https://example.com"), Locale::En, &[]);
         assert!(xml.starts_with("<?xml"));
         assert!(xml.contains("<rss version=\"2.0\""));
         assert!(xml.contains("<channel>"));
         assert!(xml.contains("</channel></rss>"));
         assert!(xml.contains("Site Status Incidents"));
+    }
+
+    #[test]
+    fn the_channel_declares_the_page_language() {
+        let xml = build_rss("Site", links("https://example.com"), Locale::De, &[]);
+        assert!(xml.contains("<language>de</language>"), "{xml}");
+        assert!(
+            xml.contains("<title>Site Status: Störungen</title>"),
+            "{xml}"
+        );
     }
 
     fn sample_incident(id: u128, updates: Vec<PublicIncidentUpdate>) -> PublicIncident {
@@ -665,6 +701,7 @@ mod tests {
         let xml = build_rss(
             "Site",
             links("https://acme.example.com"),
+            Locale::En,
             std::slice::from_ref(&inc),
         );
         assert!(
@@ -682,6 +719,7 @@ mod tests {
         let xml = build_rss(
             "Site",
             links("https://acme.example.com/"),
+            Locale::En,
             std::slice::from_ref(&inc),
         );
         assert!(!xml.contains("com//status"), "{xml}");
@@ -701,6 +739,7 @@ mod tests {
         let xml = build_rss(
             "A & B",
             links("https://acme.example.com"),
+            Locale::En,
             std::slice::from_ref(&inc),
         );
         assert!(!xml.contains("<script>"), "{xml}");
@@ -715,6 +754,7 @@ mod tests {
         let xml = build_rss(
             "Site",
             links("https://acme.example.com"),
+            Locale::En,
             std::slice::from_ref(&inc),
         );
         assert!(xml.contains(&format!(
@@ -735,6 +775,7 @@ mod tests {
                 page: "https://status.example.test/status",
                 origin: "https://status.example.test",
             },
+            Locale::En,
             std::slice::from_ref(&inc),
         );
         assert!(
@@ -762,6 +803,7 @@ mod tests {
         let xml = build_rss(
             "Site",
             links("https://acme.example.com"),
+            Locale::En,
             std::slice::from_ref(&inc),
         );
         assert!(xml.contains("[investigating] looking"), "{xml}");

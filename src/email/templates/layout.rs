@@ -238,6 +238,10 @@ pub fn quiet_link(url: &str, label: &str) -> String {
 }
 
 pub fn render(page: Page<'_>) -> String {
+    render_in("en", page)
+}
+
+pub fn render_in(lang: &str, page: Page<'_>) -> String {
     // The hairline separates the footnote from the signature, so it only earns
     // its place when both are there.
     let rule = match page.signature {
@@ -263,7 +267,7 @@ pub fn render(page: Page<'_>) -> String {
 
     format!(
         "<!doctype html>\n\
-         <html lang=\"en\"><head>\n\
+         <html lang=\"{lang}\"><head>\n\
          <meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n\
          <meta name=\"color-scheme\" content=\"only light\">\n\
@@ -289,6 +293,7 @@ pub fn render(page: Page<'_>) -> String {
          </td></tr>\n\
          </table>\n\
          </td></tr>\n</table>\n</body></html>\n",
+        lang = attr_escape(lang),
         title = html_escape(page.title),
         preheader = html_escape(page.preheader),
         header = page.header,

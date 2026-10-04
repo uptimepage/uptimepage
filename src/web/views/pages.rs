@@ -10,7 +10,7 @@ use axum::response::{IntoResponse, Response};
 use uuid::Uuid;
 
 use crate::app::AppState;
-use crate::domain::{OrgId, PublicStyle};
+use crate::domain::{Locale, OrgId, PublicStyle};
 use crate::error::AppError;
 use crate::public_status::urls::{
     public_base, public_host_suffix, public_logo_url, public_status_url,
@@ -174,6 +174,12 @@ pub struct StyleOption {
     pub selected: bool,
 }
 
+pub struct LocaleOption {
+    pub value: &'static str,
+    pub label: &'static str,
+    pub selected: bool,
+}
+
 /// One subscriber row in the editor's roster. `contact` is masked for email.
 pub struct SubscriberView {
     pub id: String,
@@ -201,6 +207,7 @@ pub struct PageEditorPage {
     pub hide_from_search: bool,
     pub website_url: String,
     pub styles: Vec<StyleOption>,
+    pub locales: Vec<LocaleOption>,
     /// Groups already in use, offered as suggestions so a second spelling of
     /// one group does not quietly become a second section on the page.
     pub groups: Vec<String>,
@@ -364,6 +371,14 @@ pub async fn page_editor(
             selected: *v == b.public_style.as_str(),
         })
         .collect();
+    let locales: Vec<LocaleOption> = Locale::ALL
+        .into_iter()
+        .map(|l| LocaleOption {
+            value: l.as_str(),
+            label: l.native_name(),
+            selected: l == page.public_locale,
+        })
+        .collect();
 
     let subscribers = match state.db.as_ref() {
         Some(pool) => crate::storage::subscribers::list_for_page(pool, org.0, page_id.0)
@@ -417,6 +432,7 @@ pub async fn page_editor(
         hide_from_search: b.public_hide_from_search,
         website_url: b.public_website_url.clone().unwrap_or_default(),
         styles,
+        locales,
         groups,
         host_suffix: public_host_suffix(&state.cfg),
         status_url,
@@ -478,6 +494,7 @@ mod tests {
             hide_from_search: false,
             website_url: String::new(),
             styles: Vec::new(),
+            locales: Vec::new(),
             groups: Vec::new(),
             host_suffix: Some(".uptimepage.dev".into()),
             status_url: "https://acme.uptimepage.dev".into(),

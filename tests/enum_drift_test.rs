@@ -13,8 +13,8 @@ mod common;
 
 use uptimepage::domain::{
     ActorType, AppTheme, ChannelKind, IncidentEventKind, IncidentOrigin, IncidentSeverity,
-    IncidentState, IncidentStatusPhase, IncidentUrgency, IncidentVisibility, NotificationReason,
-    NotificationStatus, PublicStyle, SubscriberChannel,
+    IncidentState, IncidentStatusPhase, IncidentUrgency, IncidentVisibility, Locale,
+    NotificationReason, NotificationStatus, PublicStyle, SubscriberChannel,
 };
 use uptimepage::domain::{CredentialAction, CredentialOrigin, OauthProvider};
 
@@ -281,6 +281,23 @@ async fn status_pages_public_style_check_matches_public_style_enum() {
     assert_eq!(
         db, rust,
         "status_pages.public_style CHECK list ({db:?}) drifted from PublicStyle ({rust:?})"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn status_pages_public_locale_check_matches_locale_enum() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let def = constraint_def(&pool, "status_page_locale_known")
+        .await
+        .expect("status_page_locale_known missing");
+    let db = sorted(quoted_tokens(&def));
+    let rust = sorted(Locale::ALL.iter().map(|l| l.as_str().to_string()).collect());
+    assert_eq!(
+        db, rust,
+        "status_pages.public_locale CHECK list ({db:?}) drifted from Locale ({rust:?})"
     );
 }
 

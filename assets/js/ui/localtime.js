@@ -19,8 +19,13 @@
 // The server emits a UTC fallback as the element's text, so the page is fully
 // readable without JavaScript; this script only upgrades it. Relative labels
 // are refreshed on an interval so "2 mins ago" stays honest on long-lived pages.
+//
+// A page in a language other than English pins it on <html data-time-locale>,
+// so its dates match its words; otherwise the browser's own locale decides.
 (function () {
     "use strict";
+
+    var pinned = document.documentElement.getAttribute("data-time-locale") || undefined;
 
     // Per-user 12h/24h preference, mirrored from users.time_format into the
     // sm_time_format cookie. "auto" (or absent) keeps the browser-locale
@@ -39,17 +44,38 @@
         // hourCycle is one of the few component options allowed alongside
         // timeStyle; undefined leaves the locale default untouched.
         var hc = hourCyclePref();
-        timeFmt = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", hourCycle: hc });
-        timeSecFmt = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit", hourCycle: hc });
-        dateFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
-        dateYearFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
-        dayTimeFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hourCycle: hc });
-        dayTimeYearFmt = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hourCycle: hc });
-        weekdayFmt = new Intl.DateTimeFormat(undefined, { weekday: "short" });
-        exactFmt = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium", hourCycle: hc });
-        fullDateFmt = new Intl.DateTimeFormat(undefined, { dateStyle: "full" });
-        fullFmt = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "long", hourCycle: hc });
+        timeFmt = new Intl.DateTimeFormat(pinned, { hour: "numeric", minute: "2-digit", hourCycle: hc });
+        timeSecFmt = new Intl.DateTimeFormat(pinned, { hour: "numeric", minute: "2-digit", second: "2-digit", hourCycle: hc });
+        dateFmt = new Intl.DateTimeFormat(pinned, { month: "short", day: "numeric" });
+        dateYearFmt = new Intl.DateTimeFormat(pinned, { month: "short", day: "numeric", year: "numeric" });
+        dayTimeFmt = new Intl.DateTimeFormat(pinned, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hourCycle: hc });
+        dayTimeYearFmt = new Intl.DateTimeFormat(pinned, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hourCycle: hc });
+        weekdayFmt = new Intl.DateTimeFormat(pinned, { weekday: "short" });
+        exactFmt = new Intl.DateTimeFormat(pinned, { dateStyle: "medium", timeStyle: "medium", hourCycle: hc });
+        fullDateFmt = new Intl.DateTimeFormat(pinned, { dateStyle: "full" });
+        fullFmt = new Intl.DateTimeFormat(pinned, { dateStyle: "full", timeStyle: "long", hourCycle: hc });
     } catch (_) { /* Intl unavailable: leave server text untouched */ }
+
+    var relFmt = null;
+    if (pinned) {
+        try { relFmt = new Intl.RelativeTimeFormat(pinned, { numeric: "auto" }); } catch (_) { /* keep English */ }
+    }
+
+    function capitalize(s) {
+        return s.charAt(0).toUpperCase() + s.slice(1);
+    }
+
+    // n: 0 today, 1 tomorrow, -1 yesterday.
+    function dayWord(n) {
+        if (relFmt) return relFmt.format(n, "day");
+        return n === 0 ? "today" : n > 0 ? "tomorrow" : "yesterday";
+    }
+
+    function dayAt(n, then) {
+        return relFmt
+            ? dayWord(n) + ", " + timeFmt.format(then)
+            : dayWord(n) + " at " + timeFmt.format(then);
+    }
 
     // Shared local-timezone formatters (honouring the user's 12h/24h pref)
     // for scripts that build text outside <time data-tz> elements — e.g. the
@@ -75,14 +101,15 @@
     }
 
     function atLabel(then, now) {
-        var time = " at " + timeFmt.format(then);
-        if (sameDay(then, now)) return "today" + time;
-        if (sameDay(then, shiftDays(now, 1))) return "tomorrow" + time;
-        if (sameDay(then, shiftDays(now, -1))) return "yesterday" + time;
+        if (sameDay(then, now)) return dayAt(0, then);
+        if (sameDay(then, shiftDays(now, 1))) return dayAt(1, then);
+        if (sameDay(then, shiftDays(now, -1))) return dayAt(-1, then);
         // Under six days ahead a weekday cannot be mistaken for today's.
         var ahead = then.getTime() - now.getTime();
         if (ahead > 0 && ahead < 6 * 86400000) {
-            return weekdayFmt.format(then) + time;
+            return relFmt
+                ? weekdayFmt.format(then) + ", " + timeFmt.format(then)
+                : weekdayFmt.format(then) + " at " + timeFmt.format(then);
         }
         return then.getFullYear() === now.getFullYear()
             ? dayTimeFmt.format(then)
@@ -96,19 +123,22 @@
     }
 
     function dayLabel(then, now) {
-        if (sameDay(then, now)) return "Today";
-        if (sameDay(then, shiftDays(now, -1))) return "Yesterday";
+        if (sameDay(then, now)) return capitalize(dayWord(0));
+        if (sameDay(then, shiftDays(now, -1))) return capitalize(dayWord(-1));
         return dateLabel(then, now);
     }
 
     function relativeLabel(then, now) {
         var elapsedSec = Math.round((now.getTime() - then.getTime()) / 1000);
         // Clock skew or pending writes can put an instant slightly ahead.
-        if (elapsedSec < 45) return "Just now";
+        if (elapsedSec < 45) return relFmt ? relFmt.format(0, "second") : "Just now";
         var mins = Math.round(elapsedSec / 60);
-        if (mins < 60) return mins + (mins === 1 ? " min ago" : " mins ago");
-        if (sameDay(then, now)) return "Today at " + timeFmt.format(then);
-        if (sameDay(then, shiftDays(now, -1))) return "Yesterday at " + timeFmt.format(then);
+        if (mins < 60) {
+            if (relFmt) return relFmt.format(-mins, "minute");
+            return mins + (mins === 1 ? " min ago" : " mins ago");
+        }
+        if (sameDay(then, now)) return relFmt ? dayAt(0, then) : "Today at " + timeFmt.format(then);
+        if (sameDay(then, shiftDays(now, -1))) return relFmt ? dayAt(-1, then) : "Yesterday at " + timeFmt.format(then);
         return dateLabel(then, now);
     }
 

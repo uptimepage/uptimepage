@@ -10,15 +10,15 @@
            class="min-w-0 break-words font-medium text-body hover:underline">{{ inc.header.title }}</a>
         {% call chips::sevphase(inc.header) %}{% endcall %}
         {% if inc.header.ongoing %}
-            <span class="status-badge status-badge--down">Ongoing</span>
+            <span class="status-badge status-badge--down">{{ tr.t("incident-ongoing") }}</span>
         {% endif %}
     </div>
     <p class="text-xs text-quiet">
         {% if !inc.header.component_name.is_empty() %}{{ inc.header.component_name }} ·{% endif %}
         <time datetime="{{ inc.header.started_at|iso_ts }}" data-tz="exact">{{ inc.header.started_at|human_ts }}</time>
-        · {{ inc.header.duration_secs|humanize_dur }}
+        · {{ inc.header.duration }}
         {% match inc.ended_at %}
-            {% when Some with (_) %} (resolved){% when None %}
+            {% when Some with (_) %} {{ tr.t("incident-resolved-suffix") }}{% when None %}
         {% endmatch %}
     </p>
     {% match inc.latest_message %}

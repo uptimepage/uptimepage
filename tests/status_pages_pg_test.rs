@@ -16,14 +16,16 @@ mod common;
 use std::time::Duration;
 
 use uptimepage::domain::{
-    CheckSpec, ExpectedStatus, NewMonitorShare, NewStatusPage, NewStatusPageComponent, NewTarget,
-    OrgId, StatusPageComponentUpdate, StatusPageId, StatusPageUpdate, UserId, WriteSource,
+    CheckSpec, ExpectedStatus, Locale, NewMonitorShare, NewStatusPage, NewStatusPageComponent,
+    NewTarget, OrgId, PublicOrgBranding, StatusPageComponentUpdate, StatusPageId, StatusPageUpdate,
+    UserId, WriteSource,
 };
 use uptimepage::error::AppError;
 use uptimepage::error::codes;
 use uptimepage::storage::{
-    AddComponentOutcome, CreateShareOutcome, MonitorShareStore, PgMonitorShareStore,
-    PgStatusPageStore, PostgresTargetStore, StatusPageStore, TargetStore, create_org_with_owner,
+    AddComponentOutcome, CreateShareOutcome, InMemoryStatusPageStore, MonitorShareStore,
+    PgMonitorShareStore, PgStatusPageStore, PostgresTargetStore, StatusPageStore, TargetStore,
+    create_org_with_owner,
 };
 use uuid::Uuid;
 
@@ -841,6 +843,65 @@ async fn slug_is_globally_unique_across_orgs_live_pg() {
         other => panic!("expected SLUG_TAKEN, got {other:?}"),
     }
 
+    cleanup(&pool, &[org_a, org_b], &[user_a, user_b]).await;
+}
+
+/// Both stores: a page starts English, keeps its language through a branding
+/// save that leaves it out, and reads back what was set.
+async fn assert_locale_round_trips(store: &dyn StatusPageStore, org: OrgId) {
+    let created = store
+        .create(
+            org,
+            page(&unique_slug("loc")),
+            WriteSource::Ui,
+            i64::MAX,
+            None,
+        )
+        .await
+        .unwrap()
+        .expect("page");
+    assert_eq!(created.public_locale, Locale::En);
+    let set = store
+        .update(
+            org,
+            created.id,
+            StatusPageUpdate {
+                public_locale: Some(Locale::De),
+                ..Default::default()
+            },
+            WriteSource::Api,
+        )
+        .await
+        .unwrap()
+        .expect("page");
+    assert_eq!(set.public_locale, Locale::De);
+    let rebranded = store
+        .update(
+            org,
+            created.id,
+            StatusPageUpdate {
+                branding: Some(PublicOrgBranding::default()),
+                ..Default::default()
+            },
+            WriteSource::Ui,
+        )
+        .await
+        .unwrap()
+        .expect("page");
+    assert_eq!(rebranded.public_locale, Locale::De);
+    let read = store.get(org, created.id).await.unwrap().expect("page");
+    assert_eq!(read.public_locale, Locale::De);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL — run via DATABASE_URL=... cargo test -- --ignored"]
+async fn page_locale_round_trips_in_both_stores_live_pg() {
+    let Some(pool) = pg_pool_from_env().await else {
+        return;
+    };
+    let (org_a, org_b, user_a, user_b) = two_orgs(&pool, "sp-locale").await;
+    assert_locale_round_trips(&PgStatusPageStore::new(pool.clone()), org_a).await;
+    assert_locale_round_trips(&InMemoryStatusPageStore::new(), org_b).await;
     cleanup(&pool, &[org_a, org_b], &[user_a, user_b]).await;
 }
 

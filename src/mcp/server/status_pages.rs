@@ -237,6 +237,7 @@ impl McpServer {
                     slug: new_slug,
                     enabled: args.enabled,
                     branding: None,
+                    public_locale: None,
                 },
                 WriteSource::Api,
             )

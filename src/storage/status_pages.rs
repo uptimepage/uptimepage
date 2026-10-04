@@ -40,9 +40,9 @@ pub(crate) const PAGE_NOT_HELD: &str = "sp.plan_hold_at IS NULL";
 
 use crate::custom_domains::CustomDomainRow;
 use crate::domain::{
-    MonitorShareId, NewStatusPage, NewStatusPageComponent, OrgId, PageRef, PublicOrgBranding,
-    PublicStyle, StatusPage, StatusPageComponent, StatusPageComponentUpdate, StatusPageId,
-    StatusPageUpdate, UserId, WriteSource,
+    Locale, MonitorShareId, NewStatusPage, NewStatusPageComponent, OrgId, PageRef,
+    PublicOrgBranding, PublicStyle, StatusPage, StatusPageComponent, StatusPageComponentUpdate,
+    StatusPageId, StatusPageUpdate, UserId, WriteSource,
 };
 use crate::error::codes;
 use crate::error::{AppError, Result};
@@ -194,6 +194,7 @@ struct PageRow {
     public_style: String,
     public_hide_from_search: bool,
     public_website_url: Option<String>,
+    public_locale: String,
     write_source: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -218,6 +219,7 @@ impl PageRow {
                 public_hide_from_search: self.public_hide_from_search,
                 public_website_url: self.public_website_url,
             },
+            public_locale: Locale::from_db(&self.public_locale),
             write_source: WriteSource::from_db(&self.write_source),
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -231,7 +233,7 @@ const PAGE_COLUMNS: &str = "id, org_id, slug::text AS slug, name, enabled, \
      (SELECT pa.content_hash FROM page_assets pa \
       WHERE pa.status_page_id = status_pages.id AND pa.slot = 'logo') AS logo_hash, \
      public_show_powered_by, public_style, public_hide_from_search, \
-     public_website_url, write_source, created_at, updated_at, plan_hold_at";
+     public_website_url, public_locale, write_source, created_at, updated_at, plan_hold_at";
 
 /// Groups render contiguously, placed by their earliest component.
 pub(crate) const COMPONENT_ORDER: &str = "MIN(spc.sort_order) OVER (PARTITION BY spc.public_group), \
@@ -346,7 +348,7 @@ impl StatusPageStore for PgStatusPageStore {
         source: WriteSource,
     ) -> Result<Option<StatusPage>> {
         // Branding `Some` replaces the display fields wholesale; `None` leaves
-        // them. name/slug/enabled use COALESCE so a partial update is honest.
+        // them. name/slug/enabled/locale use COALESCE so a partial update is honest.
         let b = upd.branding;
         let row: Option<PageRow> = sqlx::query_as(&format!(
             r#"UPDATE status_pages SET
@@ -361,6 +363,7 @@ impl StatusPageStore for PgStatusPageStore {
                  public_hide_from_search =
                    CASE WHEN $6::bool THEN $12 ELSE public_hide_from_search END,
                  public_website_url  = CASE WHEN $6::bool THEN $13 ELSE public_website_url END,
+                 public_locale = COALESCE($15, public_locale),
                  write_source = $14,
                  updated_at = now()
                WHERE id = $1 AND org_id = $2
@@ -380,6 +383,7 @@ impl StatusPageStore for PgStatusPageStore {
         .bind(b.as_ref().is_some_and(|x| x.public_hide_from_search))
         .bind(b.as_ref().and_then(|x| x.public_website_url.clone()))
         .bind(source.as_str())
+        .bind(upd.public_locale.map(Locale::as_str))
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| if is_unique_violation(&e) { slug_taken() } else { db_err(e) })?;
@@ -820,6 +824,7 @@ impl StatusPageStore for InMemoryStatusPageStore {
             name: new.name,
             enabled: new.enabled,
             branding: PublicOrgBranding::default(),
+            public_locale: Locale::default(),
             write_source: source,
             created_at: now,
             updated_at: now,
@@ -889,6 +894,9 @@ impl StatusPageStore for InMemoryStatusPageStore {
             let logo = p.branding.logo_hash.clone();
             p.branding = b;
             p.branding.logo_hash = logo;
+        }
+        if let Some(l) = upd.public_locale {
+            p.public_locale = l;
         }
         p.write_source = source;
         p.updated_at = Utc::now();
@@ -1140,6 +1148,18 @@ impl StatusPageStore for InMemoryStatusPageStore {
             })
             .cloned())
     }
+}
+
+/// A page that is gone reads as English.
+pub async fn public_locale(pool: &PgPool, page: PageRef) -> Result<Locale> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT public_locale FROM status_pages WHERE id = $1 AND org_id = $2")
+            .bind(page.page.0)
+            .bind(page.org.0)
+            .fetch_optional(pool)
+            .await
+            .map_err(db_err)?;
+    Ok(row.map_or_else(Locale::default, |(l,)| Locale::from_db(&l)))
 }
 
 /// PUBLIC-STATUS PATH ONLY. Feeds the in-memory snapshot the host decisions

@@ -15,6 +15,8 @@ pub mod subscriber_incident;
 pub mod subscriber_maintenance;
 pub mod support_request;
 
+use crate::i18n::Tr;
+
 /// Header safety for subjects; the same rule every other channel applies to a
 /// one-line value.
 pub(crate) use crate::text::single_line;
@@ -38,6 +40,27 @@ pub(crate) fn html_escape(input: &str) -> String {
     out
 }
 
+/// Placeholder for markup inside a catalogue message, see [`fill_slot`].
+pub(crate) const MARKUP_SLOT: &str = "\u{E000}";
+
+/// Escapes a resolved message and puts `markup` where its [`MARKUP_SLOT`] was.
+pub(crate) fn fill_slot(text: &str, markup: &str) -> String {
+    html_escape(text).replacen(MARKUP_SLOT, markup, 1)
+}
+
+pub(crate) fn subscriber_footnote(tr: Tr, page_name: &str, unsubscribe_url: &str) -> String {
+    layout::fine_print(&fill_slot(
+        &tr.t_args(
+            "email-footnote",
+            [
+                ("page", page_name.replace(MARKUP_SLOT, "").into()),
+                ("unsubscribe", MARKUP_SLOT.into()),
+            ],
+        ),
+        &layout::quiet_link(unsubscribe_url, &tr.t("email-unsubscribe")),
+    ))
+}
+
 /// Attribute-context escaping. Same rule as [`html_escape`] today (the quote
 /// entities cover `href="…"`); a distinct name keeps call sites self-documenting.
 pub(crate) fn attr_escape(input: &str) -> String {
@@ -56,8 +79,7 @@ pub(crate) fn duration_words(secs: i64) -> String {
     }
 }
 
-/// Wall-clock stamp for mail. Always UTC and always says so — unlike the app,
-/// an inbox carries no viewer timezone to render in.
+/// Wall-clock stamp for English mail; [`Tr::utc_stamp`] owns the format.
 pub(crate) fn utc_stamp(ts: chrono::DateTime<chrono::Utc>) -> String {
-    ts.format("%-d %b %Y %H:%M UTC").to_string()
+    Tr::default().utc_stamp(ts)
 }

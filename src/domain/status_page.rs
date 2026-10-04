@@ -10,6 +10,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::WriteSource;
+use super::locale::Locale;
 use super::monitor_share::MonitorShareId;
 use super::org::{OrgId, PublicOrgBranding};
 
@@ -48,6 +49,7 @@ pub struct StatusPage {
     pub enabled: bool,
     #[serde(flatten)]
     pub branding: PublicOrgBranding,
+    pub public_locale: Locale,
     pub write_source: WriteSource,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -76,6 +78,7 @@ pub struct StatusPageUpdate {
     pub slug: Option<String>,
     pub enabled: Option<bool>,
     pub branding: Option<PublicOrgBranding>,
+    pub public_locale: Option<Locale>,
 }
 
 /// One monitor as it appears on a page, with per-page curation overrides.

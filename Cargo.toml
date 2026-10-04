@@ -192,6 +192,8 @@ rmcp = { version = "1.7", default-features = false, features = [
     "transport-streamable-http-server-session",
 ] }
 schemars = "1"
+# Public status page and subscriber email catalogue (`locales/`)
+fluent-templates = { version = "0.15.1", default-features = false, features = ["macros", "walkdir"] }
 
 [build-dependencies]
 # build.rs parses esbuild's metafile to emit the asset manifest.

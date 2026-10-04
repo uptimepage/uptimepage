@@ -743,6 +743,58 @@ async fn dispatcher_sends_incident_email_end_to_end() {
 
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_german_page_mails_its_subscribers_in_german() {
+    let Some((db_url, db_name)) = fresh_test_db("subde").await else {
+        return;
+    };
+    let pool = open_test_pool(&db_url).await;
+    MIGRATOR.run(&pool).await.unwrap();
+
+    let org = seed_org(&pool).await;
+    let target = seed_target(&pool, org).await;
+    let page = seed_page(&pool, org).await;
+    sqlx::query("UPDATE status_pages SET public_locale = 'de' WHERE id = $1")
+        .bind(page)
+        .execute(&pool)
+        .await
+        .unwrap();
+    add_component(&pool, org, page, target).await;
+    let sub = confirmed_subscriber(&pool, org, page, "de@example.com").await;
+    assert_eq!(
+        uptimepage::storage::subscribers::page_locale(&pool, sub)
+            .await
+            .unwrap(),
+        Some(uptimepage::domain::Locale::De),
+        "unsubscribe pages follow the subscriber's page"
+    );
+    let incident = seed_public_incident(&pool, org, target).await;
+    add_update(&pool, org, incident, 0).await;
+
+    let mem = std::sync::Arc::new(uptimepage::email::InMemoryEmailSender::new());
+    dispatcher(pool.clone(), mem.clone())
+        .run_once()
+        .await
+        .unwrap();
+
+    let sent = mem.sent();
+    let mail = sent
+        .iter()
+        .find(|e| e.to.address == "de@example.com")
+        .expect("German subscriber mailed");
+    let rendered = mail.template.render("Uptimepage");
+    assert!(
+        rendered.subject.ends_with("Untersuchung läuft"),
+        "{}",
+        rendered.subject
+    );
+    assert!(rendered.html_body.contains(r#"<html lang="de">"#));
+
+    drop(pool);
+    drop_test_db(&db_name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
 async fn webhook_subscriber_appears_in_pending() {
     let Some(pool) = pg_pool_from_env().await else {
         return;

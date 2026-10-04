@@ -1,4 +1,4 @@
 {# AGPL-3.0 §13: offer the Corresponding Source of the running version to
    every network user. `source_url` already deep-links to the build commit
    when known (repo root otherwise); the short SHA is shown when present. #}
-<a href="{{ ""|source_url }}" class="hover:text-body" rel="vcs-git">Source code (AGPL-3.0){% if ""|source_commit != "" %} · {{ ""|source_commit }}{% endif %}</a>
+{% macro link(label) %}<a href="{{ ""|source_url }}" class="hover:text-body" rel="vcs-git">{{ label }}{% if ""|source_commit != "" %} · {{ ""|source_commit }}{% endif %}</a>{% endmacro %}

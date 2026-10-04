@@ -17,6 +17,7 @@ pub mod error;
 pub mod escalation;
 pub mod http_client;
 pub mod http_outbound;
+pub mod i18n;
 pub mod jobs;
 pub mod maintenance_ops;
 pub mod marketing;

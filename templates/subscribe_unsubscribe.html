@@ -1,25 +1,20 @@
 {% extends "chromeless_base.html" %}
-{% block title %}{% if phase == "done" %}Unsubscribed{% else if phase == "confirm" %}Unsubscribe{% else %}Link invalid{% endif %}{% endblock %}
+{% block lang %}{{ tr.lang() }}{% endblock %}
+{% block title %}{% if phase == "done" %}{{ tr.t("unsubscribed-title") }}{% else if phase == "confirm" %}{{ tr.t("unsubscribe-title") }}{% else %}{{ tr.t("unsubscribe-invalid-title") }}{% endif %}{% endblock %}
 {% block main %}
     <main class="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-4 px-6 text-center">
         {% if phase == "confirm" %}
-        <h1 class="page-title justify-center"><span class="page-title__prefix" aria-hidden="true">$</span>unsubscribe</h1>
-        <p class="text-sm text-muted">
-            Stop receiving status updates at this address? You can subscribe
-            again anytime.
-        </p>
+        <h1 class="page-title justify-center"><span class="page-title__prefix" aria-hidden="true">$</span>{{ tr.t("unsubscribe-title")|lower }}</h1>
+        <p class="text-sm text-muted">{{ tr.t("unsubscribe-prompt") }}</p>
         <form method="post" action="/subscribe/unsubscribe?s={{ s }}&amp;t={{ t }}">
-            <button type="submit" class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">unsubscribe</button>
+            <button type="submit" class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">{{ tr.t("unsubscribe-title")|lower }}</button>
         </form>
         {% else if phase == "done" %}
-        <h1 class="page-title justify-center"><span class="page-title__prefix" aria-hidden="true">$</span>unsubscribed</h1>
-        <p class="text-sm text-muted">
-            You won't receive any more updates from this status page. You can
-            close this page.
-        </p>
+        <h1 class="page-title justify-center"><span class="page-title__prefix" aria-hidden="true">$</span>{{ tr.t("unsubscribed-title")|lower }}</h1>
+        <p class="text-sm text-muted">{{ tr.t("unsubscribed-body") }}</p>
         {% else %}
-        <h1 class="page-title justify-center"><span class="page-title__prefix" aria-hidden="true">$</span>link invalid</h1>
-        <p class="text-sm text-muted">This link is invalid or has expired.</p>
+        <h1 class="page-title justify-center"><span class="page-title__prefix" aria-hidden="true">$</span>{{ tr.t("unsubscribe-invalid-title")|lower }}</h1>
+        <p class="text-sm text-muted">{{ tr.t("unsubscribe-invalid-body") }}</p>
         {% endif %}
     </main>
 {% endblock %}

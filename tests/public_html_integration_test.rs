@@ -21,7 +21,7 @@ use uuid::Uuid;
 use common::build_test_app_with_web_and_public_source;
 use uptimepage::domain::{
     ComponentHistoryResponse, DayState, IncidentImpact, IncidentSeverity, IncidentStatusPhase,
-    OverallState, OverallStatus, PageRef, PublicComponent, PublicComponentGroup,
+    Locale, OverallState, OverallStatus, PageRef, PublicComponent, PublicComponentGroup,
     PublicComponentStatus, PublicIncident, PublicIncidentUpdate, PublicMaintenanceList,
     PublicStatusPage,
 };
@@ -123,6 +123,51 @@ impl PublicSource for PublishedSource {
         _links: FeedLinks<'_>,
     ) -> Result<String, PublicAppError> {
         unimplemented!("not exercised by HTML page tests")
+    }
+}
+
+/// [`PublishedSource`] on a page set to German.
+struct GermanSource;
+
+#[async_trait]
+impl PublicSource for GermanSource {
+    async fn page(&self, page: PageRef) -> Result<Arc<PublicStatusPage>, PublicAppError> {
+        PublishedSource.page(page).await
+    }
+    async fn locale(&self, _page: PageRef) -> Locale {
+        Locale::De
+    }
+    async fn component_history(
+        &self,
+        page: PageRef,
+        id: Uuid,
+        days: u32,
+    ) -> Result<ComponentHistoryResponse, PublicAppError> {
+        PublishedSource.component_history(page, id, days).await
+    }
+    async fn list_incidents(
+        &self,
+        page: PageRef,
+        q: IncidentListQuery,
+    ) -> Result<CursorPage<PublicIncident>, PublicAppError> {
+        PublishedSource.list_incidents(page, q).await
+    }
+    async fn incident_by_id(
+        &self,
+        page: PageRef,
+        id: Uuid,
+    ) -> Result<PublicIncident, PublicAppError> {
+        PublishedSource.incident_by_id(page, id).await
+    }
+    async fn maintenance(&self, page: PageRef) -> Result<PublicMaintenanceList, PublicAppError> {
+        PublishedSource.maintenance(page).await
+    }
+    async fn incidents_rss(
+        &self,
+        page: PageRef,
+        links: FeedLinks<'_>,
+    ) -> Result<String, PublicAppError> {
+        PublishedSource.incidents_rss(page, links).await
     }
 }
 
@@ -397,6 +442,60 @@ async fn status_page_links_component_name_only_when_opted_in() {
         html.contains(PUBLIC_COMPONENT_NAME),
         "linked component lost its name:\n{html}"
     );
+}
+
+#[tokio::test]
+async fn a_german_page_speaks_german_on_both_the_page_and_its_poll() {
+    let app = build_test_app_with_web_and_public_source(|_| {}, Arc::new(GermanSource));
+    let resp = app
+        .clone()
+        .oneshot(Request::get("/status").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.headers()[header::CONTENT_LANGUAGE], "de");
+    let html = body_text(resp).await;
+    assert!(
+        html.contains(r#"<html lang="de" data-time-locale="de">"#),
+        "{html}"
+    );
+    assert!(html.contains("Größerer Systemausfall"), "{html}");
+    assert!(html.contains("Updates abonnieren"));
+    assert!(!html.contains("Major System Outage"));
+    assert!(!html.contains("Subscribe to updates"));
+    assert!(
+        html.contains(OPERATOR_TITLE),
+        "customer text stays as written"
+    );
+
+    let resp = app
+        .oneshot(
+            Request::get("/status?fragment=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.headers()[header::CONTENT_LANGUAGE], "de");
+    let html = body_text(resp).await;
+    assert!(html.contains("Untersuchung läuft"), "{html}");
+    assert!(html.contains("Aktuelle Störung"));
+    assert!(!html.contains("Investigating"));
+}
+
+#[tokio::test]
+async fn an_english_page_says_so() {
+    let app = build_test_app_with_web_and_public_source(|_| {}, Arc::new(PublishedSource));
+    let resp = app
+        .oneshot(Request::get("/status").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.headers()[header::CONTENT_LANGUAGE], "en");
+    let html = body_text(resp).await;
+    assert!(
+        html.contains(r#"<html lang="en">"#),
+        "browser picks date format"
+    );
+    assert!(html.contains(r#"<meta property="og:locale" content="en_US">"#));
 }
 
 #[tokio::test]

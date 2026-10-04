@@ -167,6 +167,92 @@ async fn valid_save_persists_and_round_trips() {
     assert_eq!(body["show_powered_by"], false);
 }
 
+/// The language is its own field: a branding save leaves it, and setting it
+/// leaves the branding.
+#[tokio::test]
+#[ignore]
+async fn page_language_and_branding_are_saved_independently() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (router, id) = owner_page(pool).await;
+    let get = || {
+        Request::get(format!("/api/v1/status-pages/{id}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    let (_, body) = read(router.clone().oneshot(get()).await.unwrap()).await;
+    assert_eq!(body["public_locale"], "en", "a new page is English");
+
+    let (st, body) = read(
+        router
+            .clone()
+            .oneshot(patch(
+                &id,
+                json!({ "branding": { "public_display_name": "Acme", "public_hide_from_search": true } }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "branding: {body}");
+
+    let (st, body) = read(
+        router
+            .clone()
+            .oneshot(patch(&id, json!({ "public_locale": "de" })))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "set German: {body}");
+    assert_eq!(body["public_locale"], "de");
+    assert_eq!(body["public_display_name"], "Acme", "branding kept");
+    assert_eq!(body["public_hide_from_search"], true, "branding kept");
+
+    let (st, body) = read(
+        router
+            .clone()
+            .oneshot(patch(
+                &id,
+                json!({ "branding": { "public_display_name": "Acme GmbH" } }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "branding without a language: {body}");
+    assert_eq!(body["public_locale"], "de");
+
+    let (st, body) = read(
+        router
+            .clone()
+            .oneshot(patch(&id, json!({ "public_locale": "fr" })))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "unsupported: {body}");
+
+    let (st, body) = read(
+        router
+            .clone()
+            .oneshot(patch(&id, json!({ "branding": { "public_locale": "de" } })))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        st,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "not a branding field: {body}"
+    );
+
+    let (_, body) = read(router.oneshot(get()).await.unwrap()).await;
+    assert_eq!(body["public_locale"], "de");
+}
+
 /// Whether the badge then renders is the plan's call, covered by
 /// `powered_by_forced_for_saas_non_white_label`.
 #[tokio::test]

@@ -9,8 +9,8 @@
 <div class="flex items-center gap-3">
     <button type="button" data-subscribe-open
             class="rounded-full border border-brand-soft px-4 py-2.5 text-sm text-brand transition-[border-color,scale] hover:border-brand motion-safe:active:scale-[0.96]">
-        Subscribe to updates
+        {{ tr.t("subscribe-title") }}
     </button>
     <a href="{{ rss_url }}" class="text-sm text-brand-soft hover:text-brand"
-       aria-label="Subscribe to incident updates via RSS">RSS</a>
+       aria-label="{{ tr.t("rss-aria") }}">RSS</a>
 </div>

@@ -1,6 +1,6 @@
 {%- import "public/_incident_chips.html" as chips -%}
 <!doctype html>
-<html lang="en">
+<html lang="{{ tr.lang() }}"{% if let Some(l) = tr.date_locale() %} data-time-locale="{{ l }}"{% endif %}>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -10,7 +10,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ "img/favicon.svg"|asset }}">
     <link rel="icon" type="image/png" sizes="32x32" href="{{ "img/favicon.png"|asset }}">
     <link rel="apple-touch-icon" href="{{ "img/apple-touch-icon.png"|asset }}">
-    <link rel="alternate" type="application/rss+xml" title="Incidents (RSS)" href="{{ rss_url }}">
+    <link rel="alternate" type="application/rss+xml" title="{{ tr.t("rss-link-title") }}" href="{{ rss_url }}">
     <link rel="stylesheet" href="{{ "css/app.css"|asset }}">
     {% include "public/_brand_style.html" %}
     <script defer src="{{ "js/ui/localtime.js"|asset }}"></script>
@@ -20,7 +20,7 @@
 
     <main id="main-content" tabindex="-1" class="mx-auto max-w-3xl px-4 py-10">
         <p class="text-sm">
-            <a href="{{ branding.home }}" class="text-quiet hover:text-body">← Back to status</a>
+            <a href="{{ branding.home }}" class="text-quiet hover:text-body">{{ tr.t("back-to-status") }}</a>
         </p>
 
         <article class="mt-4 space-y-5">
@@ -29,30 +29,30 @@
                 <p class="flex flex-wrap items-center gap-2 text-sm">
                     {% call chips::sevphase(incident.header) %}{% endcall %}
                     {% if incident.header.ongoing %}
-                        <span class="status-badge status-badge--down">Ongoing</span>
+                        <span class="status-badge status-badge--down">{{ tr.t("incident-ongoing") }}</span>
                     {% endif %}
                     {% if !incident.header.component_name.is_empty() %}
                         <span class="text-muted">· {{ incident.header.component_name }}</span>
                     {% endif %}
                 </p>
                 <p class="text-sm text-muted">
-                    Started
+                    {{ tr.t("incident-started") }}
                     <time datetime="{{ incident.header.started_at|iso_ts }}" data-tz="exact">{{ incident.header.started_at|human_ts }}</time>
                     {% match incident.ended_at %}
                         {% when Some with (t) %}
-                            · Ended
+                            · {{ tr.t("incident-ended") }}
                             <time datetime="{{ t|iso_ts }}" data-tz="exact">{{ t|human_ts }}</time>
                         {% when None %}
                     {% endmatch %}
-                    · Duration {{ incident.header.duration_secs|humanize_dur }}
+                    · {{ tr.t("incident-duration") }} {{ incident.header.duration }}
                 </p>
             </header>
 
             <section aria-labelledby="updates-heading" class="space-y-3">
-                <h2 id="updates-heading" class="text-sm font-semibold uppercase tracking-wide text-quiet">Updates</h2>
+                <h2 id="updates-heading" class="text-sm font-semibold uppercase tracking-wide text-quiet">{{ tr.t("incident-updates") }}</h2>
                 {% if incident.updates.is_empty() %}
                     <p class="public-callout public-callout--neutral text-sm text-quiet">
-                        No operator updates have been posted for this incident yet.
+                        {{ tr.t("incident-no-updates") }}
                     </p>
                 {% else %}
                     <ol class="space-y-3">
@@ -71,20 +71,20 @@
 
             {% match incident.postmortem %}{% when Some with (pm) %}
             <section aria-labelledby="postmortem-heading" class="space-y-3">
-                <h2 id="postmortem-heading" class="text-sm font-semibold uppercase tracking-wide text-quiet">Postmortem</h2>
+                <h2 id="postmortem-heading" class="text-sm font-semibold uppercase tracking-wide text-quiet">{{ tr.t("postmortem-heading") }}</h2>
                 <div class="public-callout public-callout--neutral space-y-4 text-sm text-body">
                     {% match pm.summary %}{% when Some with (s) %}
-                    <div><div class="text-xs uppercase tracking-wide text-quiet">Summary</div><p class="mt-1 whitespace-pre-line">{{ s }}</p></div>
+                    <div><div class="text-xs uppercase tracking-wide text-quiet">{{ tr.t("postmortem-summary") }}</div><p class="mt-1 whitespace-pre-line">{{ s }}</p></div>
                     {% when None %}{% endmatch %}
                     {% match pm.root_cause %}{% when Some with (s) %}
-                    <div><div class="text-xs uppercase tracking-wide text-quiet">Root cause</div><p class="mt-1 whitespace-pre-line">{{ s }}</p></div>
+                    <div><div class="text-xs uppercase tracking-wide text-quiet">{{ tr.t("postmortem-root-cause") }}</div><p class="mt-1 whitespace-pre-line">{{ s }}</p></div>
                     {% when None %}{% endmatch %}
                     {% match pm.impact %}{% when Some with (s) %}
-                    <div><div class="text-xs uppercase tracking-wide text-quiet">Impact</div><p class="mt-1 whitespace-pre-line">{{ s }}</p></div>
+                    <div><div class="text-xs uppercase tracking-wide text-quiet">{{ tr.t("postmortem-impact") }}</div><p class="mt-1 whitespace-pre-line">{{ s }}</p></div>
                     {% when None %}{% endmatch %}
                     {% if !pm.action_items.is_empty() %}
                     <div>
-                        <div class="text-xs uppercase tracking-wide text-quiet">Action items</div>
+                        <div class="text-xs uppercase tracking-wide text-quiet">{{ tr.t("postmortem-action-items") }}</div>
                         <ul class="mt-1 space-y-1">
                             {% for a in pm.action_items %}
                             <li class="flex items-baseline gap-2">
@@ -95,7 +95,7 @@
                         </ul>
                     </div>
                     {% endif %}
-                    <p class="text-xs text-quiet">Published <time datetime="{{ pm.published_at|iso_ts }}" data-tz="exact">{{ pm.published_at|human_ts }}</time></p>
+                    <p class="text-xs text-quiet">{{ tr.t("postmortem-published") }} <time datetime="{{ pm.published_at|iso_ts }}" data-tz="exact">{{ pm.published_at|human_ts }}</time></p>
                 </div>
             </section>
             {% when None %}{% endmatch %}
@@ -105,7 +105,7 @@
     <footer class="mx-auto max-w-3xl px-4 py-8 text-xs text-quiet">
         {% include "public/_powered_by.html" %}
         <a href="{{ rss_url }}" class="hover:text-body">RSS</a> ·
-        Updated <time datetime="{{ generated_at|iso_ts }}" data-tz>{{ generated_at|human_ts }}</time>
+        {{ tr.t("footer-updated") }} <time datetime="{{ generated_at|iso_ts }}" data-tz>{{ generated_at|human_ts }}</time>
         {% include "public/_source_links.html" %}
     </footer>
 </body>

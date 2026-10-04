@@ -1,15 +1,15 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{ tr.lang() }}"{% if let Some(l) = tr.date_locale() %} data-time-locale="{{ l }}"{% endif %}>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ branding.status_title() }} · Live uptime and incident history</title>
+    <title>{{ branding.status_title() }} · {{ tr.t("title-status-suffix") }}</title>
     <meta name="robots" content="{{ branding.robots() }}">
     {% include "public/_og.html" %}
     <link rel="icon" type="image/svg+xml" href="{{ "img/favicon.svg"|asset }}">
     <link rel="icon" type="image/png" sizes="32x32" href="{{ "img/favicon.png"|asset }}">
     <link rel="apple-touch-icon" href="{{ "img/apple-touch-icon.png"|asset }}">
-    <link rel="alternate" type="application/rss+xml" title="Incidents (RSS)" href="{{ view.rss_url }}">
+    <link rel="alternate" type="application/rss+xml" title="{{ tr.t("rss-link-title") }}" href="{{ view.rss_url }}">
     <link rel="stylesheet" href="{{ "css/app.css"|asset }}">
     {% include "public/_brand_style.html" %}
     <script defer src="{{ "js/htmx.min.js"|asset }}"></script>
@@ -36,7 +36,7 @@
     <footer class="mx-auto max-w-3xl px-4 py-8 text-xs text-quiet">
         {% include "public/_powered_by.html" %}
         <a href="{{ view.rss_url }}" class="hover:text-body">RSS</a> ·
-        Updated <time datetime="{{ view.generated_at|iso_ts }}" data-tz>{{ view.generated_at|human_ts }}</time>
+        {{ tr.t("footer-updated") }} <time datetime="{{ view.generated_at|iso_ts }}" data-tz>{{ view.generated_at|human_ts }}</time>
         {% include "public/_source_links.html" %}
     </footer>
 </body>

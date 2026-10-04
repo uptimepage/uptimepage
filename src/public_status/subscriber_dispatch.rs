@@ -198,6 +198,7 @@ impl SubscriberDispatcher {
             from: EmailAddress::new(self.cfg.from_address.clone(), self.cfg.from_name.clone()),
             to: EmailAddress::new(p.target.clone(), p.target.clone()),
             template: EmailTemplate::SubscriberIncident {
+                locale: p.locale(),
                 page_name: p.page_name.clone(),
                 incident_title: p.incident_title(),
                 phase: p.phase.clone(),
@@ -244,6 +245,7 @@ impl SubscriberDispatcher {
             from: EmailAddress::new(self.cfg.from_address.clone(), self.cfg.from_name.clone()),
             to: EmailAddress::new(m.target.clone(), m.target.clone()),
             template: EmailTemplate::SubscriberMaintenance {
+                locale: m.locale(),
                 page_name: m.page_name.clone(),
                 title: m.title.clone(),
                 description: description.map(str::to_owned),

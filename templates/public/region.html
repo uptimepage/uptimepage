@@ -28,7 +28,7 @@
                     {{ view.overall_label }}<span class="sr-only"> — {{ view.overall_aria }}</span>
                 </h1>
                 <p class="mt-1 text-sm opacity-80">
-                    Last checked
+                    {{ tr.t("last-checked") }}
                     <time datetime="{{ view.generated_at|iso_ts }}" data-tz>{{ view.generated_at|human_ts }}</time>
                 </p>
             </div>
@@ -40,7 +40,7 @@
     <section aria-labelledby="active-incidents-heading"
              class="public-callout public-callout--warn">
         <h2 id="active-incidents-heading" class="text-base font-semibold text-state-warn-strong">
-            Active incident{% if view.active_incidents.len() != 1 %}s{% endif %}
+            {{ view.active_heading }}
         </h2>
         <ul class="mt-4 space-y-4">
             {% for inc in view.active_incidents %}
@@ -52,9 +52,9 @@
                         {% call chips::sevphase(inc.header) %}{% endcall %}
                     </div>
                     <p class="text-pretty text-sm text-muted">
-                        Started
+                        {{ tr.t("incident-started") }}
                         <time datetime="{{ inc.header.started_at|iso_ts }}" data-tz="exact">{{ inc.header.started_at|human_ts }}</time>
-                        — {{ inc.header.duration_secs|humanize_dur }} ago{% if !inc.header.component_name.is_empty() %} — {{ inc.header.component_name }}{% endif %}
+                        {% if let Some(elapsed) = inc.header.elapsed %}— {{ elapsed }}{% endif %}{% if !inc.header.component_name.is_empty() %} — {{ inc.header.component_name }}{% endif %}
                     </p>
                     {% match inc.latest_message %}
                         {% when Some with (msg) %}
@@ -63,7 +63,7 @@
                         {% when None %}
                     {% endmatch %}
                     <p>
-                        <a href="{{ inc.permalink }}" class="text-sm font-medium text-muted hover:text-body">View incident →</a>
+                        <a href="{{ inc.permalink }}" class="text-sm font-medium text-muted hover:text-body">{{ tr.t("view-incident") }}</a>
                     </p>
                 </article>
             </li>
@@ -76,9 +76,9 @@
     {% if view.has_maintenance %}
     <section aria-labelledby="maintenance-heading"
              class="public-callout public-callout--info">
-        <h2 id="maintenance-heading" class="text-base font-semibold text-body">Scheduled maintenance</h2>
+        <h2 id="maintenance-heading" class="text-base font-semibold text-body">{{ tr.t("maintenance-heading") }}</h2>
         {% if !view.active_maintenance.is_empty() %}
-        <h3 class="mt-3 text-sm font-medium text-body">In progress</h3>
+        <h3 class="mt-3 text-sm font-medium text-body">{{ tr.t("maintenance-in-progress") }}</h3>
         <ul class="mt-1.5 space-y-2">
             {% for m in view.active_maintenance %}
             <li class="text-sm">
@@ -87,7 +87,7 @@
                     <time datetime="{{ m.starts_at|iso_ts }}" data-tz="exact">{{ m.starts_at|human_ts }}</time>
                     –
                     <time datetime="{{ m.ends_at|iso_ts }}" data-tz="exact">{{ m.ends_at|human_ts }}</time>
-                    {% if !m.affects.is_empty() %} · affects {{ m.affects }}{% endif %}
+                    {% if !m.affects.is_empty() %} · {{ tr.t("maintenance-affects") }} {{ m.affects }}{% endif %}
                 </p>
                 {% match m.description %}
                     {% when Some with (d) %}<p class="text-pretty text-quiet">{{ d }}</p>{% when None %}
@@ -97,20 +97,20 @@
         </ul>
         {% endif %}
         {% if !view.upcoming_maintenance.is_empty() %}
-        <h3 class="mt-4 text-sm font-medium text-body">Upcoming</h3>
+        <h3 class="mt-4 text-sm font-medium text-body">{{ tr.t("maintenance-upcoming") }}</h3>
         <ul class="mt-1.5 space-y-2">
             {% for m in view.upcoming_maintenance %}
             <li class="text-sm">
                 <p class="break-words font-medium text-body">{{ m.title }}</p>
                 <p class="text-muted">
-                    Starts
+                    {{ tr.t("maintenance-starts") }}
                     <time datetime="{{ m.starts_at|iso_ts }}" data-tz="exact">{{ m.starts_at|human_ts }}</time>
-                    {% match m.starts_in_secs %}
-                        {% when Some with (s) %} (in {{ s|humanize_dur }}){% when None %}
+                    {% match m.starts_in %}
+                        {% when Some with (s) %} {{ s }}{% when None %}
                     {% endmatch %}
-                    — ends
+                    — {{ tr.t("maintenance-ends") }}
                     <time datetime="{{ m.ends_at|iso_ts }}" data-tz="exact">{{ m.ends_at|human_ts }}</time>
-                    {% if !m.affects.is_empty() %} · affects {{ m.affects }}{% endif %}
+                    {% if !m.affects.is_empty() %} · {{ tr.t("maintenance-affects") }} {{ m.affects }}{% endif %}
                 </p>
                 {% match m.description %}
                     {% when Some with (d) %}<p class="text-pretty text-quiet">{{ d }}</p>{% when None %}
@@ -127,13 +127,13 @@
         {# Status legend — one key for every colour the 90-day strips use,
            so a visitor can read a bar without hovering for the tooltip. #}
         <ul class="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-quiet"
-            aria-label="Status colour key">
-            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--op"></span>Operational</li>
-            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--deg"></span>Degraded</li>
-            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--part"></span>Partial outage</li>
-            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--maj"></span>Major outage</li>
-            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--mnt"></span>Maintenance</li>
-            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--none"></span>No data</li>
+            aria-label="{{ tr.t("legend-label") }}">
+            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--op"></span>{{ tr.t("state-operational") }}</li>
+            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--deg"></span>{{ tr.t("state-degraded") }}</li>
+            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--part"></span>{{ tr.t("state-partial-outage") }}</li>
+            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--maj"></span>{{ tr.t("state-major-outage") }}</li>
+            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--mnt"></span>{{ tr.t("state-maintenance") }}</li>
+            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--none"></span>{{ tr.t("state-no-data") }}</li>
         </ul>
 
         {% for group in view.groups %}
@@ -152,8 +152,8 @@
                                 <svg class="public-cmp-link__icon h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
                                     <path stroke-linecap="round" stroke-linejoin="round" d="M4 12h3l2.5 5 3-10 2.5 5h5"/>
                                 </svg>
-                                uptime history
-                                <span class="sr-only">for {{ c.name }}, opens in a new tab</span>
+                                {{ tr.t("component-uptime-history") }}
+                                <span class="sr-only">{{ c.detail_label }}</span>
                             </a>
                             {% endif %}
                         </p>
@@ -164,7 +164,7 @@
                     {% endmatch %}
                     <div class="day-strip mt-4"
                          role="group"
-                         aria-label="Daily status history for {{ c.name }}, last 90 days. Arrow keys navigate days.">
+                         aria-label="{{ c.history_label }}">
                         {% for day in c.history %}
                         <button type="button"
                                 class="day-cell {{ day.class }}"
@@ -178,9 +178,9 @@
                         {% endfor %}
                     </div>
                     <div class="mt-2 flex items-center justify-between text-[11px] text-quiet">
-                        <span>90 days ago</span>
-                        <span><span class="font-mono text-muted">{{ c.uptime_label }}</span> uptime · {{ c.history_summary }}</span>
-                        <span>Today</span>
+                        <span>{{ tr.t("strip-start") }}</span>
+                        <span><span class="font-mono text-muted">{{ c.uptime_label }}</span> {{ tr.t("strip-uptime") }} · {{ c.history_summary }}</span>
+                        <span>{{ tr.t("strip-today") }}</span>
                     </div>
                 </li>
                 {% endfor %}
@@ -189,7 +189,7 @@
         {% endfor %}
     {% else %}
         <section class="public-callout public-callout--neutral p-8 text-center text-sm text-quiet">
-            No public components have been configured yet.
+            {{ tr.t("no-components") }}
         </section>
     {% endif %}
 
@@ -197,7 +197,7 @@
     {% if !view.recent_incidents.is_empty() %}
     <section aria-labelledby="recent-incidents-heading" class="space-y-3">
         <h2 id="recent-incidents-heading"
-            class="text-sm font-semibold uppercase tracking-wide text-quiet">Past incidents (30 days)</h2>
+            class="text-sm font-semibold uppercase tracking-wide text-quiet">{{ tr.t("past-incidents-heading") }}</h2>
         <ul class="public-callout public-callout--neutral divide-y divide-[color:var(--theme-line)] overflow-hidden p-0">
             {% for inc in view.recent_incidents %}
             <li class="p-5">{% call card::card(inc) %}{% endcall %}</li>
@@ -206,7 +206,7 @@
         {% if view.recent_incidents_has_more %}
         <p class="text-right text-sm">
             <a href="/status/incidents" class="font-medium hover:underline text-accent">
-                Older incidents →
+                {{ tr.t("older-incidents") }}
             </a>
         </p>
         {% endif %}
@@ -222,8 +222,8 @@
             <span class="day-pop-status__label" data-slot="state"></span>
             <span class="day-pop-status__duration" data-slot="duration"></span>
         </div>
-        <p class="day-popover__none" data-slot="none" hidden>No downtime recorded on this day.</p>
-        <p class="day-popover__related-heading" data-slot="related-heading" hidden>Related</p>
+        <p class="day-popover__none" data-slot="none" hidden>{{ tr.t("popover-no-downtime") }}</p>
+        <p class="day-popover__related-heading" data-slot="related-heading" hidden>{{ tr.t("popover-related") }}</p>
         <ul class="day-popover__related-list" data-slot="related-list"></ul>
     </div>
     <template id="day-popover-related-tpl"><li><a></a></li></template>

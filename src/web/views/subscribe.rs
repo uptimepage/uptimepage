@@ -16,11 +16,12 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::auth::email_norm;
 use crate::auth::url::token_link;
-use crate::domain::{NewSubscriber, SubscriberChannel};
+use crate::domain::{NewSubscriber, PageRef, SubscriberChannel};
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
 use crate::http_outbound::post_bytes_with_headers;
+use crate::i18n::Tr;
 use crate::request::host::resolve_status_page;
-use crate::storage::status_pages::{PAGE_CUSTOM_DOMAIN_PUBLISHED, PAGE_PLAN_JOIN};
+use crate::storage::status_pages::{self, PAGE_CUSTOM_DOMAIN_PUBLISHED, PAGE_PLAN_JOIN};
 use crate::storage::subscribers::{self, CONFIRM_TTL_HOURS};
 use crate::templates::filters;
 use crate::web::error::WebResult;
@@ -28,6 +29,7 @@ use crate::web::error::WebResult;
 #[derive(Template, WebTemplate)]
 #[template(path = "public/subscribe_notice.html")]
 pub struct SubscribeNotice {
+    pub tr: Tr,
     pub ok: bool,
     pub heading: String,
     pub message: String,
@@ -35,37 +37,62 @@ pub struct SubscribeNotice {
 }
 
 impl SubscribeNotice {
-    fn ok(heading: &str, message: &str) -> Response {
+    fn new(tr: Tr, ok: bool, heading: &str, message: &str, code: &str) -> Self {
         SubscribeNotice {
-            ok: true,
-            heading: heading.into(),
-            message: message.into(),
-            code: String::new(),
-        }
-        .into_response()
-    }
-
-    fn ok_with_code(heading: &str, message: &str, code: &str) -> Response {
-        SubscribeNotice {
-            ok: true,
-            heading: heading.into(),
-            message: message.into(),
+            tr,
+            ok,
+            heading: tr.t(heading),
+            message: tr.t(message),
             code: code.into(),
         }
-        .into_response()
     }
 
-    fn bad(status: StatusCode, heading: &str, message: &str) -> Response {
-        (
-            status,
-            SubscribeNotice {
-                ok: false,
-                heading: heading.into(),
-                message: message.into(),
-                code: String::new(),
-            },
-        )
-            .into_response()
+    fn ok(tr: Tr, heading: &str, message: &str) -> Response {
+        Self::new(tr, true, heading, message, "").into_response()
+    }
+
+    fn ok_with_code(tr: Tr, heading: &str, message: &str, code: &str) -> Response {
+        Self::new(tr, true, heading, message, code).into_response()
+    }
+
+    fn bad(tr: Tr, status: StatusCode, heading: &str, message: &str) -> Response {
+        (status, Self::new(tr, false, heading, message, "")).into_response()
+    }
+}
+
+/// The language of the page whose host the request arrived on.
+async fn host_page_tr(state: &AppState, headers: &HeaderMap) -> Tr {
+    match resolve_status_page(&state.request_state(), headers).await {
+        Ok(page) => page_tr(state, page).await,
+        Err(_) => Tr::default(),
+    }
+}
+
+/// Read before the row goes, so the goodbye is in the page's language even
+/// when the page is no longer published.
+async fn subscriber_tr(state: &AppState, subscriber_id: Uuid) -> Tr {
+    let Some(pool) = state.db.as_ref() else {
+        return Tr::default();
+    };
+    match subscribers::page_locale(pool, subscriber_id).await {
+        Ok(locale) => Tr::new(locale.unwrap_or_default()),
+        Err(err) => {
+            tracing::warn!(error = %err, "subscriber page language unreadable; using English");
+            Tr::default()
+        }
+    }
+}
+
+async fn page_tr(state: &AppState, page: PageRef) -> Tr {
+    let Some(pool) = state.db.as_ref() else {
+        return Tr::default();
+    };
+    match status_pages::public_locale(pool, page).await {
+        Ok(locale) => Tr::new(locale),
+        Err(err) => {
+            tracing::warn!(error = %err, "status page language unreadable; using English");
+            Tr::default()
+        }
     }
 }
 
@@ -84,31 +111,34 @@ pub async fn subscribe(
     headers: HeaderMap,
     Form(form): Form<SubscribeForm>,
 ) -> WebResult<Response> {
-    let invalid_page = || {
+    let invalid_page = |tr| {
         SubscribeNotice::bad(
+            tr,
             StatusCode::NOT_FOUND,
-            "Page not found",
-            "This status page isn't available.",
+            "notice-page-not-found",
+            "notice-page-not-found-body",
         )
     };
 
     let page = match resolve_status_page(&state.request_state(), &headers).await {
         Ok(p) => p,
-        Err(_) => return Ok(invalid_page()),
+        Err(_) => return Ok(invalid_page(Tr::default())),
     };
+    let tr = page_tr(&state, page).await;
     let Some(pool) = state.db.as_ref() else {
-        return Ok(invalid_page());
+        return Ok(invalid_page(tr));
     };
 
     if form.channel == "webhook" {
-        return subscribe_webhook(&state, pool, page, form.url.trim()).await;
+        return subscribe_webhook(&state, pool, page, form.url.trim(), tr).await;
     }
 
     let Some(email) = email_norm::normalize(&form.email) else {
         return Ok(SubscribeNotice::bad(
+            tr,
             StatusCode::BAD_REQUEST,
-            "Check the address",
-            "That doesn't look like a valid email address.",
+            "notice-check-address",
+            "notice-invalid-email",
         ));
     };
     // Lowercase so the unique index folds case variants into one subscription.
@@ -120,9 +150,10 @@ pub async fn subscribe(
     );
     if crate::security::abuse::blocked_email_destination(&email, &ops).is_some() {
         return Ok(SubscribeNotice::bad(
+            tr,
             StatusCode::BAD_REQUEST,
-            "Check the address",
-            "That address can't be used to subscribe.",
+            "notice-check-address",
+            "notice-blocked-email",
         ));
     }
     // Regardless of `signup_policy`: an open form on a public page is the
@@ -130,9 +161,10 @@ pub async fn subscribe(
     if let Some(risk) = state.listed_disposable(&email) {
         crate::security::email_policy::record("status_page_subscribe", "refused", risk);
         return Ok(SubscribeNotice::bad(
+            tr,
             StatusCode::BAD_REQUEST,
-            "Check the address",
-            risk.message(),
+            "notice-check-address",
+            risk.message_id(),
         ));
     }
 
@@ -167,7 +199,7 @@ pub async fn subscribe(
                 .trim_end_matches('/')
                 .to_string(),
         };
-        let page_name = meta.map_or_else(|| "status page".to_string(), |m| m.name);
+        let page_name = meta.map_or_else(|| tr.t("email-fallback-page-name"), |m| m.name);
         let confirm_url = token_link(&origin, "/subscribe/confirm", &token);
         let unsubscribe_url =
             subscribers::unsubscribe_url(&state.subscription_unsubscribe_secret, &origin, sub.id);
@@ -178,6 +210,7 @@ pub async fn subscribe(
             ),
             to: EmailAddress::new(sub.target.clone(), sub.target.clone()),
             template: EmailTemplate::SubscriberConfirm {
+                locale: tr.locale(),
                 page_name,
                 confirm_url,
                 expires_hours: CONFIRM_TTL_HOURS as u32,
@@ -190,8 +223,9 @@ pub async fn subscribe(
     }
 
     Ok(SubscribeNotice::ok(
-        "Almost there",
-        "Check your inbox for a confirmation link to finish subscribing.",
+        tr,
+        "notice-almost-there",
+        "notice-check-inbox",
     ))
 }
 
@@ -203,13 +237,16 @@ pub struct ConfirmQuery {
 
 pub async fn confirm(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<ConfirmQuery>,
 ) -> WebResult<Response> {
+    let tr = host_page_tr(&state, &headers).await;
     let invalid = || {
         SubscribeNotice::bad(
+            tr,
             StatusCode::NOT_FOUND,
-            "Link expired",
-            "This confirmation link is invalid, expired, or already used.",
+            "notice-link-expired",
+            "notice-link-expired-body",
         )
     };
     let token = q.token.trim();
@@ -221,8 +258,9 @@ pub async fn confirm(
     };
     match subscribers::confirm(pool, token).await? {
         Some(_) => Ok(SubscribeNotice::ok(
-            "You're subscribed",
-            "You'll be notified when the status of this page changes.",
+            tr,
+            "notice-subscribed",
+            "notice-subscribed-body",
         )),
         None => Ok(invalid()),
     }
@@ -239,6 +277,7 @@ pub struct UnsubscribeQuery {
 #[derive(Template, WebTemplate)]
 #[template(path = "subscribe_unsubscribe.html")]
 pub struct UnsubscribePage {
+    pub tr: Tr,
     pub phase: &'static str,
     pub s: String,
     pub t: String,
@@ -253,10 +292,11 @@ fn resolve_unsubscribe(state: &AppState, q: &UnsubscribeQuery) -> Option<Uuid> {
         .then_some(id)
 }
 
-fn unsubscribe_invalid() -> Response {
+fn unsubscribe_invalid(tr: Tr) -> Response {
     (
         StatusCode::NOT_FOUND,
         UnsubscribePage {
+            tr,
             phase: "invalid",
             s: String::new(),
             t: String::new(),
@@ -270,12 +310,15 @@ fn unsubscribe_invalid() -> Response {
 /// the RFC 8058 one-click.
 pub async fn unsubscribe_confirm(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<UnsubscribeQuery>,
 ) -> WebResult<Response> {
-    if resolve_unsubscribe(&state, &q).is_none() {
-        return Ok(unsubscribe_invalid());
-    }
+    let Some(id) = resolve_unsubscribe(&state, &q) else {
+        return Ok(unsubscribe_invalid(host_page_tr(&state, &headers).await));
+    };
+    let tr = subscriber_tr(&state, id).await;
     Ok(UnsubscribePage {
+        tr,
         phase: "confirm",
         s: q.s.trim().to_string(),
         t: q.t.trim().to_string(),
@@ -285,16 +328,19 @@ pub async fn unsubscribe_confirm(
 
 pub async fn unsubscribe(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<UnsubscribeQuery>,
 ) -> WebResult<Response> {
     let Some(id) = resolve_unsubscribe(&state, &q) else {
-        return Ok(unsubscribe_invalid());
+        return Ok(unsubscribe_invalid(host_page_tr(&state, &headers).await));
     };
     let Some(pool) = state.db.as_ref() else {
-        return Ok(unsubscribe_invalid());
+        return Ok(unsubscribe_invalid(Tr::default()));
     };
+    let tr = subscriber_tr(&state, id).await;
     subscribers::unsubscribe(pool, id).await?;
     Ok(UnsubscribePage {
+        tr,
         phase: "done",
         s: String::new(),
         t: String::new(),
@@ -308,14 +354,16 @@ pub async fn unsubscribe(
 async fn subscribe_webhook(
     state: &AppState,
     pool: &sqlx::PgPool,
-    page: crate::domain::status_page::PageRef,
+    page: PageRef,
     url: &str,
+    tr: Tr,
 ) -> WebResult<Response> {
     let bad_url = || {
         SubscribeNotice::bad(
+            tr,
             StatusCode::BAD_REQUEST,
-            "Check the URL",
-            "Enter a valid https:// webhook URL.",
+            "notice-check-url",
+            "notice-invalid-url",
         )
     };
     let Ok(parsed) = url::Url::parse(url) else {
@@ -346,9 +394,10 @@ async fn subscribe_webhook(
         .is_err()
     {
         return Ok(SubscribeNotice::bad(
+            tr,
             StatusCode::BAD_REQUEST,
-            "Couldn't reach your endpoint",
-            "We couldn't deliver a verification POST to that URL. Make sure it accepts HTTPS POST and returns 2xx, then try again.",
+            "notice-unreachable",
+            "notice-unreachable-body",
         ));
     }
     let sub = subscribers::subscribe(
@@ -371,8 +420,9 @@ async fn subscribe_webhook(
         .and_then(|v| v.as_str())
         .unwrap_or(&secret);
     Ok(SubscribeNotice::ok_with_code(
-        "Subscribed",
-        "Your endpoint is verified. Save this signing secret — it signs our requests so you can verify them:",
+        tr,
+        "notice-webhook-subscribed",
+        "notice-webhook-subscribed-body",
         shown,
     ))
 }

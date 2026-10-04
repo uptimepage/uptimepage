@@ -98,6 +98,16 @@
         </div>
       </div>
 
+      <label class="field-outline sm:max-w-xs">
+        <span class="field-outline__label">Language</span>
+        <select id="f-locale" data-sm-combobox aria-describedby="locale-help" class="w-full field">
+          {% for l in locales %}
+          <option value="{{ l.value }}"{% if l.selected %} selected{% endif %}>{{ l.label }}</option>
+          {% endfor %}
+        </select>
+        <span id="locale-help" class="mt-1 block text-xs text-muted">Page labels, dates and subscriber emails. Text you write stays as written.</span>
+      </label>
+
       <label class="field-outline">
         <span class="field-outline__label">About</span>
         <textarea id="f-about" maxlength="500" rows="2" autocomplete="off" class="w-full field"
@@ -438,6 +448,7 @@
             slug,
             name: document.getElementById('f-name').value,
             enabled: visibility.value === '1',
+            public_locale: document.getElementById('f-locale').value,
             branding: {
               public_display_name: document.getElementById('f-display').value || null,
               public_about: document.getElementById('f-about').value || null,

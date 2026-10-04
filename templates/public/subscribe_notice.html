@@ -1,4 +1,5 @@
 {% extends "chromeless_base.html" %}
+{% block lang %}{{ tr.lang() }}{% endblock %}
 {% block title %}{{ heading }}{% endblock %}
 {% block main %}
     <main class="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-4 px-6 text-center">
@@ -7,18 +8,18 @@
         {% if code != "" %}
         <div class="flex items-stretch gap-2">
             <code id="notice-code" class="field flex-1 select-all overflow-x-auto whitespace-nowrap text-left text-xs leading-relaxed">{{ code }}</code>
-            <button type="button" class="sticker-btn sticker-btn--accent gap-1.5 px-3 text-xs" data-copy="#notice-code" aria-label="Copy to clipboard">
+            <button type="button" class="sticker-btn sticker-btn--accent gap-1.5 px-3 text-xs" data-copy="#notice-code" data-copy-done="{{ tr.t("notice-copied") }}" aria-label="{{ tr.t("notice-copy-aria") }}">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <rect x="9" y="9" width="13" height="13" rx="2"></rect>
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                 </svg>
-                <span data-copy-label>copy</span>
+                <span data-copy-label>{{ tr.t("notice-copy") }}</span>
             </button>
         </div>
         {% endif %}
         {# No branding here to say which URL this deploy serves the page on, and
            `/status` reaches it in every mode. #}
-        <p><a href="/status" class="text-sm underline decoration-dotted hover:text-body">← Back to status page</a></p>
+        <p><a href="/status" class="text-sm underline decoration-dotted hover:text-body">{{ tr.t("notice-back") }}</a></p>
     </main>
     {% if code != "" %}
     <script defer src="{{ "js/public/copy.js"|asset }}"></script>

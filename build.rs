@@ -169,6 +169,9 @@ fn main() {
     // merged. Belt-and-braces — `src` above already covers it, but
     // pinning the content tree makes the dependency explicit.
     println!("cargo::rerun-if-changed=src/marketing/content");
+    // `static_loader!` embeds each catalogue through include_str!, which tracks
+    // edits to a file but not a locale directory added beside them.
+    println!("cargo::rerun-if-changed=locales");
 
     build_js();
 

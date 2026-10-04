@@ -10,7 +10,7 @@ document.addEventListener('click', function (e) {
     copied.then(function () {
         const label = btn.querySelector('[data-copy-label]') || btn;
         if (!label.dataset.copyOriginal) label.dataset.copyOriginal = label.textContent;
-        label.textContent = 'copied';
+        label.textContent = btn.dataset.copyDone || 'copied';
         clearTimeout(label.copyTimer);
         label.copyTimer = setTimeout(function () { label.textContent = label.dataset.copyOriginal; }, 1500);
     }, function () {

@@ -1,11 +1,13 @@
 use chrono::{DateTime, Utc};
 
 use crate::email::templates::layout::{self, ButtonStyle, Page, Tone};
-use crate::email::templates::{html_escape, utc_stamp};
+use crate::email::templates::subscriber_footnote;
 use crate::email::trait_def::RenderedEmail;
+use crate::i18n::Tr;
 
 #[allow(clippy::too_many_arguments)]
 pub fn render(
+    tr: Tr,
     page_name: &str,
     title: &str,
     description: Option<&str>,
@@ -16,55 +18,63 @@ pub fn render(
     unsubscribe_url: &str,
 ) -> RenderedEmail {
     let completed = phase == "completed";
-    let heading = if completed {
-        "Maintenance completed"
+    let heading = tr.t(if completed {
+        "email-maintenance-completed"
     } else {
-        "Scheduled maintenance"
-    };
+        "email-maintenance-scheduled"
+    });
     let subject = format!("[{page_name}] {heading}: {title}");
-    let window = format!("{} — {}", utc_stamp(starts_at), utc_stamp(ends_at));
+    let window = format!("{} — {}", tr.utc_stamp(starts_at), tr.utc_stamp(ends_at));
     let desc_text = description.map(|d| format!("\n{d}\n")).unwrap_or_default();
 
     let text_body = format!(
         "{title}\n\
          {heading}\n\
-         When: {window}\n\
+         {when}\n\
          {desc_text}\n\
-         View the status page:\n  {page_url}\n\
+         {view}\n  {page_url}\n\
          \n\
-         Unsubscribe:\n  {unsubscribe_url}\n"
+         {unsubscribe}\n  {unsubscribe_url}\n",
+        when = tr.t_args(
+            "email-maintenance-when",
+            [("window", window.as_str().into())]
+        ),
+        view = tr.t("email-view-page"),
+        unsubscribe = tr.t("email-unsubscribe-text"),
     );
 
-    let mut body = layout::facts(&[(if completed { "Ran" } else { "Window" }, window.clone())]);
+    let fact = tr.t(if completed {
+        "email-maintenance-ran"
+    } else {
+        "email-maintenance-window"
+    });
+    let mut body = layout::facts(&[(fact.as_str(), window.clone())]);
     if let Some(description) = description {
         body.push_str(&layout::prose(description));
     }
     body.push_str(&layout::button(
         page_url,
-        "View status page",
+        &tr.t("email-view-page-button"),
         ButtonStyle::Solid,
     ));
 
-    let footnote = layout::fine_print(&format!(
-        "You're receiving this because you subscribed to {page}. {unsub}.",
-        page = html_escape(page_name),
-        unsub = layout::quiet_link(unsubscribe_url, "Unsubscribe"),
-    ));
-
-    let html_body = layout::render(Page {
-        title: &subject,
-        preheader: &window,
-        // A customer's subscribers hear from the page, not from us.
-        signature: None,
-        header: layout::band(
-            if completed { Tone::Good } else { Tone::Info },
-            &heading.to_uppercase(),
-            title,
-            Some(&window),
-        ),
-        body,
-        footnote: Some(footnote),
-    });
+    let html_body = layout::render_in(
+        tr.lang(),
+        Page {
+            title: &subject,
+            preheader: &window,
+            // A customer's subscribers hear from the page, not from us.
+            signature: None,
+            header: layout::band(
+                if completed { Tone::Good } else { Tone::Info },
+                &heading.to_uppercase(),
+                title,
+                Some(&window),
+            ),
+            body,
+            footnote: Some(subscriber_footnote(tr, page_name, unsubscribe_url)),
+        },
+    );
 
     RenderedEmail {
         subject,
@@ -76,10 +86,12 @@ pub fn render(
 #[cfg(test)]
 mod tests {
     use super::render;
+    use crate::i18n::Tr;
     use chrono::{TimeZone, Utc};
 
     fn rendered(phase: &str) -> crate::email::trait_def::RenderedEmail {
         render(
+            Tr::default(),
             "Acme status",
             "Database upgrade",
             Some("Writes pause for a few minutes."),
@@ -101,6 +113,33 @@ mod tests {
             );
         }
         assert!(r.html_body.contains("SCHEDULED MAINTENANCE"));
+    }
+
+    #[test]
+    fn a_german_page_dates_the_window_in_german() {
+        let r = render(
+            Tr::new(crate::domain::Locale::De),
+            "Acme status",
+            "Database upgrade",
+            None,
+            "scheduled",
+            Utc.with_ymd_and_hms(2026, 3, 20, 1, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2026, 3, 20, 3, 0, 0).unwrap(),
+            "https://acme.test/",
+            "https://acme.test/subscribe/unsubscribe?s=1&t=2",
+        );
+        assert_eq!(
+            r.subject,
+            "[Acme status] Geplante Wartung: Database upgrade"
+        );
+        assert!(
+            r.text_body
+                .contains("Zeitraum: 20. März 2026, 01:00 UTC — 20. März 2026, 03:00 UTC"),
+            "{}",
+            r.text_body
+        );
+        assert!(r.html_body.contains("GEPLANTE WARTUNG"));
+        assert!(r.html_body.contains(r#"<html lang="de">"#));
     }
 
     #[test]

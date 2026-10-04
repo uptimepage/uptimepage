@@ -204,6 +204,7 @@ impl PublicSource for FakePublicSource {
         Ok(uptimepage::public_status::source::build_rss(
             "uptimepage",
             links,
+            uptimepage::domain::Locale::En,
             &items,
         ))
     }

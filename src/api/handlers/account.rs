@@ -170,6 +170,7 @@ pub struct StatusPageExport {
     pub public_about: Option<String>,
     pub public_brand_color: Option<String>,
     pub public_style: String,
+    pub public_locale: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -515,7 +516,7 @@ async fn build_owned_org(pool: &sqlx::PgPool, org: OrgExport) -> Result<OwnedOrg
 
     let status_pages: Vec<StatusPageExport> = sqlx::query_as(
         "SELECT id, slug, name, enabled, public_display_name, public_about, \
-                public_brand_color, public_style, created_at, updated_at \
+                public_brand_color, public_style, public_locale, created_at, updated_at \
          FROM status_pages WHERE org_id = $1 ORDER BY created_at",
     )
     .bind(org.id)

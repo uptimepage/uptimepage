@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::domain::Locale;
 use crate::error::Result;
 use crate::storage::admin::not_held_sql;
 use crate::storage::status_pages::{PAGE_CUSTOM_DOMAIN_PUBLISHED, PAGE_NOT_HELD, PAGE_PLAN_JOIN};
@@ -28,10 +29,17 @@ pub struct PendingMaintenance {
     pub starts_at: DateTime<Utc>,
     pub ends_at: DateTime<Utc>,
     pub page_name: String,
+    public_locale: String,
     pub slug: String,
     pub custom_domain: Option<String>,
     pub custom_domain_published: bool,
     pub signing_secret: Option<String>,
+}
+
+impl PendingMaintenance {
+    pub fn locale(&self) -> Locale {
+        Locale::from_db(&self.public_locale)
+    }
 }
 
 /// Verified subscribers with a maintenance window (touching their page's
@@ -43,13 +51,14 @@ pub struct PendingMaintenance {
 pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingMaintenance>> {
     let sql = format!(
         "SELECT DISTINCT subscriber_id, maintenance_id, org_id, channel, target, phase, title,
-                description, starts_at, ends_at, page_name, slug, custom_domain,
+                description, starts_at, ends_at, page_name, public_locale, slug, custom_domain,
                 custom_domain_published, signing_secret
          FROM (
              SELECT s.id AS subscriber_id, mw.id AS maintenance_id, s.org_id, s.channel, s.target,
                     s.verified_at,
                     mw.title, mw.description, mw.starts_at, mw.ends_at, mw.created_at,
                     COALESCE(NULLIF(sp.public_display_name, ''), sp.name) AS page_name,
+                    sp.public_locale,
                     sp.slug::text AS slug,
                     sp.custom_domain::text AS custom_domain,
                     {PAGE_CUSTOM_DOMAIN_PUBLISHED} AS custom_domain_published,

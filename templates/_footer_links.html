@@ -1,3 +1,4 @@
+{%- import "_source.html" as source -%}
 {# Shared footer tail: legal/policy links + third-party license bundle +
    the AGPL-3.0 §13 source offer. Included by the operator UI (base.html)
    and the standalone policy layout (legal.html). The public status page
@@ -8,4 +9,4 @@
 <span class="mx-1">·</span>
 <a href="/licenses" class="hover:text-body">Licenses</a>
 <span class="mx-1">·</span>
-{% include "_source.html" %}
+{% call source::link("Source code (AGPL-3.0)") %}{% endcall %}

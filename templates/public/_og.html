@@ -2,6 +2,7 @@
 <meta property="og:title" content="{{ og.title }}">
 <meta property="og:description" content="{{ og.description }}">
 <meta property="og:type" content="{{ og.og_type }}">
+<meta property="og:locale" content="{{ tr.og_locale() }}">
 {% if !og.site_name.is_empty() %}<meta property="og:site_name" content="{{ og.site_name }}">{% endif %}
 {% if !og.url.is_empty() %}<link rel="canonical" href="{{ og.url }}">
 <meta property="og:url" content="{{ og.url }}">{% endif %}

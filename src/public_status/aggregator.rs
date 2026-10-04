@@ -23,17 +23,18 @@ use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 use crate::domain::{
-    ComponentHistoryResponse, DayState, IncidentSeverity, IncidentStatusPhase, OrgId,
+    ComponentHistoryResponse, DayState, IncidentSeverity, IncidentStatusPhase, Locale, OrgId,
     PublicComponent, PublicComponentGroup, PublicComponentStatus, PublicIncident,
     PublicIncidentUpdate, PublicMaintenance, PublicStatusPage, StatusPageId,
-    public::auto_incident_title, uptime_pct_from_downtime,
+    uptime_pct_from_downtime,
 };
 use crate::error::Result;
+use crate::i18n::Tr;
 use crate::security::Cipher;
 use crate::storage::capability_token;
 use crate::storage::status_pages::COMPONENT_ORDER;
 
-use super::cache::HistoryIncidentMarker;
+use super::cache::{HistoryIncidentMarker, PageSettings};
 use super::overall_status::{
     IncidentImpact, component_status, day_state, overall_state, overall_status,
     stored_incident_impact,
@@ -125,10 +126,14 @@ impl OrgAggregator {
         PublicStatusPage,
         Vec<HistoryIncidentMarker>,
         HashMap<Uuid, String>,
-        bool,
+        PageSettings,
     )> {
         let now = Utc::now();
-        let components = self.load_page_components(page, org).await?;
+        let (components, settings) = tokio::try_join!(
+            self.load_page_components(page, org),
+            self.load_settings(page, org),
+        )?;
+        let tr = Tr::new(settings.locale);
         let component_ids: Vec<Uuid> = components.iter().map(|c| c.id).collect();
         let name_by_id: HashMap<Uuid, String> =
             components.iter().map(|c| (c.id, c.name.clone())).collect();
@@ -141,15 +146,13 @@ impl OrgAggregator {
             marker_windows,
             paint_windows,
             day_presence,
-            hide_from_search,
         ) = tokio::try_join!(
             self.load_maintenance(org, now, &component_ids, &name_by_id),
-            self.load_active_incidents(page, org, &component_ids, &name_by_id),
-            self.load_recent_incidents(page, org, now, &component_ids, &name_by_id),
+            self.load_active_incidents(page, org, &component_ids, &name_by_id, tr),
+            self.load_recent_incidents(page, org, now, &component_ids, &name_by_id, tr),
             self.load_marker_windows(org, now, &component_ids),
             self.load_paint_windows(org, now, &component_ids, days),
             self.load_day_presence(org, &component_ids, now, days),
-            self.load_hide_from_search(page, org),
         )?;
 
         let history_markers: Vec<HistoryIncidentMarker> = marker_windows
@@ -160,7 +163,7 @@ impl OrgAggregator {
                     id: w.id,
                     component_id: w.target_id,
                     title: truncate_title(w.public_title.unwrap_or_else(|| {
-                        auto_incident_title(&component_name, &w.status_at_start)
+                        tr.auto_incident_title(&component_name, &w.status_at_start)
                     })),
                     started_at: w.started_at,
                     ended_at: w.ended_at,
@@ -239,7 +242,7 @@ impl OrgAggregator {
             },
             history_markers,
             name_by_id,
-            hide_from_search,
+            settings,
         ))
     }
 
@@ -281,17 +284,27 @@ impl OrgAggregator {
 
     // ── private helpers ─────────────────────────────────────────────────────
 
-    /// An unreadable row reads as hidden, so a fault publishes nothing.
-    async fn load_hide_from_search(&self, page: StatusPageId, org: OrgId) -> Result<bool> {
-        let row: Option<(bool,)> = sqlx::query_as(
-            "SELECT public_hide_from_search FROM status_pages WHERE id = $1 AND org_id = $2",
+    /// A missing row reads as hidden, so a fault publishes nothing.
+    async fn load_settings(&self, page: StatusPageId, org: OrgId) -> Result<PageSettings> {
+        let row: Option<(bool, String)> = sqlx::query_as(
+            "SELECT public_hide_from_search, public_locale \
+             FROM status_pages WHERE id = $1 AND org_id = $2",
         )
         .bind(page.0)
         .bind(org.0)
         .fetch_optional(&self.pg)
         .await
-        .context("load page search visibility")?;
-        Ok(row.is_none_or(|(hidden,)| hidden))
+        .context("load page settings")?;
+        Ok(match row {
+            Some((hide_from_search, locale)) => PageSettings {
+                hide_from_search,
+                locale: Locale::from_db(&locale),
+            },
+            None => PageSettings {
+                hide_from_search: true,
+                locale: Locale::default(),
+            },
+        })
     }
 
     /// The page's monitors, with per-page curation applied, in render order.
@@ -409,6 +422,7 @@ impl OrgAggregator {
         org: OrgId,
         component_ids: &[Uuid],
         name_by_id: &HashMap<Uuid, String>,
+        tr: Tr,
     ) -> Result<Vec<PublicIncident>> {
         let rows: Vec<IncidentRow> = sqlx::query_as::<_, IncidentRow>(&format!(
             r#"SELECT i.id, i.target_id,
@@ -429,7 +443,7 @@ impl OrgAggregator {
         .fetch_all(&self.pg)
         .await
         .context("load active incidents")?;
-        self.hydrate_incidents(org, rows, name_by_id).await
+        self.hydrate_incidents(org, rows, name_by_id, tr).await
     }
 
     async fn load_recent_incidents(
@@ -439,6 +453,7 @@ impl OrgAggregator {
         now: DateTime<Utc>,
         component_ids: &[Uuid],
         name_by_id: &HashMap<Uuid, String>,
+        tr: Tr,
     ) -> Result<(Vec<PublicIncident>, bool)> {
         let since = now - ChronoDuration::days(self.cfg.recent_incidents_days as i64);
         let peek_limit = self.cfg.max_recent_incidents as i64 + 1;
@@ -468,7 +483,7 @@ impl OrgAggregator {
         if has_more {
             rows.truncate(self.cfg.max_recent_incidents as usize);
         }
-        let hydrated = self.hydrate_incidents(org, rows, name_by_id).await?;
+        let hydrated = self.hydrate_incidents(org, rows, name_by_id, tr).await?;
         Ok((hydrated, has_more))
     }
 
@@ -549,6 +564,7 @@ impl OrgAggregator {
         org: OrgId,
         rows: Vec<IncidentRow>,
         name_by_id: &HashMap<Uuid, String>,
+        tr: Tr,
     ) -> Result<Vec<PublicIncident>> {
         if rows.is_empty() {
             return Ok(Vec::new());
@@ -589,7 +605,7 @@ impl OrgAggregator {
                 let title = r
                     .public_title
                     .clone()
-                    .unwrap_or_else(|| auto_incident_title(&component_name, &r.status_at_start));
+                    .unwrap_or_else(|| tr.auto_incident_title(&component_name, &r.status_at_start));
                 let severity = IncidentSeverity::from_db_str(&r.severity);
                 PublicIncident {
                     id: r.id,

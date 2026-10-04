@@ -16,6 +16,7 @@ use hickory_resolver::proto::rr::{RData, RecordType};
 use crate::config::{EmailPolicyConfig, SignupPolicy};
 use crate::error::AppError;
 use crate::error::codes;
+use crate::i18n::Tr;
 use crate::metric_names;
 use crate::security::abuse::domain_and_parents;
 
@@ -128,21 +129,19 @@ impl EmailRisk {
 
     /// Says what to do rather than naming the list: "you're on a blocklist"
     /// invites an argument we cannot settle.
-    pub fn message(self) -> &'static str {
+    pub fn message_id(self) -> &'static str {
         match self {
-            Self::Disposable => {
-                "That looks like a temporary email address. Use one you'll still \
-                 be able to read when we send you an alert."
-            }
-            Self::NoMx => {
-                "That domain doesn't accept email, so we'd have no way to reach \
-                 you. Check the spelling."
-            }
+            Self::Disposable => "email-risk-disposable",
+            Self::NoMx => "email-risk-no-mx",
         }
     }
 
     pub fn into_app_error(self, field: &str) -> AppError {
-        AppError::bad_request_field(codes::EMAIL_DESTINATION_BLOCKED, self.message(), field)
+        AppError::bad_request_field(
+            codes::EMAIL_DESTINATION_BLOCKED,
+            Tr::default().t(self.message_id()),
+            field,
+        )
     }
 }
 

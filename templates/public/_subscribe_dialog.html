@@ -1,32 +1,32 @@
 <dialog id="subscribe-dialog" class="sticker-card m-auto w-full max-w-sm p-0 backdrop:bg-black/40">
     <form method="post" action="/subscribe" class="flex flex-col gap-3 p-5">
         <div class="flex items-center justify-between">
-            <h2 class="text-sm font-semibold text-body">Subscribe to updates</h2>
-            <button type="button" data-subscribe-close aria-label="Close" class="-m-2 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded text-xl leading-none text-quiet transition-[color,scale] hover:text-body motion-safe:active:scale-[0.96]">&times;</button>
+            <h2 class="text-sm font-semibold text-body">{{ tr.t("subscribe-title") }}</h2>
+            <button type="button" data-subscribe-close aria-label="{{ tr.t("subscribe-close") }}" class="-m-2 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded text-xl leading-none text-quiet transition-[color,scale] hover:text-body motion-safe:active:scale-[0.96]">&times;</button>
         </div>
-        <p class="text-pretty text-xs text-muted">Get notified whenever this page posts an incident or maintenance update.</p>
-        <div role="radiogroup" aria-label="Delivery method" class="flex gap-4 text-xs text-muted">
+        <p class="text-pretty text-xs text-muted">{{ tr.t("subscribe-lead") }}</p>
+        <div role="radiogroup" aria-label="{{ tr.t("subscribe-method") }}" class="flex gap-4 text-xs text-muted">
             <label class="inline-flex items-center gap-1">
-                <input type="radio" name="channel" value="email" checked data-subscribe-channel> Email
+                <input type="radio" name="channel" value="email" checked data-subscribe-channel> {{ tr.t("subscribe-email") }}
             </label>
             <label class="inline-flex items-center gap-1">
-                <input type="radio" name="channel" value="webhook" data-subscribe-channel> Webhook
+                <input type="radio" name="channel" value="webhook" data-subscribe-channel> {{ tr.t("subscribe-webhook") }}
             </label>
         </div>
         <div data-channel-pane="email">
-            <label class="sr-only" for="subscribe-email">Email address</label>
+            <label class="sr-only" for="subscribe-email">{{ tr.t("subscribe-email-label") }}</label>
             <input id="subscribe-email" class="field w-full" type="email" name="email" required
                    placeholder="you@example.com" autocomplete="email">
         </div>
         <div data-channel-pane="webhook" hidden>
-            <label class="sr-only" for="subscribe-url">Webhook URL</label>
+            <label class="sr-only" for="subscribe-url">{{ tr.t("subscribe-webhook-label") }}</label>
             <input id="subscribe-url" class="field w-full" type="url" name="url"
                    placeholder="https://your-endpoint.example.com/hook">
-            <p class="mt-1 text-[0.7rem] text-quiet">We POST a verification first, then JSON on each update.</p>
+            <p class="mt-1 text-[0.7rem] text-quiet">{{ tr.t("subscribe-webhook-hint") }}</p>
         </div>
-        <button type="submit" class="sticker-btn sticker-btn--primary justify-center px-4 py-2.5 text-sm">Subscribe</button>
-        <p class="text-[0.7rem] text-quiet">Used only to send this page's updates. Unsubscribe any time.</p>
-        <p class="text-[0.7rem] text-quiet">Prefer a feed? <a class="underline hover:text-body" href="{{ rss_url }}">RSS</a></p>
+        <button type="submit" class="sticker-btn sticker-btn--primary justify-center px-4 py-2.5 text-sm">{{ tr.t("subscribe-submit") }}</button>
+        <p class="text-[0.7rem] text-quiet">{{ tr.t("subscribe-privacy") }}</p>
+        <p class="text-[0.7rem] text-quiet">{{ tr.t("subscribe-feed-prompt") }} <a class="underline hover:text-body" href="{{ rss_url }}">RSS</a></p>
     </form>
 </dialog>
 <script defer src="{{ "js/public/subscribe_dialog.js"|asset }}"></script>

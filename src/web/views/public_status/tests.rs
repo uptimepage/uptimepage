@@ -14,6 +14,7 @@ use crate::domain::{
     PublicComponentGroup, PublicComponentStatus, PublicIncident, PublicIncidentUpdate,
     PublicMaintenance, PublicOrgBranding, PublicStatusPage,
 };
+use crate::i18n::Tr;
 use crate::public_status::HistoryIncidentMarker;
 use crate::storage::orgs::OrgBranding;
 
@@ -78,8 +79,9 @@ fn sample_branding() -> BrandingView {
 
 #[test]
 fn full_page_renders_chrome_and_components() {
-    let view = build_view(&sample_page(), &[], &Default::default());
+    let view = build_view(&sample_page(), &[], &Default::default(), Tr::default());
     let html = StatusFullPage {
+        tr: Tr::default(),
         view,
         branding: sample_branding(),
         og: OgMeta::default(),
@@ -106,8 +108,13 @@ fn full_page_renders_chrome_and_components() {
 
 #[test]
 fn day_strip_renders_trigger_buttons_and_blob() {
-    let view = build_view(&sample_page(), &[], &Default::default());
-    let html = StatusRegion { view }.render().unwrap();
+    let view = build_view(&sample_page(), &[], &Default::default(), Tr::default());
+    let html = StatusRegion {
+        tr: Tr::default(),
+        view,
+    }
+    .render()
+    .unwrap();
     assert!(html.contains("data-day-trigger"));
     assert!(html.contains(r#"data-comp="#));
     assert!(html.contains(r#"data-day="#));
@@ -136,7 +143,7 @@ fn day_strip_blob_links_overlapping_incident() {
         started_at: p.generated_at - ChronoDuration::minutes(45),
         ended_at: Some(p.generated_at - ChronoDuration::minutes(5)),
     };
-    let view = build_view(&p, &[marker], &Default::default());
+    let view = build_view(&p, &[marker], &Default::default(), Tr::default());
     // The JSON blob is the data source — assert against it, not the
     // rendered <li> markup (the JS builds those at runtime).
     assert!(view.day_strip_json.contains("Edge nodes returning 502"));
@@ -159,7 +166,7 @@ fn day_strip_blob_html_safe() {
         started_at: p.generated_at - ChronoDuration::minutes(30),
         ended_at: Some(p.generated_at - ChronoDuration::minutes(5)),
     };
-    let view = build_view(&p, &[marker], &Default::default());
+    let view = build_view(&p, &[marker], &Default::default(), Tr::default());
     assert!(!view.day_strip_json.contains('<'));
     assert!(!view.day_strip_json.contains('>'));
     // `&` appears only as `&` — never raw.
@@ -209,8 +216,13 @@ fn day_overlap_clamps_to_day_window() {
 
 #[test]
 fn fragment_renders_region_without_doctype() {
-    let view = build_view(&sample_page(), &[], &Default::default());
-    let html = StatusRegion { view }.render().unwrap();
+    let view = build_view(&sample_page(), &[], &Default::default(), Tr::default());
+    let html = StatusRegion {
+        tr: Tr::default(),
+        view,
+    }
+    .render()
+    .unwrap();
     assert!(!html.contains("<!doctype html>"));
     assert!(!html.contains("<nav"));
     assert!(html.contains(r#"id="status-region""#));
@@ -228,8 +240,9 @@ fn fragment_renders_region_without_doctype() {
 fn empty_page_renders_with_zero_components() {
     let mut p = sample_page();
     p.groups.clear();
-    let view = build_view(&p, &[], &Default::default());
+    let view = build_view(&p, &[], &Default::default(), Tr::default());
     let html = StatusFullPage {
+        tr: Tr::default(),
         view,
         branding: sample_branding(),
         og: OgMeta::default(),
@@ -263,8 +276,9 @@ fn active_incident_banner_renders_when_present() {
         }],
         postmortem: None,
     });
-    let view = build_view(&p, &[], &Default::default());
+    let view = build_view(&p, &[], &Default::default(), Tr::default());
     let html = StatusFullPage {
+        tr: Tr::default(),
         view,
         branding: sample_branding(),
         og: OgMeta::default(),
@@ -288,8 +302,9 @@ fn maintenance_card_renders_when_present() {
         ends_at: Utc::now() + ChronoDuration::hours(1),
         affected_component_names: vec!["Gateway".into()],
     });
-    let view = build_view(&p, &[], &Default::default());
+    let view = build_view(&p, &[], &Default::default(), Tr::default());
     let html = StatusFullPage {
+        tr: Tr::default(),
         view,
         branding: sample_branding(),
         og: OgMeta::default(),
@@ -319,11 +334,114 @@ fn day_classes_cover_all_states() {
 }
 
 #[test]
+fn every_status_label_has_a_message_in_every_locale() {
+    let mut ids = Vec::new();
+    for s in [
+        OverallState::Operational,
+        OverallState::Maintenance,
+        OverallState::MinorDisruption,
+        OverallState::PartialOutage,
+        OverallState::MajorOutage,
+    ] {
+        let (_, _, aria) = overall_classes(s);
+        ids.extend([
+            crate::public_status::overall_status::overall_label_id(s),
+            aria,
+        ]);
+    }
+    for s in [
+        PublicComponentStatus::Operational,
+        PublicComponentStatus::Degraded,
+        PublicComponentStatus::PartialOutage,
+        PublicComponentStatus::MajorOutage,
+        PublicComponentStatus::Maintenance,
+        PublicComponentStatus::NoData,
+    ] {
+        ids.push(component_classes(s).0);
+    }
+    for s in [
+        DayState::Operational,
+        DayState::Degraded,
+        DayState::PartialOutage,
+        DayState::MajorOutage,
+        DayState::Maintenance,
+        DayState::NoData,
+    ] {
+        ids.push(day_classes(s).1);
+    }
+    for i in [
+        IncidentImpact::Degraded,
+        IncidentImpact::PartialOutage,
+        IncidentImpact::MajorOutage,
+    ] {
+        ids.push(impact_classes(i).0);
+    }
+    for p in [
+        IncidentStatusPhase::Investigating,
+        IncidentStatusPhase::Identified,
+        IncidentStatusPhase::Monitoring,
+        IncidentStatusPhase::Resolved,
+        IncidentStatusPhase::Postmortem,
+    ] {
+        ids.push(phase_classes(p).0);
+    }
+    for locale in crate::domain::Locale::ALL {
+        for id in &ids {
+            assert_ne!(Tr::new(locale).t(id), *id, "{locale:?} has no {id}");
+        }
+    }
+}
+
+#[test]
+fn german_page_renders_german_chrome() {
+    let tr = Tr::new(crate::domain::Locale::De);
+    let html = StatusFullPage {
+        tr,
+        view: build_view(&sample_page(), &[], &Default::default(), tr),
+        branding: sample_branding(),
+        og: OgMeta::default(),
+    }
+    .render()
+    .unwrap();
+    assert!(
+        html.contains(r#"<html lang="de" data-time-locale="de">"#),
+        "{html}"
+    );
+    assert!(html.contains(r#"<meta property="og:locale" content="de_DE">"#));
+    assert!(html.contains("Updates abonnieren"));
+    assert!(html.contains("Verfügbarkeit"));
+    assert!(!html.contains("Subscribe to updates"));
+    assert!(!html.contains("Last checked"));
+    assert!(!html.contains('\u{2068}'));
+}
+
+#[test]
+fn german_summary_counts_days_and_outages_in_german() {
+    let tr = Tr::new(crate::domain::Locale::De);
+    let mut h = vec![DayState::Operational; 90];
+    h[10] = DayState::MajorOutage;
+    assert_eq!(
+        history_summary(&h, tr),
+        "90 Tage, 1 Ausfall, 0 beeinträchtigt"
+    );
+    assert_eq!(
+        history_summary(&[DayState::Operational], tr),
+        "1 Tag, keine Störungen"
+    );
+}
+
+#[test]
 fn history_summary_tallies_painted_days() {
     let mut h = vec![DayState::Operational; 90];
     h[10] = DayState::MajorOutage;
-    assert_eq!(history_summary(&h), "90 days, 1 outage, 0 degraded");
-    assert_eq!(history_summary(&[DayState::NoData; 90]), "90 days, no data");
+    assert_eq!(
+        history_summary(&h, Tr::default()),
+        "90 days, 1 outage, 0 degraded"
+    );
+    assert_eq!(
+        history_summary(&[DayState::NoData; 90], Tr::default()),
+        "90 days, no data"
+    );
 }
 
 #[test]
@@ -331,10 +449,22 @@ fn component_uptime_is_the_aggregator_figure_not_a_day_ratio() {
     let mut c = sample_page().groups[0].components[0].clone();
     c.history[10] = DayState::MajorOutage;
     c.uptime_pct = Some(99.972);
-    let view = build_component(&c, &Default::default());
+    let view = build_component(
+        &c,
+        &Default::default(),
+        &DayText::new(Tr::default(), Utc::now(), 90),
+    );
     assert_eq!(view.uptime_label, "99.97%");
     c.uptime_pct = None;
-    assert_eq!(build_component(&c, &Default::default()).uptime_label, "—");
+    assert_eq!(
+        build_component(
+            &c,
+            &Default::default(),
+            &DayText::new(Tr::default(), Utc::now(), 90)
+        )
+        .uptime_label,
+        "—"
+    );
 }
 
 #[test]
@@ -363,8 +493,9 @@ fn incident_detail_renders() {
         ],
         postmortem: None,
     };
-    let detail = IncidentDetailView::from_incident(&inc, Utc::now());
+    let detail = IncidentDetailView::from_incident(&inc, Utc::now(), Tr::default());
     let html = IncidentDetailPage {
+        tr: Tr::default(),
         branding: sample_branding(),
         incident: detail,
         generated_at: Utc::now(),
@@ -394,8 +525,9 @@ fn incident_detail_renders_published_postmortem() {
         published_at: Utc::now(),
     });
     let html = IncidentDetailPage {
+        tr: Tr::default(),
         branding: sample_branding(),
-        incident: IncidentDetailView::from_incident(&inc, Utc::now()),
+        incident: IncidentDetailView::from_incident(&inc, Utc::now(), Tr::default()),
         generated_at: Utc::now(),
         rss_url: RSS_URL,
         og: OgMeta::default(),
@@ -410,8 +542,9 @@ fn incident_detail_renders_published_postmortem() {
     let mut plain = fake_incident(Utc::now() - ChronoDuration::hours(2), 8, "Blip");
     plain.postmortem = None;
     let html2 = IncidentDetailPage {
+        tr: Tr::default(),
         branding: sample_branding(),
-        incident: IncidentDetailView::from_incident(&plain, Utc::now()),
+        incident: IncidentDetailView::from_incident(&plain, Utc::now(), Tr::default()),
         generated_at: Utc::now(),
         rss_url: RSS_URL,
         og: OgMeta::default(),
@@ -507,7 +640,7 @@ fn render_about_adds_rel_to_links() {
 
 #[test]
 fn branding_renders_logo_about_and_color() {
-    let view = build_view(&sample_page(), &[], &Default::default());
+    let view = build_view(&sample_page(), &[], &Default::default(), Tr::default());
     let branding = branding_with(PublicOrgBranding {
         public_display_name: Some("Acme Public".into()),
         public_about: Some("**hi** there".into()),
@@ -517,6 +650,7 @@ fn branding_renders_logo_about_and_color() {
         ..PublicOrgBranding::default()
     });
     let html = StatusFullPage {
+        tr: Tr::default(),
         view,
         branding,
         og: OgMeta::default(),
@@ -532,8 +666,9 @@ fn branding_renders_logo_about_and_color() {
 
 #[test]
 fn og_tags_render_with_image_when_marketing_origin_set() {
-    let view = build_view(&sample_page(), &[], &Default::default());
+    let view = build_view(&sample_page(), &[], &Default::default(), Tr::default());
     let html = StatusFullPage {
+        tr: Tr::default(),
         view,
         branding: sample_branding(),
         og: OgMeta {
@@ -565,36 +700,56 @@ fn og_tags_render_with_image_when_marketing_origin_set() {
 #[test]
 fn incident_description_drops_the_subject_when_the_component_is_unnamed() {
     assert!(
-        incident_description("Checkout 500s", "API", "Acme")
+        incident_description("Checkout 500s", "API", "Acme", Tr::default())
             .starts_with("Checkout 500s, affecting API:")
     );
     assert!(
-        incident_description("Checkout 500s", "", "Acme").starts_with("Checkout 500s: current")
+        incident_description("Checkout 500s", "", "Acme", Tr::default())
+            .starts_with("Checkout 500s: current")
     );
 }
 
 #[test]
 fn incident_description_names_the_page_once() {
-    assert!(incident_description("Outage", "", "Acme").ends_with("on the Acme Status page."));
     assert!(
-        incident_description("Outage", "", "Acme Status").ends_with("on the Acme Status page.")
+        incident_description("Outage", "", "Acme", Tr::default())
+            .ends_with("on the Acme Status page.")
     );
-    let long = incident_description("Outage", "", "Northwind Trading Co. Status Page");
+    assert!(
+        incident_description("Outage", "", "Acme Status", Tr::default())
+            .ends_with("on the Acme Status page.")
+    );
+    let long = incident_description(
+        "Outage",
+        "",
+        "Northwind Trading Co. Status Page",
+        Tr::default(),
+    );
     assert!(long.ends_with(" Status page."), "{long}");
-    let ends_in_status = incident_description("Outage", "", "Northwind Trading Company Status");
+    let ends_in_status = incident_description(
+        "Outage",
+        "",
+        "Northwind Trading Company Status",
+        Tr::default(),
+    );
     assert!(
         ends_in_status.ends_with("on the Northwind Trading Company Status page."),
         "{ends_in_status}"
     );
-    let longer = incident_description("Outage", "", "Northwind Trading Company Europe Status");
+    let longer = incident_description(
+        "Outage",
+        "",
+        "Northwind Trading Company Europe Status",
+        Tr::default(),
+    );
     assert!(longer.ends_with(" Status page."), "{longer}");
 }
 
 #[test]
 fn incident_descriptions_differ_per_incident() {
     assert_ne!(
-        incident_description("Checkout 500s", "API", "Acme"),
-        incident_description("Latency spike", "API", "Acme")
+        incident_description("Checkout 500s", "API", "Acme", Tr::default()),
+        incident_description("Latency spike", "API", "Acme", Tr::default())
     );
 }
 
@@ -614,8 +769,9 @@ fn og_image_is_empty_without_marketing_origin() {
 
 #[test]
 fn og_tags_fall_back_to_summary_when_image_empty() {
-    let view = build_view(&sample_page(), &[], &Default::default());
+    let view = build_view(&sample_page(), &[], &Default::default(), Tr::default());
     let html = StatusFullPage {
+        tr: Tr::default(),
         view,
         branding: sample_branding(),
         og: OgMeta {
@@ -639,8 +795,9 @@ fn og_tags_fall_back_to_summary_when_image_empty() {
 
 #[test]
 fn powered_by_shown_by_default() {
-    let view = build_view(&sample_page(), &[], &Default::default());
+    let view = build_view(&sample_page(), &[], &Default::default(), Tr::default());
     let html = StatusFullPage {
+        tr: Tr::default(),
         view,
         branding: sample_branding(),
         og: OgMeta::default(),
@@ -661,7 +818,8 @@ fn footer_source_links_follow_their_flag() {
     };
     let status = |b: BrandingView| {
         StatusFullPage {
-            view: build_view(&sample_page(), &[], &Default::default()),
+            tr: Tr::default(),
+            view: build_view(&sample_page(), &[], &Default::default(), Tr::default()),
             branding: b,
             og: OgMeta::default(),
         }
@@ -671,8 +829,9 @@ fn footer_source_links_follow_their_flag() {
     let incident = |b: BrandingView| {
         let inc = fake_incident(Utc::now() - ChronoDuration::hours(2), 8, "Blip");
         IncidentDetailPage {
+            tr: Tr::default(),
             branding: b,
-            incident: IncidentDetailView::from_incident(&inc, Utc::now()),
+            incident: IncidentDetailView::from_incident(&inc, Utc::now(), Tr::default()),
             generated_at: Utc::now(),
             rss_url: RSS_URL,
             og: OgMeta::default(),
@@ -695,12 +854,13 @@ fn footer_source_links_follow_their_flag() {
 // sanitiser is the independent layer that holds even then.
 #[test]
 fn malicious_brand_color_cannot_escape_style_rule() {
-    let view = build_view(&sample_page(), &[], &Default::default());
+    let view = build_view(&sample_page(), &[], &Default::default(), Tr::default());
     let branding = branding_with(PublicOrgBranding {
         public_brand_color: Some("red; } body { display: none } /*".into()),
         ..PublicOrgBranding::default()
     });
     let html = StatusFullPage {
+        tr: Tr::default(),
         view,
         branding,
         og: OgMeta::default(),
@@ -734,6 +894,21 @@ fn fake_incident(started_at: DateTime<Utc>, id_low: u8, title: &str) -> PublicIn
 }
 
 #[test]
+fn a_long_update_is_cut_by_characters_not_bytes() {
+    let mut inc = fake_incident(Utc::now(), 1, "Störung");
+    inc.updates.push(PublicIncidentUpdate {
+        posted_at: Utc::now(),
+        phase: IncidentStatusPhase::Identified,
+        message: format!("{}ü{}", "a".repeat(239), "b".repeat(20)),
+    });
+    let summary = build_incident_summary(&inc, Utc::now(), Tr::default());
+    assert_eq!(
+        summary.latest_message.as_deref(),
+        Some(format!("{}ü…", "a".repeat(239)).as_str())
+    );
+}
+
+#[test]
 fn bucket_by_month_groups_consecutive_incidents() {
     let now = Utc::now();
     let may_a = chrono::DateTime::parse_from_rfc3339("2026-05-22T10:00:00Z")
@@ -750,7 +925,7 @@ fn bucket_by_month_groups_consecutive_incidents() {
         fake_incident(may_b, 2, "May early"),
         fake_incident(apr, 3, "April"),
     ];
-    let buckets = bucket_by_month(&items, now);
+    let buckets = bucket_by_month(&items, now, Tr::default());
     assert_eq!(buckets.len(), 2);
     assert_eq!(buckets[0].label, "May 2026");
     assert_eq!(buckets[0].incidents.len(), 2);
@@ -765,8 +940,9 @@ fn archive_page_renders_buckets_and_next_link() {
         .unwrap()
         .with_timezone(&Utc);
     let items = vec![fake_incident(started, 1, "ECS rolled back")];
-    let months = bucket_by_month(&items, now);
+    let months = bucket_by_month(&items, now, Tr::default());
     let page = IncidentArchivePage {
+        tr: Tr::default(),
         branding: sample_branding(),
         months,
         next_cursor: Some("opaque-cursor-token".into()),
@@ -815,7 +991,8 @@ fn only_a_plan_that_sells_white_label_follows_the_operators_link() {
         });
         branding.follow_website_link = follow;
         StatusFullPage {
-            view: build_view(&sample_page(), &[], &Default::default()),
+            tr: Tr::default(),
+            view: build_view(&sample_page(), &[], &Default::default(), Tr::default()),
             branding,
             og: OgMeta::default(),
         }
@@ -842,7 +1019,8 @@ fn follow_link_needs_white_label_on_hosted_and_nothing_on_self_host() {
 #[test]
 fn the_header_brand_falls_back_to_the_status_page_root() {
     let html = StatusFullPage {
-        view: build_view(&sample_page(), &[], &Default::default()),
+        tr: Tr::default(),
+        view: build_view(&sample_page(), &[], &Default::default(), Tr::default()),
         branding: sample_branding(),
         og: OgMeta::default(),
     }
@@ -862,7 +1040,8 @@ fn hiding_a_page_from_search_takes_every_page_with_it() {
     assert_eq!(archive_robots(None, &branding), "noindex,follow");
 
     let html = StatusFullPage {
-        view: build_view(&sample_page(), &[], &Default::default()),
+        tr: Tr::default(),
+        view: build_view(&sample_page(), &[], &Default::default(), Tr::default()),
         branding,
         og: OgMeta::default(),
     }
@@ -874,6 +1053,7 @@ fn hiding_a_page_from_search_takes_every_page_with_it() {
 #[test]
 fn archive_page_renders_empty_state_without_next_link() {
     let page = IncidentArchivePage {
+        tr: Tr::default(),
         branding: sample_branding(),
         months: Vec::new(),
         next_cursor: None,
@@ -893,9 +1073,10 @@ fn branding_defaults_when_all_fields_null() {
     // name and no logo image is emitted (the header shows text). The
     // default colour and powered-by footer are covered by their own
     // tests above; this one pins the resolved-name + no-logo path.
-    let view = build_view(&sample_page(), &[], &Default::default());
+    let view = build_view(&sample_page(), &[], &Default::default(), Tr::default());
     let branding = branding_with(PublicOrgBranding::default());
     let html = StatusFullPage {
+        tr: Tr::default(),
         view,
         branding,
         og: OgMeta::default(),

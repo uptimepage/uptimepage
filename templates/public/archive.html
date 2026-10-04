@@ -1,17 +1,17 @@
 {%- import "public/_incident_chips.html" as chips -%}
 {%- import "public/_incident_card.html" as card -%}
 <!doctype html>
-<html lang="en">
+<html lang="{{ tr.lang() }}"{% if let Some(l) = tr.date_locale() %} data-time-locale="{{ l }}"{% endif %}>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Incident history · {{ branding.status_title() }} · Past outages</title>
+    <title>{{ tr.t("archive-heading") }} · {{ branding.status_title() }} · {{ tr.t("title-archive-suffix") }}</title>
     <meta name="robots" content="{{ robots }}">
     {% include "public/_og.html" %}
     <link rel="icon" type="image/svg+xml" href="{{ "img/favicon.svg"|asset }}">
     <link rel="icon" type="image/png" sizes="32x32" href="{{ "img/favicon.png"|asset }}">
     <link rel="apple-touch-icon" href="{{ "img/apple-touch-icon.png"|asset }}">
-    <link rel="alternate" type="application/rss+xml" title="Incidents (RSS)" href="{{ rss_url }}">
+    <link rel="alternate" type="application/rss+xml" title="{{ tr.t("rss-link-title") }}" href="{{ rss_url }}">
     <link rel="stylesheet" href="{{ "css/app.css"|asset }}">
     {% include "public/_brand_style.html" %}
     <script defer src="{{ "js/ui/localtime.js"|asset }}"></script>
@@ -21,14 +21,14 @@
 
     <main id="main-content" class="mx-auto max-w-3xl space-y-8 px-4 py-10">
         <nav class="text-sm text-quiet">
-            <a href="{{ branding.home }}" class="hover:underline">← Back to status</a>
+            <a href="{{ branding.home }}" class="hover:underline">{{ tr.t("back-to-status") }}</a>
         </nav>
 
-        <h1 class="text-2xl font-semibold tracking-tight">Incident history</h1>
+        <h1 class="text-2xl font-semibold tracking-tight">{{ tr.t("archive-heading") }}</h1>
 
         {% if months.is_empty() %}
             <p class="public-callout public-callout--neutral p-8 text-center text-sm text-quiet">
-                No incidents recorded.
+                {{ tr.t("archive-empty") }}
             </p>
         {% else %}
             {% for bucket in months %}
@@ -49,7 +49,7 @@
                 <p class="text-right text-sm">
                     <a href="/status/incidents?cursor={{ cursor }}"
                        class="font-medium hover:underline text-accent">
-                        Older incidents →
+                        {{ tr.t("older-incidents") }}
                     </a>
                 </p>
             {% endif %}

@@ -9,6 +9,7 @@ pub mod heartbeat;
 pub mod incident;
 pub mod interpolate;
 pub mod linked_app;
+pub mod locale;
 pub mod mailbox;
 pub mod maintenance;
 pub mod manual;
@@ -62,6 +63,7 @@ pub use incident::{
     next_state, uptime_pct_from_downtime,
 };
 pub use linked_app::{ExternalId, Linked, LinkedApp, LinkedAppAccount};
+pub use locale::Locale;
 pub use maintenance::{
     MaintenanceFilter, MaintenanceWindow, MaintenanceWindowUpdate, NewMaintenanceWindow,
     WindowPhase,

@@ -23,6 +23,7 @@ use crate::domain::{
     ComponentHistoryResponse, PublicIncident, PublicMaintenanceList, PublicStatusPage,
 };
 use crate::error::public::{PublicApiError, PublicAppError};
+use crate::i18n::Tr;
 use crate::pagination::cursor::IncidentCursor;
 use crate::pagination::page::{CursorPage, CursorPageOfPublicIncident};
 use crate::public_status::IncidentListQuery;
@@ -313,6 +314,7 @@ pub async fn public_badge(
     }
 
     let hidden = state.public_source.hide_from_search(page).await;
+    let tr = Tr::new(state.public_source.locale(page).await);
     let page = state.public_source.page(page).await?;
     let page = &*page;
     let (label, status_text, color) = match q.component {
@@ -323,15 +325,15 @@ pub async fn public_badge(
                 .flat_map(|g| &g.components)
                 .find(|c| c.id == id)
                 .ok_or(PublicAppError::NotFound)?;
-            let (text, color) = component_badge(comp.current_status);
+            let (text, color) = component_badge(comp.current_status, tr);
             (comp.name.as_str(), text, color)
         }
         None => {
-            let (text, color) = overall_badge(page.overall.state);
+            let (text, color) = overall_badge(page.overall.state, tr);
             (page.site_name.as_str(), text, color)
         }
     };
-    let svg = render_badge(label, status_text, color);
+    let svg = render_badge(label, &status_text, color);
 
     let mut resp = (StatusCode::OK, svg).into_response();
     resp.headers_mut()

@@ -8,8 +8,9 @@ use sqlx::PgPool;
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
-use crate::domain::{NewSubscriber, Subscriber, SubscriberChannel, public::auto_incident_title};
+use crate::domain::{Locale, NewSubscriber, Subscriber, SubscriberChannel};
 use crate::error::Result;
+use crate::i18n::Tr;
 use crate::security::sha256_hex;
 use crate::security::token_hash::generate_raw_token;
 use crate::storage::status_pages::{PAGE_CUSTOM_DOMAIN_PUBLISHED, PAGE_NOT_HELD, PAGE_PLAN_JOIN};
@@ -208,6 +209,21 @@ pub async fn unsubscribe(pool: &PgPool, subscriber_id: Uuid) -> Result<bool> {
     Ok(res.rows_affected() > 0)
 }
 
+/// The language of the page a subscriber follows, which may no longer be
+/// published on any host.
+pub async fn page_locale(pool: &PgPool, subscriber_id: Uuid) -> Result<Option<Locale>> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT sp.public_locale FROM status_page_subscribers s
+         JOIN status_pages sp ON sp.id = s.status_page_id AND sp.org_id = s.org_id
+         WHERE s.id = $1",
+    )
+    .bind(subscriber_id)
+    .fetch_optional(pool)
+    .await
+    .context("subscribers::page_locale")?;
+    Ok(row.map(|(l,)| Locale::from_db(&l)))
+}
+
 /// Periodic cleanup: subscriptions left unconfirmed for a day with no live
 /// link, expired tokens, and used tokens older than 7 days.
 pub async fn purge_old_tokens(pool: &PgPool) -> sqlx::Result<u64> {
@@ -254,6 +270,7 @@ pub struct PendingUpdate {
     component_name: String,
     status_at_start: String,
     pub page_name: String,
+    public_locale: String,
     pub slug: String,
     pub custom_domain: Option<String>,
     pub custom_domain_published: bool,
@@ -261,6 +278,10 @@ pub struct PendingUpdate {
 }
 
 impl PendingUpdate {
+    pub fn locale(&self) -> Locale {
+        Locale::from_db(&self.public_locale)
+    }
+
     /// The page's own title for the incident, so a mail about an unnarrated
     /// monitor-opened incident is not headed "Status update".
     pub fn incident_title(&self) -> String {
@@ -268,7 +289,10 @@ impl PendingUpdate {
             .as_deref()
             .filter(|t| !t.is_empty())
             .map(str::to_owned)
-            .unwrap_or_else(|| auto_incident_title(&self.component_name, &self.status_at_start))
+            .unwrap_or_else(|| {
+                Tr::new(self.locale())
+                    .auto_incident_title(&self.component_name, &self.status_at_start)
+            })
     }
 }
 
@@ -286,6 +310,7 @@ pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingUpdate
                 i.id AS incident_id, i.public_title, i.status_at_start,
                 COALESCE(NULLIF(c.public_name, ''), t.name, '') AS component_name,
                 COALESCE(NULLIF(sp.public_display_name, ''), sp.name) AS page_name,
+                sp.public_locale,
                 sp.slug::text AS slug,
                 sp.custom_domain::text AS custom_domain,
                 {PAGE_CUSTOM_DOMAIN_PUBLISHED} AS custom_domain_published,
@@ -440,7 +465,7 @@ pub fn unsubscribe_url(secret: &str, origin: &str, subscriber_id: Uuid) -> Strin
 mod tests {
     use super::*;
 
-    fn pending(public_title: Option<&str>) -> PendingUpdate {
+    fn pending(public_title: Option<&str>, public_locale: &str) -> PendingUpdate {
         PendingUpdate {
             subscriber_id: Uuid::nil(),
             update_id: Uuid::nil(),
@@ -454,6 +479,7 @@ mod tests {
             component_name: "Painel Cloud".into(),
             status_at_start: "down".into(),
             page_name: "acme".into(),
+            public_locale: public_locale.into(),
             slug: "acme".into(),
             custom_domain: None,
             custom_domain_published: false,
@@ -463,8 +489,26 @@ mod tests {
 
     #[test]
     fn an_unnarrated_incident_is_titled_the_way_the_page_titles_it() {
-        assert_eq!(pending(None).incident_title(), "Painel Cloud down");
-        assert_eq!(pending(Some("")).incident_title(), "Painel Cloud down");
-        assert_eq!(pending(Some("API errors")).incident_title(), "API errors");
+        assert_eq!(pending(None, "en").incident_title(), "Painel Cloud down");
+        assert_eq!(
+            pending(Some(""), "en").incident_title(),
+            "Painel Cloud down"
+        );
+        assert_eq!(
+            pending(Some("API errors"), "en").incident_title(),
+            "API errors"
+        );
+    }
+
+    #[test]
+    fn an_unnarrated_incident_is_titled_in_the_page_language() {
+        assert_eq!(
+            pending(None, "de").incident_title(),
+            "Painel Cloud: ausgefallen"
+        );
+        assert_eq!(
+            pending(Some("API-Fehler"), "de").incident_title(),
+            "API-Fehler"
+        );
     }
 }

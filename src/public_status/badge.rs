@@ -6,6 +6,7 @@
 //! state, label, and status text.
 
 use crate::domain::{OverallState, PublicComponentStatus};
+use crate::i18n::Tr;
 use crate::public_status::xml::xml_escape;
 
 /// Color palette aligned with the public status page UI.
@@ -30,26 +31,28 @@ const BADGE_HEIGHT: u32 = 20;
 const MAX_CHARS_PER_SEGMENT: u32 = 64;
 
 /// Mapping from overall page state to (status text, color).
-pub fn overall_badge(state: OverallState) -> (&'static str, &'static str) {
-    match state {
-        OverallState::Operational => ("operational", COLOR_GREEN),
-        OverallState::MinorDisruption => ("minor disruption", COLOR_YELLOW),
-        OverallState::Maintenance => ("maintenance", COLOR_BLUE),
-        OverallState::PartialOutage => ("partial outage", COLOR_ORANGE),
-        OverallState::MajorOutage => ("major outage", COLOR_RED),
-    }
+pub fn overall_badge(state: OverallState, tr: Tr) -> (String, &'static str) {
+    let (id, color) = match state {
+        OverallState::Operational => ("badge-operational", COLOR_GREEN),
+        OverallState::MinorDisruption => ("badge-minor", COLOR_YELLOW),
+        OverallState::Maintenance => ("badge-maintenance", COLOR_BLUE),
+        OverallState::PartialOutage => ("badge-partial", COLOR_ORANGE),
+        OverallState::MajorOutage => ("badge-major", COLOR_RED),
+    };
+    (tr.t(id), color)
 }
 
 /// Mapping from per-component status to (status text, color).
-pub fn component_badge(state: PublicComponentStatus) -> (&'static str, &'static str) {
-    match state {
-        PublicComponentStatus::Operational => ("operational", COLOR_GREEN),
-        PublicComponentStatus::Degraded => ("degraded", COLOR_YELLOW),
-        PublicComponentStatus::Maintenance => ("maintenance", COLOR_BLUE),
-        PublicComponentStatus::PartialOutage => ("partial outage", COLOR_ORANGE),
-        PublicComponentStatus::MajorOutage => ("major outage", COLOR_RED),
-        PublicComponentStatus::NoData => ("no data", COLOR_GREY),
-    }
+pub fn component_badge(state: PublicComponentStatus, tr: Tr) -> (String, &'static str) {
+    let (id, color) = match state {
+        PublicComponentStatus::Operational => ("badge-operational", COLOR_GREEN),
+        PublicComponentStatus::Degraded => ("badge-degraded", COLOR_YELLOW),
+        PublicComponentStatus::Maintenance => ("badge-maintenance", COLOR_BLUE),
+        PublicComponentStatus::PartialOutage => ("badge-partial", COLOR_ORANGE),
+        PublicComponentStatus::MajorOutage => ("badge-major", COLOR_RED),
+        PublicComponentStatus::NoData => ("badge-no-data", COLOR_GREY),
+    };
+    (tr.t(id), color)
 }
 
 /// Build a flat shields.io-style SVG badge. The label segment is gray; the
@@ -97,7 +100,7 @@ mod tests {
             OverallState::PartialOutage,
             OverallState::MajorOutage,
         ] {
-            let (text, color) = overall_badge(s);
+            let (text, color) = overall_badge(s, Tr::default());
             assert!(!text.is_empty());
             assert!(color.starts_with('#'));
         }
@@ -113,17 +116,30 @@ mod tests {
             PublicComponentStatus::MajorOutage,
             PublicComponentStatus::NoData,
         ] {
-            let (text, color) = component_badge(s);
+            let (text, color) = component_badge(s, Tr::default());
             assert!(!text.is_empty());
             assert!(color.starts_with('#'));
         }
     }
 
     #[test]
+    fn a_german_page_badge_reads_german() {
+        let de = Tr::new(crate::domain::Locale::De);
+        assert_eq!(
+            overall_badge(OverallState::MajorOutage, de).0,
+            "größerer Ausfall"
+        );
+        assert_eq!(
+            component_badge(PublicComponentStatus::NoData, de).0,
+            "keine Daten"
+        );
+    }
+
+    #[test]
     fn a_silent_component_badge_is_grey_and_says_no_data() {
         // Never a green badge: a README embedding this must not read as a
         // health claim for something that has reported nothing.
-        let (text, color) = component_badge(PublicComponentStatus::NoData);
+        let (text, color) = component_badge(PublicComponentStatus::NoData, Tr::default());
         assert_eq!(text, "no data");
         assert_ne!(color, COLOR_GREEN);
     }

@@ -20,6 +20,7 @@ pub use crate::domain::IncidentImpact;
 use crate::domain::{
     CheckStatus, DayState, IncidentSeverity, OverallState, OverallStatus, PublicComponentStatus,
 };
+use crate::i18n::Tr;
 
 /// Impact of one confirmed incident. `degraded` is whether the incident
 /// opened on a `degraded` check status (slow / rate-limited, not hard-failed);
@@ -110,20 +111,25 @@ pub fn overall_state(components: &[PublicComponentStatus]) -> OverallState {
     OverallState::Operational
 }
 
-pub fn overall_label(state: OverallState) -> &'static str {
+pub fn overall_label_id(state: OverallState) -> &'static str {
     match state {
-        OverallState::Operational => "All Systems Operational",
-        OverallState::Maintenance => "Maintenance in progress",
-        OverallState::MinorDisruption => "Minor Service Disruption",
-        OverallState::PartialOutage => "Partial System Outage",
-        OverallState::MajorOutage => "Major System Outage",
+        OverallState::Operational => "overall-operational",
+        OverallState::Maintenance => "overall-maintenance",
+        OverallState::MinorDisruption => "overall-minor",
+        OverallState::PartialOutage => "overall-partial",
+        OverallState::MajorOutage => "overall-major",
     }
+}
+
+/// The wire label is English whatever the page language.
+pub fn overall_label(state: OverallState) -> String {
+    Tr::default().t(overall_label_id(state))
 }
 
 pub fn overall_status(state: OverallState) -> OverallStatus {
     OverallStatus {
         state,
-        label: overall_label(state).to_string(),
+        label: overall_label(state),
     }
 }
 

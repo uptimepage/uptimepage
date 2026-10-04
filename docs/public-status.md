@@ -194,6 +194,14 @@ Every window records who scheduled it (`created_by`), who changed it last (`upda
 - **RSS feed** — `/api/public/v1/incidents.rss`. RSS 2.0; each item is a public incident with the latest update as the description.
 - **Subscribe** — a header button that lets any visitor follow the page; see below.
 
+## Language
+
+Each page has a language: English by default, or German. Set it under **Language** in the page editor, or with `PATCH /api/v1/status-pages/{id}` and `{"public_locale": "de"}` (see [Page identity and branding](per-org-status.md#page-identity-and-branding)); `en` switches back.
+
+The language covers what the page writes itself: status labels, headings and buttons, dates and durations, the title of an incident you never named, the status badge, the RSS feed's own title, the subscribe flow, and the confirmation, incident and maintenance emails sent to subscribers. Times in those emails stay in UTC. Text you write is shown as written: page, component and group names, the about text, incident titles and updates, and maintenance windows.
+
+A German page sends `Content-Language: de` and formats dates the German way in every browser. An English page formats dates the way the visitor's browser does. The RSS feed declares the page's language, and the public JSON API keeps its state keys (`operational`, `investigating`) in English. One page has one language, so for two audiences run two pages.
+
 ## Subscriptions
 
 Visitors can subscribe to a status page and get told about incidents and maintenance without polling the page. Two delivery channels ship today: email and webhook.
