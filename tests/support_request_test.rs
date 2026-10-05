@@ -4,7 +4,7 @@
 //! mail answers to the customer, the caller cannot dictate who it came from,
 //! and the endpoint cannot become a mail cannon.
 
-mod common;
+use crate::common;
 
 use axum::Router;
 use axum::body::Body;

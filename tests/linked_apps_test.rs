@@ -4,7 +4,7 @@
 //! press names a member only through an account they linked, and a link never
 //! takes an account from whoever holds it.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

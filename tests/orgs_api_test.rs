@@ -8,7 +8,7 @@
 //! into the extensions — the real auth backend will replace it; until then
 //! this is the only way to drive authenticated routes.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

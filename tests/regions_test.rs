@@ -1,13 +1,13 @@
 //! Live-PG tests for the region-scoped target sources that drive the agent
 //! config-pull API and the dashboard's home-region scheduler filter.
 
-mod common;
+use crate::common;
 
 use sqlx::PgPool;
 use uptimepage::storage::AdminRepo;
 use uuid::Uuid;
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 fn check_spec() -> serde_json::Value {
     serde_json::json!({

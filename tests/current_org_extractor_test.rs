@@ -3,7 +3,7 @@
 //! on the session → 401. Live-DB branches (`is_active_member`) are exercised
 //! by the integration suite.
 
-mod common;
+use crate::common;
 
 use axum::extract::FromRequestParts;
 use axum::http::Request;

@@ -1,7 +1,7 @@
 //! OAuth discovery metadata + the RFC 9728 `WWW-Authenticate` challenge. No DB
 //! needed — these read config only.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

@@ -3,7 +3,7 @@
 //! no database), and editing a variable bumps the region pull etag so agents
 //! re-pull the new values.
 
-mod common;
+use crate::common;
 
 use sqlx::PgPool;
 use uptimepage::domain::{CheckSpec, NewVariable, OrgId};
@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use common::test_cipher;
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 fn var_check_spec() -> serde_json::Value {
     serde_json::json!({

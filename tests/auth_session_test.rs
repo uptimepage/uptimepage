@@ -5,9 +5,9 @@
 //! Run via:
 //!     docker compose -f compose.dev.yml up -d postgres
 //!     DATABASE_URL=postgres://monitor:monitor@localhost:5432/monitor \
-//!         cargo test --test auth_session_test -- --ignored
+//!         cargo nextest run --test it --run-ignored only -E 'test(/^auth_session_test::/)'
 
-mod common;
+use crate::common;
 
 use chrono::{Duration as ChronoDuration, Utc};
 use uptimepage::auth::{
@@ -30,7 +30,7 @@ async fn signup_org(pool: &sqlx::PgPool, user: UserId) -> Option<uptimepage::dom
         .expect("resolve signup org")
 }
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 /// Every provider works, but the address is not a way back — the shape a
 /// deployment takes with magic link off, or with no deliverable mail sender.
@@ -1093,40 +1093,29 @@ async fn fingerprint_salt_guard_first_boot_inserts_then_rejects_change() {
     MIGRATOR.run(&pool).await.expect("migrate");
 
     // First boot: empty history, inserts the digest.
-    let inserted = fingerprint::ensure_fingerprint_salt(&pool, "salt-A")
+    let inserted = fingerprint::ensure_fingerprint_salt(&pool, "salt-A", false)
         .await
         .unwrap();
     assert!(inserted, "first salt must be inserted");
 
     // Same salt: known → no insert.
-    let again = fingerprint::ensure_fingerprint_salt(&pool, "salt-A")
+    let again = fingerprint::ensure_fingerprint_salt(&pool, "salt-A", false)
         .await
         .unwrap();
     assert!(!again, "same salt must not re-insert");
 
-    // Different salt without override env: refuses to boot.
-    // SAFETY: tests in this binary run on the same process; clean the env
-    // before and after so we don't leak state to peers.
-    unsafe {
-        std::env::remove_var(fingerprint::ROTATION_OVERRIDE_ENV);
-    }
-    let err = fingerprint::ensure_fingerprint_salt(&pool, "salt-B")
+    // Different salt without the override: refuses to boot.
+    let err = fingerprint::ensure_fingerprint_salt(&pool, "salt-B", false)
         .await
         .expect_err("rotation without override must fail");
     let msg = format!("{err:?}");
     assert!(msg.contains(fingerprint::SALT_ROTATED_CODE), "{msg}");
 
-    // With override env: accepts rotation, persists new digest.
-    unsafe {
-        std::env::set_var(fingerprint::ROTATION_OVERRIDE_ENV, "1");
-    }
-    let accepted = fingerprint::ensure_fingerprint_salt(&pool, "salt-B")
+    // With the override: accepts rotation, persists new digest.
+    let accepted = fingerprint::ensure_fingerprint_salt(&pool, "salt-B", true)
         .await
         .unwrap();
     assert!(accepted);
-    unsafe {
-        std::env::remove_var(fingerprint::ROTATION_OVERRIDE_ENV);
-    }
 
     pool.close().await;
     drop_pg(&name).await;

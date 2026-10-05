@@ -3,7 +3,7 @@
 //! never appears in any response, a referenced variable can't be deleted, and a
 //! monitor referencing an unknown variable is rejected at save.
 
-mod common;
+use crate::common;
 
 use axum::Router;
 use axum::body::Body;

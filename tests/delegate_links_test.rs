@@ -2,7 +2,7 @@
 //! the API, the public /c/<code> page, the manual create (single-use,
 //! kind-pinned, managed-kind-proof), and the consumed poll.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

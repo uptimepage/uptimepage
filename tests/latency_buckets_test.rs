@@ -7,9 +7,9 @@
 //! Skipped by default — requires a ClickHouse the migrations have run against:
 //!
 //!     CLICKHOUSE_URL=http://127.0.0.1:8123 \
-//!       cargo test --test latency_buckets_test -- --ignored --nocapture
+//!       cargo nextest run --test it --run-ignored only --no-capture -E 'test(/^latency_buckets_test::/)'
 
-mod common;
+use crate::common;
 
 use chrono::{Duration, Timelike, Utc};
 use uptimepage::domain::{CheckResult, CheckStatus, OrgId};

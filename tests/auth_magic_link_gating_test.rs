@@ -3,7 +3,7 @@
 //! included the paths are mounted (downstream still fails because the in-mem
 //! scaffold has no users, but the surface exists).
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

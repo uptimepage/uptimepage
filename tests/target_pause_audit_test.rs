@@ -2,7 +2,7 @@
 //! the `org_audit_log` entry written in the same transaction is the only record
 //! of who stopped watching, and of when.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 
@@ -11,7 +11,7 @@ use uptimepage::storage::{PostgresTargetStore, TargetStore, create_org_with_owne
 use url::Url;
 use uuid::Uuid;
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 fn http_target(name: &str) -> NewTarget {
     NewTarget {

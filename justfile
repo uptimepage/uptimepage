@@ -157,15 +157,15 @@ check:
 # Pre-push DB gate: the #[ignore] PG+CH integration tests against a FRESH
 # ci_verify database, so a new migration is proven against the schema prod will
 # actually apply it to (a stale dev DB hides fresh-schema breaks). Needs the
-# dev stack up (`just up`). Classic runner — streams output and skips nextest's build-all
-# enumeration stall. ClickHouse defaults to the dev monitor db (tests scope by
-# org/target uuids, so the shared volume is fine).
+# dev stack up (`just up`). nextest gives each test its own process, as CI does.
+# ClickHouse defaults to the dev monitor db (tests scope by org/target uuids, so
+# the shared volume is fine).
 check-db:
     docker exec -i uptimepage-postgres-1 psql -U monitor -d postgres -c "DROP DATABASE IF EXISTS ci_verify WITH (FORCE)"
     docker exec -i uptimepage-postgres-1 psql -U monitor -d postgres -c "CREATE DATABASE ci_verify"
     DATABASE_URL='postgres://monitor:monitor@127.0.0.1:5432/ci_verify' \
     CLICKHOUSE_URL='http://127.0.0.1:8123' \
-        cargo test --workspace -- --ignored
+        cargo nextest run --workspace --no-fail-fast --run-ignored only
 
 # Seed an authenticated owner session (SaaS-mode dev). Prints the cookie +
 # a curl snippet. Idempotent; needs the stack up.
@@ -315,29 +315,32 @@ db-reset:
 
 # Fast: unit + non-network integration tests, no external services needed.
 test:
-    cargo test
+    cargo nextest run --workspace
+    cargo test --doc
 
 # All tests including pg- and ch-backed ones. Requires `just up` first.
 test-all:
     DATABASE_URL=postgres://monitor:monitor@127.0.0.1:5432/monitor \
     CLICKHOUSE_URL=http://127.0.0.1:8123 \
-        cargo test -- --include-ignored
+        cargo nextest run --workspace --run-ignored all
+    cargo test --doc
 
 # Just the CH aggregator integration tests.
 test-ch:
     DATABASE_URL=postgres://monitor:monitor@127.0.0.1:5432/monitor \
     CLICKHOUSE_URL=http://127.0.0.1:8123 \
-        cargo test --test clickhouse_aggregator_test -- --ignored
+        cargo test --test it -- --ignored clickhouse_aggregator_test::
 
-# One integration-test binary, scoped compile; a bare `-E` still builds all ~48.
-test-one BIN *ARGS:
-    cargo nextest run --test {{BIN}} {{ARGS}}
+# One integration-test module (a `tests/*.rs` file), without the lib unit tests.
+# Narrow it with test names; another `-E` widens it (filtersets are unioned).
+test-one MODULE *ARGS:
+    cargo nextest run --test it -E 'test(/^{{MODULE}}::/)' {{ARGS}}
 
 # Same against the dev stack, #[ignore] PG+CH tests enabled (`just up` first).
-test-one-db BIN *ARGS:
+test-one-db MODULE *ARGS:
     DATABASE_URL=postgres://monitor:monitor@127.0.0.1:5432/monitor \
     CLICKHOUSE_URL=http://127.0.0.1:8123 \
-        cargo nextest run --test {{BIN}} --run-ignored all {{ARGS}}
+        cargo nextest run --test it -E 'test(/^{{MODULE}}::/)' --run-ignored all {{ARGS}}
 
 # ── Benchmarks ──────────────────────────────────────────────────────────────
 

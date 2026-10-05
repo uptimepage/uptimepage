@@ -8,7 +8,7 @@
 //! `#[ignore]`d by default; runs under `--run-ignored all` once `DATABASE_URL`
 //! is set. A clean run is also the fresh-DB validation of `020_on_call`.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

@@ -1,6 +1,6 @@
 //! Storage contract for the heartbeat ping log.
 
-mod common;
+use crate::common;
 
 use clickhouse::Row;
 use serde::Deserialize;

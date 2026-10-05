@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use std::io::Write;
 use std::sync::Arc;

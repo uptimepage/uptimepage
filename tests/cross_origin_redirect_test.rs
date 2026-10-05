@@ -4,7 +4,7 @@
 //! from secret variables (resolution happens server-side, so the worker sees
 //! plain values and strips by header name).
 
-mod common;
+use crate::common;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

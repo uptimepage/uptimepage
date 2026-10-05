@@ -5,7 +5,7 @@
 //! single-use codes, exact redirect_uri matching, RFC 8707 resource binding,
 //! and audience-checked access at /mcp.
 
-mod common;
+use crate::common;
 
 use axum::Router;
 use axum::body::Body;

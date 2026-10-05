@@ -5,7 +5,7 @@
 //! Live-PG ignored: needs `DATABASE_URL`. Migrations are auto-applied by
 //! `pg_pool_from_env` on first connect.
 
-mod common;
+use crate::common;
 
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -17,7 +17,7 @@ use uptimepage::storage::subscribers::{self, ConfirmMint};
 
 use common::{drop_test_db, fresh_test_db, open_test_pool, pg_pool_from_env, unique_slug};
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 async fn seed_org(pool: &PgPool) -> Uuid {
     let slug = unique_slug("sub-org");

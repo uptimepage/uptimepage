@@ -619,9 +619,15 @@ async fn main() -> Result<()> {
     let incident_narration_store: Arc<dyn IncidentNarrationStore> =
         Arc::new(PgIncidentNarrationStore::new(pg_pool_for_stores.clone()));
 
-    uptimepage::auth::ensure_fingerprint_salt(&pg_pool_for_stores, &cfg.auth.fingerprint_salt)
-        .await
-        .map_err(|e| AppError::Other(anyhow::anyhow!("auth salt guard: {e}")))?;
+    let accept_salt_rotation =
+        std::env::var(uptimepage::auth::fingerprint::ROTATION_OVERRIDE_ENV).is_ok();
+    uptimepage::auth::ensure_fingerprint_salt(
+        &pg_pool_for_stores,
+        &cfg.auth.fingerprint_salt,
+        accept_salt_rotation,
+    )
+    .await
+    .map_err(|e| AppError::Other(anyhow::anyhow!("auth salt guard: {e}")))?;
 
     // Moving the app retires every passkey at once and nothing can migrate
     // them, so the least we owe is not letting it happen quietly.

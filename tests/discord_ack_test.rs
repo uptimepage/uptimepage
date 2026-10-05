@@ -4,7 +4,7 @@
 //! a Discord account they linked from the offer the press brought, and an
 //! edit to a connected channel changes only its ping.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

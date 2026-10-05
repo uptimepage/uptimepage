@@ -2,8 +2,6 @@
 //! requires `DATABASE_URL` to be set. Tests are skipped at the cargo level when
 //! the env var is absent (sqlx::test refuses to run without it).
 
-mod common;
-
 use std::sync::Arc;
 use std::time::Duration;
 

@@ -5,7 +5,7 @@
 //! and `CLICKHOUSE_URL` set. Each test seeds rows tagged with a unique marker
 //! and asserts only on its own rows against the shared dev DB.
 
-mod common;
+use crate::common;
 
 use common::make_user;
 use uptimepage::config::{RetentionConfig, SessionConfig, TenancyConfig};

@@ -4,7 +4,7 @@
 //! check_results rows tagged with the org id, then exercise the cascade and
 //! the queue-drain.
 
-mod common;
+use crate::common;
 
 use common::{make_user, unique_slug};
 use uptimepage::domain::OrgId;

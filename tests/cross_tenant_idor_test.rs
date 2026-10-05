@@ -8,7 +8,7 @@
 //! the per-target results endpoints gate on `target_store.get(org, id)` first,
 //! so a foreign UUID is 404 regardless of the results backend.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

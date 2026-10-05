@@ -7,7 +7,7 @@
 //!   * `?fragment=1` returns the dynamic region only (no doctype)
 //!   * Aggregator returning `Unavailable` produces 503 + visible warning page
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

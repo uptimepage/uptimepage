@@ -5,7 +5,7 @@
 //! their own rows; the shared dev DB and the per-call `PURGE_BATCH_LIMIT`
 //! mean the "purged" cases backdate far enough to sort first.
 
-mod common;
+use crate::common;
 
 use common::{make_user, unique_slug};
 use uptimepage::domain::{OrgId, UserId};

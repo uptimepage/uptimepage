@@ -4,7 +4,7 @@
 //! code exchange talks to Slack and is covered by unit tests on the
 //! response parsing instead.
 
-mod common;
+use crate::common;
 
 use axum::Router;
 use axum::body::Body;

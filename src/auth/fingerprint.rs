@@ -51,9 +51,14 @@ fn salt_digest(salt: &str) -> String {
 }
 
 /// Refuses to boot if the configured salt does not match the most-recent row
-/// in `auth_salt_history`, unless the env override is set. Returns Ok(true)
-/// when a new history row was inserted (first boot, or accepted rotation).
-pub async fn ensure_fingerprint_salt(pool: &PgPool, salt: &str) -> Result<bool> {
+/// in `auth_salt_history`, unless `accept_rotation` (the operator set
+/// [`ROTATION_OVERRIDE_ENV`]). Returns Ok(true) when a new history row was
+/// inserted (first boot, or accepted rotation).
+pub async fn ensure_fingerprint_salt(
+    pool: &PgPool,
+    salt: &str,
+    accept_rotation: bool,
+) -> Result<bool> {
     if salt.is_empty() {
         return Err(AppError::Other(anyhow::anyhow!(
             "auth.fingerprint_salt is empty — refusing to boot. Generate one with `openssl rand -base64 32`"
@@ -77,7 +82,7 @@ pub async fn ensure_fingerprint_salt(pool: &PgPool, salt: &str) -> Result<bool> 
         .await
         .context("ensure_fingerprint_salt: empty-check")?;
 
-    if any_row && std::env::var(ROTATION_OVERRIDE_ENV).is_err() {
+    if any_row && !accept_rotation {
         return Err(AppError::Other(anyhow::anyhow!(
             "{SALT_ROTATED_CODE}: configured auth.fingerprint_salt is not in \
              auth_salt_history. Set {ROTATION_OVERRIDE_ENV}=1 to accept the \

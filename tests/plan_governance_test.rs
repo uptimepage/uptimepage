@@ -1,7 +1,7 @@
 //! Plan ceilings applied to the scheduler set, the agent pull, and its etag.
 //! Live PG only; no-ops without `DATABASE_URL`.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::time::Duration;

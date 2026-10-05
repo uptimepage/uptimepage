@@ -2,7 +2,7 @@
 //! events and our own clock do to an account, and the owner's actions in
 //! front of it. Live PG only; no-ops without `DATABASE_URL`.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -75,10 +75,7 @@ async fn harness() -> Option<Harness> {
 async fn isolated(prefix: &str) -> Option<Harness> {
     let (url, name) = fresh_test_db(prefix).await?;
     let pool = open_test_pool(&url).await;
-    sqlx::migrate!("./migrations/postgres")
-        .run(&pool)
-        .await
-        .expect("migrate");
+    common::MIGRATOR.run(&pool).await.expect("migrate");
     Some(harness_on(pool, Some(name)).await)
 }
 
@@ -2106,7 +2103,7 @@ async fn the_provider_ending_an_unpaid_subscription_says_the_payment_never_came(
     assert!(!kinds.contains(&"grace_expired".to_string()), "{kinds:?}");
 
     // The same ending with a cancel booked is that cancel landing.
-    let (other, _, _) = crate::account(&h.pool, "founding", 0).await;
+    let (other, _, _) = self::account(&h.pool, "founding", 0).await;
     let sub = sub_ref();
     activate(&h, other, &sub, TEAM_MONTH).await;
     h.billing

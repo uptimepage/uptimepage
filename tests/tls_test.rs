@@ -1,5 +1,3 @@
-mod common;
-
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;

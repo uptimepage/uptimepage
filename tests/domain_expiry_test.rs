@@ -23,7 +23,7 @@ use uptimepage::worker::registration::RegistrationClient;
 use uptimepage::worker::whois::WhoisClient;
 use uuid::Uuid;
 
-mod common;
+use crate::common;
 
 #[derive(Clone)]
 struct ServerState {

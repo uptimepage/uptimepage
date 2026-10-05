@@ -3,12 +3,12 @@
 //! Live-PG tests are `#[ignore]` and run via:
 //!     docker compose -f compose.dev.yml up -d postgres
 //!     DATABASE_URL=postgres://monitor:monitor@localhost:5432/monitor \
-//!         cargo test --test auth_test -- --ignored
+//!         cargo nextest run --test it --run-ignored only -E 'test(/^auth_test::/)'
 //!
 //! Each ignored test provisions a fresh, randomly-named database and tears it
 //! down, so they neither touch the shared dev DB nor race each other.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 
@@ -22,7 +22,7 @@ use uptimepage::email::{
 use url::Url;
 use uuid::Uuid;
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 /// Tables created (and dropped) by migration 007_auth.
 const AUTH_TABLES: [&str; 7] = [

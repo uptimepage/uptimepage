@@ -2,7 +2,7 @@
 //! parallel arrays, both retention windows are stamped from the org's plan, and
 //! the page snapshot expires ahead of the run that carries it.
 
-mod common;
+use crate::common;
 
 use chrono::{Duration, Utc};
 use clickhouse::Row;

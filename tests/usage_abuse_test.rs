@@ -5,7 +5,7 @@
 //! live-PG suites. They exist so a regression in the usage contract or the
 //! abuse admission control fails CI, not production.
 
-mod common;
+use crate::common;
 
 use axum::Router;
 use axum::body::Body;

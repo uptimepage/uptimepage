@@ -6,6 +6,7 @@ rust-version = "1.95"
 license = "AGPL-3.0-or-later"
 publish = false
 default-run = "uptimepage"
+autotests = false
 
 [dependencies]
 # Async runtime
@@ -226,6 +227,16 @@ strip = true
 inherits = "release"
 debug = true
 strip = false
+
+# Every integration test in one binary; see tests/main.rs.
+[[test]]
+name = "it"
+path = "tests/main.rs"
+
+# Needs a process whose metrics recorder no other test reached first.
+[[test]]
+name = "http_metrics_test"
+path = "tests/http_metrics_test.rs"
 
 [[bench]]
 name = "circuit_breaker"

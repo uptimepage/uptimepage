@@ -7,7 +7,7 @@
 //!  2. Public responses never serialise sensitive fields (URL, headers,
 //!     auth credentials, internal target name, error text).
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

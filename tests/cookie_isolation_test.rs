@@ -15,7 +15,7 @@
 //!   cookie minted by the operator router has no `Domain=` attribute, so the
 //!   browser scopes it to the exact request host.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

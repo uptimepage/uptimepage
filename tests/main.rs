@@ -1,0 +1,165 @@
+//! Every integration test, built as one binary. A crate per `tests/*.rs` file
+//! linked a full copy of the app into each of them on every change.
+
+mod common;
+
+mod acceptance_test;
+mod account_gdpr_test;
+mod account_restore_flow_test;
+mod admin_repo_test;
+mod admin_variable_resolution_test;
+mod api_test;
+mod api_token_scopes_test;
+mod api_variables_test;
+mod auth_api_tokens_test;
+mod auth_invitations_test;
+mod auth_magic_link_gating_test;
+mod auth_magic_link_test;
+mod auth_session_test;
+mod auth_test;
+mod availability_buckets_test;
+mod batcher_test;
+mod billing_lifecycle_test;
+mod bootstrap_seed_pg_test;
+mod bounded_body_audit_test;
+mod canary_test;
+mod channel_link_codes_pg_test;
+mod channel_verification_pg_test;
+mod clickhouse_aggregator_test;
+mod confirmed_downtime_pg_test;
+mod cookie_isolation_test;
+mod cors_test;
+mod cross_origin_redirect_test;
+mod cross_tenant_idor_test;
+mod cross_tenant_smoke_test;
+mod csrf_test;
+mod current_org_extractor_test;
+mod custom_domain_routing_test;
+mod custom_domain_snapshot_pg_test;
+mod delegate_links_test;
+mod discord_ack_test;
+mod discord_connect_pg_test;
+mod disposable_domains_pg_test;
+mod disposable_sources_live_test;
+mod domain_expiry_test;
+mod email_policy_gate_test;
+mod enum_drift_test;
+mod error_classes_test;
+mod escalation_policies_test;
+mod fleet_ribbon_test;
+mod flow_runs_test;
+mod heartbeat_ping_test;
+mod heartbeat_pings_ch_test;
+mod heartbeats_pg_test;
+mod incident_ack_link_test;
+mod incident_acknowledge_page_test;
+mod incident_briefs_pg_test;
+mod incident_ops_test;
+mod incident_writer_pg_test;
+mod integration_test;
+mod invitation_browser_flows_test;
+mod latency_buckets_test;
+mod linked_apps_test;
+mod load_test_public;
+mod logging_audit_test;
+mod maintenance_audit_test;
+mod maintenance_ui_test;
+mod manual_monitors_pg_test;
+mod manual_state_test;
+mod marketing_config_test;
+mod marketing_coupling_test;
+mod marketing_dispatch_test;
+mod marketing_no_db_test;
+mod mcp_auth_test;
+mod mcp_cross_tenant_test;
+mod me_theme_test;
+mod me_time_format_test;
+mod mode_parameterization_test;
+mod monitor_share_audit_test;
+mod monitor_shares_pg_test;
+mod new_endpoints_test;
+mod notification_channel_audit_test;
+mod notification_channels_pg_test;
+mod notification_channels_test;
+mod notifier_test;
+mod oauth_flow_test;
+mod oauth_identity_link_test;
+mod oauth_metadata_test;
+mod on_call_test;
+mod openapi_test;
+mod operator_incidents_test;
+mod operator_maintenance_test;
+mod org_match_triggers_test;
+mod orgs_api_test;
+mod orgs_storage_test;
+mod page_asset_audit_test;
+mod page_assets_pg_test;
+mod partition_retention_test;
+mod passkey_test;
+mod per_org_subdomain_test;
+mod periodic_loop_test;
+mod plan_assignment_test;
+mod plan_governance_test;
+mod plan_holds_test;
+mod postgres_bulk_test;
+mod postmortems_test;
+mod public_api_contract_test;
+mod public_badge_test;
+mod public_html_integration_test;
+mod public_routes_gating_test;
+mod public_rss_test;
+mod public_security_test;
+mod purge_deleted_test;
+mod purge_deleted_users_test;
+mod quotas_test;
+mod recent_results_test;
+mod region_health_test;
+mod regions_test;
+mod retention_test;
+mod sampler_test;
+mod scheduler_test;
+mod share_link_test;
+mod silence_pg_test;
+mod slack_ack_test;
+mod slack_connect_pg_test;
+mod status_page_audit_test;
+mod status_page_settings_test;
+mod status_pages_pg_test;
+mod subscribers_pg_test;
+mod support_request_test;
+mod target_delete_audit_test;
+mod target_owner_default_pg_test;
+mod target_pause_audit_test;
+mod targets_store_test;
+mod tcp_check_test;
+mod team_api_test;
+mod tenant_isolation_test;
+mod tls_cert_test;
+mod tls_test;
+mod usage_abuse_test;
+mod user_profile_test;
+mod variables_test;
+mod web_e2e_test;
+
+#[test]
+fn every_test_file_is_declared_here() {
+    let declared = include_str!("main.rs");
+    let manifest = include_str!("../Cargo.toml");
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests");
+    let mut missing: Vec<String> = std::fs::read_dir(dir)
+        .expect("read tests/")
+        .filter_map(|entry| {
+            let path = entry.expect("tests/ entry").path();
+            let stem = path.file_stem()?.to_str()?.to_owned();
+            let is_rs = path.extension().is_some_and(|ext| ext == "rs");
+            let is_module = declared.contains(&format!("\nmod {stem};"));
+            let is_target = manifest.contains(&format!("path = \"tests/{stem}.rs\""));
+            (is_rs && stem != "main" && !is_module && !is_target).then_some(stem)
+        })
+        .collect();
+    missing.sort();
+    assert!(
+        missing.is_empty(),
+        "declare in tests/main.rs or as a [[test]] in Cargo.toml, or they never run: {missing:?}"
+    );
+}

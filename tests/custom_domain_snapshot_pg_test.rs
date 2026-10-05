@@ -4,7 +4,7 @@
 //!
 //! Live PG only; no-ops without `DATABASE_URL`.
 
-mod common;
+use crate::common;
 
 use chrono::Utc;
 use common::{make_user, pg_pool_from_env, unique_slug};

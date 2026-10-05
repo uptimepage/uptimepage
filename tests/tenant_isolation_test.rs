@@ -6,7 +6,7 @@
 //! Live-PG + live-CH. Ignored at the `cargo test` default; runs under
 //! `--include-ignored` once `DATABASE_URL` and `CLICKHOUSE_URL` are set.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

@@ -6,7 +6,7 @@
 //! is set. Each test provisions its own throwaway database so concurrent runs
 //! can't contend on shared rows.
 
-mod common;
+use crate::common;
 
 use common::{make_user, unique_slug};
 use sqlx::PgPool;
@@ -18,7 +18,7 @@ use uptimepage::quotas::effective::resolve_plans;
 use uptimepage::storage::{PgSilenceStore, SilenceStore};
 use uuid::Uuid;
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 const STALE_AFTER: u64 = 120;
 

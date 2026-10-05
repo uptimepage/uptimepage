@@ -8,7 +8,7 @@
 //! is set. The harness auto-applies all migrations on first connect, so a clean
 //! run is also the fresh-DB validation of `019_escalation_policies`.
 
-mod common;
+use crate::common;
 
 use common::{make_user, unique_slug};
 use sqlx::PgPool;

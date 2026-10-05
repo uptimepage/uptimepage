@@ -4,7 +4,7 @@
 //! cross-org membership gate. The successful code exchange talks to Discord
 //! and is covered by unit tests on the response parsing instead.
 
-mod common;
+use crate::common;
 
 use axum::Router;
 use axum::body::Body;

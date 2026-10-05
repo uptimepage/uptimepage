@@ -2,7 +2,7 @@
 //! soft-deleted user gets opens exactly two doors — the restore page and the
 //! restore call — and nothing else.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -12,7 +12,7 @@ use uptimepage::auth::session as session_store;
 use uptimepage::config::AppConfig;
 use uptimepage::storage::create_org_with_owner;
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 /// The extractor under test reads the cookie, so an injected `Session` would
 /// prove nothing.

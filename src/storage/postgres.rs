@@ -28,6 +28,9 @@ use crate::storage::traits::{
     TargetStore,
 };
 
+/// The embedded Postgres migrations, shared with the integration tests.
+pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+
 /// Org-scoped Postgres-backed target store. Every query binds the `org`
 /// passed by the caller (resolved from the request's `CurrentOrg`) so reads,
 /// updates, and deletes are isolated to that organisation. The store holds no
@@ -92,10 +95,7 @@ impl PostgresTargetStore {
             .await
             .context("failed to connect to postgres")?;
         tracing::info!("running postgres migrations");
-        sqlx::migrate!("./migrations/postgres")
-            .run(&pool)
-            .await
-            .context("postgres migrations")?;
+        MIGRATOR.run(&pool).await.context("postgres migrations")?;
         // Non-fatal: the DEFAULT partition accepts writes even if provisioning
         // fails, and the daily retention tick retries. Don't block boot on it.
         if let Err(err) = super::partitions::ensure_partitions(&pool).await {

@@ -9,7 +9,7 @@
 //! Skipped by default; runs under `--include-ignored` once `DATABASE_URL`
 //! is set.
 
-mod common;
+use crate::common;
 
 use sqlx::PgPool;
 use uuid::Uuid;

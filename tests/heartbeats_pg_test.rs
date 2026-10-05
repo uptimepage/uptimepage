@@ -8,7 +8,7 @@
 //! Live-PG ignored: needs `DATABASE_URL`. Migrations auto-apply on first
 //! connect. Point it at a throwaway DB to also validate migration 031.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 
@@ -107,7 +107,7 @@ async fn dispatched_heartbeats(repo: &AdminRepo) -> Vec<Uuid> {
         .collect()
 }
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 /// The nudge sweep and migration 047 are org-unscoped by design, so they run on
 /// their own database instead of stomping a parallel test's rows.

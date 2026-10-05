@@ -2,7 +2,7 @@
 //! path-based and subdomain public-routing modes. Catches regressions where
 //! a handler implicitly relies on one mode and breaks the other.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

@@ -4,7 +4,7 @@
 //! `disposable_sources_live_test`. Needs `DATABASE_URL`; each test gets its own
 //! throwaway database, so the corpus it installs is its own.
 
-mod common;
+use crate::common;
 
 use std::collections::HashSet;
 
@@ -18,7 +18,7 @@ use uptimepage::domain::{OrgId, UserId, generate_signup_slug};
 use uptimepage::storage::orgs::create_signup_org_with_owner_in_tx;
 use uuid::Uuid;
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 const BURNER: &str = "ghost@mailinator.test";
 

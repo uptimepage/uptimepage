@@ -8,7 +8,7 @@
 //! STATUS_LOAD_CONCURRENCY=500 \
 //! STATUS_LOAD_DURATION_SECS=10 \
 //! STATUS_LOAD_P99_MS=200       \
-//!     cargo test --test load_test_public -- --ignored --nocapture
+//!     cargo nextest run --test it --run-ignored only --no-capture -E 'test(/^load_test_public::/)'
 //! ```
 //!
 //! **Scope.** The harness fires concurrent in-process requests via
@@ -24,7 +24,7 @@
 //! `GET /api/public/v1/status`. The harness asserts zero panics, zero
 //! transport errors, and a p99 ceiling drawn from `STATUS_LOAD_P99_MS`.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

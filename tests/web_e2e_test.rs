@@ -5,7 +5,7 @@
 //! layer relies on (HTMX hooks, chart data-endpoints, form data-action,
 //! credential redaction sentinels).
 
-mod common;
+use crate::common;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};

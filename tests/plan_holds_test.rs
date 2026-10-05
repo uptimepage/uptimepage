@@ -1,7 +1,7 @@
 //! Holding what a shrunken plan no longer covers, and releasing it when the
 //! plan grows back. Live PG only; no-ops without `DATABASE_URL`.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

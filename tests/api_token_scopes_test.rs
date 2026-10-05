@@ -4,7 +4,7 @@
 //! Live-PG ignored: needs a Postgres pool. The scope check is in the
 //! `Authorized<R>` extractor, in front of the unchanged per-org-id store.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

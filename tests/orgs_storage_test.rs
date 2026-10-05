@@ -4,7 +4,7 @@
 //! every test seeds its own users + orgs with `Uuid::now_v7()` slugs and
 //! cleans up via `ON DELETE CASCADE` from a final `DELETE FROM users`.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

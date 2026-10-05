@@ -2,8 +2,6 @@
 //! database: the custom-domain path resolves from the snapshot before it
 //! reaches a pool.
 
-mod common;
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use tower::util::ServiceExt;

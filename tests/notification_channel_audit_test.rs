@@ -1,7 +1,7 @@
 //! Notification-channel create/update/delete must write an atomic
 //! `org_audit_log` row, via record_audit_tx inside the mutation's tx.
 
-mod common;
+use crate::common;
 
 use uptimepage::domain::{
     ChannelConfig, NewNotificationChannel, NotificationChannelUpdate, SlackConfig, WriteSource,
@@ -10,7 +10,7 @@ use uptimepage::storage::{
     NotificationChannelStore, PgNotificationChannelStore, create_org_with_owner,
 };
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 fn slack(name: &str) -> NewNotificationChannel {
     NewNotificationChannel {

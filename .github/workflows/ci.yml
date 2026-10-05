@@ -157,7 +157,7 @@ jobs:
       CLICKHOUSE_PASSWORD: monitor
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
-      # Trim DWARF to line tables; full debuginfo on ~48 test binaries overran the runner disk (mold "Disk full?").
+      # Trim DWARF to line tables; full debuginfo on the former ~48 per-file test binaries overran the runner disk (mold "Disk full?").
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_PROFILE_TEST_DEBUG: line-tables-only
     steps:
@@ -187,7 +187,7 @@ jobs:
           install -m 0755 "$tmp/ast-grep" /usr/local/bin/ast-grep
           ast-grep --version
       # Reclaim ~20-30 GB of preinstalled runner bloat the Rust build never
-      # uses, before the full-workspace test compile (~48 binaries) + mold
+      # uses, before the full-workspace test compile + mold
       # otherwise fill the standard ubuntu-latest disk ("mold: Disk full?").
       # Scoped to safe categories only: tool-cache (Rust toolchains) and swap
       # (mold linking headroom) are kept.

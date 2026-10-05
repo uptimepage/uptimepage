@@ -2,14 +2,14 @@
 //! pre-mortem hardening pass: `signup_org_id` and `last_seen_at` (wired via
 //! session touch).
 
-mod common;
+use crate::common;
 
 use chrono::{DateTime, Utc};
 use common::{drop_test_db, fresh_test_db, open_test_pool};
 use uptimepage::domain::UserId;
 use uuid::Uuid;
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 async fn fresh_pg() -> Option<(String, String)> {
     fresh_test_db("user_profile").await

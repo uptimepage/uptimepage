@@ -7,7 +7,7 @@
 //! against a live PG+CH via `mcp-remote`/Claude Desktop. See the connector
 //! smoke notes.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

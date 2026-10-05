@@ -2,7 +2,7 @@
 //! the action-items JSONB round-trip, publish toggling, and cross-tenant
 //! isolation. `#[ignore]`d unless `DATABASE_URL` is set.
 
-mod common;
+use crate::common;
 
 use common::{make_user, unique_slug};
 use sqlx::PgPool;

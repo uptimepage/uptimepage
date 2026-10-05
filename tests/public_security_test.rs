@@ -16,7 +16,7 @@
 //! is exercised in the deployment harness, not here — the Rust process has no
 //! rate-limit middleware on `/api/public/*` by design (Caddy owns that).
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};

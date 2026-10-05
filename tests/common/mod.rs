@@ -1197,6 +1197,8 @@ impl PublicSource for UnavailablePublicSource {
 // `UNKNOWN_TABLE`. Tests share the dev database; use fresh UUIDs per test to
 // avoid cross-test interference.
 
+pub use uptimepage::storage::postgres::MIGRATOR;
+
 static PG_MIGRATED: Mutex<bool> = Mutex::const_new(false);
 static CH_MIGRATED: Mutex<bool> = Mutex::const_new(false);
 
@@ -1210,10 +1212,7 @@ pub async fn pg_pool_from_env() -> Option<PgPool> {
         .expect("connect to postgres");
     let mut guard = PG_MIGRATED.lock().await;
     if !*guard {
-        sqlx::migrate!("./migrations/postgres")
-            .run(&pool)
-            .await
-            .expect("run pg migrations");
+        MIGRATOR.run(&pool).await.expect("run pg migrations");
         *guard = true;
     }
     Some(pool)

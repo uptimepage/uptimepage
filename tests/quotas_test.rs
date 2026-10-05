@@ -9,7 +9,7 @@
 //! (over-cap overshoot, floor bypass via bulk, peer-IP keying, panic on a
 //! bad config number, leaked limiter map) fails CI, not production.
 
-mod common;
+use crate::common;
 
 use axum::Router;
 use axum::body::Body;

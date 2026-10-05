@@ -2,7 +2,7 @@
 //! the operator door in front of it. Live PG only; no-ops without
 //! `DATABASE_URL`.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};

@@ -5,7 +5,7 @@
 //! Live-PG ignored: needs `DATABASE_URL`. Migrations auto-apply on first
 //! connect.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

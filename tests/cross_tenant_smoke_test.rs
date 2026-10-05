@@ -8,8 +8,6 @@
 //! cache change that quietly drops the org parameter. Runs on every PR
 //! (no DB required).
 
-mod common;
-
 use std::sync::Arc;
 
 use chrono::Utc;

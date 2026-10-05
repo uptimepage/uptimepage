@@ -7,7 +7,7 @@
 //! account. These tests drive the real router so the check cannot be refactored
 //! out without one of them going red.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -15,7 +15,7 @@ use tower::ServiceExt;
 use uptimepage::auth::{oauth_state, session as session_store};
 use uptimepage::config::AppConfig;
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 /// GitHub configured, or the routes 404 at the enabled check and every guard
 /// behind them goes untested.

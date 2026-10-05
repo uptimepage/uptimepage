@@ -3,9 +3,9 @@
 //! Run via:
 //!     docker compose -f compose.dev.yml up -d postgres
 //!     DATABASE_URL=postgres://monitor:monitor@localhost:5432/monitor \
-//!         cargo nextest run --test bootstrap_seed_pg_test --run-ignored all
+//!         cargo nextest run --test it --run-ignored all -E 'test(/^bootstrap_seed_pg_test::/)'
 
-mod common;
+use crate::common;
 
 use sqlx::PgPool;
 use uptimepage::bootstrap::seed_first_owner;
@@ -14,7 +14,7 @@ use uptimepage::domain::OrgId;
 use uptimepage::quotas::QuotaService;
 use uptimepage::storage::{orgs as orgs_store, users};
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 async fn fresh_pool() -> Option<(PgPool, String)> {
     let (db, name) = common::fresh_test_db("bootstrap_seed").await?;

@@ -4,7 +4,7 @@
 //! only through a Slack account they linked from the offer the press brought.
 //! Acknowledging takes anyone; resolving takes a member who linked theirs.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

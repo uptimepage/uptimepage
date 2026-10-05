@@ -224,7 +224,7 @@ docker compose logs -f uptimepage
 just setup        # once: cargo-nextest and the linker
                   # (mold on Linux; macOS prints an lld opt-in snippet)
 cargo check --lib # the iteration gate (~8.5s after a one-file edit)
-just check        # builds every test binary — pre-commit gate (~4min)
+just check        # builds every test binary, the pre-commit gate (~30s after an edit)
 ```
 
 - **Toolchain**: `rust-toolchain.toml` pins 1.95 for *every* entrypoint
@@ -268,15 +268,13 @@ in. Validate schema/migration changes against a throwaway DB, not the stale
 docker compose -f compose.dev.yml up -d
 docker compose -f compose.dev.yml exec -T postgres createdb -U monitor ci_verify
 
-# Whole ignored suite (slow — builds every test binary):
+# Whole ignored suite:
 DATABASE_URL=postgres://monitor:monitor@127.0.0.1:5432/ci_verify \
-  cargo test -- --ignored
+  cargo nextest run --run-ignored only
 
-# One suite (fast — scope to a binary; bare `nextest run` rebuilds +
-# enumerates every integration test binary (about a hundred) and looks
-# frozen for minutes):
+# One test module, i.e. one file under tests/:
 DATABASE_URL=postgres://monitor:monitor@127.0.0.1:5432/ci_verify \
-  cargo test --test status_page_settings_test -- --ignored --nocapture
+  cargo test --test it -- --ignored --nocapture status_page_settings_test::
 ```
 
 ## Database access
@@ -429,7 +427,7 @@ pointed at the new bundle), and delete `templates/` plus
 
 ```bash
 cargo test --lib web::          # unit render tests
-cargo test --test web_e2e_test  # e2e
+cargo test --test it web_e2e_test::  # e2e
 ```
 
 ## Troubleshooting

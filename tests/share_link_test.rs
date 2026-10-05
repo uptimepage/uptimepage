@@ -9,7 +9,7 @@
 //! sub-resources carry the crawl directive the page states in its own head; and
 //! a status page's host answers only for that page's own detail links.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};

@@ -9,7 +9,7 @@
 //! A failure here is a signal to look, not a broken build: these depend on
 //! third parties who may redesign a page or change a policy at any time.
 //!
-//!     cargo test --test canary_test -- --ignored
+//!     cargo nextest run --test it --run-ignored only -E 'test(/^canary_test::/)'
 
 use std::collections::HashMap;
 use std::time::Duration;

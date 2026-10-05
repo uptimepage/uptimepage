@@ -3,7 +3,7 @@
 //! the rotation routes below are the authenticated half, driven over HTTP so
 //! the URL a caller is handed is the one the inbound route accepts.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

@@ -5,7 +5,7 @@
 //! Live-PG ignored: needs `DATABASE_URL`. Migrations are auto-applied by
 //! `pg_pool_from_env` on first connect.
 
-mod common;
+use crate::common;
 
 use uptimepage::domain::{
     ChannelConfig, EmailConfig, NewNotificationChannel, NotificationChannelUpdate, OrgId, UserId,

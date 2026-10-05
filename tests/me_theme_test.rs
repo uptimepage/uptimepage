@@ -5,9 +5,9 @@
 //! Run via:
 //!     docker compose -f compose.dev.yml up -d postgres
 //!     DATABASE_URL=postgres://monitor:monitor@localhost:5432/monitor \
-//!         cargo +1.95 nextest run --test me_theme_test --run-ignored all
+//!         cargo +1.95 nextest run --test it --run-ignored all -E 'test(/^me_theme_test::/)'
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -19,7 +19,7 @@ use tower::ServiceExt;
 use uptimepage::domain::UserId;
 use uuid::Uuid;
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 async fn fresh_pg() -> Option<(String, String)> {
     fresh_test_db("me_theme").await

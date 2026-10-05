@@ -5,7 +5,7 @@
 //! One test, not several: the corpus is a global singleton, so two running
 //! concurrently would each replace the set the other is reading.
 
-mod common;
+use crate::common;
 
 use std::collections::HashSet;
 

@@ -10,7 +10,7 @@
 //!     docker compose -f compose.dev.yml up -d
 //!     DATABASE_URL=postgres://monitor:monitor@127.0.0.1:5432/monitor \
 //!     CLICKHOUSE_URL=http://127.0.0.1:8123 \
-//!       cargo test --test clickhouse_aggregator_test -- --ignored
+//!       cargo nextest run --test it --run-ignored only -E 'test(/^clickhouse_aggregator_test::/)'
 //!
 //! Each test purges its own prefix at the start (idempotent — recovers from
 //! prior crashed runs) and deletes its seeded target at the end, even on
@@ -18,7 +18,7 @@
 //! TABLE ... DELETE` is async + expensive and our fresh UUIDs per run
 //! prevent cross-test interference.
 
-mod common;
+use crate::common;
 
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;

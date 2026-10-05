@@ -2,7 +2,7 @@
 //! the caller is: a plain API token and a Terraform-badged one alike. Live-PG
 //! ignored: the token path needs a pool.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

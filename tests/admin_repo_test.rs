@@ -5,7 +5,7 @@
 //! data accumulate in ClickHouse and (worse) Slack/webhook alerts keep
 //! pinging a customer who's already cancelled.
 
-mod common;
+use crate::common;
 
 use sqlx::PgPool;
 use uptimepage::storage::AdminRepo;
@@ -15,7 +15,7 @@ use uuid::Uuid;
 // Own DB per test: AdminRepo reads + decodes every enabled target across all
 // orgs, so a foreign row with an invalid check_spec from another suite on the
 // shared pool would fail the whole call. Isolation keeps the cross-org read clean.
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 fn http_check_spec() -> serde_json::Value {
     serde_json::json!({

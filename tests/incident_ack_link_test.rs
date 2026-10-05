@@ -2,7 +2,7 @@
 //! link takes the incident, a tampered or lapsed one takes nothing, and a GET
 //! only ever offers the confirmation — a prefetch must not silence a live page.
 
-mod common;
+use crate::common;
 
 use axum::Router;
 use axum::body::Body;

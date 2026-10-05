@@ -8,7 +8,7 @@
 //! Live-PG ignored: needs `DATABASE_URL`. Migrations auto-apply on first
 //! connect — point it at a throwaway DB to also validate migration 014.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

@@ -5,7 +5,7 @@
 //! guard and the account page agree, that a removed credential leaves a trail
 //! behind it, and that a deleted account takes its credentials with it.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -16,7 +16,7 @@ use uptimepage::domain::WaysIn;
 use uptimepage::storage::credential_events::RequestOrigin;
 use uptimepage::storage::{passkeys, sign_in_methods};
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 const HOST: &str = "app.test";
 const OTHER_HOST: &str = "moved.test";

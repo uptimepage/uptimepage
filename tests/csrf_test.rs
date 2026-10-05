@@ -5,7 +5,7 @@
 //! the test scaffold doesn't seed users/tokens. We only assert on the 403
 //! `CSRF_PROTECTION` boundary.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, request::Builder};

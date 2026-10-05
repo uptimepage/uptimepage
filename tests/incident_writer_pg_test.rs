@@ -9,7 +9,7 @@
 //! `#[ignore]`d by default; runs under `--run-ignored all` once `DATABASE_URL`
 //! is set. The harness auto-applies all migrations on first connect.
 
-mod common;
+use crate::common;
 
 use common::{make_user, unique_slug};
 use sqlx::PgPool;

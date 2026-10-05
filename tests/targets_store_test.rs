@@ -3,7 +3,7 @@
 //! tallies are org-wide, not page-scoped), who an update credits, the tag
 //! cap on a server-side merge, and the bulk interval and channel edits.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 
@@ -14,7 +14,7 @@ use uptimepage::storage::{PostgresTargetStore, TargetFilter, TargetStore, create
 use url::Url;
 use uuid::Uuid;
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 async fn seed(
     store: &PostgresTargetStore,

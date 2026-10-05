@@ -2,7 +2,7 @@
 //! lock through a real pool, so these need `DATABASE_URL` and
 //! `--include-ignored`.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

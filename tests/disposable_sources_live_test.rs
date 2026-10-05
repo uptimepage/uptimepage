@@ -7,9 +7,9 @@
 //!
 //! Run manually:
 //!     EMAIL_POLICY_LIVE_TEST=1 \
-//!         cargo test --test disposable_sources_live_test -- --ignored
+//!         cargo nextest run --test it --run-ignored only -E 'test(/^disposable_sources_live_test::/)'
 
-mod common;
+use crate::common;
 
 use std::collections::HashSet;
 

@@ -9,7 +9,7 @@
 //! is set. The test harness auto-applies all Postgres migrations on first
 //! connect, so the introspection sees the same constraint defs prod runs.
 
-mod common;
+use crate::common;
 
 use uptimepage::domain::{
     ActorType, AppTheme, ChannelKind, IncidentEventKind, IncidentOrigin, IncidentSeverity,

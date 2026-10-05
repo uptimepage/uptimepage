@@ -1,13 +1,13 @@
 # `regions_test` exercises `reconcile_regions`, which backfills every
 # unassigned target in the database to the default region. On a shared test DB
 # that sweeps in targets sibling tests just seeded but haven't yet assigned,
-# racing their region assertions. Run the binary's tests one at a time; prod is
+# racing their region assertions. Run its tests one at a time; prod is
 # unaffected (a single control-plane reconcile at boot).
 [test-groups]
 regions = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = 'binary(regions_test)'
+filter = 'test(/^regions_test::/)'
 test-group = 'regions'
 
 # Backstop only; the 15s in-test deadline is the real fix. Scoped to this one

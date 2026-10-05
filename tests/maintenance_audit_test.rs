@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use chrono::{Duration, Utc};
 use common::{make_user, pg_pool_from_env};

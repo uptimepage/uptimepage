@@ -1,14 +1,14 @@
 //! Page-asset put/delete must write an atomic `org_audit_log` row, and delete
 //! is org-scoped (a foreign org can't drop another tenant's asset).
 
-mod common;
+use crate::common;
 
 use uptimepage::domain::{AssetSlot, NewStatusPage, StatusPageId, WriteSource};
 use uptimepage::storage::{
     PageAssetStore, PgPageAssetStore, PgStatusPageStore, StatusPageStore, create_org_with_owner,
 };
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]

@@ -2,7 +2,7 @@
 //! DB: create pins the schedule, the state round-trips, and the routes refuse
 //! what a manual monitor cannot be.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

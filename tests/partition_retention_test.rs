@@ -3,11 +3,11 @@
 //! aged-out partitions are dropped while the current month survives.
 //! Skipped by default; run under `--run-ignored` with `DATABASE_URL` set.
 
-mod common;
+use crate::common;
 
 use uptimepage::storage::partitions::{self, PARTITIONED_TABLES};
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 async fn scalar<T>(pool: &sqlx::PgPool, sql: &str) -> T
 where

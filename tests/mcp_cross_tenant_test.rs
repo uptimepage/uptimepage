@@ -11,7 +11,7 @@
 //! `#[ignore]`d by default; runs under `--run-ignored all` with `DATABASE_URL`
 //! set. The harness auto-applies migrations on first connect.
 
-mod common;
+use crate::common;
 
 use axum::Router;
 use axum::body::Body;

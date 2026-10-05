@@ -3,9 +3,9 @@
 //! Run via:
 //!     docker compose -f compose.dev.yml up -d postgres
 //!     DATABASE_URL=postgres://monitor:monitor@localhost:5432/monitor \
-//!         cargo test --test auth_invitations_test -- --ignored
+//!         cargo nextest run --test it --run-ignored only -E 'test(/^auth_invitations_test::/)'
 
-mod common;
+use crate::common;
 
 use uptimepage::auth::invitations;
 use uptimepage::domain::{OrgId, Role, UserId, generate_signup_slug};
@@ -14,7 +14,7 @@ use uptimepage::storage::orgs::{
 };
 use uuid::Uuid;
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 async fn fresh_pg() -> Option<(String, String)> {
     common::fresh_test_db("auth_inv").await

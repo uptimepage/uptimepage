@@ -1,7 +1,7 @@
 //! Monitor-share mint/revoke must write an atomic `org_audit_log` row
 //! (actor + action + metadata), via record_audit_tx inside the mutation's tx.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 
@@ -13,7 +13,7 @@ use uptimepage::storage::{
     create_org_with_owner,
 };
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]

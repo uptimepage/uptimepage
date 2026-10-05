@@ -14,7 +14,7 @@
 //!    split proves the extractor did the gating. Disabling the page via the
 //!    operator storage path flips a previously-served slug back to 404.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

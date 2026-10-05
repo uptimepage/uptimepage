@@ -3,7 +3,7 @@
 //! action. In-memory store (no Postgres); cross-tenant isolation and the
 //! quota cap are exercised against the live Postgres store separately.
 
-mod common;
+use crate::common;
 
 use axum::Router;
 use axum::body::Body;

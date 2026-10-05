@@ -3,7 +3,7 @@
 //! acts in the signed-in member's name, and an alert from an earlier episode,
 //! or from a channel whose button was switched off since, takes nothing.
 
-mod common;
+use crate::common;
 
 use axum::Router;
 use axum::body::Body;

@@ -7,7 +7,7 @@
 //! with `quick-xml` and assert the required structural elements per
 //! https://www.rssboard.org/rss-specification.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

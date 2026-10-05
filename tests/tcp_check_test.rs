@@ -1,6 +1,6 @@
 //! The TCP check's failure text, which reaches the customer as their reason.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

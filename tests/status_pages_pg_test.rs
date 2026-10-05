@@ -11,7 +11,7 @@
 //! `pg_pool_from_env` on first connect — point it at a throwaway DB to also
 //! validate the migrations themselves.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

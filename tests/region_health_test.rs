@@ -6,9 +6,9 @@
 //!     docker compose -f compose.dev.yml up -d
 //!     DATABASE_URL=postgres://monitor:monitor@127.0.0.1:5432/monitor \
 //!     CLICKHOUSE_URL=http://127.0.0.1:8123 \
-//!       cargo test --test region_health_test -- --ignored
+//!       cargo nextest run --test it --run-ignored only -E 'test(/^region_health_test::/)'
 
-mod common;
+use crate::common;
 
 use chrono::Utc;
 use uptimepage::domain::{CheckResult, CheckStatus};

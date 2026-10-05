@@ -3,12 +3,12 @@
 //! Run via:
 //!     docker compose -f compose.dev.yml up -d postgres
 //!     DATABASE_URL=postgres://monitor:monitor@localhost:5432/monitor \
-//!         cargo +1.95 nextest run --test account_gdpr_test --run-ignored all
+//!         cargo +1.95 nextest run --test it --run-ignored all -E 'test(/^account_gdpr_test::/)'
 //!
 //! Each test gets its own freshly-created database (migrations applied) so the
 //! deletion/recovery transactions run against the real schema in isolation.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -22,7 +22,7 @@ use uptimepage::error::AppError;
 use uptimepage::error::codes;
 use uuid::Uuid;
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 async fn fresh_pg() -> Option<(String, String)> {
     fresh_test_db("gdpr").await

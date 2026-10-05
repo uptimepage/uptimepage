@@ -1,7 +1,7 @@
 //! Coverage for acceptance criteria not already exercised by the other
 //! integration tests in this directory.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

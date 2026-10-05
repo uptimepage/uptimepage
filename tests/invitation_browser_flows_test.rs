@@ -4,9 +4,9 @@
 //!
 //! Run via:
 //!     DATABASE_URL=postgres://monitor:monitor@localhost:5432/monitor \
-//!         cargo test --test invitation_browser_flows_test -- --ignored
+//!         cargo nextest run --test it --run-ignored only -E 'test(/^invitation_browser_flows_test::/)'
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -18,7 +18,7 @@ use uptimepage::domain::{ChannelKind, OrgId, Role, UserId, generate_signup_slug}
 use uptimepage::storage::orgs::create_signup_org_with_owner_in_tx;
 use uuid::Uuid;
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
+use crate::common::MIGRATOR;
 
 async fn fresh_pg() -> Option<(String, String)> {
     common::fresh_test_db("inv_flows").await

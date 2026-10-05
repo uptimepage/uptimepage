@@ -9,7 +9,7 @@
 //! Live-PG ignored: needs `DATABASE_URL`. Migrations auto-apply on first
 //! connect — point it at a throwaway DB to also validate migration 030.
 
-mod common;
+use crate::common;
 
 use uptimepage::domain::{NewVariable, OrgId, UserId, VariableId};
 use uptimepage::storage::{

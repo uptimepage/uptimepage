@@ -3,7 +3,7 @@
 //! sentinel mini-routers so the assertion is on the routing decision,
 //! not on any app-side handler.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

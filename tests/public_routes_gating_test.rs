@@ -4,7 +4,7 @@
 //! (apex-wildcard shape; wired in a later phase). Mounting the path-based
 //! surface in SaaS would expose the default org's data to every tenant.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

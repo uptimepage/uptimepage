@@ -6,9 +6,9 @@
 //! Skipped by default. Requires a ClickHouse the migrations have run against:
 //!
 //!     CLICKHOUSE_URL=http://127.0.0.1:8123 \
-//!       cargo test --test recent_results_test -- --ignored --nocapture
+//!       cargo nextest run --test it --run-ignored only --no-capture -E 'test(/^recent_results_test::/)'
 
-mod common;
+use crate::common;
 
 use chrono::{Duration, Utc};
 use uptimepage::domain::{

@@ -11,7 +11,7 @@
 //! Live-PG ignored: the owner gate needs a Postgres pool. Run with
 //! `DATABASE_URL` set (see CLAUDE.md) — unset is a no-op pass.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

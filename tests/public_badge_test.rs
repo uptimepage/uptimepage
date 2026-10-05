@@ -8,7 +8,7 @@
 //!   * `?style=` other than `flat` returns 400.
 //!   * Service Unavailable propagates as 503 without leaking response shape.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 
