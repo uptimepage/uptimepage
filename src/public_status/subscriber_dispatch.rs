@@ -1,5 +1,5 @@
 //! Background fan-out of public incident updates to confirmed subscribers.
-//! Independent of the escalation engine (feature-flag gated) so public incidents
+//! Independent of the escalation engine (gated by plan) so public incidents
 //! notify regardless. The claim is an insert into the delivery log, so a crash
 //! or a second replica never double-sends.
 
