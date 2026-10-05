@@ -427,8 +427,7 @@ use crate::storage::UptimeStats;
 )]
 pub struct ApiDoc;
 
-/// The document, built once: served at `/api/openapi.json` and read by the
-/// request-body check.
+/// The document, built once and served at `/api/openapi.json`.
 pub fn openapi() -> &'static utoipa::openapi::OpenApi {
     static DOC: std::sync::LazyLock<utoipa::openapi::OpenApi> =
         std::sync::LazyLock::new(ApiDoc::openapi);

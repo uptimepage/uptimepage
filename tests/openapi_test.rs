@@ -1,10 +1,13 @@
 mod common;
 
+use std::collections::HashMap;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use common::build_test_app;
 use serde_json::Value;
 use tower::ServiceExt;
+use uptimepage::api::strict::{BodySchema, ref_name};
 
 fn app() -> axum::Router {
     build_test_app(|_| {})
@@ -208,7 +211,7 @@ fn walk(
     lenient: &mut Vec<String>,
 ) {
     if let Some(reference) = schema["$ref"].as_str() {
-        let name = reference.rsplit('/').next().unwrap();
+        let name = ref_name(reference);
         if tolerant.contains(&name) || seen.iter().any(|s| s == name) {
             return;
         }
@@ -249,4 +252,127 @@ fn walk(
             lenient,
         );
     }
+}
+
+/// `api::json::Json` resolves a body's `$ref`s in the schemas its own type
+/// collects, not in this document. Every name a documented body reaches must
+/// be in that set, as the schema the document publishes under it: a name the
+/// set lacks would leave that object unchecked.
+#[test]
+fn every_request_body_resolves_its_refs_without_the_doc() {
+    use uptimepage::api::handlers::{
+        api_tokens, billing, escalation_policies, holds, incidents, linked_apps,
+        notification_channels, on_call, orgs, status_page, targets, variables,
+    };
+    use uptimepage::api::types::{BulkActionRequest, TestRequest};
+    use uptimepage::domain::{
+        IncidentNarrationUpdate, MaintenanceWindowUpdate, NewEscalationPolicy, NewIncidentUpdate,
+        NewMaintenanceWindow, NewManualIncident, NewMonitorShare, NewNotificationChannel,
+        NewOnCallOverride, NewOnCallSchedule, NewStatusPageComponent, NewTarget, NewVariable,
+        NotificationChannelUpdate, PostmortemUpsert, StatusPageComponentUpdate, TargetUpdate,
+    };
+    use uptimepage::target_ops::SetManualState;
+
+    let bodies = HashMap::from([
+        body::<NewTarget>(),
+        body::<TargetUpdate>(),
+        body::<targets::TargetRegions>(),
+        body::<targets::RotateHeartbeatRequest>(),
+        body::<SetManualState>(),
+        body::<BulkActionRequest>(),
+        body::<TestRequest>(),
+        body::<NewMaintenanceWindow>(),
+        body::<MaintenanceWindowUpdate>(),
+        body::<NewVariable>(),
+        body::<variables::VariableValueUpdate>(),
+        body::<NewNotificationChannel>(),
+        body::<NotificationChannelUpdate>(),
+        body::<notification_channels::TestChannelConfigRequest>(),
+        body::<notification_channels::TestChannelEditRequest>(),
+        body::<notification_channels::OneTapLinkRequest>(),
+        body::<notification_channels::DelegateLinkRequest>(),
+        body::<linked_apps::LinkOfferRequest>(),
+        body::<IncidentNarrationUpdate>(),
+        body::<NewIncidentUpdate>(),
+        body::<NewManualIncident>(),
+        body::<incidents::LifecycleBody>(),
+        body::<incidents::AssignBody>(),
+        body::<incidents::NoteBody>(),
+        body::<incidents::PublishBody>(),
+        body::<PostmortemUpsert>(),
+        body::<NewEscalationPolicy>(),
+        body::<escalation_policies::PolicyBinding>(),
+        body::<NewOnCallSchedule>(),
+        body::<NewOnCallOverride>(),
+        body::<on_call::ContactChannels>(),
+        body::<orgs::CreateOrgRequest>(),
+        body::<orgs::UpdateOrgRequest>(),
+        body::<orgs::SwitchActiveOrgRequest>(),
+        body::<orgs::UpdateMemberRoleRequest>(),
+        body::<status_page::CreatePageRequest>(),
+        body::<status_page::UpdatePageRequest>(),
+        body::<status_page::ReorderRequest>(),
+        body::<NewStatusPageComponent>(),
+        body::<StatusPageComponentUpdate>(),
+        body::<NewMonitorShare>(),
+        body::<api_tokens::NewApiTokenRequest>(),
+        body::<api_tokens::RenameApiTokenRequest>(),
+        body::<billing::CheckoutChoice>(),
+        body::<billing::PlanChoice>(),
+        body::<holds::KeepRequest>(),
+    ]);
+    let doc = serde_json::to_value(uptimepage::api::docs::openapi()).unwrap();
+    let published = &doc["components"]["schemas"];
+
+    let mut problems = Vec::new();
+    for (path, item) in doc["paths"].as_object().unwrap() {
+        for (method, op) in item.as_object().unwrap() {
+            let schema = &op["requestBody"]["content"]["application/json"]["schema"];
+            if schema.is_null() {
+                continue;
+            }
+            let at = format!("{method} {path}");
+            let Some(name) = body_name(schema) else {
+                problems.push(format!("{at}: the body names no schema"));
+                continue;
+            };
+            let Some(body) = bodies.get(name) else {
+                problems.push(format!("{at}: add {name} to the bodies above"));
+                continue;
+            };
+            if body.root() != &published[name] {
+                problems.push(format!("{at}: the {name} above is not the one published"));
+            }
+            for reference in body.refs() {
+                match (body.components().get(reference), published.get(reference)) {
+                    (None, _) => {
+                        problems.push(format!("{at}: {name} does not collect {reference}"))
+                    }
+                    (Some(_), None) => problems.push(format!(
+                        "{at}: {name} collects {reference}, which the document does not publish"
+                    )),
+                    (Some(own), Some(doc)) if own != doc => {
+                        problems.push(format!("{at}: {name} collects another {reference}"));
+                    }
+                    (Some(_), Some(_)) => {}
+                }
+            }
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+fn body<T: utoipa::ToSchema>() -> (String, BodySchema) {
+    (T::name().into_owned(), BodySchema::of::<T>())
+}
+
+/// The type a documented body names: itself, its items, or the non-null side
+/// of an optional body.
+fn body_name(schema: &Value) -> Option<&str> {
+    fn named(s: &Value) -> Option<&str> {
+        s["$ref"].as_str().map(ref_name)
+    }
+    named(schema)
+        .or_else(|| named(&schema["items"]))
+        .or_else(|| schema["oneOf"].as_array()?.iter().find_map(named))
 }

@@ -16,9 +16,9 @@ use axum::http::{HeaderMap, header};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use utoipa::PartialSchema;
+use utoipa::ToSchema;
 
-use super::strict;
+use super::strict::BodySchema;
 use crate::error::AppError;
 use crate::error::codes;
 
@@ -27,7 +27,7 @@ pub struct Json<T>(pub T);
 
 impl<T, S> FromRequest<S> for Json<T>
 where
-    T: DeserializeOwned + PartialSchema + 'static,
+    T: DeserializeOwned + ToSchema + 'static,
     S: Send + Sync,
 {
     type Rejection = AppError;
@@ -44,7 +44,7 @@ where
 /// a caller that always sends one keeps working.
 impl<T, S> OptionalFromRequest<S> for Json<T>
 where
-    T: DeserializeOwned + PartialSchema + 'static,
+    T: DeserializeOwned + ToSchema + 'static,
     S: Send + Sync,
 {
     type Rejection = AppError;
@@ -85,7 +85,7 @@ async fn body<S: Send + Sync>(req: Request, state: &S) -> Result<Bytes, AppError
 
 fn decode<T>(bytes: &Bytes) -> Result<Json<T>, AppError>
 where
-    T: DeserializeOwned + PartialSchema + 'static,
+    T: DeserializeOwned + ToSchema + 'static,
 {
     let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|e| {
         AppError::bad_request(
@@ -93,7 +93,14 @@ where
             format!("Failed to parse the request body as JSON: {e}"),
         )
     })?;
-    if let Some(message) = strict::describe(&value, &schema_of::<T>()) {
+    let schema = schema_of::<T>();
+    if let Some(name) = schema.unresolved() {
+        return Err(AppError::internal_with_context(
+            codes::INTERNAL,
+            format!("request body schema reaches `{name}`, which its type does not collect"),
+        ));
+    }
+    if let Some(message) = schema.describe(&value) {
         return Err(AppError::unprocessable(codes::INVALID_JSON, message));
     }
     // From the bytes, not the value: a duplicate key is refused here and
@@ -106,13 +113,13 @@ where
     })
 }
 
-fn schema_of<T: PartialSchema + 'static>() -> Arc<serde_json::Value> {
-    static SCHEMAS: LazyLock<Mutex<HashMap<TypeId, Arc<serde_json::Value>>>> =
+fn schema_of<T: ToSchema + 'static>() -> Arc<BodySchema> {
+    static SCHEMAS: LazyLock<Mutex<HashMap<TypeId, Arc<BodySchema>>>> =
         LazyLock::new(Mutex::default);
     let mut cache = SCHEMAS.lock().unwrap_or_else(|e| e.into_inner());
     cache
         .entry(TypeId::of::<T>())
-        .or_insert_with(|| Arc::new(serde_json::to_value(T::schema()).unwrap_or_default()))
+        .or_insert_with(|| Arc::new(BodySchema::of::<T>()))
         .clone()
 }
 
@@ -175,5 +182,36 @@ impl From<JsonRejection> for AppError {
             }
             _ => Self::bad_request(codes::INVALID_JSON, message),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::Deserialize;
+    use utoipa::openapi::RefOr;
+    use utoipa::openapi::schema::{ObjectBuilder, Ref, Schema};
+
+    use super::*;
+
+    #[derive(Deserialize)]
+    struct Dangling {}
+
+    impl utoipa::PartialSchema for Dangling {
+        fn schema() -> RefOr<Schema> {
+            ObjectBuilder::new()
+                .property("inner", Ref::from_schema_name("Missing"))
+                .into()
+        }
+    }
+
+    impl ToSchema for Dangling {}
+
+    #[test]
+    fn a_ref_the_type_does_not_collect_fails_closed() {
+        let body = Bytes::from_static(br#"{"inner":{"anything":1}}"#);
+        assert!(matches!(
+            decode::<Dangling>(&body),
+            Err(AppError::Internal { .. })
+        ));
     }
 }
