@@ -342,6 +342,17 @@ test-one-db MODULE *ARGS:
     CLICKHOUSE_URL=http://127.0.0.1:8123 \
         cargo nextest run --test it -E 'test(/^{{MODULE}}::/)' --run-ignored all {{ARGS}}
 
+# Needs: `rustup component add llvm-tools-preview` + `cargo install --locked cargo-llvm-cov`.
+# Builds instrumented into its own llvm-cov-target dir, so the first run is cold.
+# Other report: `just coverage --summary-only` or `--lcov --output-path lcov.info`.
+# Line coverage of the whole suite, PG+CH tests included, on a fresh ci_verify DB.
+coverage *ARGS='--html --open':
+    docker exec -i uptimepage-postgres-1 psql -U monitor -d postgres -c "DROP DATABASE IF EXISTS ci_verify WITH (FORCE)"
+    docker exec -i uptimepage-postgres-1 psql -U monitor -d postgres -c "CREATE DATABASE ci_verify"
+    DATABASE_URL='postgres://monitor:monitor@127.0.0.1:5432/ci_verify' \
+    CLICKHOUSE_URL='http://127.0.0.1:8123' \
+        cargo llvm-cov nextest --workspace --no-fail-fast --run-ignored all {{ARGS}}
+
 # ── Benchmarks ──────────────────────────────────────────────────────────────
 
 # Uses a throwaway `ci_verify` DB so the dev DB is untouched (harness
