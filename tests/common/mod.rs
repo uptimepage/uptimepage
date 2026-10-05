@@ -896,6 +896,17 @@ pub fn issued_session(headers: &axum::http::HeaderMap) -> Option<&str> {
         .find(|c| c.starts_with(&prefix) && !c.starts_with(&format!("{prefix};")))
 }
 
+/// Whether a response expires the session cookie.
+pub fn cleared_session(headers: &axum::http::HeaderMap) -> bool {
+    let prefix = format!("{}=", test_config(|_| {}).auth.session.cookie_name);
+    headers
+        .get_all(axum::http::header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .filter(|c| c.starts_with(&prefix))
+        .any(|c| c.contains("Max-Age=0") || c.starts_with(&format!("{prefix};")))
+}
+
 pub async fn session_count(pool: &PgPool, user: Uuid) -> i64 {
     sqlx::query_scalar("SELECT count(*) FROM sessions WHERE user_id = $1")
         .bind(user)

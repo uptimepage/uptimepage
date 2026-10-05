@@ -86,6 +86,7 @@ mod notification_channels_test;
 mod notifier_test;
 mod oauth_flow_test;
 mod oauth_identity_link_test;
+mod oauth_login_test;
 mod oauth_metadata_test;
 mod on_call_test;
 mod openapi_test;
