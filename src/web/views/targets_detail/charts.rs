@@ -8,8 +8,7 @@ use crate::web::views::dashboard::{
     Polarity, count_delta, render_spark_path_domain, ribbon_class, uptime_pp_delta,
 };
 
-use super::load::confirmed_uptime_pct;
-use super::rows::KpiTrend;
+use super::rows::{KpiTrend, StatusSeg};
 
 // Target point count for the uptime sparkline; bucket width derives from it.
 pub(super) const SPARK_SEGMENTS: i64 = 48;
@@ -83,6 +82,11 @@ pub(super) fn build_kpi_trend(inp: KpiInputs) -> KpiTrend {
     }
 }
 
+pub(super) fn confirmed_uptime_pct(incidents: &[Incident], range: ClampedRange) -> f64 {
+    let down = confirmed_downtime_secs(incidents, range.from, range.to, Utc::now());
+    uptime_pct_from_downtime(down, (range.to - range.from).num_seconds())
+}
+
 /// Builds the uptime sparkline over a fixed 0–100 domain (healthy sits flat at
 /// the top, dips notch down). All-regions decomposes the confirmed headline:
 /// every bucket is `1 − confirmed-incident-overlap`, measured the same way as
@@ -143,23 +147,6 @@ fn availability_series(
         }
     }
     series
-}
-
-/// One cell of the uptime ribbon under the header. Mirrors the dashboard's
-/// fleet ribbon so both reuse `.dashboard-ribbon__seg` and its tooltip JS.
-pub struct StatusSeg {
-    /// `op` | `deg` | `maj` | `none` — drives the `dashboard-ribbon__seg--*` class.
-    pub class: &'static str,
-    /// Bucket start (`%H:%M`) and uptime figure, shown in the hover tooltip.
-    pub time: String,
-    pub stat: String,
-    /// ISO bounds of the bucket; a failing cell drills the drawer to this window.
-    pub from_iso: String,
-    pub to_iso: String,
-    /// Check counts in the bucket; the drawer shows "{bad} of {total} failing"
-    /// so a wide window's scale is known without fetching every row.
-    pub total: u64,
-    pub bad: u64,
 }
 
 /// Fixed-length `(total, up)` per bucket from the raw availability rollup, on the

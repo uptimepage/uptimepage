@@ -33,13 +33,10 @@ mod rows;
 #[cfg(test)]
 mod tests;
 
-pub use charts::StatusSeg;
-pub use load::{
-    CustomWindow, LiveData, LiveDataCache, PingTally, UnconfirmedFailures, live_data_cache,
-};
+pub use load::{CustomWindow, LiveData, LiveDataCache, UnconfirmedFailures, live_data_cache};
 pub use rows::{
     DetailCheckRows, DetailLive, FlowEvidenceView, FlowRunRow, FlowStepRow, HeartbeatLiveness,
-    IncidentRow, KpiTrend, RegionBreakdownRow, ResultRow, UptimeStatsView,
+    IncidentRow, KpiTrend, PingTally, RegionBreakdownRow, ResultRow, StatusSeg, UptimeStatsView,
 };
 
 pub(crate) use rows::WindowLabels;

@@ -5,7 +5,6 @@ use askama_web::WebTemplate;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use super::load::PingTally;
 use crate::domain::agent_wire::StepOutcome;
 use crate::domain::{CheckResult, Incident};
 use crate::storage::UptimeStats;
@@ -13,7 +12,6 @@ use crate::templates::filters;
 use crate::templates::format::{fmt_human, fmt_ts};
 use crate::web::views::dashboard::KpiDelta;
 
-use super::charts::StatusSeg;
 use super::fmt_error_display;
 use crate::web::views::dashboard;
 
@@ -109,6 +107,41 @@ impl HeartbeatLiveness {
             overdue: hb.down_at.is_some_and(|d| now > d),
         }
     }
+}
+
+/// What the page can say about a heartbeat's own reports. `Unavailable` keeps
+/// a failed read from falling back to the check count, which is the number the
+/// card exists to stop showing.
+#[derive(Clone, Copy)]
+pub enum PingTally {
+    Counted(u64),
+    Unavailable,
+}
+
+impl PingTally {
+    pub fn count(self) -> Option<u64> {
+        match self {
+            Self::Counted(n) => Some(n),
+            Self::Unavailable => None,
+        }
+    }
+}
+
+/// One cell of the uptime ribbon under the header. Mirrors the dashboard's
+/// fleet ribbon so both reuse `.dashboard-ribbon__seg` and its tooltip JS.
+pub struct StatusSeg {
+    /// `op` | `deg` | `maj` | `none` — drives the `dashboard-ribbon__seg--*` class.
+    pub class: &'static str,
+    /// Bucket start (`%H:%M`) and uptime figure, shown in the hover tooltip.
+    pub time: String,
+    pub stat: String,
+    /// ISO bounds of the bucket; a failing cell drills the drawer to this window.
+    pub from_iso: String,
+    pub to_iso: String,
+    /// Check counts in the bucket; the drawer shows "{bad} of {total} failing"
+    /// so a wide window's scale is known without fetching every row.
+    pub total: u64,
+    pub bad: u64,
 }
 
 #[derive(Template, WebTemplate)]

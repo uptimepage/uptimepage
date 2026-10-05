@@ -5,15 +5,16 @@ use moka::sync::Cache;
 use uuid::Uuid;
 
 use crate::app::AppState;
-use crate::domain::{Incident, OrgId, Target, confirmed_downtime_secs, uptime_pct_from_downtime};
+use crate::domain::{Incident, OrgId, Target};
 use crate::storage::{ClampedRange, TimeRange};
 use crate::templates::format::fmt_ts;
 use crate::web::error::{WebError, WebResult};
 
 use super::charts::{
-    KpiInputs, SPARK_SEGMENTS, StatusSeg, bucket_counts, build_kpi_trend, status_segments,
+    KpiInputs, SPARK_SEGMENTS, bucket_counts, build_kpi_trend, confirmed_uptime_pct,
+    status_segments,
 };
-use super::rows::{IncidentRow, KpiTrend, ResultRow, UptimeStatsView};
+use super::rows::{IncidentRow, KpiTrend, PingTally, ResultRow, StatusSeg, UptimeStatsView};
 use super::{INCIDENTS_PAGE_LIMIT, RESULTS_PAGE_LIMIT, resolve_window, wider_status_window};
 
 // Confirmed incidents over the longest window (90d) are few; this bounds the
@@ -191,24 +192,6 @@ pub(super) async fn load_flaps(
 /// it so a burst of either kind collapses to one CH round-trip. Inner
 /// fields are `Arc` so a cache hit clones a pointer instead of the
 /// full row vector + uptime struct per request.
-/// What the page can say about a heartbeat's own reports. `Unavailable` keeps
-/// a failed read from falling back to the check count, which is the number the
-/// card exists to stop showing.
-#[derive(Clone, Copy)]
-pub enum PingTally {
-    Counted(u64),
-    Unavailable,
-}
-
-impl PingTally {
-    pub fn count(self) -> Option<u64> {
-        match self {
-            Self::Counted(n) => Some(n),
-            Self::Unavailable => None,
-        }
-    }
-}
-
 pub struct LiveData {
     pub uptime: Arc<UptimeStatsView>,
     pub kpi: Arc<KpiTrend>,
@@ -497,11 +480,6 @@ async fn confirmed_incidents(
             false,
         )
         .await
-}
-
-pub(super) fn confirmed_uptime_pct(incidents: &[Incident], range: ClampedRange) -> f64 {
-    let down = confirmed_downtime_secs(incidents, range.from, range.to, Utc::now());
-    uptime_pct_from_downtime(down, (range.to - range.from).num_seconds())
 }
 
 /// The incidents-tab data for one monitor: the header badge's live status, the
