@@ -228,6 +228,12 @@ inherits = "release"
 debug = true
 strip = false
 
+# Dependencies are optimised in dev and test builds; this crate stays at 0, so
+# edits rebuild as fast as before. Unoptimised, highlighting, hashing and
+# templating at each test process start cost seconds per test.
+[profile.dev.package."*"]
+opt-level = 2
+
 # Every integration test in one binary; see tests/main.rs.
 [[test]]
 name = "it"
