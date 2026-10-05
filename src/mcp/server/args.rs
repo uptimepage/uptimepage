@@ -1,5 +1,5 @@
-use super::text::sanitize_data;
-use super::view::{channel_names, region_policy_str, sorted, tag_list};
+use super::text::{region_policy_str, sanitize_data, tag_list};
+use super::view::{channel_names, sorted};
 use crate::mcp::error::config_error;
 
 use chrono::{DateTime, Duration, Utc};

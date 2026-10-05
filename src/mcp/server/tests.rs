@@ -10,12 +10,14 @@ use super::maintenance::{
     schedule_prompt, window_view,
 };
 use super::support::deny_terraform;
-use super::text::{clean_public_text, create_prompt_lines, sanitize_data, sanitize_prompt};
+use super::text::{
+    clean_public_text, create_prompt_lines, probe_line, sanitize_data, sanitize_prompt,
+};
 use super::tools_read::IncidentPage;
 use super::view::{
     channel_names, check_config, check_timing, current_state, expected_status_str, flow_run_item,
-    incident_detail, incident_summary, ms_to_rfc3339, probe_line, region_cap, region_health,
-    region_items, region_policy_view, step_trend_item, ts_to_rfc3339, undeliverable_reason,
+    incident_detail, incident_summary, ms_to_rfc3339, region_cap, region_health, region_items,
+    region_policy_view, step_trend_item, ts_to_rfc3339, undeliverable_reason,
 };
 use super::*;
 

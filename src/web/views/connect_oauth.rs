@@ -17,7 +17,7 @@ use crate::domain::{ChannelConfig, OrgId};
 use crate::error::{AppError, Result};
 use crate::request::CurrentUser;
 use crate::storage::orgs::is_active_member;
-use crate::web::views::delegate_connect::{audit_delegated_create, finish_create};
+use crate::web::views::delegate_create::{audit_delegated_create, finish_create};
 use crate::web::views::notification_channels::{QuotaBlockLog, create_channel_deduped};
 
 /// Everything that distinguishes one OAuth connect provider from another.

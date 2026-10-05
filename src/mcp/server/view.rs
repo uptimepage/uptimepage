@@ -19,8 +19,8 @@ use crate::mcp::schema::{
     CheckConfig, CheckDiagnosticView, CheckTiming, DnsCheckConfig, DomainExpiryCheckConfig,
     FlowCheckConfig, FlowRunEvidence, FlowRunItem, FlowStepConfig, FlowStepRun, FlowStepTrendItem,
     HeartbeatCheckConfig, HttpCheckConfig, IncidentDetail, IncidentSummary, IncidentUpdateItem,
-    IncidentVisibilityResult, ManualCheckConfig, PingCheckConfig, ProbeOutcome, RegionHealth,
-    RegionItem, RegionPolicyArg, RegionPolicyMode, TcpCheckConfig, TlsCertCheckConfig,
+    IncidentVisibilityResult, ManualCheckConfig, PingCheckConfig, RegionHealth, RegionItem,
+    RegionPolicyArg, RegionPolicyMode, TcpCheckConfig, TlsCertCheckConfig,
 };
 
 pub(super) fn check_diagnostic(result: &CheckResult) -> Option<CheckDiagnosticView> {
@@ -116,17 +116,6 @@ pub(super) fn sorted(tags: &[String]) -> Vec<&str> {
     v
 }
 
-pub(super) fn tag_list(tags: &[String]) -> String {
-    if tags.is_empty() {
-        "none".to_string()
-    } else {
-        tags.iter()
-            .map(|t| sanitize_data(t))
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-}
-
 pub(super) fn region_policy_view(policy: RegionIncidentPolicy) -> RegionPolicyArg {
     let (mode, count) = match policy {
         RegionIncidentPolicy::Any => (RegionPolicyMode::Any, None),
@@ -135,33 +124,6 @@ pub(super) fn region_policy_view(policy: RegionIncidentPolicy) -> RegionPolicyAr
         RegionIncidentPolicy::Count(n) => (RegionPolicyMode::Count, Some(n)),
     };
     RegionPolicyArg { mode, count }
-}
-
-pub(super) fn region_policy_str(policy: RegionIncidentPolicy) -> String {
-    match policy {
-        RegionIncidentPolicy::Any => "any region down".to_string(),
-        RegionIncidentPolicy::Majority => "a majority of regions down".to_string(),
-        RegionIncidentPolicy::All => "every region down".to_string(),
-        RegionIncidentPolicy::Count(n) => format!("{n} regions down"),
-    }
-}
-
-/// One line a human can judge the trial run by.
-pub(super) fn probe_line(p: &ProbeOutcome) -> String {
-    let head = match (p.state.as_str(), p.http_status) {
-        ("up", Some(code)) => format!("passed, HTTP {code}"),
-        ("up", None) => "passed".to_string(),
-        (state, Some(code)) => format!("{state}, HTTP {code}"),
-        (state, None) => state.to_string(),
-    };
-    let result = match &p.error {
-        Some(err) => format!("{head} in {}ms — {err}", p.duration_ms),
-        None => format!("{head} in {}ms", p.duration_ms),
-    };
-    match &p.diagnostic {
-        Some(diagnostic) => format!("{result}; {}", diagnostic.summary),
-        None => result,
-    }
 }
 
 /// Flags against the resolved set, not the raw column: a plan cap trims it.

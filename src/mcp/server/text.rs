@@ -1,10 +1,9 @@
 use super::MAX_INCIDENT_MESSAGE_LEN;
-use super::view::{probe_line, region_policy_str, tag_list};
 use crate::storage::LifecycleOutcome;
 
 use rmcp::handler::server::wrapper::Json;
 
-use crate::domain::target::NewTarget;
+use crate::domain::target::{NewTarget, RegionIncidentPolicy};
 use crate::domain::text::is_invisible;
 use crate::domain::{CheckSpec, humanize_check_error};
 
@@ -110,6 +109,44 @@ pub(super) fn create_prompt_lines(
             .to_string(),
     });
     lines
+}
+
+pub(super) fn tag_list(tags: &[String]) -> String {
+    if tags.is_empty() {
+        "none".to_string()
+    } else {
+        tags.iter()
+            .map(|t| sanitize_data(t))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+pub(super) fn region_policy_str(policy: RegionIncidentPolicy) -> String {
+    match policy {
+        RegionIncidentPolicy::Any => "any region down".to_string(),
+        RegionIncidentPolicy::Majority => "a majority of regions down".to_string(),
+        RegionIncidentPolicy::All => "every region down".to_string(),
+        RegionIncidentPolicy::Count(n) => format!("{n} regions down"),
+    }
+}
+
+/// One line a human can judge the trial run by.
+pub(super) fn probe_line(p: &ProbeOutcome) -> String {
+    let head = match (p.state.as_str(), p.http_status) {
+        ("up", Some(code)) => format!("passed, HTTP {code}"),
+        ("up", None) => "passed".to_string(),
+        (state, Some(code)) => format!("{state}, HTTP {code}"),
+        (state, None) => state.to_string(),
+    };
+    let result = match &p.error {
+        Some(err) => format!("{head} in {}ms — {err}", p.duration_ms),
+        None => format!("{head} in {}ms", p.duration_ms),
+    };
+    match &p.diagnostic {
+        Some(diagnostic) => format!("{result}; {}", diagnostic.summary),
+        None => result,
+    }
 }
 
 /// Cap on any one untrusted value in a confirmation prompt.

@@ -23,7 +23,7 @@ use crate::error::{AppError, codes};
 use crate::request::CurrentOrg;
 use crate::templates::filters;
 use crate::web::error::WebResult;
-use crate::web::views::on_call::{Roster, org_members};
+use crate::web::views::on_call_roster::{Roster, org_members};
 use crate::web::views::resolve_org;
 
 /// Shifts listed in one day before the rest fold into a count.
@@ -317,7 +317,7 @@ mod tests {
     use crate::domain::{
         OnCallLayer, OnCallOverride, OnCallParticipant, OnCallSchedule, RotationType, UserId,
     };
-    use crate::web::views::on_call::MemberChoice;
+    use crate::web::views::on_call_roster::MemberChoice;
 
     fn t(s: &str) -> DateTime<Utc> {
         s.parse().unwrap()

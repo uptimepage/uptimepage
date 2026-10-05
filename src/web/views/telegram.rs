@@ -255,7 +255,7 @@ async fn link_chat(state: &AppState, code: &str, chat: ChatRef) -> Result<String
         tracing::warn!(?err, channel_id = %channel.id, "telegram link attach failed");
     }
     if delegated {
-        crate::web::views::delegate_connect::audit_delegated_create(state, org, &channel, "").await;
+        crate::web::views::delegate_create::audit_delegated_create(state, org, &channel, "").await;
     }
 
     let org_name = match &state.db {
