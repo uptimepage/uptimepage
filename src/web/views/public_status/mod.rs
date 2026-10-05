@@ -259,7 +259,7 @@ pub async fn logo(State(state): State<AppState>, headers: HeaderMap) -> Response
 fn incident_description(title: &str, component_name: &str, display_name: &str, tr: Tr) -> String {
     // Every interpolated value is customer text, so each is capped: three
     // unbounded names would push the tag well past what a SERP snippet shows.
-    let cap = crate::notifier::truncate_chars;
+    let cap = crate::text::truncate_chars;
     let full = crate::public_status::status_title(display_name);
     let page = if full.chars().count() <= 37 {
         full

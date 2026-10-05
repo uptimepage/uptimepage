@@ -51,7 +51,7 @@ pub(super) fn retry_after_hint(error: Option<&str>) -> Option<chrono::Duration> 
     const MAX_HINT_SECS: i64 = 3600;
     // Discord's sub-second hints floor to zero, which costs nothing: the value
     // only ever raises a backoff that has a floor of its own.
-    crate::notifier::json_int_field(error?, "retry_after")
+    crate::notifier::transport::json_int_field(error?, "retry_after")
         .filter(|secs| *secs >= 0)
         .map(|secs| chrono::Duration::seconds(secs.min(MAX_HINT_SECS)))
 }

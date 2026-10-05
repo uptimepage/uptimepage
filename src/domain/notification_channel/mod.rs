@@ -12,7 +12,7 @@
 //! 3. [`ChannelConfig`] variant + `with_transport!` arm — the compiler then
 //!    points at the remaining match sites (`build_notifier`, the form
 //!    prefill);
-//! 4. a `Notifier` impl in `crate::notifier` and its factory arm;
+//! 4. a `crate::notifier::transport::Notifier` impl and its factory arm;
 //! 5. the form UI: template variant panel + type card + JS config builder.
 //!
 //! The whole config blob is sealed at rest by the credentials KEK at the

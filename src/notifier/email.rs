@@ -5,9 +5,9 @@ use async_trait::async_trait;
 use crate::email::templates::incident_alert::IncidentAlert;
 use crate::email::{EmailAddress, EmailSender, EmailTemplate, TransactionalEmail};
 use crate::error::Result;
-use crate::notifier::Notifier;
 use crate::notifier::card::alert_link;
 use crate::notifier::event::IncidentNotice;
+use crate::notifier::transport::Notifier;
 
 /// Transactional-mail context for alert delivery: the process-wide sender
 /// plus the product's From identity. Owned by long-lived senders (engine,

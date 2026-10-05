@@ -9,8 +9,8 @@ use url::Url;
 
 use crate::error::Result;
 use crate::http_outbound::{OutboundHttpClient, post_json};
-use crate::notifier::Notifier;
 use crate::notifier::card::{AlertCard, CardField, CardTone, CardValue, escape_markdown};
+use crate::notifier::transport::Notifier;
 use crate::text::truncate_chars;
 
 const HEADING_MAX: usize = 256;

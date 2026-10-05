@@ -8,7 +8,8 @@ use crate::domain::{IncidentUrgency, NotificationReason};
 use crate::error::Result;
 use crate::http_outbound::{OutboundHttpClient, post_json_with_headers};
 use crate::notifier::event::IncidentNotice;
-use crate::notifier::{Notifier, truncate_chars};
+use crate::notifier::transport::Notifier;
+use crate::text::truncate_chars;
 
 // Gotify stores the message and imposes no documented cap; this one keeps a
 // long error sample from filling the notification drawer.

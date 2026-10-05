@@ -6,8 +6,8 @@ use url::Url;
 
 use crate::error::{AppError, Result};
 use crate::http_outbound::{OutboundHttpClient, post_bytes_with_headers};
-use crate::notifier::Notifier;
 use crate::notifier::event::IncidentNotice;
+use crate::notifier::transport::Notifier;
 
 /// Header carrying the signing timestamp (unix seconds) and the signature.
 const TIMESTAMP_HEADER: &str = "X-Uptimepage-Timestamp";

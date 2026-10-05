@@ -439,7 +439,7 @@ async fn build_notifier_telegram_app_needs_central_token() {
 
 #[tokio::test(start_paused = true)]
 async fn telegram_app_deferred_send_carries_retry_hint() {
-    use uptimepage::notifier::Notifier;
+    use uptimepage::notifier::transport::Notifier;
     use uptimepage::telegram::TelegramSendBudget;
 
     let budget = std::sync::Arc::new(TelegramSendBudget::new());

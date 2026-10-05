@@ -7,10 +7,10 @@ use url::Url;
 
 use crate::error::Result;
 use crate::http_outbound::{OutboundHttpClient, post_json};
-use crate::notifier::Notifier;
 use crate::notifier::card::{AlertCard, CardField, CardTone, CardValue};
 use crate::notifier::event::IncidentNotice;
-use crate::notifier::truncate_chars;
+use crate::notifier::transport::Notifier;
+use crate::text::truncate_chars;
 
 const FALLBACK_MAX: usize = 1000;
 const TITLE_MAX: usize = 256;

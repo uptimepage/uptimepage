@@ -7,8 +7,8 @@ use url::Url;
 use crate::domain::WhatsAppConfig;
 use crate::error::{AppError, Result};
 use crate::http_outbound::{OutboundHttpClient, post_json_with_headers};
-use crate::notifier::Notifier;
 use crate::notifier::event::IncidentNotice;
+use crate::notifier::transport::Notifier;
 
 const GRAPH_API_VERSION: &str = "v23.0";
 

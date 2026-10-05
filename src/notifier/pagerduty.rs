@@ -7,7 +7,8 @@ use crate::domain::{IncidentSeverity, NotificationReason};
 use crate::error::Result;
 use crate::http_outbound::{OutboundHttpClient, post_json};
 use crate::notifier::event::IncidentNotice;
-use crate::notifier::{Notifier, truncate_chars};
+use crate::notifier::transport::Notifier;
+use crate::text::truncate_chars;
 
 const ENQUEUE_URL: &str = "https://events.pagerduty.com/v2/enqueue";
 // Events API v2 caps payload.summary at 1024 characters.

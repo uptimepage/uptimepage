@@ -4,10 +4,10 @@ use url::Url;
 
 use crate::error::Result;
 use crate::http_outbound::{OutboundHttpClient, post_json};
-use crate::notifier::Notifier;
 use crate::notifier::card::alert_link;
 use crate::notifier::event::IncidentNotice;
-use crate::notifier::truncate_chars;
+use crate::notifier::transport::Notifier;
+use crate::text::truncate_chars;
 
 /// Google Chat caps message text at 4096 characters.
 const MAX_TEXT_CHARS: usize = 4096;

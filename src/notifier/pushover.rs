@@ -8,7 +8,8 @@ use crate::domain::{IncidentUrgency, NotificationReason};
 use crate::error::{AppError, Result};
 use crate::http_outbound::{OutboundHttpClient, get_json, post_json, post_json_capture};
 use crate::notifier::event::IncidentNotice;
-use crate::notifier::{Notifier, truncate_chars};
+use crate::notifier::transport::Notifier;
+use crate::text::truncate_chars;
 
 const MESSAGES_URL: &str = "https://api.pushover.net/1/messages.json";
 // Pushover caps: message 1024, title 250, url 512 characters.

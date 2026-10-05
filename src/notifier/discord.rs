@@ -9,10 +9,10 @@ use url::Url;
 use crate::domain::DiscordMention;
 use crate::error::Result;
 use crate::http_outbound::{OutboundHttpClient, post_json};
-use crate::notifier::Notifier;
 use crate::notifier::card::{AlertCard, CardField, CardTone, CardValue, Presses, escape_markdown};
 use crate::notifier::event::IncidentNotice;
-use crate::notifier::truncate_chars;
+use crate::notifier::transport::Notifier;
+use crate::text::truncate_chars;
 
 const TITLE_MAX: usize = 256;
 const DESCRIPTION_MAX: usize = 2048;

@@ -9,8 +9,8 @@ use url::Url;
 use crate::domain::NotificationReason;
 use crate::error::Result;
 use crate::http_outbound::{OutboundHttpClient, post_json};
-use crate::notifier::Notifier;
 use crate::notifier::event::IncidentNotice;
+use crate::notifier::transport::Notifier;
 
 use crate::notifier::card::{AlertCard, Presses};
 

@@ -14,8 +14,8 @@ use url::Url;
 
 use crate::error::{AppError, Result};
 use crate::http_outbound::{OutboundHttpClient, send_json_for_status};
-use crate::notifier::truncate_chars;
 use crate::security::redaction::redact_url_paths;
+use crate::text::truncate_chars;
 
 /// Our app's Interactions Endpoint URL, appended to `auth.public_base_url`.
 pub const INTERACTIONS_PATH: &str = "/hooks/discord/interactions";

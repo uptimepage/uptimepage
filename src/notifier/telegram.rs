@@ -7,7 +7,7 @@ use url::Url;
 use crate::error::{AppError, Result};
 use crate::http_outbound::{OutboundHttpClient, post_json};
 use crate::notifier::event::IncidentNotice;
-use crate::notifier::{ChatMigration, Notifier, json_int_field};
+use crate::notifier::transport::{ChatMigration, Notifier, json_int_field};
 use crate::telegram::TelegramSendBudget;
 
 /// Telegram Bot API sender. The bot token is embedded in the fixed

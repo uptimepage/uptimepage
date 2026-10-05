@@ -10,9 +10,9 @@ use crate::error::{AppError, Result};
 use crate::http_outbound::{
     OutboundHttpClient, post_form_with_headers, post_json_capture, post_json_with_headers,
 };
-use crate::notifier::Notifier;
 use crate::notifier::event::IncidentNotice;
-use crate::notifier::truncate_chars;
+use crate::notifier::transport::Notifier;
+use crate::text::truncate_chars;
 
 // SMS is billed per 160-char (GSM-7) segment. Cap the body so a long monitor
 // name plus the incident link can't silently fan out into an expensive

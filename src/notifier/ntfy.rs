@@ -8,7 +8,8 @@ use crate::domain::{IncidentUrgency, NotificationReason};
 use crate::error::Result;
 use crate::http_outbound::{OutboundHttpClient, post_json_with_headers};
 use crate::notifier::event::IncidentNotice;
-use crate::notifier::{Notifier, truncate_bytes};
+use crate::notifier::transport::Notifier;
+use crate::text::truncate_bytes;
 
 // ntfy's default server-side cap is 4096 BYTES; an over-limit publish is
 // silently converted to a .txt attachment (or rejected when attachments
@@ -16,7 +17,7 @@ use crate::notifier::{Notifier, truncate_bytes};
 const MAX_MESSAGE_BYTES: usize = 4096;
 
 /// Acknowledge action for a push notification. Its own type so the factory
-/// call site reads, the way [`crate::notifier::EmailAlert`] does for mail.
+/// call site reads, the way [`crate::notifier::email::EmailAlert`] does for mail.
 #[derive(Clone)]
 pub struct PushAck {
     pub url: String,
