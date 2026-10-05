@@ -26,10 +26,12 @@ use tower::ServiceExt;
 use uptimepage::auth::scope::ScopeSet;
 use uptimepage::domain::target::{MAX_TAG_LEN, MAX_TAGS_PER_TARGET};
 use uptimepage::domain::{
-    CheckSpec, ExpectedStatus, NewMaintenanceWindow, NewTarget, OrgId, UserId, WriteSource,
+    CheckSpec, ExpectedStatus, NewMaintenanceWindow, NewStatusPage, NewStatusPageComponent,
+    NewTarget, OrgId, StatusPageId, UserId, WriteSource,
 };
 use uptimepage::storage::{
-    MaintenanceStore, PgMaintenanceStore, PostgresTargetStore, TargetStore, create_org_with_owner,
+    MaintenanceStore, PgMaintenanceStore, PgStatusPageStore, PostgresTargetStore, StatusPageStore,
+    TargetStore, create_org_with_owner,
 };
 use url::Url;
 use uuid::Uuid;
@@ -102,13 +104,19 @@ const UNCONFIRMED: &str = "unconfirmed:no_elicitation";
 /// The `{code, message, retryable}` a tool-execution error carries, or `None`
 /// when the call succeeded.
 fn error_code(result: &Value) -> Option<String> {
+    tool_error(result)?["code"].as_str().map(str::to_string)
+}
+
+/// The message a tool-execution error carries; empty when the call succeeded.
+fn error_message(result: &Value) -> &str {
+    tool_error(result)
+        .and_then(|e| e["message"].as_str())
+        .unwrap_or_default()
+}
+
+fn tool_error(result: &Value) -> Option<&Value> {
     let payload = &result["result"];
-    if payload["isError"] != Value::Bool(true) {
-        return None;
-    }
-    payload["structuredContent"]["error"]["code"]
-        .as_str()
-        .map(str::to_string)
+    (payload["isError"] == Value::Bool(true)).then(|| &payload["structuredContent"]["error"])
 }
 
 fn secret_monitor() -> NewTarget {
@@ -202,19 +210,40 @@ async fn seed_channel(pool: &PgPool, org: OrgId, name: &str) -> Uuid {
 
 /// Router with `/mcp` mounted, two orgs, and a connector bound to the first.
 async fn connect(pool: &PgPool) -> (Connector, OrgId, OrgId) {
-    let app = build_saas_router_with_pg_cfg(pool.clone(), |cfg| {
-        cfg.mcp.enabled = true;
-    })
-    .await;
+    let app = mcp_app(pool).await;
     let (org_a, user_a) = seed_org(pool, "mcpa").await;
     let (org_b, _) = seed_org(pool, "mcpb").await;
+    let mcp = connector(app, pool, user_a, org_a, &["full_access"]).await;
+    (mcp, org_a, org_b)
+}
 
+async fn mcp_app(pool: &PgPool) -> Router {
+    build_saas_router_with_pg_cfg(pool.clone(), |cfg| {
+        cfg.mcp.enabled = true;
+    })
+    .await
+}
+
+/// A session for `user`'s token bound to `org` with `scopes`.
+async fn connector(
+    app: Router,
+    pool: &PgPool,
+    user: UserId,
+    org: OrgId,
+    scopes: &[&str],
+) -> Connector {
+    let scope_set = ScopeSet::from_strs(scopes.iter().copied());
+    assert_eq!(
+        scope_set.to_strings().len(),
+        scopes.len(),
+        "unknown scope in {scopes:?}"
+    );
     let created = uptimepage::auth::api_tokens::create(
         pool,
-        user_a,
+        user,
         "tenancy-probe",
-        &ScopeSet::from_strs(["full_access"]),
-        Some(org_a),
+        &scope_set,
+        Some(org),
         None,
         16,
         10,
@@ -246,15 +275,11 @@ async fn connect(pool: &PgPool) -> (Connector, OrgId, OrgId) {
         .unwrap()
         .to_string();
 
-    (
-        Connector {
-            app,
-            token: created.token,
-            session,
-        },
-        org_a,
-        org_b,
-    )
+    Connector {
+        app,
+        token: created.token,
+        session,
+    }
 }
 
 #[tokio::test]
@@ -859,4 +884,468 @@ async fn a_window_is_scheduled_edited_ended_and_cancelled() {
             .as_deref(),
         Some(UNCONFIRMED)
     );
+}
+
+const SEEDED_PAGE: &str = "Secret Status";
+
+async fn seed_page(pool: &PgPool, org: OrgId, slug: &str) -> StatusPageId {
+    PgStatusPageStore::new(pool.clone())
+        .create(
+            org,
+            NewStatusPage {
+                slug: slug.into(),
+                name: SEEDED_PAGE.into(),
+                enabled: true,
+            },
+            WriteSource::Ui,
+            i64::MAX,
+            None,
+        )
+        .await
+        .expect("insert page")
+        .expect("page created")
+        .id
+}
+
+/// `(name, enabled)` of the page at `slug`, whichever org holds it.
+async fn page_row(pool: &PgPool, slug: &str) -> Option<(String, bool)> {
+    sqlx::query_as("SELECT name, enabled FROM status_pages WHERE slug = $1")
+        .bind(slug)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+}
+
+/// `(monitor, public_name)` of every component on the page at `slug`, in
+/// display order.
+async fn components(pool: &PgPool, slug: &str) -> Vec<(Uuid, Option<String>)> {
+    sqlx::query_as(
+        "SELECT c.target_id, c.public_name FROM status_page_components c \
+         JOIN status_pages p ON p.id = c.status_page_id \
+         WHERE p.slug = $1 ORDER BY c.sort_order",
+    )
+    .bind(slug)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+#[ignore]
+async fn status_page_tools_cannot_reach_another_orgs_page_or_monitor() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (mcp, org_a, org_b) = connect(&pool).await;
+    let a_target = seed_monitor(&pool, org_a).await;
+    let b_target = seed_monitor(&pool, org_b).await;
+    let b_slug = unique_slug("mcpbpage");
+    let b_page = seed_page(&pool, org_b, &b_slug).await;
+    PgStatusPageStore::new(pool.clone())
+        .add_component(
+            org_b,
+            b_page,
+            NewStatusPageComponent {
+                target_id: b_target,
+                public_name: None,
+                public_description: None,
+                public_group: None,
+                sort_order: 0,
+                detail_link_enabled: false,
+            },
+            i64::MAX,
+            None,
+        )
+        .await
+        .expect("component on B's page");
+
+    let taken = mcp
+        .call(
+            "create_status_page",
+            json!({ "slug": b_slug, "name": "Taken" }),
+        )
+        .await;
+    assert_eq!(
+        error_code(&taken).as_deref(),
+        Some("invalid_argument"),
+        "{taken}"
+    );
+    assert!(error_message(&taken).contains("already taken"), "{taken}");
+
+    for (tool, args) in [
+        (
+            "update_status_page",
+            json!({ "slug": b_slug, "name": "Taken", "enabled": false }),
+        ),
+        (
+            "add_status_page_components",
+            json!({ "slug": b_slug, "components": [{ "monitor_id": a_target }] }),
+        ),
+        (
+            "update_status_page_component",
+            json!({ "slug": b_slug, "monitor_id": b_target, "public_name": "Taken" }),
+        ),
+    ] {
+        let refused = mcp.call(tool, args).await;
+        assert_eq!(
+            error_code(&refused).as_deref(),
+            Some("not_found"),
+            "{tool}: {refused}"
+        );
+        assert_eq!(
+            error_message(&refused),
+            "status page not found",
+            "{tool} must not resolve another org's page"
+        );
+    }
+
+    let a_slug = unique_slug("mcpapage");
+    let created = mcp
+        .call(
+            "create_status_page",
+            json!({ "slug": a_slug, "name": "Acme" }),
+        )
+        .await;
+    assert_eq!(error_code(&created), None, "{created}");
+    let moved = mcp
+        .call(
+            "update_status_page",
+            json!({ "slug": a_slug, "new_slug": b_slug }),
+        )
+        .await;
+    assert_eq!(
+        error_code(&moved).as_deref(),
+        Some("invalid_argument"),
+        "{moved}"
+    );
+    assert!(error_message(&moved).contains("already taken"), "{moved}");
+    assert_eq!(page_row(&pool, &a_slug).await, Some(("Acme".into(), false)));
+
+    let borrowed = mcp
+        .call(
+            "add_status_page_components",
+            json!({ "slug": a_slug, "components": [
+                { "monitor_id": b_target },
+                { "monitor_id": Uuid::now_v7() },
+            ] }),
+        )
+        .await;
+    assert_eq!(error_code(&borrowed), None, "{borrowed}");
+    let outcome = &borrowed["result"]["structuredContent"];
+    assert_eq!(outcome["added"], 0);
+    let results = &outcome["results"];
+    assert_eq!(results[0]["outcome"], "failed");
+    assert!(results[0]["error"].is_string(), "{borrowed}");
+    assert_eq!(
+        results[0]["error"], results[1]["error"],
+        "another org's monitor must read exactly like one that does not exist"
+    );
+    assert!(
+        components(&pool, &a_slug).await.is_empty(),
+        "another org's monitor must never be published on this page"
+    );
+    let [foreign, missing] = [b_target, Uuid::now_v7()]
+        .map(|id| json!({ "slug": a_slug, "monitor_id": id, "public_name": "Taken" }));
+    let foreign = mcp.call("update_status_page_component", foreign).await;
+    let missing = mcp.call("update_status_page_component", missing).await;
+    assert_eq!(
+        error_code(&foreign).as_deref(),
+        Some("not_found"),
+        "{foreign}"
+    );
+    assert_eq!(
+        (error_code(&foreign), error_message(&foreign)),
+        (error_code(&missing), error_message(&missing)),
+        "another org's monitor must read exactly like one that does not exist"
+    );
+
+    assert_eq!(
+        page_row(&pool, &b_slug).await,
+        Some((SEEDED_PAGE.into(), true))
+    );
+    assert_eq!(components(&pool, &b_slug).await, vec![(b_target, None)]);
+}
+
+#[tokio::test]
+#[ignore]
+async fn status_pages_are_written_only_by_an_owner_with_the_scope() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let app = mcp_app(&pool).await;
+    let (org_a, owner) = seed_org(&pool, "mcpa").await;
+    let target = seed_monitor(&pool, org_a).await;
+    let slug = unique_slug("mcpown");
+    seed_page(&pool, org_a, &slug).await;
+
+    let member = make_user(&pool, "mcpmember").await;
+    sqlx::query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'member')")
+        .bind(member.0)
+        .bind(org_a.0)
+        .execute(&pool)
+        .await
+        .expect("seed member");
+    let as_member = connector(app.clone(), &pool, member, org_a, &["full_access"]).await;
+    let read_only = connector(app, &pool, owner, org_a, &["status_page:read"]).await;
+
+    let new_slug = unique_slug("mcpnew");
+    for (mcp, refusal) in [
+        (&as_member, "owner-managed"),
+        (&read_only, "`status_page:write`"),
+    ] {
+        for (tool, args) in [
+            (
+                "create_status_page",
+                json!({ "slug": new_slug, "name": "Shadow" }),
+            ),
+            (
+                "update_status_page",
+                json!({ "slug": slug, "new_slug": new_slug }),
+            ),
+            (
+                "add_status_page_components",
+                json!({ "slug": slug, "components": [{ "monitor_id": target }] }),
+            ),
+            (
+                "update_status_page_component",
+                json!({ "slug": slug, "monitor_id": target, "public_name": "Shadow" }),
+            ),
+        ] {
+            let refused = mcp.call(tool, args).await;
+            assert_eq!(
+                error_code(&refused).as_deref(),
+                Some("insufficient_scope"),
+                "{tool}"
+            );
+            assert!(
+                error_message(&refused).contains(refusal),
+                "{tool}: {refused}"
+            );
+        }
+    }
+
+    assert!(page_row(&pool, &new_slug).await.is_none());
+    assert_eq!(
+        page_row(&pool, &slug).await,
+        Some((SEEDED_PAGE.into(), true))
+    );
+    assert!(components(&pool, &slug).await.is_empty());
+}
+
+#[tokio::test]
+#[ignore]
+async fn a_page_is_created_curated_and_published() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (mcp, org_a, _) = connect(&pool).await;
+    let [api, web, worker] = [
+        seed_monitor(&pool, org_a).await,
+        seed_monitor(&pool, org_a).await,
+        seed_monitor(&pool, org_a).await,
+    ];
+    let slug = unique_slug("mcppage");
+
+    for (tool, args) in [
+        (
+            "create_status_page",
+            json!({ "slug": "Not A Slug!", "name": "Acme" }),
+        ),
+        ("create_status_page", json!({ "slug": slug, "name": "   " })),
+    ] {
+        let refused = mcp.call(tool, args).await;
+        assert_eq!(
+            error_code(&refused).as_deref(),
+            Some("invalid_argument"),
+            "{refused}"
+        );
+    }
+
+    let created = mcp
+        .call(
+            "create_status_page",
+            json!({ "slug": slug.to_uppercase(), "name": "Acme" }),
+        )
+        .await;
+    assert_eq!(error_code(&created), None, "{created}");
+    let page = &created["result"]["structuredContent"];
+    assert_eq!(page["slug"], slug.as_str(), "slugs are stored lowercase");
+    assert_eq!(page["enabled"], false, "a new page starts unpublished");
+    assert!(
+        page["public_url"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("{slug}.{}", common::SAAS_BASE_DOMAIN)),
+        "{page}"
+    );
+    assert_eq!(
+        latest_audit_detail(&pool, org_a, "create_status_page")
+            .await
+            .as_deref(),
+        Some(UNCONFIRMED)
+    );
+
+    for args in [
+        json!({ "slug": slug, "components": [] }),
+        json!({ "slug": slug, "components": [{ "monitor_id": "not-a-uuid" }] }),
+        json!({ "slug": slug, "components": [
+            { "monitor_id": api },
+            { "monitor_id": web, "public_name": "x".repeat(81) },
+        ] }),
+    ] {
+        let refused = mcp.call("add_status_page_components", args).await;
+        assert_eq!(
+            error_code(&refused).as_deref(),
+            Some("invalid_argument"),
+            "{refused}"
+        );
+    }
+    assert!(
+        components(&pool, &slug).await.is_empty(),
+        "a bad entry anywhere in the batch applies none of it"
+    );
+
+    let added = mcp
+        .call(
+            "add_status_page_components",
+            json!({ "slug": slug, "components": [
+                { "monitor_id": api, "public_name": "API" },
+                { "monitor_id": web },
+            ] }),
+        )
+        .await;
+    assert_eq!(error_code(&added), None, "{added}");
+    assert_eq!(added["result"]["structuredContent"]["added"], 2);
+    let again = mcp
+        .call(
+            "add_status_page_components",
+            json!({ "slug": slug, "components": [
+                { "monitor_id": api },
+                { "monitor_id": worker },
+            ] }),
+        )
+        .await;
+    assert_eq!(error_code(&again), None, "{again}");
+    let results = &again["result"]["structuredContent"]["results"];
+    assert_eq!(results[0]["outcome"], "already_on_page");
+    assert_eq!(results[1]["outcome"], "added");
+    assert_eq!(
+        components(&pool, &slug).await,
+        vec![(api, Some("API".into())), (web, None), (worker, None)],
+        "a later batch lands after the components already shown"
+    );
+
+    let renamed = mcp
+        .call(
+            "update_status_page_component",
+            json!({ "slug": slug, "monitor_id": web, "public_name": "Website" }),
+        )
+        .await;
+    assert_eq!(error_code(&renamed), None, "{renamed}");
+    assert_eq!(
+        components(&pool, &slug).await[1].1.as_deref(),
+        Some("Website")
+    );
+    let stranger = seed_monitor(&pool, org_a).await;
+    for args in [
+        json!({ "slug": slug, "monitor_id": stranger, "public_name": "Nope" }),
+        json!({ "slug": unique_slug("nopage"), "monitor_id": web, "public_name": "Nope" }),
+    ] {
+        let refused = mcp.call("update_status_page_component", args).await;
+        assert_eq!(
+            error_code(&refused).as_deref(),
+            Some("not_found"),
+            "{refused}"
+        );
+    }
+    assert_eq!(
+        error_code(
+            &mcp.call(
+                "update_status_page_component",
+                json!({ "slug": slug, "monitor_id": web })
+            )
+            .await
+        )
+        .as_deref(),
+        Some("invalid_argument")
+    );
+
+    assert_eq!(
+        error_code(
+            &mcp.call("update_status_page", json!({ "slug": slug }))
+                .await
+        )
+        .as_deref(),
+        Some("invalid_argument"),
+        "an update that changes nothing is refused"
+    );
+    let moved = unique_slug("mcpmoved");
+    let published = mcp
+        .call(
+            "update_status_page",
+            json!({ "slug": slug, "name": "Acme Status", "new_slug": moved, "enabled": true }),
+        )
+        .await;
+    assert_eq!(error_code(&published), None, "{published}");
+    let page = &published["result"]["structuredContent"];
+    assert_eq!(page["slug"], moved.as_str());
+    assert_eq!(page["enabled"], true);
+    assert_eq!(
+        page_row(&pool, &moved).await,
+        Some(("Acme Status".into(), true))
+    );
+    assert!(
+        page_row(&pool, &slug).await.is_none(),
+        "the old slug is gone"
+    );
+    assert_eq!(
+        error_code(
+            &mcp.call(
+                "update_status_page",
+                json!({ "slug": slug, "enabled": false })
+            )
+            .await
+        )
+        .as_deref(),
+        Some("not_found")
+    );
+    assert_eq!(components(&pool, &moved).await.len(), 3);
+}
+
+#[tokio::test]
+#[ignore]
+async fn a_connector_cannot_create_past_the_plans_page_cap() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (mcp, org_a, _) = connect(&pool).await;
+    let max = common::plan_for(&pool, org_a).await.max_status_pages;
+    for _ in 0..max {
+        seed_page(&pool, org_a, &unique_slug("mcpcap")).await;
+    }
+
+    let over = unique_slug("mcpover");
+    let refused = mcp
+        .call(
+            "create_status_page",
+            json!({ "slug": over, "name": "One more" }),
+        )
+        .await;
+
+    assert_eq!(
+        error_code(&refused).as_deref(),
+        Some("invalid_argument"),
+        "{refused}"
+    );
+    assert!(
+        error_message(&refused).contains("limit reached"),
+        "{refused}"
+    );
+    assert!(page_row(&pool, &over).await.is_none());
+    let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM status_pages WHERE org_id = $1")
+        .bind(org_a.0)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, i64::from(max));
 }
