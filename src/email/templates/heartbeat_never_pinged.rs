@@ -1,6 +1,5 @@
 use crate::email::templates::layout::{self, ButtonStyle, Page};
-use crate::email::templates::{duration_words, html_escape};
-use crate::email::trait_def::RenderedEmail;
+use crate::email::templates::{RenderedEmail, duration_words, html_escape};
 
 pub struct UnwiredHeartbeat<'a> {
     pub monitor_name: &'a str,

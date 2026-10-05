@@ -1,8 +1,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::email::templates::layout::{self, ButtonStyle, Page};
-use crate::email::templates::{html_escape, utc_stamp};
-use crate::email::trait_def::RenderedEmail;
+use crate::email::templates::{RenderedEmail, html_escape, utc_stamp};
 
 pub fn render(
     site_name: &str,
@@ -72,7 +71,7 @@ mod tests {
     use super::render;
     use chrono::{TimeZone, Utc};
 
-    fn hostile() -> crate::email::trait_def::RenderedEmail {
+    fn hostile() -> crate::email::templates::RenderedEmail {
         render(
             "Uptimepage",
             "verify your account, action required",

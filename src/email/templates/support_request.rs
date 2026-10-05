@@ -1,6 +1,5 @@
 use crate::email::templates::layout::{self, Page};
-use crate::email::templates::single_line;
-use crate::email::trait_def::RenderedEmail;
+use crate::email::templates::{RenderedEmail, single_line};
 
 /// What the operator needs to answer without a round-trip. Only `message` and
 /// `page_url` come from the caller; the rest is server-derived.

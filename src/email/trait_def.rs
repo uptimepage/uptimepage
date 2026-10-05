@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
-use super::templates;
-pub use super::templates::incident_alert::IncidentAlert;
+use super::templates::incident_alert::IncidentAlert;
+use super::templates::{self, RenderedEmail};
 use crate::domain::{Landing, Locale};
 use crate::i18n::Tr;
 
@@ -498,13 +498,6 @@ impl EmailTemplate {
             _ => None,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RenderedEmail {
-    pub subject: String,
-    pub text_body: String,
-    pub html_body: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

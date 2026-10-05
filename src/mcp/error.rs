@@ -15,8 +15,6 @@ use serde_json::json;
 
 use crate::error::AppError;
 
-use super::audit::Outcome;
-
 /// Stable machine codes the model (and our tests) can branch on.
 pub mod codes {
     pub const INVALID_ARGUMENT: &str = "invalid_argument";
@@ -178,15 +176,5 @@ pub(super) fn probe_dispatch_error(e: crate::error::AppError) -> McpToolError {
         }
         AppError::Internal { .. } | AppError::Other(_) => McpToolError::internal(e.to_string()),
         other => McpToolError::invalid_argument(other.to_string()),
-    }
-}
-
-/// Map a write-tool error to an audit outcome: server faults are `error`;
-/// everything else (scope, confirmation, bad input, not-found) is a caller-side
-/// `denied`.
-pub(super) fn outcome_for(e: &McpToolError) -> Outcome {
-    match e.code {
-        codes::INTERNAL | codes::PROBE_UNAVAILABLE | codes::PROBE_BUSY => Outcome::Error,
-        _ => Outcome::Denied,
     }
 }

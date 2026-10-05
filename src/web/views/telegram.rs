@@ -16,10 +16,10 @@ use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::security::sha256_hex;
 use crate::storage::LinkPurpose;
-use crate::telegram::{
-    ChatRef, TelegramClient, Update, WebhookAction, classify_update, webhook_secret_matches,
-};
+use crate::telegram::{ChatRef, Update, WebhookAction, classify_update, webhook_secret_matches};
 use crate::web::views::notification_channels::{QuotaBlockLog, create_channel_deduped};
+
+use super::telegram_send::spawn_send;
 
 const SECRET_HEADER: &str = "x-telegram-bot-api-secret-token";
 
@@ -270,32 +270,4 @@ async fn link_chat(state: &AppState, code: &str, chat: ChatRef) -> Result<String
         Some(name) => format!("Linked to {name} — alerts will arrive in this chat."),
         None => "Linked — alerts will arrive in this chat.".to_string(),
     })
-}
-
-pub(super) fn bot(state: &AppState) -> TelegramClient {
-    TelegramClient::new(
-        state.outbound_http.clone(),
-        state.cfg.telegram.bot_token.expose_secret(),
-    )
-}
-
-/// Message a chat, as a reply to `reply_to` when given.
-pub(super) fn spawn_send(state: &AppState, chat_id: i64, reply_to: Option<i64>, text: String) {
-    let client = bot(state);
-    let budget = state.telegram_send_budget.clone();
-    tokio::spawn(async move {
-        // A reply deferred past the budget's wait ceiling is dropped — a late
-        // confirmation is noise, and alerts keep their slots.
-        if let Err(deferred) = budget.acquire(chat_id).await {
-            tracing::warn!(chat_id, ?deferred, "telegram reply dropped by send budget");
-            return;
-        }
-        let sent = match reply_to {
-            Some(message_id) => client.send_reply(chat_id, message_id, &text).await,
-            None => client.send_message(chat_id, &text).await,
-        };
-        if let Err(err) = sent {
-            tracing::warn!(?err, chat_id, "telegram reply failed");
-        }
-    });
 }

@@ -18,7 +18,7 @@ use x509_parser::prelude::FromDer;
 
 use crate::config::{CheckerConfig, DnsConfig, HttpClientConfig, SecurityConfig};
 use crate::error::{AppError, Result};
-use crate::http_client::connector::ConnectParams;
+use crate::http_client::connector::{ChainFault, ConnectParams};
 use crate::http_client::dns::HickoryDnsResolver;
 use crate::metric_names;
 use crate::security::SsrfGuard;
@@ -138,30 +138,6 @@ fn server_roots() -> RootCertStore {
     }
     roots
 }
-
-/// The `UnknownIssuer` cases a reader can act on. Both reach the customer as
-/// "certificate not trusted" otherwise, which names the symptom and hides what
-/// the reader has to change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ChainFault {
-    /// One cert, not self-issued, naming its issuer over AIA. The server
-    /// withheld the intermediate, or its CA is one we do not carry; the leaf
-    /// alone cannot say which, so the wording names neither. Browsers fetch
-    /// the AIA cert and paper over the first case.
-    Incomplete,
-    SelfSigned,
-}
-
-impl std::fmt::Display for ChainFault {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Incomplete => "server sent only its own certificate",
-            Self::SelfSigned => "certificate is self-signed",
-        })
-    }
-}
-
-impl std::error::Error for ChainFault {}
 
 /// Splits `UnknownIssuer` into the [`ChainFault`] cases, which needs the peer
 /// chain and so has to happen inside verification. Only ever renames a

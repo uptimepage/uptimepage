@@ -1,8 +1,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::email::templates::layout::{self, ButtonStyle, Page, Tone};
-use crate::email::templates::subscriber_footnote;
-use crate::email::trait_def::RenderedEmail;
+use crate::email::templates::{RenderedEmail, subscriber_footnote};
 use crate::i18n::Tr;
 
 #[allow(clippy::too_many_arguments)]
@@ -89,7 +88,7 @@ mod tests {
     use crate::i18n::Tr;
     use chrono::{TimeZone, Utc};
 
-    fn rendered(phase: &str) -> crate::email::trait_def::RenderedEmail {
+    fn rendered(phase: &str) -> crate::email::templates::RenderedEmail {
         render(
             Tr::default(),
             "Acme status",

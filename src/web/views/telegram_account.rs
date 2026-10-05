@@ -10,7 +10,7 @@ use crate::security::sha256_hex;
 use crate::storage::linked_apps::{Claimant, LinkOutcome};
 use crate::telegram::Person;
 
-use super::telegram::spawn_send;
+use super::telegram_send::spawn_send;
 
 pub(super) async fn handle_link(state: &AppState, code: &str, person: &Person, chat_id: i64) {
     let text = link(state, code, person).await;

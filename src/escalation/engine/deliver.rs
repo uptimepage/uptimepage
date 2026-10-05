@@ -12,8 +12,8 @@ use crate::error::Result;
 use crate::notifier::event::IncidentNotice;
 use crate::notifier::{EmailAlert, build_notifier, notify_following_moves};
 
-use super::rules::{log_error_snippet, push_target, retry_after_hint};
-use super::{PageTarget, Worker};
+use super::Worker;
+use super::rules::{PageTarget, log_error_snippet, push_target, retry_after_hint};
 use crate::metric_names;
 use crate::security::redaction::redact_url_paths;
 

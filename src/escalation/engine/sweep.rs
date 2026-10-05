@@ -14,8 +14,8 @@ use crate::error::Result;
 use crate::notifier::event::IncidentNotice;
 use crate::storage::{Actor, DueIncident, PendingNotification, QUEUED_TAKEOVER_SECS};
 
-use super::rules::{Paged, channel_targets, reason_is_stale, resolvable_channels};
-use super::{PageTarget, SWEEP_CONCURRENCY, Worker};
+use super::rules::{PageTarget, Paged, channel_targets, reason_is_stale, resolvable_channels};
+use super::{SWEEP_CONCURRENCY, Worker};
 
 /// Cap on the transport response quoted into the mail: a broken endpoint
 /// answers with a page of HTML.

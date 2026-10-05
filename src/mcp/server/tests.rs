@@ -37,9 +37,9 @@ use crate::domain::{
     AlertBinding, CheckSpec, ExpectedStatus, FlowStep, MaintenanceWindow, NewMaintenanceWindow,
     TargetAlerts, WriteSource,
 };
-use crate::mcp::audit::Outcome;
+use crate::mcp::audit::{Outcome, outcome_for};
 use crate::mcp::cursor;
-use crate::mcp::error::{codes, outcome_for, probe_dispatch_error};
+use crate::mcp::error::{codes, probe_dispatch_error};
 use crate::mcp::schema::{
     CheckConfig, FieldChange, MaintenanceStatus, MonitorDetail, MonitorUpdateResult, NewCheck,
     ProbeOutcome, RegionPolicyArg, RegionPolicyMode, UpdateMaintenanceArgs, UpdateMonitorArgs,

@@ -1,7 +1,6 @@
 use crate::domain::IncidentStatusPhase;
 use crate::email::templates::layout::{self, ButtonStyle, Page, Tone};
-use crate::email::templates::{single_line, subscriber_footnote};
-use crate::email::trait_def::RenderedEmail;
+use crate::email::templates::{RenderedEmail, single_line, subscriber_footnote};
 use crate::i18n::Tr;
 
 pub fn render(

@@ -6,8 +6,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::email::templates::layout::{self, Page, Tone};
-use crate::email::templates::utc_stamp;
-use crate::email::trait_def::RenderedEmail;
+use crate::email::templates::{RenderedEmail, utc_stamp};
 
 pub fn render(site_name: &str, scheduled_purge_at: DateTime<Utc>) -> RenderedEmail {
     let purge_human = utc_stamp(scheduled_purge_at);

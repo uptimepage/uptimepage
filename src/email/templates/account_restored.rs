@@ -1,8 +1,8 @@
 //! Account-restored notification. The deletion mail promised a date; this one
 //! retracts it.
 
+use crate::email::templates::RenderedEmail;
 use crate::email::templates::layout::{self, Page, Tone};
-use crate::email::trait_def::RenderedEmail;
 
 pub fn render(site_name: &str) -> RenderedEmail {
     let subject = format!("Your {site_name} account has been restored");

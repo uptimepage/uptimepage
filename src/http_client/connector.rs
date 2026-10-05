@@ -15,12 +15,35 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 
-use crate::http_client::client::ChainFault;
 use crate::http_client::dns::HickoryDnsResolver;
 use crate::http_client::{H1_MAX_HEADERS, H2_MAX_HEADER_LIST_SIZE};
 use crate::security::SsrfGuard;
 
 pub(crate) type ReqBody = Full<Bytes>;
+
+/// The `UnknownIssuer` cases a reader can act on. Both reach the customer as
+/// "certificate not trusted" otherwise, which names the symptom and hides what
+/// the reader has to change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChainFault {
+    /// One cert, not self-issued, naming its issuer over AIA. The server
+    /// withheld the intermediate, or its CA is one we do not carry; the leaf
+    /// alone cannot say which, so the wording names neither. Browsers fetch
+    /// the AIA cert and paper over the first case.
+    Incomplete,
+    SelfSigned,
+}
+
+impl std::fmt::Display for ChainFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Incomplete => "server sent only its own certificate",
+            Self::SelfSigned => "certificate is self-signed",
+        })
+    }
+}
+
+impl std::error::Error for ChainFault {}
 
 /// Elapsed since `start` as whole ms, saturating at `u16::MAX` — the width the
 /// result schema stores each phase in.

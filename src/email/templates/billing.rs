@@ -5,8 +5,7 @@ use chrono::{DateTime, Utc};
 
 use crate::domain::Landing;
 use crate::email::templates::layout::{self, ButtonStyle, Page, Tone};
-use crate::email::templates::{html_escape, utc_stamp};
-use crate::email::trait_def::RenderedEmail;
+use crate::email::templates::{RenderedEmail, html_escape, utc_stamp};
 
 /// Rows a smaller plan does not cover. Zero on both means the plan fits.
 #[derive(Debug, Clone, Copy)]

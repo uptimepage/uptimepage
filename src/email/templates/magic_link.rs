@@ -4,9 +4,8 @@
 //! `auth.enabled_methods` is extended with `"magic_link"`. No template
 //! change required at that point.
 
-use crate::email::templates::html_escape;
 use crate::email::templates::layout::{self, ButtonStyle, Page};
-use crate::email::trait_def::RenderedEmail;
+use crate::email::templates::{RenderedEmail, html_escape};
 
 pub fn render(
     site_name: &str,

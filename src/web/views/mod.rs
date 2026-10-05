@@ -40,6 +40,7 @@ pub mod team_lock;
 pub mod telegram;
 mod telegram_account;
 mod telegram_press;
+mod telegram_send;
 pub mod variables;
 pub mod verify_channel;
 pub mod whatsapp;

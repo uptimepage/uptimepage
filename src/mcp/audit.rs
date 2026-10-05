@@ -11,6 +11,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 use super::auth::McpAuth;
+use super::error::{McpToolError, codes};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -27,6 +28,16 @@ impl Outcome {
             Outcome::Error => "error",
             Outcome::Denied => "denied",
         }
+    }
+}
+
+/// Map a write-tool error to an audit outcome: server faults are `error`;
+/// everything else (scope, confirmation, bad input, not-found) is a caller-side
+/// `denied`.
+pub(super) fn outcome_for(e: &McpToolError) -> Outcome {
+    match e.code {
+        codes::INTERNAL | codes::PROBE_UNAVAILABLE | codes::PROBE_BUSY => Outcome::Error,
+        _ => Outcome::Denied,
     }
 }
 

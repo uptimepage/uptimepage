@@ -1,6 +1,5 @@
 use crate::email::templates::layout::{self, ButtonStyle, Page};
-use crate::email::templates::{MARKUP_SLOT, fill_slot, html_escape};
-use crate::email::trait_def::RenderedEmail;
+use crate::email::templates::{MARKUP_SLOT, RenderedEmail, fill_slot, html_escape};
 use crate::i18n::Tr;
 
 pub fn render(

@@ -38,10 +38,6 @@ pub struct LoginQuery {
     pub invitation: Option<String>,
 }
 
-/// Signing in must never be the thing that cancels a deletion, so the choice
-/// gets its own page.
-pub const RESTORE_PATH: &str = "/account/restore";
-
 /// Per-provider plumbing the shared runners dispatch on.
 struct ProviderParts<'a> {
     cfg: &'a OauthClientConfig,

@@ -5,8 +5,7 @@ use chrono::{DateTime, Utc};
 
 use crate::domain::{IncidentOrigin, IncidentSeverity, IncidentUrgency, NotificationReason};
 use crate::email::templates::layout::{self, ButtonStyle, Page, Tone};
-use crate::email::templates::{html_escape, single_line, utc_stamp};
-use crate::email::trait_def::RenderedEmail;
+use crate::email::templates::{RenderedEmail, html_escape, single_line, utc_stamp};
 
 /// Longer than one line of machine output belongs in a block of its own, where
 /// wrapping is expected and a stack trace stays readable.

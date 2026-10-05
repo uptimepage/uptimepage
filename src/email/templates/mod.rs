@@ -17,6 +17,13 @@ pub mod support_request;
 
 use crate::i18n::Tr;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderedEmail {
+    pub subject: String,
+    pub text_body: String,
+    pub html_body: String,
+}
+
 /// Header safety for subjects; the same rule every other channel applies to a
 /// one-line value.
 pub(crate) use crate::text::single_line;

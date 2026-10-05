@@ -19,8 +19,9 @@ pub use log_only::LogOnlyEmailSender;
 pub(crate) use log_only::mask_email;
 pub use memory::InMemoryEmailSender;
 pub use resend::ResendEmailSender;
+pub use templates::RenderedEmail;
 pub use trait_def::{
-    EmailAddress, EmailError, EmailResult, EmailSender, EmailTemplate, MessageId, RenderedEmail,
+    EmailAddress, EmailError, EmailResult, EmailSender, EmailTemplate, MessageId,
     TransactionalEmail,
 };
 

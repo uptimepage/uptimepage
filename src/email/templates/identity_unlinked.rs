@@ -2,8 +2,7 @@
 //! it, someone holding a session removes the owner's own provider silently.
 
 use crate::email::templates::layout::{self, ButtonStyle, Page, Tone};
-use crate::email::templates::{html_escape, single_line};
-use crate::email::trait_def::RenderedEmail;
+use crate::email::templates::{RenderedEmail, html_escape, single_line};
 
 pub fn render(site_name: &str, provider_label: &str, account_url: &str) -> RenderedEmail {
     let provider = single_line(provider_label);

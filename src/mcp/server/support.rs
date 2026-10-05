@@ -10,9 +10,9 @@ use crate::public_status::urls::{public_base, public_status_url};
 use crate::quotas::ratelimit::{RateLimitCategory, RateLimitKey};
 use crate::storage::{ClampedRange, TimeRange};
 
-use crate::mcp::audit::{self, Outcome};
+use crate::mcp::audit::{self, Outcome, outcome_for};
 use crate::mcp::auth::McpAuth;
-use crate::mcp::error::{McpToolError, codes, outcome_for};
+use crate::mcp::error::{McpToolError, codes};
 
 use super::McpServer;
 use super::text::sanitize_data;

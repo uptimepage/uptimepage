@@ -23,6 +23,10 @@ use crate::storage::users::SessionOrg;
 
 use crate::auth::invitations::{self, AcceptedInvitation};
 
+/// Signing in must never be the thing that cancels a deletion, so the choice
+/// gets its own page.
+const RESTORE_PATH: &str = "/account/restore";
+
 /// What the dance carried and what came of it.
 pub(super) enum Invited {
     Nobody,
@@ -263,7 +267,7 @@ pub(super) async fn complete(
     );
 
     Ok(if pending_deletion.is_some() {
-        super::auth::RESTORE_PATH.to_string()
+        RESTORE_PATH.to_string()
     } else {
         match invited {
             Invited::Joined(joined) => joined.landing_url(),

@@ -3,7 +3,14 @@ use uuid::Uuid;
 use crate::domain::{ExternalId, IncidentState, Linked, LinkedApp, NotificationReason, UserId};
 use crate::storage::{Actor, AppPress};
 
-use super::PageTarget;
+/// One resolved paging destination: a concrete channel plus, when the rung
+/// targeted a person or schedule, the responder it resolved to (recorded on the
+/// notification row for the audit trail).
+#[derive(Clone, Copy)]
+pub(super) struct PageTarget {
+    pub(super) channel_id: Uuid,
+    pub(super) user_id: Option<UserId>,
+}
 
 /// Delivery errors echo transport response bodies (up to the outbound read
 /// cap). The DB error column stays org-scoped, but the shared log stream must

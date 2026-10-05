@@ -48,15 +48,6 @@ mod sweep;
 #[cfg(test)]
 mod tests;
 
-/// One resolved paging destination: a concrete channel plus, when the rung
-/// targeted a person or schedule, the responder it resolved to (recorded on the
-/// notification row for the audit trail).
-#[derive(Clone, Copy)]
-struct PageTarget {
-    channel_id: Uuid,
-    user_id: Option<UserId>,
-}
-
 /// A nudge that an incident's state changed and its paging should be
 /// reconciled. Carries no payload beyond identity + the reason to page; the
 /// engine re-reads the incident, monitor, and channels so a stale signal never

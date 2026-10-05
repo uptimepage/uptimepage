@@ -10,7 +10,7 @@ use crate::telegram::Press;
 use super::app_press::{
     GONE, Pressed, Taken, acknowledged_notice, announcement, take, unnamed_notice,
 };
-use super::telegram::{bot, spawn_send};
+use super::telegram_send::{bot, spawn_send};
 
 const LINK_HINT: &str =
     "Link Telegram in your Uptimepage account settings so your next presses carry your name.";
