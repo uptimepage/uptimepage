@@ -23,7 +23,7 @@ use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::security::sha256_hex;
 use crate::storage::LinkPurpose;
-use crate::web::views::notification_channels::{QuotaBlockLog, create_channel_deduped};
+use crate::web::views::notification_channels::create_capped_channel;
 use crate::whatsapp::{InboundAction, Notification, classify, send_text, signature_matches};
 
 const SIGNATURE_HEADER: &str = "x-hub-signature-256";
@@ -144,31 +144,13 @@ async fn link_phone(
         .filter(|n| !n.is_empty())
         .unwrap_or("WhatsApp")
         .to_string();
-    let limit = i64::from(
-        state
-            .quotas
-            .limit_for_org(org)
-            .await?
-            .max_notification_channels,
-    );
     let config = ChannelConfig::WhatsAppApp(WhatsAppAppConfig {
         phone: from.to_string(),
         profile_name,
     });
-    let channel = match create_channel_deduped(
-        state.notification_channel_store.as_ref(),
-        org,
-        &base_name,
-        config,
-        limit,
-        QuotaBlockLog {
-            db: state.db.clone(),
-            user: None,
-            flow: "whatsapp_link",
-        },
-    )
-    .await
-    {
+    let created =
+        create_capped_channel(state, org, &base_name, config, None, "whatsapp_link").await;
+    let channel = match created {
         Ok(ch) => ch,
         Err(err) => {
             // 15-minute codes keep their burn-on-failure shape (telegram

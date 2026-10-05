@@ -22,7 +22,7 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::{
     AlertAction, ChannelConfig, ChannelKind, MAX_CHANNEL_NAME_LEN, NewNotificationChannel,
-    NotificationChannel, OrgId, Target, WriteSource,
+    NotificationChannel, OrgId, Target, UserId, WriteSource,
 };
 use crate::error::AppError;
 use crate::error::codes;
@@ -732,6 +732,37 @@ pub struct QuotaBlockLog {
     pub db: Option<sqlx::PgPool>,
     pub user: Option<crate::domain::UserId>,
     pub flow: &'static str,
+}
+
+/// [`create_channel_deduped`] under the org's plan cap on channels.
+pub async fn create_capped_channel(
+    state: &AppState,
+    org: OrgId,
+    base_name: &str,
+    config: ChannelConfig,
+    user: Option<UserId>,
+    flow: &'static str,
+) -> Result<NotificationChannel, AppError> {
+    let limit = i64::from(
+        state
+            .quotas
+            .limit_for_org(org)
+            .await?
+            .max_notification_channels,
+    );
+    create_channel_deduped(
+        state.notification_channel_store.as_ref(),
+        org,
+        base_name,
+        config,
+        limit,
+        QuotaBlockLog {
+            db: state.db.clone(),
+            user,
+            flow,
+        },
+    )
+    .await
 }
 
 /// Create a connect-flow channel (telegram link, Slack OAuth, …), deduping

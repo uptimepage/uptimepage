@@ -211,13 +211,7 @@ pub async fn create(
             "this link is invalid, expired, or already used",
         ));
     };
-    let channel = match finish_create(&state, &link, &base_name, req.config, "form").await {
-        Ok(ch) => ch,
-        Err(err) => {
-            state.channel_link_code_store.restore(link.id).await?;
-            return Err(err);
-        }
-    };
+    let channel = finish_create(&state, &link, &base_name, req.config, "form").await?;
     audit_delegated_create(&state, link.org_id, &channel, &client_ip.to_string()).await;
     Ok(Json(json!({ "channel_id": channel.id })))
 }

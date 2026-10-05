@@ -17,7 +17,8 @@ use crate::error::{AppError, Result};
 use crate::security::sha256_hex;
 use crate::storage::LinkPurpose;
 use crate::telegram::{ChatRef, Update, WebhookAction, classify_update, webhook_secret_matches};
-use crate::web::views::notification_channels::{QuotaBlockLog, create_channel_deduped};
+use crate::web::views::delegate_create::{audit_delegated_create, restore_link};
+use crate::web::views::notification_channels::create_capped_channel;
 
 use super::telegram_send::spawn_send;
 
@@ -198,41 +199,22 @@ async fn link_chat(state: &AppState, code: &str, chat: ChatRef) -> Result<String
         .map(str::trim)
         .filter(|n| !n.is_empty())
         .unwrap_or("Telegram");
-    let limit = i64::from(
-        state
-            .quotas
-            .limit_for_org(org)
-            .await?
-            .max_notification_channels,
-    );
     let config = ChannelConfig::TelegramApp(TelegramAppConfig {
         chat_id: chat.id.to_string(),
         chat_title: chat.title.clone(),
     });
-    let channel = match create_channel_deduped(
-        state.notification_channel_store.as_ref(),
-        org,
-        base_name,
-        config,
-        limit,
-        QuotaBlockLog {
-            db: state.db.clone(),
-            user: None,
-            flow: if delegated {
-                "telegram_delegate"
-            } else {
-                "telegram_link"
-            },
-        },
-    )
-    .await
-    {
+    let flow = if delegated {
+        "telegram_delegate"
+    } else {
+        "telegram_link"
+    };
+    let channel = match create_capped_channel(state, org, base_name, config, None, flow).await {
         Ok(ch) => ch,
         Err(err) => {
             // A failed create must not burn a 7-day delegate invite; the
             // 15-minute telegram codes keep their burn-on-failure shape.
             if delegated {
-                state.channel_link_code_store.restore(link.id).await?;
+                restore_link(state, &link, flow).await;
             }
             if let AppError::Unprocessable { code, .. } = &err
                 && *code == codes::CHANNEL_QUOTA_EXCEEDED
@@ -255,7 +237,7 @@ async fn link_chat(state: &AppState, code: &str, chat: ChatRef) -> Result<String
         tracing::warn!(?err, channel_id = %channel.id, "telegram link attach failed");
     }
     if delegated {
-        crate::web::views::delegate_create::audit_delegated_create(state, org, &channel, "").await;
+        audit_delegated_create(state, org, &channel, "").await;
     }
 
     let org_name = match &state.db {

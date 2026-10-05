@@ -10,10 +10,10 @@ use crate::domain::{ChannelConfig, NotificationChannel, OrgId};
 use crate::error::Result;
 use crate::storage::channel_link_codes::ConsumedLink;
 use crate::storage::orgs::record_audit_tx;
-use crate::web::views::notification_channels::{QuotaBlockLog, create_channel_deduped};
+use crate::web::views::notification_channels::create_capped_channel;
 
 /// Quota-capped create + link attach, shared by the manual form and the
-/// OAuth callbacks' delegate branch.
+/// OAuth callbacks' delegate branch. A failed create restores the link.
 pub(crate) async fn finish_create(
     state: &AppState,
     link: &ConsumedLink,
@@ -21,26 +21,14 @@ pub(crate) async fn finish_create(
     config: ChannelConfig,
     via: &'static str,
 ) -> Result<NotificationChannel> {
-    let limit = i64::from(
-        state
-            .quotas
-            .limit_for_org(link.org_id)
-            .await?
-            .max_notification_channels,
-    );
-    let channel = create_channel_deduped(
-        state.notification_channel_store.as_ref(),
-        link.org_id,
-        base_name,
-        config,
-        limit,
-        QuotaBlockLog {
-            db: state.db.clone(),
-            user: None,
-            flow: via,
-        },
-    )
-    .await?;
+    let created = create_capped_channel(state, link.org_id, base_name, config, None, via).await;
+    let channel = match created {
+        Ok(ch) => ch,
+        Err(err) => {
+            restore_link(state, link, via).await;
+            return Err(err);
+        }
+    };
     // Best-effort: the channel exists and works either way, and never
     // failing after the create means a restore can never resurrect a link
     // whose channel was already made.
@@ -61,6 +49,21 @@ pub(crate) async fn finish_create(
         "channel created via delegation link"
     );
     Ok(channel)
+}
+
+/// Un-spends a link after a failed create. Best-effort: the caller's own
+/// error is the one worth returning, and a failed restore only leaves the
+/// link spent.
+pub(crate) async fn restore_link(state: &AppState, link: &ConsumedLink, via: &'static str) {
+    if let Err(err) = state.channel_link_code_store.restore(link.id).await {
+        tracing::warn!(
+            ?err,
+            org_id = %link.org_id.0,
+            link_id = %link.id,
+            via,
+            "delegate link restore failed"
+        );
+    }
 }
 
 /// Best-effort compliance trail; the channel exists either way and the

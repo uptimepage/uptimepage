@@ -17,8 +17,8 @@ use crate::domain::{ChannelConfig, OrgId};
 use crate::error::{AppError, Result};
 use crate::request::CurrentUser;
 use crate::storage::orgs::is_active_member;
-use crate::web::views::delegate_create::{audit_delegated_create, finish_create};
-use crate::web::views::notification_channels::{QuotaBlockLog, create_channel_deduped};
+use crate::web::views::delegate_create::{audit_delegated_create, finish_create, restore_link};
+use crate::web::views::notification_channels::create_capped_channel;
 
 /// Everything that distinguishes one OAuth connect provider from another.
 pub struct ConnectProvider {
@@ -221,7 +221,7 @@ pub async fn run_callback(
         Err(err) => {
             tracing::warn!(provider = p.kind, org_id = %org.0, error = %err, "oauth connect exchange failed");
             if let Some(link) = &delegate {
-                state.channel_link_code_store.restore(link.id).await?;
+                restore_link(state, link, p.flow).await;
             }
             return Ok(bounce(p, bounce_base, "failed"));
         }
@@ -232,7 +232,7 @@ pub async fn run_callback(
     if let Err(err) = config.validate() {
         tracing::warn!(provider = p.kind, org_id = %org.0, error = %err, "oauth connect returned an invalid config");
         if let Some(link) = &delegate {
-            state.channel_link_code_store.restore(link.id).await?;
+            restore_link(state, link, p.flow).await;
         }
         return Ok(bounce(p, bounce_base, "failed"));
     }
@@ -247,37 +247,13 @@ pub async fn run_callback(
             Err(AppError::Unprocessable { code, .. })
                 if code == crate::error::codes::CHANNEL_QUOTA_EXCEEDED =>
             {
-                state.channel_link_code_store.restore(link.id).await?;
                 Ok(bounce(p, bounce_base, "quota"))
             }
-            Err(err) => {
-                state.channel_link_code_store.restore(link.id).await?;
-                Err(err)
-            }
+            Err(err) => Err(err),
         };
     }
 
-    let limit = i64::from(
-        state
-            .quotas
-            .limit_for_org(org)
-            .await?
-            .max_notification_channels,
-    );
-    match create_channel_deduped(
-        state.notification_channel_store.as_ref(),
-        org,
-        &base_name,
-        config,
-        limit,
-        QuotaBlockLog {
-            db: state.db.clone(),
-            user: session_user,
-            flow: p.flow,
-        },
-    )
-    .await
-    {
+    match create_capped_channel(state, org, &base_name, config, session_user, p.flow).await {
         Ok(ch) => {
             tracing::info!(provider = p.kind, org_id = %org.0, channel_id = %ch.id, "oauth channel connected");
             Ok(Redirect::to(&format!("/settings/notifications/{}/edit", ch.id)).into_response())
