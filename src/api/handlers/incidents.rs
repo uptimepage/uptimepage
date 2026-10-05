@@ -5,7 +5,7 @@
 //! (`public_status::incident_writer`) which only opens/closes incidents based
 //! on check results.
 
-use crate::api::json::Json;
+use crate::request::json::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::AppendHeaders;

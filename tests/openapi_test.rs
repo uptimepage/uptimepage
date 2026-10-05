@@ -7,7 +7,7 @@ use axum::http::{Request, StatusCode};
 use common::build_test_app;
 use serde_json::Value;
 use tower::ServiceExt;
-use uptimepage::api::strict::{BodySchema, ref_name};
+use uptimepage::request::strict::{BodySchema, ref_name};
 
 fn app() -> axum::Router {
     build_test_app(|_| {})
@@ -162,7 +162,7 @@ async fn every_request_body_refuses_unknown_keys() {
     let doc = body_json(resp).await;
     let schemas = &doc["components"]["schemas"];
     // Every body is strict at the boundary through the schema walk in
-    // `api::strict`; this test keeps the published schema saying so where it
+    // `request::strict`; this test keeps the published schema saying so where it
     // can. CheckSpec and ChannelConfig are stored shapes, so their serde
     // types cannot carry the attribute, and the two enums' schemas have no
     // place for it. new_endpoints_test covers all four at runtime.
@@ -254,7 +254,7 @@ fn walk(
     }
 }
 
-/// `api::json::Json` resolves a body's `$ref`s in the schemas its own type
+/// `request::json::Json` resolves a body's `$ref`s in the schemas its own type
 /// collects, not in this document. Every name a documented body reaches must
 /// be in that set, as the schema the document publishes under it: a name the
 /// set lacks would leave that object unchecked.

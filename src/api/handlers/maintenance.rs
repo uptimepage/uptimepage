@@ -4,7 +4,7 @@
 //! app's own auth boundary applies. The public surface reads maintenance
 //! through `PublicSource::maintenance`, never through this handler.
 
-use crate::api::json::Json;
+use crate::request::json::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::AppendHeaders;

@@ -21,7 +21,7 @@
 //! - `POST /auth/magic-link/code` — the same redemption proved by the code
 //!   printed in that mail, and only from the browser that asked for it.
 
-use crate::api::json::Json;
+use crate::request::json::Json;
 use anyhow::Context;
 use askama::Template;
 use askama_web::WebTemplate;

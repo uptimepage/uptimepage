@@ -5,7 +5,7 @@
 //! nothing; expired, revoked, or spent codes all render the same generic
 //! 404 page (no enumeration signal).
 
-use crate::api::json::Json;
+use crate::request::json::Json;
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::extract::{Path, Query, State};

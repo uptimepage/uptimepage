@@ -2,7 +2,7 @@
 //! agent's own bearer token, which resolves to a region + agent id — never org
 //! membership and never the request body.
 
-use crate::api::json::LenientJson as Json;
+use crate::request::json::LenientJson as Json;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};

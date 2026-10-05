@@ -86,9 +86,9 @@ src/
 │
 │   HTTP surfaces
 ├── request/          what every surface reads off a request first: caller extractors,
-│                     client IP, host parsing, state cookies, time-range query, metrics and
-│                     rate-limit layers
-├── api/              REST /api/v1 handlers, routes, OpenAPI doc, strict bodies
+│                     strict JSON bodies, client IP, host parsing, state cookies,
+│                     time-range query, metrics and rate-limit layers
+├── api/              REST /api/v1 handlers, routes, OpenAPI doc
 ├── web/              server-rendered operator UI (renders only; mutations call the API)
 ├── mcp/              in-process MCP server (typed, authorized, audited tools)
 ├── oauth/            OAuth 2.1 authorization server backing the MCP connector

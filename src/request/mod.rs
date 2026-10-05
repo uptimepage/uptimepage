@@ -1,9 +1,10 @@
 //! What every HTTP surface reads off a request before its own work starts:
-//! the caller (session, API token, agent, operator), the client IP, the host
-//! a status page is served on, the cookies that carry state between pages
-//! (flash, login hint, display preferences, deletion receipt), and the two
-//! layers applied around every route: per-route metrics and the per-subject
-//! rate limit.
+//! the caller (session, API token, agent, operator), the JSON body (strict
+//! unless an agent sends it: refused on any key its type's schema does not
+//! declare), the client IP, the host a status page is served on, the cookies
+//! that carry state between pages (flash, login hint, display preferences,
+//! deletion receipt), and the two layers applied around every route:
+//! per-route metrics and the per-subject rate limit.
 
 pub mod auth;
 pub mod client_ip;
@@ -12,11 +13,13 @@ pub mod display_prefs;
 pub mod flash;
 pub mod host;
 pub mod http_metrics;
+pub mod json;
 pub mod login_hint;
 pub mod nav_identity;
 pub mod range;
 pub mod rate_limit;
 pub mod state;
+pub mod strict;
 pub mod theme;
 pub mod time_format;
 

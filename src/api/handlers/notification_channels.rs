@@ -7,7 +7,7 @@
 //! Secrets are sealed at rest by the store and are never echoed back: every
 //! read path returns through [`Redacted`].
 
-use crate::api::json::Json;
+use crate::request::json::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::AppendHeaders;

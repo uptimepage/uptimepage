@@ -1,12 +1,10 @@
 pub mod docs;
 pub mod handlers;
 pub mod idempotency;
-pub mod json;
 pub mod json_arc;
 pub mod middleware;
 pub mod redaction;
 pub mod routes;
-pub mod strict;
 pub mod types;
 
 pub use docs::ApiDoc;

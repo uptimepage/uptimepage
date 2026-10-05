@@ -6,7 +6,7 @@
 //! the provider replied, so a caller sees an upgrade applied or a downgrade
 //! booked without waiting for the webhook that confirms it.
 
-use crate::api::json::Json;
+use crate::request::json::Json;
 use axum::extract::State;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

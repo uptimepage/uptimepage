@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::api::json::Json;
 use crate::app::AppState;
 use crate::domain::{LinkedApp, UserId};
 use crate::error::{AppError, Result, codes};
+use crate::request::json::Json;
 use crate::request::{BrowserUser, CurrentUser};
 use crate::security::app_link::{TELEGRAM_LINK_TTL, telegram_start_payload};
 use crate::security::sha256_hex;

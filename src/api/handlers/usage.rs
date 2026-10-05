@@ -10,7 +10,7 @@
 //! The counts are the **account's**, pooled across every live org it owns, not
 //! the one org in the path: that is the pool the caps are enforced against.
 
-use crate::api::json::Json;
+use crate::request::json::Json;
 use axum::extract::{Path, State};
 use serde::Serialize;
 use utoipa::ToSchema;

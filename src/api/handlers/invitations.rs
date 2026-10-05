@@ -13,7 +13,7 @@
 //! ids through [`inv::try_auto_accept`]. Email-sending uses
 //! [`AppState::email_sender`] so the provider stays config-driven.
 
-use crate::api::json::Json;
+use crate::request::json::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
