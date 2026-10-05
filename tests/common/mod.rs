@@ -876,6 +876,47 @@ async fn body_bytes(resp: axum::http::Response<Body>) -> axum::body::Bytes {
         .expect("collect body")
 }
 
+/// A `Cookie` header value carrying a fresh session for `user`.
+pub async fn session_cookie(pool: &PgPool, user: uptimepage::domain::UserId) -> String {
+    let cfg = test_config(|_| {});
+    let created =
+        uptimepage::auth::session::create(pool, &cfg.auth.session, user, None, None, None)
+            .await
+            .expect("session");
+    format!("{}={}", cfg.auth.session.cookie_name, created.cookie_token)
+}
+
+/// The non-empty session cookie a response sets, if it sets one.
+pub fn issued_session(headers: &axum::http::HeaderMap) -> Option<&str> {
+    let prefix = format!("{}=", test_config(|_| {}).auth.session.cookie_name);
+    headers
+        .get_all(axum::http::header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|c| c.starts_with(&prefix) && !c.starts_with(&format!("{prefix};")))
+}
+
+pub async fn session_count(pool: &PgPool, user: Uuid) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM sessions WHERE user_id = $1")
+        .bind(user)
+        .fetch_one(pool)
+        .await
+        .expect("count sessions")
+}
+
+/// Failed sign-ins recorded for `method` with `reason`.
+pub async fn login_failures(pool: &PgPool, method: &str, reason: &str) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM login_attempts \
+         WHERE method = $1 AND NOT success AND failure_reason = $2",
+    )
+    .bind(method)
+    .bind(reason)
+    .fetch_one(pool)
+    .await
+    .expect("count login failures")
+}
+
 /// Best-effort removal of a test org and the account it hangs off, which the
 /// org's delete cascade leaves behind. An account still holding another org
 /// stays.

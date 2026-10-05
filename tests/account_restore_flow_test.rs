@@ -8,21 +8,9 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use tower::ServiceExt;
 use uptimepage::auth::account;
-use uptimepage::auth::session as session_store;
-use uptimepage::config::AppConfig;
 use uptimepage::storage::create_org_with_owner;
 
 use crate::common::MIGRATOR;
-
-/// The extractor under test reads the cookie, so an injected `Session` would
-/// prove nothing.
-async fn session_cookie(pool: &sqlx::PgPool, user: uptimepage::domain::UserId) -> String {
-    let cfg = AppConfig::load().expect("config");
-    let created = session_store::create(pool, &cfg.auth.session, user, None, None, None)
-        .await
-        .expect("session");
-    format!("{}={}", cfg.auth.session.cookie_name, created.cookie_token)
-}
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
@@ -42,7 +30,7 @@ async fn signing_in_does_not_restore_but_the_restore_call_does() {
         .await
         .expect("deletion");
 
-    let cookie = session_cookie(&pool, user).await;
+    let cookie = common::session_cookie(&pool, user).await;
     let (deleted_at,): (Option<chrono::DateTime<chrono::Utc>>,) =
         sqlx::query_as("SELECT deleted_at FROM users WHERE id = $1")
             .bind(user.0)
@@ -161,8 +149,8 @@ async fn restore_repairs_sessions_minted_on_other_devices() {
         .await
         .expect("deletion");
 
-    let phone = session_cookie(&pool, user).await;
-    let laptop = session_cookie(&pool, user).await;
+    let phone = common::session_cookie(&pool, user).await;
+    let laptop = common::session_cookie(&pool, user).await;
     let (app, _) = common::build_test_app_with_pg_store_anon(pool.clone(), |_| {}).await;
 
     let resp = app
@@ -224,7 +212,7 @@ async fn restore_page_is_closed_to_everyone_else() {
         .await
         .unwrap()
         .unwrap();
-    let cookie = session_cookie(&pool, user).await;
+    let cookie = common::session_cookie(&pool, user).await;
     let (app, _) = common::build_test_app_with_pg_store_anon(pool.clone(), |_| {}).await;
 
     // A page, so both refusals redirect to the login form. Rendering

@@ -387,15 +387,19 @@ async fn a_ceremony_answers_once_and_expiry_is_swept() {
         .await
         .expect("store");
 
-    let first: Option<(Option<UserId>, String)> =
-        passkeys::take_state(&pool, &handle).await.expect("take");
-    let (owner, payload) = first.expect("the first answer is served");
-    assert_eq!(owner, Some(user), "the state remembers who started it");
-    assert_eq!(payload, "challenge");
+    let first = passkeys::take_state(&pool, &handle)
+        .await
+        .expect("take")
+        .expect("the first answer is served");
+    assert_eq!(
+        first.owner,
+        Some(user),
+        "the state remembers who started it"
+    );
+    assert_eq!(first.decode::<String>().unwrap(), "challenge");
 
     // Replaying it finds nothing, because the read deleted it.
-    let second: Option<(Option<UserId>, String)> =
-        passkeys::take_state(&pool, &handle).await.expect("take");
+    let second = passkeys::take_state(&pool, &handle).await.expect("take");
     assert!(second.is_none(), "a challenge answers once");
 
     // A login ceremony carries no user, and an expired one is not served even
@@ -416,14 +420,12 @@ async fn a_ceremony_answers_once_and_expiry_is_swept() {
     .await
     .expect("age it");
 
-    let expired: Option<(Option<UserId>, String)> =
-        passkeys::take_state(&pool, &stale).await.expect("take");
+    let expired = passkeys::take_state(&pool, &stale).await.expect("take");
     assert!(expired.is_none(), "an expired challenge is not answerable");
 
     let swept = passkeys::purge_expired(&pool).await.expect("purge");
     assert_eq!(swept, 1, "only the expired row goes");
-    let remaining: Option<(Option<UserId>, String)> =
-        passkeys::take_state(&pool, &live).await.expect("take");
+    let remaining = passkeys::take_state(&pool, &live).await.expect("take");
     assert!(remaining.is_some(), "the live challenge survived the sweep");
 
     pool.close().await;

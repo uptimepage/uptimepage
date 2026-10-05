@@ -215,6 +215,9 @@ quick-xml = "0.41"
 # Fixture-based parameterization for self-host vs SaaS test matrices.
 rstest = { version = "0.26", default-features = false }
 tempfile = "3.27.0"
+# Software authenticator for the passkey ceremony tests, pinned to the
+# webauthn-rs prerelease it has to answer.
+webauthn-authenticator-rs = { version = "=0.6.1-dev", features = ["softpasskey"] }
 
 [profile.release]
 opt-level = 3

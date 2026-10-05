@@ -12,8 +12,7 @@ use crate::common;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use tower::ServiceExt;
-use uptimepage::auth::{oauth_state, session as session_store};
-use uptimepage::config::AppConfig;
+use uptimepage::auth::oauth_state;
 
 use crate::common::MIGRATOR;
 
@@ -28,14 +27,6 @@ async fn app(pool: &sqlx::PgPool) -> axum::Router {
     })
     .await;
     router
-}
-
-async fn session_cookie(pool: &sqlx::PgPool, user: uptimepage::domain::UserId) -> String {
-    let cfg = AppConfig::load().expect("config");
-    let created = session_store::create(pool, &cfg.auth.session, user, None, None, None)
-        .await
-        .expect("session");
-    format!("{}={}", cfg.auth.session.cookie_name, created.cookie_token)
 }
 
 /// Mints a link-purpose state for `owner`, then completes the callback under
@@ -104,7 +95,7 @@ async fn a_link_state_alone_does_not_authorise_the_link() {
     );
 
     // A session for someone else: still not the account the state names.
-    let theirs = session_cookie(&pool, stranger).await;
+    let theirs = common::session_cookie(&pool, stranger).await;
     let (status, location) = complete_link_callback(&pool, owner, Some(&theirs)).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "another user must not link");
     assert!(location.starts_with("/login"), "got {location:?}");
@@ -267,7 +258,7 @@ async fn starting_a_link_needs_a_post_the_csrf_header_and_a_session() {
     let pool = common::open_test_pool(&db).await;
     MIGRATOR.run(&pool).await.unwrap();
     let user = common::make_user(&pool, "linker").await;
-    let cookie = session_cookie(&pool, user).await;
+    let cookie = common::session_cookie(&pool, user).await;
     let app = app(&pool).await;
 
     // A GET would let any page force a signed-in visitor into a link dance by
@@ -315,7 +306,7 @@ async fn a_signed_in_start_binds_the_state_to_that_user() {
     let pool = common::open_test_pool(&db).await;
     MIGRATOR.run(&pool).await.unwrap();
     let user = common::make_user(&pool, "binder").await;
-    let cookie = session_cookie(&pool, user).await;
+    let cookie = common::session_cookie(&pool, user).await;
     let app = app(&pool).await;
 
     let (status, body) = link_start(&app, Some(&cookie), true).await;
@@ -353,7 +344,7 @@ async fn a_disabled_provider_offers_no_link() {
     let pool = common::open_test_pool(&db).await;
     MIGRATOR.run(&pool).await.unwrap();
     let user = common::make_user(&pool, "hopeful").await;
-    let cookie = session_cookie(&pool, user).await;
+    let cookie = common::session_cookie(&pool, user).await;
     let app = app(&pool).await;
 
     // Only github is enabled by `app`, so gitlab must refuse rather than mint
@@ -385,7 +376,7 @@ async fn cancelling_a_link_is_not_a_failed_sign_in() {
     let pool = common::open_test_pool(&db).await;
     MIGRATOR.run(&pool).await.unwrap();
     let user = common::make_user(&pool, "quitter").await;
-    let cookie = session_cookie(&pool, user).await;
+    let cookie = common::session_cookie(&pool, user).await;
 
     let state = oauth_state::generate_state();
     oauth_state::insert(
@@ -440,7 +431,7 @@ async fn a_link_callback_never_mints_a_session() {
     let pool = common::open_test_pool(&db).await;
     MIGRATOR.run(&pool).await.unwrap();
     let user = common::make_user(&pool, "already-in").await;
-    let cookie = session_cookie(&pool, user).await;
+    let cookie = common::session_cookie(&pool, user).await;
 
     let (before,): (i64,) = sqlx::query_as("SELECT count(*) FROM sessions")
         .fetch_one(&pool)
@@ -532,7 +523,7 @@ async fn a_detour_through_account_settings_keeps_another_pages_banner() {
     let pool = common::open_test_pool(&db).await;
     MIGRATOR.run(&pool).await.unwrap();
     let user = common::make_user(&pool, "flasher").await;
-    let cookie = session_cookie(&pool, user).await;
+    let cookie = common::session_cookie(&pool, user).await;
 
     // `restored` is the dashboard's to render. Landing here first must not be
     // what loses it.
@@ -597,7 +588,7 @@ async fn removing_a_method_needs_the_csrf_header_and_a_session() {
     let pool = common::open_test_pool(&db).await;
     MIGRATOR.run(&pool).await.unwrap();
     let user = common::make_user(&pool, "remover").await;
-    let cookie = session_cookie(&pool, user).await;
+    let cookie = common::session_cookie(&pool, user).await;
     let app = app(&pool).await;
     let path = "/api/v1/me/sign-in-methods/github?provider_user_id=x";
 
@@ -653,7 +644,7 @@ async fn removing_a_method_records_it_and_leaves_the_others() {
     .await
     .expect("link gitlab");
 
-    let cookie = session_cookie(&pool, owner.user_id).await;
+    let cookie = common::session_cookie(&pool, owner.user_id).await;
     let status = unlink_req(
         &app(&pool).await,
         Some(&cookie),
@@ -713,7 +704,7 @@ async fn removing_a_method_that_was_never_there_is_a_404() {
     )
     .await
     .expect("signup");
-    let cookie = session_cookie(&pool, owner.user_id).await;
+    let cookie = common::session_cookie(&pool, owner.user_id).await;
 
     // Not "you would lock yourself out" — that answer would be a lie about a
     // method the account never had.

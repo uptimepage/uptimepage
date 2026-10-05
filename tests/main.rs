@@ -97,6 +97,7 @@ mod orgs_storage_test;
 mod page_asset_audit_test;
 mod page_assets_pg_test;
 mod partition_retention_test;
+mod passkey_ceremony_test;
 mod passkey_test;
 mod per_org_subdomain_test;
 mod periodic_loop_test;

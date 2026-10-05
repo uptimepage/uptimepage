@@ -256,12 +256,25 @@ pub async fn put_state<S: serde::Serialize>(
     Ok(())
 }
 
+/// A consumed ceremony state. The owner is read before the state is decoded,
+/// so a handle answered at the other ceremony is refused as spent rather than
+/// failing to decode.
+pub struct Taken {
+    /// The account that started a registration; `None` for a sign-in.
+    pub owner: Option<UserId>,
+    state: serde_json::Value,
+}
+
+impl Taken {
+    pub fn decode<S: serde::de::DeserializeOwned>(self) -> Result<S> {
+        serde_json::from_value(self.state)
+            .map_err(|e| AppError::Other(anyhow::anyhow!("decode ceremony state: {e}")))
+    }
+}
+
 /// Deletes and returns in one statement, so two answers to the same challenge
 /// cannot both proceed.
-pub async fn take_state<S: serde::de::DeserializeOwned>(
-    pool: &PgPool,
-    handle: &str,
-) -> Result<Option<(Option<UserId>, S)>> {
+pub async fn take_state(pool: &PgPool, handle: &str) -> Result<Option<Taken>> {
     let row: Option<(Option<Uuid>, serde_json::Value)> = sqlx::query_as(
         "DELETE FROM webauthn_states WHERE state_hash = $1 AND expires_at > now() \
          RETURNING user_id, state",
@@ -270,12 +283,10 @@ pub async fn take_state<S: serde::de::DeserializeOwned>(
     .fetch_optional(pool)
     .await
     .map_err(|e| AppError::Other(anyhow::anyhow!("take ceremony state: {e}")))?;
-    let Some((user, state)) = row else {
-        return Ok(None);
-    };
-    let state = serde_json::from_value(state)
-        .map_err(|e| AppError::Other(anyhow::anyhow!("decode ceremony state: {e}")))?;
-    Ok(Some((user.map(UserId), state)))
+    Ok(row.map(|(user, state)| Taken {
+        owner: user.map(UserId),
+        state,
+    }))
 }
 
 /// An abandoned ceremony is never consumed, so without this the table grows

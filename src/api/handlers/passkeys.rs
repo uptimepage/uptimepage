@@ -126,20 +126,20 @@ pub async fn register_finish(
     let webauthn = enabled(&state)?;
     let rp_id = passkey::relying_party_id(&state.cfg.auth.public_base_url)?;
 
-    let Some((owner, ceremony)) =
-        passkeys::take_state::<PasskeyRegistration>(pool, &body.handle).await?
-    else {
+    let Some(taken) = passkeys::take_state(pool, &body.handle).await? else {
         return Err(spent_registration());
     };
     // The handle is opaque but it is not a capability: without this, one
     // account could finish a ceremony another account started.
-    if owner != Some(user.id) {
+    if taken.owner != Some(user.id) {
         tracing::warn!(
             user_id = %user.id.0,
-            "passkey registration finished against a challenge another session started"
+            sign_in_handle = taken.owner.is_none(),
+            "passkey registration finished against a challenge this session did not start"
         );
         return Err(spent_registration());
     }
+    let ceremony: PasskeyRegistration = taken.decode()?;
 
     let credential: RegisterPublicKeyCredential =
         serde_json::from_value(body.credential).map_err(|_| {
@@ -255,15 +255,15 @@ pub async fn login_finish(
     let ua_hash = fingerprint::hash_fingerprint(salt, user_agent(&headers));
 
     // Mirror of the registration check: a state row that names an owner is a
-    // registration, and answering it here would consume it and leak that the
-    // handle existed at all.
-    let Some((owner, carried)) = passkeys::take_state::<LoginCeremony>(pool, &body.handle).await?
-    else {
+    // registration, refused like any dead handle so the answer says nothing
+    // about it.
+    let Some(taken) = passkeys::take_state(pool, &body.handle).await? else {
         return Err(spent_login());
     };
-    if owner.is_some() {
-        return Err(spent_login());
+    if taken.owner.is_some() {
+        return Err(refused(pool, &ip_hash, &ua_hash, "registration_handle").await);
     }
+    let carried: LoginCeremony = taken.decode()?;
     let credential: PublicKeyCredential =
         serde_json::from_value(body.credential).map_err(|_| {
             AppError::bad_request(
