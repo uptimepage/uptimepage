@@ -41,4 +41,4 @@ jobs:
       # Single-threaded so the control case reports before the others and a
       # runner with no egress reads as one obvious failure, not three.
       - name: probe real origins
-        run: cargo test --test it -- --ignored --test-threads=1 canary_test::
+        run: "cargo test --test it -- --ignored --test-threads=1 canary_test::"
