@@ -4,6 +4,8 @@ use std::fmt;
 
 use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat, Utc};
 
+use crate::duration::{DurationUnit, duration_parts};
+
 pub fn fmt_ts(t: DateTime<Utc>) -> String {
     t.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
@@ -45,56 +47,21 @@ pub struct HumanDur(pub i64);
 impl fmt::Display for HumanDur {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ((n, unit), minor) = duration_parts(self.0);
-        write!(f, "{n}{}", unit.suffix())?;
+        write!(f, "{n}{}", suffix(unit))?;
         if let Some((n, unit)) = minor {
-            write!(f, " {n}{}", unit.suffix())?;
+            write!(f, " {n}{}", suffix(unit))?;
         }
         Ok(())
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DurationUnit {
-    Second,
-    Minute,
-    Hour,
-    Day,
-}
-
-impl DurationUnit {
-    fn suffix(self) -> &'static str {
-        match self {
-            Self::Second => "s",
-            Self::Minute => "m",
-            Self::Hour => "h",
-            Self::Day => "d",
-        }
+fn suffix(unit: DurationUnit) -> &'static str {
+    match unit {
+        DurationUnit::Second => "s",
+        DurationUnit::Minute => "m",
+        DurationUnit::Hour => "h",
+        DurationUnit::Day => "d",
     }
-}
-
-/// The largest unit of a duration, plus the next one down when non-zero.
-/// Negative durations clamp to zero.
-pub fn duration_parts(secs: i64) -> ((i64, DurationUnit), Option<(i64, DurationUnit)>) {
-    let total = secs.max(0);
-    if total < 60 {
-        return ((total, DurationUnit::Second), None);
-    }
-    let mins = total / 60;
-    if mins < 60 {
-        return ((mins, DurationUnit::Minute), None);
-    }
-    let (hours, rem_mins) = (mins / 60, mins % 60);
-    if hours < 24 {
-        return (
-            (hours, DurationUnit::Hour),
-            (rem_mins != 0).then_some((rem_mins, DurationUnit::Minute)),
-        );
-    }
-    let (days, rem_hours) = (hours / 24, hours % 24);
-    (
-        (days, DurationUnit::Day),
-        (rem_hours != 0).then_some((rem_hours, DurationUnit::Hour)),
-    )
 }
 
 #[cfg(test)]
@@ -102,7 +69,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn humanize_duration_picks_largest_unit() {
+    fn humanize_duration_writes_short_suffixes() {
         assert_eq!(humanize_duration(ChronoDuration::seconds(0)), "0s");
         assert_eq!(humanize_duration(ChronoDuration::seconds(45)), "45s");
         assert_eq!(humanize_duration(ChronoDuration::minutes(17)), "17m");

@@ -46,6 +46,8 @@ src/
 ├── templates/        askama filters, fingerprinted assets, timestamp formats
 ├── pagination/       page envelopes + opaque cursors shared by every list surface
 ├── text.rs           one-line and length-capped text shaping for outbound channels
+├── duration.rs       two-unit duration split shared by the console and status page formatters
+├── i18n.rs           status page and subscriber email messages in each page language
 │
 │   services and stores
 ├── storage/          Postgres + ClickHouse + in-memory stores behind traits;

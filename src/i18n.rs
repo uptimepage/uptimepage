@@ -8,7 +8,7 @@ use fluent_templates::fluent_bundle::FluentValue;
 use fluent_templates::{LanguageIdentifier, langid, static_loader};
 
 use crate::domain::Locale;
-use crate::templates::format::{DurationUnit, duration_parts};
+use crate::duration::{DurationUnit, duration_parts};
 
 static_loader! {
     static PUBLIC = {

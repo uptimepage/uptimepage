@@ -12,6 +12,7 @@ pub mod config;
 pub mod custom_domains;
 pub mod discord;
 pub mod domain;
+pub(crate) mod duration;
 pub mod email;
 pub mod error;
 pub mod escalation;
