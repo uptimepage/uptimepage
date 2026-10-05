@@ -610,8 +610,8 @@ This deployment is right-sized for **single-tenant, small-team operator use**:
 - **Per-IP throttling is targeted, not blanket.** Seventeen named zones cover
   the surfaces worth bounding (see the table above); everything else falls
   through unthrottled. To bound another path, add its own `handle` block
-  with a matcher, a `rate_limit` and `import app_upstream` — do not put
-  `rate_limit` at site scope or inside the shared snippet, since either
+  with a matcher, a `rate_limit` and `invoke app_upstream` — do not put
+  `rate_limit` at site scope or inside the shared named route, since either
   applies it to `/healthz` and the public status surface too. Zone names are
   global to the Caddy process, so pick a fresh one.
 - **No WAF / DDoS protection.** Front this with Cloudflare (free tier) if

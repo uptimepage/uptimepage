@@ -57,7 +57,9 @@ services:
       # resolves to ::1 first in this image → connection refused. Probing
       # the public :80 instead would 308→https and then fail TLS (no cert
       # for the SNI).
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:2019/config/"]
+      # A small endpoint, read in full: `/config/` is the whole config with its
+      # secrets, and `--spider` hanging up mid-body made Caddy log a broken pipe.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/reverse_proxy/upstreams"]
       interval: 30s
       timeout: 5s
       retries: 3

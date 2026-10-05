@@ -42,6 +42,10 @@
 {
 	email {$UPTIMEPAGE_ACME_EMAIL}
 
+	# `invoke app_upstream` ends a route the way a terminal `reverse_proxy`
+	# does, so it must sort after every handle and respond in a site.
+	order invoke after reverse_proxy
+
 	# No global `acme_dns`: that would force DNS-01 on app.{domain} too and
 	# make self-host depend on a Hetzner token it doesn't need. The DNS-01
 	# issuer is scoped into the wildcard site block instead. Keeping
@@ -80,8 +84,10 @@
 # Both app colors with active health checks. Steady state one color is up; the
 # stopped color fails /readyz and is held out of rotation. During a deploy's
 # brief overlap both are healthy and round-robined (same DB, harmless).
-# Imported by every site block below so the upstream is defined once.
-(app_upstream) {
+# A named route, invoked from every site block below: Caddy provisions it once
+# per server, so one active checker probes the colors instead of one per
+# invoke.
+&(app_upstream) {
 	reverse_proxy uptimepage_blue:8080 uptimepage_green:8080 {
 		lb_policy round_robin
 		lb_try_duration 5s
@@ -208,7 +214,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 	# without credentials.
 	@health path /healthz /readyz
 	handle @health {
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── Block Prometheus metrics from the public internet ──────────────
@@ -228,7 +234,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 	@static path /static/*
 	handle @static {
 		header Cache-Control "public, max-age=31536000, immutable"
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── Public status surface (self-host, no auth) ─────────────────────
@@ -251,7 +257,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 			}
 		}
 		header Cache-Control "public, max-age=10, stale-while-revalidate=30"
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── Per-IP limits on the abuse-sensitive endpoints ─────────────────
@@ -270,7 +276,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 				window 1m
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# Open by design (RFC 7591), one row per call; the app sweeps unapproved
@@ -289,7 +295,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 				window 1m
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# Org creation — strict speedbump against naive mass-signup abuse.
@@ -306,7 +312,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 				window 24h
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── Login page — defense-in-depth speedbump ────────────────────────
@@ -329,7 +335,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 				window 1m
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── Share links — anonymous, per-IP edge cap ───────────────────────
@@ -352,7 +358,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 				window 1m
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── Heartbeat pings, anonymous capability token, per-IP edge cap ───
@@ -369,7 +375,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 				window 1m
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── On-call calendar feeds, anonymous capability token, per-IP cap ─
@@ -387,7 +393,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 				window 1m
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── Email-channel verification — anonymous token link ──────────────
@@ -403,7 +409,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 				window 1m
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── Public subscription surface — anonymous, per-IP edge cap ───────
@@ -420,7 +426,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 				window 1m
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── Invitation token surface — anonymous token links ───────────────
@@ -436,7 +442,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 				window 1m
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── On-demand checks — per-IP edge cap ahead of the org limiter ─────
@@ -454,7 +460,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 				window 1m
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── Delegation connect pages — anonymous single-use codes ──────────
@@ -470,7 +476,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 				window 1m
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── Telegram bot webhook — anonymous, per-IP edge cap ──────────────
@@ -492,7 +498,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 				window 1m
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── Resend bounce webhook — anonymous, per-IP edge cap ─────────────
@@ -511,7 +517,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 				window 1m
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── WhatsApp (Meta) webhook — anonymous, per-IP edge cap ───────────
@@ -530,7 +536,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 				window 1m
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── Slack interactions — anonymous, per-IP edge cap ────────────────
@@ -551,7 +557,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 				window 1m
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── Discord interactions — anonymous, per-IP edge cap ──────────────
@@ -572,7 +578,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 				window 1m
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── Operator surface: app-enforced session auth (SaaS) ─────────────
@@ -605,8 +611,8 @@ app.{$UPTIMEPAGE_DOMAIN} {
 	}
 
 	# ─── Access logs ────────────────────────────────────────────────────
-	# Skip health endpoints — otherwise every Caddy probe (every 30s) plus
-	# external uptime checks flood the log with ~3k+ lines/day of noise.
+	# Skip health endpoints: external uptime checks would flood the log with
+	# ~3k+ lines/day of noise. Caddy's own active checks never reach it.
 	log_skip @health
 	log {
 		output file /var/log/caddy/access-app.log {
@@ -618,7 +624,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 	}
 
 	# ─── Reverse proxy to the Rust service ──────────────────────────────
-	import app_upstream
+	invoke app_upstream
 }
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -647,13 +653,13 @@ mcp.{$UPTIMEPAGE_DOMAIN} {
 				window 1m
 			}
 		}
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# ─── Discovery — RFC 9728 / RFC 8414 metadata, the server card ──────
 	@discovery path /.well-known/*
 	handle @discovery {
-		import app_upstream
+		invoke app_upstream
 	}
 
 	handle {
@@ -729,7 +735,7 @@ mcp.{$UPTIMEPAGE_DOMAIN} {
 
 	# The app reads the original Host to map slug → org; Caddy forwards it
 	# upstream by default.
-	import app_upstream
+	invoke app_upstream
 }
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -763,7 +769,7 @@ www.{$UPTIMEPAGE_DOMAIN} {
 	# the Host header to decide between landing and a tenant fall-through;
 	# Caddy forwards Host + X-Forwarded-* upstream by default.
 	handle {
-		import app_upstream
+		invoke app_upstream
 	}
 
 	# Marketing surfaces are public, cacheable, JS-free; no edge auth.
@@ -894,5 +900,5 @@ https:// {
 		format json
 	}
 
-	import app_upstream
+	invoke app_upstream
 }
