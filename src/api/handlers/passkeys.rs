@@ -21,7 +21,7 @@ use crate::domain::UserId;
 use crate::error::{AppError, Result};
 use crate::request::auth::Session;
 use crate::request::{BrowserUser, CurrentUser};
-use crate::storage::{oauth_identities, passkeys};
+use crate::storage::{credential_events, passkeys, sign_in_methods};
 
 use super::sign_in;
 
@@ -171,7 +171,7 @@ pub async fn register_finish(
         &stored,
         &rp_id,
         nickname(body.nickname.as_deref()).as_deref(),
-        oauth_identities::RequestOrigin {
+        credential_events::RequestOrigin {
             ip_hash: ip_hash.as_deref(),
             user_agent_hash: ua_hash.as_deref(),
         },
@@ -377,13 +377,13 @@ pub async fn remove(
     let ip_hash = fingerprint::hash_fingerprint(salt, &client_ip.to_string());
     let ua_hash = fingerprint::hash_fingerprint(salt, user_agent(&headers));
 
-    let email = passkeys::remove(
+    let email = sign_in_methods::remove_passkey(
         pool,
         user_id,
         id,
         rp_id.as_deref(),
         &crate::auth::ways_in(&state.cfg),
-        oauth_identities::RequestOrigin {
+        credential_events::RequestOrigin {
             ip_hash: ip_hash.as_deref(),
             user_agent_hash: ua_hash.as_deref(),
         },

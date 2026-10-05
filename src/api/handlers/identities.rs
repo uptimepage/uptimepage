@@ -11,7 +11,7 @@ use crate::auth::passkey;
 use crate::domain::OauthProvider;
 use crate::error::Result;
 use crate::request::{BrowserUser, CurrentUser};
-use crate::storage::oauth_identities;
+use crate::storage::{credential_events, sign_in_methods};
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UnlinkQuery {
@@ -61,14 +61,14 @@ pub async fn unlink(
             .unwrap_or_default(),
     );
     let rp_id = passkey_rp_id(&state);
-    let email = oauth_identities::unlink(
+    let email = sign_in_methods::unlink_identity(
         pool,
         user_id,
         provider,
         q.provider_user_id.as_deref(),
         &crate::auth::ways_in(&state.cfg),
         rp_id.as_deref(),
-        oauth_identities::RequestOrigin {
+        credential_events::RequestOrigin {
             ip_hash: ip_hash.as_deref(),
             user_agent_hash: ua_hash.as_deref(),
         },

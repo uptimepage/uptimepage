@@ -13,8 +13,8 @@ use tower::ServiceExt;
 use uptimepage::domain::OauthProvider;
 use uptimepage::domain::UserId;
 use uptimepage::domain::WaysIn;
-use uptimepage::storage::oauth_identities::RequestOrigin;
-use uptimepage::storage::passkeys;
+use uptimepage::storage::credential_events::RequestOrigin;
+use uptimepage::storage::{passkeys, sign_in_methods};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
 
@@ -73,9 +73,10 @@ async fn the_last_way_in_cannot_be_removed() {
     let user = common::make_user(&pool, "solo").await;
 
     let only = add_credential(&pool, user, "cred-a", HOST).await;
-    let err = passkeys::remove(&pool, user, only, Some(HOST), &ways_in(true), anon())
-        .await
-        .expect_err("the only credential must stay");
+    let err =
+        sign_in_methods::remove_passkey(&pool, user, only, Some(HOST), &ways_in(true), anon())
+            .await
+            .expect_err("the only credential must stay");
     assert!(
         format!("{err:?}").contains("LAST_SIGN_IN_METHOD"),
         "refused for the right reason, got {err:?}"
@@ -83,12 +84,13 @@ async fn the_last_way_in_cannot_be_removed() {
 
     // A sibling makes the first one expendable, and only then.
     let second = add_credential(&pool, user, "cred-b", HOST).await;
-    passkeys::remove(&pool, user, only, Some(HOST), &ways_in(true), anon())
+    sign_in_methods::remove_passkey(&pool, user, only, Some(HOST), &ways_in(true), anon())
         .await
         .expect("a sibling still opens the account");
-    let err = passkeys::remove(&pool, user, second, Some(HOST), &ways_in(true), anon())
-        .await
-        .expect_err("now it is the last one again");
+    let err =
+        sign_in_methods::remove_passkey(&pool, user, second, Some(HOST), &ways_in(true), anon())
+            .await
+            .expect_err("now it is the last one again");
     assert!(format!("{err:?}").contains("LAST_SIGN_IN_METHOD"));
 
     pool.close().await;
@@ -110,8 +112,8 @@ async fn two_removals_at_once_cannot_empty_the_account() {
 
     let ways = ways_in(true);
     let (ra, rb) = tokio::join!(
-        passkeys::remove(&pool, user, a, Some(HOST), &ways, anon()),
-        passkeys::remove(&pool, user, b, Some(HOST), &ways, anon()),
+        sign_in_methods::remove_passkey(&pool, user, a, Some(HOST), &ways, anon()),
+        sign_in_methods::remove_passkey(&pool, user, b, Some(HOST), &ways, anon()),
     );
     assert!(
         ra.is_ok() != rb.is_ok(),
@@ -155,8 +157,8 @@ async fn dropping_the_last_provider_and_the_last_passkey_at_once_leaves_one() {
         passkeys_open_the_account: true,
     };
     let (passkey_gone, provider_gone) = tokio::join!(
-        passkeys::remove(&pool, user, only, Some(HOST), &ways, anon()),
-        uptimepage::storage::oauth_identities::unlink(
+        sign_in_methods::remove_passkey(&pool, user, only, Some(HOST), &ways, anon()),
+        sign_in_methods::unlink_identity(
             &pool,
             user,
             OauthProvider::Github,
@@ -208,9 +210,10 @@ async fn a_credential_bound_to_another_host_is_not_a_way_back() {
 
     // The stale row is a row, not a way in: counting it would let the account
     // drop the one credential that still answers on this host.
-    let err = passkeys::remove(&pool, user, here, Some(HOST), &ways_in(true), anon())
-        .await
-        .expect_err("the orphaned credential must not hold the door open");
+    let err =
+        sign_in_methods::remove_passkey(&pool, user, here, Some(HOST), &ways_in(true), anon())
+            .await
+            .expect_err("the orphaned credential must not hold the door open");
     assert!(
         format!("{err:?}").contains("LAST_SIGN_IN_METHOD"),
         "{err:?}"
@@ -232,9 +235,10 @@ async fn a_switched_off_deployment_counts_no_passkey() {
 
     add_credential(&pool, user, "cred-a", HOST).await;
     let doomed = add_credential(&pool, user, "cred-b", HOST).await;
-    let err = passkeys::remove(&pool, user, doomed, Some(HOST), &ways_in(false), anon())
-        .await
-        .expect_err("none of them can sign in here");
+    let err =
+        sign_in_methods::remove_passkey(&pool, user, doomed, Some(HOST), &ways_in(false), anon())
+            .await
+            .expect_err("none of them can sign in here");
     assert!(
         format!("{err:?}").contains("LAST_SIGN_IN_METHOD"),
         "{err:?}"
@@ -315,7 +319,7 @@ async fn removing_a_credential_leaves_the_trail_behind() {
 
     let first = add_credential(&pool, user, "cred-a", HOST).await;
     add_credential(&pool, user, "cred-b", HOST).await;
-    passkeys::remove(&pool, user, first, Some(HOST), &ways_in(true), anon())
+    sign_in_methods::remove_passkey(&pool, user, first, Some(HOST), &ways_in(true), anon())
         .await
         .expect("removable");
 
@@ -352,15 +356,16 @@ async fn a_credential_already_gone_is_not_an_error_page() {
 
     let doomed = add_credential(&pool, user, "cred-a", HOST).await;
     add_credential(&pool, user, "cred-b", HOST).await;
-    passkeys::remove(&pool, user, doomed, Some(HOST), &ways_in(true), anon())
+    sign_in_methods::remove_passkey(&pool, user, doomed, Some(HOST), &ways_in(true), anon())
         .await
         .expect("the first press removes it");
 
     // A double-click races the first request past its own guard, and the answer
     // for a row that is not there is the same as for one that never was.
-    let err = passkeys::remove(&pool, user, doomed, Some(HOST), &ways_in(true), anon())
-        .await
-        .expect_err("the second press finds nothing");
+    let err =
+        sign_in_methods::remove_passkey(&pool, user, doomed, Some(HOST), &ways_in(true), anon())
+            .await
+            .expect_err("the second press finds nothing");
     assert!(format!("{err:?}").contains("PASSKEY_NOT_FOUND"), "{err:?}");
 
     pool.close().await;

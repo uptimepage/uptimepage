@@ -211,7 +211,7 @@ pub enum CredentialChange {
 
 /// What makes a provider linking itself in on an email match something the
 /// owner can act on, and the only signal a removal happened at all.
-/// Best-effort: `oauth_identities::record_event` keeps the durable trail.
+/// Best-effort: `credential_events::record` keeps the durable trail.
 pub fn notify_credential_change(
     state: &AppState,
     email: &str,
@@ -336,15 +336,15 @@ async fn finish_link(
     identity: &crate::auth::oauth_login::RemoteIdentity,
     link_user: UserId,
     cookies: &Cookies,
-    from: crate::storage::oauth_identities::RequestOrigin<'_>,
+    from: crate::storage::credential_events::RequestOrigin<'_>,
 ) -> Result<axum::response::Response> {
     let flash = match oauth_login::link_identity_to_user(pool, provider, identity, link_user).await
     {
         Ok(oauth_login::LinkOutcome::Linked) => {
-            crate::storage::oauth_identities::record_event(
+            crate::storage::credential_events::record(
                 pool,
                 link_user,
-                crate::storage::oauth_identities::CredentialEvent {
+                crate::storage::credential_events::CredentialEvent {
                     provider: provider.as_db_str(),
                     provider_user_id: &identity.provider_user_id,
                     action: CredentialAction::Linked,
@@ -573,7 +573,7 @@ async fn finish_login(
             &identity,
             link_user,
             &cookies,
-            crate::storage::oauth_identities::RequestOrigin {
+            crate::storage::credential_events::RequestOrigin {
                 ip_hash: ip_hash.as_deref(),
                 user_agent_hash: ua_hash.as_deref(),
             },
@@ -667,10 +667,10 @@ async fn finish_login(
     };
     // Nobody asked for this in so many words, so the account is told.
     if resolved.is_new_user {
-        crate::storage::oauth_identities::record_event(
+        crate::storage::credential_events::record(
             pool,
             resolved.user_id,
-            crate::storage::oauth_identities::CredentialEvent {
+            crate::storage::credential_events::CredentialEvent {
                 provider: provider.as_db_str(),
                 provider_user_id: &identity.provider_user_id,
                 action: CredentialAction::Linked,
@@ -683,10 +683,10 @@ async fn finish_login(
     }
 
     if resolved.newly_linked {
-        crate::storage::oauth_identities::record_event(
+        crate::storage::credential_events::record(
             pool,
             resolved.user_id,
-            crate::storage::oauth_identities::CredentialEvent {
+            crate::storage::credential_events::CredentialEvent {
                 provider: provider.as_db_str(),
                 provider_user_id: &identity.provider_user_id,
                 action: CredentialAction::Linked,

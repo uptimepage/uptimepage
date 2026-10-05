@@ -20,7 +20,7 @@ use uptimepage::config::SessionConfig;
 use uptimepage::domain::WaysIn;
 use uptimepage::domain::{OauthProvider, OauthProvider as P, UserId};
 use uptimepage::error::AppError;
-use uptimepage::storage::oauth_identities;
+use uptimepage::storage::{credential_events, oauth_identities, sign_in_methods};
 use uuid::Uuid;
 
 /// What the sign-in tail resolves for this user once phase C has committed.
@@ -671,7 +671,7 @@ async fn unlink_holds_the_last_way_in_only_when_email_cannot_open_it() {
     .expect("github signup");
 
     // Magic link off: this row is the only way in, so it stays.
-    let err = oauth_identities::unlink(
+    let err = sign_in_methods::unlink_identity(
         &pool,
         owner.user_id,
         OauthProvider::Github,
@@ -687,7 +687,7 @@ async fn unlink_holds_the_last_way_in_only_when_email_cannot_open_it() {
     // Magic link on: the address itself opens the account, so a user whose
     // provider is compromised can drop it without first handing another
     // provider a credential on the account they are locking down.
-    oauth_identities::unlink(
+    sign_in_methods::unlink_identity(
         &pool,
         owner.user_id,
         OauthProvider::Github,
@@ -719,7 +719,7 @@ async fn unlink_holds_the_last_way_in_only_when_email_cannot_open_it() {
         .await
         .expect("link second");
 
-    oauth_identities::unlink(
+    sign_in_methods::unlink_identity(
         &pool,
         owner.user_id,
         OauthProvider::Github,
@@ -780,7 +780,7 @@ async fn unlink_without_a_subject_cannot_empty_the_account() {
     // Omitting the subject removes BOTH, so the guard has to weigh what would
     // remain, not what is there now — counting rows before the delete lets
     // this call empty the account and lock it out.
-    let err = oauth_identities::unlink(
+    let err = sign_in_methods::unlink_identity(
         &pool,
         owner.user_id,
         OauthProvider::Github,
@@ -802,7 +802,7 @@ async fn unlink_without_a_subject_cannot_empty_the_account() {
     );
 
     // Naming one leaves the other, so it goes through.
-    oauth_identities::unlink(
+    sign_in_methods::unlink_identity(
         &pool,
         owner.user_id,
         OauthProvider::Github,
@@ -854,7 +854,7 @@ async fn unlink_reports_a_method_that_is_not_on_the_account() {
     .expect("github signup");
 
     // Not "you would lock yourself out" — this method was never here.
-    let err = oauth_identities::unlink(
+    let err = sign_in_methods::unlink_identity(
         &pool,
         owner.user_id,
         OauthProvider::Gitlab,
@@ -1328,7 +1328,7 @@ async fn a_disabled_provider_is_a_row_not_a_way_in() {
         passkeys_open_the_account: false,
         email_is_a_way_back: false,
     };
-    let err = oauth_identities::unlink(
+    let err = sign_in_methods::unlink_identity(
         &pool,
         owner.user_id,
         OauthProvider::Gitlab,
@@ -1342,7 +1342,7 @@ async fn a_disabled_provider_is_a_row_not_a_way_in() {
     assert!(matches!(err, AppError::BadRequest { code, .. } if code == "LAST_SIGN_IN_METHOD"));
 
     // The one that does not work is free to go.
-    oauth_identities::unlink(
+    sign_in_methods::unlink_identity(
         &pool,
         owner.user_id,
         OauthProvider::Github,
@@ -1386,10 +1386,10 @@ async fn signup_and_a_later_link_both_leave_a_trail() {
     // The runbook tells operators every credential is in this table. An account
     // whose only method is the signup one must not read as "nothing was ever
     // added" — that is the answer that ends an investigation early.
-    oauth_identities::record_event(
+    credential_events::record(
         &pool,
         owner.user_id,
-        oauth_identities::CredentialEvent {
+        credential_events::CredentialEvent {
             provider: OauthProvider::Github.as_db_str(),
             provider_user_id: "gh-first",
             action: uptimepage::domain::CredentialAction::Linked,

@@ -175,10 +175,10 @@ async fn an_auto_link_is_told_apart_from_a_deliberate_one() {
     .expect("email match");
     assert!(linked.newly_linked);
 
-    uptimepage::storage::oauth_identities::record_event(
+    uptimepage::storage::credential_events::record(
         &pool,
         owner.user_id,
-        uptimepage::storage::oauth_identities::CredentialEvent {
+        uptimepage::storage::credential_events::CredentialEvent {
             provider: uptimepage::domain::OauthProvider::Google.as_db_str(),
             provider_user_id: "g-1",
             action: uptimepage::domain::CredentialAction::Linked,
@@ -188,10 +188,10 @@ async fn an_auto_link_is_told_apart_from_a_deliberate_one() {
         },
     )
     .await;
-    uptimepage::storage::oauth_identities::record_event(
+    uptimepage::storage::credential_events::record(
         &pool,
         owner.user_id,
-        uptimepage::storage::oauth_identities::CredentialEvent {
+        uptimepage::storage::credential_events::CredentialEvent {
             provider: uptimepage::domain::OauthProvider::Gitlab.as_db_str(),
             provider_user_id: "gl-1",
             action: uptimepage::domain::CredentialAction::Linked,

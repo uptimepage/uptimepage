@@ -1,8 +1,8 @@
 //! Stored passkeys and the short-lived state of a ceremony in flight.
 //!
 //! A credential is one row and one way into an account, so it sits beside the
-//! linked identities on the account page and answers the same last-way-in
-//! question before it can be taken away.
+//! linked identities on the account page, and `sign_in_methods` asks the same
+//! last-way-in question of both before one can be taken away.
 
 use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
@@ -12,7 +12,7 @@ use webauthn_rs::prelude::*;
 use crate::domain::UserId;
 use crate::domain::{CredentialAction, CredentialOrigin};
 use crate::error::{AppError, Result};
-use crate::storage::oauth_identities::{CredentialEvent, RequestOrigin};
+use crate::storage::credential_events::{self, CredentialEvent, RequestOrigin};
 
 /// Not an [`crate::domain::OauthProvider`]: that enum is pinned to the
 /// `oauth_identities` CHECK, and no vendor is involved here.
@@ -149,7 +149,7 @@ pub async fn insert(
     .await
     .map_err(|e| AppError::Other(anyhow::anyhow!("insert passkey: {e}")))?;
     let change = event(&label, CredentialAction::Linked, from);
-    crate::storage::oauth_identities::record_event_in_tx(&mut tx, user, change).await?;
+    credential_events::record_in_tx(&mut tx, user, change).await?;
     tx.commit()
         .await
         .map_err(|e| AppError::Other(anyhow::anyhow!("commit passkey insert: {e}")))?;
@@ -201,9 +201,8 @@ pub async fn stored_counter(pool: &PgPool, credential_id: &[u8]) -> Result<Optio
     Ok(row.and_then(|(c,)| c))
 }
 
-/// Shared with the OAuth writers so one insert and one log line describe every
-/// credential change, whoever it belongs to.
-fn event<'a>(
+/// A passkey's entry in the trail every credential writer shares.
+pub(crate) fn event<'a>(
     label: &'a str,
     action: CredentialAction,
     from: RequestOrigin<'a>,
@@ -220,82 +219,9 @@ fn event<'a>(
 
 /// The trail keeps naming a credential after its row is gone, and that column
 /// is text, so the raw id travels as base64url rather than as bytes.
-fn credential_label(credential_id: &[u8]) -> String {
+pub(crate) fn credential_label(credential_id: &[u8]) -> String {
     use base64::Engine as _;
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(credential_id)
-}
-
-/// Refuses when it is the last thing that opens the account. Returns the address
-/// so the caller can say a credential just left.
-pub async fn remove(
-    pool: &PgPool,
-    user: UserId,
-    id: Uuid,
-    rp_id: Option<&str>,
-    ways_in: &crate::domain::WaysIn,
-    from: RequestOrigin<'_>,
-) -> Result<String> {
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Other(anyhow::anyhow!("begin passkey removal: {e}")))?;
-    // Counting outside this lock lets two removals of different credentials
-    // each see the other surviving, and an account with two ways in and no
-    // third loses both. Same key `ensure_room` takes, so adds and removes
-    // serialise against each other too.
-    crate::storage::locks::advisory_xact_lock(
-        &mut *tx,
-        &crate::storage::locks::user_lock_key(user),
-    )
-    .await
-    .map_err(|e| AppError::Other(anyhow::anyhow!("lock passkey removal: {e}")))?;
-
-    let held = list_for_user(&mut *tx, user).await?;
-    let Some(doomed) = held.iter().find(|row| row.id == id) else {
-        return Err(AppError::not_found(
-            "PASSKEY_NOT_FOUND",
-            "no such passkey on this account",
-        ));
-    };
-    // Same rule the account page asked before it drew the button, so the two
-    // cannot answer differently.
-    let surviving = held
-        .iter()
-        .filter(|row| row.id != id)
-        .filter(|row| rp_id.is_some_and(|rp| row.usable_from(rp)))
-        .count();
-    let linked = crate::storage::oauth_identities::list_for_user(&mut *tx, user).await?;
-    if !ways_in.passkey_removable(&linked, surviving) {
-        return Err(AppError::bad_request(
-            "LAST_SIGN_IN_METHOD",
-            "that is the only thing that still opens this account",
-        ));
-    }
-
-    let label = credential_label(&doomed.credential_id);
-    let email: Option<(String,)> = sqlx::query_as(
-        "DELETE FROM webauthn_credentials WHERE id = $1 AND user_id = $2 \
-         RETURNING (SELECT email::text FROM users WHERE id = $2)",
-    )
-    .bind(id)
-    .bind(user.0)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(|e| AppError::Other(anyhow::anyhow!("delete passkey: {e}")))?;
-    let Some(email) = email else {
-        tx.rollback().await.ok();
-        return Err(AppError::not_found(
-            "PASSKEY_NOT_FOUND",
-            "no such passkey on this account",
-        ));
-    };
-    let change = event(&label, CredentialAction::Unlinked, from);
-    crate::storage::oauth_identities::record_event_in_tx(&mut tx, user, change).await?;
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Other(anyhow::anyhow!("commit passkey removal: {e}")))?;
-    change.announce(user);
-    Ok(email.0)
 }
 
 // ---------------------------------------------------------------------------
