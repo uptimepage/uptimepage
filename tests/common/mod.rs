@@ -1238,8 +1238,9 @@ pub async fn ch_client_from_env() -> Option<clickhouse::Client> {
     Some(client)
 }
 
-// Per-test throwaway database: `CREATE DATABASE <prefix>_<uuid>`, migrations
-// applied by the caller, dropped at the end. The isolation model used by the
+// Per-test throwaway database: `<prefix>_<uuid>`, copied from a template that
+// already carries every migration (a copy takes ~30 ms, migrating an empty
+// database ~0.7 s), dropped at the end. The isolation model used by the
 // auth / GDPR suites (distinct from the shared-DB `pg_pool_from_env`). Returns
 // `None` when `DATABASE_URL` is unset so `#[ignore]` tests no-op cleanly.
 pub async fn fresh_test_db(prefix: &str) -> Option<(String, String)> {
@@ -1251,12 +1252,104 @@ pub async fn fresh_test_db(prefix: &str) -> Option<(String, String)> {
     let mut conn = sqlx::PgConnection::connect(url.as_str())
         .await
         .expect("fresh_test_db: connect to admin DB");
-    conn.execute(format!("CREATE DATABASE {test_db}").as_str())
+    let template = format!("{TEMPLATE_PREFIX}{}", migration_set_hash());
+    template_lock(&mut conn, "pg_advisory_lock_shared").await;
+    if !database_exists(&mut conn, &template).await {
+        template_lock(&mut conn, "pg_advisory_unlock_shared").await;
+        build_template(&mut conn, &url, &template).await;
+    }
+    conn.execute(format!("CREATE DATABASE {test_db} TEMPLATE {template}").as_str())
         .await
         .expect("fresh_test_db: CREATE DATABASE");
+    template_lock(&mut conn, "pg_advisory_unlock_shared").await;
     let mut new_url = url.clone();
     new_url.set_path(&format!("/{test_db}"));
     Some((new_url.to_string(), test_db))
+}
+
+// Named after the migration set, so an added or edited migration gets its own
+// template.
+const TEMPLATE_PREFIX: &str = "uptimepage_template_";
+
+// Copies hold this lock shared and a build holds it exclusively, so a stale
+// template is never dropped while another checkout is copying it.
+async fn template_lock(admin: &mut sqlx::PgConnection, function: &str) {
+    const TEMPLATE_LOCK: i64 = 0x7570_746d_706c_7465;
+    let sql = format!("SELECT {function}($1)");
+    sqlx::query(&sql)
+        .bind(TEMPLATE_LOCK)
+        .execute(&mut *admin)
+        .await
+        .expect(function);
+}
+
+// Migrated under a temporary name and renamed into place only when complete,
+// so a build that dies half way is never copied. Returns holding the shared
+// lock, taken before the exclusive one is released.
+async fn build_template(admin: &mut sqlx::PgConnection, admin_url: &Url, name: &str) {
+    use sqlx::Executor;
+    template_lock(admin, "pg_advisory_lock").await;
+    if !database_exists(admin, name).await {
+        let building = format!("{name}_building");
+        admin
+            .execute(format!("DROP DATABASE IF EXISTS {building} WITH (FORCE)").as_str())
+            .await
+            .expect("template: drop a dead build");
+        admin
+            .execute(format!("CREATE DATABASE {building}").as_str())
+            .await
+            .expect("template: create");
+        let mut url = admin_url.clone();
+        url.set_path(&format!("/{building}"));
+        let pool = open_test_pool(url.as_str()).await;
+        MIGRATOR.run(&pool).await.expect("template: migrate");
+        pool.close().await;
+        admin
+            .execute(format!("ALTER DATABASE {building} RENAME TO {name}").as_str())
+            .await
+            .expect("template: rename");
+        // Any open session on a template, a psql or a GUI, blocks every copy.
+        admin
+            .execute(format!("ALTER DATABASE {name} WITH ALLOW_CONNECTIONS false").as_str())
+            .await
+            .expect("template: close to sessions");
+        let stale: Vec<String> = sqlx::query_scalar(
+            "SELECT datname FROM pg_database WHERE starts_with(datname, $1) AND datname <> $2",
+        )
+        .bind(TEMPLATE_PREFIX)
+        .bind(name)
+        .fetch_all(&mut *admin)
+        .await
+        .expect("template: list stale");
+        for db in stale {
+            let _ = admin
+                .execute(format!("DROP DATABASE IF EXISTS {db}").as_str())
+                .await;
+        }
+    }
+    template_lock(admin, "pg_advisory_lock_shared").await;
+    template_lock(admin, "pg_advisory_unlock").await;
+}
+
+fn migration_set_hash() -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    for migration in MIGRATOR.iter() {
+        hash.update(migration.version.to_le_bytes());
+        hash.update(&*migration.checksum);
+    }
+    hash.finalize()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+async fn database_exists(admin: &mut sqlx::PgConnection, name: &str) -> bool {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)")
+        .bind(name)
+        .fetch_one(&mut *admin)
+        .await
+        .expect("template: look up")
 }
 
 pub async fn drop_test_db(test_db: &str) {

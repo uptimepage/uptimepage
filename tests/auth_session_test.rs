@@ -1409,15 +1409,9 @@ async fn the_migration_gives_older_identities_their_signup_row() {
     };
     let pool = open_pool(&db_url).await;
 
-    // Everything up to and including 043, then an identity as it would exist
-    // on a database that predates the credential trail.
-    sqlx::migrate::Migrator::new(std::path::Path::new("./migrations/postgres"))
-        .await
-        .expect("load")
-        .undo(&pool, 0)
-        .await
-        .ok();
     MIGRATOR.run(&pool).await.expect("migrate");
+    // An identity as it would exist on a database that predates the
+    // credential trail.
     sqlx::query("DELETE FROM credential_events")
         .execute(&pool)
         .await
