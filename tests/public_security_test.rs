@@ -20,7 +20,7 @@ use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use common::build_test_app_with_web;
+use common::{body_text, build_test_app_with_web};
 use tower::ServiceExt;
 
 const FORGED_COOKIE: &str = "session=stolen-operator-session; admin=true";
@@ -33,13 +33,6 @@ const PUBLIC_PATHS: &[&str] = &[
     "/api/public/v1/incidents.rss",
     "/api/public/v1/maintenance",
 ];
-
-async fn body_text(resp: axum::http::Response<Body>) -> String {
-    let bytes = axum::body::to_bytes(resp.into_body(), 8 << 20)
-        .await
-        .unwrap();
-    String::from_utf8_lossy(&bytes).into_owned()
-}
 
 #[tokio::test]
 async fn public_responses_never_set_cookie() {

@@ -584,6 +584,16 @@ pub async fn build_saas_router_with_pg_cfg(
     pool: PgPool,
     mutate: impl FnOnce(&mut AppConfig),
 ) -> Router {
+    build_saas_router_with_pg_tweaked(pool, mutate, |state| state).await
+}
+
+/// As [`build_saas_router_with_pg_cfg`], with a hook on the assembled state
+/// for tests that swap in a capturing mail sender or set a link secret.
+pub async fn build_saas_router_with_pg_tweaked(
+    pool: PgPool,
+    mutate: impl FnOnce(&mut AppConfig),
+    tweak: impl FnOnce(AppState) -> AppState,
+) -> Router {
     let mut cfg = test_config(|_| {});
     cfg.tenancy.path_based_public_routes = false;
     cfg.tenancy.subdomain_public_routes = true;
@@ -592,7 +602,7 @@ pub async fn build_saas_router_with_pg_cfg(
     cfg.public_status.base_domain = SAAS_BASE_DOMAIN.into();
     cfg.auth.session.cookie_domain = String::new();
     mutate(&mut cfg);
-    assemble_pg_router(pool, cfg)
+    assemble_pg_router_tweaked(pool, cfg, tweak)
 }
 
 /// Shared tail of the PG-target-store router builders: real
@@ -600,10 +610,6 @@ pub async fn build_saas_router_with_pg_cfg(
 /// wired into the API + web router. The incident store has to be the Postgres
 /// one for tenancy tests to mean anything: the in-memory stand-in looks rows up
 /// by id alone. Callers own the tenancy prelude that precedes this.
-fn assemble_pg_router(pool: PgPool, cfg: AppConfig) -> Router {
-    assemble_pg_router_tweaked(pool, cfg, |state| state)
-}
-
 fn assemble_pg_router_tweaked(
     pool: PgPool,
     cfg: AppConfig,
@@ -856,10 +862,37 @@ pub async fn owner_json(
 
 /// Decodes the response body as JSON. Panics on non-JSON payloads.
 pub async fn body_json(resp: axum::http::Response<Body>) -> Value {
-    let bytes = axum::body::to_bytes(resp.into_body(), 8 << 20)
+    serde_json::from_slice(&body_bytes(resp).await).expect("valid json")
+}
+
+/// Decodes the response body as UTF-8 text. Panics on anything else.
+pub async fn body_text(resp: axum::http::Response<Body>) -> String {
+    String::from_utf8(body_bytes(resp).await.to_vec()).expect("utf-8 body")
+}
+
+async fn body_bytes(resp: axum::http::Response<Body>) -> axum::body::Bytes {
+    axum::body::to_bytes(resp.into_body(), 8 << 20)
         .await
-        .expect("collect body");
-    serde_json::from_slice(&bytes).expect("valid json")
+        .expect("collect body")
+}
+
+/// Best-effort removal of a test org and the account it hangs off, which the
+/// org's delete cascade leaves behind. An account still holding another org
+/// stays.
+pub async fn delete_org_and_account(pool: &PgPool, org: Uuid) {
+    let account: Option<(Uuid,)> =
+        sqlx::query_as("DELETE FROM organizations WHERE id = $1 RETURNING account_id")
+            .bind(org)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+    if let Some((account,)) = account {
+        let _ = sqlx::query("DELETE FROM accounts WHERE id = $1")
+            .bind(account)
+            .execute(pool)
+            .await;
+    }
 }
 
 /// The process-wide metrics recorder. One per process, so every test in a

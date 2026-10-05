@@ -28,7 +28,7 @@ use uptimepage::error::public::PublicAppError;
 use uptimepage::pagination::CursorPage;
 use uptimepage::public_status::{IncidentListQuery, PublicSource, source::FeedLinks};
 
-use common::build_test_app_with_public_source;
+use common::{body_text, build_test_app_with_public_source};
 
 // Marker strings that the underlying private target carries; if any of these
 // surface in a public response the wire-type isolation has failed.
@@ -292,13 +292,6 @@ async fn a_hidden_page_marks_every_public_representation_noindex() {
     }
 }
 
-async fn body_string(resp: axum::response::Response) -> String {
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    String::from_utf8_lossy(&bytes).into_owned()
-}
-
 fn assert_no_secrets(name: &str, haystack: &str) {
     for s in [
         SECRET_URL,
@@ -332,7 +325,7 @@ async fn non_public_component_history_returns_404() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-    let body = body_string(resp).await;
+    let body = body_text(resp).await;
     assert!(body.contains(r#""code":"NOT_FOUND""#));
     // Public envelope is narrow: no trace_id / details / field keys.
     assert!(!body.contains("trace_id"));
@@ -367,7 +360,7 @@ async fn page_payload_excludes_non_public_resources() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let body = body_string(resp).await;
+    let body = body_text(resp).await;
     assert_no_secrets("/status", &body);
     // The public component is visible …
     assert!(body.contains(PUBLIC_COMPONENT_NAME));
@@ -387,7 +380,7 @@ async fn incident_list_excludes_non_public() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let body = body_string(resp).await;
+    let body = body_text(resp).await;
     assert_no_secrets("/incidents", &body);
     assert!(body.contains(PUBLIC_INCIDENT_TITLE));
 }
@@ -403,7 +396,7 @@ async fn rss_feed_excludes_non_public() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let body = body_string(resp).await;
+    let body = body_text(resp).await;
     assert_no_secrets("/incidents.rss", &body);
     assert!(body.contains("<rss version=\"2.0\""));
 }
@@ -419,7 +412,7 @@ async fn maintenance_list_excludes_non_public() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let body = body_string(resp).await;
+    let body = body_text(resp).await;
     assert_no_secrets("/maintenance", &body);
 }
 
@@ -490,8 +483,7 @@ async fn public_wire_types_lack_sensitive_field_names_in_schema() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let doc = body_string(resp).await;
-    let doc_json: serde_json::Value = serde_json::from_str(&doc).unwrap();
+    let doc_json = common::body_json(resp).await;
     let schemas = &doc_json["components"]["schemas"];
     for name in [
         "PublicStatusPage",
@@ -537,7 +529,7 @@ async fn page_response_does_not_leak_underlying_target_internals() {
         )
         .await
         .unwrap();
-    let body = body_string(resp).await;
+    let body = body_text(resp).await;
     // Even though the underlying private target carries credentials, the
     // public response shape literally cannot contain them. Re-checking on
     // the live body guards against accidental future leakage paths.
@@ -566,7 +558,7 @@ async fn openapi_marks_public_paths_as_unauthenticated() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let doc: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    let doc = common::body_json(resp).await;
     for path in [
         "/api/public/v1/status",
         "/api/public/v1/components/{id}/history",

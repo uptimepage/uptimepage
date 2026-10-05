@@ -9,17 +9,12 @@ use crate::common;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
-use common::{build_test_app_with_web, build_test_app_with_web_and_owner};
+use common::{body_text, build_test_app_with_web, build_test_app_with_web_and_owner};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
 fn app() -> axum::Router {
     build_test_app_with_web_and_owner(|_| {})
-}
-
-async fn body_text(resp: axum::http::Response<Body>) -> String {
-    let bytes = to_bytes(resp.into_body(), 4 << 20).await.unwrap();
-    String::from_utf8(bytes.to_vec()).unwrap()
 }
 
 fn html_ct(resp: &axum::http::Response<Body>) -> &str {

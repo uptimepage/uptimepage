@@ -15,7 +15,7 @@ use common::{
     default_http_check, drop_test_db, fresh_test_db, make_user, open_test_pool, pg_pool_from_env,
     unique_slug, with_session,
 };
-use common::{metric_value, metrics_handle};
+use common::{body_text, metric_value, metrics_handle};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -2747,13 +2747,6 @@ async fn a_change_behind_a_slow_one_is_refused_not_queued() {
     assert_eq!(calls, vec![format!("change:{sub}:pri_team_month:Now")]);
     assert_eq!(row(&h.pool, account).await.plan_id, "team");
     h.finish().await;
-}
-
-async fn body_text(resp: axum::http::Response<Body>) -> String {
-    let bytes = axum::body::to_bytes(resp.into_body(), 8 << 20)
-        .await
-        .expect("body");
-    String::from_utf8(bytes.to_vec()).expect("utf8")
 }
 
 fn api(method: &str, path: &str, body: Option<Value>) -> Request<Body> {

@@ -18,7 +18,7 @@ use chrono::Utc;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use common::build_test_app_with_web_and_public_source;
+use common::{body_text, build_test_app_with_web_and_public_source};
 use uptimepage::domain::{
     ComponentHistoryResponse, DayState, IncidentImpact, IncidentSeverity, IncidentStatusPhase,
     Locale, OverallState, OverallStatus, PageRef, PublicComponent, PublicComponentGroup,
@@ -372,13 +372,6 @@ impl PublicSource for MaintenanceDominatesSource {
 }
 
 use common::UnavailablePublicSource as UnavailableSource;
-
-async fn body_text(resp: axum::http::Response<Body>) -> String {
-    let bytes = axum::body::to_bytes(resp.into_body(), 8 << 20)
-        .await
-        .unwrap();
-    String::from_utf8(bytes.to_vec()).unwrap()
-}
 
 fn ct(resp: &axum::http::Response<Body>) -> String {
     resp.headers()

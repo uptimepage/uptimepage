@@ -8,6 +8,8 @@ mod account_gdpr_test;
 mod account_restore_flow_test;
 mod admin_repo_test;
 mod admin_variable_resolution_test;
+mod agent_auth_test;
+mod alert_channel_stop_test;
 mod api_test;
 mod api_token_scopes_test;
 mod api_variables_test;
@@ -125,6 +127,7 @@ mod slack_connect_pg_test;
 mod status_page_audit_test;
 mod status_page_settings_test;
 mod status_pages_pg_test;
+mod subscribe_test;
 mod subscribers_pg_test;
 mod support_request_test;
 mod target_delete_audit_test;
@@ -139,6 +142,7 @@ mod tls_test;
 mod usage_abuse_test;
 mod user_profile_test;
 mod variables_test;
+mod verify_channel_test;
 mod web_e2e_test;
 
 #[test]
