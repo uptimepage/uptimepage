@@ -54,7 +54,7 @@ The allowance is the leftover: subtract the target from 100% and apply it to the
 | 99.99% | 4m 19s | 52m 34s |
 | 99.999% | 26s | 5m 15s |
 
-Two things fall out of that table. The first is how quickly the numbers stop being reassuring: 99% sounds close to perfect and permits more than seven hours a month. The second is how fast the top end gets expensive. Going from 99.9% to 99.99% removes 39 minutes a month, and buying those 39 minutes usually means redundancy across regions, automated failover and someone on call who is paid to be woken up.
+Two things fall out of that table. The first is how quickly the numbers stop being reassuring: 99% sounds close to perfect and permits more than seven hours a month. The second is how fast the top end gets expensive. Going from 99.9% to 99.99% removes 39 minutes a month, and buying those 39 minutes usually means redundancy across regions, automated failover and [someone on call](/blog/on-call-rotation-small-team) who is paid to be woken up.
 
 Each of the common targets has its own breakdown: [98% and what it really allows](/blog/is-98-uptime-good), [99.9% at 43 minutes 12 seconds a month](/blog/how-much-downtime-is-99-9-uptime), [99.95% at 21 minutes 36 seconds](/blog/how-much-downtime-is-99-95-uptime), and [99.99% at 4 minutes 19 seconds](/blog/how-much-downtime-is-99-99-uptime).
 

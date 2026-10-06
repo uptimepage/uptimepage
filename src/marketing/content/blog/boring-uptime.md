@@ -28,7 +28,7 @@ The fifth ping is the real one. Nobody hears it.
 This is how monitors fail. They miss the outage outright sometimes,
 but more often they just get noisy enough that the humans on the other
 end learn to tune them out. Two months in, the Slack channel is muted.
-Six months in, the on-call rota's morale is sunk. A year in, somebody
+Six months in, the [on-call rota](/blog/on-call-rotation-small-team)'s morale is sunk. A year in, somebody
 is writing a postmortem that opens "the alerting system was working as
 designed."
 

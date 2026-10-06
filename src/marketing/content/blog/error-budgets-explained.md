@@ -64,7 +64,7 @@ One threshold is not enough. It either alerts too late or it sends too many [fal
 - Page: 5% in 6 hours (30-minute short window). This is a 6x burn.
 - Slow ticket: 10% in 3 days (6-hour short window). This is a 1x burn.
 
-The fast page catches a sudden outage. The slow ticket catches a slow problem that would still use up the whole month if nobody looked.
+The fast page catches a sudden outage. The slow ticket catches a slow problem that would still use up the whole month if nobody looked. A page also needs a person to receive it. For a small team that is [one name on call and a short escalation ladder](/blog/on-call-rotation-small-team).
 
 ## The rule is the point
 

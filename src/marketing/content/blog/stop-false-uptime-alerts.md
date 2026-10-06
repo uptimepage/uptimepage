@@ -98,7 +98,7 @@ Leave the confirmation count at two unless you have a reason. It is the differen
 
 Pick the rule to match the monitor. A payment API deserves majority or even any. An internal tool nobody uses at night can wait for all. The setting is per monitor, so you do not have to choose one policy for everything.
 
-The goal of all this machinery is boring: when your phone buzzes, it is real. Everything else is plumbing.
+The goal of all this machinery is boring: when your phone buzzes, it is real. Everything else is plumbing. Whose phone that is, and whose is next when they do not answer, is the job of an [on-call rotation](/blog/on-call-rotation-small-team).
 
 ## Common questions
 

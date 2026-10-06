@@ -780,6 +780,7 @@ mod tests {
         "uptime-kuma-rest-api",
         "best-open-source-status-pages",
         "wordpress-missed-schedule",
+        "on-call-rotation-small-team",
     ];
 
     #[test]

@@ -63,7 +63,7 @@ Look at the targets on either side of it.
 
 At 99.5% you are telling customers you may be down for 3 hours 36 minutes a month. An enterprise buyer will read that as a service that fails during working hours.
 
-At 99.99% you are down to 4 minutes 19 seconds a month. Someone has to be paged, wake up, read, understand the problem and act, inside four minutes, every time. You cannot fix that by hiring. The answer is automatic failover between regions, which is a much larger bill.
+At 99.99% you are down to 4 minutes 19 seconds a month. Someone has to [be paged](/blog/on-call-rotation-small-team), wake up, read, understand the problem and act, inside four minutes, every time. You cannot fix that by hiring. The answer is automatic failover between regions, which is a much larger bill.
 
 99.9% is the last target where a person can still be part of the fix. That is how it became the standard number.
 
