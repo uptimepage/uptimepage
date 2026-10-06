@@ -46,6 +46,10 @@
 # The incident writer is a third actor and cannot be switched off, but it only
 # reacts to states this profile no longer seeds. See the search-api block.
 #
+# Heartbeat and browser flow need no seeded monitors: the new-monitor form's
+# type rail lists every check type, so that shot is /targets/new, viewed only.
+# Nothing is created there.
+#
 # Env overrides:
 #   SLUG          org slug to seed onto       (default: uptimepage)
 #   PG_CONTAINER  postgres container name     (default: uptimepage-postgres-1)
@@ -558,6 +562,7 @@ echo
 echo "Seeded '${SLUG}'."
 echo "  operator:    http://app.${BASE_DOMAIN}:8080/targets"
 echo "  dashboard:   http://app.${BASE_DOMAIN}:8080/dashboard"
+echo "  check types: http://app.${BASE_DOMAIN}:8080/targets/new  (view only, covers heartbeat and browser flow)"
 echo "  status page: http://${SLUG}.${BASE_DOMAIN}:8080/"
 echo
 echo "Keep the dev-region agents stopped until the shots are taken — they probe"
