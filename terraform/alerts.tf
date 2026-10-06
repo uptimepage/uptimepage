@@ -24,12 +24,14 @@ resource "grafana_rule_group" "pipeline" {
   folder_uid       = grafana_folder.obs.uid
   interval_seconds = 60
 
-  # Results permanently dropped: the batcher exhausted its retries and
-  # gave up, so this is confirmed, irreversible loss (e.g. ClickHouse
-  # unreachable long enough to drain the retry budget). Transient write
-  # failures that retries recover are only a warning (StorageWriteFailing
-  # below), so a critical here always means real data loss. no_data = OK:
-  # absence means no writes attempted, which PipelineStalled covers.
+  # Results permanently dropped: confirmed, irreversible loss (e.g. the
+  # batcher draining its retry budget while ClickHouse is unreachable).
+  # Transient write failures that retries recover are only a warning
+  # (StorageWriteFailing below), so a critical here always means real data
+  # loss. target_in_flight is excluded: older agent builds count a slow
+  # check skipping its own next tick here, and that loses no result.
+  # no_data = OK: `> 0` filters a zero rate down to no series, which is the
+  # healthy state.
   rule {
     name           = "UptimepageResultsLost"
     condition      = "C"
@@ -41,8 +43,8 @@ resource "grafana_rule_group" "pipeline" {
       service  = "uptimepage"
     }
     annotations = {
-      summary     = "uptimepage: check results permanently dropped"
-      description = "results permanently dropped after retries exhausted (rate > 0 for 2m); confirmed data loss. Runbook: runbooks/grafana-cloud.md."
+      summary     = "uptimepage: results permanently dropped"
+      description = "check results or history rows permanently dropped (rate > 0 for 2m); confirmed data loss. Runbook: runbooks/grafana-cloud.md."
     }
     data {
       ref_id         = "A"
@@ -54,7 +56,7 @@ resource "grafana_rule_group" "pipeline" {
       model = jsonencode({
         refId   = "A"
         instant = true
-        expr    = "sum(rate(uptimepage_storage_dropped_results_total[5m])) > 0"
+        expr    = "sum(rate(uptimepage_storage_dropped_results_total{reason!=\"target_in_flight\"}[5m])) > 0"
       })
     }
     data {
@@ -1658,6 +1660,11 @@ resource "grafana_contact_point" "critical" {
 # Severity routing by channel and timing:
 #   - root (critical falls through here): email + Telegram, page fast,
 #     repeat often.
+#   - child alertname=DatasourceError, matched first: a rule that cannot
+#     evaluate (Grafana failing to query its own Prometheus) raises this
+#     with the rule's labels. Held 10m, because most clear within minutes
+#     and a group that resolves before its first send is never notified.
+#     Its severity=warning child keeps warning rules on email.
 #   - child severity=warning: email-only default, batch longer, repeat
 #     daily — degraded signals shouldn't have paging cadence. continue =
 #     false: a matched warning stops here, never also hits the root path.
@@ -1667,6 +1674,33 @@ resource "grafana_notification_policy" "root" {
   group_wait      = "30s"
   group_interval  = "5m"
   repeat_interval = "4h"
+
+  policy {
+    contact_point = grafana_contact_point.critical.name
+    continue      = false
+
+    matcher {
+      label = "alertname"
+      match = "="
+      value = "DatasourceError"
+    }
+
+    group_wait     = "10m"
+    group_interval = "30m"
+
+    policy {
+      contact_point = grafana_contact_point.default.name
+      continue      = false
+
+      matcher {
+        label = "severity"
+        match = "="
+        value = "warning"
+      }
+
+      repeat_interval = "1d"
+    }
+  }
 
   policy {
     contact_point = grafana_contact_point.default.name

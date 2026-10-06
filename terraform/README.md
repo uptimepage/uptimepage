@@ -26,7 +26,8 @@ State + secrets live in **HCP Terraform Cloud** — never in this repo.
   contact points (email-only `uptimepage-default` for warnings,
   email+Telegram `uptimepage-critical` for criticals); the root
   notification policy with severity routing (critical pages fast to both
-  channels, warning batches slow to email).
+  channels, warning batches slow to email, a failed rule evaluation is
+  held a further 10m before it notifies either).
 - `dashboard.tf` — every board under `terraform/dashboards/*.json`
   (`uptimepage-ops`, `uptimepage-business`, `uptimepage-host`,
   `uptimepage-clickhouse`), loaded via `fileset` + `for_each` so adding a
@@ -93,10 +94,12 @@ commit it (provider version pinning; `.gitignore` keeps it tracked).
 
 **Notification policy** — `grafana_notification_policy.root` owns the
 **single org root policy** and apply **replaces** it (now: critical
-fast-page cadence at the root + a `severity=warning` child that batches
-slow). It is already Terraform-managed here, so changes are normal
-in-place updates — but any UI edit to notification policies is drift
-silently reverted on the next `apply`. `plan` renders a policy change
+fast-page cadence at the root + an `alertname=DatasourceError` child,
+matched first, that holds a failed evaluation 10m past the rule's own
+`for` so it only notifies when it lasts + a `severity=warning` child
+that batches slow). It is already Terraform-managed here, so changes are
+normal in-place updates — but any UI edit to notification policies is
+drift silently reverted on the next `apply`. `plan` renders a policy change
 as an in-place update, never a destroy; read it.
 
 **Apply order** (gap-closer first):
