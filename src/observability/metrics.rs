@@ -53,8 +53,8 @@ pub fn init(bind: &str) -> Result<MetricsHandle> {
 }
 
 fn prime_event_counters() {
-    // increase() cannot see the first increment of a series that appears
-    // mid-range, and these fire rarely enough that it usually does.
+    // increase() and rate() cannot see the first increment of a series that
+    // appears mid-range, and these fire rarely enough that it usually does.
     metrics::counter!(metric_names::ACCOUNT_DELETIONS_REQUESTED).increment(0);
     metrics::counter!(metric_names::ORGS_EMPTIED).increment(0);
     for outcome in ["applied", "duplicate", "stale", "unmatched", "foreign"] {
@@ -65,6 +65,17 @@ fn prime_event_counters() {
     }
     metrics::counter!(metric_names::BILLING_PROVIDER_CANCEL_FAILED).increment(0);
     metrics::counter!(metric_names::BILLING_PROVIDER_DATE_FAILED).increment(0);
+    for reason in [
+        "queue_full",
+        "pool_saturated",
+        "buffer_overflow",
+        "retries_exhausted",
+        "flow_run_buffer_full",
+        "flow_run_write_failed",
+        "heartbeat_ping_write_failed",
+    ] {
+        metrics::counter!(metric_names::STORAGE_DROPPED, "reason" => reason).increment(0);
+    }
 }
 
 fn register_descriptions() {
@@ -106,6 +117,10 @@ fn register_descriptions() {
     describe_counter!(
         "uptimepage_storage_dropped_results_total",
         "Results dropped before storage, labelled by reason"
+    );
+    describe_counter!(
+        "uptimepage_checks_skipped_in_flight_total",
+        "Scheduler ticks skipped because the target's previous probe was still running"
     );
     describe_counter!(
         "uptimepage_notifications_dead_lettered_total",

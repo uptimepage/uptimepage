@@ -161,8 +161,8 @@ async fn spawn_slow_mock(delay: Duration) -> (std::net::SocketAddr, Arc<AtomicU3
 async fn dispatch_skips_when_target_probe_already_in_flight() {
     // Cadence 150 ms, response time 600 ms — three ticks land before the
     // first probe completes. Without the in-flight guard the mock would see
-    // every tick; with it, ticks 2-N drop and the counter only advances per
-    // completed probe.
+    // every tick; with it, ticks 2-N are skipped and the counter only advances
+    // per completed probe.
     let response = Duration::from_millis(600);
     let cadence = Duration::from_millis(150);
     let (addr, counter) = spawn_slow_mock(response).await;
@@ -195,12 +195,12 @@ async fn dispatch_skips_when_target_probe_already_in_flight() {
     // Upper bound (cadence-only): 1500/150 = 10. With the in-flight guard
     // the worker can only start one probe per ~600 ms ⇒ ≤ 3.
     assert!(
-        probes <= 4,
-        "probe should be deduplicated; got {probes} (expected ≤ 4)"
+        (1..=4).contains(&probes),
+        "probe should run and be deduplicated; got {probes} (expected 1..=4)"
     );
-    assert!(
-        dropped >= 3,
-        "in-flight dispatches should drop; got {dropped} (expected ≥ 3)"
+    assert_eq!(
+        dropped, 0,
+        "a skipped tick loses no result, so it must not count as a drop"
     );
 }
 

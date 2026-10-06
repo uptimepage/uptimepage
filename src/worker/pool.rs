@@ -25,6 +25,8 @@ static HOST_THROTTLE_WAITS_HOST: LazyLock<Counter> =
     LazyLock::new(|| counter!(metric_names::HOST_THROTTLE_WAITS, "kind" => "host"));
 static HOST_THROTTLE_DROPS_C: LazyLock<Counter> =
     LazyLock::new(|| counter!(metric_names::HOST_THROTTLE_DROPS));
+static CHECKS_SKIPPED_IN_FLIGHT_C: LazyLock<Counter> =
+    LazyLock::new(|| counter!(metric_names::CHECKS_SKIPPED_IN_FLIGHT));
 
 pub struct CheckTask {
     pub target: Arc<Target>,
@@ -325,8 +327,7 @@ impl WorkerPool {
         // duplicate ClickHouse rows at near-identical timestamps, double
         // host-throttle consumption, ambiguous alert ordering.
         if !self.in_flight.insert(task.target.id) {
-            counter!(metric_names::STORAGE_DROPPED, "reason" => "target_in_flight").increment(1);
-            self.fanout.note_storage_dropped();
+            CHECKS_SKIPPED_IN_FLIGHT_C.increment(1);
             return;
         }
         let in_flight_guard = InFlightGuard {

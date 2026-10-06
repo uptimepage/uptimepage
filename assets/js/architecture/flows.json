@@ -1161,7 +1161,7 @@
           "f": "batch",
           "t": "otlp",
           "h": "drop counters",
-          "d": "Every dropped result is labelled queue_full, target_in_flight, pool_saturated, buffer_overflow or retries_exhausted."
+          "d": "Every dropped result is labelled queue_full, pool_saturated, buffer_overflow or retries_exhausted."
         },
         {
           "f": "layers",

@@ -4,6 +4,7 @@
 pub const CHECKS_TOTAL: &str = "uptimepage_checks_total";
 pub const CHECK_ERRORS: &str = "uptimepage_checks_errors_total";
 pub const CHECK_REDIRECTS: &str = "uptimepage_check_redirects_total";
+pub const CHECKS_SKIPPED_IN_FLIGHT: &str = "uptimepage_checks_skipped_in_flight_total";
 pub const HTTP_ACCESS_DIAGNOSTICS: &str = "uptimepage_http_access_diagnostics_total";
 pub const BREAKER_STATE_CHANGES: &str = "uptimepage_circuit_breaker_state_changes_total";
 pub const STORAGE_WRITES: &str = "uptimepage_storage_writes_total";
