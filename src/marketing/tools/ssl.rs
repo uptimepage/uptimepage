@@ -266,7 +266,7 @@ async fn run(host: &str, port: u16) -> Result<ProbeReport, ProbeError> {
 /// is meaningful to a visitor. Each becomes a sentence about the host.
 fn describe(err: CertProbeError) -> ProbeError {
     let text = match err {
-        CertProbeError::Connect(ref e) if probe::egress_is_broken(e) => {
+        CertProbeError::Connect(ref e) if crate::net::egress_is_broken(e) => {
             return ProbeError::Server(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "The checker could not open an outbound connection.",

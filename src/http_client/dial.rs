@@ -1,9 +1,11 @@
 use std::net::{IpAddr, SocketAddr};
+use std::time::Duration;
 
 use tokio::net::TcpStream;
 
 use super::HttpClients;
 use super::connector::{dns_reason, tcp_reason};
+use crate::net::happy_eyeballs;
 
 /// Resolves `host` and keeps only addresses the shared SSRF guard allows.
 /// Errors when resolution fails or nothing survives the filter, so callers
@@ -27,26 +29,26 @@ pub(crate) async fn allowed_addrs(
     Ok(addrs)
 }
 
-/// Tries to open a TCP connection to `(ip, port)` for each allowed address of
-/// `host`.
+/// Races a TCP connection to the allowed addresses of `host`, v6 and v4
+/// interleaved, giving up after `budget`.
 pub(crate) async fn connect_via_guard(
     host: &str,
     port: u16,
     clients: &HttpClients,
+    budget: Duration,
 ) -> anyhow::Result<TcpStream> {
-    let mut last_err: Option<std::io::Error> = None;
-    for ip in allowed_addrs(host, clients).await? {
-        match TcpStream::connect(SocketAddr::new(ip, port)).await {
-            Ok(s) => return Ok(s),
-            Err(e) => last_err = Some(e),
-        }
-    }
-    // The raw `io::Error` Display carries a platform-specific errno, which no
-    // error class can name and the customer should never read. Kept as the
-    // source so an operator can still tell a refused port from a blocked one:
-    // `context` is what `to_string` yields, the errno survives in `{:?}`.
-    let err = last_err.expect("allowed_addrs yields at least one address");
-    tracing::debug!(host, port, error = %err, "connect failed");
-    let reason = tcp_reason(&err);
-    Err(anyhow::Error::new(err).context(reason))
+    let addrs = allowed_addrs(host, clients)
+        .await?
+        .into_iter()
+        .map(|ip| SocketAddr::new(ip, port))
+        .collect();
+    happy_eyeballs::connect(addrs, budget).await.map_err(|err| {
+        // The raw `io::Error` Display carries a platform-specific errno, which no
+        // error class can name and the customer should never read. Kept as the
+        // source so an operator can still tell a refused port from a blocked one:
+        // `context` is what `to_string` yields, the errno survives in `{:?}`.
+        tracing::debug!(host, port, error = %err, "connect failed");
+        let reason = tcp_reason(&err);
+        anyhow::Error::new(err).context(reason)
+    })
 }

@@ -123,7 +123,7 @@ async fn query(
     registrable: &str,
     clients: &HttpClients,
 ) -> Result<String> {
-    let mut stream: TcpStream = connect_via_guard(server, port, clients)
+    let mut stream: TcpStream = connect_via_guard(server, port, clients, clients.connect_timeout())
         .await
         .with_context(|| format!("connecting to WHOIS server {server}"))?;
 

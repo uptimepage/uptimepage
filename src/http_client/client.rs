@@ -71,6 +71,10 @@ impl HttpClients {
     pub fn ssrf_guard(&self) -> SsrfGuard {
         self.ssrf_guard
     }
+
+    pub(crate) fn connect_timeout(&self) -> Duration {
+        self.connect_timeout
+    }
 }
 
 pub fn build_clients(

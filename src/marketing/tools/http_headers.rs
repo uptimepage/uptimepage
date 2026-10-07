@@ -481,7 +481,7 @@ fn describe(e: &(dyn std::error::Error + 'static)) -> ProbeError {
     let mut source: Option<&(dyn std::error::Error + 'static)> = Some(e);
     while let Some(err) = source {
         if let Some(io) = err.downcast_ref::<std::io::Error>()
-            && probe::egress_is_broken(io)
+            && crate::net::egress_is_broken(io)
         {
             return ProbeError::Server(
                 StatusCode::SERVICE_UNAVAILABLE,

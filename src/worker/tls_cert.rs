@@ -78,7 +78,7 @@ struct CertVerdict {
 }
 
 async fn run_check(check: &TlsCertCheck, clients: &HttpClients) -> anyhow::Result<ProbeOutcome> {
-    let stream = connect_via_guard(&check.host, check.port, clients).await?;
+    let stream = connect_via_guard(&check.host, check.port, clients, check.timeout).await?;
     let peer = stream.peer_addr()?.ip();
     let server_name = check.server_name.as_deref().unwrap_or(&check.host);
 

@@ -19,6 +19,8 @@ use std::time::Duration;
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::net::TcpStream;
 
+use super::egress_is_broken;
+
 /// RFC 8305 §4 "Connection Attempt Delay". 250 ms is the spec's default and
 /// matches what mainstream stacks (Chrome, Firefox, macOS, curl) ship.
 pub const STAGGER: Duration = Duration::from_millis(250);
@@ -39,7 +41,7 @@ pub async fn connect(addrs: Vec<SocketAddr>, overall_timeout: Duration) -> io::R
     let deadline = tokio::time::Instant::now() + overall_timeout;
     let mut attempts: FuturesUnordered<_> = FuturesUnordered::new();
     let mut iter = interleaved.into_iter().peekable();
-    let mut first_err: Option<io::Error> = None;
+    let mut kept_err: Option<io::Error> = None;
 
     // Seed with the first address immediately.
     if let Some(addr) = iter.next() {
@@ -49,14 +51,12 @@ pub async fn connect(addrs: Vec<SocketAddr>, overall_timeout: Duration) -> io::R
     loop {
         if attempts.is_empty() && iter.peek().is_none() {
             return Err(
-                first_err.unwrap_or_else(|| io::Error::other("happy-eyeballs: connect failed"))
+                kept_err.unwrap_or_else(|| io::Error::other("happy-eyeballs: connect failed"))
             );
         }
         let now = tokio::time::Instant::now();
         if now >= deadline {
-            return Err(first_err.unwrap_or_else(|| {
-                io::Error::new(io::ErrorKind::TimedOut, "happy-eyeballs: overall timeout")
-            }));
+            return Err(deadline_error(kept_err));
         }
 
         // Cap the stagger by the overall deadline so we don't sleep past it.
@@ -64,18 +64,14 @@ pub async fn connect(addrs: Vec<SocketAddr>, overall_timeout: Duration) -> io::R
 
         tokio::select! {
             // Existing attempt finished. Success wins immediately; failure is
-            // remembered as the diagnostic for the eventual error. On failure
+            // ranked against the one kept so far. On failure
             // we fall through to the loop head, which will queue the next
             // address (if any) and immediately await — no extra stagger
             // penalising a fast-failing address.
             Some(res) = attempts.next() => {
                 match res {
                     Ok(stream) => return Ok(stream),
-                    Err(e) => {
-                        if first_err.is_none() {
-                            first_err = Some(e);
-                        }
-                    }
+                    Err(e) => kept_err = Some(more_telling(kept_err, e)),
                 }
                 if let Some(addr) = iter.next() {
                     attempts.push(TcpStream::connect(addr));
@@ -91,6 +87,22 @@ pub async fn connect(addrs: Vec<SocketAddr>, overall_timeout: Duration) -> io::R
             }
         }
     }
+}
+
+/// Keeps the first failure unless only a later one speaks for the target.
+fn more_telling(kept: Option<io::Error>, next: io::Error) -> io::Error {
+    match kept {
+        Some(kept) if !egress_is_broken(&kept) || egress_is_broken(&next) => kept,
+        _ => next,
+    }
+}
+
+/// An address still pending at the deadline timed out, which says more about
+/// the target than a failure that never left this host.
+fn deadline_error(kept: Option<io::Error>) -> io::Error {
+    kept.filter(|e| !egress_is_broken(e)).unwrap_or_else(|| {
+        io::Error::new(io::ErrorKind::TimedOut, "happy-eyeballs: overall timeout")
+    })
 }
 
 /// Interleave addresses so IPv6 is tried first, then v4, alternating
@@ -171,6 +183,30 @@ mod tests {
         assert!(out[3].is_ipv6());
     }
 
+    #[test]
+    fn a_missing_probe_route_never_masks_the_targets_answer() {
+        use io::ErrorKind::{ConnectionRefused, NetworkUnreachable, TimedOut};
+        let kind = |kept: Option<io::ErrorKind>, next| {
+            more_telling(kept.map(io::Error::from), io::Error::from(next)).kind()
+        };
+        assert_eq!(kind(None, NetworkUnreachable), NetworkUnreachable);
+        assert_eq!(
+            kind(Some(NetworkUnreachable), ConnectionRefused),
+            ConnectionRefused
+        );
+        assert_eq!(kind(Some(ConnectionRefused), TimedOut), ConnectionRefused);
+        assert_eq!(
+            kind(Some(NetworkUnreachable), NetworkUnreachable),
+            NetworkUnreachable
+        );
+
+        let at_deadline =
+            |kept: Option<io::ErrorKind>| deadline_error(kept.map(io::Error::from)).kind();
+        assert_eq!(at_deadline(None), TimedOut);
+        assert_eq!(at_deadline(Some(NetworkUnreachable)), TimedOut);
+        assert_eq!(at_deadline(Some(ConnectionRefused)), ConnectionRefused);
+    }
+
     #[tokio::test]
     async fn errors_on_empty_address_list() {
         let err = connect(vec![], Duration::from_secs(1))
@@ -195,11 +231,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn returns_first_error_when_all_attempts_fail() {
-        // Two refused ports on loopback. Both connects fail (ECONNREFUSED).
-        // We expect the *first* failure to surface — Quality reviewer flagged
-        // this as the right diagnostic (the v6 path is tried first, so its
-        // failure is usually the most actionable signal).
+    async fn a_silent_first_address_does_not_hold_up_the_next() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // TEST-NET-1 drops the SYN, the way a firewalled AAAA does.
+        let addrs = vec![sock("192.0.2.1:80"), sock(&format!("127.0.0.1:{port}"))];
+        let start = tokio::time::Instant::now();
+        let (conn, accepted) =
+            tokio::join!(connect(addrs, Duration::from_secs(5)), listener.accept());
+        conn.expect("the reachable address must win");
+        accepted.expect("listener must accept");
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            start.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn returns_an_error_when_all_attempts_fail() {
         let addrs = vec![sock("127.0.0.1:1"), sock("127.0.0.1:2")];
         let err = connect(addrs, Duration::from_secs(2))
             .await

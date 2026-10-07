@@ -6,7 +6,6 @@
 //! that keeps a stranger's dead host out of our own 5xx rate. A tool adds its
 //! own port allowlist and deadline on top.
 
-use std::io;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::num::NonZeroU32;
 use std::time::Duration;
@@ -132,19 +131,6 @@ fn no_nameserver_was_reached(e: &NetError) -> bool {
     matches!(
         e,
         NetError::Io(_) | NetError::NoConnections | NetError::Busy
-    )
-}
-
-/// A connect that failed before a packet could leave this host. Reporting it as
-/// the host's fault would tell every visitor their site is dead the moment we
-/// lose egress, and record nothing here.
-pub(super) fn egress_is_broken(e: &io::Error) -> bool {
-    matches!(
-        e.kind(),
-        io::ErrorKind::PermissionDenied
-            | io::ErrorKind::NetworkUnreachable
-            | io::ErrorKind::NetworkDown
-            | io::ErrorKind::AddrNotAvailable
     )
 }
 
@@ -310,27 +296,6 @@ mod tests {
         let res =
             ProbeError::Server(StatusCode::SERVICE_UNAVAILABLE, "no resolver").into_response();
         assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
-    }
-
-    /// Losing egress must not read as every visitor's host being dead.
-    #[test]
-    fn a_connect_that_never_left_this_host_is_ours() {
-        for kind in [
-            io::ErrorKind::PermissionDenied,
-            io::ErrorKind::NetworkUnreachable,
-            io::ErrorKind::NetworkDown,
-            io::ErrorKind::AddrNotAvailable,
-        ] {
-            assert!(egress_is_broken(&io::Error::from(kind)), "{kind:?}");
-        }
-        for kind in [
-            io::ErrorKind::ConnectionRefused,
-            io::ErrorKind::ConnectionReset,
-            io::ErrorKind::TimedOut,
-            io::ErrorKind::HostUnreachable,
-        ] {
-            assert!(!egress_is_broken(&io::Error::from(kind)), "{kind:?}");
-        }
     }
 
     #[test]
