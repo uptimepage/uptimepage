@@ -583,6 +583,7 @@ async fn paging_kinds_reject_malformed_configs() {
 async fn provider_webhook_kinds_reject_offsite_urls() {
     let app = app();
     for (kind, url) in [
+        ("slack", "https://example.com/services/T/B/x"),
         ("discord", "https://example.com/api/webhooks/1/x"),
         ("msteams", "https://example.com/workflows/x"),
         ("google_chat", "https://example.com/v1/spaces/A/messages"),

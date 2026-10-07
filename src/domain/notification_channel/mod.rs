@@ -946,6 +946,21 @@ mod tests {
 
     #[test]
     fn provider_webhooks_pin_their_hosts() {
+        let slack = |url: &str| {
+            ChannelConfig::Slack(SlackConfig {
+                webhook_url: url.into(),
+                mention: None,
+            })
+            .validate()
+        };
+        assert!(slack("https://hooks.slack.com/services/T/B/x").is_ok());
+        assert!(slack("https://hooks.slack.com/workflows/T/A/1/x").is_ok());
+        assert!(slack("https://hooks.slack-gov.com/services/T/B/x").is_ok());
+        assert!(slack("https://discord.com/api/webhooks/123/tok").is_err());
+        assert!(slack("https://slack.com/services/T/B/x").is_err());
+        assert!(slack("https://hooks.slack.com.evil.test/services/T/B/x").is_err());
+        assert!(slack("http://hooks.slack.com/services/T/B/x").is_err());
+
         let discord = |url: &str| {
             ChannelConfig::Discord(DiscordConfig {
                 webhook_url: url.into(),

@@ -3,7 +3,7 @@ use utoipa::ToSchema;
 
 use super::ChannelKind;
 use super::mention::{cleared_when_empty, tokens, validate as validate_mention, without_broadcast};
-use super::transport::{MASK, TransportConfig, require_https, trim_in_place};
+use super::transport::{MASK, TransportConfig, require_provider_webhook, trim_in_place};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct SlackConfig {
@@ -115,7 +115,12 @@ impl TransportConfig for SlackConfig {
     }
 
     fn validate(&self) -> Result<(), String> {
-        require_https(&self.webhook_url, "webhook_url")?;
+        require_provider_webhook(
+            &self.webhook_url,
+            "Slack",
+            &["hooks.slack.com", "hooks.slack-gov.com"],
+            None,
+        )?;
         validate_ping(self.mention.as_deref())
     }
 

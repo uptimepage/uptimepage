@@ -18,7 +18,7 @@ The point of the split is blast radius. A noisy marketing-site monitor and your 
 
 | Type | What you provide | Notes |
 |---|---|---|
-| Slack, Discord, Teams, Google Chat, Mattermost | An incoming webhook URL | Discord, Teams and Google Chat URLs are host-checked, so a wrong-vendor paste is refused up front. A Slack URL is only checked for `https`, so verify it with a test send. Mattermost has no single host to check — Cloud and on-prem installs each serve their own — so its URL is checked for `https` and for the `/hooks/<key>` path every incoming webhook ends in, and a URL copied from the REST API is refused. Slack, Discord and Mattermost also take an optional group ping, see below |
+| Slack, Discord, Teams, Google Chat, Mattermost | An incoming webhook URL | Slack, Discord, Teams and Google Chat URLs are host-checked, so a wrong-vendor paste is refused up front. Mattermost has no single host to check — Cloud and on-prem installs each serve their own — so its URL is checked for `https` and for the `/hooks/<key>` path every incoming webhook ends in, and a URL copied from the REST API is refused. Slack, Discord and Mattermost also take an optional group ping, see below |
 | Telegram | One-tap link, or your own bot token and chat id | The one-tap flow is available where the platform runs a central bot |
 | WhatsApp | One-tap link, or Business Cloud API credentials and a template | Bring-your-own needs an approved one-parameter template |
 | SMS | Credentials for your own gateway: Twilio, Vonage, Telnyx, Plivo, or Sinch | One message per alert, trimmed to bound per-segment cost |
