@@ -19,9 +19,9 @@
       <a href="/incidents/{{ id }}" class="inline-block text-sm text-muted hover:text-body">← incident</a>
       <h1 class="page-title">
         <span class="page-title__prefix" aria-hidden="true">$</span><input
-          name="title" type="text" maxlength="200" value="{{ title }}"
+          name="title" type="text"{% if title_required %} required{% endif %} maxlength="200" value="{{ title }}"
           autocomplete="off" spellcheck="false"
-          placeholder="{% match monitor_name %}{% when Some with (n) %}{{ n }}{% when None %}untitled incident{% endmatch %}"
+          placeholder="{% if title_required %}checkout failing for EU customers{% else %}{% match monitor_name %}{% when Some with (n) %}{{ n }}{% when None %}untitled incident{% endmatch %}{% endif %}"
           aria-label="Incident title" class="page-title__input w-full sm:w-[40ch]">
       </h1>
       <p class="text-sm text-muted">

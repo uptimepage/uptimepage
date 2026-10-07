@@ -132,7 +132,8 @@ pub struct IncidentNarrationUpdate {
     #[serde(default, deserialize_with = "double_option")]
     #[schema(nullable = true, value_type = Option<String>)]
     pub public_description: Option<Option<String>>,
-    /// Internal title. Clearing it falls the label back to the monitor name.
+    /// Internal title. Clearing it falls the label back to the monitor name;
+    /// refused on a declared incident.
     #[serde(default, deserialize_with = "double_option")]
     #[schema(nullable = true, value_type = Option<String>)]
     pub title: Option<Option<String>>,
@@ -674,9 +675,8 @@ fn default_true() -> bool {
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NewManualIncident {
-    #[serde(default)]
-    #[schema(nullable = true)]
-    pub title: Option<String>,
+    #[schema(max_length = 200)]
+    pub title: String,
     #[serde(default)]
     pub severity: IncidentSeverity,
     #[serde(default)]

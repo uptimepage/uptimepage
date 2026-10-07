@@ -482,6 +482,7 @@ fn edit_form_arrives_prefilled_and_leaves_the_monitor_alone() {
         active_tab: "incidents",
         id: Uuid::now_v7().to_string(),
         title: "partner API degraded".into(),
+        title_required: true,
         monitor_name: Some("api-prod".into()),
         target_id: Some(Uuid::now_v7().to_string()),
         severity: "critical",
@@ -495,6 +496,10 @@ fn edit_form_arrives_prefilled_and_leaves_the_monitor_alone() {
     .render()
     .unwrap();
     assert!(html.contains(r#"value="partner API degraded""#), "{html}");
+    assert!(
+        html.contains(r#"name="title" type="text" required"#),
+        "{html}"
+    );
     assert!(
         html.contains(r#"name="severity" value="critical" checked"#),
         "{html}"

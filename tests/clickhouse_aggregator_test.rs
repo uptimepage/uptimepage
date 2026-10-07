@@ -1222,7 +1222,7 @@ async fn a_page_incident_shows_only_on_the_pages_it_names() {
             .declare(
                 org_id,
                 NewManualIncident {
-                    title: Some("Network outage in Frankfurt".into()),
+                    title: "Network outage in Frankfurt".into(),
                     severity: IncidentSeverity::Critical,
                     status_page_ids: vec![posted.0, bare.0],
                     ..Default::default()

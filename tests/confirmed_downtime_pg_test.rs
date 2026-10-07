@@ -102,7 +102,7 @@ async fn a_declared_incident_stays_out_of_uptime_until_asked_in_pg() {
         .declare(
             org,
             NewManualIncident {
-                title: Some("payments failing, site up".into()),
+                title: "payments failing, site up".into(),
                 target_id: Some(target_id),
                 ..Default::default()
             },

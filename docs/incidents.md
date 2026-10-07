@@ -22,7 +22,7 @@ A background writer scans every enabled monitor (not only status-page components
 
 Visibility is derived at open time: if the monitor is a component of an enabled status page the incident opens `public`, otherwise `internal`. A monitor on no page still gets a fully tracked internal incident.
 
-You can also declare an incident by hand from the console (`/incidents/declare`) — for a problem a monitor can't see, like a customer report or a partner outage. A manual incident may stand alone or link to a monitor. A monitor holds at most one open declaration, independently of whatever the writer is doing, so a declaration you forget to close never silences detection on that monitor.
+You can also declare an incident by hand from the console (`/incidents/declare`) — for a problem a monitor can't see, like a customer report or a partner outage. A manual incident may stand alone or link to a monitor, and always has a title: `POST /api/v1/incidents` requires `title`, and amending cannot clear it. A monitor holds at most one open declaration, independently of whatever the writer is doing, so a declaration you forget to close never silences detection on that monitor.
 
 Declaring is quiet by default: the incident opens `internal` and pages nobody, so you can open one while you are still working out what broke. The form offers both louder options explicitly — publish it to the status pages carrying the linked monitor (or, with no monitor, the pages you pick), and alert the org's channels now. Over the API those are the `visibility` and `notify` fields on `POST /api/v1/incidents`, both off unless set. Alert mail for a declared incident says it was declared by hand, so nobody reads it as a monitor detection.
 

@@ -246,6 +246,55 @@ async fn a_declared_incident_may_name_no_monitor() {
     assert_eq!(declared["origin"], "manual");
 }
 
+#[tokio::test]
+async fn a_declared_incident_needs_a_title() {
+    let app = build_test_app_with_owner(|_| {});
+    for (body, status, code) in [
+        (json!({}), StatusCode::UNPROCESSABLE_ENTITY, "INVALID_JSON"),
+        (
+            json!({ "title": null }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "INVALID_JSON",
+        ),
+        (
+            json!({ "title": "  " }),
+            StatusCode::BAD_REQUEST,
+            "EMPTY_TITLE",
+        ),
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(owner_json("POST", "/api/v1/incidents", body.clone()))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), status, "{body}");
+        assert_eq!(body_json(resp).await["error"]["code"], code, "{body}");
+    }
+
+    let resp = app
+        .clone()
+        .oneshot(owner_json(
+            "POST",
+            "/api/v1/incidents",
+            json!({ "title": "partner API degraded" }),
+        ))
+        .await
+        .unwrap();
+    let id = body_json(resp).await["id"].as_str().unwrap().to_string();
+    let resp = app
+        .oneshot(owner_json(
+            "PATCH",
+            &format!("/api/v1/incidents/{id}"),
+            json!({ "title": null }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let err = body_json(resp).await;
+    assert_eq!(err["error"]["code"], "EMPTY_TITLE");
+    assert_eq!(err["error"]["field"], "title");
+}
+
 /// Recording a problem the monitors cannot see must not page anyone or tell
 /// customers, unless asked.
 #[tokio::test]

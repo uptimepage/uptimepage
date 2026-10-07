@@ -36,7 +36,7 @@ async fn rig() -> Rig {
         .declare(
             org,
             NewManualIncident {
-                title: Some("db unreachable".into()),
+                title: "db unreachable".into(),
                 ..Default::default()
             },
             Actor::System,
@@ -215,7 +215,7 @@ async fn a_deployment_without_the_secret_mints_and_honours_nothing() {
         .declare(
             org,
             NewManualIncident {
-                title: Some("db unreachable".into()),
+                title: "db unreachable".into(),
                 ..Default::default()
             },
             Actor::System,

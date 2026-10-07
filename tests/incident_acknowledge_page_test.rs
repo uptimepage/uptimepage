@@ -70,7 +70,7 @@ async fn rig_with(state: uptimepage::app::AppState) -> Rig {
         .declare(
             org,
             NewManualIncident {
-                title: Some("db unreachable".into()),
+                title: "db unreachable".into(),
                 ..Default::default()
             },
             Actor::System,
@@ -674,7 +674,7 @@ async fn an_alert_from_another_of_the_members_orgs_acts_there_pg() {
             ops.declare(
                 org,
                 NewManualIncident {
-                    title: Some("db unreachable".into()),
+                    title: "db unreachable".into(),
                     ..Default::default()
                 },
                 Actor::System,

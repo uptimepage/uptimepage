@@ -87,7 +87,7 @@ async fn rig_with(wire: impl FnOnce(AppState) -> AppState) -> Rig {
         .declare(
             org,
             NewManualIncident {
-                title: Some("db unreachable".into()),
+                title: "db unreachable".into(),
                 ..Default::default()
             },
             Actor::System,

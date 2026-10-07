@@ -33,7 +33,8 @@ use crate::storage::{Actor, IncidentOpsFilter, LifecycleOutcome};
     tag = "incidents",
     summary = "Amend an incident (title, severity, urgency, public narration)",
     description = "Sending JSON `null` for `title`, `public_title` or `public_description` clears \
-                   the stored value; omitting the field leaves it unchanged. The public page falls \
+                   the stored value; omitting the field leaves it unchanged. A declared \
+                   incident's `title` cannot be cleared. The public page falls \
                    back to auto-generated content when the public title is null. A severity change \
                    is recorded on the incident's internal timeline. `counts_as_downtime` decides \
                    whether the incident's duration reaches the monitor's uptime figure, and is \
@@ -67,12 +68,24 @@ pub async fn update_incident_narration(
         update.public_description.as_ref(),
         "public_description",
     )?;
+    let clears_title = matches!(update.title, Some(None));
     // Read before the write so the timeline can say what it changed from.
-    let was = if update.severity.is_some() || update.counts_as_downtime.is_some() {
+    let was = if update.severity.is_some() || update.counts_as_downtime.is_some() || clears_title {
         state.incident_ops_store.get(org, id).await?
     } else {
         None
     };
+    if clears_title
+        && let Some(before) = was.as_ref()
+        && before.origin == IncidentOrigin::Manual
+        && before.title.is_some()
+    {
+        return Err(AppError::bad_request_field(
+            codes::EMPTY_TITLE,
+            "a declared incident needs a title",
+            "title",
+        ));
+    }
     if update.counts_as_downtime.is_some()
         && let Some(before) = was.as_ref()
         && before.origin != IncidentOrigin::Manual
@@ -382,7 +395,12 @@ pub async fn incident_notifications(
                    one unless `visibility` and `notify` say otherwise, so declaring is safe to \
                    do while you are still working out what broke.",
     request_body = NewManualIncident,
-    responses((status = 201, body = OpsIncident), (status = 400, body = ApiError)),
+    responses(
+        (status = 201, body = OpsIncident),
+        (status = 400, body = ApiError),
+        (status = 409, body = ApiError),
+        (status = 422, body = ApiError),
+    ),
 )]
 pub async fn declare_incident(
     State(state): State<AppState>,
@@ -390,7 +408,7 @@ pub async fn declare_incident(
     CurrentUser(user): CurrentUser,
     Json(new): Json<NewManualIncident>,
 ) -> Result<(StatusCode, Json<OpsIncident>)> {
-    validation::validate_optional_title(Some(&new.title), "title")?;
+    validation::validate_title(&new.title, "title")?;
     let (notify, publish) = (new.notify, new.visibility == IncidentVisibility::Public);
     if publish && new.target_id.is_none() && new.status_page_ids.is_empty() {
         return Err(AppError::bad_request_field(

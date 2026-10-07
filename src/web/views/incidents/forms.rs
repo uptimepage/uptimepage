@@ -64,6 +64,7 @@ pub struct EditIncidentPage {
     pub active_tab: &'static str,
     pub id: String,
     pub title: String,
+    pub title_required: bool,
     /// Read-only: one monitor holds one open declaration, so rebinding would
     /// collide with the open-incident index.
     pub monitor_name: Option<String>,
@@ -99,6 +100,7 @@ pub async fn edit_form(
         active_tab: "incidents",
         id: inc.id.to_string(),
         title: inc.title.clone().unwrap_or_default(),
+        title_required: inc.origin == IncidentOrigin::Manual,
         monitor_name,
         target_id: inc.target_id.map(|t| t.to_string()),
         severity: inc.severity.as_db_str(),

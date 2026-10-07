@@ -423,7 +423,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         let inc = OpsIncident {
             id: Uuid::now_v7(),
             target_id: new.target_id,
-            title: new.title,
+            title: Some(new.title),
             state: IncidentState::Triggered,
             severity: new.severity,
             urgency: new.urgency,

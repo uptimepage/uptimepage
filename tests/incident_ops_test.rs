@@ -73,7 +73,7 @@ async fn a_target_less_incident_survives_every_narration_path_pg() {
         .declare(
             org,
             NewManualIncident {
-                title: Some("partner outage".into()),
+                title: "partner outage".into(),
                 ..Default::default()
             },
             Actor::User(user),
@@ -132,7 +132,7 @@ async fn incident_titles_read_back_for_their_own_org_only_pg() {
         .declare(
             org,
             NewManualIncident {
-                title: Some("partner outage".into()),
+                title: "partner outage".into(),
                 ..Default::default()
             },
             Actor::User(user),
@@ -169,7 +169,7 @@ async fn an_incident_can_be_amended_after_it_is_declared_pg() {
         .declare(
             org,
             NewManualIncident {
-                title: Some("partner outage".into()),
+                title: "partner outage".into(),
                 ..Default::default()
             },
             Actor::User(user),
@@ -289,7 +289,7 @@ async fn operator_incident_actions_reach_the_org_audit_log_pg() {
         .declare(
             org,
             NewManualIncident {
-                title: Some("partner outage".into()),
+                title: "partner outage".into(),
                 ..Default::default()
             },
             Actor::User(user),
@@ -2403,7 +2403,7 @@ async fn an_incident_without_a_monitor_is_published_to_the_pages_it_names_pg() {
         .declare(
             org,
             NewManualIncident {
-                title: Some("network outage".into()),
+                title: "network outage".into(),
                 ..Default::default()
             },
             Actor::User(user),
@@ -2473,7 +2473,7 @@ async fn an_incident_without_a_monitor_is_published_to_the_pages_it_names_pg() {
         .declare(
             org,
             NewManualIncident {
-                title: Some("dns outage".into()),
+                title: "dns outage".into(),
                 status_page_ids: vec![first],
                 ..Default::default()
             },
@@ -2526,7 +2526,7 @@ async fn an_incident_cannot_be_posted_to_another_orgs_page_pg() {
             .declare(
                 org,
                 NewManualIncident {
-                    title: Some("x".into()),
+                    title: "x".into(),
                     status_page_ids: vec![mine, theirs],
                     ..Default::default()
                 },
