@@ -103,7 +103,7 @@ pub fn decide_multi(
                     started_at: trigger.bad[0].timestamp,
                     status_at_start,
                     check_count: origin.bad.len() as u32,
-                    error_sample: incident_error_sample(&bad, verdicts.len(), quorum),
+                    error_sample: incident_error_sample(&bad, quorum),
                     region: None,
                     regions_down,
                     regions_up,
@@ -155,7 +155,7 @@ pub fn decide_multi(
             {
                 actions.push(Action::Escalate {
                     incident_id: inc.id,
-                    error_sample: incident_error_sample(&bad, verdicts.len(), quorum),
+                    error_sample: incident_error_sample(&bad, quorum),
                 });
             }
             actions
@@ -189,11 +189,7 @@ fn split_regions(bad: &[&Verdict], verdicts: &[Verdict]) -> (Vec<String>, Vec<St
 
 /// Cause as stated to notifications and incident views. The per-result error
 /// is left untouched for API consumers.
-fn incident_error_sample(
-    bad: &[&Verdict<'_>],
-    reporting_regions: usize,
-    quorum: usize,
-) -> Option<String> {
+fn incident_error_sample(bad: &[&Verdict<'_>], quorum: usize) -> Option<String> {
     // Newest failure per region only: an earlier page must not outlive a
     // change in how the edge is failing.
     let diagnosed: Vec<_> = bad
@@ -237,9 +233,10 @@ fn incident_error_sample(
             // Ahead of the tally: notifications clip this sample, and the fix
             // is worth more to the reader than the vote count.
             parts.push(diagnostic.guidance().to_string());
-            if reporting_regions > 1 {
+            if bad.len() > 1 {
                 parts.push(format!(
-                    "{matching_regions}/{reporting_regions} reporting regions agree"
+                    "{matching_regions}/{} failing regions agree",
+                    bad.len()
                 ));
             }
             return Some(parts.join(" · "));

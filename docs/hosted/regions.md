@@ -47,7 +47,7 @@ The same thing shows up in smaller ways elsewhere: geo-fenced APIs, aggressive b
 
 How to tell this apart from real downtime:
 
-- For an HTTP response that matches a supported CDN/WAF signature, the result names the access-policy diagnosis separately from the authoritative status error. An incident names a provider only when the same diagnosis meets the monitor's region quorum, and reports the agreeing/total reporting-region count.
+- For an HTTP response that matches a supported CDN/WAF signature, the result names the access-policy diagnosis separately from the authoritative status error. An incident names a provider only when the same diagnosis meets the monitor's region quorum, and, when more than one region confirmed the failure, reports how many of them agree.
 - Run **check now** and compare regions. A block from our side usually fails in every region at once, where a real outage often starts in one region and spreads.
 - Look at connect time on the checks that did succeed. If they connect in a couple of hundred milliseconds and the failures are hard timeouts, the path is being dropped rather than being slow.
 - Open the URL yourself, from a connection that is not a datacentre. If it answers there and times out from every region you assigned, the difference is who is asking, not whether the service is up.

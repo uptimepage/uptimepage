@@ -137,7 +137,7 @@ fn decide_requires_cross_region_cause_consensus_and_reports_it() {
     {
         Some(Action::Open(new)) => {
             let sample = new.error_sample.expect("diagnostic sample");
-            assert!(sample.contains("3/3 reporting regions agree"), "{sample}");
+            assert!(sample.contains("3/3 failing regions agree"), "{sample}");
             assert!(sample.contains("authenticated health endpoint"), "{sample}");
             assert!(
                 sample.chars().count() <= 200,
@@ -150,6 +150,48 @@ fn decide_requires_cross_region_cause_consensus_and_reports_it() {
         }
         other => panic!("expected Open, got {other:?}"),
     }
+}
+
+#[test]
+fn cause_tally_counts_only_failing_regions() {
+    let base = Utc.with_ymd_and_hms(2026, 5, 13, 12, 0, 0).unwrap();
+    let target = Uuid::now_v7();
+    let blocked = || {
+        vec![
+            akamai_blocked(target, base),
+            akamai_blocked(target, ts(base, 30)),
+        ]
+    };
+    let healthy = || vec![result(target, base, CheckStatus::Up)];
+    let sample_for = |by_region: &[(String, Vec<CheckResult>)], quorum| match decide_multi(
+        target,
+        &[],
+        by_region,
+        2,
+        quorum,
+    )
+    .as_slice()
+    {
+        [Action::Open(new)] => new.error_sample.clone().expect("diagnostic sample"),
+        other => panic!("expected Open, got {other:?}"),
+    };
+
+    let one_of_three = [
+        ("eu".to_string(), blocked()),
+        ("us".to_string(), healthy()),
+        ("ap".to_string(), healthy()),
+    ];
+    let sample = sample_for(&one_of_three, 1);
+    assert!(sample.contains("Akamai"), "{sample}");
+    assert!(!sample.contains("regions agree"), "{sample}");
+
+    let two_of_three = [
+        ("eu".to_string(), blocked()),
+        ("us".to_string(), blocked()),
+        ("ap".to_string(), healthy()),
+    ];
+    let sample = sample_for(&two_of_three, 2);
+    assert!(sample.contains("2/2 failing regions agree"), "{sample}");
 }
 
 #[test]
@@ -175,7 +217,7 @@ fn decide_names_the_failing_side_when_every_region_sees_a_dead_origin() {
                 "{sample}"
             );
             assert!(sample.contains("restart the tunnel daemon"), "{sample}");
-            assert!(sample.contains("3/3 reporting regions agree"), "{sample}");
+            assert!(sample.contains("3/3 failing regions agree"), "{sample}");
         }
         other => panic!("expected Open, got {other:?}"),
     }
@@ -243,7 +285,7 @@ fn decide_does_not_promote_one_regions_guess_to_majority_cause() {
         Some(Action::Open(new)) => {
             let sample = new.error_sample.expect("protocol sample");
             assert!(!sample.contains("Akamai"), "{sample}");
-            assert!(!sample.contains("reporting regions agree"), "{sample}");
+            assert!(!sample.contains("failing regions agree"), "{sample}");
         }
         other => panic!("expected Open, got {other:?}"),
     }
@@ -1482,7 +1524,7 @@ fn escalation_diagnostics_require_quorum_and_keep_region_agreement() {
                     assert!(sample.contains("origin tunnel down behind the Cloudflare edge"));
                     assert!(sample.contains("restart the tunnel daemon"));
                     assert!(
-                        sample.contains(&format!("{diagnosed_regions}/3 reporting regions agree"))
+                        sample.contains(&format!("{diagnosed_regions}/3 failing regions agree"))
                     );
                 } else {
                     assert_eq!(sample, "unexpected status 530");
