@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 
 /// Every `crate::<module>` marketing touches. Each travels with the site on
 /// extraction because it needs no pool, no `AppState` and no scheduler;
-/// `custom_domains` is an in-memory snapshot that imports only `domain`.
+/// `custom_domains` is an in-memory snapshot that imports only `domain`, and
+/// `net` imports no crate module.
 const ALLOWED_CRATE_MODULES: &[&str] = &[
     "marketing",
     "templates",
@@ -17,6 +18,7 @@ const ALLOWED_CRATE_MODULES: &[&str] = &[
     "request",
     "custom_domains",
     "http_outbound",
+    "net",
 ];
 
 const FORBIDDEN_SYMBOLS: &[&str] = &["AppState"];
