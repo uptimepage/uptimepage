@@ -58,6 +58,7 @@ fn heartbeat_target(name: &str, enabled: bool) -> NewTarget {
         alert_confirmations: 2,
         notify_recovery: true,
         renotify_interval_secs: 3600,
+        recovery_period_secs: 0,
         group_name: None,
         owner_user_id: None,
         regions: None,

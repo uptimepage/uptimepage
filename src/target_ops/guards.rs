@@ -10,7 +10,8 @@ use crate::request::state::require_pool;
 use crate::security::SsrfGuard;
 use crate::targets::flow_capable_set;
 use crate::targets::validate::{
-    RegionSnapshot, flow_covered, normalize_region_ids, validate_heartbeat_cadence,
+    RegionSnapshot, flow_covered, normalize_region_ids, reject_manual_recovery_period,
+    validate_heartbeat_cadence,
 };
 
 use super::TargetOps;
@@ -182,9 +183,9 @@ impl TargetOps<'_> {
     /// half can arrive alone, so the floor and the heartbeat pairing are judged on
     /// the merge of the request and the stored row. A heartbeat window that shrinks
     /// with no interval sent lowers the stored interval to the new cadence, rather
-    /// than refusing a field the caller never named. A manual monitor's cadence and
-    /// confirmations are fixed, so a different value is refused rather than stored
-    /// and ignored. A missing target is left for the update itself to 404.
+    /// than refusing a field the caller never named. A manual monitor's cadence,
+    /// confirmations and recovery period are fixed, so a different value is
+    /// refused rather than stored and ignored. A missing target is left for the update itself to 404.
     pub(crate) async fn validate_patch_schedule(
         &self,
         org: OrgId,
@@ -193,9 +194,12 @@ impl TargetOps<'_> {
         prefetched: Option<&Target>,
     ) -> Result<()> {
         let requested = update.interval.map(|i| i.as_secs() as i64);
-        // 1 is what a manual monitor runs on, so only another count needs the kind.
+        // 1 and 0 are what a manual monitor runs on, so only another value needs
+        // the kind.
         let tunes_confirmations = update.alert_confirmations.is_some_and(|n| n != 1);
-        if requested.is_none() && update.check.is_none() && !tunes_confirmations {
+        let tunes_recovery = update.recovery_period_secs.is_some_and(|n| n != 0);
+        if requested.is_none() && update.check.is_none() && !tunes_confirmations && !tunes_recovery
+        {
             return Ok(());
         }
         // The row is only worth reading for the half the request leaves out. A high
@@ -277,5 +281,7 @@ fn reject_manual_tuning(update: &TargetUpdate) -> Result<()> {
             "alert_confirmations",
         ));
     }
-    Ok(())
+    update
+        .recovery_period_secs
+        .map_or(Ok(()), reject_manual_recovery_period)
 }

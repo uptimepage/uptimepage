@@ -625,6 +625,7 @@ fn stored_monitor() -> Target {
         alert_confirmations: 2,
         notify_recovery: true,
         renotify_interval_secs: 3600,
+        recovery_period_secs: 0,
         region_policy: RegionIncidentPolicy::Majority,
         group_name: Some("API".into()),
         owner_user_id: None,
@@ -642,6 +643,7 @@ fn patch_args() -> UpdateMonitorArgs {
         alert_confirmations: None,
         notify_recovery: None,
         renotify_interval_secs: None,
+        recovery_period_secs: None,
         tags: None,
         group_name: None,
         region_policy: None,
@@ -1039,6 +1041,7 @@ fn a_creation_prompt_states_every_setting_it_would_apply() {
         alert_confirmations: 5,
         notify_recovery: false,
         renotify_interval_secs: 0,
+        recovery_period_secs: 600,
         group_name: Some("API".into()),
         owner_user_id: None,
         regions: None,
@@ -1057,6 +1060,7 @@ fn a_creation_prompt_states_every_setting_it_would_apply() {
         "alerts after 5 failing checks",
         "recovery is not announced",
         "no reminders",
+        "closes its incident once checks have passed for 600s",
         "2 regions down (2 of 2 assigned regions)",
         "notification channels: ops-slack, pager (disabled, delivers nothing)",
     ] {
@@ -1070,11 +1074,13 @@ fn a_creation_prompt_states_every_setting_it_would_apply() {
     // operator is approving them either way.
     new.notify_recovery = true;
     new.renotify_interval_secs = 3_600;
+    new.recovery_period_secs = 0;
     new.tags.clear();
     new.group_name = None;
     new.alerts = TargetAlerts::default();
     let lines = create_prompt_lines(&new, &regions, None, None).join("\n");
     assert!(lines.contains("first reminder after 3600s"));
+    assert!(lines.contains("closes its incident once checks pass again"));
     assert!(!lines.contains("tags:"));
     // Silence is the one state worth stating outright.
     assert!(lines.contains("alerts nobody unless a channel's tag rule covers its tags"));

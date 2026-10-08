@@ -26,7 +26,7 @@ pub use fields::{
 };
 pub use model::{
     ChannelChoice, ConfirmationChoice, FormModel, IntervalChoice, KindCard, OwnerChoice,
-    RegionChoice, RegionGroup, RenotifyChoice, ThresholdChoice,
+    RegionChoice, RegionGroup, SecondsChoice, ThresholdChoice,
 };
 pub use prefill::NewParams;
 

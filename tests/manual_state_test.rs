@@ -78,6 +78,20 @@ async fn a_manual_monitor_starts_up_and_takes_the_state_it_is_given() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
     assert_eq!(refused["error"]["code"], "INVALID_INTERVAL");
+    let (status, refused) = send(
+        &router,
+        "POST",
+        "/api/v1/targets",
+        Some(json!({
+            "name": "held",
+            "interval": 60,
+            "recovery_period_secs": 300,
+            "check": { "type": "manual" },
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(refused["error"]["field"], "recovery_period_secs");
     assert_eq!(
         created["alert_confirmations"], 1,
         "a set is the confirmation"
@@ -283,6 +297,10 @@ async fn a_manual_monitor_refuses_a_schedule_it_would_not_follow() {
     for (body, code) in [
         (json!({ "interval": 300 }), "INVALID_INTERVAL"),
         (json!({ "alert_confirmations": 3 }), "INVALID_ALERT_CONFIG"),
+        (
+            json!({ "recovery_period_secs": 300 }),
+            "INVALID_ALERT_CONFIG",
+        ),
     ] {
         let (status, res) = send(&router, "PATCH", &path, Some(body.clone())).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body} -> {res}");
@@ -292,7 +310,12 @@ async fn a_manual_monitor_refuses_a_schedule_it_would_not_follow() {
         &router,
         "PATCH",
         &path,
-        Some(json!({ "name": "SIP trunks", "interval": 60, "alert_confirmations": 1 })),
+        Some(json!({
+            "name": "SIP trunks",
+            "interval": 60,
+            "alert_confirmations": 1,
+            "recovery_period_secs": 0,
+        })),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{res}");

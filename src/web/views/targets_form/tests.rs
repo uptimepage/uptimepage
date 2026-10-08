@@ -258,6 +258,7 @@ fn headers_render_as_row_inputs() {
         alert_confirmations: 2,
         notify_recovery: true,
         renotify_interval_secs: 3600,
+        recovery_period_secs: 0,
         group_name: None,
         owner_user_id: None,
         write_source: crate::domain::WriteSource::Ui,
@@ -373,6 +374,30 @@ fn off_preset_interval_is_preserved_as_an_option() {
     .unwrap();
     assert!(html.contains(r#"name="interval_s" value="90" class="sr-only" checked"#));
     assert!(html.contains("90s"));
+}
+
+#[test]
+fn the_recovery_hold_defaults_off_and_keeps_an_off_preset_value() {
+    let form = empty_create_form();
+    let html = FormPage {
+        active_tab: "targets",
+        form,
+    }
+    .render()
+    .unwrap();
+    assert!(html.contains(r#"name="recovery_period_secs" value="0" class="sr-only" checked"#));
+
+    let mut form = empty_create_form();
+    form.recovery_period_secs = 420;
+    let offered: Vec<u32> = form.recovery_options().iter().map(|o| o.secs).collect();
+    assert_eq!(offered, [0, 120, 300, 420, 600, 900, 1_800]);
+    let html = FormPage {
+        active_tab: "targets",
+        form,
+    }
+    .render()
+    .unwrap();
+    assert!(html.contains(r#"name="recovery_period_secs" value="420" class="sr-only" checked"#));
 }
 
 #[test]
@@ -516,6 +541,7 @@ fn edit_form_renders_target_with_sealed_auth() {
         alert_confirmations: 2,
         notify_recovery: true,
         renotify_interval_secs: 3600,
+        recovery_period_secs: 0,
         group_name: None,
         owner_user_id: None,
         write_source: crate::domain::WriteSource::Ui,
@@ -553,6 +579,7 @@ fn edit_form_maps_tcp_target_fields() {
         alert_confirmations: 2,
         notify_recovery: true,
         renotify_interval_secs: 3600,
+        recovery_period_secs: 0,
         group_name: None,
         owner_user_id: None,
         write_source: crate::domain::WriteSource::Ui,
@@ -594,6 +621,7 @@ fn edit_form_maps_tls_cert_target_fields() {
         alert_confirmations: 2,
         notify_recovery: true,
         renotify_interval_secs: 3600,
+        recovery_period_secs: 0,
         group_name: None,
         owner_user_id: None,
         write_source: crate::domain::WriteSource::Ui,
@@ -632,6 +660,7 @@ fn edit_form_maps_domain_expiry_target_fields() {
         alert_confirmations: 2,
         notify_recovery: true,
         renotify_interval_secs: 3600,
+        recovery_period_secs: 0,
         group_name: None,
         owner_user_id: None,
         write_source: crate::domain::WriteSource::Ui,
@@ -667,6 +696,7 @@ fn edit_form_maps_heartbeat_target_fields() {
         alert_confirmations: 2,
         notify_recovery: true,
         renotify_interval_secs: 3600,
+        recovery_period_secs: 0,
         group_name: None,
         owner_user_id: None,
         write_source: crate::domain::WriteSource::Ui,
@@ -716,6 +746,7 @@ fn edit_form_maps_dns_target_fields() {
         alert_confirmations: 2,
         notify_recovery: true,
         renotify_interval_secs: 3600,
+        recovery_period_secs: 0,
         group_name: None,
         owner_user_id: None,
         write_source: crate::domain::WriteSource::Ui,
@@ -833,6 +864,7 @@ fn copy_form_seeds_create_from_existing() {
         alert_confirmations: 2,
         notify_recovery: true,
         renotify_interval_secs: 3600,
+        recovery_period_secs: 0,
         group_name: None,
         owner_user_id: None,
         write_source: crate::domain::WriteSource::Ui,

@@ -67,6 +67,8 @@ pub struct FormModel {
     pub notify_recovery: bool,
     /// Seconds between outage reminders while unacknowledged; 0 = off.
     pub renotify_interval_secs: u32,
+    /// Seconds a recovery must hold before the incident closes; 0 = at once.
+    pub recovery_period_secs: u32,
     /// Escalation-policy choices for the monitor's binding selector (edit only;
     /// a not-yet-created monitor has no id to bind). Own binding marked selected.
     pub escalation_choices: Vec<crate::web::views::escalation::Choice>,
@@ -153,8 +155,9 @@ pub(super) fn region_threshold_choices(
     out
 }
 
-/// One preset in the outage-reminder dropdown. `secs` is submitted verbatim.
-pub struct RenotifyChoice {
+/// One preset in a seconds rail (reminder cadence, recovery hold). `secs` is
+/// submitted verbatim.
+pub struct SecondsChoice {
     pub secs: u32,
     pub label: String,
     pub selected: bool,
@@ -300,7 +303,7 @@ impl FormModel {
 
     /// Reminder-cadence presets with the monitor's current interval selected;
     /// an off-preset stored value is preserved as its own option.
-    pub fn renotify_options(&self) -> Vec<RenotifyChoice> {
+    pub fn renotify_options(&self) -> Vec<SecondsChoice> {
         let mut values: Vec<u32> = vec![0, 900, 1_800, 3_600, 7_200, 21_600];
         if !values.contains(&self.renotify_interval_secs) {
             values.push(self.renotify_interval_secs);
@@ -308,7 +311,7 @@ impl FormModel {
         }
         values
             .into_iter()
-            .map(|secs| RenotifyChoice {
+            .map(|secs| SecondsChoice {
                 secs,
                 label: if secs == 0 {
                     "off".to_string()
@@ -316,6 +319,28 @@ impl FormModel {
                     exact_duration(u64::from(secs))
                 },
                 selected: secs == self.renotify_interval_secs,
+            })
+            .collect()
+    }
+
+    /// Recovery-hold presets with the monitor's current hold selected; an
+    /// off-preset stored value is preserved as its own option.
+    pub fn recovery_options(&self) -> Vec<SecondsChoice> {
+        let mut values: Vec<u32> = vec![0, 120, 300, 600, 900, 1_800];
+        if !values.contains(&self.recovery_period_secs) {
+            values.push(self.recovery_period_secs);
+            values.sort_unstable();
+        }
+        values
+            .into_iter()
+            .map(|secs| SecondsChoice {
+                secs,
+                label: if secs == 0 {
+                    "at once".to_string()
+                } else {
+                    exact_duration(u64::from(secs))
+                },
+                selected: secs == self.recovery_period_secs,
             })
             .collect()
     }

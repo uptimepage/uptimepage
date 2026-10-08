@@ -11,8 +11,9 @@
 //! Detection rule (anything not `up` is unhealthy):
 //!  * `≥ flap_threshold` consecutive `down`/`error`/`degraded` results, no open
 //!    incident → INSERT a new open incident.
-//!  * `≥ flap_threshold` consecutive `up` results while an open incident exists
-//!    → UPDATE `ended_at` to the first such timestamp.
+//!  * `≥ flap_threshold` consecutive `up` results while an open incident exists,
+//!    held for the monitor's recovery period → UPDATE `ended_at` to the first
+//!    such timestamp.
 //!
 //! Both rules are idempotent: re-running with the same input produces no
 //! additional writes. The rules themselves are applied by [`decide_multi`],
@@ -335,11 +336,15 @@ impl IncidentWriter {
 
     /// Window sized to the target's cadence: confirming a transition needs
     /// `confirmations` results spaced one `interval` apart, which a fixed window
-    /// can't hold for a slow monitor. `cfg.lookback` floors it for fast ones.
+    /// can't hold for a slow monitor, and closing needs the start of a recovery
+    /// that has held for the recovery period. Both get the same 2× slack.
+    /// `cfg.lookback` floors it for fast ones.
     fn lookback_for(&self, target: &Target) -> ChronoDuration {
         let confirmations = u64::from(target.alert_confirmations.max(1));
-        let needed =
-            ChronoDuration::seconds((target.interval.as_secs() * 2 * confirmations) as i64);
+        let recovery = u64::from(target.recovery_period_secs);
+        let needed = ChronoDuration::seconds(
+            (2 * (target.interval.as_secs() * confirmations + recovery)) as i64,
+        );
         self.cfg.lookback.max(needed)
     }
 
@@ -371,7 +376,15 @@ impl IncidentWriter {
 
         let confirmations = target.alert_confirmations.max(1);
         let quorum = target.region_policy.required(by_region.len());
-        let actions = decide_multi(target.id, &open, &by_region, confirmations, quorum);
+        let recovery = ChronoDuration::seconds(i64::from(target.recovery_period_secs));
+        let actions = decide_multi(
+            target.id,
+            &open,
+            &by_region,
+            confirmations,
+            quorum,
+            recovery,
+        );
         for action in actions {
             match action {
                 Action::None => {}

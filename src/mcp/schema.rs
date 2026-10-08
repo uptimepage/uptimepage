@@ -288,6 +288,9 @@ pub struct MonitorDetail {
     /// each further reminder waits twice as long, up to a day. 0 means
     /// reminders are off.
     pub renotify_interval_secs: u32,
+    /// Seconds a recovered monitor must stay healthy before its incident
+    /// closes. 0 closes on the confirming checks alone.
+    pub recovery_period_secs: u32,
     /// The detection quorum, in the same shape the write tools take. `null` for
     /// a heartbeat, which has no probe regions to reach a quorum over. A stored
     /// `count` can exceed the regions that exist today if one was later
@@ -613,6 +616,11 @@ pub struct CreateMonitorArgs {
     /// each further reminder waits twice as long, up to a day. 0 turns
     /// reminders off; otherwise at least 60. Defaults to 3600.
     pub renotify_interval_secs: Option<u32>,
+    /// Seconds a recovered monitor must stay healthy before its incident
+    /// closes; a failure confirmed inside the window keeps the incident open,
+    /// so a flapping service reads as one outage. 0 to 1800, defaults to 0,
+    /// which closes on the confirming checks alone. Not for a manual monitor.
+    pub recovery_period_secs: Option<u32>,
     /// Detection quorum across probe regions.
     pub region_policy: Option<RegionPolicyArg>,
     /// Probe regions to run the check from, as ids from `list_regions`. Omit
@@ -1160,6 +1168,10 @@ pub struct UpdateMonitorArgs {
     /// each further reminder waits twice as long, up to a day. 0 turns
     /// reminders off; otherwise at least 60.
     pub renotify_interval_secs: Option<u32>,
+    /// Seconds a recovered monitor must stay healthy before its incident
+    /// closes, 0 to 1800. Raising it folds a flapping monitor's short outages
+    /// into one incident, at the cost of announcing recovery later.
+    pub recovery_period_secs: Option<u32>,
     /// Replaces the whole tag list. Read the monitor first: a tag left out of
     /// this list is removed. At most 50 tags, each at most 50 characters.
     pub tags: Option<Vec<String>>,

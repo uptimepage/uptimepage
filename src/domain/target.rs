@@ -15,6 +15,10 @@ use super::user::UserId;
 pub const MAX_TAGS_PER_TARGET: usize = 50;
 pub const MAX_TAG_LEN: usize = 50;
 
+/// Longest hold before a recovered monitor's incident closes. The incident
+/// writer reads back over the hold to date the recovery, so it is bounded.
+pub const MAX_RECOVERY_PERIOD_SECS: u32 = 1800;
+
 /// How many regions must agree a monitor is down before it alerts. `Any`,
 /// `Majority`, and `All` track the live region count; `Count` is a fixed number
 /// the user chose. Resolved to a concrete threshold by [`Self::required`].
@@ -99,6 +103,12 @@ pub struct Target {
     /// each further reminder waits twice as long, up to a day. 0 = off.
     #[serde(default = "default_renotify_interval_secs")]
     pub renotify_interval_secs: u32,
+    /// Seconds a recovered monitor must stay healthy before its incident
+    /// closes; a failure confirmed inside the window keeps the incident open.
+    /// 0 closes on the confirming checks alone.
+    #[serde(default)]
+    #[schema(maximum = 1800)]
+    pub recovery_period_secs: u32,
     /// How multi-region health folds into incidents for this monitor.
     #[serde(default)]
     pub region_policy: RegionIncidentPolicy,
@@ -149,6 +159,12 @@ pub struct NewTarget {
     /// each further reminder waits twice as long, up to a day. 0 = off.
     #[serde(default = "default_renotify_interval_secs")]
     pub renotify_interval_secs: u32,
+    /// Seconds a recovered monitor must stay healthy before its incident
+    /// closes; a failure confirmed inside the window keeps the incident open.
+    /// 0 (the default) closes on the confirming checks alone. At most 1800.
+    #[serde(default)]
+    #[schema(maximum = 1800)]
+    pub recovery_period_secs: u32,
     /// Detection policy. Omit to take the derived default — quorum-majority when
     /// the monitor lands in more than one region, any-down for a single region.
     #[serde(default)]
@@ -201,6 +217,8 @@ pub struct TargetUpdate {
     pub alert_confirmations: Option<u32>,
     pub notify_recovery: Option<bool>,
     pub renotify_interval_secs: Option<u32>,
+    #[schema(maximum = 1800)]
+    pub recovery_period_secs: Option<u32>,
     #[schema(max_items = 50)]
     pub tags: Option<Vec<String>>,
     #[serde(default, deserialize_with = "TargetAlerts::deserialize_strict_opt")]

@@ -111,7 +111,7 @@ type RegionPullEtagRow = (
 /// Single source for the cross-tenant target column list. Both the
 /// scheduler-snapshot and incident-writer-keyset queries return the same
 /// `targets` shape that [`decode_target_row`] consumes.
-const TARGET_COLUMNS: &str = "t.org_id, t.id, t.name, t.check_spec, t.interval_secs, t.enabled, t.tags, t.alerts, t.region_policy, t.alert_confirmations, t.notify_recovery, t.renotify_interval_secs, t.group_name, t.owner_user_id, t.write_source, t.created_at, t.updated_at, t.plan_hold_at";
+const TARGET_COLUMNS: &str = "t.org_id, t.id, t.name, t.check_spec, t.interval_secs, t.enabled, t.tags, t.alerts, t.region_policy, t.alert_confirmations, t.notify_recovery, t.renotify_interval_secs, t.recovery_period_secs, t.group_name, t.owner_user_id, t.write_source, t.created_at, t.updated_at, t.plan_hold_at";
 
 /// The per-org region ceiling, joined in as `cap`. `$2` carries the org ids and
 /// `$3` their limits; an org missing from the arrays has no ceiling. Written

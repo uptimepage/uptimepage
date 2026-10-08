@@ -89,6 +89,7 @@ async fn make_target(store: &dyn TargetStore, org: OrgId, name: &str, secret: bo
         alert_confirmations: 2,
         notify_recovery: true,
         renotify_interval_secs: 3600,
+        recovery_period_secs: 0,
         group_name: None,
         owner_user_id: None,
         regions: None,

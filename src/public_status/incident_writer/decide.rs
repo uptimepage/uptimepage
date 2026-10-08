@@ -1,7 +1,7 @@
 //! The pure decision: what the recent results say should open or close, with
 //! no database and no clock of its own.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use uuid::Uuid;
 
 use crate::domain::{CheckResult, CheckStatus};
@@ -34,6 +34,9 @@ struct Verdict<'a> {
     region: &'a str,
     bad: &'a [CheckResult],
     good: &'a [CheckResult],
+    /// The region failed somewhere in view, so its trailing good run is a
+    /// recovery, not just a region that was never down.
+    failed: bool,
 }
 
 /// Single-region convenience over [`decide_multi`]: one region, combined
@@ -49,17 +52,25 @@ pub fn decide(open: Option<&OpenIncident>, results: &[CheckResult], flap_thresho
     };
     let opens: Vec<OpenIncident> = open.cloned().into_iter().collect();
     let by_region = [(String::new(), results.to_vec())];
-    decide_multi(target_id, &opens, &by_region, flap_threshold, 1)
-        .into_iter()
-        .next()
-        .unwrap_or(Action::None)
+    decide_multi(
+        target_id,
+        &opens,
+        &by_region,
+        flap_threshold,
+        1,
+        ChronoDuration::zero(),
+    )
+    .into_iter()
+    .next()
+    .unwrap_or(Action::None)
 }
 
 /// Pure region-aware decision. Each `(region, results)` group is one region's
 /// checks ascending by time; `opens` is every open incident for the target.
 /// `confirmations` is the per-region consecutive-bad run needed; `quorum` is how
 /// many regions must agree before the combined incident opens (clamped to the
-/// live region count so it can never be unreachable). Returns the writes to
+/// live region count so it can never be unreachable). `recovery` is how long
+/// the recovery must hold before the incident closes. Returns the writes to
 /// apply; an empty vec means nothing to do.
 pub fn decide_multi(
     target_id: Uuid,
@@ -67,15 +78,20 @@ pub fn decide_multi(
     by_region: &[(String, Vec<CheckResult>)],
     confirmations: u32,
     quorum: usize,
+    recovery: ChronoDuration,
 ) -> Vec<Action> {
     let threshold = (confirmations as usize).max(1);
 
     let verdicts: Vec<Verdict> = by_region
         .iter()
-        .map(|(region, results)| Verdict {
-            region,
-            bad: trailing_bad_run(results),
-            good: trailing_good_run(results),
+        .map(|(region, results)| {
+            let good = trailing_good_run(results);
+            Verdict {
+                region,
+                bad: trailing_bad_run(results),
+                good,
+                failed: good.len() < results.len(),
+            }
         })
         .collect();
 
@@ -113,38 +129,36 @@ pub fn decide_multi(
             }
         }
         Some(inc) => {
-            // Close once below quorum, with a sustained-good region as recovery
-            // evidence; ended_at = latest such recovery.
-            if bad.len() < quorum {
-                let ended = verdicts
-                    .iter()
-                    .filter(|v| v.good.len() >= threshold)
-                    .map(|v| v.good[0].timestamp)
-                    .max();
-                if let Some(ended) = ended
-                    && ended > inc.started_at
-                {
-                    return vec![Action::Close {
-                        incident_id: inc.id,
-                        ended_at: ended,
-                    }];
-                }
+            // Close once below quorum and the recovery has held; ended_at is
+            // when it began, so the hold is not counted as downtime.
+            if bad.len() < quorum
+                && let Some(ended) = recovered_at(&verdicts, threshold, recovery)
+                && ended > inc.started_at
+            {
+                return vec![Action::Close {
+                    incident_id: inc.id,
+                    ended_at: ended,
+                }];
             }
             // The breakdown only grows: a region one check behind the quorum
             // joins once it confirms, silence adds nothing, and a recovery is
             // the close's business, so the row keeps the worst the outage was.
-            // The status follows the same rule.
+            // The status follows the same rule. Below quorum the outage is
+            // over and only waiting out its recovery, so a lone region failing
+            // then is not part of it.
             let mut actions = Vec::new();
-            let (confirmed, _) = split_regions(&bad, &verdicts);
-            let regions: Vec<String> = confirmed
-                .into_iter()
-                .filter(|r| !inc.regions_down.contains(r))
-                .collect();
-            if !regions.is_empty() {
-                actions.push(Action::Widen {
-                    incident_id: inc.id,
-                    regions,
-                });
+            if bad.len() >= quorum {
+                let (confirmed, _) = split_regions(&bad, &verdicts);
+                let regions: Vec<String> = confirmed
+                    .into_iter()
+                    .filter(|r| !inc.regions_down.contains(r))
+                    .collect();
+                if !regions.is_empty() {
+                    actions.push(Action::Widen {
+                        incident_id: inc.id,
+                        regions,
+                    });
+                }
             }
             // Only to down: an error is as often our probe as the service, so
             // it never turns a degraded incident into an outage. Judged as an
@@ -161,6 +175,34 @@ pub fn decide_multi(
             actions
         }
     }
+}
+
+/// When the outage ended, once its recovery has held for `recovery`: the
+/// latest onset among regions back up for a full confirmation run. A region up
+/// throughout may never have failed, so it dates the end only alongside a
+/// region seen recovering, or when every region has been up for the whole
+/// window and the recovery itself is older than the window. A region failing
+/// again restarts its own run, so a renewed outage restarts the hold.
+fn recovered_at(
+    verdicts: &[Verdict],
+    threshold: usize,
+    recovery: ChronoDuration,
+) -> Option<DateTime<Utc>> {
+    let held: Vec<&Verdict> = verdicts
+        .iter()
+        .filter(|v| v.good.len() >= threshold)
+        .collect();
+    let witnessed = held.iter().any(|v| v.failed);
+    if !witnessed && verdicts.iter().any(|v| v.failed) {
+        return None;
+    }
+    let onset = held.iter().map(|v| v.good[0].timestamp).max()?;
+    let seen = held
+        .iter()
+        .filter_map(|v| v.good.last())
+        .map(|r| r.timestamp)
+        .max()?;
+    (seen - onset >= recovery).then_some(onset)
 }
 
 fn worst_status(bad: &[&Verdict]) -> Option<CheckStatus> {

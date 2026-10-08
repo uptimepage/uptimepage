@@ -742,6 +742,10 @@ import { parseDuration } from "./_duration.js";
         }
         const recoveryEl = form.querySelector("[data-notify-recovery]");
         const renotifyEl = form.querySelector("[data-renotify-secs] input:checked");
+        const holdEl = form.querySelector("[data-recovery-period] input:checked");
+        const recoveryPeriod = currentCheckType() === "manual"
+            ? 0
+            : (holdEl ? parseInt(holdEl.value, 10) || 0 : 0);
 
         const planMin = Number(form.dataset.minInterval) || 60;
         const kind = data.get("check_type") || "http";
@@ -766,6 +770,7 @@ import { parseDuration } from "./_duration.js";
             check,
             alerts,
             alert_confirmations: confirmations,
+            recovery_period_secs: recoveryPeriod,
         };
         // Absent with zero channels: create takes the server defaults,
         // edit (partial PATCH) keeps the stored values.
@@ -1034,6 +1039,7 @@ import { parseDuration } from "./_duration.js";
         "check.server_name": "tls_server_name",
         "interval": "interval_s",
         "renotify_interval_secs": "renotify_secs",
+        "recovery_period_secs": "recovery_period_secs",
         "name": "name",
     };
 

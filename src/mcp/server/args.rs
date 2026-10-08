@@ -82,6 +82,17 @@ pub(super) fn build_monitor_patch(
         );
         update.renotify_interval_secs = Some(secs);
     }
+    if let Some(secs) = args.recovery_period_secs
+        && secs != target.recovery_period_secs
+    {
+        fits_i32(u64::from(secs), "recovery_period_secs")?;
+        moved(
+            "recovery_period_secs",
+            target.recovery_period_secs.to_string(),
+            secs.to_string(),
+        );
+        update.recovery_period_secs = Some(secs);
+    }
     if let Some(tags) = args.tags.as_ref() {
         let tags = crate::targets::validate::normalize_tags(tags).map_err(config_error)?;
         if sorted(&tags) != sorted(&target.tags) {
@@ -179,6 +190,7 @@ pub(super) fn requested_fields(args: &UpdateMonitorArgs) -> Vec<&'static str> {
             "renotify_interval_secs",
             args.renotify_interval_secs.is_some(),
         ),
+        ("recovery_period_secs", args.recovery_period_secs.is_some()),
         ("tags", args.tags.is_some()),
         ("group_name", args.group_name.is_some()),
         ("region_policy", args.region_policy.is_some()),

@@ -34,6 +34,7 @@ async fn seed(
         alert_confirmations: 2,
         notify_recovery: true,
         renotify_interval_secs: 3600,
+        recovery_period_secs: 0,
         group_name: group.map(str::to_owned),
         owner_user_id: None,
         regions: None,
@@ -281,6 +282,7 @@ async fn an_update_can_decline_to_claim_authorship() {
         alert_confirmations: 2,
         notify_recovery: true,
         renotify_interval_secs: 3600,
+        recovery_period_secs: 0,
         group_name: None,
         owner_user_id: None,
         regions: None,
@@ -331,6 +333,140 @@ async fn an_update_can_decline_to_claim_authorship() {
     common::drop_test_db(&name).await;
 }
 
+/// The recovery hold survives every write path and every read back, the
+/// cross-tenant one the incident writer walks included.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn the_recovery_period_round_trips_through_every_write() {
+    use uptimepage::domain::NewTargetWithRegions;
+    use uptimepage::storage::AdminRepo;
+
+    let Some((db, name)) = common::fresh_test_db("targets_recovery").await else {
+        return;
+    };
+    let pool = common::open_test_pool(&db).await;
+    MIGRATOR.run(&pool).await.unwrap();
+
+    let user = common::make_user(&pool, "rp").await;
+    let org = create_org_with_owner(&pool, user, &common::unique_slug("rp"), "Co")
+        .await
+        .unwrap()
+        .unwrap();
+    let store = PostgresTargetStore::from_pool(pool.clone(), None);
+    let held = |name: &str, secs: u32| NewTarget {
+        name: name.into(),
+        check: CheckSpec::Tcp(TcpCheck {
+            host: "db.example.com".into(),
+            port: 5432,
+            timeout: Duration::from_secs(1),
+        }),
+        interval: Duration::from_secs(60),
+        enabled: true,
+        tags: vec![],
+        alerts: Default::default(),
+        region_policy: Default::default(),
+        alert_confirmations: 2,
+        notify_recovery: true,
+        renotify_interval_secs: 3600,
+        recovery_period_secs: secs,
+        group_name: None,
+        owner_user_id: None,
+        regions: None,
+    };
+
+    let single = store
+        .create(
+            org.id,
+            held("single", 600),
+            WriteSource::Ui,
+            i64::MAX,
+            i64::MAX,
+        )
+        .await
+        .unwrap();
+    assert_eq!(single.recovery_period_secs, 600);
+    let bulk = store
+        .bulk_create(
+            org.id,
+            vec![
+                NewTargetWithRegions {
+                    target: held("bulk-a", 120),
+                    regions: vec![],
+                },
+                NewTargetWithRegions {
+                    target: held("bulk-b", 0),
+                    regions: vec![],
+                },
+            ],
+            WriteSource::Api,
+            i64::MAX,
+            i64::MAX,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        bulk.iter()
+            .map(|t| t.recovery_period_secs)
+            .collect::<Vec<_>>(),
+        [120, 0]
+    );
+
+    let updated = store
+        .update(
+            org.id,
+            single.id,
+            uptimepage::domain::TargetUpdate {
+                recovery_period_secs: Some(1800),
+                ..Default::default()
+            },
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .expect("target exists");
+    assert_eq!(updated.recovery_period_secs, 1800);
+    let untouched = store
+        .update(
+            org.id,
+            single.id,
+            uptimepage::domain::TargetUpdate {
+                interval: Some(Duration::from_secs(120)),
+                ..Default::default()
+            },
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .expect("target exists");
+    assert_eq!(
+        untouched.recovery_period_secs, 1800,
+        "an omitted field is kept"
+    );
+    assert_eq!(
+        store
+            .get(org.id, single.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .recovery_period_secs,
+        1800
+    );
+
+    let page = AdminRepo::new(pool.clone(), None, "recovery_test")
+        .next_enabled_target_page(None, 100)
+        .await
+        .unwrap();
+    let walked = page
+        .iter()
+        .find(|(_, t)| t.id == single.id)
+        .expect("the writer sees the monitor");
+    assert_eq!(walked.1.recovery_period_secs, 1800);
+
+    common::drop_test_db(&name).await;
+}
+
 /// A bulk add merges server-side, so the cap lands on a list no request carried.
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
@@ -362,6 +498,7 @@ async fn a_bulk_tag_add_stops_at_the_cap_and_says_which_monitor_was_full() {
         alert_confirmations: 2,
         notify_recovery: true,
         renotify_interval_secs: 3600,
+        recovery_period_secs: 0,
         group_name: None,
         owner_user_id: None,
         regions: None,

@@ -13,8 +13,8 @@ use crate::domain::{CheckSpec, TargetAlerts, WriteSource};
 use crate::quotas::ratelimit::RateLimitCategory;
 use crate::target_ops::vet_note;
 use crate::targets::validate::{
-    validate_alert_confirmations, validate_group_name, validate_region_policy,
-    validate_renotify_interval,
+    validate_alert_confirmations, validate_group_name, validate_recovery_period,
+    validate_region_policy, validate_renotify_interval,
 };
 use crate::web::views::describe_check;
 
@@ -327,6 +327,9 @@ impl McpServer {
         if let Some(n) = args.renotify_interval_secs {
             fits_i32(u64::from(n), "renotify_interval_secs")?;
         }
+        if let Some(n) = args.recovery_period_secs {
+            fits_i32(u64::from(n), "recovery_period_secs")?;
+        }
 
         // An empty list binds nothing, exactly like omitting the field, so it
         // does not demand the scope or spend the query.
@@ -368,6 +371,7 @@ impl McpServer {
             alert_confirmations: args.alert_confirmations.unwrap_or(2),
             notify_recovery: args.notify_recovery.unwrap_or(true),
             renotify_interval_secs: args.renotify_interval_secs.unwrap_or(3600),
+            recovery_period_secs: args.recovery_period_secs.unwrap_or(0),
             group_name: args.group_name.as_deref().map(str::trim).and_then(|g| {
                 if g.is_empty() {
                     None
@@ -672,6 +676,7 @@ impl McpServer {
 
         validate_alert_confirmations(update.alert_confirmations).map_err(config_error)?;
         validate_renotify_interval(update.renotify_interval_secs).map_err(config_error)?;
+        validate_recovery_period(update.recovery_period_secs).map_err(config_error)?;
         if let Some(Some(group)) = update.group_name.as_ref() {
             validate_group_name(Some(group.as_str())).map_err(config_error)?;
         }

@@ -204,6 +204,7 @@ pub(crate) struct TargetRow {
     pub(crate) alert_confirmations: i32,
     pub(crate) notify_recovery: bool,
     pub(crate) renotify_interval_secs: i32,
+    pub(crate) recovery_period_secs: i32,
     pub(crate) group_name: Option<String>,
     pub(crate) owner_user_id: Option<Uuid>,
     pub(crate) write_source: String,
@@ -270,6 +271,7 @@ pub(crate) fn decode_target_row(row: TargetRow, cipher: Option<&Cipher>) -> Resu
         alert_confirmations: row.alert_confirmations.max(1) as u32,
         notify_recovery: row.notify_recovery,
         renotify_interval_secs: row.renotify_interval_secs.max(0) as u32,
+        recovery_period_secs: row.recovery_period_secs.max(0) as u32,
         region_policy,
         group_name: row.group_name,
         owner_user_id: row.owner_user_id,
@@ -406,7 +408,7 @@ impl TargetStore for PostgresTargetStore {
             .map(str::to_owned);
         let sql = format!(
             r#"SELECT id, name, check_spec, interval_secs, enabled, tags, alerts, region_policy,
-                      alert_confirmations, notify_recovery, renotify_interval_secs,
+                      alert_confirmations, notify_recovery, renotify_interval_secs, recovery_period_secs,
                       group_name, owner_user_id,
                       write_source,
                       created_at, updated_at, plan_hold_at
@@ -544,7 +546,7 @@ impl TargetStore for PostgresTargetStore {
     async fn get(&self, org: OrgId, id: Uuid) -> Result<Option<Target>> {
         let row: Option<TargetRow> = sqlx::query_as::<_, TargetRow>(
             r#"SELECT id, name, check_spec, interval_secs, enabled, tags, alerts, region_policy,
-                      alert_confirmations, notify_recovery, renotify_interval_secs,
+                      alert_confirmations, notify_recovery, renotify_interval_secs, recovery_period_secs,
                       group_name, owner_user_id,
                       write_source,
                       created_at, updated_at, plan_hold_at
@@ -619,10 +621,11 @@ impl TargetStore for PostgresTargetStore {
         let row: TargetRow = sqlx::query_as::<_, TargetRow>(
             r#"INSERT INTO targets (org_id, name, check_spec, interval_secs, enabled, tags, alerts,
                                     group_name, owner_user_id, write_source, region_policy,
-                                    alert_confirmations, notify_recovery, renotify_interval_secs)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                                    alert_confirmations, notify_recovery, renotify_interval_secs,
+                                    recovery_period_secs)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                RETURNING id, name, check_spec, interval_secs, enabled, tags, alerts, region_policy,
-                      alert_confirmations, notify_recovery, renotify_interval_secs,
+                      alert_confirmations, notify_recovery, renotify_interval_secs, recovery_period_secs,
                       group_name, owner_user_id,
                       write_source,
                       created_at, updated_at, plan_hold_at"#,
@@ -641,6 +644,7 @@ impl TargetStore for PostgresTargetStore {
         .bind(new.alert_confirmations.max(1) as i32)
         .bind(new.notify_recovery)
         .bind(new.renotify_interval_secs as i32)
+        .bind(new.recovery_period_secs as i32)
         .fetch_one(&mut *tx)
         .await
         .map_err(|e| match owner_left_the_org(&e) {
@@ -726,13 +730,14 @@ impl TargetStore for PostgresTargetStore {
                  alert_confirmations = COALESCE($15, alert_confirmations),
                  notify_recovery = COALESCE($16, notify_recovery),
                  renotify_interval_secs = COALESCE($17, renotify_interval_secs),
+                 recovery_period_secs = COALESCE($18, recovery_period_secs),
                  group_name = CASE WHEN $8::bool THEN $9 ELSE group_name END,
                  owner_user_id = CASE WHEN $10::bool THEN $11 ELSE owner_user_id END,
                  write_source = COALESCE($13, write_source),
                  updated_at = now()
                WHERE id = $1 AND org_id = $12
                RETURNING id, name, check_spec, interval_secs, enabled, tags, alerts, region_policy,
-                      alert_confirmations, notify_recovery, renotify_interval_secs,
+                      alert_confirmations, notify_recovery, renotify_interval_secs, recovery_period_secs,
                       group_name, owner_user_id,
                       write_source,
                       created_at, updated_at, plan_hold_at"#,
@@ -754,7 +759,8 @@ impl TargetStore for PostgresTargetStore {
             .bind(region_policy_json)
             .bind(update.alert_confirmations.map(|n| n.max(1) as i32))
             .bind(update.notify_recovery)
-            .bind(update.renotify_interval_secs.map(|n| n as i32));
+            .bind(update.renotify_interval_secs.map(|n| n as i32))
+            .bind(update.recovery_period_secs.map(|n| n as i32));
         let row: Option<TargetRow> = match tx.as_mut() {
             Some(tx) => query.fetch_optional(&mut **tx).await,
             None => query.fetch_optional(&self.pool).await,
@@ -875,22 +881,22 @@ impl TargetStore for PostgresTargetStore {
         const SQL: &str = r#"INSERT INTO targets (id, org_id, name, check_spec, interval_secs, enabled, tags, alerts,
                                     group_name, owner_user_id, write_source,
                                     alert_confirmations, notify_recovery, renotify_interval_secs,
-                                    region_policy)
+                                    recovery_period_secs, region_policy)
                SELECT u.id, $9, u.name, u.check_spec, u.interval_secs, u.enabled,
                       ARRAY(SELECT jsonb_array_elements_text(u.tags)),
                       u.alerts,
                       u.group_name, u.owner_user_id,
                       $10,
                       u.alert_confirmations, u.notify_recovery, u.renotify_interval_secs,
-                      u.region_policy
+                      u.recovery_period_secs, u.region_policy
                FROM UNNEST($1::text[], $2::jsonb[], $3::int4[], $4::bool[], $5::jsonb[], $6::jsonb[],
                            $7::text[], $8::uuid[], $11::int4[], $12::bool[], $13::int4[],
-                           $14::jsonb[], $15::uuid[])
+                           $14::jsonb[], $15::uuid[], $16::int4[])
                     AS u(name, check_spec, interval_secs, enabled, tags, alerts,
                          group_name, owner_user_id, alert_confirmations, notify_recovery,
-                         renotify_interval_secs, region_policy, id)
+                         renotify_interval_secs, region_policy, id, recovery_period_secs)
                RETURNING id, name, check_spec, interval_secs, enabled, tags, alerts, region_policy,
-                      alert_confirmations, notify_recovery, renotify_interval_secs,
+                      alert_confirmations, notify_recovery, renotify_interval_secs, recovery_period_secs,
                       group_name, owner_user_id,
                       write_source,
                       created_at, updated_at, plan_hold_at"#;
@@ -908,6 +914,7 @@ impl TargetStore for PostgresTargetStore {
         let mut confirmations: Vec<i32> = Vec::with_capacity(len);
         let mut recoveries: Vec<bool> = Vec::with_capacity(len);
         let mut renotifies: Vec<i32> = Vec::with_capacity(len);
+        let mut recovery_periods: Vec<i32> = Vec::with_capacity(len);
         let mut policies: Vec<Json<RegionIncidentPolicy>> = Vec::with_capacity(len);
         let ids: Vec<Uuid> = (0..len).map(|_| Uuid::new_v4()).collect();
 
@@ -965,6 +972,7 @@ impl TargetStore for PostgresTargetStore {
                 confirmations.push(new.alert_confirmations.max(1) as i32);
                 recoveries.push(new.notify_recovery);
                 renotifies.push(new.renotify_interval_secs as i32);
+                recovery_periods.push(new.recovery_period_secs as i32);
                 policies.push(Json(new.region_policy.unwrap_or_default()));
             }
             sqlx::query_as::<_, TargetRow>(SQL)
@@ -983,6 +991,7 @@ impl TargetStore for PostgresTargetStore {
                 .bind(&renotifies)
                 .bind(&policies)
                 .bind(&ids)
+                .bind(&recovery_periods)
                 .fetch_all(&mut *tx)
                 .await
                 .context("bulk insert targets")?
@@ -1002,6 +1011,7 @@ impl TargetStore for PostgresTargetStore {
                 confirmations.push(new.alert_confirmations.max(1) as i32);
                 recoveries.push(new.notify_recovery);
                 renotifies.push(new.renotify_interval_secs as i32);
+                recovery_periods.push(new.recovery_period_secs as i32);
                 policies.push(Json(new.region_policy.unwrap_or_default()));
             }
             sqlx::query_as::<_, TargetRow>(SQL)
@@ -1020,6 +1030,7 @@ impl TargetStore for PostgresTargetStore {
                 .bind(&renotifies)
                 .bind(&policies)
                 .bind(&ids)
+                .bind(&recovery_periods)
                 .fetch_all(&mut *tx)
                 .await
                 .context("bulk insert targets")?
@@ -1062,7 +1073,7 @@ impl TargetStore for PostgresTargetStore {
     async fn list_updated_since(&self, org: OrgId, since: DateTime<Utc>) -> Result<Vec<Target>> {
         let rows: Vec<TargetRow> = sqlx::query_as::<_, TargetRow>(
             r#"SELECT id, name, check_spec, interval_secs, enabled, tags, alerts, region_policy,
-                      alert_confirmations, notify_recovery, renotify_interval_secs,
+                      alert_confirmations, notify_recovery, renotify_interval_secs, recovery_period_secs,
                       group_name, owner_user_id,
                       write_source,
                       created_at, updated_at, plan_hold_at

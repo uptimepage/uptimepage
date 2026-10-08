@@ -429,6 +429,7 @@ target (incidents still open and show on status pages).
 "alert_confirmations": 3,
 "notify_recovery": true,
 "renotify_interval_secs": 3600,
+"recovery_period_secs": 600,
 "region_policy": "majority"
 ```
 
@@ -436,6 +437,7 @@ target (incidents still open and show on status pages).
 - `alert_confirmations` — consecutive failing checks before an incident opens (and the same number of passing checks before it closes, which damps flapping). Default `2`, must be `>= 1`.
 - `notify_recovery` — when `true` (default), the recovery is announced to the monitor's channels. When `false`, recovery is silent.
 - `renotify_interval_secs` — seconds before the first reminder while an outage stays unacknowledged. Each further reminder doubles the gap, capped at a day, so a long outage nobody answers decays to a daily nudge. An interval already longer than a day keeps its own cadence. `0` disables reminders; otherwise must be `>= 60`. Default `3600`. Acknowledging or resolving the incident stops the reminders.
+- `recovery_period_secs` — how long the monitor must stay up before its incident closes. A failure that confirms inside the window keeps the same incident open and restarts the wait, so a service that flaps for an hour is one incident rather than a dozen short ones. The incident's end is still dated to when the final recovery began, so the wait is not counted as downtime; only the recovery notice comes that much later. `0` (default) closes as soon as the passing checks confirm; at most `1800`. A manual monitor closes on the state it is set to, so anything but `0` there is `400 INVALID_ALERT_CONFIG`.
 - `region_policy` — how many probe regions must agree the target is down before an incident opens: `"any"`, `"majority"` (default), `"all"`, or `{ "count": N }`.
 
 Notifications are driven by the incident engine: one notification per
@@ -452,6 +454,7 @@ attempt cap; per-incident delivery state is visible at
 - `notification channel <id> does not exist` — unknown id, or one owned by another org
 - `alert_confirmations must be >= 1`
 - `renotify_interval_secs must be 0 (off) or at least 60`
+- `recovery_period_secs must be between 0 and 1800`
 
 A `region_policy` of `{ "count": N }` where `N` is `0` or exceeds the
 available regions is `422 INVALID_REGION_POLICY`. A count within the catalog but

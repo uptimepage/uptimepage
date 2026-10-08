@@ -647,6 +647,52 @@ async fn rejects_zero_alert_confirmations() {
     assert_eq!(post_target(payload).await, StatusCode::BAD_REQUEST);
 }
 
+/// The hold is stored as sent, defaults to none, and is bounded on both doors.
+#[tokio::test]
+async fn recovery_period_round_trips_and_is_bounded() {
+    let app = app();
+    let created = post_and_body(app.clone(), tcp_target("db")).await;
+    assert_eq!(created["recovery_period_secs"], 0, "off unless asked for");
+    let id = created["id"].as_str().unwrap().to_string();
+    let path = format!("/api/v1/targets/{id}");
+
+    let resp = app
+        .clone()
+        .oneshot(common::json_request(
+            "PATCH",
+            &path,
+            json!({ "recovery_period_secs": 600 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["recovery_period_secs"], 600);
+
+    let resp = app
+        .clone()
+        .oneshot(common::json_request(
+            "PATCH",
+            &path,
+            json!({ "recovery_period_secs": 1801 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let err = body_json(resp).await["error"].clone();
+    assert_eq!(err["code"], "INVALID_ALERT_CONFIG");
+    assert_eq!(err["field"], "recovery_period_secs");
+
+    let mut payload = tcp_target("db2");
+    payload["recovery_period_secs"] = json!(3600);
+    assert_eq!(post_target(payload).await, StatusCode::BAD_REQUEST);
+    let mut payload = tcp_target("db3");
+    payload["recovery_period_secs"] = json!(1800);
+    assert_eq!(
+        post_and_body(app, payload).await["recovery_period_secs"],
+        1800
+    );
+}
+
 #[tokio::test]
 async fn accepts_verify_tls_false_without_credentials() {
     let payload = json!({

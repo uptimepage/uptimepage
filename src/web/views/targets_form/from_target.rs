@@ -46,6 +46,7 @@ pub(super) fn empty_create_form() -> FormModel {
         alert_confirmations: 2,
         notify_recovery: true,
         renotify_interval_secs: 3600,
+        recovery_period_secs: 0,
         escalation_choices: Vec::new(),
         escalation_hint: String::new(),
         escalation: EscalationOffer::Open,
@@ -154,6 +155,7 @@ pub(super) fn form_from_target(t: Target, kind: FormKind) -> Result<FormModel, A
     let alert_confirmations = t.alert_confirmations;
     let notify_recovery = t.notify_recovery;
     let renotify_interval_secs = t.renotify_interval_secs;
+    let recovery_period_secs = t.recovery_period_secs;
 
     Ok(FormModel {
         mode,
@@ -187,6 +189,7 @@ pub(super) fn form_from_target(t: Target, kind: FormKind) -> Result<FormModel, A
         alert_confirmations,
         notify_recovery,
         renotify_interval_secs,
+        recovery_period_secs,
         escalation_choices: Vec::new(),
         escalation_hint: String::new(),
         escalation: EscalationOffer::Open,

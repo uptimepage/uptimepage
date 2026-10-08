@@ -83,6 +83,7 @@ pub(super) fn target_with_channel_recovery(channel_id: Uuid, notify_recovery: bo
         alert_confirmations: 1,
         notify_recovery,
         renotify_interval_secs: 3600,
+        recovery_period_secs: 0,
         region_policy: Default::default(),
         group_name: None,
         owner_user_id: None,

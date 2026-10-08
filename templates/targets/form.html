@@ -658,7 +658,7 @@
       <div class="clear-both space-y-2">
       <button type="button" data-collapse-toggle tabindex="-1" aria-hidden="true"
               class="group block w-full cursor-pointer border-0 bg-transparent p-0 text-left">
-        <span id="advanced-settings-hint" data-collapse-hint class="text-xs text-muted group-hover:text-body">confirmations, regions, reminders, owner</span>
+        <span id="advanced-settings-hint" data-collapse-hint class="text-xs text-muted group-hover:text-body">confirmations, recovery, regions, reminders, owner</span>
       </button>
       <div id="advanced-settings-body" class="space-y-6 hidden">
 
@@ -676,6 +676,18 @@
               {% endfor %}
             </div>
             <span class="mt-1 block text-xs text-muted">Consecutive failed checks before the monitor counts as down — 1 fail reacts instantly but a single network blip can page you; <span class="hl">2 fails is the usual default</span>.</span>
+            <div data-recovery-period class="mt-4">
+              <span class="mb-1.5 block text-xs text-muted">Close incident after</span>
+              <div class="sm-rail sm-rail--wide" role="radiogroup" aria-label="Close incident after">
+                {% for o in form.recovery_options() %}
+                <label class="sm-rail__seg">
+                  <input type="radio" name="recovery_period_secs" value="{{ o.secs }}" class="sr-only"{% if o.selected %} checked{% endif %}>
+                  {{ o.label }}
+                </label>
+                {% endfor %}
+              </div>
+              <span class="mt-1 block text-xs text-muted">How long the monitor must stay up before its incident closes. A failure inside the window keeps the same incident open, so <span class="hl">a flapping service shows as one outage, not many</span>; recovery is announced that much later.</span>
+            </div>
           </div>
           {% if form.show_regions %}
           <div data-monitor-regions data-target-id="{{ form.id }}">

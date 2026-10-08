@@ -47,6 +47,7 @@ async fn mint_and_revoke_share_write_audit_rows() {
                 alert_confirmations: 2,
                 notify_recovery: true,
                 renotify_interval_secs: 3600,
+                recovery_period_secs: 0,
                 group_name: None,
                 owner_user_id: None,
                 regions: None,

@@ -189,6 +189,7 @@ pub(crate) fn validate_new_target(
             ));
         }
         new.alert_confirmations = 1;
+        reject_manual_recovery_period(new.recovery_period_secs)?;
     }
     let requested = new.interval.as_secs() as i64;
     let kind_floor = min_interval_secs_for_kind(new.check.kind()) as i64;
@@ -211,6 +212,7 @@ pub(crate) fn validate_new_target(
     validate_alerts(&new.alerts)?;
     validate_alert_confirmations(Some(new.alert_confirmations))?;
     validate_renotify_interval(Some(new.renotify_interval_secs))?;
+    validate_recovery_period(Some(new.recovery_period_secs))?;
     validate_group_name(new.group_name.as_deref())
 }
 
@@ -248,6 +250,33 @@ pub(crate) fn validate_renotify_interval(secs: Option<u32>) -> Result<()> {
             codes::INVALID_ALERT_CONFIG,
             "renotify_interval_secs must be 0 (off) or at least 60",
             "renotify_interval_secs",
+        ));
+    }
+    Ok(())
+}
+
+/// Bounded, since the incident writer reads back over the hold to date the
+/// recovery it waited out.
+pub(crate) fn validate_recovery_period(secs: Option<u32>) -> Result<()> {
+    use crate::domain::target::MAX_RECOVERY_PERIOD_SECS;
+    if matches!(secs, Some(n) if n > MAX_RECOVERY_PERIOD_SECS) {
+        return Err(AppError::bad_request_field(
+            codes::INVALID_ALERT_CONFIG,
+            format!("recovery_period_secs must be between 0 and {MAX_RECOVERY_PERIOD_SECS}"),
+            "recovery_period_secs",
+        ));
+    }
+    Ok(())
+}
+
+/// A manual monitor's incident closes on the state it is set to: a person
+/// saying it is up is the recovery, so there is nothing to wait out.
+pub(crate) fn reject_manual_recovery_period(secs: u32) -> Result<()> {
+    if secs != 0 {
+        return Err(AppError::bad_request_field(
+            codes::INVALID_ALERT_CONFIG,
+            "a manual monitor closes on the state it is set to; recovery_period_secs does not apply",
+            "recovery_period_secs",
         ));
     }
     Ok(())

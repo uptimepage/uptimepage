@@ -17,6 +17,7 @@ fn field_label(field: &str) -> &str {
         "alert_confirmations" => "failing checks before alerting",
         "notify_recovery" => "announce recovery",
         "renotify_interval_secs" => "reminder interval (seconds)",
+        "recovery_period_secs" => "recovery hold before closing (seconds)",
         "group_name" => "group",
         "alerts" => "notification channels",
         "region_policy" => "opens an incident on",
@@ -87,6 +88,13 @@ pub(super) fn create_prompt_lines(
         0 => "no reminders while an outage is open".to_string(),
         secs => format!("first reminder after {secs}s, then doubling while unacknowledged"),
     });
+    // A manual monitor closes on the state it is set to, said by its alert line.
+    if !matches!(new.check, CheckSpec::Manual(_)) {
+        lines.push(match new.recovery_period_secs {
+            0 => "closes its incident once checks pass again".to_string(),
+            secs => format!("closes its incident once checks have passed for {secs}s"),
+        });
+    }
     if let Some(policy) = new.region_policy {
         // A quorum wider than the assignment is clamped, so the label alone would
         // promise a patience the monitor will not have.

@@ -1408,6 +1408,7 @@ mod tests {
             alert_confirmations: 1,
             notify_recovery: true,
             renotify_interval_secs: 0,
+            recovery_period_secs: 0,
             region_policy: Default::default(),
             group_name: None,
             owner_user_id: None,

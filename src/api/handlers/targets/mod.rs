@@ -42,7 +42,8 @@ use crate::targets::validate::{
     canonicalize_check, carry_credentials, carry_flags, carry_flow_secrets, gate_flow,
     gate_flow_steps, normalize_tags, reject_passive_probe, take_cleared_credentials,
     validate_alert_confirmations, validate_alerts, validate_check, validate_group_name,
-    validate_new_target, validate_region_policy, validate_renotify_interval,
+    validate_new_target, validate_recovery_period, validate_region_policy,
+    validate_renotify_interval,
 };
 
 #[derive(Debug, Deserialize, IntoParams)]
@@ -303,6 +304,7 @@ pub async fn update(
     }
     validate_alert_confirmations(update.alert_confirmations)?;
     validate_renotify_interval(update.renotify_interval_secs)?;
+    validate_recovery_period(update.recovery_period_secs)?;
     if update.region_policy.is_some() {
         let available = state.target_store.available_regions().await?;
         validate_region_policy(update.region_policy, available.len())?;

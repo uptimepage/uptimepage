@@ -381,6 +381,7 @@ impl McpServer {
             alert_confirmations: target.alert_confirmations,
             notify_recovery: target.notify_recovery,
             renotify_interval_secs: target.renotify_interval_secs,
+            recovery_period_secs: target.recovery_period_secs,
             // Blanked for the same reason `regions` is: a quorum over no probe
             // regions describes nothing.
             region_policy: (!target.check.is_passive())
