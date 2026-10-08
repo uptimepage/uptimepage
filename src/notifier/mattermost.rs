@@ -157,6 +157,7 @@ fn color(tone: CardTone) -> &'static str {
         CardTone::Minor => "#F1C40F",
         CardTone::Warning => "#95A5A6",
         CardTone::Recovered | CardTone::Resumed => "#2ECC71",
+        CardTone::Closed => "#7F8C8D",
     }
 }
 

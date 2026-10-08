@@ -2,7 +2,9 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::domain::{IncidentOrigin, IncidentSeverity, IncidentUrgency, NotificationReason};
+use crate::domain::{
+    IncidentOrigin, IncidentSeverity, IncidentUrgency, MONITOR_DELETED_MESSAGE, NotificationReason,
+};
 use crate::text::{single_line, truncate_chars};
 
 /// The incident-shaped payload handed to a transport. Serialized as-is for the
@@ -131,6 +133,9 @@ impl IncidentNotice {
                     .map(|m| format!(" after {m}m"))
                     .unwrap_or_default();
                 format!("{label} — incident RESOLVED{dur}", label = self.label())
+            }
+            NotificationReason::MonitorDeleted => {
+                format!("{label} — {MONITOR_DELETED_MESSAGE}", label = self.label())
             }
             NotificationReason::NoData => format!(
                 "{label} — NO DATA: monitoring interrupted, no check results received",

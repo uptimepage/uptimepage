@@ -6,7 +6,9 @@
 
 use chrono::{DateTime, Utc};
 
-use crate::domain::{IncidentOrigin, IncidentSeverity, NotificationReason};
+use crate::domain::{
+    IncidentOrigin, IncidentSeverity, MONITOR_DELETED_MESSAGE, NotificationReason,
+};
 use crate::notifier::event::IncidentNotice;
 use crate::text::{single_line, truncate_chars};
 
@@ -37,6 +39,8 @@ pub enum CardTone {
     Warning,
     Recovered,
     Resumed,
+    /// Over without a recovery: the monitor that raised it was deleted.
+    Closed,
 }
 
 impl CardTone {
@@ -48,6 +52,7 @@ impl CardTone {
             Self::Warning => "⚠️",
             Self::Recovered => "✅",
             Self::Resumed => "🟢",
+            Self::Closed => "⚪",
         }
     }
 }
@@ -111,6 +116,7 @@ pub struct AlertCard {
 pub enum CardTemplate {
     Incident,
     Resolved,
+    MonitorDeleted,
     NoData,
     DataResumed,
 }
@@ -123,6 +129,7 @@ impl CardTemplate {
             | NotificationReason::Escalated
             | NotificationReason::Reminder => Self::Incident,
             NotificationReason::Resolved => Self::Resolved,
+            NotificationReason::MonitorDeleted => Self::MonitorDeleted,
             NotificationReason::NoData => Self::NoData,
             NotificationReason::DataResumed => Self::DataResumed,
         }
@@ -176,6 +183,12 @@ impl CardTemplate {
                         .push(CardField::text("Duration", spell_duration(minutes)));
                 }
             }
+            Self::MonitorDeleted => {
+                card.fields.push(CardField::time("Started", n.started_at));
+                if let Some(end) = n.ended_at {
+                    card.fields.push(CardField::time("Closed", end));
+                }
+            }
             Self::NoData => card.fields.push(CardField::time("Since", n.started_at)),
             Self::DataResumed => {}
         }
@@ -191,6 +204,7 @@ impl CardTemplate {
             },
             Self::NoData => CardTone::Warning,
             Self::Resolved => CardTone::Recovered,
+            Self::MonitorDeleted => CardTone::Closed,
             // An outage that ended and a monitor that started reporting again
             // ask for different follow-up, so they do not look alike.
             Self::DataResumed => CardTone::Resumed,
@@ -205,6 +219,7 @@ impl CardTemplate {
                 state = n.open_state(),
             ),
             Self::Resolved => "Incident resolved".into(),
+            Self::MonitorDeleted => MONITOR_DELETED_MESSAGE.into(),
             Self::NoData => "No data: monitoring interrupted, no check results received".into(),
             Self::DataResumed => "Monitoring resumed, receiving check results again".into(),
         }
@@ -356,6 +371,17 @@ pub(crate) mod tests {
         assert_eq!(labels(&card), ["Started"]);
         assert_eq!(card.error.as_deref(), Some("HTTP 500"));
         assert!(card.pings);
+    }
+
+    #[test]
+    fn a_monitor_delete_reads_as_closed_not_recovered() {
+        let mut n = notice(NotificationReason::MonitorDeleted);
+        n.ended_at = Some(n.started_at + chrono::Duration::minutes(95));
+        let card = AlertCard::for_notice(&n, None);
+        assert!(matches!(card.tone, CardTone::Closed));
+        assert_eq!(card.headline, MONITOR_DELETED_MESSAGE);
+        assert_eq!(labels(&card), ["Started", "Closed"]);
+        assert!(!card.pings);
     }
 
     #[test]

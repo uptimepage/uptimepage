@@ -94,6 +94,8 @@ pub struct IncidentDetailPage {
     pub label: String,
     pub target_id: Option<String>,
     pub monitor_name: Option<String>,
+    /// False once the incident closed with its deleted monitor.
+    pub reopenable: bool,
     pub state: &'static str,
     pub state_label: &'static str,
     pub severity: &'static str,
@@ -200,6 +202,7 @@ fn event_kind_label(e: &IncidentEvent) -> &'static str {
         Unpublished => "unpublished",
         PostmortemPublished => "postmortem published",
         PostmortemUnpublished => "postmortem unpublished",
+        MonitorDeleted => "monitor deleted",
     }
 }
 
@@ -215,10 +218,7 @@ pub async fn detail(
         .get(org, id)
         .await?
         .ok_or_else(|| AppError::not_found(codes::INCIDENT_NOT_FOUND, "incident not found"))?;
-    let monitor_name = match inc.target_id {
-        Some(t) => state.target_store.get(org, t).await?.map(|x| x.name),
-        None => None,
-    };
+    let monitor_name = inc.target_name.clone();
     let (members, mut acks, events) = tokio::try_join!(
         members_map(&state, org),
         async {
@@ -329,6 +329,7 @@ pub(super) fn make_detail_page(
         label,
         target_id: inc.target_id.map(|t| t.to_string()),
         monitor_name,
+        reopenable: inc.reopenable(),
         state: inc.state.as_db_str(),
         state_label: state_label(inc.state),
         severity: inc.severity.as_db_str(),

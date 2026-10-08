@@ -14,8 +14,8 @@ use crate::config::PostgresConfig;
 use crate::domain::metrics::{TagCount, TargetsSummary};
 use crate::domain::target::MAX_TAGS_PER_TARGET;
 use crate::domain::{
-    CheckSpec, NewTarget, NewTargetWithRegions, OrgId, RegionIncidentPolicy, Target, TargetAlerts,
-    TargetUpdate, UserId, WriteSource,
+    CheckSpec, MONITOR_DELETED_MESSAGE, NewTarget, NewTargetWithRegions, OrgId,
+    RegionIncidentPolicy, Target, TargetAlerts, TargetUpdate, UserId, WriteSource,
 };
 use crate::error::{AppError, Result};
 use crate::security::Cipher;
@@ -278,6 +278,100 @@ pub(crate) fn decode_target_row(row: TargetRow, cipher: Option<&Cipher>) -> Resu
         updated_at: row.updated_at,
         plan_hold_at: row.plan_hold_at,
     })
+}
+
+/// Settle the incidents of monitors about to be deleted, inside the delete's
+/// transaction. The incidents outlive the monitors, so nothing else will close
+/// a monitor's incident once its monitor is gone: it is closed here, as resolved
+/// by whoever deleted the monitor and marked so it stays out of the resolution
+/// metrics. A declared incident is a person's to close and stays open. Either
+/// way paging stops, since pages go out through the monitor; notices that an
+/// incident ended still go out. An incident ever made public stays tied to the
+/// pages that showed the monitor, and one closed here says so in a public
+/// update rather than claiming a recovery.
+///
+/// Locks the monitors first, then their incidents, the order every other writer
+/// takes them in. An incident opening concurrently waits on the monitor and
+/// then fails on its absence. A reopen that already holds its incident commits
+/// before the close below reads it, so the close sees it open and closes it.
+async fn close_incidents_of_deleted_targets(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+    ids: &[Uuid],
+    actor: Option<UserId>,
+) -> Result<u64> {
+    sqlx::query("SELECT id FROM targets WHERE id = ANY($1) AND org_id = $2 FOR UPDATE")
+        .bind(ids)
+        .bind(org.0)
+        .execute(&mut **tx)
+        .await
+        .context("delete target: lock")?;
+    sqlx::query("SELECT id FROM incidents WHERE target_id = ANY($1) AND org_id = $2 FOR UPDATE")
+        .bind(ids)
+        .bind(org.0)
+        .execute(&mut **tx)
+        .await
+        .context("delete target: lock incidents")?;
+    // One snapshot for every step: `owned` still sees the monitor links that
+    // the delete is about to clear.
+    let (closed,): (i64,) = sqlx::query_as(
+        r#"WITH owned AS (
+               SELECT id, origin, visibility, target_id, ended_at FROM incidents
+               WHERE org_id = $2 AND target_id = ANY($1)
+           ), closed AS (
+               UPDATE incidents
+               SET state = 'resolved',
+                   ended_at = now(),
+                   duration_secs = GREATEST(0, EXTRACT(EPOCH FROM now() - started_at))::int,
+                   resolved_by = $3,
+                   next_escalation_at = NULL,
+                   closed_by_monitor_delete = true,
+                   updated_at = now()
+               WHERE org_id = $2 AND ended_at IS NULL
+                 AND id IN (SELECT id FROM owned WHERE origin = 'monitor')
+               RETURNING id
+           ), logged AS (
+               INSERT INTO incident_events (org_id, incident_id, kind, actor_type, actor_id, message)
+               SELECT $2, o.id, 'monitor_deleted',
+                      CASE WHEN $3::uuid IS NULL THEN 'system' ELSE 'user' END, $3,
+                      CASE WHEN o.origin = 'monitor'
+                           THEN 'Monitor deleted. The incident was closed with it.'
+                           ELSE 'Monitor deleted. The incident stays open without it.' END
+               FROM owned o WHERE o.ended_at IS NULL
+           ), shown AS (
+               -- Ever public: one unpublished since still owes its subscribers
+               -- the closing update, which reaches them through these pages.
+               SELECT o.id, o.target_id FROM owned o
+               WHERE o.visibility = 'public' OR EXISTS (
+                   SELECT 1 FROM incident_events e
+                   WHERE e.incident_id = o.id AND e.org_id = $2 AND e.kind = 'published')
+           ), pinned AS (
+               INSERT INTO incident_status_pages (org_id, incident_id, status_page_id, component_name)
+               SELECT $2, s.id, c.status_page_id, COALESCE(NULLIF(c.public_name, ''), t.name)
+               FROM shown s
+               JOIN status_page_components c ON c.org_id = $2 AND c.target_id = s.target_id
+               JOIN targets t ON t.id = s.target_id AND t.org_id = $2
+               ON CONFLICT (incident_id, status_page_id) DO NOTHING
+           ), told AS (
+               INSERT INTO incident_updates (org_id, incident_id, phase, message, author)
+               SELECT $2, c.id, 'resolved', $4, COALESCE($3::uuid::text, 'system')
+               FROM closed c WHERE c.id IN (SELECT id FROM shown)
+           ), muted AS (
+               UPDATE incident_notifications
+               SET status = 'suppressed', next_attempt_at = NULL, error = 'monitor deleted'
+               WHERE org_id = $2 AND incident_id IN (SELECT id FROM owned)
+                 AND status IN ('queued', 'failed') AND reason <> 'resolved'
+           )
+           SELECT count(*) FROM closed"#,
+    )
+    .bind(ids)
+    .bind(org.0)
+    .bind(actor.map(|u| u.0))
+    .bind(MONITOR_DELETED_MESSAGE)
+    .fetch_one(&mut **tx)
+    .await
+    .context("delete target: close incidents")?;
+    Ok(closed.max(0) as u64)
 }
 
 #[async_trait]
@@ -692,6 +786,8 @@ impl TargetStore for PostgresTargetStore {
 
     async fn delete(&self, org: OrgId, id: Uuid, actor: Option<UserId>) -> Result<bool> {
         let mut tx = self.pool.begin().await.context("delete target: begin")?;
+        let incidents_closed =
+            close_incidents_of_deleted_targets(&mut tx, org, &[id], actor).await?;
         // RETURNING, not a prior read: after the commit there is nothing left
         // to read the name from.
         let removed: Option<(String, String)> = sqlx::query_as(
@@ -709,7 +805,12 @@ impl TargetStore for PostgresTargetStore {
                 org,
                 actor,
                 "target.deleted",
-                serde_json::json!({ "target_id": id, "name": name, "kind": kind }),
+                serde_json::json!({
+                    "target_id": id,
+                    "name": name,
+                    "kind": kind,
+                    "incidents_closed": incidents_closed,
+                }),
             )
             .await?;
         }
@@ -1099,6 +1200,7 @@ impl TargetStore for PostgresTargetStore {
             return Ok(Vec::new());
         }
         let mut tx = self.pool.begin().await.context("bulk delete: begin")?;
+        let incidents_closed = close_incidents_of_deleted_targets(&mut tx, org, ids, actor).await?;
         let rows: Vec<(Uuid, String)> = sqlx::query_as(
             r#"DELETE FROM targets WHERE id = ANY($1) AND org_id = $2 RETURNING id, name"#,
         )
@@ -1125,6 +1227,7 @@ impl TargetStore for PostgresTargetStore {
                     "count": rows.len(),
                     "targets": sample,
                     "truncated": rows.len() > SAMPLE,
+                    "incidents_closed": incidents_closed,
                 }),
             )
             .await?;

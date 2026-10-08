@@ -1558,6 +1558,7 @@ fn incident_row_falls_back_to_start_end_when_duration_secs_missing() {
     let inc = crate::domain::Incident {
         id: Uuid::nil(),
         target_id: Some(Uuid::nil()),
+        target_name: None,
         started_at: start,
         ended_at: Some(end),
         status: crate::domain::CheckStatus::Down,

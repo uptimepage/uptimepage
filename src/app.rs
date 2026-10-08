@@ -433,7 +433,9 @@ impl AppState {
             };
         let incident_ops_store: Arc<dyn crate::storage::IncidentOpsStore> = match db.clone() {
             Some(pool) => Arc::new(crate::storage::PgIncidentOpsStore::new(pool)),
-            None => Arc::new(crate::storage::InMemoryIncidentOpsStore::new()),
+            None => Arc::new(crate::storage::InMemoryIncidentOpsStore::with_targets(
+                target_store.clone(),
+            )),
         };
         let escalation_policy_store: Arc<dyn crate::storage::EscalationPolicyStore> =
             match db.clone() {

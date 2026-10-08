@@ -19,7 +19,11 @@
       <span class="dashboard-incident-severity dashboard-incident-severity--{{ inc.severity_class }}">{{ inc.severity_label }}</span>
       <div class="dashboard-incident-banner__body">
         <div class="dashboard-incident-banner__row">
-          <a href="/targets/{{ inc.target_id }}" class="dashboard-incident-banner__name">{{ inc.title }}</a>
+          {% if let Some(target_id) = inc.target_id %}
+          <a href="/targets/{{ target_id }}" class="dashboard-incident-banner__name">{{ inc.title }}</a>
+          {% else %}
+          <span class="dashboard-incident-banner__name">{{ inc.title }}</span>
+          {% endif %}
           <span class="dashboard-incident-banner__age">{{ inc.age_label }}</span>
           <span class="dashboard-incident-banner__actions">
             {% if inc.can_acknowledge %}

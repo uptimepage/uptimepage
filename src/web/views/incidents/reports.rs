@@ -1,16 +1,12 @@
 //! Incident metrics over a window: counts, MTTA/MTTR and the noisiest
 //! monitors.
 
-use std::collections::HashMap;
-
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::extract::{Query, State};
 use serde::Deserialize;
-use uuid::Uuid;
 
 use crate::app::AppState;
-use crate::domain::OrgId;
 use crate::request::{AuthedBrowser, CurrentOrg};
 use crate::templates::filters;
 use crate::web::error::WebResult;
@@ -36,7 +32,8 @@ pub struct ReportBucket {
 }
 
 pub struct ReportMonitorRow {
-    pub id: String,
+    /// `None` once the monitor has been deleted.
+    pub id: Option<String>,
     pub name: String,
     pub count: u64,
 }
@@ -55,10 +52,6 @@ pub struct IncidentsReportPage {
     pub auto_resolved: u64,
     pub human_resolved: u64,
     pub top_monitors: Vec<ReportMonitorRow>,
-}
-
-async fn name_map(state: &AppState, org: OrgId) -> WebResult<HashMap<Uuid, String>> {
-    Ok(state.target_store.names(org).await?)
 }
 
 pub async fn reports(
@@ -83,7 +76,6 @@ pub async fn reports(
             m
         }
     };
-    let names = name_map(&state, org).await?;
     let bucket = |b: crate::domain::MetricBucket| ReportBucket {
         label: b.key,
         count: b.count,
@@ -109,11 +101,8 @@ pub async fn reports(
             .top_monitors
             .into_iter()
             .map(|t| ReportMonitorRow {
-                id: t.target_id.to_string(),
-                name: names
-                    .get(&t.target_id)
-                    .cloned()
-                    .unwrap_or_else(|| "deleted monitor".to_string()),
+                id: t.target_id.map(|id| id.to_string()),
+                name: t.name,
                 count: t.count,
             })
             .collect(),

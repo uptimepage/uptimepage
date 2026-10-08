@@ -175,7 +175,7 @@ impl McpServer {
         let open_by_target: HashMap<Uuid, (String, String)> = open
             .unwrap_or_default()
             .into_iter()
-            .map(|i| (i.target_id, (i.id.to_string(), i.started_at.to_rfc3339())))
+            .filter_map(|i| Some((i.target_id?, (i.id.to_string(), i.started_at.to_rfc3339()))))
             .collect();
 
         // `since` must cover every failing monitor, public or not, so it falls
@@ -947,18 +947,6 @@ impl McpServer {
             .map_err(|e| McpToolError::internal(format!("get incident: {e}")))?
             .ok_or_else(|| McpToolError::not_found("incident not found"))?;
 
-        let monitor_name = match incident.target_id {
-            Some(t) => self
-                .state
-                .target_store
-                .get(org, t)
-                .await
-                .ok()
-                .flatten()
-                .map(|x| x.name),
-            None => None,
-        };
-
         let pages = self
             .state
             .incident_ops_store
@@ -966,7 +954,7 @@ impl McpServer {
             .await
             .map_err(|e| McpToolError::internal(format!("incident pages: {e}")))?;
 
-        Ok(Json(incident_detail(&incident, monitor_name, &pages)))
+        Ok(Json(incident_detail(&incident, &pages)))
     }
 
     /// Incident reporting over a trailing window: MTTA/MTTR, counts by
@@ -1012,7 +1000,9 @@ impl McpServer {
                 .top_monitors
                 .into_iter()
                 .map(|t| NoisyMonitor {
-                    monitor_id: t.target_id.to_string(),
+                    monitor_id: t.target_id.map(|id| id.to_string()).unwrap_or_default(),
+                    monitor_name: sanitize_data(&t.name),
+                    monitor_deleted: t.monitor_deleted(),
                     count: t.count,
                 })
                 .collect(),

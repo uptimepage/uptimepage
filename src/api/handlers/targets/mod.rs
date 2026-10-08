@@ -16,8 +16,8 @@ use crate::app::AppState;
 use crate::auth::scope::Scope;
 use crate::domain::agent_wire::DispatchKind;
 use crate::domain::{
-    CheckResult, CheckSpec, NewTarget, NewTargetWithRegions, OrgId, Target, TargetUpdate,
-    min_interval_secs_for_kind,
+    CheckResult, CheckSpec, NewTarget, NewTargetWithRegions, NotificationReason, OrgId, Target,
+    TargetUpdate, min_interval_secs_for_kind,
 };
 use crate::error::ApiError;
 use crate::error::codes;
@@ -678,6 +678,9 @@ pub async fn delete(
         for page in pages {
             state.public_source.invalidate(page).await;
         }
+        // The delete closed the monitor's open incidents.
+        state.nav_pill_cache.invalidate(&org);
+        tell_responders_closed(&state, org, &[id]).await;
         note_if_emptied(&state, org, 1).await;
         if let Ok(pool) = state.require_db() {
             crate::quotas::holds::release_after_delete(pool, &state.quotas, org).await;
@@ -688,6 +691,25 @@ pub async fn delete(
             codes::TARGET_NOT_FOUND,
             "target not found",
         ))
+    }
+}
+
+/// The delete closed these monitors' incidents; whoever they paged hears that
+/// they closed, and that nothing recovered.
+async fn tell_responders_closed(state: &AppState, org: OrgId, monitors: &[Uuid]) {
+    match state
+        .incident_ops_store
+        .closed_with_monitors(org, monitors)
+        .await
+    {
+        Ok(ids) => {
+            for id in ids {
+                state.signal_incident(org, id, NotificationReason::MonitorDeleted);
+            }
+        }
+        Err(err) => {
+            tracing::warn!(org_id = %org.0, error = %err, "closed incidents lookup after monitor delete failed");
+        }
     }
 }
 
@@ -889,6 +911,9 @@ pub async fn bulk_action(
             for page in pages {
                 state.public_source.invalidate(page).await;
             }
+            // The delete closed the monitors' open incidents.
+            state.nav_pill_cache.invalidate(&org);
+            tell_responders_closed(&state, org, &succeeded).await;
             note_if_emptied(&state, org, succeeded.len()).await;
             if let Ok(pool) = state.require_db() {
                 crate::quotas::holds::release_after_delete(pool, &state.quotas, org).await;

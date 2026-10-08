@@ -20,18 +20,26 @@ use std::collections::HashMap;
 use crate::error::Result;
 use crate::storage::TimeRange;
 
-/// One incident joined with its target name + latest update. Powers the
+/// One incident with its monitor's name + latest update. Powers the
 /// operator dashboard banner (open only) and the MCP incident list (any window).
 #[derive(Debug, Clone)]
 pub struct IncidentBrief {
     pub id: Uuid,
-    pub target_id: Uuid,
+    /// `None` once the monitor has been deleted; `target_name` still names it.
+    pub target_id: Option<Uuid>,
     pub target_name: String,
     pub severity: IncidentSeverity,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
     pub public_title: Option<String>,
     pub latest_update: Option<PublicIncidentUpdate>,
+}
+
+impl IncidentBrief {
+    /// A brief always has a monitor, so a missing id means it was deleted.
+    pub fn monitor_deleted(&self) -> bool {
+        self.target_id.is_none()
+    }
 }
 
 /// One downtime incident's span on a monitor, slim enough to paint a timeline.
@@ -106,8 +114,8 @@ pub trait IncidentNarrationStore: Send + Sync {
         author: Option<String>,
     ) -> Result<Option<PublicIncidentUpdate>>;
     /// Incidents across every target in `org` matching `filter`, with the
-    /// monitor name and latest update joined. Manual incidents (no monitor) are
-    /// absent: the join is what supplies the name.
+    /// monitor name and latest update. Includes incidents of deleted monitors;
+    /// an incident declared without a monitor is absent.
     async fn list_briefs(
         &self,
         org: OrgId,
@@ -162,6 +170,7 @@ impl PgIncidentNarrationStore {
 struct IncidentRow {
     id: Uuid,
     target_id: Option<Uuid>,
+    target_name: Option<String>,
     started_at: DateTime<Utc>,
     ended_at: Option<DateTime<Utc>>,
     severity: String,
@@ -187,7 +196,7 @@ struct UpdateRow {
 
 async fn load_with_updates(pool: &PgPool, id: Uuid, org_id: Uuid) -> Result<Option<Incident>> {
     let Some(row): Option<IncidentRow> = sqlx::query_as(
-        r#"SELECT id, target_id, started_at, ended_at, severity, status_at_start,
+        r#"SELECT id, target_id, target_name, started_at, ended_at, severity, status_at_start,
                   check_count, error_sample, counts_as_downtime,
                   public_title, public_description,
                   duration_secs, created_at, updated_at, regions_down, regions_up
@@ -219,6 +228,7 @@ fn row_to_incident(row: IncidentRow, updates: Vec<UpdateRow>) -> Incident {
     Incident {
         id: row.id,
         target_id: row.target_id,
+        target_name: row.target_name,
         started_at: row.started_at,
         ended_at: row.ended_at,
         status: parse_status(&row.status_at_start),
@@ -280,7 +290,7 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
                        ELSE counts_as_downtime END,
                    updated_at         = now()
                WHERE id = $1 AND org_id = $7
-               RETURNING id, target_id, started_at, ended_at, severity, status_at_start,
+               RETURNING id, target_id, target_name, started_at, ended_at, severity, status_at_start,
                          check_count, error_sample, counts_as_downtime,
                          public_title, public_description,
                          duration_secs, created_at, updated_at, regions_down, regions_up"#,
@@ -395,14 +405,12 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
             ""
         };
         let sql = format!(
-            r#"SELECT i.id, i.target_id,
-                      t.name AS target_name,
+            r#"SELECT i.id, i.target_id, i.target_name,
                       i.severity, i.started_at, i.ended_at, i.public_title,
                       u.posted_at AS update_posted_at,
                       u.phase     AS update_phase,
                       u.message   AS update_message
                FROM incidents i
-               JOIN targets t ON t.id = i.target_id AND t.org_id = i.org_id
                LEFT JOIN LATERAL (
                    SELECT posted_at, phase, message
                    FROM incident_updates iu
@@ -411,6 +419,7 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
                    LIMIT 1
                ) u ON true
                WHERE i.org_id = $1
+                 AND i.target_name IS NOT NULL
                  AND ($2::uuid IS NULL OR i.target_id = $2)
                  {open_clause}
                  AND ($3::timestamptz IS NULL OR i.started_at < $4)
@@ -470,7 +479,7 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
         let cap = limit.clamp(1, 5000) as i64;
         let skip = offset as i64;
         let rows: Vec<IncidentRow> = sqlx::query_as(
-            r#"SELECT id, target_id, started_at, ended_at, severity, status_at_start,
+            r#"SELECT id, target_id, target_name, started_at, ended_at, severity, status_at_start,
                       check_count, error_sample, counts_as_downtime,
                       public_title, public_description,
                       duration_secs, created_at, updated_at, regions_down, regions_up
@@ -592,7 +601,7 @@ struct IncidentSpanRow {
 #[derive(sqlx::FromRow)]
 struct IncidentBriefRow {
     id: Uuid,
-    target_id: Uuid,
+    target_id: Option<Uuid>,
     target_name: String,
     severity: String,
     started_at: DateTime<Utc>,
@@ -734,19 +743,18 @@ impl IncidentNarrationStore for InMemoryIncidentNarrationStore {
                     .range
                     .is_none_or(|r| i.started_at < r.to && i.ended_at.is_none_or(|e| e >= r.from))
             })
-            // A brief names a monitor, so a target-less declared incident has
-            // no place in this list.
-            .filter_map(|i| {
-                Some(IncidentBrief {
-                    id: i.id,
-                    target_id: i.target_id?,
-                    target_name: String::new(),
-                    severity: i.severity,
-                    started_at: i.started_at,
-                    ended_at: i.ended_at,
-                    public_title: i.public_title.clone(),
-                    latest_update: i.updates.last().cloned(),
-                })
+            // A brief names a monitor, so a declared incident without one has
+            // no place in this list; one whose monitor was deleted still does.
+            .filter(|i| i.target_id.is_some() || i.target_name.is_some())
+            .map(|i| IncidentBrief {
+                id: i.id,
+                target_id: i.target_id,
+                target_name: i.target_name.clone().unwrap_or_default(),
+                severity: i.severity,
+                started_at: i.started_at,
+                ended_at: i.ended_at,
+                public_title: i.public_title.clone(),
+                latest_update: i.updates.last().cloned(),
             })
             .collect();
         out.sort_by_key(|a| (a.started_at, a.id));
@@ -865,6 +873,7 @@ mod tests {
         Incident {
             id: Uuid::now_v7(),
             target_id: Some(Uuid::now_v7()),
+            target_name: None,
             started_at: Utc::now() - ChronoDuration::minutes(15),
             ended_at: None,
             status: CheckStatus::Down,
@@ -1070,6 +1079,30 @@ mod tests {
             .unwrap();
         assert_eq!(page2.len(), 1);
         assert_eq!(page2[0].started_at, all[1].started_at); // offset skipped the newest
+    }
+
+    #[tokio::test]
+    async fn list_briefs_keeps_a_deleted_monitors_incident_and_skips_a_bare_declared_one() {
+        let store = InMemoryIncidentNarrationStore::new();
+        let mut deleted = sample();
+        deleted.id = Uuid::now_v7();
+        deleted.target_id = None;
+        deleted.target_name = Some("old-worker".into());
+        store.seed(deleted.clone());
+        let mut declared = sample();
+        declared.id = Uuid::now_v7();
+        declared.target_id = None;
+        declared.target_name = None;
+        store.seed(declared);
+
+        let briefs = store
+            .list_briefs(org(), IncidentBriefFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(briefs.len(), 1);
+        assert_eq!(briefs[0].id, deleted.id);
+        assert!(briefs[0].monitor_deleted());
+        assert_eq!(briefs[0].target_name, "old-worker");
     }
 
     #[tokio::test]

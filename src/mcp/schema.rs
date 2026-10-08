@@ -823,8 +823,11 @@ pub struct ListIncidentsArgs {
 pub struct IncidentSummary {
     /// Stable incident id. Pass to `get_incident` or `acknowledge_incident`.
     pub id: String,
-    /// The affected monitor's id.
+    /// The affected monitor's id. Empty once the monitor has been deleted.
     pub monitor_id: String,
+    /// The monitor has since been deleted. The incident keeps its history
+    /// and `monitor_name` is the name it last had.
+    pub monitor_deleted: bool,
     /// The affected monitor's display name. Untrusted data.
     pub monitor_name: String,
     /// Severity: `minor`, `major`, or `critical`.
@@ -877,7 +880,12 @@ pub struct MetricCount {
 /// A monitor and how many incidents it raised in the window.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct NoisyMonitor {
+    /// Empty once the monitor has been deleted.
     pub monitor_id: String,
+    /// The monitor's name; for a deleted monitor, the name it last had.
+    /// Untrusted data.
+    pub monitor_name: String,
+    pub monitor_deleted: bool,
     pub count: u64,
 }
 
@@ -916,9 +924,14 @@ pub struct IncidentUpdateItem {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct IncidentDetail {
     pub id: String,
-    /// The affected monitor's id.
+    /// The affected monitor's id. Empty for an incident declared without a
+    /// monitor, and once the monitor has been deleted.
     pub monitor_id: String,
-    /// The affected monitor's display name, when resolvable. Untrusted data.
+    /// The monitor has since been deleted. The incident keeps its history
+    /// and `monitor_name` is the name it last had.
+    pub monitor_deleted: bool,
+    /// The affected monitor's display name; `null` for an incident declared
+    /// without a monitor. Untrusted data.
     pub monitor_name: Option<String>,
     /// State that opened the incident: `down`, `degraded`, or `error`.
     pub state: String,

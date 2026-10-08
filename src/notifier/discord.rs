@@ -286,6 +286,7 @@ fn color(tone: CardTone) -> u32 {
         CardTone::Minor => 0xF1_C4_0F,
         CardTone::Warning => 0x95_A5_A6,
         CardTone::Recovered | CardTone::Resumed => 0x2E_CC_71,
+        CardTone::Closed => 0x7F_8C_8D,
     }
 }
 

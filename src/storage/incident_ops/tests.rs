@@ -41,6 +41,10 @@ fn seed_triggered(store: &InMemoryIncidentOpsStore) -> Uuid {
     store.seed(OpsIncident {
         id,
         target_id: Some(Uuid::now_v7()),
+        target_ref: None,
+        target_name: None,
+        target_kind: None,
+        closed_by_monitor_delete: false,
         title: None,
         state: IncidentState::Triggered,
         severity: IncidentSeverity::Major,
@@ -74,6 +78,71 @@ fn unwrap_updated(o: LifecycleOutcome) -> OpsIncident {
         LifecycleOutcome::Updated(i) => *i,
         other => panic!("expected Updated, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn a_close_by_monitor_delete_stays_out_of_resolution_metrics() {
+    let store = InMemoryIncidentOpsStore::new();
+    let id = seed_triggered(&store);
+    store.edit(id, |i| {
+        i.state = IncidentState::Resolved;
+        i.ended_at = Some(i.started_at + chrono::Duration::days(20));
+        i.resolved_by = Some(user());
+        i.closed_by_monitor_delete = true;
+    });
+    let m = store.metrics(org(), 30).await.unwrap();
+    assert_eq!(m.total, 1);
+    assert_eq!((m.human_resolved, m.auto_resolved), (0, 0));
+    assert_eq!(m.mttr_secs, None, "a 20-day cleanup is not a 20-day repair");
+}
+
+#[tokio::test]
+async fn only_a_declared_incident_reopens_once_its_monitor_is_deleted() {
+    let store = InMemoryIncidentOpsStore::new();
+    let monitors = seed_triggered(&store);
+    let declared = seed_triggered(&store);
+    for id in [monitors, declared] {
+        store.resolve(org(), id, Actor::System, None).await.unwrap();
+        store.edit(id, |i| {
+            i.target_ref = i.target_id.take();
+            i.target_name = Some("api".into());
+        });
+    }
+    store.edit(declared, |i| i.origin = IncidentOrigin::Manual);
+
+    assert!(
+        store
+            .reopen(org(), monitors, Actor::System, None)
+            .await
+            .is_err()
+    );
+    let reopened = store
+        .reopen(org(), declared, Actor::System, None)
+        .await
+        .unwrap();
+    assert!(matches!(reopened, LifecycleOutcome::Updated(_)));
+}
+
+#[tokio::test]
+async fn metrics_keep_two_deleted_monitors_that_shared_a_name_apart() {
+    let store = InMemoryIncidentOpsStore::new();
+    let (first, second) = (Uuid::now_v7(), Uuid::now_v7());
+    for monitor in [first, first, second] {
+        let id = seed_triggered(&store);
+        store.edit(id, |i| {
+            i.target_id = None;
+            i.target_ref = Some(monitor);
+            i.target_name = Some("api".into());
+        });
+    }
+    let m = store.metrics(org(), 30).await.unwrap();
+    let apis: Vec<u64> = m
+        .top_monitors
+        .iter()
+        .filter(|t| t.name == "api")
+        .map(|t| t.count)
+        .collect();
+    assert_eq!(apis, vec![2, 1]);
 }
 
 #[tokio::test]

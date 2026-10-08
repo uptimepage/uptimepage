@@ -70,6 +70,10 @@ pub struct ConsoleRow {
     pub state_label: &'static str,
     /// Monitor check type; `None` for a manual incident (no monitor).
     pub kind: Option<&'static str>,
+    /// The incident's monitor has since been deleted.
+    pub monitor_deleted: bool,
+    /// Whether a person can still reopen it.
+    pub reopenable: bool,
     pub severity: &'static str,
     pub urgency: &'static str,
     pub origin: &'static str,
@@ -163,6 +167,8 @@ pub(super) fn row_from(
         state: inc.state.as_db_str(),
         state_label: state_label(inc.state),
         kind: None,
+        monitor_deleted: inc.monitor_deleted(),
+        reopenable: inc.reopenable(),
         severity: inc.severity.as_db_str(),
         urgency: inc.urgency.as_db_str(),
         origin: inc.origin.as_db_str(),
@@ -351,21 +357,15 @@ async fn console_data(
         )
         .await?;
     let ids: Vec<Uuid> = incidents.iter().map(|i| i.id).collect();
-    // One lean projection (id, name, check kind) — no full target decode.
-    let (targets, mut acks) = tokio::try_join!(
-        state.target_store.names_and_kinds(org),
-        state.incident_ops_store.acknowledgements(org, &ids),
-    )?;
+    let mut acks = state.incident_ops_store.acknowledgements(org, &ids).await?;
     let rows: Vec<ConsoleRow> = incidents
         .into_iter()
         .map(|i| {
             let avatar_of = |u: UserId| member_avatar(u, members);
-            let name = i
-                .target_id
-                .and_then(|t| targets.get(&t).map(|(n, _)| n.clone()));
-            let kind = i
-                .target_id
-                .and_then(|t| targets.get(&t).map(|(_, k)| kind_label(k)));
+            // The incident carries its monitor's name and kind, so a deleted
+            // monitor's incident still reads as it did.
+            let name = i.target_name.clone();
+            let kind = i.target_kind.as_deref().map(kind_label);
             let incident_acks = acks.remove(&i.id).unwrap_or_default();
             let resolved = i.resolved_by.and_then(avatar_of);
             let assignee = i.assigned_to.and_then(avatar_of);

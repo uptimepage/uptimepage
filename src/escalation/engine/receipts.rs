@@ -105,9 +105,9 @@ impl Worker {
 
     /// Nothing is left for this page to acknowledge: its incident was taken by
     /// somebody, resolved, or removed, its outage ended and another has since
-    /// started, or its monitor is no longer watched. One incident read serves
-    /// all three. Any failed lookup reads as still paging, so an error never
-    /// cancels a live page.
+    /// started, or its monitor is no longer watched or was deleted. One
+    /// incident read serves them all. Any failed lookup reads as still paging,
+    /// so an error never cancels a live page.
     pub(super) async fn page_is_spent(&self, ack: &EmergencyAck) -> bool {
         let incident = match self.ops.get(ack.org, ack.incident_id).await {
             Ok(Some(incident)) => incident,
@@ -121,6 +121,11 @@ impl Worker {
             self.ops.generation(ack.org, ack.incident_id).await,
             Ok(Some(current)) if current != ack.generation
         ) {
+            return true;
+        }
+        // Paging went with the monitor, even for an incident a person still
+        // holds open.
+        if incident.monitor_deleted() {
             return true;
         }
         let Some(target_id) = incident.target_id else {

@@ -133,8 +133,15 @@ pub struct OrgExport {
 pub struct IncidentExport {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
-    #[schema(value_type = String, format = "uuid")]
-    pub target_id: Uuid,
+    /// `null` for an incident declared without a monitor, and once the
+    /// monitor has been deleted.
+    #[schema(value_type = Option<String>, format = "uuid")]
+    pub target_id: Option<Uuid>,
+    /// The monitor's id, kept after the monitor is deleted.
+    #[schema(value_type = Option<String>, format = "uuid")]
+    pub target_ref: Option<Uuid>,
+    /// The monitor's name, kept after the monitor is deleted.
+    pub target_name: Option<String>,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
     pub severity: String,
@@ -491,7 +498,7 @@ async fn build_owned_org(pool: &sqlx::PgPool, org: OrgExport) -> Result<OwnedOrg
         .collect();
 
     let mut incidents: Vec<IncidentExport> = sqlx::query_as(
-        "SELECT id, target_id, started_at, ended_at, severity, status_at_start, \
+        "SELECT id, target_id, target_ref, target_name, started_at, ended_at, severity, status_at_start, \
                 check_count, error_sample, duration_secs, created_at, updated_at \
          FROM incidents WHERE org_id = $1 ORDER BY started_at DESC",
     )

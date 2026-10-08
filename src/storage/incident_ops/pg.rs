@@ -39,7 +39,7 @@ impl PgIncidentOpsStore {
 
 /// Columns selected for an [`OpsIncident`]. Kept in one place so every
 /// `RETURNING` / `SELECT` stays in lockstep with [`OpsIncidentRow`].
-const OPS_COLS: &str = "id, target_id, title, state, severity, urgency, origin, visibility, \
+const OPS_COLS: &str = "id, target_id, target_ref, target_name, target_kind, closed_by_monitor_delete, title, state, severity, urgency, origin, visibility, \
      paging_enabled, counts_as_downtime, started_at, ended_at, acknowledged_at, \
      acknowledged_by, assigned_to, resolved_by, escalation_policy_id, escalation_level, \
      escalation_round, next_escalation_at, \
@@ -53,32 +53,44 @@ async fn replace_status_pages_tx(
     id: Uuid,
     pages: &[Uuid],
 ) -> Result<Vec<Uuid>> {
-    sqlx::query("DELETE FROM incident_status_pages WHERE org_id = $1 AND incident_id = $2")
-        .bind(org.0)
-        .bind(id)
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| anyhow::anyhow!("clear incident pages: {e}"))?;
-    if pages.is_empty() {
-        return Ok(Vec::new());
-    }
     let mut wanted = pages.to_vec();
     wanted.sort_unstable();
     wanted.dedup();
-    let linked = sqlx::query(
-        "INSERT INTO incident_status_pages (org_id, incident_id, status_page_id) \
-         SELECT $1, $2, sp.id FROM status_pages sp WHERE sp.org_id = $1 AND sp.id = ANY($3)",
+    let known: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM status_pages WHERE org_id = $1 AND id = ANY($2)")
+            .bind(org.0)
+            .bind(&wanted)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(|e| anyhow::anyhow!("check incident pages: {e}"))?;
+    if known != wanted.len() as i64 {
+        return Err(super::unknown_status_pages(
+            wanted.len() - known.max(0) as usize,
+        ));
+    }
+    // A page kept from before keeps its row, and with it the name a deleted
+    // monitor had there.
+    sqlx::query(
+        "DELETE FROM incident_status_pages \
+         WHERE org_id = $1 AND incident_id = $2 AND status_page_id <> ALL($3)",
     )
     .bind(org.0)
     .bind(id)
     .bind(&wanted)
     .execute(&mut *conn)
     .await
-    .map_err(|e| anyhow::anyhow!("link incident pages: {e}"))?
-    .rows_affected();
-    if linked != wanted.len() as u64 {
-        return Err(super::unknown_status_pages(wanted.len() - linked as usize));
-    }
+    .map_err(|e| anyhow::anyhow!("clear incident pages: {e}"))?;
+    sqlx::query(
+        "INSERT INTO incident_status_pages (org_id, incident_id, status_page_id) \
+         SELECT $1, $2, unnest($3::uuid[]) \
+         ON CONFLICT (incident_id, status_page_id) DO NOTHING",
+    )
+    .bind(org.0)
+    .bind(id)
+    .bind(&wanted)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| anyhow::anyhow!("link incident pages: {e}"))?;
     Ok(wanted)
 }
 
@@ -126,6 +138,10 @@ pub(super) fn resolved_public_message(note: Option<&str>) -> String {
 struct OpsIncidentRow {
     id: Uuid,
     target_id: Option<Uuid>,
+    target_ref: Option<Uuid>,
+    target_name: Option<String>,
+    target_kind: Option<String>,
+    closed_by_monitor_delete: bool,
     title: Option<String>,
     state: String,
     severity: String,
@@ -156,6 +172,10 @@ fn row_to_ops(r: OpsIncidentRow) -> OpsIncident {
     OpsIncident {
         id: r.id,
         target_id: r.target_id,
+        target_ref: r.target_ref,
+        target_name: r.target_name,
+        target_kind: r.target_kind,
+        closed_by_monitor_delete: r.closed_by_monitor_delete,
         title: r.title,
         state: IncidentState::from_db_str(&r.state),
         severity: IncidentSeverity::from_db_str(&r.severity),
@@ -278,9 +298,9 @@ async fn insert_event_tx(
     Ok(())
 }
 
-/// Mirror an operator's incident action into `org_audit_log`: incidents and
-/// their events cascade away with the monitor, leaving no trace the incident
-/// existed. System transitions are skipped, or every recovery writes a row.
+/// Mirror an operator's incident action into `org_audit_log`, the org's one
+/// trail of who did what. System transitions are skipped, or every recovery
+/// writes a row.
 /// An actor with no user id still writes one, with its kind in the metadata to
 /// say why `actor_id` is null.
 async fn record_incident_audit_tx(
@@ -304,7 +324,7 @@ async fn record_incident_audit_tx(
 
 /// Counted off the append-only timeline rather than a column of its own, so it
 /// cannot run backwards: nothing deletes `incident_events` short of the
-/// incident itself cascading away, which voids every link to it anyway.
+/// incident itself going with its org, which voids every link to it anyway.
 async fn reopen_count_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: OrgId,
@@ -398,16 +418,23 @@ impl PgIncidentOpsStore {
             .await
             .map_err(|e| anyhow::anyhow!("incident lock: {e}"))?;
 
-        let current: Option<(String,)> =
-            sqlx::query_as("SELECT state FROM incidents WHERE id = $1 AND org_id = $2 FOR UPDATE")
-                .bind(id)
-                .bind(org.0)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|e| anyhow::anyhow!("load incident state: {e}"))?;
-        let Some((state_str,)) = current else {
+        let current: Option<(String, bool)> = sqlx::query_as(
+            "SELECT state, origin = 'monitor' AND target_id IS NULL AND target_name IS NOT NULL \
+             FROM incidents WHERE id = $1 AND org_id = $2 FOR UPDATE",
+        )
+        .bind(id)
+        .bind(org.0)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| anyhow::anyhow!("load incident state: {e}"))?;
+        let Some((state_str, ended_with_monitor)) = current else {
             return unlisted(LifecycleOutcome::NotFound);
         };
+        // Read under the row lock the monitor delete also takes, so a reopen
+        // cannot land on an incident the delete has just closed.
+        if ended_with_monitor && transition == IncidentTransition::Reopen {
+            return Err(super::monitor_deleted());
+        }
         // Under the transition's own locks, so a reopen cannot slip between
         // this check and the update.
         let episode = reopen_count_tx(&mut tx, org, id).await?;
@@ -582,9 +609,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
              WHERE org_id = $1 AND ($2::text IS NULL OR state = $2) \
                  AND ($3::text IS NULL OR severity = $3) \
                  AND ($4::uuid IS NULL OR assigned_to = $4) \
-                 AND ($7::text IS NULL OR title ILIKE $7 OR EXISTS ( \
-                     SELECT 1 FROM targets t \
-                      WHERE t.id = incidents.target_id AND t.name ILIKE $7)) \
+                 AND ($7::text IS NULL OR title ILIKE $7 OR target_name ILIKE $7) \
              ORDER BY {} LIMIT $5 OFFSET $6",
             filter.sort.order_sql()
         );
@@ -616,9 +641,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
              WHERE org_id = $1 AND ($2::text IS NULL OR state = $2) \
                  AND ($3::text IS NULL OR severity = $3) \
                  AND ($4::uuid IS NULL OR assigned_to = $4) \
-                 AND ($5::text IS NULL OR title ILIKE $5 OR EXISTS ( \
-                     SELECT 1 FROM targets t \
-                      WHERE t.id = incidents.target_id AND t.name ILIKE $5))",
+                 AND ($5::text IS NULL OR title ILIKE $5 OR target_name ILIKE $5)",
         )
         .bind(org.0)
         .bind(state)
@@ -647,9 +670,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             "SELECT state, count(*) FROM incidents \
              WHERE org_id = $1 AND ($2::text IS NULL OR severity = $2) \
                  AND ($3::uuid IS NULL OR assigned_to = $3) \
-                 AND ($4::text IS NULL OR title ILIKE $4 OR EXISTS ( \
-                     SELECT 1 FROM targets t \
-                      WHERE t.id = incidents.target_id AND t.name ILIKE $4)) \
+                 AND ($4::text IS NULL OR title ILIKE $4 OR target_name ILIKE $4) \
              GROUP BY state",
         )
         .bind(org.0)
@@ -687,9 +708,11 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                  (avg(extract(epoch FROM (acknowledged_at - started_at))) \
                      FILTER (WHERE acknowledged_at IS NOT NULL))::float8 AS mtta, \
                  (avg(extract(epoch FROM (ended_at - started_at))) \
-                     FILTER (WHERE ended_at IS NOT NULL))::float8 AS mttr, \
-                 count(*) FILTER (WHERE state = 'resolved' AND resolved_by IS NULL) AS auto_resolved, \
-                 count(*) FILTER (WHERE state = 'resolved' AND resolved_by IS NOT NULL) AS human_resolved \
+                     FILTER (WHERE ended_at IS NOT NULL AND NOT closed_by_monitor_delete))::float8 AS mttr, \
+                 count(*) FILTER (WHERE state = 'resolved' AND resolved_by IS NULL \
+                     AND NOT closed_by_monitor_delete) AS auto_resolved, \
+                 count(*) FILTER (WHERE state = 'resolved' AND resolved_by IS NOT NULL \
+                     AND NOT closed_by_monitor_delete) AS human_resolved \
              FROM incidents WHERE org_id = $1 AND started_at >= $2",
         )
         .bind(org.0)
@@ -728,10 +751,13 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         )
         .await?;
 
-        let top: Vec<(Uuid, i64)> = sqlx::query_as(
-            "SELECT target_id, count(*) FROM incidents \
-             WHERE org_id = $1 AND started_at >= $2 AND target_id IS NOT NULL \
-             GROUP BY target_id ORDER BY count DESC, target_id LIMIT 10",
+        // Grouped by the monitor's kept id, so two deleted monitors that shared
+        // a name stay two rows.
+        let top: Vec<(Option<Uuid>, String, i64)> = sqlx::query_as(
+            "SELECT target_id, target_name, count(*) FROM incidents \
+             WHERE org_id = $1 AND started_at >= $2 AND target_ref IS NOT NULL \
+             GROUP BY target_ref, target_id, target_name \
+             ORDER BY count DESC, target_name, target_ref LIMIT 10",
         )
         .bind(org.0)
         .bind(since)
@@ -750,8 +776,9 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             human_resolved: s.human_resolved.max(0) as u64,
             top_monitors: top
                 .into_iter()
-                .map(|(target_id, count)| MonitorIncidentCount {
+                .map(|(target_id, name, count)| MonitorIncidentCount {
                     target_id,
+                    name,
                     count: count.max(0) as u64,
                 })
                 .collect(),
@@ -1141,6 +1168,19 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             .await
             .map_err(|e| anyhow::anyhow!("acquire: {e}"))?;
         status_pages_tx(&mut conn, org, id).await
+    }
+
+    async fn closed_with_monitors(&self, org: OrgId, monitors: &[Uuid]) -> Result<Vec<Uuid>> {
+        sqlx::query_scalar(
+            "SELECT id FROM incidents \
+             WHERE org_id = $1 AND target_ref = ANY($2) AND target_id IS NULL \
+               AND closed_by_monitor_delete",
+        )
+        .bind(org.0)
+        .bind(monitors)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("incidents closed with monitors: {e}").into())
     }
 
     async fn unpublish(&self, org: OrgId, id: Uuid, actor: Actor) -> Result<Option<OpsIncident>> {
@@ -1566,6 +1606,10 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         Ok(res.rows_affected() > 0)
     }
 
+    // `target_id IS NOT NULL OR target_name IS NULL` leaves out an incident whose
+    // monitor was deleted. The delete closes those; this keeps one left open by
+    // any other path from being picked up every tick with nothing to page.
+    // Reconcile and flap release carry the same guard.
     async fn due_for_escalation(
         &self,
         now: DateTime<Utc>,
@@ -1591,6 +1635,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                  SELECT id FROM incidents \
                  WHERE state = 'triggered' AND next_escalation_at IS NOT NULL \
                      AND next_escalation_at <= $1 \
+                     AND (target_id IS NOT NULL OR target_name IS NULL) \
                  ORDER BY next_escalation_at ASC LIMIT $3 \
                  FOR UPDATE SKIP LOCKED \
              ) \
@@ -1636,6 +1681,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
              FROM incidents i \
              WHERE state = 'triggered' AND started_at <= $1 AND started_at >= $2 \
                  AND paging_enabled \
+                 AND (target_id IS NOT NULL OR target_name IS NULL) \
                  AND escalation_policy_id IS NULL AND next_escalation_at IS NULL \
                  AND NOT EXISTS ( \
                      SELECT 1 FROM incident_notifications n WHERE n.incident_id = i.id \
@@ -1835,6 +1881,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                    AND h.channel_id IS NULL AND h.transport = 'damped' \
              ) held ON TRUE \
              WHERE i.state = 'triggered' \
+               AND (i.target_id IS NOT NULL OR i.target_name IS NULL) \
                AND held.held_at IS NOT NULL \
                AND held.held_at <= $1 \
                AND NOT EXISTS ( \

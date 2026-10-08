@@ -316,7 +316,8 @@ pub(super) fn check_timing(r: &CheckResult) -> CheckTiming {
 pub(super) fn incident_summary(i: &IncidentBrief) -> IncidentSummary {
     IncidentSummary {
         id: i.id.to_string(),
-        monitor_id: i.target_id.to_string(),
+        monitor_id: i.target_id.map(|t| t.to_string()).unwrap_or_default(),
+        monitor_deleted: i.monitor_deleted(),
         monitor_name: sanitize_data(&i.target_name),
         severity: i.severity.as_db_str().to_string(),
         opened_at: i.started_at.to_rfc3339(),
@@ -330,15 +331,12 @@ pub(super) fn incident_summary(i: &IncidentBrief) -> IncidentSummary {
 }
 
 /// Callers pass the raw incident; error text is humanized and scrubbed here.
-pub(super) fn incident_detail(
-    i: &Incident,
-    monitor_name: Option<String>,
-    status_page_ids: &[Uuid],
-) -> IncidentDetail {
+pub(super) fn incident_detail(i: &Incident, status_page_ids: &[Uuid]) -> IncidentDetail {
     IncidentDetail {
         id: i.id.to_string(),
         monitor_id: i.target_id.map(|t| t.to_string()).unwrap_or_default(),
-        monitor_name: monitor_name.map(|n| sanitize_data(&n)),
+        monitor_deleted: i.monitor_deleted(),
+        monitor_name: i.target_name.as_deref().map(sanitize_data),
         state: i.status.as_str().to_string(),
         severity: i.severity.as_db_str().to_string(),
         opened_at: i.started_at.to_rfc3339(),

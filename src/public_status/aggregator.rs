@@ -80,6 +80,16 @@ pub(crate) fn on_page(components: &str, page: &str) -> String {
     )
 }
 
+/// The name `page` gave an incident's monitor before the monitor was deleted;
+/// NULL while the monitor exists and for a declared incident.
+pub(crate) fn kept_component_name(page: &str) -> String {
+    format!(
+        "(SELECT isp.component_name FROM incident_status_pages isp \
+          WHERE isp.incident_id = i.id AND isp.org_id = i.org_id \
+            AND isp.status_page_id = {page}) AS kept_component_name"
+    )
+}
+
 /// One monitor as it sits on a page: its target id, the resolved public name
 /// (per-page override or the monitor's own name), and the page-local grouping.
 struct PageComponent {
@@ -428,7 +438,7 @@ impl OrgAggregator {
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
                       i.origin, i.regions_up,
-                      i.public_title, i.public_description
+                      i.public_title, i.public_description, {kept}
                FROM incidents i
                WHERE i.org_id = $1
                  AND i.ended_at IS NULL
@@ -436,6 +446,7 @@ impl OrgAggregator {
                  AND i.visibility = 'public'
                ORDER BY i.started_at DESC"#,
             on_page = on_page("$2", "$3"),
+            kept = kept_component_name("$3"),
         ))
         .bind(org.0)
         .bind(component_ids)
@@ -461,7 +472,7 @@ impl OrgAggregator {
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
                       i.origin, i.regions_up,
-                      i.public_title, i.public_description
+                      i.public_title, i.public_description, {kept}
                FROM incidents i
                WHERE i.org_id = $3
                  AND i.started_at >= $1
@@ -470,6 +481,7 @@ impl OrgAggregator {
                ORDER BY i.started_at DESC, i.id DESC
                LIMIT $2"#,
             on_page = on_page("$4", "$5"),
+            kept = kept_component_name("$5"),
         ))
         .bind(since)
         .bind(peek_limit)
@@ -588,6 +600,7 @@ impl OrgAggregator {
                 let component_name = r
                     .target_id
                     .and_then(|t| name_by_id.get(&t).cloned())
+                    .or_else(|| r.kept_component_name.clone())
                     .unwrap_or_default();
                 let my_updates: Vec<PublicIncidentUpdate> = updates
                     .iter()
@@ -816,6 +829,7 @@ struct IncidentRow {
     public_title: Option<String>,
     #[allow(dead_code)]
     public_description: Option<String>,
+    kept_component_name: Option<String>,
 }
 
 #[derive(FromRow)]

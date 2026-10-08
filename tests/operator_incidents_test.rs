@@ -16,6 +16,7 @@ fn seed_incident() -> Incident {
     Incident {
         id: Uuid::now_v7(),
         target_id: Some(Uuid::now_v7()),
+        target_name: None,
         started_at: Utc::now() - Duration::minutes(10),
         ended_at: None,
         status: CheckStatus::Down,

@@ -29,6 +29,10 @@ pub(super) fn ops(state: IncidentState) -> OpsIncident {
     OpsIncident {
         id: Uuid::now_v7(),
         target_id: Some(Uuid::now_v7()),
+        target_ref: None,
+        target_name: None,
+        target_kind: None,
+        closed_by_monitor_delete: false,
         title: None,
         state,
         severity: crate::domain::IncidentSeverity::Major,
@@ -170,6 +174,83 @@ fn console_resolved_row_shows_reopen_only() {
     let html = page(vec![row]).render().unwrap();
     assert!(html.contains(r#"data-incident-action="reopen""#));
     assert!(!html.contains(r#"data-incident-action="acknowledge""#));
+}
+
+fn closed_with_deleted_monitor() -> OpsIncident {
+    let mut inc = ops(IncidentState::Resolved);
+    inc.ended_at = Some(Utc::now());
+    inc.target_ref = inc.target_id.take();
+    inc.target_name = Some("old-worker".into());
+    inc
+}
+
+#[test]
+fn console_offers_no_reopen_once_the_monitor_is_deleted() {
+    let row = row_from(
+        closed_with_deleted_monitor(),
+        Some("old-worker".into()),
+        AckList::default(),
+        None,
+        None,
+        false,
+    );
+    let html = page(vec![row]).render().unwrap();
+    assert!(html.contains("monitor deleted"), "{html}");
+    assert!(!html.contains(r#"data-incident-action="reopen""#), "{html}");
+}
+
+#[test]
+fn a_declared_incident_stays_reopenable_after_its_monitor_is_deleted() {
+    let mut inc = closed_with_deleted_monitor();
+    inc.origin = crate::domain::IncidentOrigin::Manual;
+    let row = row_from(
+        inc.clone(),
+        Some("old-worker".into()),
+        AckList::default(),
+        None,
+        None,
+        false,
+    );
+    let console = page(vec![row]).render().unwrap();
+    assert!(console.contains("monitor deleted"), "{console}");
+    assert!(
+        console.contains(r#"data-incident-action="reopen""#),
+        "{console}"
+    );
+    let detail = make_detail_page(
+        inc,
+        Some("old-worker".into()),
+        AckList::default(),
+        "old-worker".to_string(),
+        Vec::new(),
+        Vec::new(),
+        None,
+    )
+    .render()
+    .unwrap();
+    assert!(detail.contains("old-worker (deleted)"), "{detail}");
+    assert!(
+        detail.contains(r#"data-incident-action="reopen""#),
+        "{detail}"
+    );
+}
+
+#[test]
+fn detail_offers_no_reopen_once_the_monitor_is_deleted() {
+    let html = make_detail_page(
+        closed_with_deleted_monitor(),
+        Some("old-worker".into()),
+        AckList::default(),
+        "old-worker".to_string(),
+        Vec::new(),
+        Vec::new(),
+        None,
+    )
+    .render()
+    .unwrap();
+    assert!(html.contains("old-worker (deleted)"), "{html}");
+    assert!(!html.contains(r#"data-incident-action="reopen""#), "{html}");
+    assert!(html.contains("data-incident-note"), "{html}");
 }
 
 fn alice_acker() -> AckList {
@@ -799,16 +880,26 @@ fn reports_page_renders_kpis_and_top_monitors() {
         }],
         auto_resolved: 1,
         human_resolved: 1,
-        top_monitors: vec![ReportMonitorRow {
-            id: Uuid::now_v7().to_string(),
-            name: "api-gateway".into(),
-            count: 2,
-        }],
+        top_monitors: vec![
+            ReportMonitorRow {
+                id: Some(Uuid::now_v7().to_string()),
+                name: "api-gateway".into(),
+                count: 2,
+            },
+            ReportMonitorRow {
+                id: None,
+                name: "old-worker".into(),
+                count: 1,
+            },
+        ],
     };
     let html = page.render().unwrap();
     assert!(html.contains("5m 0s"));
     assert!(html.contains("1h 2m"));
     assert!(html.contains("api-gateway"));
+    // A deleted monitor is still named, with nothing to link to.
+    assert!(html.contains("old-worker (deleted)"), "{html}");
+    assert_eq!(html.matches("href=\"/targets/").count(), 1, "{html}");
     // Shares the dashboard's range tabs, so labels are bare keys.
     assert!(html.contains("range-tabs__btn"), "{html}");
     assert!(html.contains(">7d</a>"), "{html}");

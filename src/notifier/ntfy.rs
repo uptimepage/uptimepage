@@ -82,7 +82,7 @@ impl NtfyNotifier {
         notice: &'a IncidentNotice,
         ack: Option<&'a PushAck>,
     ) -> Publish<'a> {
-        let resolved = notice.reason == NotificationReason::Resolved;
+        let resolved = notice.reason.closes_incident();
         Publish {
             topic,
             title: notice.label(),
@@ -92,10 +92,10 @@ impl NtfyNotifier {
                 (false, IncidentUrgency::High) => 4,
                 (false, IncidentUrgency::Low) => 3,
             },
-            tags: if resolved {
-                ["white_check_mark"]
-            } else {
-                ["rotating_light"]
+            tags: match notice.reason {
+                NotificationReason::Resolved => ["white_check_mark"],
+                NotificationReason::MonitorDeleted => ["white_circle"],
+                _ => ["rotating_light"],
             },
             click: notice.url.as_deref(),
             actions: match ack.filter(|_| !resolved) {

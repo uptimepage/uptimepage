@@ -220,6 +220,7 @@ fn theme(tone: CardTone) -> &'static str {
         CardTone::Critical | CardTone::Major => "Attention",
         CardTone::Minor | CardTone::Warning => "Warning",
         CardTone::Recovered | CardTone::Resumed => "Good",
+        CardTone::Closed => "Default",
     }
 }
 

@@ -162,7 +162,7 @@ pub(super) fn open_episode_active(rows: &[crate::domain::IncidentNotification]) 
         .max();
     let last_resolved = rows
         .iter()
-        .filter(|n| n.reason == NotificationReason::Resolved)
+        .filter(|n| n.reason.closes_incident())
         .map(|n| n.created_at)
         .max();
     match (last_open, last_resolved) {
@@ -197,9 +197,7 @@ pub(super) fn resolvable_channels(rows: &[crate::domain::IncidentNotification]) 
             .max();
         let Some(open_at) = last_open else { continue };
         let resolved_after = rows.iter().any(|n| {
-            n.channel_id == Some(cid)
-                && n.reason == NotificationReason::Resolved
-                && n.created_at >= open_at
+            n.channel_id == Some(cid) && n.reason.closes_incident() && n.created_at >= open_at
         });
         if !resolved_after {
             out.push(cid);
@@ -218,7 +216,9 @@ pub(super) fn reason_is_stale(reason: NotificationReason, state: IncidentState) 
         | NotificationReason::Escalated => state == IncidentState::Resolved,
         // A reminder only says "still unacknowledged", which an ack ends.
         NotificationReason::Reminder => state != IncidentState::Triggered,
-        NotificationReason::Resolved => state != IncidentState::Resolved,
+        NotificationReason::Resolved | NotificationReason::MonitorDeleted => {
+            state != IncidentState::Resolved
+        }
         NotificationReason::NoData | NotificationReason::DataResumed => false,
     }
 }

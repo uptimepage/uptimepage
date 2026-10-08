@@ -300,7 +300,7 @@ impl PendingUpdate {
 /// ever-published incident, posted since they subscribed and within the
 /// lookback. The incident→page link is `incident.target_id` ∈ the page's
 /// curated components, or for an incident with no monitor, the pages it was
-/// published to. Updates flow while the incident is public; once
+/// published to or, once its monitor was deleted, kept on. Updates flow while the incident is public; once
 /// unpublished, only the `resolved` closer still fans out, so an incident taken
 /// off the page before it ends doesn't strand subscribers on its last update.
 pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingUpdate>> {
@@ -308,7 +308,10 @@ pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingUpdate
         "SELECT s.id AS subscriber_id, u.id AS update_id, s.org_id, s.channel, s.target,
                 u.phase, u.message,
                 i.id AS incident_id, i.public_title, i.status_at_start,
-                COALESCE(NULLIF(c.public_name, ''), t.name, '') AS component_name,
+                COALESCE(NULLIF(c.public_name, ''), t.name,
+                         (SELECT isp.component_name FROM incident_status_pages isp
+                          WHERE isp.incident_id = i.id AND isp.org_id = i.org_id
+                            AND isp.status_page_id = s.status_page_id), '') AS component_name,
                 COALESCE(NULLIF(sp.public_display_name, ''), sp.name) AS page_name,
                 sp.public_locale,
                 sp.slug::text AS slug,

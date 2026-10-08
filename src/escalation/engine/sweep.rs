@@ -14,6 +14,7 @@ use crate::error::Result;
 use crate::notifier::event::IncidentNotice;
 use crate::storage::{Actor, DueIncident, PendingNotification, QUEUED_TAKEOVER_SECS};
 
+use super::deliver::Rebuilt;
 use super::rules::{PageTarget, Paged, channel_targets, reason_is_stale, resolvable_channels};
 use super::{SWEEP_CONCURRENCY, Worker};
 
@@ -228,7 +229,12 @@ impl Worker {
         if channels.is_empty() {
             return Ok(());
         }
-        let notice = self.notice(&incident, &target, NotificationReason::Reminder, None);
+        let notice = self.notice(
+            &incident,
+            Some(target.name.clone()),
+            NotificationReason::Reminder,
+            None,
+        );
         let paged = self
             .page_channels(
                 d.org,
@@ -298,7 +304,12 @@ impl Worker {
                         .await?;
                     return Ok(());
                 }
-                let notice = self.notice(&incident, &target, NotificationReason::Escalated, None);
+                let notice = self.notice(
+                    &incident,
+                    Some(target.name.clone()),
+                    NotificationReason::Escalated,
+                    None,
+                );
                 let targets = self
                     .resolve_targets(d.org, &policy, level, Utc::now())
                     .await?;
@@ -610,9 +621,28 @@ impl Worker {
                 self.rebuild_notice(p.org, p.incident_id, cid, p.reason)
                     .await?
             }
-            None => None,
+            None => Rebuilt::Gone,
         };
-        let Some((notice, channel, state)) = rebuilt else {
+        if matches!(rebuilt, Rebuilt::MonitorDeleted) {
+            // Not a delivery failure: a page caught mid-flight by the delete
+            // has nothing left to say.
+            self.ops
+                .mark_notification(
+                    p.org,
+                    p.id,
+                    NotificationOutcome {
+                        status: NotificationStatus::Suppressed,
+                        attempt: next_attempt,
+                        error: Some("monitor deleted".to_string()),
+                        sent_at: None,
+                        next_attempt_at: None,
+                        provider_receipt: None,
+                    },
+                )
+                .await?;
+            return Ok(());
+        }
+        let Rebuilt::Ready(ready) = rebuilt else {
             // Channel/incident gone: back off so a dead target doesn't churn
             // every tick, and let the attempt cap retire the row.
             let next_attempt_at = self.retry_backoff(next_attempt);
@@ -633,6 +663,7 @@ impl Worker {
                 .await?;
             return Ok(());
         };
+        let (notice, channel, state) = *ready;
         // Terminal either way, but the two causes read alike on the row unless
         // it says which.
         let suppressed = if !channel.enabled {

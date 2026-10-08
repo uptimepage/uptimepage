@@ -14,9 +14,15 @@ use super::user::UserId;
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Incident {
     pub id: Uuid,
-    /// `None` for an incident an operator declared without naming a monitor.
+    /// `None` for an incident an operator declared without naming a monitor,
+    /// and once the monitor has been deleted.
     #[schema(nullable = true)]
     pub target_id: Option<Uuid>,
+    /// The monitor's name, kept after the monitor is deleted. `None` only for
+    /// an incident declared without a monitor.
+    #[serde(default)]
+    #[schema(nullable = true)]
+    pub target_name: Option<String>,
     pub started_at: DateTime<Utc>,
     /// `null` if the incident is ongoing.
     #[schema(nullable = true)]
@@ -56,6 +62,11 @@ pub struct Incident {
 }
 
 impl Incident {
+    /// The incident had a monitor that has since been deleted.
+    pub fn monitor_deleted(&self) -> bool {
+        self.target_id.is_none() && self.target_name.is_some()
+    }
+
     /// Resolved duration of a CLOSED incident. Returns `None` for ongoing
     /// incidents. Prefers the stored `duration_secs` set by the coalescer;
     /// falls back to `(ended_at - started_at)` when missing. Saturating
@@ -224,6 +235,7 @@ fn new_incident(
     Incident {
         id: Uuid::now_v7(),
         target_id: Some(target_id),
+        target_name: None,
         started_at: ts,
         ended_at: None,
         status,
@@ -460,6 +472,7 @@ pub enum IncidentEventKind {
     Unpublished,
     PostmortemPublished,
     PostmortemUnpublished,
+    MonitorDeleted,
 }
 
 impl IncidentEventKind {
@@ -480,6 +493,7 @@ impl IncidentEventKind {
         Self::Unpublished,
         Self::PostmortemPublished,
         Self::PostmortemUnpublished,
+        Self::MonitorDeleted,
     ];
     pub fn as_db_str(self) -> &'static str {
         match self {
@@ -499,6 +513,7 @@ impl IncidentEventKind {
             Self::Unpublished => "unpublished",
             Self::PostmortemPublished => "postmortem_published",
             Self::PostmortemUnpublished => "postmortem_unpublished",
+            Self::MonitorDeleted => "monitor_deleted",
         }
     }
     /// Unknown values fall back to `Note` so a forward-migrated row never
@@ -520,6 +535,7 @@ impl IncidentEventKind {
             "unpublished" => Self::Unpublished,
             "postmortem_published" => Self::PostmortemPublished,
             "postmortem_unpublished" => Self::PostmortemUnpublished,
+            "monitor_deleted" => Self::MonitorDeleted,
             _ => Self::Note,
         }
     }
@@ -570,7 +586,14 @@ pub enum NotificationReason {
     DataResumed,
     /// Periodic nudge that an already-paged incident is still unacknowledged.
     Reminder,
+    /// The monitor was deleted and its incident closed with it. Not a
+    /// recovery: nothing says the service came back.
+    MonitorDeleted,
 }
+
+/// What responders and status page readers are told when a monitor's deletion
+/// closes its incident.
+pub const MONITOR_DELETED_MESSAGE: &str = "Monitoring was removed; this incident was closed.";
 
 impl NotificationReason {
     pub const ALL: &'static [Self] = &[
@@ -581,6 +604,7 @@ impl NotificationReason {
         Self::NoData,
         Self::DataResumed,
         Self::Reminder,
+        Self::MonitorDeleted,
     ];
     pub fn as_db_str(self) -> &'static str {
         match self {
@@ -591,6 +615,7 @@ impl NotificationReason {
             Self::NoData => "no_data",
             Self::DataResumed => "data_resumed",
             Self::Reminder => "reminder",
+            Self::MonitorDeleted => "monitor_deleted",
         }
     }
     /// An incident still running that nobody has been told to stop chasing,
@@ -603,6 +628,12 @@ impl NotificationReason {
         )
     }
 
+    /// Tells responders the incident is over, so it goes to the channels that
+    /// were paged and still goes out once the monitor is gone.
+    pub fn closes_incident(self) -> bool {
+        matches!(self, Self::Resolved | Self::MonitorDeleted)
+    }
+
     pub fn from_db_str(s: &str) -> Self {
         match s {
             "escalated" => Self::Escalated,
@@ -611,6 +642,7 @@ impl NotificationReason {
             "no_data" => Self::NoData,
             "data_resumed" => Self::DataResumed,
             "reminder" => Self::Reminder,
+            "monitor_deleted" => Self::MonitorDeleted,
             _ => Self::Opened,
         }
     }
@@ -621,8 +653,29 @@ impl NotificationReason {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OpsIncident {
     pub id: Uuid,
+    /// The monitor while it exists. Cleared when the monitor is deleted; the
+    /// incident keeps its history and `target_name` still names it.
     #[schema(nullable = true)]
     pub target_id: Option<Uuid>,
+    /// The monitor's id, kept after the monitor is deleted, so two deleted
+    /// monitors that shared a name stay apart. `None` only for an incident
+    /// declared without a monitor.
+    #[serde(default)]
+    #[schema(nullable = true)]
+    pub target_ref: Option<Uuid>,
+    /// Name and kind of the incident's monitor, current while it exists and
+    /// as it last was once deleted. `None` only for an incident declared
+    /// without a monitor.
+    #[serde(default)]
+    #[schema(nullable = true)]
+    pub target_name: Option<String>,
+    #[serde(default)]
+    #[schema(nullable = true)]
+    pub target_kind: Option<String>,
+    /// Set when deleting the monitor closed the incident. Nothing was resolved,
+    /// so it counts toward neither MTTR nor who resolved what.
+    #[serde(default)]
+    pub closed_by_monitor_delete: bool,
     #[schema(nullable = true)]
     pub title: Option<String>,
     pub state: IncidentState,
@@ -665,6 +718,19 @@ pub struct OpsIncident {
     pub regions_up: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+impl OpsIncident {
+    /// The incident had a monitor that has since been deleted.
+    pub fn monitor_deleted(&self) -> bool {
+        self.target_id.is_none() && self.target_name.is_some()
+    }
+
+    /// A monitor's incident ends with its monitor: reopened, nothing would
+    /// watch or close it. A declared one stays a person's to reopen.
+    pub fn reopenable(&self) -> bool {
+        !(self.origin == IncidentOrigin::Monitor && self.monitor_deleted())
+    }
 }
 
 fn default_true() -> bool {
@@ -947,8 +1013,20 @@ pub struct MetricBucket {
 /// Noisiest monitor in the window, by incident count.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MonitorIncidentCount {
-    pub target_id: Uuid,
+    /// `None` once the monitor has been deleted.
+    #[schema(nullable = true)]
+    pub target_id: Option<Uuid>,
+    /// The monitor's name; for a deleted monitor, the name it last had.
+    pub name: String,
     pub count: u64,
+}
+
+impl MonitorIncidentCount {
+    /// A counted incident always had a monitor, so a missing id means it was
+    /// deleted.
+    pub fn monitor_deleted(&self) -> bool {
+        self.target_id.is_none()
+    }
 }
 
 /// Aggregate incident reporting over a trailing window. `mtta`/`mttr` are means

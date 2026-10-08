@@ -57,10 +57,10 @@ pub use incident::{
     ActionItem, ActorType, Incident, IncidentAcknowledgement, IncidentEvent, IncidentEventKind,
     IncidentMetrics, IncidentNarrationUpdate, IncidentNotification, IncidentOrigin,
     IncidentPostmortem, IncidentState, IncidentTransition, IncidentUrgency, IncidentVisibility,
-    MetricBucket, MonitorIncidentCount, NewIncidentNotification, NewIncidentUpdate,
-    NewManualIncident, NotificationOutcome, NotificationReason, NotificationStatus, OpsIncident,
-    PostmortemUpsert, TransitionError, coalesce_incidents, confirmed_downtime_secs, elapsed_at,
-    next_state, uptime_pct_from_downtime,
+    MONITOR_DELETED_MESSAGE, MetricBucket, MonitorIncidentCount, NewIncidentNotification,
+    NewIncidentUpdate, NewManualIncident, NotificationOutcome, NotificationReason,
+    NotificationStatus, OpsIncident, PostmortemUpsert, TransitionError, coalesce_incidents,
+    confirmed_downtime_secs, elapsed_at, next_state, uptime_pct_from_downtime,
 };
 pub use linked_app::{ExternalId, Linked, LinkedApp, LinkedAppAccount};
 pub use locale::Locale;

@@ -38,9 +38,14 @@
       <legend class="float-left mb-3 w-full"><span class="form-legend">what it affects</span></legend>
       <div class="clear-both">
         {% match monitor_name %}{% when Some with (n) %}
-        <a href="/targets/{{ target_id.as_deref().unwrap_or("") }}"
+        {% if let Some(t) = target_id %}
+        <a href="/targets/{{ t }}"
            class="dashboard-chip hover:underline">monitor: {{ n }}</a>
         <p class="mt-2 font-mono text-xs text-quiet"># fixed after declaring — one monitor holds one open declaration</p>
+        {% else %}
+        <span class="dashboard-chip">monitor: {{ n }} (deleted)</span>
+        <p class="mt-2 font-mono text-xs text-quiet"># the monitor was deleted — this incident keeps its history</p>
+        {% endif %}
         {% when None %}
         <p class="font-mono text-xs text-quiet"># standalone — this incident hangs off no monitor</p>
         {% endmatch %}

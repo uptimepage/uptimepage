@@ -178,7 +178,8 @@ pub struct TypeCount {
 #[derive(Clone)]
 pub struct DashboardActiveIncident {
     pub id: String,
-    pub target_id: String,
+    /// `None` once the monitor has been deleted.
+    pub target_id: Option<String>,
     pub title: String,
     pub age_label: String,
     pub severity_label: &'static str,
@@ -333,7 +334,7 @@ impl DashboardActiveIncident {
         let age_secs = (now - started_at).num_seconds().max(0);
         Self {
             id: id.to_string(),
-            target_id: target_id.to_string(),
+            target_id: target_id.map(|t| t.to_string()),
             title,
             age_label: HumanDur(age_secs).to_string(),
             severity_label: severity_display(severity),

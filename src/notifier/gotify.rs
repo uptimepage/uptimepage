@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use url::Url;
 
-use crate::domain::{IncidentUrgency, NotificationReason};
+use crate::domain::IncidentUrgency;
 use crate::error::Result;
 use crate::http_outbound::{OutboundHttpClient, post_json_with_headers};
 use crate::notifier::event::IncidentNotice;
@@ -59,7 +59,7 @@ impl GotifyNotifier {
     }
 
     fn publish(notice: &IncidentNotice) -> Publish<'_> {
-        let resolved = notice.reason == NotificationReason::Resolved;
+        let resolved = notice.reason.closes_incident();
         Publish {
             title: notice.label(),
             message: truncate_chars(&notice.plain_text(), MAX_MESSAGE_CHARS),
@@ -100,7 +100,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::domain::{IncidentOrigin, IncidentSeverity};
+    use crate::domain::{IncidentOrigin, IncidentSeverity, NotificationReason};
 
     fn notice(reason: NotificationReason, urgency: IncidentUrgency) -> IncidentNotice {
         IncidentNotice {

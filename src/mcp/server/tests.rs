@@ -71,7 +71,7 @@ fn check_result(dns: Option<u16>, ttfb: Option<u16>, size: Option<u32>) -> Check
 fn active_incident(latest: Option<PublicIncidentUpdate>) -> IncidentBrief {
     IncidentBrief {
         id: Uuid::nil(),
-        target_id: Uuid::nil(),
+        target_id: Some(Uuid::nil()),
         target_name: "api".into(),
         severity: IncidentSeverity::Critical,
         started_at: Utc::now(),
@@ -1782,6 +1782,7 @@ fn incident_detail_maps_state_severity_and_updates() {
     let inc = Incident {
         id: Uuid::nil(),
         target_id: Some(Uuid::nil()),
+        target_name: Some("api".into()),
         started_at: Utc::now(),
         ended_at: None,
         status: CheckStatus::Down,
@@ -1799,10 +1800,11 @@ fn incident_detail_maps_state_severity_and_updates() {
         regions_up: vec!["eu-helsinki".into()],
     };
     let page = Uuid::now_v7();
-    let d = incident_detail(&inc, Some("api".into()), &[page]);
+    let d = incident_detail(&inc, &[page]);
     assert_eq!(d.state, "down");
     assert_eq!(d.severity, "major");
     assert_eq!(d.monitor_name.as_deref(), Some("api"));
+    assert!(!d.monitor_deleted);
     assert_eq!(d.regions_down, vec!["us-east".to_string()]);
     assert_eq!(d.regions_up, vec!["eu-helsinki".to_string()]);
     assert!(d.resolved_at.is_none());
@@ -1810,6 +1812,34 @@ fn incident_detail_maps_state_severity_and_updates() {
     assert_eq!(d.updates.len(), 1);
     assert_eq!(d.updates[0].phase, "investigating");
     assert_eq!(d.status_page_ids, vec![page.to_string()]);
+}
+
+#[test]
+fn incident_detail_names_a_deleted_monitor() {
+    let inc = Incident {
+        id: Uuid::nil(),
+        target_id: None,
+        target_name: Some("api".into()),
+        started_at: Utc::now(),
+        ended_at: Some(Utc::now()),
+        status: CheckStatus::Down,
+        duration_secs: Some(60),
+        check_count: 3,
+        counts_as_downtime: true,
+        error_sample: None,
+        severity: IncidentSeverity::Major,
+        public_title: None,
+        public_description: None,
+        created_at: None,
+        updated_at: None,
+        updates: Vec::new(),
+        regions_down: Vec::new(),
+        regions_up: Vec::new(),
+    };
+    let d = incident_detail(&inc, &[]);
+    assert!(d.monitor_deleted);
+    assert_eq!(d.monitor_id, "");
+    assert_eq!(d.monitor_name.as_deref(), Some("api"));
 }
 
 fn metrics(samples: u64, last_status: &str, last_minute_ts: Option<i64>) -> DashboardMetrics {

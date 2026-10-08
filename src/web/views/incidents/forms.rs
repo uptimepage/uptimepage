@@ -90,10 +90,7 @@ pub async fn edit_form(
         .get(org, id)
         .await?
         .ok_or_else(|| AppError::not_found(codes::INCIDENT_NOT_FOUND, "incident not found"))?;
-    let monitor_name = match inc.target_id {
-        Some(t) => state.target_store.get(org, t).await?.map(|x| x.name),
-        None => None,
-    };
+    let monitor_name = inc.target_name.clone();
     // Separate read-model over the same row; the ops one carries no public copy.
     let narration = state.incident_narration_store.get(org, id).await?;
     Ok(EditIncidentPage {
@@ -156,10 +153,7 @@ pub async fn postmortem_form(
         .get(org, id)
         .await?
         .ok_or_else(|| AppError::not_found(codes::INCIDENT_NOT_FOUND, "incident not found"))?;
-    let monitor_name = match inc.target_id {
-        Some(t) => state.target_store.get(org, t).await?.map(|x| x.name),
-        None => None,
-    };
+    let monitor_name = inc.target_name.clone();
     let incident_label = super::incident_label(inc.title.clone(), monitor_name);
 
     let pm = state.postmortem_store.get(org, id).await?;

@@ -28,9 +28,10 @@ use chrono::Utc;
 use futures::FutureExt;
 use sqlx::PgPool;
 use uptimepage::domain::{
-    CheckResult, CheckSpec, CheckStatus, DayState, ExpectedStatus, IncidentImpact, NewMonitorShare,
-    NewStatusPage, NewStatusPageComponent, NewTarget, OrgId, OverallState, PublicComponentStatus,
-    StatusPageComponentUpdate, StatusPageId, WriteSource,
+    CheckResult, CheckSpec, CheckStatus, DayState, ExpectedStatus, IncidentImpact,
+    MONITOR_DELETED_MESSAGE, NewMonitorShare, NewStatusPage, NewStatusPageComponent, NewTarget,
+    OrgId, OverallState, PublicComponentStatus, StatusPageComponentUpdate, StatusPageId,
+    WriteSource,
 };
 use uptimepage::public_status::{AggregatorConfig, OrgAggregator};
 use uptimepage::storage::{
@@ -248,6 +249,67 @@ async fn rendered_groups_follow_the_stored_order() {
     for target_id in ids {
         delete_target(&pool, target_id).await;
     }
+}
+
+/// A public incident outlives its monitor on the page that showed it: still
+/// listed under the name the page gave the monitor, and closed by the update
+/// that says monitoring was removed rather than that anything recovered.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL + CLICKHOUSE_URL — run via `docker compose -f compose.dev.yml up -d` then `cargo test -- --ignored`"]
+async fn a_deleted_monitors_incident_stays_on_its_page() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        eprintln!("skipped: DATABASE_URL not set");
+        return;
+    };
+    let Some(ch) = common::ch_client_from_env().await else {
+        eprintln!("skipped: CLICKHOUSE_URL not set");
+        return;
+    };
+    purge_prefix(&pool, "agg-gone-").await;
+
+    let org_id = seed_org(&pool, "agg-del").await;
+    let store = PostgresTargetStore::from_pool(pool.clone(), None);
+    let target = store
+        .create(
+            org_id,
+            public_target(&format!("agg-gone-{}", Uuid::now_v7())),
+            WriteSource::Ui,
+            i64::MAX,
+            i64::MAX,
+        )
+        .await
+        .expect("create target");
+    let page_id = seed_page_with_target(&pool, org_id, target.id).await;
+    sqlx::query("UPDATE status_page_components SET public_name = 'API' WHERE status_page_id = $1")
+        .bind(page_id.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let incident: Uuid = sqlx::query_scalar(
+        "INSERT INTO incidents (org_id, target_id, started_at, status_at_start, visibility) \
+         VALUES ($1, $2, now() - interval '1 hour', 'down', 'public') RETURNING id",
+    )
+    .bind(org_id.0)
+    .bind(target.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(store.delete(org_id, target.id, None).await.unwrap());
+
+    let agg = OrgAggregator::new(pool.clone(), ch, AggregatorConfig::default(), None);
+    let (page, _markers, _names, _hidden) = agg.build(page_id, org_id).await.expect("build");
+    assert!(page.active_incidents.is_empty(), "closed with its monitor");
+    let shown = page
+        .recent_incidents
+        .iter()
+        .find(|i| i.id == incident)
+        .expect("still on the page");
+    assert_eq!(shown.component_name, "API");
+    assert!(shown.title.contains("API"), "{}", shown.title);
+    assert_eq!(
+        shown.updates.last().map(|u| u.message.as_str()),
+        Some(MONITOR_DELETED_MESSAGE)
+    );
 }
 
 /// Exercises the history-strip `has(?, target_id)` query site and the

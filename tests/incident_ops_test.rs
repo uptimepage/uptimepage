@@ -274,8 +274,8 @@ async fn a_quietly_declared_incident_is_never_reconciled_into_a_page_pg() {
     );
 }
 
-/// Incidents cascade away with their monitor, so the audit log is the only
-/// place a churned customer's incident work survives.
+/// The audit log is the org's one trail of who did what, so operator incident
+/// actions land there too.
 #[tokio::test]
 #[ignore]
 async fn operator_incident_actions_reach_the_org_audit_log_pg() {

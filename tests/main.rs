@@ -56,6 +56,7 @@ mod heartbeats_pg_test;
 mod incident_ack_link_test;
 mod incident_acknowledge_page_test;
 mod incident_briefs_pg_test;
+mod incident_monitor_history_test;
 mod incident_ops_test;
 mod incident_writer_pg_test;
 mod integration_test;

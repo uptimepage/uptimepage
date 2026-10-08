@@ -237,6 +237,15 @@ pub(crate) fn pages_with_monitor() -> crate::error::AppError {
     )
 }
 
+/// Reopening would leave an incident open that nothing can page about or
+/// close: its monitor is gone.
+pub(crate) fn monitor_deleted() -> crate::error::AppError {
+    crate::error::AppError::conflict(
+        crate::error::codes::INCIDENT_MONITOR_DELETED,
+        "this incident's monitor was deleted, so it cannot be reopened",
+    )
+}
+
 pub(crate) fn unknown_status_pages(missing: usize) -> crate::error::AppError {
     crate::error::AppError::bad_request_field(
         crate::error::codes::INVALID_STATUS_PAGE_ID,
@@ -371,6 +380,9 @@ pub trait IncidentOpsStore: Send + Sync {
     /// Pages a monitor-less incident was published to, empty for one with a
     /// monitor.
     async fn status_pages(&self, org: OrgId, id: Uuid) -> Result<Vec<Uuid>>;
+    /// Incidents closed by deleting these monitors, whose responders are told
+    /// it closed.
+    async fn closed_with_monitors(&self, org: OrgId, monitors: &[Uuid]) -> Result<Vec<Uuid>>;
     /// Flip an incident back to internal visibility. Logs an `unpublished`
     /// event. `None` ⇒ no such incident in `org`.
     async fn unpublish(&self, org: OrgId, id: Uuid, actor: Actor) -> Result<Option<OpsIncident>>;

@@ -246,6 +246,7 @@ async fn share_incidents_rows_do_not_link_to_the_incident_page() {
     narration.seed(Incident {
         id: incident,
         target_id: Some(target),
+        target_name: None,
         started_at: started,
         ended_at: None,
         status: CheckStatus::Down,

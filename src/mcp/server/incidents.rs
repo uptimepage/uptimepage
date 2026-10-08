@@ -121,7 +121,7 @@ impl McpServer {
                 "incident is not published; call publish_incident first, then post the update",
             ));
         }
-        let label = self.label_for(auth.org, &incident).await?;
+        let label = label_for(&incident);
         require_confirmation(
             ctx,
             auth,
@@ -181,7 +181,7 @@ impl McpServer {
             .await
             .map_err(|e| McpToolError::internal(format!("get incident: {e}")))?
             .ok_or_else(|| McpToolError::not_found("incident not found"))?;
-        let label = self.label_for(auth.org, &incident).await?;
+        let label = label_for(&incident);
         let where_ = self
             .publish_destination(auth.org, &incident, pages.as_deref())
             .await?;
@@ -261,34 +261,7 @@ impl McpServer {
             .await
             .map_err(|e| McpToolError::internal(format!("get incident: {e}")))?
             .ok_or_else(|| McpToolError::not_found("incident not found"))?;
-        self.label_for(org, &incident).await
-    }
-
-    async fn label_for(
-        &self,
-        org: crate::domain::OrgId,
-        incident: &OpsIncident,
-    ) -> Result<String, McpToolError> {
-        // A failed name lookup fails the whole call: degrading to an unnamed
-        // prompt would ask the user to approve they-know-not-what, which is
-        // the one thing this confirmation exists to prevent.
-        let monitor = match incident.target_id {
-            Some(target_id) => self
-                .state
-                .target_store
-                .get(org, target_id)
-                .await
-                .map_err(|e| McpToolError::internal(format!("get monitor: {e}")))?
-                .map(|t| t.name),
-            None => None,
-        };
-        Ok(match (monitor, incident.title.as_deref()) {
-            (Some(name), _) => format!("the incident on \"{}\"", sanitize_prompt(&name)),
-            (None, Some(title)) => format!("the incident \"{}\"", sanitize_prompt(title)),
-            // A declared incident can carry neither monitor nor title; the id is
-            // then the only handle, and it beats approving an unnamed thing.
-            (None, None) => format!("incident {}", incident.id),
-        })
+        Ok(label_for(&incident))
     }
 
     /// Where a publish will show the incident, refused up front when the store
@@ -348,5 +321,17 @@ impl McpServer {
             1 => format!("the status page {}", names[0]),
             _ => format!("the status pages {}", names.join(", ")),
         })
+    }
+}
+
+/// What the confirmation prompt calls the incident. The monitor's name is on
+/// the incident itself, so a deleted monitor is still named.
+fn label_for(incident: &OpsIncident) -> String {
+    match (incident.target_name.as_deref(), incident.title.as_deref()) {
+        (Some(name), _) => format!("the incident on \"{}\"", sanitize_prompt(name)),
+        (None, Some(title)) => format!("the incident \"{}\"", sanitize_prompt(title)),
+        // A declared incident can carry neither monitor nor title; the id is
+        // then the only handle, and it beats approving an unnamed thing.
+        (None, None) => format!("incident {}", incident.id),
     }
 }

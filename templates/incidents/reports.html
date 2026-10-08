@@ -98,7 +98,11 @@
       <ul class="mt-2 space-y-1 text-sm">
         {% for m in top_monitors %}
         <li class="flex items-center justify-between gap-2">
-          <a href="/targets/{{ m.id }}" class="truncate hover:underline">{{ m.name }}</a>
+          {% if let Some(id) = m.id %}
+          <a href="/targets/{{ id }}" class="truncate hover:underline">{{ m.name }}</a>
+          {% else %}
+          <span class="truncate text-quiet">{{ m.name }} (deleted)</span>
+          {% endif %}
           <span class="tabular-nums">{{ m.count }}</span>
         </li>
         {% endfor %}

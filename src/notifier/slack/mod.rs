@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use url::Url;
 
-use crate::domain::NotificationReason;
+use crate::domain::{MONITOR_DELETED_MESSAGE, NotificationReason};
 use crate::error::Result;
 use crate::http_outbound::{OutboundHttpClient, post_json};
 use crate::notifier::event::IncidentNotice;
@@ -140,6 +140,9 @@ impl SlackNotifier {
                     .map(|m| format!(" after {m}m"))
                     .unwrap_or_default();
                 format!("*{label}* — incident RESOLVED{dur}{link}")
+            }
+            NotificationReason::MonitorDeleted => {
+                format!("*{label}* — {MONITOR_DELETED_MESSAGE}{link}")
             }
             NotificationReason::NoData => {
                 format!("*{label}* — NO DATA: monitoring interrupted{link}")

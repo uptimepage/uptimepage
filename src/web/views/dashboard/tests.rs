@@ -1198,7 +1198,7 @@ fn dashboard_active_incident_falls_back_to_target_name_then_default() {
 fn brief(now: DateTime<Utc>) -> IncidentBrief {
     IncidentBrief {
         id: Uuid::now_v7(),
-        target_id: Uuid::nil(),
+        target_id: Some(Uuid::nil()),
         target_name: "api".into(),
         severity: IncidentSeverity::Major,
         started_at: now - Duration::minutes(10),

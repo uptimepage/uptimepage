@@ -30,8 +30,12 @@
     </div>
     <p class="text-sm text-muted">
       {% match monitor_name %}{% when Some with (n) %}
-      <a href="/targets/{{ target_id.as_deref().unwrap_or("") }}"
+      {% if let Some(t) = target_id %}
+      <a href="/targets/{{ t }}"
          class="font-mono text-body underline decoration-dotted underline-offset-2 hover:text-body">{{ n }}</a>
+      {% else %}
+      <span class="font-mono text-quiet" title="The monitor was deleted. The incident keeps its history.">{{ n }} (deleted)</span>
+      {% endif %}
       {% when None %}
       <span class="font-mono text-quiet">no monitor</span>
       {% endmatch %}
@@ -263,7 +267,7 @@
               class="sticker-btn sticker-btn--accent min-h-10 px-4 py-2 text-sm font-medium inline-flex items-center justify-center gap-1.5">
         <span aria-hidden="true">✓</span> resolve
       </button>
-      {% else %}
+      {% else if reopenable %}
       <button type="button" data-incident-action="reopen" data-incident-id="{{ id }}"
               class="sticker-btn min-h-10 px-4 py-2 text-sm font-medium">reopen</button>
       {% endif %}

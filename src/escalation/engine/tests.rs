@@ -101,6 +101,10 @@ pub(super) fn seed_incident(ops: &InMemoryIncidentOpsStore, target_id: Option<Uu
     ops.seed(OpsIncident {
         id,
         target_id,
+        target_ref: None,
+        target_name: None,
+        target_kind: None,
+        closed_by_monitor_delete: false,
         title: None,
         state: IncidentState::Triggered,
         severity: IncidentSeverity::Major,
@@ -1236,6 +1240,10 @@ async fn reconcile_pages_an_incident_whose_open_signal_was_dropped() {
     ops.seed(OpsIncident {
         id,
         target_id: Some(tid),
+        target_ref: None,
+        target_name: None,
+        target_kind: None,
+        closed_by_monitor_delete: false,
         title: None,
         state: IncidentState::Triggered,
         severity: IncidentSeverity::Major,
@@ -1289,6 +1297,10 @@ async fn reconcile_leaves_an_incident_older_than_its_window_alone() {
     ops.seed(OpsIncident {
         id,
         target_id: Some(tid),
+        target_ref: None,
+        target_name: None,
+        target_kind: None,
+        closed_by_monitor_delete: false,
         title: None,
         state: IncidentState::Triggered,
         severity: IncidentSeverity::Major,
@@ -2225,6 +2237,174 @@ async fn an_alert_mail_links_the_acknowledge_page_for_its_episode() {
     assert!(opened.contains(&format!("Acknowledge: {page}")), "{opened}");
     let resolved = sent[1].template.render("Uptimepage").text_body;
     assert!(!resolved.contains("/acknowledge"), "{resolved}");
+}
+
+/// What a monitor delete leaves behind: the incident closed, the link gone,
+/// the name kept.
+fn close_with_deleted_monitor(ops: &InMemoryIncidentOpsStore, id: Uuid, monitor: Uuid) {
+    ops.edit(id, |i| {
+        i.state = IncidentState::Resolved;
+        i.ended_at = Some(Utc::now());
+        i.next_escalation_at = None;
+        i.target_id = None;
+        i.target_ref = Some(monitor);
+        i.target_name = Some("api".into());
+        i.closed_by_monitor_delete = true;
+    });
+}
+
+/// The channel the incident paged hears it closed with its monitor, once, in
+/// words that claim no recovery. The monitor's recovery opt-out went with it.
+#[tokio::test]
+async fn a_monitor_delete_tells_the_paged_channel_it_closed() {
+    let channels = Arc::new(InMemoryNotificationChannelStore::new());
+    let cid = verified_mail_channel(&channels, true).await;
+    let target = target_with_channel_recovery(cid, false);
+    let tid = target.id;
+    let ops = Arc::new(InMemoryIncidentOpsStore::new());
+    let id = seed_incident(&ops, Some(tid));
+    let targets = Arc::new(InMemoryTargetStore::from_vec(vec![target]));
+    let (eng, mail) = engine_mailing(
+        ops.clone(),
+        targets.clone(),
+        channels,
+        EscalationConfig::default(),
+    );
+    eng.page(org(), id, NotificationReason::Opened)
+        .await
+        .unwrap();
+
+    targets.delete(org(), tid, None).await.unwrap();
+    close_with_deleted_monitor(&ops, id, tid);
+    for _ in 0..2 {
+        eng.page(org(), id, NotificationReason::MonitorDeleted)
+            .await
+            .unwrap();
+    }
+
+    let sent = mail.sent();
+    assert_eq!(sent.len(), 2, "told once");
+    let closed = sent[1].template.render("Uptimepage");
+    assert!(
+        closed
+            .subject
+            .contains("api — Monitoring was removed; this incident was closed."),
+        "{}",
+        closed.subject
+    );
+    assert!(
+        closed.html_body.contains("MONITORING REMOVED"),
+        "{}",
+        closed.html_body
+    );
+    assert!(
+        !closed.text_body.contains("Recovered"),
+        "{}",
+        closed.text_body
+    );
+    assert!(
+        !closed.text_body.contains("/acknowledge"),
+        "{}",
+        closed.text_body
+    );
+}
+
+/// A recovery notice still retrying when the monitor goes is true news and
+/// still goes out; a page about the outage has nothing left to say.
+#[tokio::test]
+async fn a_delete_drops_pending_pages_but_not_a_pending_recovery() {
+    let channels = Arc::new(InMemoryNotificationChannelStore::new());
+    let cid = failing_channel(&channels).await;
+    let target = target_with_channel(cid);
+    let tid = target.id;
+    let ops = Arc::new(InMemoryIncidentOpsStore::new());
+    let id = seed_incident(&ops, Some(tid));
+    let targets = Arc::new(InMemoryTargetStore::from_vec(vec![target]));
+    let policies = Arc::new(InMemoryEscalationPolicyStore::new());
+    let eng = engine(ops.clone(), policies, targets.clone(), channels);
+    eng.page(org(), id, NotificationReason::Opened)
+        .await
+        .unwrap();
+    ops.resolve(org(), id, Actor::System, None).await.unwrap();
+    eng.page(org(), id, NotificationReason::Resolved)
+        .await
+        .unwrap();
+
+    targets.delete(org(), tid, None).await.unwrap();
+    ops.edit(id, |i| {
+        i.target_id = None;
+        i.target_ref = Some(tid);
+        i.target_name = Some("api".into());
+    });
+    ops.clear_retry_backoff();
+    eng.retry_pending().await;
+
+    let rows = ops.notifications_for(org(), id).await.unwrap();
+    let by_reason = |r: NotificationReason| rows.iter().find(|n| n.reason == r).unwrap();
+    let opened = by_reason(NotificationReason::Opened);
+    assert_eq!(opened.status, NotificationStatus::Suppressed);
+    let resolved = by_reason(NotificationReason::Resolved);
+    assert_eq!(
+        resolved.status,
+        NotificationStatus::Failed,
+        "retried, not dropped"
+    );
+    assert_eq!(resolved.attempt, 2);
+}
+
+/// A declared incident stays open when its monitor goes. Paging stops, so an
+/// emergency still sounding is spent, and the person who later resolves it
+/// still tells whoever it paged.
+#[tokio::test]
+async fn a_declared_incident_outliving_its_monitor_goes_quiet_then_reports_its_resolve() {
+    let channels = Arc::new(InMemoryNotificationChannelStore::new());
+    let cid = verified_mail_channel(&channels, true).await;
+    let target = target_with_channel_recovery(cid, false);
+    let tid = target.id;
+    let ops = Arc::new(InMemoryIncidentOpsStore::new());
+    let id = seed_incident(&ops, Some(tid));
+    ops.edit(id, |i| i.origin = IncidentOrigin::Manual);
+    let targets = Arc::new(InMemoryTargetStore::from_vec(vec![target]));
+    let (eng, mail) = engine_mailing(
+        ops.clone(),
+        targets.clone(),
+        channels,
+        EscalationConfig::default(),
+    );
+    eng.page(org(), id, NotificationReason::Opened)
+        .await
+        .unwrap();
+
+    targets.delete(org(), tid, None).await.unwrap();
+    ops.edit(id, |i| {
+        i.target_ref = i.target_id.take();
+        i.target_name = Some("api".into());
+    });
+    let ack = crate::storage::EmergencyAck {
+        id: Uuid::now_v7(),
+        org: org(),
+        incident_id: id,
+        channel_id: cid,
+        receipt: "rcpt".into(),
+        generation: 0,
+    };
+    assert!(
+        eng.page_is_spent(&ack).await,
+        "still open, no longer paging"
+    );
+
+    ops.resolve(org(), id, Actor::System, None).await.unwrap();
+    eng.page(org(), id, NotificationReason::Resolved)
+        .await
+        .unwrap();
+    let sent = mail.sent();
+    assert_eq!(sent.len(), 2);
+    let resolved = sent[1].template.render("Uptimepage");
+    assert!(
+        resolved.subject.contains("api — incident RESOLVED"),
+        "{}",
+        resolved.subject
+    );
 }
 
 pub(super) async fn verified_mail_channel(

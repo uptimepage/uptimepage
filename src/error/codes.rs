@@ -103,6 +103,8 @@ pub const MAINTENANCE_NOT_FOUND: &str = "MAINTENANCE_NOT_FOUND";
 pub const INCIDENT_NOT_FOUND: &str = "INCIDENT_NOT_FOUND";
 pub const INCIDENT_INVALID_STATE: &str = "INCIDENT_INVALID_STATE";
 pub const INCIDENT_DOWNTIME_NOT_EDITABLE: &str = "INCIDENT_DOWNTIME_NOT_EDITABLE";
+/// The incident's monitor was deleted; it keeps its history but cannot reopen.
+pub const INCIDENT_MONITOR_DELETED: &str = "INCIDENT_MONITOR_DELETED";
 /// Publishing an incident with no monitor names no status page to show it on.
 pub const INCIDENT_STATUS_PAGE_REQUIRED: &str = "INCIDENT_STATUS_PAGE_REQUIRED";
 /// Status pages were chosen for an incident whose monitor already decides them.

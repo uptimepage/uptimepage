@@ -30,6 +30,9 @@
           <div class="mt-0.5 flex flex-wrap gap-1">
             <span class="dashboard-chip dashboard-chip--flat">{{ row.origin }}</span>
             <span class="dashboard-chip dashboard-chip--flat">{{ row.visibility }}</span>
+            {% if row.monitor_deleted %}
+            <span class="dashboard-chip dashboard-chip--flat" title="The monitor was deleted. The incident keeps its history.">monitor deleted</span>
+            {% endif %}
             {% if row.urgency == "high" %}
             <span class="dashboard-chip dashboard-chip--flat" title="high urgency — pages on-call">page</span>
             {% else %}
@@ -92,7 +95,7 @@
             {% if row.ongoing %}
             <button type="button" data-incident-action="resolve" data-incident-id="{{ row.id }}"
                     class="sticker-btn px-2 py-1 text-xs">resolve</button>
-            {% else %}
+            {% else if row.reopenable %}
             <button type="button" data-incident-action="reopen" data-incident-id="{{ row.id }}"
                     class="sticker-btn px-2 py-1 text-xs">reopen</button>
             {% endif %}

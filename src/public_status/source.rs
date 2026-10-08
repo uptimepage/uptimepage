@@ -23,7 +23,7 @@ use crate::i18n::Tr;
 use crate::pagination::cursor::IncidentCursor;
 use crate::pagination::page::CursorPage;
 
-use super::aggregator::{OrgAggregator, on_page};
+use super::aggregator::{OrgAggregator, kept_component_name, on_page};
 use super::cache::{HistoryIncidentMarker, PageCache, PageCacheError, PageData};
 use super::overall_status::stored_incident_impact;
 use super::xml::xml_escape;
@@ -217,7 +217,7 @@ impl PublicSource for OrgPublicSource {
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
                       i.origin, i.regions_up,
-                      i.public_title, i.public_description
+                      i.public_title, i.public_description, {kept}
                FROM incidents i
                WHERE i.org_id = $5
                  AND {on_page}
@@ -231,6 +231,7 @@ impl PublicSource for OrgPublicSource {
                ORDER BY i.started_at DESC, i.id DESC
                LIMIT $6"#,
             on_page = on_page("$7", "$8"),
+            kept = kept_component_name("$8"),
         ))
         .bind(since)
         .bind(ongoing_only)
@@ -279,13 +280,14 @@ impl PublicSource for OrgPublicSource {
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
                       i.origin, i.regions_up,
-                      i.public_title, i.public_description
+                      i.public_title, i.public_description, {kept}
                FROM incidents i
                WHERE i.id = $1
                  AND i.org_id = $2
                  AND {on_page}
                  AND i.visibility = 'public'"#,
             on_page = on_page("$3", "$4"),
+            kept = kept_component_name("$4"),
         ))
         .bind(id)
         .bind(page.org.0)
@@ -363,6 +365,7 @@ impl OrgPublicSource {
                 let component_name = r
                     .target_id
                     .and_then(|t| names.get(&t).cloned())
+                    .or_else(|| r.kept_component_name.clone())
                     .unwrap_or_default();
                 let mut my_updates: Vec<PublicIncidentUpdate> = updates
                     .iter()
@@ -471,6 +474,7 @@ struct IncidentRow {
     public_title: Option<String>,
     #[allow(dead_code)]
     public_description: Option<String>,
+    kept_component_name: Option<String>,
 }
 
 #[derive(FromRow)]

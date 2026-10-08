@@ -36,8 +36,8 @@ async fn seed_incident(
     started: &str,
     ended: Option<&str>,
 ) {
-    // A target-less incident can only be operator-declared: the schema's
-    // `incident_monitor_has_target` check enforces it.
+    // A target-less incident seeded from scratch can only be operator-declared:
+    // the schema's `incident_monitor_named` check enforces it.
     let sql = format!(
         "INSERT INTO incidents (org_id, target_id, started_at, ended_at, status_at_start, \
                                 check_count, state, visibility, origin) \

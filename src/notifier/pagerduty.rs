@@ -120,7 +120,9 @@ impl PagerDutyNotifier {
     /// reminder into the incident it already has instead of paging again.
     fn closes_the_incident(reason: NotificationReason) -> bool {
         match reason {
-            NotificationReason::Resolved | NotificationReason::DataResumed => true,
+            NotificationReason::Resolved
+            | NotificationReason::MonitorDeleted
+            | NotificationReason::DataResumed => true,
             NotificationReason::Opened
             | NotificationReason::Reopened
             | NotificationReason::Escalated
@@ -241,9 +243,10 @@ mod tests {
     }
 
     #[test]
-    fn only_a_recovery_closes_the_pagerduty_incident() {
+    fn only_a_recovery_or_a_monitor_delete_closes_the_pagerduty_incident() {
         for reason in [
             NotificationReason::Resolved,
+            NotificationReason::MonitorDeleted,
             NotificationReason::DataResumed,
         ] {
             assert!(PagerDutyNotifier::closes_the_incident(reason), "{reason:?}");

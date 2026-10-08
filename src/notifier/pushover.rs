@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::domain::{IncidentUrgency, NotificationReason};
+use crate::domain::IncidentUrgency;
 use crate::error::{AppError, Result};
 use crate::http_outbound::{OutboundHttpClient, get_json, post_json, post_json_capture};
 use crate::notifier::event::IncidentNotice;
@@ -58,9 +58,7 @@ struct SendResponse {
 /// Emergency priority applies only to a live high-urgency page — not to a
 /// resolve (which goes silent) or a low-urgency notice.
 fn is_emergency(enabled: bool, notice: &IncidentNotice) -> bool {
-    enabled
-        && matches!(notice.urgency, IncidentUrgency::High)
-        && !matches!(notice.reason, NotificationReason::Resolved)
+    enabled && matches!(notice.urgency, IncidentUrgency::High) && !notice.reason.closes_incident()
 }
 
 impl PushoverNotifier {
@@ -102,19 +100,20 @@ impl PushoverNotifier {
             priority: if emergency {
                 2
             } else {
-                match (notice.reason, notice.urgency) {
-                    (NotificationReason::Resolved, _) => -1,
-                    (_, IncidentUrgency::High) => 1,
-                    (_, IncidentUrgency::Low) => 0,
+                match (notice.reason.closes_incident(), notice.urgency) {
+                    (true, _) => -1,
+                    (false, IncidentUrgency::High) => 1,
+                    (false, IncidentUrgency::Low) => 0,
                 }
             },
             retry: emergency.then_some(EMERGENCY_RETRY_SECS),
             expire: emergency.then_some(EMERGENCY_EXPIRE_SECS),
             // Pushover renders the push at this time — a resolve is news
             // from the resolve moment, not the open.
-            timestamp: match notice.reason {
-                NotificationReason::Resolved => notice.ended_at.unwrap_or(notice.started_at),
-                _ => notice.started_at,
+            timestamp: if notice.reason.closes_incident() {
+                notice.ended_at.unwrap_or(notice.started_at)
+            } else {
+                notice.started_at
             }
             .timestamp(),
             url_title: url.is_some().then_some("Open incident"),
@@ -284,7 +283,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::domain::{IncidentOrigin, IncidentSeverity};
+    use crate::domain::{IncidentOrigin, IncidentSeverity, NotificationReason};
 
     fn notice(reason: NotificationReason, urgency: IncidentUrgency) -> IncidentNotice {
         IncidentNotice {
@@ -345,6 +344,11 @@ mod tests {
         assert_eq!(rv["priority"], -1);
         // The resolve push carries the resolve moment, not the open time.
         assert_eq!(rv["timestamp"], resolved.ended_at.unwrap().timestamp());
+        let mut closed = notice(NotificationReason::MonitorDeleted, IncidentUrgency::High);
+        closed.ended_at = resolved.ended_at;
+        let emergency =
+            serde_json::to_value(PushoverNotifier::message("t", "u", None, true, &closed)).unwrap();
+        assert_eq!(emergency["priority"], -1, "a closing notice never rings");
         let mut no_url = notice(NotificationReason::Opened, IncidentUrgency::High);
         no_url.url = None;
         let v = msg(&no_url);

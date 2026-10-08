@@ -158,7 +158,7 @@ async fn show(
     let Some(inc) = state.incident_ops_store.get(org, id).await? else {
         return Ok(missing());
     };
-    let (members, mut acks, episode, monitor_name, offered) = tokio::try_join!(
+    let (members, mut acks, episode, offered) = tokio::try_join!(
         members_map(&state, org),
         async {
             Ok(state
@@ -167,12 +167,6 @@ async fn show(
                 .await?)
         },
         async { Ok(state.incident_ops_store.generation(org, id).await?) },
-        async {
-            Ok(match inc.target_id {
-                Some(t) => state.target_store.get(org, t).await?.map(|x| x.name),
-                None => None,
-            })
-        },
         still_offered(&state, &link, action),
     )?;
     let Some(episode) = episode else {
@@ -184,7 +178,7 @@ async fn show(
         phase: phase(action, &inc, episode, &link, &acks, offered),
         resolving: action == AlertAction::Resolve,
         id: id.to_string(),
-        label: incident_label(inc.title.clone(), monitor_name),
+        label: incident_label(inc.title.clone(), inc.target_name.clone()),
         severity: inc.severity.as_db_str(),
         state_label: state_label(inc.state),
         open_for: ongoing

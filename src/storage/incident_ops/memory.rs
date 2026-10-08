@@ -27,6 +27,8 @@ use super::{
 #[derive(Default)]
 pub struct InMemoryIncidentOpsStore {
     inner: Mutex<MemState>,
+    /// Names a declared incident's monitor, as the Postgres trigger does.
+    targets: Option<std::sync::Arc<dyn crate::storage::TargetStore>>,
 }
 
 #[derive(Default)]
@@ -90,6 +92,13 @@ fn record_acknowledgement(state: &mut MemState, id: Uuid, actor: Actor, episode:
 impl InMemoryIncidentOpsStore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_targets(targets: std::sync::Arc<dyn crate::storage::TargetStore>) -> Self {
+        Self {
+            targets: Some(targets),
+            ..Self::default()
+        }
     }
 
     pub fn seed(&self, incident: OpsIncident) {
@@ -362,6 +371,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             .collect();
         let mttr: Vec<f64> = in_window
             .iter()
+            .filter(|i| !i.closed_by_monitor_delete)
             .filter_map(|i| i.ended_at.map(|e| (e - i.started_at).num_seconds() as f64))
             .collect();
 
@@ -378,18 +388,26 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             v
         };
 
-        let mut top: std::collections::HashMap<Uuid, u64> = Default::default();
+        let mut top: std::collections::HashMap<(Uuid, Option<Uuid>, String), u64> =
+            Default::default();
         for i in &in_window {
-            if let Some(t) = i.target_id {
-                *top.entry(t).or_default() += 1;
+            if let (Some(kept), Some(name)) = (i.target_ref, &i.target_name) {
+                *top.entry((kept, i.target_id, name.clone())).or_default() += 1;
             }
         }
-        let mut top_monitors: Vec<MonitorIncidentCount> = top
+        let mut top: Vec<_> = top.into_iter().collect();
+        top.sort_by(|((ka, _, na), ca), ((kb, _, nb), cb)| {
+            cb.cmp(ca).then(na.cmp(nb)).then(ka.cmp(kb))
+        });
+        let top_monitors: Vec<MonitorIncidentCount> = top
             .into_iter()
-            .map(|(target_id, count)| MonitorIncidentCount { target_id, count })
+            .take(10)
+            .map(|((_, target_id, name), count)| MonitorIncidentCount {
+                target_id,
+                name,
+                count,
+            })
             .collect();
-        top_monitors.sort_by(|a, b| b.count.cmp(&a.count).then(a.target_id.cmp(&b.target_id)));
-        top_monitors.truncate(10);
 
         Ok(IncidentMetrics {
             window_days,
@@ -400,11 +418,19 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             by_state: tally(&|i| i.state.as_db_str().to_string()),
             auto_resolved: in_window
                 .iter()
-                .filter(|i| i.state == IncidentState::Resolved && i.resolved_by.is_none())
+                .filter(|i| {
+                    i.state == IncidentState::Resolved
+                        && i.resolved_by.is_none()
+                        && !i.closed_by_monitor_delete
+                })
                 .count() as u64,
             human_resolved: in_window
                 .iter()
-                .filter(|i| i.state == IncidentState::Resolved && i.resolved_by.is_some())
+                .filter(|i| {
+                    i.state == IncidentState::Resolved
+                        && i.resolved_by.is_some()
+                        && !i.closed_by_monitor_delete
+                })
                 .count() as u64,
             top_monitors,
         })
@@ -412,17 +438,25 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
 
     async fn declare(
         &self,
-        _org: OrgId,
+        org: OrgId,
         new: NewManualIncident,
         actor: Actor,
     ) -> Result<OpsIncident> {
         if new.target_id.is_some() && !new.status_page_ids.is_empty() {
             return Err(pages_with_monitor());
         }
+        let monitor = match (&self.targets, new.target_id) {
+            (Some(targets), Some(id)) => targets.get(org, id).await?,
+            _ => None,
+        };
         let now = Utc::now();
         let inc = OpsIncident {
             id: Uuid::now_v7(),
             target_id: new.target_id,
+            target_ref: new.target_id,
+            target_name: monitor.as_ref().map(|t| t.name.clone()),
+            target_kind: monitor.as_ref().map(|t| t.check.kind().to_string()),
+            closed_by_monitor_delete: false,
             title: Some(new.title),
             state: IncidentState::Triggered,
             severity: new.severity,
@@ -537,6 +571,15 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         actor: Actor,
         note: Option<String>,
     ) -> Result<LifecycleOutcome> {
+        let ended_with_monitor = self
+            .inner
+            .lock()
+            .incidents
+            .iter()
+            .any(|i| i.id == id && !i.reopenable());
+        if ended_with_monitor {
+            return Err(super::monitor_deleted());
+        }
         Ok(self
             .apply(
                 id,
@@ -619,6 +662,21 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             .get(&id)
             .cloned()
             .unwrap_or_default())
+    }
+
+    async fn closed_with_monitors(&self, _org: OrgId, monitors: &[Uuid]) -> Result<Vec<Uuid>> {
+        Ok(self
+            .inner
+            .lock()
+            .incidents
+            .iter()
+            .filter(|i| {
+                i.closed_by_monitor_delete
+                    && i.target_id.is_none()
+                    && i.target_ref.is_some_and(|r| monitors.contains(&r))
+            })
+            .map(|i| i.id)
+            .collect())
     }
 
     async fn unpublish(&self, _org: OrgId, id: Uuid, actor: Actor) -> Result<Option<OpsIncident>> {
@@ -913,7 +971,9 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         let mut g = self.inner.lock();
         let mut out = Vec::new();
         for inc in g.incidents.iter_mut().filter(|i| {
-            i.state == IncidentState::Triggered && i.next_escalation_at.is_some_and(|t| t <= now)
+            i.state == IncidentState::Triggered
+                && !i.monitor_deleted()
+                && i.next_escalation_at.is_some_and(|t| t <= now)
         }) {
             if out.len() >= limit {
                 break;
@@ -942,6 +1002,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             .iter()
             .filter(|i| {
                 i.state == IncidentState::Triggered
+                    && !i.monitor_deleted()
                     && i.started_at <= cutoff
                     && i.started_at >= since
                     && i.escalation_policy_id.is_none()
@@ -1030,7 +1091,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         Ok(g.incidents
             .iter()
             .filter(|i| {
-                if i.state != IncidentState::Triggered {
+                if i.state != IncidentState::Triggered || i.monitor_deleted() {
                     return false;
                 }
                 let Some(held_at) = g
