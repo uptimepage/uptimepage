@@ -28,6 +28,7 @@ mod canary_test;
 mod channel_link_codes_pg_test;
 mod channel_verification_pg_test;
 mod clickhouse_aggregator_test;
+mod closing_notice_pg_test;
 mod confirmed_downtime_pg_test;
 mod cookie_isolation_test;
 mod cors_test;

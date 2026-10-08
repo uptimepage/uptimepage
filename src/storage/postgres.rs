@@ -326,6 +326,7 @@ async fn close_incidents_of_deleted_targets(
                    resolved_by = $3,
                    next_escalation_at = NULL,
                    closed_by_monitor_delete = true,
+                   closing_notice_at = now(),
                    updated_at = now()
                WHERE org_id = $2 AND ended_at IS NULL
                  AND id IN (SELECT id FROM owned WHERE origin = 'monitor')

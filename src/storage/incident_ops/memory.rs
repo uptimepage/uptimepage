@@ -19,9 +19,10 @@ use crate::domain::{
 use crate::error::Result;
 
 use super::{
-    Acknowledged, Actor, DueIncident, EmergencyAck, INCIDENT_DETAIL_ROW_CAP, IncidentOpsFilter,
-    IncidentOpsStore, IncidentSort, IncidentStateCounts, LifecycleOutcome, PendingNotification,
-    QUEUED_TAKEOVER_SECS, pages_with_monitor, status_page_required,
+    Acknowledged, Actor, ClaimedEscalation, ClosingNotice, DueClosingNotices, DueIncident,
+    EmergencyAck, INCIDENT_DETAIL_ROW_CAP, IncidentOpsFilter, IncidentOpsStore, IncidentSort,
+    IncidentStateCounts, LifecycleOutcome, PendingNotification, QUEUED_TAKEOVER_SECS,
+    pages_with_monitor, status_page_required,
 };
 
 #[derive(Default)]
@@ -40,6 +41,8 @@ struct MemState {
     notifications: Vec<(OrgId, IncidentNotification)>,
     renotify_counts: std::collections::HashMap<Uuid, u32>,
     status_pages: std::collections::HashMap<Uuid, Vec<Uuid>>,
+    /// Owed closing notices by incident, as `incidents.closing_notice_at`.
+    closing_notices: HashMap<Uuid, DateTime<Utc>>,
 }
 
 /// Episode number off the timeline, matching the Postgres store.
@@ -58,6 +61,33 @@ fn reopens_before(state: &MemState, incident_id: Uuid, at: DateTime<Utc>) -> i64
                 && e.occurred_at <= at
         })
         .count() as i64
+}
+
+/// Append a paging-log row, stamped as the Postgres defaults would.
+fn push_notification(state: &mut MemState, n: NewIncidentNotification) -> Uuid {
+    let id = Uuid::now_v7();
+    state.notifications.push((
+        n.org,
+        IncidentNotification {
+            id,
+            incident_id: n.incident_id,
+            escalation_level: n.escalation_level,
+            target_user_id: n.target_user_id,
+            channel_id: n.channel_id,
+            transport: n.transport,
+            reason: n.reason,
+            status: n.status,
+            attempt: n.attempt,
+            error: n.error,
+            episode: n.episode,
+            created_at: Utc::now(),
+            sent_at: n.sent_at,
+            next_attempt_at: None,
+            provider_receipt: None,
+            acked_at: None,
+        },
+    ));
+    id
 }
 
 /// Add `actor` to the people who acknowledged `episode`; false when they
@@ -144,6 +174,35 @@ impl InMemoryIncidentOpsStore {
         }
     }
 
+    /// Test helper: record that a close made through [`Self::edit`] owes its
+    /// notice, as the statement that closed it would have.
+    #[cfg(test)]
+    pub fn owe_closing_notice(&self, id: Uuid) {
+        self.inner.lock().closing_notices.insert(id, Utc::now());
+    }
+
+    /// Test helper: whether a closing notice is still owed or leased.
+    #[cfg(test)]
+    pub fn closing_notice_pending(&self, id: Uuid) -> bool {
+        self.inner.lock().closing_notices.contains_key(&id)
+    }
+
+    /// Test helper: backdate every closing notice and the incident's end,
+    /// simulating time passing since the close.
+    #[cfg(test)]
+    pub fn age_closing_notices(&self, by: chrono::Duration) {
+        let mut g = self.inner.lock();
+        let ids: Vec<Uuid> = g.closing_notices.keys().copied().collect();
+        for at in g.closing_notices.values_mut() {
+            *at -= by;
+        }
+        for i in g.incidents.iter_mut().filter(|i| ids.contains(&i.id)) {
+            if let Some(ended) = i.ended_at.as_mut() {
+                *ended -= by;
+            }
+        }
+    }
+
     fn push_event(
         state: &mut MemState,
         incident_id: Uuid,
@@ -205,6 +264,13 @@ impl InMemoryIncidentOpsStore {
         if from != to {
             mutate(&mut g.incidents[idx]);
             g.incidents[idx].updated_at = Utc::now();
+            // As the Postgres updates do: a close owes the closing notice, a
+            // reopen withdraws it.
+            if to == IncidentState::Resolved {
+                g.closing_notices.insert(id, Utc::now());
+            } else if from == IncidentState::Resolved {
+                g.closing_notices.remove(&id);
+            }
         }
         let updated = g.incidents[idx].clone();
         let acknowledging = transition == IncidentTransition::Acknowledge;
@@ -777,26 +843,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
     }
 
     async fn record_notification(&self, n: NewIncidentNotification) -> Result<Uuid> {
-        let id = Uuid::now_v7();
-        let row = IncidentNotification {
-            id,
-            incident_id: n.incident_id,
-            escalation_level: n.escalation_level,
-            target_user_id: n.target_user_id,
-            channel_id: n.channel_id,
-            transport: n.transport,
-            reason: n.reason,
-            status: n.status,
-            attempt: n.attempt,
-            error: n.error,
-            created_at: Utc::now(),
-            sent_at: n.sent_at,
-            next_attempt_at: None,
-            provider_receipt: None,
-            acked_at: None,
-        };
-        self.inner.lock().notifications.push((n.org, row));
-        Ok(id)
+        Ok(push_notification(&mut self.inner.lock(), n))
     }
 
     async fn pending_notifications(
@@ -979,13 +1026,16 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         now: DateTime<Utc>,
         limit: usize,
         lease_secs: i64,
-    ) -> Result<Vec<DueIncident>> {
+    ) -> Result<Vec<ClaimedEscalation>> {
         // Claim-and-lease, mirroring the Pg impl: bump next_escalation_at forward
         // as the rows are returned so a re-scan doesn't re-pick them.
         let lease_to = now + chrono::Duration::seconds(lease_secs.max(1));
         let mut g = self.inner.lock();
+        let MemState {
+            incidents, events, ..
+        } = &mut *g;
         let mut out = Vec::new();
-        for inc in g.incidents.iter_mut().filter(|i| {
+        for inc in incidents.iter_mut().filter(|i| {
             i.state == IncidentState::Triggered
                 && !i.monitor_deleted()
                 && i.next_escalation_at.is_some_and(|t| t <= now)
@@ -993,13 +1043,20 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             if out.len() >= limit {
                 break;
             }
-            out.push(DueIncident {
-                id: inc.id,
-                org: OrgId(Uuid::nil()),
-                target_id: inc.target_id,
-                escalation_policy_id: inc.escalation_policy_id,
-                escalation_level: inc.escalation_level,
-                escalation_round: inc.escalation_round,
+            out.push(ClaimedEscalation {
+                due: DueIncident {
+                    id: inc.id,
+                    org: OrgId(Uuid::nil()),
+                    target_id: inc.target_id,
+                    escalation_policy_id: inc.escalation_policy_id,
+                    escalation_level: inc.escalation_level,
+                    escalation_round: inc.escalation_round,
+                },
+                claim: lease_to,
+                episode: events
+                    .iter()
+                    .filter(|e| e.incident_id == inc.id && e.kind == IncidentEventKind::Reopened)
+                    .count() as i64,
             });
             inc.next_escalation_at = Some(lease_to);
         }
@@ -1034,6 +1091,98 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
                 escalation_round: i.escalation_round,
             })
             .collect())
+    }
+
+    async fn claim_closing_notice(
+        &self,
+        _org: OrgId,
+        id: Uuid,
+        lease_secs: i64,
+    ) -> Result<Option<DateTime<Utc>>> {
+        let mut g = self.inner.lock();
+        let now = Utc::now();
+        let resolved = g
+            .incidents
+            .iter()
+            .any(|i| i.id == id && i.state == IncidentState::Resolved);
+        Ok(match g.closing_notices.get_mut(&id) {
+            Some(at) if resolved && *at <= now => {
+                *at = now + chrono::Duration::seconds(lease_secs.max(1));
+                Some(*at)
+            }
+            _ => None,
+        })
+    }
+
+    async fn due_closing_notices(
+        &self,
+        grace_secs: i64,
+        window_secs: i64,
+        lease_secs: i64,
+        limit: usize,
+    ) -> Result<DueClosingNotices> {
+        let mut g = self.inner.lock();
+        let now = Utc::now();
+        let ripe_before = now - chrono::Duration::seconds(grace_secs.max(0));
+        let ended_after = now - chrono::Duration::seconds(window_secs.max(1));
+        let claim = now + chrono::Duration::seconds(lease_secs.max(1));
+        let mut ripe: Vec<(Uuid, DateTime<Utc>)> = g
+            .closing_notices
+            .iter()
+            .filter(|(_, at)| **at <= ripe_before)
+            .map(|(id, at)| (*id, *at))
+            .collect();
+        ripe.sort_by_key(|(_, at)| *at);
+        let mut due = DueClosingNotices::default();
+        for (id, _) in ripe.into_iter().take(limit.max(1)) {
+            let owed = g.incidents.iter().any(|i| {
+                i.id == id
+                    && i.state == IncidentState::Resolved
+                    && i.ended_at.is_some_and(|ended| ended >= ended_after)
+            });
+            if owed {
+                g.closing_notices.insert(id, claim);
+                due.claimed.push(ClosingNotice {
+                    id,
+                    org: OrgId(Uuid::nil()),
+                    claim,
+                });
+            } else {
+                g.closing_notices.remove(&id);
+                due.expired += 1;
+            }
+        }
+        Ok(due)
+    }
+
+    async fn record_closing_notification(
+        &self,
+        n: NewIncidentNotification,
+        claim: DateTime<Utc>,
+        lease_secs: i64,
+    ) -> Result<Option<(Uuid, DateTime<Utc>)>> {
+        let mut g = self.inner.lock();
+        let renewed = match g.closing_notices.get_mut(&n.incident_id) {
+            Some(at) if *at == claim => {
+                *at = Utc::now() + chrono::Duration::seconds(lease_secs.max(1));
+                *at
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some((push_notification(&mut g, n), renewed)))
+    }
+
+    async fn settle_closing_notice(
+        &self,
+        _org: OrgId,
+        id: Uuid,
+        claim: DateTime<Utc>,
+    ) -> Result<()> {
+        let mut g = self.inner.lock();
+        if g.closing_notices.get(&id) == Some(&claim) {
+            g.closing_notices.remove(&id);
+        }
+        Ok(())
     }
 
     // The reminder cadence depends on the per-target `renotify_interval_secs`,

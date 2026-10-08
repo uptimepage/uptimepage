@@ -132,6 +132,9 @@ pub struct EscalationConfig {
     /// Floor on the reconcile scan: without it an incident nobody can be paged
     /// about is re-attempted every tick, forever.
     pub reconcile_window_secs: u64,
+    /// How long after an incident ends its closing notice may still go out
+    /// when the signal for it was lost. Older ones are withdrawn unsent.
+    pub closing_window_secs: u64,
     /// Window the flap damper counts a monitor's incident opens over.
     pub flap_window_secs: u64,
     /// Opens within `flap_window_secs` before a monitor counts as flapping.
@@ -155,6 +158,7 @@ impl Default for EscalationConfig {
             retry_backoff_base_secs: 30,
             retry_backoff_cap_secs: 3600,
             reconcile_window_secs: 3600,
+            closing_window_secs: 86_400,
             flap_window_secs: 3600,
             flap_max_opens: 5,
             flap_hold_secs: 600,

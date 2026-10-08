@@ -618,6 +618,7 @@ async fn due_for_renotify_selects_overdue_open_unacked_live_pg() {
                 attempt: 1,
                 error: None,
                 sent_at: Some(Utc::now() - page_age),
+                episode: 0,
             })
             .await
             .unwrap();

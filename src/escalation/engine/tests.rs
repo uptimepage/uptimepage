@@ -25,14 +25,18 @@ pub(super) fn org() -> OrgId {
 
 // A channel whose transport always fails fast (closed loopback port), so a
 // delivery attempt records `failed` without needing a mock HTTP server.
-async fn failing_channel(store: &InMemoryNotificationChannelStore) -> Uuid {
+pub(super) async fn failing_channel(store: &InMemoryNotificationChannelStore) -> Uuid {
+    webhook_channel(store, "http://127.0.0.1:1/notify").await
+}
+
+pub(super) async fn webhook_channel(store: &InMemoryNotificationChannelStore, url: &str) -> Uuid {
     store
         .create(
             org(),
             NewNotificationChannel {
                 name: format!("ops-{}", Uuid::now_v7()),
                 config: ChannelConfig::Webhook(WebhookConfig {
-                    url: "http://127.0.0.1:1/notify".into(),
+                    url: url.into(),
                     headers: Default::default(),
                     secret: None,
                 }),
@@ -54,7 +58,7 @@ pub(super) fn target_with_channel(channel_id: Uuid) -> Target {
     target_with_channel_recovery(channel_id, true)
 }
 
-fn target_with_channel_recovery(channel_id: Uuid, notify_recovery: bool) -> Target {
+pub(super) fn target_with_channel_recovery(channel_id: Uuid, notify_recovery: bool) -> Target {
     Target {
         id: Uuid::now_v7(),
         name: "api".into(),
@@ -133,7 +137,7 @@ pub(super) fn seed_incident(ops: &InMemoryIncidentOpsStore, target_id: Option<Uu
     id
 }
 
-fn channel_step(level: i32, delay: i32, channel: Uuid) -> NewEscalationStep {
+pub(super) fn channel_step(level: i32, delay: i32, channel: Uuid) -> NewEscalationStep {
     NewEscalationStep {
         level,
         delay_secs: delay,
@@ -146,7 +150,7 @@ fn channel_step(level: i32, delay: i32, channel: Uuid) -> NewEscalationStep {
     }
 }
 
-fn engine(
+pub(super) fn engine(
     ops: Arc<dyn IncidentOpsStore>,
     policies: Arc<dyn EscalationPolicyStore>,
     targets: Arc<dyn TargetStore>,
@@ -259,7 +263,7 @@ fn engine_mailing_owned(
 }
 
 /// [`engine`] with a maintenance store the test controls.
-fn engine_maint(
+pub(super) fn engine_maint(
     ops: Arc<dyn IncidentOpsStore>,
     targets: Arc<dyn TargetStore>,
     channels: Arc<dyn NotificationChannelStore>,
@@ -498,6 +502,7 @@ async fn a_resolve_still_reaches_a_paused_monitors_channels() {
         Arc::new(InMemoryTargetStore::from_vec(vec![target])),
         channels,
     );
+    ops.resolve(org(), id, Actor::System, None).await.unwrap();
     paused
         .page(org(), id, NotificationReason::Resolved)
         .await
@@ -656,11 +661,26 @@ async fn sweep_walks_to_the_next_level_then_exhausts() {
     assert_eq!(ops.notifications_for(org(), id).await.unwrap().len(), 2);
 }
 
-#[tokio::test]
-async fn acknowledge_halts_the_sweep() {
+/// An open incident whose policy pages `first`, then `second` with no wait
+/// between them, its first step already paged and the next one due.
+pub(super) struct Ladder {
+    pub(super) ops: Arc<InMemoryIncidentOpsStore>,
+    pub(super) eng: EscalationEngine,
+    pub(super) id: Uuid,
+    pub(super) first: Uuid,
+}
+
+pub(super) async fn two_step_ladder() -> Ladder {
+    two_step_ladder_with(Arc::new(crate::storage::InMemoryMaintenanceStore::new())).await
+}
+
+/// [`two_step_ladder`] with a maintenance store the test controls.
+pub(super) async fn two_step_ladder_with(
+    maintenance: Arc<dyn crate::storage::MaintenanceStore>,
+) -> Ladder {
     let channels = Arc::new(InMemoryNotificationChannelStore::new());
-    let c1 = failing_channel(&channels).await;
-    let c2 = failing_channel(&channels).await;
+    let first = failing_channel(&channels).await;
+    let second = failing_channel(&channels).await;
     let target = bare_target();
     let tid = target.id;
     let ops = Arc::new(InMemoryIncidentOpsStore::new());
@@ -674,7 +694,7 @@ async fn acknowledge_halts_the_sweep() {
                 name: "p".into(),
                 description: None,
                 repeat_count: 0,
-                steps: vec![channel_step(1, 0, c1), channel_step(2, 0, c2)],
+                steps: vec![channel_step(1, 0, first), channel_step(2, 0, second)],
             },
             10,
         )
@@ -685,16 +705,41 @@ async fn acknowledge_halts_the_sweep() {
         .await
         .unwrap();
 
-    let eng = engine(ops.clone(), policies, targets, channels);
+    let eng = engine_maint_policies(ops.clone(), policies, targets, channels, maintenance);
     eng.page(org(), id, NotificationReason::Opened)
         .await
         .unwrap();
+    Ladder {
+        ops,
+        eng,
+        id,
+        first,
+    }
+}
+
+#[tokio::test]
+async fn acknowledge_halts_the_sweep() {
+    let Ladder { ops, eng, id, .. } = two_step_ladder().await;
     // A responder acks → next_escalation_at cleared, state acknowledged.
     ops.acknowledge(org(), id, Actor::System, None, None)
         .await
         .unwrap();
     eng.escalate_due().await;
     // Still only the level-1 page; the sweep found nothing due.
+    assert_eq!(ops.notifications_for(org(), id).await.unwrap().len(), 1);
+}
+
+/// The ack lands after a sweep took the next step but before the step ran.
+#[tokio::test]
+async fn a_step_taken_before_an_acknowledgement_pages_nobody() {
+    let Ladder { ops, eng, id, .. } = two_step_ladder().await;
+    let taken = ops.due_for_escalation(Utc::now(), 10, 60).await.unwrap();
+    assert_eq!(taken.len(), 1);
+
+    ops.acknowledge(org(), id, Actor::System, None, None)
+        .await
+        .unwrap();
+    eng.w.escalate_one(&taken[0]).await.unwrap();
     assert_eq!(ops.notifications_for(org(), id).await.unwrap().len(), 1);
 }
 
@@ -873,7 +918,7 @@ async fn a_reminder_that_reaches_nobody_does_not_widen_the_backoff() {
     assert_eq!(ops.renotify_count(id), 0);
 }
 
-async fn window_over(
+pub(super) async fn window_over(
     target_id: uuid::Uuid,
     suppress_alerts: bool,
 ) -> Arc<crate::storage::InMemoryMaintenanceStore> {
@@ -2241,7 +2286,7 @@ async fn an_alert_mail_links_the_acknowledge_page_for_its_episode() {
 
 /// What a monitor delete leaves behind: the incident closed, the link gone,
 /// the name kept.
-fn close_with_deleted_monitor(ops: &InMemoryIncidentOpsStore, id: Uuid, monitor: Uuid) {
+pub(super) fn close_with_deleted_monitor(ops: &InMemoryIncidentOpsStore, id: Uuid, monitor: Uuid) {
     ops.edit(id, |i| {
         i.state = IncidentState::Resolved;
         i.ended_at = Some(Utc::now());
@@ -2251,6 +2296,7 @@ fn close_with_deleted_monitor(ops: &InMemoryIncidentOpsStore, id: Uuid, monitor:
         i.target_name = Some("api".into());
         i.closed_by_monitor_delete = true;
     });
+    ops.owe_closing_notice(id);
 }
 
 /// The channel the incident paged hears it closed with its monitor, once, in

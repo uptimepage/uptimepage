@@ -3,7 +3,8 @@ use uuid::Uuid;
 
 use crate::domain::{
     ActorType, IncidentAcknowledgement, IncidentEventKind, IncidentOrigin, IncidentSeverity,
-    IncidentState, IncidentUrgency, IncidentVisibility, OpsIncident, OrgId, UserId,
+    IncidentState, IncidentUrgency, IncidentVisibility, NewIncidentNotification,
+    NotificationReason, NotificationStatus, OpsIncident, OrgId, UserId,
 };
 
 use super::pg::resolved_public_message;
@@ -637,4 +638,153 @@ async fn an_incident_without_a_monitor_publishes_only_to_named_pages() {
         .unwrap();
     assert_eq!(pubd.visibility, IncidentVisibility::Public);
     assert_eq!(store.status_pages(org(), inc.id).await.unwrap(), vec![page]);
+}
+
+/// A close owes its notice, one claim at a time, until the holder settles it.
+#[tokio::test]
+async fn a_close_owes_one_closing_notice_until_its_holder_settles_it() {
+    let store = InMemoryIncidentOpsStore::new();
+    let id = seed_triggered(&store);
+    assert_eq!(
+        store.claim_closing_notice(org(), id, 60).await.unwrap(),
+        None
+    );
+
+    store.resolve(org(), id, Actor::System, None).await.unwrap();
+    let claim = store
+        .claim_closing_notice(org(), id, 60)
+        .await
+        .unwrap()
+        .expect("a close owes its notice");
+    assert_eq!(
+        store.claim_closing_notice(org(), id, 60).await.unwrap(),
+        None,
+        "held by the first claim"
+    );
+    let due = store.due_closing_notices(0, 86_400, 60, 10).await.unwrap();
+    assert!(due.claimed.is_empty(), "a leased notice is not due");
+
+    store.settle_closing_notice(org(), id, claim).await.unwrap();
+    assert!(!store.closing_notice_pending(id));
+}
+
+#[tokio::test]
+async fn a_reopen_withdraws_the_closing_notice() {
+    let store = InMemoryIncidentOpsStore::new();
+    let id = seed_triggered(&store);
+    store.resolve(org(), id, Actor::System, None).await.unwrap();
+    store.reopen(org(), id, Actor::System, None).await.unwrap();
+    assert!(!store.closing_notice_pending(id));
+    assert_eq!(
+        store.claim_closing_notice(org(), id, 60).await.unwrap(),
+        None
+    );
+}
+
+/// Settling under a claim that lapsed must not clear the notice whoever took
+/// it next is still sending.
+#[tokio::test]
+async fn a_lapsed_claim_settles_nothing() {
+    let store = InMemoryIncidentOpsStore::new();
+    let id = seed_triggered(&store);
+    store.resolve(org(), id, Actor::System, None).await.unwrap();
+    let lapsed = store
+        .claim_closing_notice(org(), id, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    store.age_closing_notices(chrono::Duration::minutes(1));
+    let due = store.due_closing_notices(0, 86_400, 60, 10).await.unwrap();
+    assert_eq!(due.claimed.len(), 1, "a lapsed lease falls due again");
+
+    store
+        .settle_closing_notice(org(), id, lapsed)
+        .await
+        .unwrap();
+    assert!(store.closing_notice_pending(id));
+    store
+        .settle_closing_notice(org(), id, due.claimed[0].claim)
+        .await
+        .unwrap();
+    assert!(!store.closing_notice_pending(id));
+}
+
+#[tokio::test]
+async fn the_sweep_waits_out_the_grace_and_withdraws_what_ended_outside_the_window() {
+    let store = InMemoryIncidentOpsStore::new();
+    let fresh = seed_triggered(&store);
+    store
+        .resolve(org(), fresh, Actor::System, None)
+        .await
+        .unwrap();
+    let due = store.due_closing_notices(15, 86_400, 60, 10).await.unwrap();
+    assert!(due.claimed.is_empty(), "inside the grace");
+
+    store.age_closing_notices(chrono::Duration::days(2));
+    let due = store.due_closing_notices(15, 86_400, 60, 10).await.unwrap();
+    assert!(due.claimed.is_empty());
+    assert_eq!(due.expired, 1);
+    assert!(!store.closing_notice_pending(fresh));
+}
+
+fn closing_row(id: Uuid) -> NewIncidentNotification {
+    NewIncidentNotification {
+        org: org(),
+        incident_id: id,
+        escalation_level: Some(0),
+        target_user_id: None,
+        channel_id: Some(Uuid::now_v7()),
+        transport: "webhook".into(),
+        reason: NotificationReason::Resolved,
+        status: NotificationStatus::Queued,
+        attempt: 1,
+        error: None,
+        sent_at: None,
+        episode: 0,
+    }
+}
+
+/// Each row of the notice renews the claim it went out under. A sender whose
+/// claim was taken over, or withdrawn by a reopen, records nothing.
+#[tokio::test]
+async fn a_closing_row_is_recorded_only_under_the_claim_that_holds_the_notice() {
+    let store = InMemoryIncidentOpsStore::new();
+    let id = seed_triggered(&store);
+    store.resolve(org(), id, Actor::System, None).await.unwrap();
+    let claim = store
+        .claim_closing_notice(org(), id, 60)
+        .await
+        .unwrap()
+        .unwrap();
+    let (_, renewed) = store
+        .record_closing_notification(closing_row(id), claim, 60)
+        .await
+        .unwrap()
+        .expect("held");
+
+    store.age_closing_notices(chrono::Duration::minutes(2));
+    let taken = store.due_closing_notices(0, 86_400, 60, 10).await.unwrap();
+    assert_eq!(
+        store
+            .record_closing_notification(closing_row(id), renewed, 60)
+            .await
+            .unwrap(),
+        None
+    );
+    let (_, held) = store
+        .record_closing_notification(closing_row(id), taken.claimed[0].claim, 60)
+        .await
+        .unwrap()
+        .expect("the new holder's");
+    assert_eq!(store.notifications_for(org(), id).await.unwrap().len(), 2);
+
+    store.reopen(org(), id, Actor::System, None).await.unwrap();
+    assert_eq!(
+        store
+            .record_closing_notification(closing_row(id), held, 60)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(store.notifications_for(org(), id).await.unwrap().len(), 2);
 }

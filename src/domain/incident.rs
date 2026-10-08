@@ -738,6 +738,16 @@ impl OpsIncident {
     pub fn reopenable(&self) -> bool {
         !self.ended_with_monitor()
     }
+
+    /// What an ended incident tells the responders it paged: a delete that
+    /// closed it says so rather than claiming a recovery.
+    pub fn closing_reason(&self) -> NotificationReason {
+        if self.closed_by_monitor_delete {
+            NotificationReason::MonitorDeleted
+        } else {
+            NotificationReason::Resolved
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -819,6 +829,9 @@ pub struct IncidentNotification {
     pub attempt: i32,
     #[schema(nullable = true)]
     pub error: Option<String>,
+    /// The episode (how many times the incident had reopened) this page was
+    /// sent for.
+    pub episode: i64,
     pub created_at: DateTime<Utc>,
     #[schema(nullable = true)]
     pub sent_at: Option<DateTime<Utc>>,
@@ -850,6 +863,9 @@ pub struct NewIncidentNotification {
     pub attempt: i32,
     pub error: Option<String>,
     pub sent_at: Option<DateTime<Utc>>,
+    /// The episode the page was decided for, read before it went out: a reopen
+    /// while it is still sending does not make it the new episode's.
+    pub episode: i64,
 }
 
 /// Result of one paging attempt, applied to its `incident_notifications` row by

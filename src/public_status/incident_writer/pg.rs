@@ -241,7 +241,8 @@ impl IncidentStore for PgIncidentStore {
         // incident, append a `resolved` update for the timeline. The UPDATE
         // matches only while ended_at was NULL, so the final SELECT returns a
         // row only for the call that actually closed it — a re-run or the race
-        // loser returns None and never re-pages.
+        // loser returns None and never re-pages. `closing_notice_at` is dated
+        // by the commit, not by `$2`: the recovering check can predate it.
         let row: Option<(Uuid,)> = sqlx::query_as(
             r#"WITH closed AS (
                    UPDATE incidents
@@ -250,6 +251,7 @@ impl IncidentStore for PgIncidentStore {
                           state = 'resolved',
                           resolved_by = NULL,
                           next_escalation_at = NULL,
+                          closing_notice_at = now(),
                           updated_at = now()
                     WHERE id = $1 AND org_id = $3 AND ended_at IS NULL
                    RETURNING id, org_id, visibility

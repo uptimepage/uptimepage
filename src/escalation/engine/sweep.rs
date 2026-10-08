@@ -12,7 +12,9 @@ use crate::domain::{
 };
 use crate::error::Result;
 use crate::notifier::event::IncidentNotice;
-use crate::storage::{Actor, DueIncident, PendingNotification, QUEUED_TAKEOVER_SECS};
+use crate::storage::{
+    Actor, ClaimedEscalation, DueIncident, PendingNotification, QUEUED_TAKEOVER_SECS,
+};
 
 use super::deliver::Rebuilt;
 use super::rules::{PageTarget, Paged, channel_targets, reason_is_stale, resolvable_channels};
@@ -131,9 +133,7 @@ impl Worker {
     /// sweep returns promptly (the remainder is picked up next tick).
     pub(super) async fn escalate_due(&self) {
         let limit = self.cfg.max_pages_per_tick.max(1) as usize;
-        // Lease claimed rungs long enough to page + record the real next time
-        // before another instance could re-pick them.
-        let lease = (self.cfg.tick_interval_secs.max(1) as i64 * 2).max(60);
+        let lease = self.claim_lease_secs();
         let due = match self.ops.due_for_escalation(Utc::now(), limit, lease).await {
             Ok(d) => d,
             Err(err) => {
@@ -157,9 +157,9 @@ impl Worker {
         }
     }
 
-    async fn escalate_one_logged(&self, d: DueIncident) {
-        if let Err(err) = self.escalate_one(&d).await {
-            tracing::warn!(incident_id = %d.id, error = %err, "escalation step failed");
+    async fn escalate_one_logged(&self, c: ClaimedEscalation) {
+        if let Err(err) = self.escalate_one(&c).await {
+            tracing::warn!(incident_id = %c.due.id, error = %err, "escalation step failed");
         }
     }
 
@@ -229,6 +229,9 @@ impl Worker {
         if channels.is_empty() {
             return Ok(());
         }
+        let Some(episode) = self.ops.generation(d.org, d.id).await? else {
+            return Ok(());
+        };
         let notice = self.notice(
             &incident,
             Some(target.name.clone()),
@@ -243,6 +246,8 @@ impl Worker {
                 NotificationReason::Reminder,
                 incident.escalation_level,
                 &channel_targets(channels),
+                episode,
+                None,
             )
             .await?;
         if paged.recorded > 0 {
@@ -252,7 +257,20 @@ impl Worker {
             .await
     }
 
-    async fn escalate_one(&self, d: &DueIncident) -> Result<()> {
+    /// Take the step `c` claimed, unless the incident has moved on since: an
+    /// ack or a resolve cleared the timer, a reopen's first page set its own,
+    /// or another instance retook the step once the lease ran out. Under the
+    /// page lock, so a step and an opening page never interleave. Its pages
+    /// are the claim's episode, so a reopen while it is under way still pages.
+    pub(super) async fn escalate_one(&self, c: &ClaimedEscalation) -> Result<()> {
+        let d = &c.due;
+        let _guard = self.page_lock(d.id).lock().await;
+        let Some(incident) = self.ops.get(d.org, d.id).await? else {
+            return Ok(());
+        };
+        if incident.next_escalation_at != Some(c.claim) {
+            return Ok(());
+        }
         let Some(policy_id) = d.escalation_policy_id else {
             // Timer armed without a policy — disarm so it does not spin.
             self.ops
@@ -278,9 +296,6 @@ impl Worker {
                 round,
                 delay_secs,
             } => {
-                let Some(incident) = self.ops.get(d.org, d.id).await? else {
-                    return Ok(());
-                };
                 let Some(target_id) = incident.target_id else {
                     return Ok(());
                 };
@@ -324,6 +339,8 @@ impl Worker {
                         NotificationReason::Escalated,
                         level,
                         &targets,
+                        c.episode,
+                        None,
                     )
                     .await?;
                 let wait = wait_after(&policy.steps, policy.repeat_count, level, round, delay_secs);
@@ -356,6 +373,13 @@ impl Worker {
     /// send so a crash never leaves a delivered page with no audit row. The
     /// caller pre-filters the channel set (dedup, recovery opt-out), so this
     /// pages every id it is handed. Returns how many delivered.
+    ///
+    /// Every row is stamped with `episode`, the one the page was decided for.
+    /// A closing notice goes out under its `claim`: each row is recorded only
+    /// while the claim holds, renewing it, and the fan-out stops once it is
+    /// lost. A send can outlast the lease, and another instance taking the
+    /// notice over then tells only the channels that have no row yet.
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn page_channels(
         &self,
         org: OrgId,
@@ -364,6 +388,8 @@ impl Worker {
         reason: NotificationReason,
         level: i32,
         targets: &[PageTarget],
+        episode: i64,
+        mut claim: Option<&mut DateTime<Utc>>,
     ) -> Result<Paged> {
         let mut paged = Paged::default();
         for t in targets {
@@ -374,22 +400,37 @@ impl Worker {
             if !channel.enabled {
                 continue;
             }
-            let id = self
-                .ops
-                .record_notification(NewIncidentNotification {
-                    org,
-                    incident_id,
-                    escalation_level: Some(level),
-                    target_user_id: t.user_id,
-                    channel_id: Some(cid),
-                    transport: channel.kind.as_db_str().to_string(),
-                    reason,
-                    status: NotificationStatus::Queued,
-                    attempt: 1,
-                    error: None,
-                    sent_at: None,
-                })
-                .await?;
+            let row = NewIncidentNotification {
+                org,
+                incident_id,
+                escalation_level: Some(level),
+                target_user_id: t.user_id,
+                channel_id: Some(cid),
+                transport: channel.kind.as_db_str().to_string(),
+                reason,
+                status: NotificationStatus::Queued,
+                attempt: 1,
+                error: None,
+                sent_at: None,
+                episode,
+            };
+            let id = match claim.as_deref_mut() {
+                None => self.ops.record_notification(row).await?,
+                Some(held) => {
+                    let lease = self.claim_lease_secs();
+                    match self
+                        .ops
+                        .record_closing_notification(row, *held, lease)
+                        .await?
+                    {
+                        Some((id, renewed)) => {
+                            *held = renewed;
+                            id
+                        }
+                        None => break,
+                    }
+                }
+            };
             // Unverified email: no send is attempted, but the row records a
             // failure so the gap is visible on the incident, not silent.
             let (status, error, receipt) = if channel.awaiting_verification() {

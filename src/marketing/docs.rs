@@ -418,7 +418,7 @@ pub const DOCS: &[DocPage] = &[
         section: Section::SelfHosting,
         scope: Scope::SelfHosting,
         created: "2026-07-22",
-        lastmod: "2026-09-30",
+        lastmod: "2026-10-09",
         source: include_str!("../../docs/configuration.md"),
         dir: "",
     },

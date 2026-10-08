@@ -285,7 +285,7 @@ async fn deleting_a_monitor_keeps_its_incidents_and_closes_the_open_one() {
 
     let due = f.ops.due_for_escalation(Utc::now(), 100, 30).await.unwrap();
     assert!(
-        due.iter().all(|d| d.id != open),
+        due.iter().all(|d| d.due.id != open),
         "a closed incident never escalates"
     );
 
@@ -373,7 +373,7 @@ async fn an_open_orphan_left_by_a_raw_delete_is_never_escalated() {
     assert!(inc.monitor_deleted());
     assert_eq!(inc.state.as_db_str(), "triggered");
     let due = f.ops.due_for_escalation(Utc::now(), 100, 30).await.unwrap();
-    assert!(due.iter().all(|d| d.id != open));
+    assert!(due.iter().all(|d| d.due.id != open));
 
     common::drop_test_db(&f.db).await;
 }

@@ -492,6 +492,12 @@ channel_failure_limit = 3
 # signal — it is an incident nobody can be paged about.
 reconcile_window_secs = 3600
 
+# How long after an incident ends its closing notice still goes out when the
+# signal for it was lost (a restart between the close and the page, or a full
+# signal queue). The sweep waits one tick for the signal first. Older notices
+# are withdrawn unsent: a recovery announced days late helps nobody.
+closing_window_secs = 86400
+
 # Flap damping. A monitor opening more than flap_max_opens incidents inside
 # flap_window_secs is one unstable endpoint, not that many outages; the crossing
 # alert says so and later ones are held. Set flap_max_opens = 0 to deliver all.

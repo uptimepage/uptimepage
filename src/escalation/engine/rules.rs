@@ -138,19 +138,23 @@ pub(super) fn flap_state(opens: u32, max: u32) -> FlapState {
     }
 }
 
-/// Is an outage already being paged? True when the most recent open-side page
-/// (opened/reopened/escalated) is newer than the most recent resolution page —
-/// i.e. we are inside an unresolved paging episode. Used to absorb duplicate
-/// open signals without silencing a genuine reopen (which posts a Resolved row
-/// first, ending the prior episode).
-pub(super) fn open_episode_active(rows: &[crate::domain::IncidentNotification]) -> bool {
-    let last_open = rows
-        .iter()
+/// Is `episode` already being paged? True when an open-side page
+/// (opened/reopened/escalated) was sent for it. Absorbs duplicate open
+/// signals. The episode is the incident's own, not inferred from a closing
+/// notice or from when a page was recorded: a close that told nobody (a
+/// recovery opt-out, a late resolve the reopen withdrew) must not silence the
+/// reopen after it, and neither may the last episode's pages still going out.
+pub(super) fn open_episode_active(
+    rows: &[crate::domain::IncidentNotification],
+    episode: i64,
+) -> bool {
+    rows.iter()
         // A held open is not an episode in progress: counting it would make
         // the release look like a duplicate signal. Keyed on the marker, not
         // `channel_id` — deleting a channel NULLs that on real delivered rows.
         .filter(|n| !is_damper_marker(&n.transport))
-        .filter(|n| {
+        .filter(|n| n.episode == episode)
+        .any(|n| {
             matches!(
                 n.reason,
                 NotificationReason::Opened
@@ -158,22 +162,11 @@ pub(super) fn open_episode_active(rows: &[crate::domain::IncidentNotification]) 
                     | NotificationReason::Escalated
             )
         })
-        .map(|n| n.created_at)
-        .max();
-    let last_resolved = rows
-        .iter()
-        .filter(|n| n.reason.closes_incident())
-        .map(|n| n.created_at)
-        .max();
-    match (last_open, last_resolved) {
-        (Some(o), Some(r)) => o > r,
-        (Some(_), None) => true,
-        _ => false,
-    }
 }
 
-/// Channels to send the all-clear to: every channel paged this episode that
-/// has not already been sent a resolution newer than its last open-side page.
+/// Channels to send the all-clear to: every channel paged that has not
+/// already been sent a resolution newer than its last open-side page. One
+/// paged before a reopen that overtook the last close's notice hears this one.
 pub(super) fn resolvable_channels(rows: &[crate::domain::IncidentNotification]) -> Vec<Uuid> {
     let mut out: Vec<Uuid> = Vec::new();
     let mut seen: Vec<Uuid> = Vec::new();

@@ -68,9 +68,9 @@ pub use heartbeats::{
     HeartbeatMonitor, HeartbeatStore, InMemoryHeartbeatStore, PgHeartbeatStore, PingAccepted,
 };
 pub use incident_ops::{
-    Acknowledged, Actor, AppPress, DueIncident, EmergencyAck, InMemoryIncidentOpsStore,
-    IncidentOpsFilter, IncidentOpsStore, IncidentSort, LifecycleOutcome, PendingNotification,
-    PgIncidentOpsStore, QUEUED_TAKEOVER_SECS,
+    Acknowledged, Actor, AppPress, ClaimedEscalation, ClosingNotice, DueClosingNotices,
+    DueIncident, EmergencyAck, InMemoryIncidentOpsStore, IncidentOpsFilter, IncidentOpsStore,
+    IncidentSort, LifecycleOutcome, PendingNotification, PgIncidentOpsStore, QUEUED_TAKEOVER_SECS,
 };
 pub use incidents::{
     InMemoryIncidentNarrationStore, IncidentBrief, IncidentBriefFilter, IncidentNarrationStore,

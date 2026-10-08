@@ -21,10 +21,11 @@ use crate::error::Result;
 use crate::storage::locks::{advisory_xact_lock, incident_lock_key};
 
 use super::{
-    AUTO_RESOLVED_MESSAGE, Acknowledged, Actor, DueIncident, EmergencyAck, INCIDENT_DETAIL_ROW_CAP,
-    IncidentOpsFilter, IncidentOpsStore, IncidentStateCounts, LifecycleOutcome,
-    PendingNotification, QUEUED_TAKEOVER_SECS, opening_update_message, pages_with_monitor,
-    status_page_required, unnamed_sender,
+    AUTO_RESOLVED_MESSAGE, Acknowledged, Actor, ClaimedEscalation, ClosingNotice,
+    DueClosingNotices, DueIncident, EmergencyAck, INCIDENT_DETAIL_ROW_CAP, IncidentOpsFilter,
+    IncidentOpsStore, IncidentStateCounts, LifecycleOutcome, PendingNotification,
+    QUEUED_TAKEOVER_SECS, opening_update_message, pages_with_monitor, status_page_required,
+    unnamed_sender,
 };
 
 pub struct PgIncidentOpsStore {
@@ -229,7 +230,7 @@ fn row_to_event(r: EventRow) -> IncidentEvent {
 }
 
 const NOTIF_COLS: &str = "id, incident_id, escalation_level, target_user_id, channel_id, \
-     transport, reason, status, attempt, error, created_at, sent_at, next_attempt_at, \
+     transport, reason, status, attempt, error, episode, created_at, sent_at, next_attempt_at, \
      provider_receipt, acked_at";
 
 #[derive(sqlx::FromRow)]
@@ -244,6 +245,7 @@ struct NotifRow {
     status: String,
     attempt: i32,
     error: Option<String>,
+    episode: i64,
     created_at: DateTime<Utc>,
     sent_at: Option<DateTime<Utc>>,
     next_attempt_at: Option<DateTime<Utc>>,
@@ -263,6 +265,7 @@ fn row_to_notif(r: NotifRow) -> IncidentNotification {
         status: NotificationStatus::from_db_str(&r.status),
         attempt: r.attempt,
         error: r.error,
+        episode: r.episode,
         created_at: r.created_at,
         sent_at: r.sent_at,
         next_attempt_at: r.next_attempt_at,
@@ -560,7 +563,8 @@ impl PgIncidentOpsStore {
              SET state = 'resolved', ended_at = COALESCE(ended_at, now()), \
                  duration_secs = COALESCE(duration_secs, \
                      GREATEST(0, EXTRACT(EPOCH FROM (now() - started_at))::int)), \
-                 resolved_by = $3, next_escalation_at = NULL, updated_at = now() \
+                 resolved_by = $3, next_escalation_at = NULL, closing_notice_at = now(), \
+                 updated_at = now() \
              WHERE id = $1 AND org_id = $2 RETURNING {OPS_COLS}"
         );
         let public_resolution = Some(resolved_public_message(note.as_deref()));
@@ -941,7 +945,8 @@ impl IncidentOpsStore for PgIncidentOpsStore {
              SET state = 'resolved', ended_at = COALESCE(ended_at, now()), \
                  duration_secs = COALESCE(duration_secs, \
                      GREATEST(0, EXTRACT(EPOCH FROM (now() - started_at))::int)), \
-                 resolved_by = $3, next_escalation_at = NULL, updated_at = now() \
+                 resolved_by = $3, next_escalation_at = NULL, closing_notice_at = now(), \
+                 updated_at = now() \
              WHERE id = $1 AND org_id = $2 RETURNING {OPS_COLS}"
         );
         self.transition(
@@ -969,13 +974,14 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         // Reopen does not use the actor's user id in the row, but the shared
         // `transition` helper always binds it as $3 (ack/resolve do use it), so
         // the predicate references $3 as a deliberate no-op to keep the bound
-        // parameter count in step with the statement.
+        // parameter count in step with the statement. An incident running again
+        // no longer owes the notice that it ended.
         let sql = format!(
             "UPDATE incidents \
              SET state = 'triggered', ended_at = NULL, duration_secs = NULL, resolved_by = NULL, \
                  acknowledged_at = NULL, acknowledged_by = NULL, \
                  escalation_level = 0, escalation_round = 0, renotify_count = 0, \
-                 updated_at = now() \
+                 closing_notice_at = NULL, updated_at = now() \
              WHERE id = $1 AND org_id = $2 AND ($3::uuid IS NULL OR true) RETURNING {OPS_COLS}"
         );
         self.transition(
@@ -1369,8 +1375,8 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         let row: (Uuid,) = sqlx::query_as(
             r#"INSERT INTO incident_notifications
                  (org_id, incident_id, escalation_level, target_user_id, channel_id,
-                  transport, reason, status, attempt, error, sent_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                  transport, reason, status, attempt, error, sent_at, episode)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
                RETURNING id"#,
         )
         .bind(n.org.0)
@@ -1384,6 +1390,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         .bind(n.attempt)
         .bind(n.error)
         .bind(n.sent_at)
+        .bind(n.episode)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| anyhow::anyhow!("record_notification: {e}"))?;
@@ -1632,7 +1639,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         now: DateTime<Utc>,
         limit: usize,
         lease_secs: i64,
-    ) -> Result<Vec<DueIncident>> {
+    ) -> Result<Vec<ClaimedEscalation>> {
         let cap = (limit as i64).clamp(1, 1000);
         #[derive(sqlx::FromRow)]
         struct Row {
@@ -1642,6 +1649,8 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             escalation_policy_id: Option<Uuid>,
             escalation_level: i32,
             escalation_round: i32,
+            next_escalation_at: DateTime<Utc>,
+            episode: i64,
         }
         // Claim-and-lease: lock the due rows with SKIP LOCKED and push their
         // timer forward so a concurrent engine instance never re-selects them
@@ -1656,7 +1665,11 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                  ORDER BY next_escalation_at ASC LIMIT $3 \
                  FOR UPDATE SKIP LOCKED \
              ) \
-             RETURNING id, org_id, target_id, escalation_policy_id, escalation_level, escalation_round",
+             RETURNING id, org_id, target_id, escalation_policy_id, escalation_level, \
+                 escalation_round, next_escalation_at, \
+                 (SELECT count(*) FROM incident_events e \
+                  WHERE e.incident_id = incidents.id AND e.org_id = incidents.org_id \
+                      AND e.kind = 'reopened') AS episode",
         )
         .bind(now)
         .bind(lease_secs.max(1) as f64)
@@ -1666,13 +1679,17 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         .map_err(|e| anyhow::anyhow!("due_for_escalation: {e}"))?;
         Ok(rows
             .into_iter()
-            .map(|r| DueIncident {
-                id: r.id,
-                org: OrgId(r.org_id),
-                target_id: r.target_id,
-                escalation_policy_id: r.escalation_policy_id,
-                escalation_level: r.escalation_level,
-                escalation_round: r.escalation_round,
+            .map(|r| ClaimedEscalation {
+                due: DueIncident {
+                    id: r.id,
+                    org: OrgId(r.org_id),
+                    target_id: r.target_id,
+                    escalation_policy_id: r.escalation_policy_id,
+                    escalation_level: r.escalation_level,
+                    escalation_round: r.escalation_round,
+                },
+                claim: r.next_escalation_at,
+                episode: r.episode,
             })
             .collect())
     }
@@ -1722,6 +1739,137 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                 escalation_round: r.escalation_round,
             })
             .collect())
+    }
+
+    // Every closing-notice statement reads the database's clock, the one the
+    // close stamped the notice with.
+    async fn claim_closing_notice(
+        &self,
+        org: OrgId,
+        id: Uuid,
+        lease_secs: i64,
+    ) -> Result<Option<DateTime<Utc>>> {
+        sqlx::query_scalar(
+            "UPDATE incidents \
+             SET closing_notice_at = now() + make_interval(secs => $3::double precision) \
+             WHERE id = $1 AND org_id = $2 AND state = 'resolved' AND closing_notice_at <= now() \
+             RETURNING closing_notice_at",
+        )
+        .bind(id)
+        .bind(org.0)
+        .bind(lease_secs.max(1) as f64)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("claim_closing_notice: {e}").into())
+    }
+
+    async fn due_closing_notices(
+        &self,
+        grace_secs: i64,
+        window_secs: i64,
+        lease_secs: i64,
+        limit: usize,
+    ) -> Result<DueClosingNotices> {
+        let cap = (limit as i64).clamp(1, 1000);
+        // One statement claims what is owed and withdraws what went stale, so
+        // a notice nobody will send does not stay in the index.
+        let rows: Vec<(Uuid, Uuid, Option<DateTime<Utc>>)> = sqlx::query_as(
+            "WITH due AS ( \
+                 SELECT id, org_id, state = 'resolved' \
+                     AND ended_at >= now() - make_interval(secs => $2::double precision) AS owed \
+                 FROM incidents \
+                 WHERE closing_notice_at <= now() - make_interval(secs => $1::double precision) \
+                 ORDER BY closing_notice_at ASC LIMIT $4 \
+                 FOR UPDATE SKIP LOCKED \
+             ) \
+             UPDATE incidents i \
+             SET closing_notice_at = CASE WHEN due.owed \
+                 THEN now() + make_interval(secs => $3::double precision) END \
+             FROM due WHERE i.id = due.id AND i.org_id = due.org_id \
+             RETURNING i.id, i.org_id, i.closing_notice_at",
+        )
+        .bind(grace_secs.max(0) as f64)
+        .bind(window_secs.max(1) as f64)
+        .bind(lease_secs.max(1) as f64)
+        .bind(cap)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("due_closing_notices: {e}"))?;
+        let mut due = DueClosingNotices::default();
+        for (id, org_id, claim) in rows {
+            match claim {
+                Some(claim) => due.claimed.push(ClosingNotice {
+                    id,
+                    org: OrgId(org_id),
+                    claim,
+                }),
+                None => due.expired += 1,
+            }
+        }
+        Ok(due)
+    }
+
+    async fn record_closing_notification(
+        &self,
+        n: NewIncidentNotification,
+        claim: DateTime<Utc>,
+        lease_secs: i64,
+    ) -> Result<Option<(Uuid, DateTime<Utc>)>> {
+        // The renewal locks the incident row, so a sender taking the notice
+        // over either waits for this row to commit and finds the lease
+        // renewed, or commits first and this inserts nothing.
+        sqlx::query_as(
+            r#"WITH held AS (
+                   UPDATE incidents
+                   SET closing_notice_at = now() + make_interval(secs => $13::double precision)
+                   WHERE id = $2 AND org_id = $1 AND closing_notice_at = $14
+                   RETURNING id, org_id, closing_notice_at
+               ), recorded AS (
+                   INSERT INTO incident_notifications
+                     (org_id, incident_id, escalation_level, target_user_id, channel_id,
+                      transport, reason, status, attempt, error, sent_at, episode)
+                   SELECT held.org_id, held.id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+                   FROM held
+                   RETURNING id
+               )
+               SELECT recorded.id, held.closing_notice_at FROM recorded, held"#,
+        )
+        .bind(n.org.0)
+        .bind(n.incident_id)
+        .bind(n.escalation_level)
+        .bind(n.target_user_id)
+        .bind(n.channel_id)
+        .bind(n.transport)
+        .bind(n.reason.as_db_str())
+        .bind(n.status.as_db_str())
+        .bind(n.attempt)
+        .bind(n.error)
+        .bind(n.sent_at)
+        .bind(n.episode)
+        .bind(lease_secs.max(1) as f64)
+        .bind(claim)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("record_closing_notification: {e}").into())
+    }
+
+    async fn settle_closing_notice(
+        &self,
+        org: OrgId,
+        id: Uuid,
+        claim: DateTime<Utc>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE incidents SET closing_notice_at = NULL \
+             WHERE id = $1 AND org_id = $2 AND closing_notice_at = $3",
+        )
+        .bind(id)
+        .bind(org.0)
+        .bind(claim)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("settle_closing_notice: {e}"))?;
+        Ok(())
     }
 
     async fn due_for_renotify(&self, now: DateTime<Utc>, limit: usize) -> Result<Vec<DueIncident>> {

@@ -4,11 +4,11 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::domain::{
-    EscalationDecision, IncidentEventKind, NotificationReason, OpsIncident, OrgId, Target,
-    next_step, wait_after,
+    EscalationDecision, IncidentEventKind, IncidentState, NotificationReason, OpsIncident, OrgId,
+    Target, next_step, wait_after,
 };
 use crate::error::Result;
-use crate::storage::{Actor, DueIncident};
+use crate::storage::{Actor, ClosingNotice, DueIncident};
 
 use super::rules::{
     DAMPED_TRANSPORT, Damper, FlapState, MAINTENANCE_TRANSPORT, RELEASED_TRANSPORT,
@@ -17,10 +17,11 @@ use super::rules::{
 use super::{SWEEP_CONCURRENCY, Worker};
 
 impl Worker {
-    /// Reconcile dropped open signals, then walk due escalations and retry
-    /// failed pages. Runs on a detached task off the rx loop.
+    /// Reconcile dropped open and closing signals, then walk due escalations
+    /// and retry failed pages. Runs on a detached task off the rx loop.
     pub(super) async fn sweep(&self) {
         self.reconcile().await;
+        self.reconcile_closed().await;
         self.release_held().await;
         self.release_maintenance().await;
         self.escalate_due().await;
@@ -148,6 +149,62 @@ impl Worker {
         }
     }
 
+    /// Send the closing notices whose signal never arrived: a restart between
+    /// the close and its signal, or a signal channel full under a mass outage.
+    /// The close recorded the notice as owed in the statement that ended the
+    /// incident, so the database says what is missing. The signal gets a tick
+    /// to land first. Whichever of the two claims a notice sends it, so they
+    /// never both do, even from two engine instances.
+    pub(super) async fn reconcile_closed(&self) {
+        let limit = self.cfg.max_pages_per_tick.max(1) as usize;
+        let grace = self.cfg.tick_interval_secs.max(1) as i64;
+        let window = self.cfg.closing_window_secs.max(1) as i64;
+        let due = match self
+            .ops
+            .due_closing_notices(grace, window, self.claim_lease_secs(), limit)
+            .await
+        {
+            Ok(d) => d,
+            Err(err) => {
+                tracing::warn!(error = %err, "closing notice scan failed");
+                return;
+            }
+        };
+        if due.expired > 0 {
+            tracing::warn!(
+                count = due.expired,
+                "closing notices withdrawn unsent: their incident ended outside the window"
+            );
+        }
+        if !due.claimed.is_empty() {
+            tracing::warn!(
+                count = due.claimed.len(),
+                "sending closing notices whose signal never arrived"
+            );
+        }
+        let budget = self.sweep_budget();
+        let start = Instant::now();
+        let mut it = due.claimed.into_iter();
+        let mut futs = FuturesUnordered::new();
+        for n in it.by_ref().take(SWEEP_CONCURRENCY) {
+            futs.push(self.close_one_logged(n));
+        }
+        while futs.next().await.is_some() {
+            if start.elapsed() < budget
+                && let Some(n) = it.next()
+            {
+                futs.push(self.close_one_logged(n));
+            }
+        }
+    }
+
+    async fn close_one_logged(&self, n: ClosingNotice) {
+        let _guard = self.page_lock(n.id).lock().await;
+        if let Err(err) = self.close_out(n.org, n.id, n.claim).await {
+            tracing::warn!(incident_id = %n.id, error = %err, "closing notice failed");
+        }
+    }
+
     async fn release_one_logged(&self, d: DueIncident) {
         if let Err(err) = self.release_one(&d).await {
             tracing::warn!(incident_id = %d.id, error = %err, "held alert release failed");
@@ -179,6 +236,9 @@ impl Worker {
         if paged {
             return Ok(());
         }
+        let Some(episode) = self.ops.generation(d.org, d.id).await? else {
+            return Ok(());
+        };
         self.ops
             .record_notification(crate::domain::NewIncidentNotification {
                 org: d.org,
@@ -192,6 +252,7 @@ impl Worker {
                 attempt: 0,
                 error: None,
                 sent_at: None,
+                episode,
             })
             .await?;
         Ok(())
@@ -222,8 +283,9 @@ impl Worker {
     }
 
     /// Handle a lifecycle signal. Opened/Reopened start the escalation episode
-    /// (page the first rung, arm the timer); Resolved notifies the channels
-    /// already paged this episode. The escalation sweep handles later rungs.
+    /// (page the first rung, arm the timer); Resolved/MonitorDeleted send the
+    /// notice the close owes to the channels already paged this episode. The
+    /// escalation sweep handles later rungs.
     pub(super) async fn page(
         &self,
         org: OrgId,
@@ -248,26 +310,24 @@ impl Worker {
         // signal task + sweep (reconcile) task could both open the same episode
         // and double-page. Held for the whole resolve+page+record sequence.
         let _guard = self.page_lock(incident_id).lock().await;
+        // Sent only while the close still owes it: not twice, not after a
+        // reopen withdrew it, and not while the sweep holds it.
+        if reason.closes_incident() {
+            return match self
+                .ops
+                .claim_closing_notice(org, incident_id, self.claim_lease_secs())
+                .await?
+            {
+                Some(claim) => self.close_out(org, incident_id, claim).await,
+                None => Ok(()),
+            };
+        }
         let Some(incident) = self.ops.get(org, incident_id).await? else {
             return Ok(());
         };
-        // Once the monitor is gone nothing pages, but whoever was paged still
-        // hears the incident ended, under the name it kept. A delete's notice
-        // goes only for an incident the delete closed; a declared incident
-        // resolved later sends the usual all-clear, since the monitor's
-        // recovery opt-out went with the monitor.
+        // Once the monitor is gone nothing pages.
         if incident.monitor_deleted() {
-            let name = incident.target_name.clone();
-            return match reason {
-                NotificationReason::MonitorDeleted => {
-                    let send = incident.closed_by_monitor_delete;
-                    self.notify_closed(org, &incident, name, reason, send).await
-                }
-                NotificationReason::Resolved => {
-                    self.notify_closed(org, &incident, name, reason, true).await
-                }
-                _ => Ok(()),
-            };
+            return Ok(());
         }
         let Some(target_id) = incident.target_id else {
             return Ok(());
@@ -278,13 +338,9 @@ impl Worker {
         match reason {
             // A held monitor rides the pause branch: the writer already skips
             // it, so this only catches an episode that was open when the hold
-            // landed. Resolution still goes out, or an outage that ended would
-            // stay on the customer's timeline forever.
-            _ if (!target.enabled || target.plan_hold_at.is_some())
-                && reason != NotificationReason::Resolved =>
-            {
-                Ok(())
-            }
+            // landed. Its closing notice still goes out, above, or an outage
+            // that ended would stay on the customer's timeline forever.
+            _ if !target.enabled || target.plan_hold_at.is_some() => Ok(()),
             NotificationReason::Opened | NotificationReason::Reopened => {
                 // Retire the last episode's pages before the new one starts.
                 if reason == NotificationReason::Reopened {
@@ -293,13 +349,8 @@ impl Worker {
                 self.open_episode(org, &incident, &target, reason, damper)
                     .await
             }
-            NotificationReason::Resolved => {
-                let name = Some(target.name.clone());
-                self.notify_closed(org, &incident, name, reason, target.notify_recovery)
-                    .await
-            }
-            // Sent only once the monitor is gone, above.
-            NotificationReason::MonitorDeleted => Ok(()),
+            // Claimed above, before the incident is read.
+            NotificationReason::Resolved | NotificationReason::MonitorDeleted => Ok(()),
             // Escalation and reminder pages originate from the sweep, never an
             // inbound signal.
             NotificationReason::Escalated | NotificationReason::Reminder => Ok(()),
@@ -320,8 +371,13 @@ impl Worker {
         reason: NotificationReason,
         damper: Damper,
     ) -> Result<()> {
+        // Read before anything goes out, so every row this page writes stays
+        // this episode's even if the incident reopens while it is sending.
+        let Some(episode) = self.ops.generation(org, incident.id).await? else {
+            return Ok(());
+        };
         let already = self.ops.notifications_for(org, incident.id).await?;
-        if open_episode_active(&already) {
+        if open_episode_active(&already, episode) {
             return Ok(());
         }
         // The scan read `triggered` a sweep ago and a flapping monitor
@@ -338,7 +394,9 @@ impl Worker {
         // bargain, so it exempts them too.
         let operator_declared = incident.origin == crate::domain::IncidentOrigin::Manual;
         if !operator_declared && self.alerts_suppressed(org, target.id).await {
-            return self.hold_for_maintenance(org, incident.id, reason).await;
+            return self
+                .hold_for_maintenance(org, incident.id, reason, episode)
+                .await;
         }
         if damper == Damper::Apply && !operator_declared {
             match self.flap_state(org, target).await? {
@@ -347,7 +405,9 @@ impl Worker {
                     self.note_flap_engaged(org, incident.id, target).await?;
                     note = Some(self.flap_notice());
                 }
-                FlapState::Damped => return self.hold(org, incident.id, reason).await,
+                FlapState::Damped => {
+                    return self.hold(org, incident.id, reason, episode).await;
+                }
             }
         }
         let notice = self.notice(incident, Some(target.name.clone()), reason, note);
@@ -367,7 +427,16 @@ impl Worker {
                             self.note_empty_rung(org, incident.id, level).await?;
                         }
                         let paged = self
-                            .page_channels(org, incident.id, &notice, reason, level, &targets)
+                            .page_channels(
+                                org,
+                                incident.id,
+                                &notice,
+                                reason,
+                                level,
+                                &targets,
+                                episode,
+                                None,
+                            )
                             .await?;
                         let wait =
                             wait_after(&policy.steps, policy.repeat_count, level, 0, delay_secs);
@@ -402,7 +471,16 @@ impl Worker {
                     .await?,
                 );
                 let paged = self
-                    .page_channels(org, incident.id, &notice, reason, 0, &targets)
+                    .page_channels(
+                        org,
+                        incident.id,
+                        &notice,
+                        reason,
+                        0,
+                        &targets,
+                        episode,
+                        None,
+                    )
                     .await?;
                 self.log_paged(org, incident.id, reason, paged.delivered)
                     .await?;
@@ -410,7 +488,8 @@ impl Worker {
                     // Nothing bound, or every bound channel gone: without a row
                     // the reconcile scan re-runs this episode every tick for the
                     // whole window, re-appending its timeline note each time.
-                    self.record_unreachable(org, incident.id, reason).await?;
+                    self.record_unreachable(org, incident.id, reason, episode)
+                        .await?;
                 }
             }
         }
@@ -477,6 +556,7 @@ impl Worker {
         org: OrgId,
         incident_id: Uuid,
         reason: NotificationReason,
+        episode: i64,
     ) -> Result<()> {
         self.ops
             .record_notification(crate::domain::NewIncidentNotification {
@@ -491,6 +571,7 @@ impl Worker {
                 attempt: 0,
                 error: None,
                 sent_at: None,
+                episode,
             })
             .await
             .map(|_| ())
@@ -499,7 +580,13 @@ impl Worker {
     /// Hold this open rather than deliver it. The row is what the release scan
     /// keys off, so a hold is never a drop, and it also keeps the reconcile
     /// scan from re-running the episode every tick.
-    async fn hold(&self, org: OrgId, incident_id: Uuid, reason: NotificationReason) -> Result<()> {
+    async fn hold(
+        &self,
+        org: OrgId,
+        incident_id: Uuid,
+        reason: NotificationReason,
+        episode: i64,
+    ) -> Result<()> {
         metrics::counter!(crate::metric_names::ALERTS_DAMPED).increment(1);
         self.ops
             .record_notification(crate::domain::NewIncidentNotification {
@@ -514,6 +601,7 @@ impl Worker {
                 attempt: 0,
                 error: None,
                 sent_at: None,
+                episode,
             })
             .await?;
         self.ops
@@ -531,11 +619,65 @@ impl Worker {
             .await
     }
 
+    /// Send the closing notice taken under `claim`, then settle it, under the
+    /// incident's page lock. Settled whatever came of it (sent, opted out,
+    /// nobody to tell) so it is never taken again. An error leaves the lease
+    /// to run out and the sweep tries again, skipping whoever was told. A
+    /// claim lost mid-way settles nothing: what is left is the next holder's.
+    async fn close_out(
+        &self,
+        org: OrgId,
+        incident_id: Uuid,
+        mut claim: chrono::DateTime<Utc>,
+    ) -> Result<()> {
+        // A reopen since the claim withdrew the notice.
+        if let Some(incident) = self
+            .ops
+            .get(org, incident_id)
+            .await?
+            .filter(|i| i.state == IncidentState::Resolved)
+        {
+            self.notify_ended(org, &incident, &mut claim).await?;
+        }
+        self.ops
+            .settle_closing_notice(org, incident_id, claim)
+            .await
+    }
+
+    /// Tell the channels paged this episode that the incident ended, in the
+    /// words its close calls for. Once the monitor is gone they still hear it,
+    /// under the name the incident kept, and the monitor's recovery opt-out
+    /// went with it.
+    async fn notify_ended(
+        &self,
+        org: OrgId,
+        incident: &OpsIncident,
+        claim: &mut chrono::DateTime<Utc>,
+    ) -> Result<()> {
+        let reason = incident.closing_reason();
+        if incident.monitor_deleted() {
+            let name = incident.target_name.clone();
+            return self
+                .notify_closed(org, incident, name, reason, true, claim)
+                .await;
+        }
+        let Some(target_id) = incident.target_id else {
+            return Ok(());
+        };
+        let Some(target) = self.targets.get(org, target_id).await? else {
+            return Ok(());
+        };
+        let name = Some(target.name.clone());
+        self.notify_closed(org, incident, name, reason, target.notify_recovery, claim)
+            .await
+    }
+
     /// Tell every channel paged this episode, and not yet told, that the
     /// incident ended: `Resolved` for a recovery or a person's resolve,
     /// `MonitorDeleted` when its monitor's deletion closed it. `send` false
     /// (a recovery opt-out) still stops a repeating emergency page: an ended
-    /// incident must go quiet either way.
+    /// incident must go quiet either way. Each channel is told under `claim`,
+    /// renewed as it goes.
     async fn notify_closed(
         &self,
         org: OrgId,
@@ -543,6 +685,7 @@ impl Worker {
         monitor_name: Option<String>,
         reason: NotificationReason,
         send: bool,
+        claim: &mut chrono::DateTime<Utc>,
     ) -> Result<()> {
         self.cancel_emergency(org, incident.id).await;
         if !send {
@@ -553,6 +696,9 @@ impl Worker {
         if channels.is_empty() {
             return Ok(());
         }
+        let Some(episode) = self.ops.generation(org, incident.id).await? else {
+            return Ok(());
+        };
         let notice = self.notice(incident, monitor_name, reason, None);
         let paged = self
             .page_channels(
@@ -562,6 +708,8 @@ impl Worker {
                 reason,
                 incident.escalation_level,
                 &channel_targets(channels),
+                episode,
+                Some(claim),
             )
             .await?;
         self.log_paged(org, incident.id, reason, paged.delivered)
@@ -583,6 +731,7 @@ impl Worker {
         org: OrgId,
         incident_id: Uuid,
         reason: NotificationReason,
+        episode: i64,
     ) -> Result<()> {
         self.ops
             .record_notification(crate::domain::NewIncidentNotification {
@@ -597,6 +746,7 @@ impl Worker {
                 attempt: 0,
                 error: None,
                 sent_at: None,
+                episode,
             })
             .await?;
         self.ops

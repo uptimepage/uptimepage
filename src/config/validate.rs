@@ -59,6 +59,14 @@ impl AppConfig {
                 self.escalation.tick_interval_secs
             )));
         }
+        if self.escalation.closing_window_secs <= self.escalation.tick_interval_secs {
+            return Err(crate::error::AppError::Other(anyhow::anyhow!(
+                "escalation.closing_window_secs ({}) must exceed tick_interval_secs ({}) \
+                 or every lost closing notice is withdrawn unsent",
+                self.escalation.closing_window_secs,
+                self.escalation.tick_interval_secs
+            )));
+        }
         // A zero hold would read as "held" and release on the very next tick,
         // and the operator-facing copy would say "0 minutes".
         if self.escalation.flap_max_opens > 0 {

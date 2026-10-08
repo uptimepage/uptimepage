@@ -538,6 +538,7 @@ async fn notification_log_record_retry_and_scope_pg() {
             attempt: 1,
             error: Some("connect refused".into()),
             sent_at: None,
+            episode: 0,
         })
         .await
         .expect("record");
@@ -636,6 +637,7 @@ async fn notification_log_record_retry_and_scope_pg() {
             attempt: 1,
             error: None,
             sent_at: None,
+            episode: 0,
         })
         .await
         .expect("record queued");
@@ -936,6 +938,7 @@ async fn due_for_reconcile_finds_only_unpaged_triggered_pg() {
             attempt: 1,
             error: None,
             sent_at: Some(chrono::Utc::now()),
+            episode: 0,
         })
         .await
         .unwrap();
@@ -986,6 +989,7 @@ async fn renotify_backoff_widens_with_each_reminder_pg() {
             attempt: 1,
             error: None,
             sent_at: Some(chrono::Utc::now()),
+            episode: 0,
         })
         .await
         .expect("record");
@@ -1131,6 +1135,7 @@ async fn a_maintenance_hold_releases_only_once_the_window_lets_go_pg() {
             attempt: 0,
             error: None,
             sent_at: None,
+            episode: 0,
         })
         .await
         .expect("hold marker");
@@ -1211,6 +1216,7 @@ async fn a_maintenance_hold_releases_only_once_the_window_lets_go_pg() {
             attempt: 1,
             error: None,
             sent_at: Some(chrono::Utc::now()),
+            episode: 0,
         })
         .await
         .expect("release page");
@@ -1472,6 +1478,7 @@ async fn retry_scan_skips_a_first_attempt_still_in_flight_in_memory() {
             attempt: 1,
             error: None,
             sent_at: None,
+            episode: 0,
         })
         .await
         .unwrap();
@@ -1518,6 +1525,7 @@ async fn emergency_ack_lifecycle_in_memory() {
                 attempt: 1,
                 error: None,
                 sent_at: None,
+                episode: 0,
             })
             .await
             .unwrap();
@@ -2297,6 +2305,7 @@ async fn an_emergency_receipt_remembers_the_outage_it_paged_for_pg() {
                     attempt: 1,
                     error: None,
                     sent_at: Some(chrono::Utc::now()),
+                    episode: 0,
                 })
                 .await
                 .expect("record notification");

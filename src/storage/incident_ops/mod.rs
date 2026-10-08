@@ -229,6 +229,36 @@ pub struct DueIncident {
     pub escalation_round: i32,
 }
 
+/// An escalation step [`IncidentOpsStore::due_for_escalation`] claimed.
+/// `claim` is the timer value the claim leased it with. The step is still the
+/// caller's to take only while the timer holds it: an ack or a resolve clears
+/// the timer, and a reopen's first page sets its own.
+#[derive(Debug, Clone)]
+pub struct ClaimedEscalation {
+    pub due: DueIncident,
+    pub claim: DateTime<Utc>,
+    /// The episode the step was claimed in. Its pages are that episode's,
+    /// whatever happens to the incident while it is taken.
+    pub episode: i64,
+}
+
+/// An ended incident whose closing notice this caller has taken. `claim` is
+/// the lease it holds, and settling with it clears only that lease.
+#[derive(Debug, Clone)]
+pub struct ClosingNotice {
+    pub id: Uuid,
+    pub org: OrgId,
+    pub claim: DateTime<Utc>,
+}
+
+/// One closing-notice scan: the notices it took, and how many it withdrew
+/// unsent because their incident ended before the window.
+#[derive(Debug, Clone, Default)]
+pub struct DueClosingNotices {
+    pub claimed: Vec<ClosingNotice>,
+    pub expired: usize,
+}
+
 pub(crate) fn pages_with_monitor() -> crate::error::AppError {
     crate::error::AppError::bad_request_field(
         crate::error::codes::INCIDENT_STATUS_PAGES_WITH_MONITOR,
@@ -493,7 +523,7 @@ pub trait IncidentOpsStore: Send + Sync {
         now: DateTime<Utc>,
         limit: usize,
         lease_secs: i64,
-    ) -> Result<Vec<DueIncident>>;
+    ) -> Result<Vec<ClaimedEscalation>>;
     /// Cross-org `triggered` incidents that were opened but never paged and
     /// never armed — no paging-log row, no bound policy, no timer — started
     /// inside `window`, given as `(floor, cutoff)`. These are incidents whose open signal was lost
@@ -504,6 +534,45 @@ pub trait IncidentOpsStore: Send + Sync {
         window: (DateTime<Utc>, DateTime<Utc>),
         limit: usize,
     ) -> Result<Vec<DueIncident>>;
+    /// Every close records, in the statement that ends the incident, that the
+    /// responders it paged are owed the notice that it ended; a reopen
+    /// withdraws it. This takes that notice for `lease_secs`. `None` when
+    /// nothing is owed (never closed, reopened since, already sent) or another
+    /// sender holds it.
+    async fn claim_closing_notice(
+        &self,
+        org: OrgId,
+        id: Uuid,
+        lease_secs: i64,
+    ) -> Result<Option<DateTime<Utc>>>;
+    /// Cross-org closing notices owed for at least `grace_secs`, the ones whose
+    /// signal was lost, each claimed for `lease_secs` under `FOR UPDATE SKIP
+    /// LOCKED` so a second engine instance never takes the same one. A notice
+    /// for an incident that ended more than `window_secs` ago is withdrawn
+    /// unsent. The oldest go first when more than `limit` are owed.
+    async fn due_closing_notices(
+        &self,
+        grace_secs: i64,
+        window_secs: i64,
+        lease_secs: i64,
+        limit: usize,
+    ) -> Result<DueClosingNotices>;
+    /// Persist one row of the closing notice held under `claim`, only while
+    /// that claim still holds, and renew its lease for `lease_secs`. Returns
+    /// the row id and the renewed claim; `None`, recording nothing, once the
+    /// claim is lost: another sender took the notice after this lease ran out,
+    /// or a reopen withdrew it. One statement does both, so whoever takes the
+    /// notice next sees every row this sender recorded.
+    async fn record_closing_notification(
+        &self,
+        n: NewIncidentNotification,
+        claim: DateTime<Utc>,
+        lease_secs: i64,
+    ) -> Result<Option<(Uuid, DateTime<Utc>)>>;
+    /// The notice taken under `claim` has been dealt with. One a later close
+    /// owes, or another sender took once this lease ran out, stays.
+    async fn settle_closing_notice(&self, org: OrgId, id: Uuid, claim: DateTime<Utc>)
+    -> Result<()>;
     /// Cross-org open, unacknowledged incidents whose monitor wants an outage
     /// reminder (`renotify_interval_secs > 0`) and whose last page attempt is
     /// older than that interval doubled once per reminder already sent, and

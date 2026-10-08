@@ -40,6 +40,8 @@ use rules::{retry_after_hint, retry_delay_secs};
 
 #[cfg(test)]
 mod alert_controls_tests;
+#[cfg(test)]
+mod closing_notice_tests;
 mod deliver;
 mod episode;
 mod receipts;
@@ -288,6 +290,10 @@ impl EscalationEngine {
         self.w.reconcile().await
     }
     #[cfg(test)]
+    async fn reconcile_closed(&self) {
+        self.w.reconcile_closed().await
+    }
+    #[cfg(test)]
     async fn renotify_one(&self, d: &crate::storage::DueIncident) -> crate::error::Result<()> {
         self.w.renotify_one(d).await
     }
@@ -341,6 +347,13 @@ impl Worker {
             )
             .increment(1);
         }
+    }
+
+    /// Lease on a claimed escalation rung or closing notice: long enough to
+    /// page and record it before another instance could take it again. A
+    /// closing notice renews its lease with every channel it records.
+    fn claim_lease_secs(&self) -> i64 {
+        (self.cfg.tick_interval_secs.max(1) as i64 * 2).max(60)
     }
 
     /// The shard lock guarding paging for `incident_id`.
