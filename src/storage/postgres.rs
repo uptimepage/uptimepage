@@ -284,9 +284,9 @@ pub(crate) fn decode_target_row(row: TargetRow, cipher: Option<&Cipher>) -> Resu
 /// transaction. The incidents outlive the monitors, so nothing else will close
 /// a monitor's incident once its monitor is gone: it is closed here, as resolved
 /// by whoever deleted the monitor and marked so it stays out of the resolution
-/// metrics. A declared incident is a person's to close and stays open. Either
-/// way paging stops, since pages go out through the monitor; notices that an
-/// incident ended still go out. An incident ever made public stays tied to the
+/// metrics. A declared incident is a person's to close and stays open, with
+/// paging switched off. Either way paging stops, since pages go out through
+/// the monitor; notices that an incident ended still go out. An incident ever made public stays tied to the
 /// pages that showed the monitor, and one closed here says so in a public
 /// update rather than claiming a recovery.
 ///
@@ -330,6 +330,13 @@ async fn close_incidents_of_deleted_targets(
                WHERE org_id = $2 AND ended_at IS NULL
                  AND id IN (SELECT id FROM owned WHERE origin = 'monitor')
                RETURNING id
+           ), parked AS (
+               -- A declared incident stays open but can no longer page: its
+               -- pages went out through the monitor.
+               UPDATE incidents
+               SET paging_enabled = false, next_escalation_at = NULL, updated_at = now()
+               WHERE org_id = $2 AND ended_at IS NULL
+                 AND id IN (SELECT id FROM owned WHERE origin = 'manual')
            ), logged AS (
                INSERT INTO incident_events (org_id, incident_id, kind, actor_type, actor_id, message)
                SELECT $2, o.id, 'monitor_deleted',

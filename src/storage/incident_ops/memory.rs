@@ -432,6 +432,10 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
                         && !i.closed_by_monitor_delete
                 })
                 .count() as u64,
+            closed_with_monitor: in_window
+                .iter()
+                .filter(|i| i.closed_by_monitor_delete)
+                .count() as u64,
             top_monitors,
         })
     }
@@ -638,10 +642,21 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             return Ok(None);
         };
         if g.incidents[idx].target_id.is_none() {
-            let pages = status_page_ids
-                .unwrap_or_else(|| g.status_pages.get(&id).cloned().unwrap_or_default());
+            let ended_with_monitor = g.incidents[idx].ended_with_monitor();
+            let shown = g.status_pages.get(&id).cloned().unwrap_or_default();
+            if ended_with_monitor
+                && let Some(wanted) = &status_page_ids
+                && wanted.iter().any(|p| !shown.contains(p))
+            {
+                return Err(super::pages_beyond_deleted_monitor());
+            }
+            let pages = status_page_ids.unwrap_or(shown);
             if pages.is_empty() {
-                return Err(status_page_required());
+                return Err(if ended_with_monitor {
+                    super::pages_beyond_deleted_monitor()
+                } else {
+                    status_page_required()
+                });
             }
             g.status_pages.insert(id, pages);
         } else if status_page_ids.is_some_and(|p| !p.is_empty()) {

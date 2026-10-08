@@ -996,6 +996,7 @@ impl McpServer {
             by_state: buckets(m.by_state),
             auto_resolved: m.auto_resolved,
             human_resolved: m.human_resolved,
+            closed_with_monitor: m.closed_with_monitor,
             top_monitors: m
                 .top_monitors
                 .into_iter()

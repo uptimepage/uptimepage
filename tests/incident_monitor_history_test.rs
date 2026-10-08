@@ -119,8 +119,10 @@ impl Fixture {
     /// A declared incident naming the monitor, as an operator raises one.
     async fn declared_incident(&self, target: Uuid) -> Uuid {
         sqlx::query_scalar(
-            "INSERT INTO incidents (org_id, target_id, started_at, status_at_start, origin, title) \
-             VALUES ($1, $2, now() - interval '1 hour', 'down', 'manual', 'Payments degraded') \
+            "INSERT INTO incidents \
+                 (org_id, target_id, started_at, status_at_start, origin, title, next_escalation_at) \
+             VALUES ($1, $2, now() - interval '1 hour', 'down', 'manual', 'Payments degraded', \
+                     now() + interval '5 minutes') \
              RETURNING id",
         )
         .bind(self.org.0)
@@ -553,6 +555,8 @@ async fn a_declared_incident_stays_open_when_its_monitor_is_deleted() {
     );
     assert!(inc.monitor_deleted());
     assert!(!inc.closed_by_monitor_delete);
+    assert!(!inc.paging_enabled, "nothing left to page through");
+    assert!(inc.next_escalation_at.is_none());
     assert_eq!(inc.target_name.as_deref(), Some("payments"));
     assert_eq!(f.monitor_deleted_events(declared).await, 1);
     assert_eq!(
@@ -712,6 +716,57 @@ async fn an_incident_taken_off_its_page_still_closes_for_its_subscribers() {
     common::drop_test_db(&f.db).await;
 }
 
+/// A monitor's incident lives on only where the monitor was shown: never on a
+/// page that did not carry it, and nowhere if it was never public.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_deleted_monitors_incident_stays_off_pages_that_never_showed_it() {
+    let Some(f) = fixture("inc_hist_pages").await else {
+        return;
+    };
+    let monitor = f.monitor("api-internal").await;
+    let page = f.page_showing(monitor, Some("API")).await;
+    let public = f.open_incident(monitor).await;
+    sqlx::query("UPDATE incidents SET visibility = 'public' WHERE id = $1")
+        .bind(public)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let internal = f.resolved_incident(monitor).await;
+    let other = f.page_showing(f.monitor("billing").await, None).await;
+    f.targets
+        .delete(f.org, monitor, Some(f.user))
+        .await
+        .unwrap();
+
+    let refused = |res: Result<_, AppError>| {
+        let err = res.expect_err("refused");
+        assert!(
+            matches!(err, AppError::Conflict { code, .. } if code == codes::INCIDENT_MONITOR_DELETED),
+            "{err:?}"
+        );
+    };
+    let me = Actor::User(f.user);
+    refused(
+        f.ops
+            .publish(f.org, public, None, None, Some(vec![page, other]), me)
+            .await,
+    );
+    refused(f.ops.publish(f.org, internal, None, None, None, me).await);
+    refused(
+        f.ops
+            .publish(f.org, internal, None, None, Some(vec![page]), me)
+            .await,
+    );
+    f.ops
+        .publish(f.org, public, None, None, Some(vec![page]), me)
+        .await
+        .unwrap()
+        .expect("still on its own page");
+
+    common::drop_test_db(&f.db).await;
+}
+
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
 async fn a_close_by_monitor_delete_stays_out_of_resolution_metrics() {
@@ -728,6 +783,7 @@ async fn a_close_by_monitor_delete_stays_out_of_resolution_metrics() {
     let m = f.ops.metrics(f.org, 30).await.unwrap();
     assert_eq!(m.total, 1);
     assert_eq!((m.human_resolved, m.auto_resolved), (0, 0));
+    assert_eq!(m.closed_with_monitor, 1);
     assert_eq!(m.mttr_secs, None);
 
     common::drop_test_db(&f.db).await;

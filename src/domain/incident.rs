@@ -726,10 +726,17 @@ impl OpsIncident {
         self.target_id.is_none() && self.target_name.is_some()
     }
 
-    /// A monitor's incident ends with its monitor: reopened, nothing would
-    /// watch or close it. A declared one stays a person's to reopen.
+    /// A monitor's own incident whose monitor was deleted: it ended with the
+    /// monitor and lives on as history, on the pages that showed the monitor.
+    /// A declared one stays a person's to run.
+    pub fn ended_with_monitor(&self) -> bool {
+        self.origin == IncidentOrigin::Monitor && self.monitor_deleted()
+    }
+
+    /// Reopened, an incident that ended with its monitor would have nothing to
+    /// watch or close it.
     pub fn reopenable(&self) -> bool {
-        !(self.origin == IncidentOrigin::Monitor && self.monitor_deleted())
+        !self.ended_with_monitor()
     }
 }
 
@@ -1044,6 +1051,10 @@ pub struct IncidentMetrics {
     pub by_state: Vec<MetricBucket>,
     pub auto_resolved: u64,
     pub human_resolved: u64,
+    /// Closed because their monitor was deleted: in `total` and the resolved
+    /// state, outside MTTR and the two counts above.
+    #[serde(default)]
+    pub closed_with_monitor: u64,
     pub top_monitors: Vec<MonitorIncidentCount>,
 }
 

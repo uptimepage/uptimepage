@@ -53,7 +53,7 @@
       <div class="dashboard-kpi-card__row">
         <p class="dashboard-kpi-card__value{% if human_resolved == 0 %} dashboard-kpi-card__value--quiet{% endif %}">{{ human_resolved }}</p>
       </div>
-      <p class="dashboard-kpi-card__hint">{{ auto_resolved }} closed themselves when the monitor recovered</p>
+      <p class="dashboard-kpi-card__hint">{{ auto_resolved }} closed themselves when the monitor recovered{% if closed_with_monitor > 0 %}; {{ closed_with_monitor }} closed when their monitor was deleted{% endif %}</p>
     </article>
   </section>
 

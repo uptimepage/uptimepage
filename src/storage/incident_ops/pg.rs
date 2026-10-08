@@ -702,6 +702,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             mttr: Option<f64>,
             auto_resolved: i64,
             human_resolved: i64,
+            closed_with_monitor: i64,
         }
         let s: Scalars = sqlx::query_as(
             "SELECT count(*) AS total, \
@@ -712,7 +713,8 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                  count(*) FILTER (WHERE state = 'resolved' AND resolved_by IS NULL \
                      AND NOT closed_by_monitor_delete) AS auto_resolved, \
                  count(*) FILTER (WHERE state = 'resolved' AND resolved_by IS NOT NULL \
-                     AND NOT closed_by_monitor_delete) AS human_resolved \
+                     AND NOT closed_by_monitor_delete) AS human_resolved, \
+                 count(*) FILTER (WHERE closed_by_monitor_delete) AS closed_with_monitor \
              FROM incidents WHERE org_id = $1 AND started_at >= $2",
         )
         .bind(org.0)
@@ -774,6 +776,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             by_state,
             auto_resolved: s.auto_resolved.max(0) as u64,
             human_resolved: s.human_resolved.max(0) as u64,
+            closed_with_monitor: s.closed_with_monitor.max(0) as u64,
             top_monitors: top
                 .into_iter()
                 .map(|(target_id, name, count)| MonitorIncidentCount {
@@ -1064,24 +1067,38 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         // Lock the row and read the pre-publish visibility so the opening
         // update below only fires on an internal->public transition, not on a
         // re-publish.
-        let prior: Option<(String, Option<Uuid>)> = sqlx::query_as(
-            "SELECT visibility, target_id FROM incidents WHERE id = $1 AND org_id = $2 FOR UPDATE",
+        let prior: Option<(String, Option<Uuid>, bool)> = sqlx::query_as(
+            "SELECT visibility, target_id, \
+                    origin = 'monitor' AND target_id IS NULL AND target_name IS NOT NULL \
+             FROM incidents WHERE id = $1 AND org_id = $2 FOR UPDATE",
         )
         .bind(id)
         .bind(org.0)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| anyhow::anyhow!("publish lock: {e}"))?;
-        let Some((prior_visibility, target_id)) = prior else {
+        let Some((prior_visibility, target_id, ended_with_monitor)) = prior else {
             return Ok(None);
         };
         let pages = if target_id.is_none() {
+            // No other page ever carried the deleted monitor, and none would
+            // know what to call it.
+            if ended_with_monitor && let Some(wanted) = &status_page_ids {
+                let shown = status_pages_tx(&mut tx, org, id).await?;
+                if wanted.iter().any(|p| !shown.contains(p)) {
+                    return Err(super::pages_beyond_deleted_monitor());
+                }
+            }
             let pages = match &status_page_ids {
                 Some(pages) => replace_status_pages_tx(&mut tx, org, id, pages).await?,
                 None => status_pages_tx(&mut tx, org, id).await?,
             };
             if pages.is_empty() {
-                return Err(status_page_required());
+                return Err(if ended_with_monitor {
+                    super::pages_beyond_deleted_monitor()
+                } else {
+                    status_page_required()
+                });
             }
             pages
         } else if status_page_ids.is_some_and(|p| !p.is_empty()) {

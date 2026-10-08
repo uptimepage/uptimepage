@@ -51,6 +51,7 @@ pub struct IncidentsReportPage {
     pub by_state: Vec<ReportBucket>,
     pub auto_resolved: u64,
     pub human_resolved: u64,
+    pub closed_with_monitor: u64,
     pub top_monitors: Vec<ReportMonitorRow>,
 }
 
@@ -97,6 +98,7 @@ pub async fn reports(
         by_state: m.by_state.into_iter().map(bucket).collect(),
         auto_resolved: m.auto_resolved,
         human_resolved: m.human_resolved,
+        closed_with_monitor: m.closed_with_monitor,
         top_monitors: m
             .top_monitors
             .into_iter()

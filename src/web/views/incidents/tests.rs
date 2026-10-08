@@ -876,10 +876,11 @@ fn reports_page_renders_kpis_and_top_monitors() {
         }],
         by_state: vec![ReportBucket {
             label: "resolved".into(),
-            count: 2,
+            count: 3,
         }],
         auto_resolved: 1,
         human_resolved: 1,
+        closed_with_monitor: 1,
         top_monitors: vec![
             ReportMonitorRow {
                 id: Some(Uuid::now_v7().to_string()),
@@ -897,6 +898,11 @@ fn reports_page_renders_kpis_and_top_monitors() {
     assert!(html.contains("5m 0s"));
     assert!(html.contains("1h 2m"));
     assert!(html.contains("api-gateway"));
+    // Every resolved incident is accounted for.
+    assert!(
+        html.contains("1 closed when their monitor was deleted"),
+        "{html}"
+    );
     // A deleted monitor is still named, with nothing to link to.
     assert!(html.contains("old-worker (deleted)"), "{html}");
     assert_eq!(html.matches("href=\"/targets/").count(), 1, "{html}");

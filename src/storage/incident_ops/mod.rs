@@ -246,6 +246,15 @@ pub(crate) fn monitor_deleted() -> crate::error::AppError {
     )
 }
 
+/// Publishing an incident that ended with its monitor anywhere but the pages
+/// that showed the monitor.
+pub(crate) fn pages_beyond_deleted_monitor() -> crate::error::AppError {
+    crate::error::AppError::conflict(
+        crate::error::codes::INCIDENT_MONITOR_DELETED,
+        "this incident's monitor was deleted, so it can only be shown on the pages that showed the monitor",
+    )
+}
+
 pub(crate) fn unknown_status_pages(missing: usize) -> crate::error::AppError {
     crate::error::AppError::bad_request_field(
         crate::error::codes::INVALID_STATUS_PAGE_ID,

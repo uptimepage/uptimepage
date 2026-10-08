@@ -93,6 +93,7 @@ async fn a_close_by_monitor_delete_stays_out_of_resolution_metrics() {
     let m = store.metrics(org(), 30).await.unwrap();
     assert_eq!(m.total, 1);
     assert_eq!((m.human_resolved, m.auto_resolved), (0, 0));
+    assert_eq!(m.closed_with_monitor, 1);
     assert_eq!(m.mttr_secs, None, "a 20-day cleanup is not a 20-day repair");
 }
 
@@ -121,6 +122,30 @@ async fn only_a_declared_incident_reopens_once_its_monitor_is_deleted() {
         .await
         .unwrap();
     assert!(matches!(reopened, LifecycleOutcome::Updated(_)));
+}
+
+#[tokio::test]
+async fn an_incident_that_ended_with_its_monitor_takes_no_new_page() {
+    let store = InMemoryIncidentOpsStore::new();
+    let id = seed_triggered(&store);
+    store.resolve(org(), id, Actor::System, None).await.unwrap();
+    store.edit(id, |i| {
+        i.target_ref = i.target_id.take();
+        i.target_name = Some("api".into());
+    });
+    let page = Uuid::now_v7();
+    assert!(
+        store
+            .publish(org(), id, None, None, Some(vec![page]), Actor::System)
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .publish(org(), id, None, None, None, Actor::System)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]

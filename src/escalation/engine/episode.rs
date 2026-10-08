@@ -244,25 +244,27 @@ impl Worker {
         damper: Damper,
     ) -> Result<()> {
         // Serialise all paging for this incident: the dedup in open_episode /
-        // notify_resolution is read-then-act, so without this a concurrent
+        // notify_closed is read-then-act, so without this a concurrent
         // signal task + sweep (reconcile) task could both open the same episode
         // and double-page. Held for the whole resolve+page+record sequence.
         let _guard = self.page_lock(incident_id).lock().await;
         let Some(incident) = self.ops.get(org, incident_id).await? else {
             return Ok(());
         };
-        // Sent once the monitor is already gone.
-        if reason == NotificationReason::MonitorDeleted {
-            return self.notify_monitor_deleted(org, &incident).await;
-        }
-        // A declared incident outlives its monitor without paging again, and
-        // whoever it paged still hears when a person resolves it. Its
-        // monitor's recovery opt-out went with the monitor.
+        // Once the monitor is gone nothing pages, but whoever was paged still
+        // hears the incident ended, under the name it kept. A delete's notice
+        // goes only for an incident the delete closed; a declared incident
+        // resolved later sends the usual all-clear, since the monitor's
+        // recovery opt-out went with the monitor.
         if incident.monitor_deleted() {
+            let name = incident.target_name.clone();
             return match reason {
+                NotificationReason::MonitorDeleted => {
+                    let send = incident.closed_by_monitor_delete;
+                    self.notify_closed(org, &incident, name, reason, send).await
+                }
                 NotificationReason::Resolved => {
-                    let name = incident.target_name.clone();
-                    self.notify_resolution(org, &incident, name, true).await
+                    self.notify_closed(org, &incident, name, reason, true).await
                 }
                 _ => Ok(()),
             };
@@ -293,9 +295,10 @@ impl Worker {
             }
             NotificationReason::Resolved => {
                 let name = Some(target.name.clone());
-                self.notify_resolution(org, &incident, name, target.notify_recovery)
+                self.notify_closed(org, &incident, name, reason, target.notify_recovery)
                     .await
             }
+            // Sent only once the monitor is gone, above.
             NotificationReason::MonitorDeleted => Ok(()),
             // Escalation and reminder pages originate from the sweep, never an
             // inbound signal.
@@ -528,20 +531,21 @@ impl Worker {
             .await
     }
 
-    /// Send the all-clear to every channel paged this episode that has not
-    /// already had one, honouring a binding's recovery opt-out.
-    async fn notify_resolution(
+    /// Tell every channel paged this episode, and not yet told, that the
+    /// incident ended: `Resolved` for a recovery or a person's resolve,
+    /// `MonitorDeleted` when its monitor's deletion closed it. `send` false
+    /// (a recovery opt-out) still stops a repeating emergency page: an ended
+    /// incident must go quiet either way.
+    async fn notify_closed(
         &self,
         org: OrgId,
         incident: &OpsIncident,
         monitor_name: Option<String>,
-        notify_recovery: bool,
+        reason: NotificationReason,
+        send: bool,
     ) -> Result<()> {
-        // Stop any still-repeating emergency page before the recovery-notice
-        // gate — a resolved incident must go quiet even when the recovery push
-        // itself is disabled.
         self.cancel_emergency(org, incident.id).await;
-        if !notify_recovery {
+        if !send {
             return Ok(());
         }
         let rows = self.ops.notifications_for(org, incident.id).await?;
@@ -549,63 +553,19 @@ impl Worker {
         if channels.is_empty() {
             return Ok(());
         }
-        let notice = self.notice(incident, monitor_name, NotificationReason::Resolved, None);
+        let notice = self.notice(incident, monitor_name, reason, None);
         let paged = self
             .page_channels(
                 org,
                 incident.id,
                 &notice,
-                NotificationReason::Resolved,
+                reason,
                 incident.escalation_level,
                 &channel_targets(channels),
             )
             .await?;
-        self.log_paged(
-            org,
-            incident.id,
-            NotificationReason::Resolved,
-            paged.delivered,
-        )
-        .await
-    }
-
-    /// Tells the channels paged this episode that the incident closed with its
-    /// monitor, under the name the incident kept. Unlike a recovery it ignores
-    /// the monitor's recovery-notice setting, which went with the monitor, and
-    /// says nothing recovered.
-    async fn notify_monitor_deleted(&self, org: OrgId, incident: &OpsIncident) -> Result<()> {
-        self.cancel_emergency(org, incident.id).await;
-        if !incident.closed_by_monitor_delete {
-            return Ok(());
-        }
-        let rows = self.ops.notifications_for(org, incident.id).await?;
-        let channels: Vec<Uuid> = resolvable_channels(&rows);
-        if channels.is_empty() {
-            return Ok(());
-        }
-        let notice = self.notice(
-            incident,
-            incident.target_name.clone(),
-            NotificationReason::MonitorDeleted,
-            None,
-        );
-        let paged = self
-            .page_channels(
-                org,
-                incident.id,
-                &notice,
-                NotificationReason::MonitorDeleted,
-                incident.escalation_level,
-                &channel_targets(channels),
-            )
-            .await?;
-        self.log_paged(
-            org,
-            incident.id,
-            NotificationReason::MonitorDeleted,
-            paged.delivered,
-        )
-        .await
+        self.log_paged(org, incident.id, reason, paged.delivered)
+            .await
     }
 
     /// A lookup failure reads as no maintenance, so an error never silences a page.

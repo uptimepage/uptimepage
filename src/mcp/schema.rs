@@ -905,6 +905,9 @@ pub struct IncidentMetricsResult {
     pub auto_resolved: u64,
     /// Resolved by a person.
     pub human_resolved: u64,
+    /// Closed because their monitor was deleted; counted in neither of the
+    /// above nor in MTTR.
+    pub closed_with_monitor: u64,
     /// Noisiest monitors, most incidents first.
     pub top_monitors: Vec<NoisyMonitor>,
 }

@@ -285,7 +285,12 @@ pub async fn detail(
     let recovered_at = monitor_recovered_at(&state, org, &inc).await;
     let pages = if inc.target_id.is_none() {
         let linked = state.incident_ops_store.status_pages(org, id).await?;
-        page_choices(&state, org, &linked).await?
+        let mut choices = page_choices(&state, org, &linked).await?;
+        // Only the pages that showed its deleted monitor can carry it.
+        if inc.ended_with_monitor() {
+            choices.retain(|c| c.selected);
+        }
+        choices
     } else {
         Vec::new()
     };
