@@ -7,7 +7,7 @@ use uuid::Uuid;
 use super::org::OrgId;
 use super::public::{
     Downtime, IncidentImpact, IncidentSeverity, IncidentStatusPhase, PublicIncidentUpdate,
-    stored_incident_impact,
+    Recovered, outage_parts, stored_incident_impact,
 };
 use super::result::CheckStatus;
 use super::user::UserId;
@@ -66,6 +66,16 @@ pub struct Incident {
     /// severity then sets its impact.
     #[serde(default)]
     pub origin: IncidentOrigin,
+    /// When the recovery it is waiting out began. While set the monitor is
+    /// back up, paging pauses and downtime stops counting from then; the
+    /// incident closes once the recovery holds.
+    #[serde(default)]
+    #[schema(nullable = true)]
+    pub recovering_since: Option<DateTime<Utc>>,
+    /// Stretches the monitor was back up in before the failure returned
+    /// inside the recovery period. Part of the incident, not downtime.
+    #[serde(default)]
+    pub recovered: Vec<Recovered>,
 }
 
 impl Incident {
@@ -113,8 +123,9 @@ pub fn elapsed_at(
 }
 
 /// Confirmed downtime in seconds over `[from, to]`, weighted by impact as
-/// [`Downtime::weighted_secs`] weighs it, so every uptime figure agrees with
-/// the status page. An ongoing incident runs to `now`.
+/// [`Downtime::weighted_secs`] weighs it, less the stretches each was back up
+/// in. An ongoing incident runs to `now`, one waiting out its recovery to
+/// where the recovery began.
 pub fn confirmed_downtime_secs(
     incidents: &[Incident],
     from: DateTime<Utc>,
@@ -124,7 +135,16 @@ pub fn confirmed_downtime_secs(
     let spans: Vec<_> = incidents
         .iter()
         .filter(|i| i.counts_as_downtime)
-        .map(|i| (i.started_at, i.ended_at.unwrap_or(now), i.impact()))
+        .flat_map(|i| {
+            let impact = i.impact();
+            outage_parts(
+                i.started_at,
+                i.ended_at.or(i.recovering_since),
+                &i.recovered,
+            )
+            .into_iter()
+            .map(move |(from, until)| (from, until.unwrap_or(now), impact))
+        })
         .collect();
     Downtime::between(&spans, from, to).weighted_secs()
 }
@@ -267,6 +287,8 @@ fn new_incident(
         regions_down: Vec::new(),
         regions_up: Vec::new(),
         origin: IncidentOrigin::Monitor,
+        recovering_since: None,
+        recovered: Vec::new(),
     }
 }
 
@@ -723,6 +745,11 @@ pub struct OpsIncident {
     pub escalation_round: i32,
     #[schema(nullable = true)]
     pub next_escalation_at: Option<DateTime<Utc>>,
+    /// When the recovery it is waiting out began. While set the monitor is
+    /// back up and paging pauses; the incident closes once the recovery holds.
+    #[serde(default)]
+    #[schema(nullable = true)]
+    pub recovering_since: Option<DateTime<Utc>>,
     pub check_count: u64,
     #[schema(nullable = true)]
     pub error_sample: Option<String>,
@@ -1254,6 +1281,20 @@ mod tests {
             "a minor declaration reads as degraded"
         );
         assert_eq!(one(&declared_critical), 1_000);
+    }
+
+    #[test]
+    fn a_stretch_it_was_back_up_in_is_not_downtime() {
+        // Down a minute, up two, down a minute again inside the hold: one
+        // incident, two minutes of downtime.
+        let (from, to, now) = (ts(0), ts(10_000), ts(10_000));
+        let mut inc = new_incident(Uuid::nil(), ts(1_000), CheckStatus::Down, None);
+        inc.ended_at = Some(ts(1_240));
+        inc.recovered = vec![Recovered {
+            from: ts(1_060),
+            until: ts(1_180),
+        }];
+        assert_eq!(confirmed_downtime_secs(&[inc], from, to, now), 120);
     }
 
     #[test]

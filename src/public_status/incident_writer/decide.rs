@@ -4,7 +4,7 @@
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use uuid::Uuid;
 
-use crate::domain::{CheckResult, CheckStatus};
+use crate::domain::{CheckResult, CheckStatus, Recovered};
 
 use super::{NewOpenIncident, OpenIncident};
 
@@ -28,6 +28,48 @@ pub enum Action {
         incident_id: Uuid,
         error_sample: Option<String>,
     },
+    /// The outage is over and its recovery is being held. While `since` is
+    /// set paging pauses and the incident stops counting as downtime from
+    /// then; `None` once the recovery is lost.
+    Recovering {
+        incident_id: Uuid,
+        since: Option<DateTime<Utc>>,
+    },
+    /// A stretch it was back up in until a failure inside the recovery period
+    /// took it down again. Kept on the incident so it never counts as
+    /// downtime; the recovering mark it began, if any, is dropped.
+    Relapsed {
+        incident_id: Uuid,
+        recovered: Recovered,
+    },
+}
+
+/// How long a recovery must hold before its incident closes, and the clock it
+/// is judged by.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Hold {
+    pub period: ChronoDuration,
+    /// The monitor's check interval.
+    pub interval: ChronoDuration,
+    pub now: DateTime<Utc>,
+}
+
+impl Hold {
+    /// Closes on the confirming checks alone.
+    pub const NONE: Self = Self {
+        period: ChronoDuration::zero(),
+        interval: ChronoDuration::zero(),
+        now: DateTime::<Utc>::MIN_UTC,
+    };
+
+    /// Held once the period has passed since the recovery began and every
+    /// check due inside it has passed too. A check due after the period is not
+    /// waited for, so a monitor that checks less often than its hold closes
+    /// when the hold is up rather than a whole interval later.
+    fn has_held(&self, began: DateTime<Utc>, last_seen: DateTime<Utc>) -> bool {
+        self.period <= ChronoDuration::zero()
+            || (self.now - began >= self.period && last_seen - began >= self.period - self.interval)
+    }
 }
 
 struct Verdict<'a> {
@@ -48,33 +90,26 @@ pub fn decide(open: Option<&OpenIncident>, results: &[CheckResult], flap_thresho
     };
     let opens: Vec<OpenIncident> = open.cloned().into_iter().collect();
     let by_region = [(String::new(), results.to_vec())];
-    decide_multi(
-        target_id,
-        &opens,
-        &by_region,
-        flap_threshold,
-        1,
-        ChronoDuration::zero(),
-    )
-    .into_iter()
-    .next()
-    .unwrap_or(Action::None)
+    decide_multi(target_id, &opens, &by_region, flap_threshold, 1, Hold::NONE)
+        .into_iter()
+        .next()
+        .unwrap_or(Action::None)
 }
 
 /// Pure region-aware decision. Each `(region, results)` group is one region's
 /// checks ascending by time; `opens` is every open incident for the target.
 /// `confirmations` is the per-region consecutive-bad run needed; `quorum` is how
 /// many regions must agree before the combined incident opens (clamped to the
-/// live region count so it can never be unreachable). `recovery` is how long
-/// the recovery must hold before the incident closes. Returns the writes to
-/// apply; an empty vec means nothing to do.
+/// live region count so it can never be unreachable). `hold` is how long the
+/// recovery must hold before the incident closes. Returns the writes to apply;
+/// an empty vec means nothing to do.
 pub fn decide_multi(
     target_id: Uuid,
     opens: &[OpenIncident],
     by_region: &[(String, Vec<CheckResult>)],
     confirmations: u32,
     quorum: usize,
-    recovery: ChronoDuration,
+    hold: Hold,
 ) -> Vec<Action> {
     let threshold = (confirmations as usize).max(1);
 
@@ -120,15 +155,53 @@ pub fn decide_multi(
             }
         }
         Some(inc) => {
+            let tally = Tally::of(inc, by_region, threshold);
+            let mut actions = Vec::new();
+            // Every stretch in view it was back up in before the failure
+            // returned stays out of the downtime: kept once, however many
+            // scans see it and however many came and went between two scans.
+            let mut marked = inc.recovering_since;
+            for recovered in tally.back_up_stretches(quorum) {
+                if recovered.from < inc.started_at {
+                    continue;
+                }
+                if marked == Some(recovered.from) {
+                    marked = None;
+                } else if inc.recovered.iter().any(|r| r.from == recovered.from) {
+                    continue;
+                }
+                actions.push(Action::Relapsed {
+                    incident_id: inc.id,
+                    recovered,
+                });
+            }
+            // Down again with the recovery it marked out of view. Silence
+            // settles nothing, so it leaves the mark alone.
+            if marked.is_some() && tally.down_now >= quorum {
+                actions.push(Action::Recovering {
+                    incident_id: inc.id,
+                    since: None,
+                });
+                marked = None;
+            }
             // Close once the outage is over and its recovery has held;
             // ended_at is when it ended, so the hold is not counted as downtime.
-            if let Some(ended) = recovered_at(inc, by_region, threshold, quorum, recovery)
-                && ended > inc.started_at
+            // Until then the incident is recovering from that moment.
+            if let Some(r) = tally.recovery(quorum)
+                && r.ended > inc.started_at
             {
-                return vec![Action::Close {
-                    incident_id: inc.id,
-                    ended_at: ended,
-                }];
+                if !r.unsettled && hold.has_held(r.ended, r.last_seen) {
+                    actions.push(Action::Close {
+                        incident_id: inc.id,
+                        ended_at: r.ended,
+                    });
+                } else if marked != Some(r.ended) {
+                    actions.push(Action::Recovering {
+                        incident_id: inc.id,
+                        since: Some(r.ended),
+                    });
+                }
+                return actions;
             }
             // The breakdown only grows: a region one check behind the quorum
             // joins once it confirms, silence adds nothing, and a recovery is
@@ -136,7 +209,6 @@ pub fn decide_multi(
             // The status follows the same rule. Below quorum the outage is
             // over and only waiting out its recovery, so a lone region failing
             // then is not part of it.
-            let mut actions = Vec::new();
             if bad.len() >= quorum {
                 let (confirmed, _) = split_regions(&bad, &verdicts);
                 let regions: Vec<String> = confirmed
@@ -229,83 +301,140 @@ fn confirmed_down_spans(
     (spans, state)
 }
 
-/// When the outage ended, once its recovery has held for `recovery`: the last
-/// moment the regions confirmed down fell below the quorum. Runs shorter than
-/// a confirmation change nothing, so a stray failed check neither restarts the
-/// hold nor moves the end, and a lone region failing below the quorum is not
-/// the outage. An outage that confirms again inside the hold keeps the
-/// incident open, and its recovery restarts the wait. When the quorum is never
-/// reached in view, the end is the latest recovery of a region the outage was
-/// counted in.
-///
-/// The recovery has to be confirmed by a region the outage was counted in. A
-/// region that never failed says nothing about one that stopped reporting, so
-/// silence cannot carry the count below the quorum while a region is still
-/// failing. Only when every region the outage was counted in has gone quiet do
-/// the regions still reporting decide, and then every one of them has to be
-/// confirmed up: the end is when the last of them was.
-fn recovered_at(
-    inc: &OpenIncident,
-    by_region: &[(String, Vec<CheckResult>)],
-    threshold: usize,
-    quorum: usize,
-    recovery: ChronoDuration,
-) -> Option<DateTime<Utc>> {
-    let mut events: Vec<(DateTime<Utc>, i32)> = Vec::new();
-    let mut down_now = 0usize;
-    let mut undecided = false;
-    let mut witnessed: Option<DateTime<Utc>> = None;
-    let mut all_up_since: Option<DateTime<Utc>> = None;
-    let mut last_seen: Option<DateTime<Utc>> = None;
-    for (region, results) in by_region {
-        let Some(last) = results.last() else {
-            continue;
+/// What [`Tally::recovery`] found.
+struct Recovery {
+    ended: DateTime<Utc>,
+    /// The newest result in view, which the hold is judged against.
+    last_seen: DateTime<Utc>,
+    /// Failures not yet confirmed could still bring the regions down back to
+    /// the quorum, so the recovery cannot be called held until they settle.
+    unsettled: bool,
+}
+
+/// Each region's confirmed state over the window, counted up for the open
+/// incident: the regions it was counted in start out down.
+struct Tally {
+    /// Confirmed-down stretches as count changes, sorted so a region failing
+    /// at the instant another recovers is counted first and the handover is
+    /// not mistaken for the outage ending.
+    events: Vec<(DateTime<Utc>, i32)>,
+    down_now: usize,
+    failing_unconfirmed: usize,
+    undecided: bool,
+    witnessed: Option<DateTime<Utc>>,
+    all_up_since: Option<DateTime<Utc>>,
+    last_seen: Option<DateTime<Utc>>,
+}
+
+impl Tally {
+    fn of(inc: &OpenIncident, by_region: &[(String, Vec<CheckResult>)], threshold: usize) -> Self {
+        let mut t = Self {
+            events: Vec::new(),
+            down_now: 0,
+            failing_unconfirmed: 0,
+            undecided: false,
+            witnessed: None,
+            all_up_since: None,
+            last_seen: None,
         };
-        last_seen = last_seen.max(Some(last.timestamp));
-        // Without a breakdown (one unnamed region, or a row from before the
-        // breakdown was kept) every region is taken as part of the outage.
-        let in_outage = inc.regions_down.is_empty() || inc.regions_down.contains(region);
-        let (spans, state) = confirmed_down_spans(results, threshold, in_outage);
-        match state {
-            Confirmed::Down => down_now += 1,
-            Confirmed::Up(since) => {
-                all_up_since = all_up_since.max(Some(since));
-                if in_outage {
-                    witnessed = witnessed.max(Some(since));
+        for (region, results) in by_region {
+            let Some(last) = results.last() else {
+                continue;
+            };
+            t.last_seen = t.last_seen.max(Some(last.timestamp));
+            // Without a breakdown (one unnamed region, or a row from before the
+            // breakdown was kept) every region is taken as part of the outage.
+            let in_outage = inc.regions_down.is_empty() || inc.regions_down.contains(region);
+            let (spans, state) = confirmed_down_spans(results, threshold, in_outage);
+            match state {
+                Confirmed::Down => t.down_now += 1,
+                Confirmed::Up(since) => {
+                    t.all_up_since = t.all_up_since.max(Some(since));
+                    if in_outage {
+                        t.witnessed = t.witnessed.max(Some(since));
+                    }
+                }
+                Confirmed::Unknown => t.undecided = true,
+            }
+            if state != Confirmed::Down && !trailing_bad_run(results).is_empty() {
+                t.failing_unconfirmed += 1;
+            }
+            for (from, to) in spans {
+                t.events.push((from, 1));
+                if let Some(to) = to {
+                    t.events.push((to, -1));
                 }
             }
-            Confirmed::Unknown => undecided = true,
         }
-        for (from, to) in spans {
-            events.push((from, 1));
-            if let Some(to) = to {
-                events.push((to, -1));
-            }
+        t.events.sort_by_key(|(at, delta)| (*at, -delta));
+        t
+    }
+
+    /// When the outage ended: the last moment the regions confirmed down fell
+    /// below the quorum. Runs shorter than a confirmation change nothing, so a
+    /// stray failed check neither restarts the hold nor moves the end, and a
+    /// lone region failing below the quorum is not the outage. An outage that
+    /// confirms again inside the hold keeps the incident open, and its
+    /// recovery restarts the wait. When the quorum is never reached in view,
+    /// the end is the latest recovery of a region the outage was counted in.
+    ///
+    /// The recovery has to be confirmed by a region the outage was counted in.
+    /// A region that never failed says nothing about one that stopped
+    /// reporting, so silence cannot carry the count below the quorum while a
+    /// region is still failing. Only when every region the outage was counted
+    /// in has gone quiet do the regions still reporting decide, and then every
+    /// one of them has to be confirmed up: the end is when the last of them was.
+    fn recovery(&self, quorum: usize) -> Option<Recovery> {
+        if self.down_now >= quorum {
+            return None;
         }
-    }
-    if down_now >= quorum {
-        return None;
-    }
-    let onset = match witnessed {
-        Some(recovered) => {
-            // A region failing at the instant another recovers is counted
-            // first, so the handover is not mistaken for the outage ending.
-            events.sort_by_key(|(at, delta)| (*at, -delta));
-            let quorum = quorum as i32;
-            let mut down = 0;
-            let mut ended = None;
-            for (at, delta) in events {
-                if down >= quorum && down + delta < quorum {
-                    ended = Some(at);
+        let onset = match self.witnessed {
+            Some(recovered) => {
+                let quorum = quorum as i32;
+                let mut down = 0;
+                let mut ended = None;
+                for &(at, delta) in &self.events {
+                    if down >= quorum && down + delta < quorum {
+                        ended = Some(at);
+                    }
+                    down += delta;
                 }
-                down += delta;
+                ended.unwrap_or(recovered)
             }
-            ended.unwrap_or(recovered)
+            None if self.down_now == 0 && !self.undecided => self.all_up_since?,
+            None => return None,
+        };
+        Some(Recovery {
+            ended: onset,
+            last_seen: self.last_seen?,
+            unsettled: self.down_now + self.failing_unconfirmed >= quorum,
+        })
+    }
+
+    /// Each stretch the regions confirmed down were below the quorum before
+    /// they reached it again: a recovery a failure ended.
+    fn back_up_stretches(&self, quorum: usize) -> Vec<Recovered> {
+        let quorum = quorum as i32;
+        let mut down = 0;
+        let mut up_since = None;
+        let mut out = Vec::new();
+        for &(at, delta) in &self.events {
+            let was_down = down >= quorum;
+            down += delta;
+            match (was_down, down >= quorum) {
+                (true, false) => up_since = Some(at),
+                (false, true) => {
+                    if let Some(from) = up_since.take()
+                        && at > from
+                    {
+                        out.push(Recovered { from, until: at });
+                    }
+                }
+                _ => {}
+            }
         }
-        None if down_now == 0 && !undecided => all_up_since?,
-        None => return None,
-    };
-    (last_seen? - onset >= recovery).then_some(onset)
+        out
+    }
 }
 
 fn worst_status(bad: &[&Verdict]) -> Option<CheckStatus> {

@@ -43,7 +43,7 @@ impl PgIncidentOpsStore {
 const OPS_COLS: &str = "id, target_id, target_ref, target_name, target_kind, closed_by_monitor_delete, title, state, severity, urgency, origin, visibility, \
      paging_enabled, counts_as_downtime, started_at, ended_at, acknowledged_at, \
      acknowledged_by, assigned_to, resolved_by, escalation_policy_id, escalation_level, \
-     escalation_round, next_escalation_at, \
+     escalation_round, next_escalation_at, recovering_since, \
      check_count, error_sample, regions_down, regions_up, created_at, updated_at";
 
 /// Point a monitor-less incident at exactly `pages`. A page outside `org`
@@ -158,6 +158,7 @@ struct OpsIncidentRow {
     escalation_level: i32,
     escalation_round: i32,
     next_escalation_at: Option<DateTime<Utc>>,
+    recovering_since: Option<DateTime<Utc>>,
     check_count: i32,
     error_sample: Option<String>,
     regions_down: Option<Vec<String>>,
@@ -192,6 +193,7 @@ fn row_to_ops(r: OpsIncidentRow) -> OpsIncident {
         escalation_level: r.escalation_level,
         escalation_round: r.escalation_round,
         next_escalation_at: r.next_escalation_at,
+        recovering_since: r.recovering_since,
         check_count: r.check_count.max(0) as u64,
         error_sample: r.error_sample,
         regions_down: r.regions_down.unwrap_or_default(),
@@ -556,14 +558,15 @@ impl PgIncidentOpsStore {
         note: Option<String>,
         expect_generation: Option<i64>,
     ) -> Result<LifecycleOutcome> {
-        // Manual resolve: resolved_by = actor's user (bound as $3).
+        // Manual resolve: resolved_by = actor's user (bound as $3). One waiting
+        // out its recovery ended where the recovery began.
         let sql = format!(
             "UPDATE incidents \
-             SET state = 'resolved', ended_at = COALESCE(ended_at, now()), \
-                 duration_secs = COALESCE(duration_secs, \
-                     GREATEST(0, EXTRACT(EPOCH FROM (now() - started_at))::int)), \
-                 resolved_by = $3, next_escalation_at = NULL, closing_notice_at = now(), \
-                 updated_at = now() \
+             SET state = 'resolved', ended_at = COALESCE(ended_at, recovering_since, now()), \
+                 duration_secs = COALESCE(duration_secs, GREATEST(0, EXTRACT(EPOCH FROM \
+                     (COALESCE(ended_at, recovering_since, now()) - started_at))::int)), \
+                 resolved_by = $3, next_escalation_at = NULL, recovering_since = NULL, \
+                 closing_notice_at = now(), updated_at = now() \
              WHERE id = $1 AND org_id = $2 RETURNING {OPS_COLS}"
         );
         let public_resolution = Some(resolved_public_message(note.as_deref()));
@@ -941,11 +944,11 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         // System recovery: resolved_by stays NULL ($3 = system actor's NULL user).
         let sql = format!(
             "UPDATE incidents \
-             SET state = 'resolved', ended_at = COALESCE(ended_at, now()), \
-                 duration_secs = COALESCE(duration_secs, \
-                     GREATEST(0, EXTRACT(EPOCH FROM (now() - started_at))::int)), \
-                 resolved_by = $3, next_escalation_at = NULL, closing_notice_at = now(), \
-                 updated_at = now() \
+             SET state = 'resolved', ended_at = COALESCE(ended_at, recovering_since, now()), \
+                 duration_secs = COALESCE(duration_secs, GREATEST(0, EXTRACT(EPOCH FROM \
+                     (COALESCE(ended_at, recovering_since, now()) - started_at))::int)), \
+                 resolved_by = $3, next_escalation_at = NULL, recovering_since = NULL, \
+                 closing_notice_at = now(), updated_at = now() \
              WHERE id = $1 AND org_id = $2 RETURNING {OPS_COLS}"
         );
         self.transition(
@@ -983,7 +986,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
              SET state = 'triggered', ended_at = NULL, duration_secs = NULL, resolved_by = NULL, \
                  acknowledged_at = NULL, acknowledged_by = NULL, \
                  escalation_level = 0, escalation_round = 0, renotify_count = 0, \
-                 closing_notice_at = NULL, updated_at = now() \
+                 closing_notice_at = NULL, recovering_since = NULL, updated_at = now() \
              WHERE id = $1 AND org_id = $2 AND ($3::uuid IS NULL OR true) RETURNING {OPS_COLS}"
         );
         self.transition(
@@ -1664,7 +1667,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
              WHERE id IN ( \
                  SELECT id FROM incidents \
                  WHERE state = 'triggered' AND next_escalation_at IS NOT NULL \
-                     AND next_escalation_at <= $1 \
+                     AND next_escalation_at <= $1 AND recovering_since IS NULL \
                      AND (target_id IS NOT NULL OR target_name IS NULL) \
                  ORDER BY next_escalation_at ASC LIMIT $3 \
                  FOR UPDATE SKIP LOCKED \
@@ -1718,7 +1721,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             "SELECT id, org_id, target_id, escalation_policy_id, escalation_level, escalation_round \
              FROM incidents i \
              WHERE state = 'triggered' AND started_at <= $1 AND started_at >= $2 \
-                 AND paging_enabled \
+                 AND paging_enabled AND recovering_since IS NULL \
                  AND (target_id IS NOT NULL OR target_name IS NULL) \
                  AND escalation_policy_id IS NULL AND next_escalation_at IS NULL \
                  AND NOT EXISTS ( \
@@ -1906,6 +1909,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
              FROM incidents i \
              JOIN targets t ON t.id = i.target_id AND t.org_id = i.org_id \
              WHERE i.state = 'triggered' AND i.ended_at IS NULL \
+                 AND i.recovering_since IS NULL \
                  AND i.next_escalation_at IS NULL \
                  AND t.renotify_interval_secs > 0 \
                  AND {not_held} \
@@ -1990,6 +1994,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                      AND m.channel_id IS NULL AND m.transport = 'maintenance' \
                ) \
                AND i.state = 'triggered' AND i.ended_at IS NULL \
+               AND i.recovering_since IS NULL \
                AND i.target_id IS NOT NULL \
                AND held.held_at IS NOT NULL \
                AND NOT EXISTS ( \
@@ -2049,7 +2054,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                  WHERE h.incident_id = i.id AND h.org_id = i.org_id \
                    AND h.channel_id IS NULL AND h.transport = 'damped' \
              ) held ON TRUE \
-             WHERE i.state = 'triggered' \
+             WHERE i.state = 'triggered' AND i.recovering_since IS NULL \
                AND (i.target_id IS NOT NULL OR i.target_name IS NULL) \
                AND held.held_at IS NOT NULL \
                AND held.held_at <= $1 \

@@ -189,7 +189,7 @@ pub(crate) fn validate_new_target(
             ));
         }
         new.alert_confirmations = 1;
-        reject_manual_recovery_period(new.recovery_period_secs)?;
+        reject_manual_recovery_period(new.recovery_period())?;
     }
     let requested = new.interval.as_secs() as i64;
     let kind_floor = min_interval_secs_for_kind(new.check.kind()) as i64;
@@ -212,7 +212,7 @@ pub(crate) fn validate_new_target(
     validate_alerts(&new.alerts)?;
     validate_alert_confirmations(Some(new.alert_confirmations))?;
     validate_renotify_interval(Some(new.renotify_interval_secs))?;
-    validate_recovery_period(Some(new.recovery_period_secs))?;
+    validate_recovery_period(new.recovery_period_secs)?;
     validate_group_name(new.group_name.as_deref())
 }
 

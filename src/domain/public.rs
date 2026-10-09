@@ -49,6 +49,51 @@ pub enum DayState {
 /// When an incident ran, and how bad it was.
 pub type ImpactSpan = (DateTime<Utc>, DateTime<Utc>, IncidentImpact);
 
+/// A stretch inside an incident when the monitor was back up, until a failure
+/// that confirmed inside its recovery period took it down again. It belongs to
+/// the incident but is not downtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Recovered {
+    pub from: DateTime<Utc>,
+    pub until: DateTime<Utc>,
+}
+
+impl Recovered {
+    /// The stretches a stored incident keeps as paired arrays.
+    pub fn paired(from: Vec<DateTime<Utc>>, until: Vec<DateTime<Utc>>) -> Vec<Self> {
+        from.into_iter()
+            .zip(until)
+            .map(|(from, until)| Self { from, until })
+            .collect()
+    }
+}
+
+/// The parts of an incident the service was down: from `started` to `ended`
+/// (`None` while open, and so is the last part) less the stretches it was back
+/// up in.
+pub fn outage_parts(
+    started: DateTime<Utc>,
+    ended: Option<DateTime<Utc>>,
+    recovered: &[Recovered],
+) -> Vec<(DateTime<Utc>, Option<DateTime<Utc>>)> {
+    let end = ended.unwrap_or(DateTime::<Utc>::MAX_UTC);
+    let mut stretches: Vec<&Recovered> = recovered.iter().filter(|r| r.until > r.from).collect();
+    stretches.sort_by_key(|r| r.from);
+    let mut parts = Vec::with_capacity(stretches.len() + 1);
+    let mut from = started;
+    for r in stretches {
+        if r.from > from {
+            parts.push((from, Some(r.from.min(end))));
+        }
+        from = from.max(r.until);
+        if from >= end {
+            return parts;
+        }
+    }
+    parts.push((from, ended));
+    parts
+}
+
 /// Time one monitor or component spent in each outage state over a range. An
 /// instant covered by two incidents counts once, at the worse of them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -321,6 +366,10 @@ pub struct PublicIncident {
     /// Most recent phase from operator updates; `investigating` if none.
     pub status_phase: IncidentStatusPhase,
     pub updates: Vec<PublicIncidentUpdate>,
+    /// Stretches it was back up in before the failure returned; not downtime.
+    /// Kept off the wire.
+    #[serde(skip)]
+    pub recovered: Vec<Recovered>,
     /// Present only once an operator publishes a postmortem; never set on list
     /// views.
     #[serde(default)]
@@ -423,6 +472,38 @@ mod tests {
 
     fn mins(secs: i64) -> i64 {
         secs / 60
+    }
+
+    #[test]
+    fn an_incident_is_down_except_where_it_had_recovered() {
+        let recovered = [
+            Recovered {
+                from: at(70),
+                until: at(80),
+            },
+            Recovered {
+                from: at(20),
+                until: at(30),
+            },
+        ];
+        assert_eq!(
+            outage_parts(at(0), Some(at(100)), &recovered),
+            [
+                (at(0), Some(at(20))),
+                (at(30), Some(at(70))),
+                (at(80), Some(at(100)))
+            ]
+        );
+        assert_eq!(
+            outage_parts(at(0), None, &recovered).last(),
+            Some(&(at(80), None)),
+            "still down"
+        );
+        assert_eq!(
+            outage_parts(at(0), Some(at(25)), &recovered),
+            [(at(0), Some(at(20)))],
+            "ended while recovered"
+        );
     }
 
     #[test]

@@ -26,7 +26,8 @@ use crate::domain::{
     ComponentHistoryResponse, DayState, Downtime, ImpactSpan, IncidentSeverity,
     IncidentStatusPhase, Locale, OrgId, PublicComponent, PublicComponentGroup,
     PublicComponentStatus, PublicIncident, PublicIncidentUpdate, PublicMaintenance,
-    PublicStatusPage, StatusPageId, stored_incident_impact, uptime_pct_from_downtime,
+    PublicStatusPage, Recovered, StatusPageId, outage_parts, stored_incident_impact,
+    uptime_pct_from_downtime,
 };
 use crate::error::Result;
 use crate::i18n::Tr;
@@ -440,7 +441,7 @@ impl OrgAggregator {
         let rows: Vec<IncidentRow> = sqlx::query_as::<_, IncidentRow>(&format!(
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
-                      i.origin, i.regions_up,
+                      i.origin, i.regions_up, i.recovered_from, i.recovered_until,
                       i.public_title, i.public_description, {kept}
                FROM incidents i
                WHERE i.org_id = $1
@@ -474,7 +475,7 @@ impl OrgAggregator {
         let mut rows: Vec<IncidentRow> = sqlx::query_as::<_, IncidentRow>(&format!(
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
-                      i.origin, i.regions_up,
+                      i.origin, i.regions_up, i.recovered_from, i.recovered_until,
                       i.public_title, i.public_description, {kept}
                FROM incidents i
                WHERE i.org_id = $3
@@ -503,7 +504,8 @@ impl OrgAggregator {
     }
 
     /// 90-day slim incident pool for the popover matcher. 1000-row cap guards
-    /// against an incident-spam tenant blowing the rendered JSON.
+    /// against an incident-spam tenant blowing the rendered JSON. Ends one
+    /// waiting out its recovery where the strip ends it.
     async fn load_marker_windows(
         &self,
         org: OrgId,
@@ -517,7 +519,7 @@ impl OrgAggregator {
         let rows = sqlx::query_as::<_, MarkerWindowRow>(
             r#"SELECT i.id, i.target_id,
                       i.public_title, i.status_at_start,
-                      i.started_at, i.ended_at
+                      i.started_at, COALESCE(i.ended_at, i.recovering_since) AS ended_at
                FROM incidents i
                WHERE i.org_id = $2
                  AND (i.ended_at IS NULL OR i.ended_at >= $1)
@@ -541,7 +543,9 @@ impl OrgAggregator {
     /// manual incidents paint only once published. Visibility still gates the
     /// curated cards, recent list, and popover markers. Paint must be complete
     /// or the strip renders green over a real outage; rows are slim (no titles)
-    /// and bounded by the span window.
+    /// and bounded by the span window. An incident waiting out its recovery
+    /// ends here where the recovery began: the component is back up. One that
+    /// was back up for a while before failing again is split around it.
     async fn load_paint_windows(
         &self,
         org: OrgId,
@@ -556,7 +560,8 @@ impl OrgAggregator {
         let rows = sqlx::query_as::<_, PaintWindowRow>(
             r#"SELECT i.target_id,
                       i.status_at_start, i.severity, i.origin, i.regions_up,
-                      i.started_at, i.ended_at
+                      i.started_at, COALESCE(i.ended_at, i.recovering_since) AS ended_at,
+                      i.recovered_from, i.recovered_until
                FROM incidents i
                WHERE i.org_id = $2
                  AND (i.ended_at IS NULL OR i.ended_at >= $1)
@@ -571,7 +576,7 @@ impl OrgAggregator {
         .fetch_all(&self.pg)
         .await
         .context("load paint windows")?;
-        Ok(rows)
+        Ok(rows.into_iter().flat_map(PaintWindowRow::split).collect())
     }
 
     async fn hydrate_incidents(
@@ -640,6 +645,7 @@ impl OrgAggregator {
                     ),
                     status_phase,
                     updates: my_updates,
+                    recovered: Recovered::paired(r.recovered_from, r.recovered_until),
                     postmortem: None,
                 }
             })
@@ -848,6 +854,8 @@ struct IncidentRow {
     status_at_start: String,
     origin: String,
     regions_up: Option<Vec<String>>,
+    recovered_from: Vec<DateTime<Utc>>,
+    recovered_until: Vec<DateTime<Utc>>,
     public_title: Option<String>,
     #[allow(dead_code)]
     public_description: Option<String>,
@@ -864,7 +872,7 @@ struct MarkerWindowRow {
     ended_at: Option<DateTime<Utc>>,
 }
 
-#[derive(FromRow)]
+#[derive(FromRow, Clone)]
 struct PaintWindowRow {
     target_id: Uuid,
     status_at_start: String,
@@ -873,9 +881,28 @@ struct PaintWindowRow {
     regions_up: Option<Vec<String>>,
     started_at: DateTime<Utc>,
     ended_at: Option<DateTime<Utc>>,
+    recovered_from: Vec<DateTime<Utc>>,
+    recovered_until: Vec<DateTime<Utc>>,
 }
 
 impl PaintWindowRow {
+    /// The stretches of it the component was down, one window each. The
+    /// windows carry no stretches of their own: the split has used them.
+    fn split(mut self) -> Vec<Self> {
+        let recovered = Recovered::paired(
+            std::mem::take(&mut self.recovered_from),
+            std::mem::take(&mut self.recovered_until),
+        );
+        outage_parts(self.started_at, self.ended_at, &recovered)
+            .into_iter()
+            .map(|(started_at, ended_at)| Self {
+                started_at,
+                ended_at,
+                ..self.clone()
+            })
+            .collect()
+    }
+
     fn impact(&self) -> IncidentImpact {
         stored_incident_impact(
             &self.origin,
@@ -1026,6 +1053,8 @@ mod tests {
             regions_up,
             started_at,
             ended_at,
+            recovered_from: Vec::new(),
+            recovered_until: Vec::new(),
         }
     }
 
@@ -1196,6 +1225,30 @@ mod tests {
             component_uptime(&[t], &presence, &[measured, declared], now, 90)[&t].expect("probed");
         // Thirteen hours down out of twenty-four, counted once.
         assert!((45.0..46.0).contains(&pct), "{pct}");
+    }
+
+    #[test]
+    fn a_stretch_back_up_inside_an_incident_is_neither_down_nor_painted() {
+        let t = Uuid::now_v7();
+        let now = Utc.with_ymd_and_hms(2026, 5, 13, 12, 0, 0).unwrap();
+        let presence = [presence_row(t, now - ChronoDuration::days(1))];
+        let mut w = window(
+            t,
+            "monitor",
+            "major",
+            "down",
+            None,
+            now - ChronoDuration::hours(12),
+            Some(now - ChronoDuration::hours(6)),
+        );
+        w.recovered_from = vec![now - ChronoDuration::hours(11)];
+        w.recovered_until = vec![now - ChronoDuration::hours(7)];
+        let parts = w.split();
+        assert_eq!(parts.len(), 2);
+        assert!(parts.iter().all(|p| p.recovered_from.is_empty()));
+        let pct = component_uptime(&[t], &presence, &parts, now, 90)[&t].expect("probed");
+        // Two hours down out of twenty-four, not six.
+        assert!((91.6..91.7).contains(&pct), "{pct}");
     }
 
     #[test]

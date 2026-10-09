@@ -371,7 +371,7 @@ impl McpServer {
             alert_confirmations: args.alert_confirmations.unwrap_or(2),
             notify_recovery: args.notify_recovery.unwrap_or(true),
             renotify_interval_secs: args.renotify_interval_secs.unwrap_or(3600),
-            recovery_period_secs: args.recovery_period_secs.unwrap_or(0),
+            recovery_period_secs: args.recovery_period_secs,
             group_name: args.group_name.as_deref().map(str::trim).and_then(|g| {
                 if g.is_empty() {
                     None

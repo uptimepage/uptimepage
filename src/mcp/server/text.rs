@@ -90,7 +90,7 @@ pub(super) fn create_prompt_lines(
     });
     // A manual monitor closes on the state it is set to, said by its alert line.
     if !matches!(new.check, CheckSpec::Manual(_)) {
-        lines.push(match new.recovery_period_secs {
+        lines.push(match new.recovery_period() {
             0 => "closes its incident once checks pass again".to_string(),
             secs => format!("closes its incident once checks have passed for {secs}s"),
         });

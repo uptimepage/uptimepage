@@ -305,7 +305,9 @@ impl InMemoryIncidentOpsStore {
             expect_generation,
             |i| {
                 i.state = IncidentState::Resolved;
-                i.ended_at.get_or_insert_with(Utc::now);
+                let recovered = i.recovering_since.take();
+                i.ended_at
+                    .get_or_insert_with(|| recovered.unwrap_or_else(Utc::now));
                 i.resolved_by = actor.user_id();
                 i.next_escalation_at = None;
             },
@@ -545,6 +547,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             escalation_level: 0,
             escalation_round: 0,
             next_escalation_at: None,
+            recovering_since: None,
             check_count: 0,
             error_sample: None,
             regions_down: Vec::new(),
@@ -626,7 +629,9 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
                 None,
                 |i| {
                     i.state = IncidentState::Resolved;
-                    i.ended_at.get_or_insert_with(Utc::now);
+                    let recovered = i.recovering_since.take();
+                    i.ended_at
+                        .get_or_insert_with(|| recovered.unwrap_or_else(Utc::now));
                     i.resolved_by = None;
                     i.next_escalation_at = None;
                 },
@@ -1039,6 +1044,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             i.state == IncidentState::Triggered
                 && !i.monitor_deleted()
                 && i.next_escalation_at.is_some_and(|t| t <= now)
+                && i.recovering_since.is_none()
         }) {
             if out.len() >= limit {
                 break;
@@ -1075,6 +1081,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             .filter(|i| {
                 i.state == IncidentState::Triggered
                     && !i.monitor_deleted()
+                    && i.recovering_since.is_none()
                     && i.started_at <= cutoff
                     && i.started_at >= since
                     && i.escalation_policy_id.is_none()
@@ -1218,7 +1225,10 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             .incidents
             .iter()
             .filter(|i| {
-                if i.state != IncidentState::Triggered || i.target_id.is_none() {
+                if i.state != IncidentState::Triggered
+                    || i.target_id.is_none()
+                    || i.recovering_since.is_some()
+                {
                     return false;
                 }
                 let Some(at) = held_at(i.id) else {
@@ -1255,7 +1265,10 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         Ok(g.incidents
             .iter()
             .filter(|i| {
-                if i.state != IncidentState::Triggered || i.monitor_deleted() {
+                if i.state != IncidentState::Triggered
+                    || i.monitor_deleted()
+                    || i.recovering_since.is_some()
+                {
                     return false;
                 }
                 let Some(held_at) = g

@@ -34,8 +34,9 @@ use crate::mcp::schema::{
     LatencyPoint, ListIncidentsArgs, ListMaintenanceArgs, ListMonitorsArgs, ListStatusPagesArgs,
     MaintenanceIdArg, MaintenanceList, MaintenanceWindowView, MetricCount, MonitorDetail,
     MonitorHistory, MonitorList, MonitorListItem, NoisyMonitor, OrgHealth, OrgUsage, Quota,
-    RegionList, StatusPageComponent as McpComponent, StatusPageDetail, StatusPageList,
-    StatusPageSummary, TagItem, TagList, VariableList, VariableSummary, WorstMonitor,
+    RecoveredStretch, RegionList, StatusPageComponent as McpComponent, StatusPageDetail,
+    StatusPageList, StatusPageSummary, TagItem, TagList, VariableList, VariableSummary,
+    WorstMonitor,
 };
 
 use super::McpServer;
@@ -519,8 +520,17 @@ impl McpServer {
             .map(|inc| IncidentWindow {
                 opened_at: inc.started_at.to_rfc3339(),
                 resolved_at: inc.ended_at.map(|e| e.to_rfc3339()),
+                recovering_since: inc.recovering_since.map(|r| r.to_rfc3339()),
                 counts_as_downtime: inc.counts_as_downtime,
                 impact: inc.impact().as_str().to_string(),
+                recovered: inc
+                    .recovered
+                    .iter()
+                    .map(|r| RecoveredStretch {
+                        from: r.from.to_rfc3339(),
+                        until: r.until.to_rfc3339(),
+                    })
+                    .collect(),
             })
             .collect();
 

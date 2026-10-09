@@ -37,6 +37,10 @@ import { parseDuration } from "./_duration.js";
         KIND_INTERVALS = JSON.parse(form.dataset.kindIntervals || "{}");
     } catch { /* falls back to the floors */ }
     const pickerFloor = (kind) => KIND_INTERVALS[kind]?.min || kindFloor(kind);
+    let KIND_RECOVERY = {};
+    try {
+        KIND_RECOVERY = JSON.parse(form.dataset.kindRecovery || "{}");
+    } catch { /* the rendered hold stays */ }
     const suggested = (kind) => KIND_INTERVALS[kind]?.default;
     // Floors reach twelve hours, and "43200 seconds" reads as nothing.
     const floorLabel = (s) =>
@@ -145,6 +149,15 @@ import { parseDuration } from "./_duration.js";
         if (policy) policy.disabled = flow && flowRegions < 2;
     }
 
+    // A new monitor follows its kind's recovery hold until someone picks one;
+    // a hold carried over from a real monitor counts as picked.
+    function applyKindRecoveryDefault(kind) {
+        if (form.dataset.mode !== "create" || form.dataset.recoveryTouched) return;
+        const want = form.querySelector(
+            `[data-recovery-period] input[value='${KIND_RECOVERY[kind]}']`);
+        if (want) want.checked = true;
+    }
+
     // The kind's own value field, not the method/record-type select before it.
     function focusFirstField(kind) {
         const panel = form.querySelector(`fieldset[data-variant='${kind}']`);
@@ -159,11 +172,16 @@ import { parseDuration } from "./_duration.js";
             form.dataset.intervalTouched = "1";
             return;
         }
+        if (evt.target.name === "recovery_period_secs") {
+            form.dataset.recoveryTouched = "1";
+            return;
+        }
         if (evt.target.name !== "check_type") return;
         const want = evt.target.value;
         document.querySelectorAll("[data-variant]").forEach(el => {
             el.classList.toggle("hidden", el.dataset.variant !== want);
         });
+        applyKindRecoveryDefault(want);
         applyKindIntervalDefaults(want);
         applyPassiveKind(want);
         applyFlowRegions(want);

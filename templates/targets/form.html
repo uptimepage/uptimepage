@@ -13,7 +13,8 @@
         data-kind-floors="{{ form.kind_floors_json() }}"
         data-passive-kinds="{{ form.passive_kinds_json() }}"
         data-kind-intervals="{{ form.kind_intervals_json() }}"
-        {% if form.interval_pinned %}data-interval-touched="1"{% endif %}
+        data-kind-recovery="{{ form.kind_recovery_json() }}"
+        {% if form.carried_over %}data-interval-touched="1" data-recovery-touched="1"{% endif %}
         novalidate
         class="mx-auto w-full max-w-7xl">
 

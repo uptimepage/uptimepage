@@ -89,7 +89,7 @@ async fn make_target(store: &dyn TargetStore, org: OrgId, name: &str, secret: bo
         alert_confirmations: 2,
         notify_recovery: true,
         renotify_interval_secs: 3600,
-        recovery_period_secs: 0,
+        recovery_period_secs: None,
         group_name: None,
         owner_user_id: None,
         regions: None,
@@ -264,6 +264,8 @@ async fn share_incidents_rows_do_not_link_to_the_incident_page() {
         regions_down: Vec::new(),
         regions_up: Vec::new(),
         origin: Default::default(),
+        recovering_since: None,
+        recovered: Vec::new(),
     });
 
     let (status, body) = get(&router, &format!("/m/{token}/incidents")).await;

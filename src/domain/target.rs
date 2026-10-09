@@ -19,6 +19,10 @@ pub const MAX_TAG_LEN: usize = 50;
 /// writer reads back over the hold to date the recovery, so it is bounded.
 pub const MAX_RECOVERY_PERIOD_SECS: u32 = 1800;
 
+/// The hold a monitor probed for availability gets unless it asks for another,
+/// so a service that falls over again within minutes stays one incident.
+pub const DEFAULT_RECOVERY_PERIOD_SECS: u32 = 180;
+
 /// How many regions must agree a monitor is down before it alerts. `Any`,
 /// `Majority`, and `All` track the live region count; `Count` is a fixed number
 /// the user chose. Resolved to a concrete threshold by [`Self::required`].
@@ -161,10 +165,11 @@ pub struct NewTarget {
     pub renotify_interval_secs: u32,
     /// Seconds a recovered monitor must stay healthy before its incident
     /// closes; a failure confirmed inside the window keeps the incident open.
-    /// 0 (the default) closes on the confirming checks alone. At most 1800.
+    /// 0 closes on the confirming checks alone. At most 1800. Omit for the
+    /// default: 180 on an HTTP, TCP, ping, DNS or flow monitor, 0 on the rest.
     #[serde(default)]
     #[schema(maximum = 1800)]
-    pub recovery_period_secs: u32,
+    pub recovery_period_secs: Option<u32>,
     /// Detection policy. Omit to take the derived default — quorum-majority when
     /// the monitor lands in more than one region, any-down for a single region.
     #[serde(default)]
@@ -183,6 +188,12 @@ pub struct NewTarget {
 }
 
 impl NewTarget {
+    /// The hold asked for, or the default for the monitor's kind.
+    pub fn recovery_period(&self) -> u32 {
+        self.recovery_period_secs
+            .unwrap_or_else(|| self.check.default_recovery_period_secs())
+    }
+
     /// Makes the caller the owner when the body left the field out. An
     /// explicit null stays unowned.
     pub fn default_owner(&mut self, caller: UserId) {

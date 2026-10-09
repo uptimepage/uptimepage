@@ -66,6 +66,7 @@ fn seed_triggered(store: &InMemoryIncidentOpsStore) -> Uuid {
         regions_up: Vec::new(),
         created_at: now,
         updated_at: now,
+        recovering_since: None,
     });
     id
 }

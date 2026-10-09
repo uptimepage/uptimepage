@@ -112,7 +112,7 @@ fn public_target(name: &str) -> NewTarget {
         alert_confirmations: 2,
         notify_recovery: true,
         renotify_interval_secs: 3600,
-        recovery_period_secs: 0,
+        recovery_period_secs: None,
         group_name: None,
         owner_user_id: None,
         regions: None,
@@ -817,7 +817,7 @@ async fn build_component_state_follows_confirmed_incidents() {
             .await
             .expect("add major component");
 
-        let agg = OrgAggregator::new(pool, ch, AggregatorConfig::default(), None);
+        let agg = OrgAggregator::new(pool.clone(), ch, AggregatorConfig::default(), None);
         let (page, _markers, _names, _hidden) =
             agg.build(page_id, org_id).await.expect("aggregator build");
 
@@ -868,6 +868,35 @@ async fn build_component_state_follows_confirmed_incidents() {
             let pct = c.uptime_pct.expect("probed component has an uptime");
             assert!((99.5..99.99).contains(&pct), "{} uptime {pct}", c.name);
         }
+
+        // Waiting out its recovery, the major one is back up: the dot turns
+        // green while the incident stays listed until the recovery holds.
+        sqlx::query(
+            "UPDATE incidents SET recovering_since = now() - interval '1 minute' \
+             WHERE org_id = $1 AND target_id = $2",
+        )
+        .bind(org_id.0)
+        .bind(major_id)
+        .execute(&pool)
+        .await
+        .expect("mark recovering");
+        let (page, _markers, _names, _hidden) = agg
+            .build(page_id, org_id)
+            .await
+            .expect("aggregator rebuild");
+        let major = page
+            .groups
+            .iter()
+            .flat_map(|g| &g.components)
+            .find(|c| c.id == major_id)
+            .expect("component present");
+        assert_eq!(major.current_status, PublicComponentStatus::Operational);
+        assert!(
+            page.active_incidents
+                .iter()
+                .any(|i| i.component_id == Some(major_id)),
+            "still open until the recovery holds"
+        );
     };
 
     let result = AssertUnwindSafe(body).catch_unwind().await;

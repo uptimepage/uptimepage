@@ -31,7 +31,7 @@ use tokio::time::{MissedTickBehavior, interval};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::domain::{CheckResult, CheckStatus, NotificationReason, OrgId, Target};
+use crate::domain::{CheckResult, CheckStatus, NotificationReason, OrgId, Recovered, Target};
 use crate::error::Result;
 use crate::escalation::IncidentSignal;
 use crate::storage::ResultsStore;
@@ -44,7 +44,7 @@ mod pg;
 #[cfg(test)]
 mod tests;
 
-pub use decide::{Action, decide, decide_multi};
+pub use decide::{Action, Hold, decide, decide_multi};
 pub use memory::{InMemoryIncidentStore, MemIncident};
 pub use pg::PgIncidentStore;
 
@@ -90,6 +90,17 @@ pub trait IncidentStore: Send + Sync {
         incident_id: Uuid,
         error_sample: Option<String>,
     ) -> Result<()>;
+    /// Mark a still-open incident recovering since `since`, or no longer
+    /// recovering with `None`.
+    async fn set_recovering(
+        &self,
+        org: OrgId,
+        incident_id: Uuid,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<()>;
+    /// Keep a stretch a still-open incident was back up in, once however often
+    /// it is sent, and drop the recovering mark that stretch began.
+    async fn relapse(&self, org: OrgId, incident_id: Uuid, recovered: Recovered) -> Result<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +114,10 @@ pub struct OpenIncident {
     pub regions_down: Vec<String>,
     /// The worst status the outage has reached, kept in `status_at_start`.
     pub worst_status: CheckStatus,
+    /// When the recovery it is holding began; `None` while it is down.
+    pub recovering_since: Option<DateTime<Utc>>,
+    /// Stretches already kept as back up, so a scan does not keep one twice.
+    pub recovered: Vec<Recovered>,
 }
 
 #[derive(Debug, Clone)]
@@ -376,15 +391,12 @@ impl IncidentWriter {
 
         let confirmations = target.alert_confirmations.max(1);
         let quorum = target.region_policy.required(by_region.len());
-        let recovery = ChronoDuration::seconds(i64::from(target.recovery_period_secs));
-        let actions = decide_multi(
-            target.id,
-            &open,
-            &by_region,
-            confirmations,
-            quorum,
-            recovery,
-        );
+        let hold = Hold {
+            period: ChronoDuration::seconds(i64::from(target.recovery_period_secs)),
+            interval: ChronoDuration::from_std(target.interval).unwrap_or(ChronoDuration::zero()),
+            now,
+        };
+        let actions = decide_multi(target.id, &open, &by_region, confirmations, quorum, hold);
         for action in actions {
             match action {
                 Action::None => {}
@@ -421,6 +433,19 @@ impl IncidentWriter {
                 } => {
                     self.incident_store
                         .escalate(org, incident_id, error_sample)
+                        .await?;
+                }
+                Action::Recovering { incident_id, since } => {
+                    self.incident_store
+                        .set_recovering(org, incident_id, since)
+                        .await?;
+                }
+                Action::Relapsed {
+                    incident_id,
+                    recovered,
+                } => {
+                    self.incident_store
+                        .relapse(org, incident_id, recovered)
                         .await?;
                 }
             }

@@ -396,12 +396,27 @@ pub struct IncidentWindow {
     pub opened_at: String,
     /// RFC 3339 incident end, or `null` while ongoing.
     pub resolved_at: Option<String>,
+    /// RFC 3339 moment the monitor came back up while the incident waits out
+    /// its recovery period. `uptime` stops counting the window here.
+    pub recovering_since: Option<String>,
     /// `false` when this window is listed but kept out of `uptime`.
     pub counts_as_downtime: bool,
     /// `major_outage`, `partial_outage` or `degraded`. A counted window
     /// explains the `uptime` gap by it: a major outage in full, a partial
     /// outage for 30% of its length, a degraded one not at all.
     pub impact: String,
+    /// Stretches inside the window the monitor was back up in before the
+    /// failure returned. `uptime` does not count them.
+    pub recovered: Vec<RecoveredStretch>,
+}
+
+/// A stretch an incident was back up in.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RecoveredStretch {
+    /// RFC 3339 start.
+    pub from: String,
+    /// RFC 3339 end, when the failure came back.
+    pub until: String,
 }
 
 /// One region's share of a monitor's window, straight from its own checks.
@@ -622,8 +637,9 @@ pub struct CreateMonitorArgs {
     pub renotify_interval_secs: Option<u32>,
     /// Seconds a recovered monitor must stay healthy before its incident
     /// closes; a failure confirmed inside the window keeps the incident open,
-    /// so a flapping service reads as one outage. 0 to 1800, defaults to 0,
-    /// which closes on the confirming checks alone. Not for a manual monitor.
+    /// so a flapping service reads as one outage. 0 to 1800; 0 closes on the
+    /// confirming checks alone. Defaults to 180 on an HTTP, TCP, ping, DNS or
+    /// flow monitor and 0 on the rest. Not for a manual monitor.
     pub recovery_period_secs: Option<u32>,
     /// Detection quorum across probe regions.
     pub region_policy: Option<RegionPolicyArg>,

@@ -80,6 +80,7 @@ impl PublicSource for TwoIncidentSource {
                     generated: false,
                 }],
                 postmortem: None,
+                recovered: Vec::new(),
             },
             PublicIncident {
                 id: Uuid::parse_str("00000000-0000-0000-0000-000000000c02").unwrap(),
@@ -93,6 +94,7 @@ impl PublicSource for TwoIncidentSource {
                 status_phase: IncidentStatusPhase::Resolved,
                 updates: vec![],
                 postmortem: None,
+                recovered: Vec::new(),
             },
         ];
         Ok(CursorPage::new(items, None))

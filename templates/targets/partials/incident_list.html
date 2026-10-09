@@ -79,6 +79,7 @@
               {% when Some with (ts) %}<span aria-hidden="true">→</span><span class="sr-only">until</span><time class="font-mono tabular-nums" datetime="{{ ts|iso_ts }}" data-tz="exact">{{ ts|human_ts }}</time>
               {% when None %}<span aria-hidden="true">→</span><span class="sr-only">until</span><span>now</span>
             {% endmatch %}
+            {% if inc.recovering %}<span aria-hidden="true">·</span><span class="text-quiet">back up, waiting out its recovery period</span>{% endif %}
             {% if !inc.uptime_note.is_empty() %}<span aria-hidden="true">·</span><span class="text-quiet">{{ inc.uptime_note }}</span>{% endif %}
           </p>
         </td>

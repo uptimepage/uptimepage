@@ -91,6 +91,7 @@ impl PublicSource for FakePublicSource {
                 generated: false,
             }],
             postmortem: None,
+            recovered: Vec::new(),
         };
         let maintenance = PublicMaintenance {
             id: Uuid::nil(),
@@ -153,6 +154,7 @@ impl PublicSource for FakePublicSource {
             status_phase: IncidentStatusPhase::Investigating,
             updates: Vec::new(),
             postmortem: None,
+            recovered: Vec::new(),
         };
         Ok(CursorPage::new(vec![item], None))
     }
@@ -177,6 +179,7 @@ impl PublicSource for FakePublicSource {
             status_phase: IncidentStatusPhase::Investigating,
             updates: Vec::new(),
             postmortem: None,
+            recovered: Vec::new(),
         })
     }
 

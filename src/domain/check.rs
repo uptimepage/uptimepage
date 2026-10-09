@@ -38,6 +38,11 @@ impl CheckSpec {
         "flow",
     ];
 
+    /// See [`default_recovery_period_secs_for_kind`].
+    pub fn default_recovery_period_secs(&self) -> u32 {
+        default_recovery_period_secs_for_kind(self.kind())
+    }
+
     pub fn kind(&self) -> &'static str {
         match self {
             CheckSpec::Http(_) => "http",
@@ -129,6 +134,18 @@ pub fn min_interval_secs_for_kind(kind: &str) -> u64 {
         "heartbeat" => EVALUATION_CADENCE_MIN_SECS,
         "manual" => MANUAL_EVALUATION_SECS,
         _ => 10,
+    }
+}
+
+/// The recovery hold a new monitor of this kind gets unless it asks for
+/// another. Only a monitor probed for availability gets one. An expiry check
+/// runs hours apart and a heartbeat waits on the job's next ping, so a hold
+/// would keep a recovered incident open until then; a manual monitor closes on
+/// the state it is set to.
+pub fn default_recovery_period_secs_for_kind(kind: &str) -> u32 {
+    match kind {
+        "http" | "tcp" | "ping" | "dns" | "flow" => super::target::DEFAULT_RECOVERY_PERIOD_SECS,
+        _ => 0,
     }
 }
 

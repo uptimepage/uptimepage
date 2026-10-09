@@ -646,6 +646,7 @@ impl InMemoryTargetStore {
 
     fn materialize(new: NewTarget, source: WriteSource) -> Target {
         let now = Utc::now();
+        let recovery_period_secs = new.recovery_period();
         Target {
             id: Uuid::now_v7(),
             name: new.name,
@@ -657,7 +658,7 @@ impl InMemoryTargetStore {
             alert_confirmations: new.alert_confirmations.max(1),
             notify_recovery: new.notify_recovery,
             renotify_interval_secs: new.renotify_interval_secs,
-            recovery_period_secs: new.recovery_period_secs,
+            recovery_period_secs,
             region_policy: new.region_policy.unwrap_or_default(),
             group_name: new.group_name,
             owner_user_id: new.owner_user_id.flatten(),
@@ -1313,7 +1314,7 @@ mod tests {
                     alert_confirmations: 2,
                     notify_recovery: true,
                     renotify_interval_secs: 3600,
-                    recovery_period_secs: 0,
+                    recovery_period_secs: None,
                     group_name: None,
                     owner_user_id: None,
                     regions: None,
@@ -1390,7 +1391,7 @@ mod tests {
             alert_confirmations: 2,
             notify_recovery: true,
             renotify_interval_secs: 3600,
-            recovery_period_secs: 0,
+            recovery_period_secs: None,
             group_name: None,
             owner_user_id: None,
             regions: None,

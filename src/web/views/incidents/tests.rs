@@ -57,6 +57,7 @@ pub(super) fn ops(state: IncidentState) -> OpsIncident {
         regions_up: Vec::new(),
         created_at: Utc::now(),
         updated_at: Utc::now(),
+        recovering_since: None,
     }
 }
 

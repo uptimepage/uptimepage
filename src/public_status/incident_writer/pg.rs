@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-use crate::domain::{ActorType, CheckStatus, IncidentEventKind, OrgId};
+use crate::domain::{ActorType, CheckStatus, IncidentEventKind, OrgId, Recovered};
 use crate::error::Result;
 
 use super::{IncidentStore, NewOpenIncident, OpenIncident};
@@ -32,6 +32,9 @@ struct OpenIncidentRow {
     region: Option<String>,
     regions_down: Option<Vec<String>>,
     status_at_start: String,
+    recovering_since: Option<DateTime<Utc>>,
+    recovered_from: Vec<DateTime<Utc>>,
+    recovered_until: Vec<DateTime<Utc>>,
 }
 
 impl OpenIncidentRow {
@@ -45,6 +48,8 @@ impl OpenIncidentRow {
             // Unreadable reads as the worst, so it is never escalated past.
             worst_status: CheckStatus::from_label(&self.status_at_start)
                 .unwrap_or(CheckStatus::Down),
+            recovering_since: self.recovering_since,
+            recovered: Recovered::paired(self.recovered_from, self.recovered_until),
         }
     }
 }
@@ -53,7 +58,8 @@ impl OpenIncidentRow {
 impl IncidentStore for PgIncidentStore {
     async fn open_for_target(&self, org: OrgId, target_id: Uuid) -> Result<Option<OpenIncident>> {
         let row: Option<OpenIncidentRow> = sqlx::query_as::<_, OpenIncidentRow>(
-            r#"SELECT id, target_id, started_at, region, regions_down, status_at_start
+            r#"SELECT id, target_id, started_at, region, regions_down, status_at_start,
+                      recovering_since, recovered_from, recovered_until
                FROM incidents
                WHERE target_id = $1 AND org_id = $2 AND ended_at IS NULL
                  AND origin = 'monitor'
@@ -88,7 +94,7 @@ impl IncidentStore for PgIncidentStore {
         }
         let rows: Vec<Row> = sqlx::query_as::<_, Row>(
             r#"SELECT i.org_id, i.id, i.target_id, i.started_at, i.region, i.regions_down,
-                      i.status_at_start
+                      i.status_at_start, i.recovering_since, i.recovered_from, i.recovered_until
                FROM incidents i
                JOIN unnest($1::uuid[], $2::uuid[]) AS pairs(org_id, target_id)
                  ON i.org_id = pairs.org_id AND i.target_id = pairs.target_id
@@ -251,6 +257,7 @@ impl IncidentStore for PgIncidentStore {
                           state = 'resolved',
                           resolved_by = NULL,
                           next_escalation_at = NULL,
+                          recovering_since = NULL,
                           closing_notice_at = now(),
                           updated_at = now()
                     WHERE id = $1 AND org_id = $3 AND ended_at IS NULL
@@ -271,6 +278,49 @@ impl IncidentStore for PgIncidentStore {
         .await
         .context("incident close")?;
         Ok(row.is_some())
+    }
+
+    async fn set_recovering(
+        &self,
+        org: OrgId,
+        incident_id: Uuid,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE incidents SET recovering_since = $3, updated_at = now() \
+             WHERE id = $1 AND org_id = $2 AND ended_at IS NULL",
+        )
+        .bind(incident_id)
+        .bind(org.0)
+        .bind(since)
+        .execute(&self.pool)
+        .await
+        .context("incident set_recovering")?;
+        Ok(())
+    }
+
+    async fn relapse(&self, org: OrgId, incident_id: Uuid, recovered: Recovered) -> Result<()> {
+        // Every SET reads the row as it was, so a stretch already kept is
+        // left as it is and the mark goes only if this stretch began it.
+        sqlx::query(
+            "UPDATE incidents \
+                SET recovered_from = CASE WHEN $3 = ANY(recovered_from) THEN recovered_from \
+                                          ELSE array_append(recovered_from, $3) END, \
+                    recovered_until = CASE WHEN $3 = ANY(recovered_from) THEN recovered_until \
+                                           ELSE array_append(recovered_until, $4) END, \
+                    recovering_since = CASE WHEN recovering_since = $3 THEN NULL \
+                                            ELSE recovering_since END, \
+                    updated_at = now() \
+              WHERE id = $1 AND org_id = $2 AND ended_at IS NULL",
+        )
+        .bind(incident_id)
+        .bind(org.0)
+        .bind(recovered.from)
+        .bind(recovered.until)
+        .execute(&self.pool)
+        .await
+        .context("incident relapse")?;
+        Ok(())
     }
 
     async fn widen(&self, org: OrgId, incident_id: Uuid, regions: &[String]) -> Result<()> {

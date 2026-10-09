@@ -1042,7 +1042,7 @@ fn a_creation_prompt_states_every_setting_it_would_apply() {
         alert_confirmations: 5,
         notify_recovery: false,
         renotify_interval_secs: 0,
-        recovery_period_secs: 600,
+        recovery_period_secs: Some(600),
         group_name: Some("API".into()),
         owner_user_id: None,
         regions: None,
@@ -1075,13 +1075,13 @@ fn a_creation_prompt_states_every_setting_it_would_apply() {
     // operator is approving them either way.
     new.notify_recovery = true;
     new.renotify_interval_secs = 3_600;
-    new.recovery_period_secs = 0;
+    new.recovery_period_secs = None;
     new.tags.clear();
     new.group_name = None;
     new.alerts = TargetAlerts::default();
     let lines = create_prompt_lines(&new, &regions, None, None).join("\n");
     assert!(lines.contains("first reminder after 3600s"));
-    assert!(lines.contains("closes its incident once checks pass again"));
+    assert!(lines.contains("closes its incident once checks have passed for 180s"));
     assert!(!lines.contains("tags:"));
     // Silence is the one state worth stating outright.
     assert!(lines.contains("alerts nobody unless a channel's tag rule covers its tags"));
@@ -1806,6 +1806,8 @@ fn incident_detail_maps_state_severity_and_updates() {
         regions_down: vec!["us-east".into()],
         regions_up: vec!["eu-helsinki".into()],
         origin: Default::default(),
+        recovering_since: None,
+        recovered: Vec::new(),
     };
     let page = Uuid::now_v7();
     let d = incident_detail(&inc, &[page]);
@@ -1844,6 +1846,8 @@ fn incident_detail_names_a_deleted_monitor() {
         regions_down: Vec::new(),
         regions_up: Vec::new(),
         origin: Default::default(),
+        recovering_since: None,
+        recovered: Vec::new(),
     };
     let d = incident_detail(&inc, &[]);
     assert!(d.monitor_deleted);

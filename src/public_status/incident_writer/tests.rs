@@ -131,7 +131,7 @@ fn decide_requires_cross_region_cause_consensus_and_reports_it() {
         )
     });
 
-    match decide_multi(target, &[], &by_region, 2, 2, ChronoDuration::zero())
+    match decide_multi(target, &[], &by_region, 2, 2, Hold::NONE)
         .into_iter()
         .next()
     {
@@ -169,7 +169,7 @@ fn cause_tally_counts_only_failing_regions() {
         by_region,
         2,
         quorum,
-        ChronoDuration::zero(),
+        Hold::NONE,
     )
     .as_slice()
     {
@@ -207,7 +207,7 @@ fn decide_names_the_failing_side_when_every_region_sees_a_dead_origin() {
         )
     });
 
-    match decide_multi(target, &[], &by_region, 2, 2, ChronoDuration::zero())
+    match decide_multi(target, &[], &by_region, 2, 2, Hold::NONE)
         .into_iter()
         .next()
     {
@@ -246,7 +246,7 @@ fn decide_will_not_blame_the_edge_on_one_regions_evidence() {
         ),
     ];
 
-    match decide_multi(target, &[], &by_region, 2, 2, ChronoDuration::zero())
+    match decide_multi(target, &[], &by_region, 2, 2, Hold::NONE)
         .into_iter()
         .next()
     {
@@ -279,7 +279,7 @@ fn decide_does_not_promote_one_regions_guess_to_majority_cause() {
         ),
     ];
 
-    match decide_multi(target, &[], &by_region, 2, 2, ChronoDuration::zero())
+    match decide_multi(target, &[], &by_region, 2, 2, Hold::NONE)
         .into_iter()
         .next()
     {
@@ -333,7 +333,7 @@ fn decide_multi_worst_region_sets_status_not_earliest() {
             ],
         ),
     ];
-    match decide_multi(t, &[], &by_region, 2, 2, ChronoDuration::zero())
+    match decide_multi(t, &[], &by_region, 2, 2, Hold::NONE)
         .into_iter()
         .next()
     {
@@ -357,6 +357,8 @@ fn the_breakdown_only_grows_while_open() {
         regions_down: vec!["fra".into(), "us".into()],
         started_at: ts(base, 0),
         worst_status: CheckStatus::Down,
+        recovering_since: None,
+        recovered: Vec::new(),
     };
     let down = |offsets: &[i64]| -> Vec<CheckResult> {
         offsets
@@ -372,17 +374,7 @@ fn the_breakdown_only_grows_while_open() {
         region("us", down(&[10, 40])),
         region("hel", down(&[50])),
     ];
-    assert!(
-        decide_multi(
-            t,
-            std::slice::from_ref(&open),
-            &by_region,
-            2,
-            2,
-            ChronoDuration::zero()
-        )
-        .is_empty()
-    );
+    assert!(decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 2, Hold::NONE).is_empty());
 
     // Its second failure lands: it joins.
     let by_region = vec![
@@ -390,16 +382,7 @@ fn the_breakdown_only_grows_while_open() {
         region("us", down(&[10, 40])),
         region("hel", down(&[50, 80])),
     ];
-    match decide_multi(
-        t,
-        std::slice::from_ref(&open),
-        &by_region,
-        2,
-        2,
-        ChronoDuration::zero(),
-    )
-    .as_slice()
-    {
+    match decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 2, Hold::NONE).as_slice() {
         [
             Action::Widen {
                 incident_id,
@@ -428,15 +411,7 @@ fn the_breakdown_only_grows_while_open() {
         vec![],
     ] {
         assert!(
-            decide_multi(
-                t,
-                std::slice::from_ref(&full),
-                &by_region,
-                2,
-                2,
-                ChronoDuration::zero()
-            )
-            .is_empty(),
+            decide_multi(t, std::slice::from_ref(&full), &by_region, 2, 2, Hold::NONE).is_empty(),
             "{by_region:?}"
         );
     }
@@ -453,6 +428,8 @@ fn decide_two_good_closes_open_incident() {
         regions_down: Vec::new(),
         started_at: ts(base, 0),
         worst_status: CheckStatus::Down,
+        recovering_since: None,
+        recovered: Vec::new(),
     };
     let results = vec![
         result(target, ts(base, 30), CheckStatus::Down),
@@ -482,6 +459,8 @@ fn decide_single_good_does_not_close_open_incident() {
         regions_down: Vec::new(),
         started_at: ts(base, 0),
         worst_status: CheckStatus::Down,
+        recovering_since: None,
+        recovered: Vec::new(),
     };
     let results = vec![
         result(target, ts(base, 30), CheckStatus::Down),
@@ -502,6 +481,8 @@ fn decide_recovery_run_before_incident_does_not_close() {
         regions_down: Vec::new(),
         started_at: ts(base, 1_000),
         worst_status: CheckStatus::Down,
+        recovering_since: None,
+        recovered: Vec::new(),
     };
     let results = vec![
         result(target, ts(base, 0), CheckStatus::Up),
@@ -527,6 +508,8 @@ fn decide_isolated_good_blip_does_not_close_then_reopen() {
         regions_down: Vec::new(),
         started_at: ts(base, 0),
         worst_status: CheckStatus::Down,
+        recovering_since: None,
+        recovered: Vec::new(),
     };
     let results = vec![
         result(target, ts(base, 30), CheckStatus::Down),
@@ -569,6 +552,8 @@ fn decide_degraded_run_does_not_close_open_incident() {
         regions_down: Vec::new(),
         started_at: ts(base, 0),
         worst_status: CheckStatus::Down,
+        recovering_since: None,
+        recovered: Vec::new(),
     };
     let results = vec![
         result(target, ts(base, 30), CheckStatus::Error),
@@ -630,6 +615,8 @@ fn decide_trailing_degraded_does_not_close() {
         regions_down: Vec::new(),
         started_at: ts(base, 0),
         worst_status: CheckStatus::Down,
+        recovering_since: None,
+        recovered: Vec::new(),
     };
     let results = vec![
         result(target, ts(base, 30), CheckStatus::Down),
@@ -660,6 +647,8 @@ fn decide_running_twice_with_same_data_is_idempotent_for_open() {
         regions_down: Vec::new(),
         started_at: ts(base, 0),
         worst_status: CheckStatus::Down,
+        recovering_since: None,
+        recovered: Vec::new(),
     };
     // Same input, but now we know about the open incident; trailing 'up'
     // run length is 0, so nothing happens.
@@ -695,7 +684,7 @@ fn any_down_opens_from_a_single_bad_region_among_healthy() {
             ],
         ),
     ];
-    match decide_multi(t, &[], &by_region, 2, 1, ChronoDuration::zero()).as_slice() {
+    match decide_multi(t, &[], &by_region, 2, 1, Hold::NONE).as_slice() {
         [Action::Open(n)] => {
             assert_eq!(n.region, None, "combined incident is region-agnostic");
             assert_eq!(n.started_at, ts(b, 0));
@@ -716,6 +705,8 @@ fn any_down_stays_open_while_one_region_still_bad() {
         region: None,
         regions_down: vec!["eu".into()],
         worst_status: CheckStatus::Down,
+        recovering_since: None,
+        recovered: Vec::new(),
     };
     let by_region = vec![
         (
@@ -734,7 +725,7 @@ fn any_down_stays_open_while_one_region_still_bad() {
             ],
         ),
     ];
-    let actions = decide_multi(t, &[open], &by_region, 2, 1, ChronoDuration::zero());
+    let actions = decide_multi(t, &[open], &by_region, 2, 1, Hold::NONE);
     assert!(
         !actions.iter().any(|a| matches!(a, Action::Close { .. })),
         "must not close while a region is still down: {actions:?}"
@@ -756,6 +747,8 @@ fn any_down_closes_when_all_regions_recovered() {
         region: None,
         regions_down: Vec::new(),
         worst_status: CheckStatus::Down,
+        recovering_since: None,
+        recovered: Vec::new(),
     };
     let by_region = vec![
         (
@@ -774,16 +767,7 @@ fn any_down_closes_when_all_regions_recovered() {
             ],
         ),
     ];
-    match decide_multi(
-        t,
-        std::slice::from_ref(&open),
-        &by_region,
-        2,
-        1,
-        ChronoDuration::zero(),
-    )
-    .as_slice()
-    {
+    match decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 1, Hold::NONE).as_slice() {
         [
             Action::Close {
                 incident_id,
@@ -819,7 +803,7 @@ fn quorum_needs_two_regions_before_opening() {
         ),
     ];
     assert!(
-        decide_multi(t, &[], &one_bad, 2, 2, ChronoDuration::zero()).is_empty(),
+        decide_multi(t, &[], &one_bad, 2, 2, Hold::NONE).is_empty(),
         "one region down is below quorum"
     );
 
@@ -839,7 +823,7 @@ fn quorum_needs_two_regions_before_opening() {
             ],
         ),
     ];
-    match decide_multi(t, &[], &two_bad, 2, 2, ChronoDuration::zero()).as_slice() {
+    match decide_multi(t, &[], &two_bad, 2, 2, Hold::NONE).as_slice() {
         [Action::Open(n)] => {
             assert_eq!(n.region, None);
             // Opens when the quorum-th (second) region went bad.
@@ -862,6 +846,8 @@ fn quorum_closes_when_back_below_threshold() {
         region: None,
         regions_down: Vec::new(),
         worst_status: CheckStatus::Down,
+        recovering_since: None,
+        recovered: Vec::new(),
     };
     let by_region = vec![
         (
@@ -880,16 +866,7 @@ fn quorum_closes_when_back_below_threshold() {
             ],
         ),
     ];
-    match decide_multi(
-        t,
-        std::slice::from_ref(&open),
-        &by_region,
-        2,
-        2,
-        ChronoDuration::zero(),
-    )
-    .as_slice()
-    {
+    match decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 2, Hold::NONE).as_slice() {
         [Action::Close { incident_id, .. }] => assert_eq!(*incident_id, open.id),
         other => panic!("expected one Close, got {other:?}"),
     }
@@ -918,7 +895,7 @@ fn quorum_clamps_to_live_region_count() {
             ],
         ),
     ];
-    match decide_multi(t, &[], &by_region, 2, 3, ChronoDuration::zero()).as_slice() {
+    match decide_multi(t, &[], &by_region, 2, 3, Hold::NONE).as_slice() {
         [Action::Open(_)] => {}
         other => panic!("expected Open (quorum clamped to live count), got {other:?}"),
     }
@@ -934,6 +911,8 @@ fn open_since(target_id: Uuid, started_at: DateTime<Utc>, regions_down: &[&str])
         region: None,
         regions_down: regions_down.iter().map(|r| r.to_string()).collect(),
         worst_status: CheckStatus::Down,
+        recovering_since: None,
+        recovered: Vec::new(),
     }
 }
 
@@ -942,6 +921,38 @@ fn run(t: Uuid, base: DateTime<Utc>, from: i64, to: i64, status: CheckStatus) ->
         .step_by(30)
         .map(|o| result(t, ts(base, o), status))
         .collect()
+}
+
+/// The hold as the writer judges it at the newest result in view, for a
+/// monitor checking every 30 seconds.
+fn hold_at(period: ChronoDuration, by_region: &[(String, Vec<CheckResult>)]) -> Hold {
+    let now = by_region
+        .iter()
+        .filter_map(|(_, results)| results.last())
+        .map(|r| r.timestamp)
+        .max()
+        .expect("results in view");
+    Hold {
+        period,
+        interval: ChronoDuration::seconds(30),
+        now,
+    }
+}
+
+/// The one recovering mark among `actions`, beside any stretches kept.
+fn recovering(actions: &[Action]) -> Option<DateTime<Utc>> {
+    let marks: Vec<Option<DateTime<Utc>>> = actions
+        .iter()
+        .filter_map(|a| match a {
+            Action::Recovering { since, .. } => Some(*since),
+            Action::Relapsed { .. } => None,
+            other => panic!("expected Recovering, got {other:?}"),
+        })
+        .collect();
+    match marks.as_slice() {
+        [since] => *since,
+        _ => panic!("expected one Recovering, got {actions:?}"),
+    }
 }
 
 #[test]
@@ -956,16 +967,304 @@ fn a_recovery_closes_only_once_it_has_held() {
         vec![(String::new(), results)]
     };
 
-    assert!(
-        decide_multi(t, std::slice::from_ref(&open), &up_for(240), 2, 1, hold).is_empty(),
+    let four = up_for(240);
+    assert_eq!(
+        recovering(&decide_multi(
+            t,
+            std::slice::from_ref(&open),
+            &four,
+            2,
+            1,
+            hold_at(hold, &four)
+        )),
+        Some(ts(base, 60)),
         "four minutes up is not yet five"
     );
-    match decide_multi(t, std::slice::from_ref(&open), &up_for(300), 2, 1, hold).as_slice() {
+    let five = up_for(300);
+    match decide_multi(
+        t,
+        std::slice::from_ref(&open),
+        &five,
+        2,
+        1,
+        hold_at(hold, &five),
+    )
+    .as_slice()
+    {
         [Action::Close { ended_at, .. }] => {
             assert_eq!(*ended_at, ts(base, 60), "the hold is not downtime");
         }
         other => panic!("expected Close, got {other:?}"),
     }
+}
+
+#[test]
+fn a_monitor_checking_less_often_than_its_hold_closes_when_the_hold_is_up() {
+    // Every fifteen minutes with one confirmation: no check falls inside a
+    // three-minute hold, so it is not waited for.
+    let base = mbase();
+    let t = Uuid::now_v7();
+    let open = open_since(t, ts(base, 0), &[]);
+    let by_region = vec![(
+        String::new(),
+        vec![
+            result(t, ts(base, 0), CheckStatus::Down),
+            result(t, ts(base, 900), CheckStatus::Up),
+        ],
+    )];
+    let hold = |now: i64| Hold {
+        period: ChronoDuration::minutes(3),
+        interval: ChronoDuration::minutes(15),
+        now: ts(base, now),
+    };
+    assert_eq!(
+        recovering(&decide_multi(
+            t,
+            std::slice::from_ref(&open),
+            &by_region,
+            1,
+            1,
+            hold(960)
+        )),
+        Some(ts(base, 900))
+    );
+    match decide_multi(
+        t,
+        std::slice::from_ref(&open),
+        &by_region,
+        1,
+        1,
+        hold(1_080),
+    )
+    .as_slice()
+    {
+        [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 900)),
+        other => panic!("expected Close, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_failure_not_yet_confirmed_keeps_the_hold_from_passing() {
+    // The latest check failed and the next one may confirm it, so closing
+    // now would split one outage into two incidents.
+    let base = mbase();
+    let t = Uuid::now_v7();
+    let open = open_since(t, ts(base, 0), &[]);
+    let mut results = run(t, base, 0, 30, CheckStatus::Down);
+    results.extend(run(t, base, 60, 90, CheckStatus::Up));
+    results.extend(run(t, base, 120, 120, CheckStatus::Down));
+    let hold = Hold {
+        period: ChronoDuration::seconds(90),
+        interval: ChronoDuration::seconds(30),
+        now: ts(base, 160),
+    };
+    let by_region = vec![(String::new(), results.clone())];
+    assert_eq!(
+        recovering(&decide_multi(
+            t,
+            std::slice::from_ref(&open),
+            &by_region,
+            2,
+            1,
+            hold
+        )),
+        Some(ts(base, 60))
+    );
+
+    results.extend(run(t, base, 150, 150, CheckStatus::Up));
+    let by_region = vec![(String::new(), results)];
+    match decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 1, hold).as_slice() {
+        [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 60)),
+        other => panic!("expected Close, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_check_due_inside_the_hold_must_have_passed() {
+    // The clock is past the hold, but the checks that should have run inside
+    // it are not in yet.
+    let base = mbase();
+    let t = Uuid::now_v7();
+    let open = open_since(t, ts(base, 0), &[]);
+    let mut results = run(t, base, 0, 30, CheckStatus::Down);
+    results.extend(run(t, base, 60, 120, CheckStatus::Up));
+    let by_region = vec![(String::new(), results)];
+    let hold = Hold {
+        period: ChronoDuration::minutes(5),
+        interval: ChronoDuration::seconds(30),
+        now: ts(base, 600),
+    };
+    assert_eq!(
+        recovering(&decide_multi(
+            t,
+            std::slice::from_ref(&open),
+            &by_region,
+            2,
+            1,
+            hold
+        )),
+        Some(ts(base, 60))
+    );
+}
+
+#[test]
+fn the_recovering_mark_is_written_once_and_its_stretch_kept_when_the_failure_returns() {
+    let base = mbase();
+    let t = Uuid::now_v7();
+    let mut open = open_since(t, ts(base, 0), &[]);
+    open.recovering_since = Some(ts(base, 60));
+    let hold = ChronoDuration::minutes(5);
+    let mut results = run(t, base, 0, 30, CheckStatus::Down);
+    results.extend(run(t, base, 60, 180, CheckStatus::Up));
+    let by_region = vec![(String::new(), results.clone())];
+    assert!(
+        decide_multi(
+            t,
+            std::slice::from_ref(&open),
+            &by_region,
+            2,
+            1,
+            hold_at(hold, &by_region)
+        )
+        .is_empty(),
+        "already marked from the same moment"
+    );
+
+    // Down again from 210: paging resumes, and 60–210 stays out of downtime.
+    results.extend(run(t, base, 210, 240, CheckStatus::Down));
+    let by_region = vec![(String::new(), results.clone())];
+    assert_eq!(
+        decide_multi(
+            t,
+            std::slice::from_ref(&open),
+            &by_region,
+            2,
+            1,
+            hold_at(hold, &by_region)
+        ),
+        [Action::Relapsed {
+            incident_id: open.id,
+            recovered: Recovered {
+                from: ts(base, 60),
+                until: ts(base, 210),
+            },
+        }]
+    );
+
+    // Back up again before the writer looked: the stretch is kept and the
+    // new recovery marked in the same pass.
+    results.extend(run(t, base, 270, 300, CheckStatus::Up));
+    let by_region = vec![(String::new(), results)];
+    assert_eq!(
+        decide_multi(
+            t,
+            std::slice::from_ref(&open),
+            &by_region,
+            2,
+            1,
+            hold_at(hold, &by_region)
+        ),
+        [
+            Action::Relapsed {
+                incident_id: open.id,
+                recovered: Recovered {
+                    from: ts(base, 60),
+                    until: ts(base, 210),
+                },
+            },
+            Action::Recovering {
+                incident_id: open.id,
+                since: Some(ts(base, 270)),
+            },
+        ]
+    );
+}
+
+#[test]
+fn every_recovery_a_failure_ended_between_two_scans_is_kept_once() {
+    // Up and down twice while the writer was away, then up again: no mark
+    // was ever set, and both stretches it was back up in stay out of downtime.
+    let base = mbase();
+    let t = Uuid::now_v7();
+    let mut open = open_since(t, ts(base, 0), &[]);
+    let hold = ChronoDuration::minutes(5);
+    let mut results = run(t, base, 0, 30, CheckStatus::Down);
+    results.extend(run(t, base, 60, 90, CheckStatus::Up));
+    results.extend(run(t, base, 120, 150, CheckStatus::Down));
+    results.extend(run(t, base, 180, 210, CheckStatus::Up));
+    results.extend(run(t, base, 240, 270, CheckStatus::Down));
+    results.extend(run(t, base, 300, 330, CheckStatus::Up));
+    let by_region = vec![(String::new(), results)];
+    let stretch = |from, until| Action::Relapsed {
+        incident_id: open.id,
+        recovered: Recovered {
+            from: ts(base, from),
+            until: ts(base, until),
+        },
+    };
+    let recovering = Action::Recovering {
+        incident_id: open.id,
+        since: Some(ts(base, 300)),
+    };
+    assert_eq!(
+        decide_multi(
+            t,
+            std::slice::from_ref(&open),
+            &by_region,
+            2,
+            1,
+            hold_at(hold, &by_region)
+        ),
+        [stretch(60, 120), stretch(180, 240), recovering.clone()]
+    );
+
+    open.recovered = vec![Recovered {
+        from: ts(base, 60),
+        until: ts(base, 120),
+    }];
+    assert_eq!(
+        decide_multi(
+            t,
+            std::slice::from_ref(&open),
+            &by_region,
+            2,
+            1,
+            hold_at(hold, &by_region)
+        ),
+        [stretch(180, 240), recovering],
+        "a stretch already kept is not sent again"
+    );
+}
+
+#[test]
+fn a_recovering_incident_whose_regions_go_quiet_keeps_its_mark() {
+    // fra recovered and then stopped reporting; us still fails alone, below
+    // the majority hel keeps. Nothing says the outage came back.
+    let base = mbase();
+    let t = Uuid::now_v7();
+    let mut open = open_since(t, ts(base, 0), &["fra", "us"]);
+    open.recovering_since = Some(ts(base, 60));
+    let by_region = vec![
+        (
+            "hel".to_string(),
+            run(t, base, 1_200, 1_500, CheckStatus::Up),
+        ),
+        (
+            "us".to_string(),
+            run(t, base, 1_200, 1_500, CheckStatus::Down),
+        ),
+    ];
+    assert!(
+        decide_multi(
+            t,
+            std::slice::from_ref(&open),
+            &by_region,
+            2,
+            2,
+            hold_at(ChronoDuration::minutes(5), &by_region)
+        )
+        .is_empty()
+    );
 }
 
 #[test]
@@ -981,16 +1280,46 @@ fn a_failure_inside_the_hold_keeps_one_incident() {
     results.extend(run(t, base, 270, 300, CheckStatus::Down));
     results.extend(run(t, base, 330, 600, CheckStatus::Up));
     let by_region = vec![(String::new(), results.clone())];
-    assert!(
-        decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 1, hold).is_empty(),
+    assert_eq!(
+        recovering(&decide_multi(
+            t,
+            std::slice::from_ref(&open),
+            &by_region,
+            2,
+            1,
+            hold_at(hold, &by_region)
+        )),
+        Some(ts(base, 330)),
         "the hold restarted at the second recovery"
     );
 
     results.extend(run(t, base, 630, 630, CheckStatus::Up));
     let by_region = vec![(String::new(), results)];
-    match decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 1, hold).as_slice() {
-        [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 330)),
-        other => panic!("expected Close, got {other:?}"),
+    match decide_multi(
+        t,
+        std::slice::from_ref(&open),
+        &by_region,
+        2,
+        1,
+        hold_at(hold, &by_region),
+    )
+    .as_slice()
+    {
+        [
+            Action::Relapsed { recovered, .. },
+            Action::Close { ended_at, .. },
+        ] => {
+            assert_eq!(
+                *recovered,
+                Recovered {
+                    from: ts(base, 60),
+                    until: ts(base, 270)
+                },
+                "the three minutes it was back up are not downtime"
+            );
+            assert_eq!(*ended_at, ts(base, 330));
+        }
+        other => panic!("expected the stretch kept and Close, got {other:?}"),
     }
 }
 
@@ -1018,13 +1347,39 @@ fn a_flapping_quorum_folds_into_one_incident_while_one_region_stays_up() {
         ]
     };
 
-    assert!(
-        decide_multi(t, std::slice::from_ref(&open), &regions(990), 2, 2, hold).is_empty(),
+    let short = regions(990);
+    assert_eq!(
+        recovering(&decide_multi(
+            t,
+            std::slice::from_ref(&open),
+            &short,
+            2,
+            2,
+            hold_at(hold, &short)
+        )),
+        Some(ts(base, 420)),
         "nine and a half minutes since the second recovery"
     );
-    match decide_multi(t, std::slice::from_ref(&open), &regions(1_020), 2, 2, hold).as_slice() {
-        [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 420)),
-        other => panic!("expected Close, got {other:?}"),
+    let held = regions(1_020);
+    match decide_multi(
+        t,
+        std::slice::from_ref(&open),
+        &held,
+        2,
+        2,
+        hold_at(hold, &held),
+    )
+    .as_slice()
+    {
+        [
+            Action::Relapsed { recovered, .. },
+            Action::Close { ended_at, .. },
+        ] => {
+            assert_eq!(recovered.from, ts(base, 60));
+            assert_eq!(recovered.until, ts(base, 330));
+            assert_eq!(*ended_at, ts(base, 420));
+        }
+        other => panic!("expected the stretch kept and Close, got {other:?}"),
     }
 }
 
@@ -1059,7 +1414,7 @@ fn a_region_up_throughout_does_not_close_an_outage_the_others_are_still_in() {
             &regions(1),
             2,
             2,
-            ChronoDuration::zero()
+            Hold::NONE
         )
         .is_empty(),
         "a single good check each"
@@ -1070,7 +1425,7 @@ fn a_region_up_throughout_does_not_close_an_outage_the_others_are_still_in() {
         &regions(2),
         2,
         2,
-        ChronoDuration::zero(),
+        Hold::NONE,
     )
     .as_slice()
     {
@@ -1100,8 +1455,16 @@ fn a_lone_region_failing_during_the_hold_is_not_part_of_the_outage() {
         ("hel".to_string(), hel),
         ("us".to_string(), recovered()),
     ];
-    assert!(
-        decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 2, hold).is_empty(),
+    assert_eq!(
+        recovering(&decide_multi(
+            t,
+            std::slice::from_ref(&open),
+            &by_region,
+            2,
+            2,
+            hold_at(hold, &by_region)
+        )),
+        Some(ts(base, 60)),
         "no Widen, and the hold is still running"
     );
 }
@@ -1128,16 +1491,7 @@ fn a_region_still_failing_alone_does_not_keep_the_outage_open() {
             run(t, base, 1_200, 1_500, CheckStatus::Up),
         ),
     ];
-    match decide_multi(
-        t,
-        std::slice::from_ref(&open),
-        &by_region,
-        2,
-        2,
-        ChronoDuration::zero(),
-    )
-    .as_slice()
-    {
+    match decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 2, Hold::NONE).as_slice() {
         [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 1_200)),
         other => panic!("expected Close, got {other:?}"),
     }
@@ -1154,7 +1508,16 @@ fn a_stray_failed_check_neither_restarts_the_hold_nor_moves_the_end() {
     results.extend(run(t, base, 300, 300, CheckStatus::Down));
     results.extend(run(t, base, 330, 660, CheckStatus::Up));
     let by_region = vec![(String::new(), results)];
-    match decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 1, hold).as_slice() {
+    match decide_multi(
+        t,
+        std::slice::from_ref(&open),
+        &by_region,
+        2,
+        1,
+        hold_at(hold, &by_region),
+    )
+    .as_slice()
+    {
         [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 60)),
         other => panic!("expected Close, got {other:?}"),
     }
@@ -1173,17 +1536,7 @@ fn another_regions_blip_is_not_the_recovery_of_the_one_that_failed() {
     hel.extend(run(t, base, 7_080, 7_080, CheckStatus::Down));
     hel.extend(run(t, base, 7_110, 7_200, CheckStatus::Up));
     let by_region = vec![("fra".to_string(), fra), ("hel".to_string(), hel)];
-    assert!(
-        decide_multi(
-            t,
-            std::slice::from_ref(&open),
-            &by_region,
-            2,
-            1,
-            ChronoDuration::zero()
-        )
-        .is_empty()
-    );
+    assert!(decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 1, Hold::NONE).is_empty());
 }
 
 #[test]
@@ -1205,7 +1558,16 @@ fn a_lone_region_recovering_during_the_hold_does_not_redate_the_end() {
         ("hel".to_string(), hel),
         ("us".to_string(), recovered()),
     ];
-    match decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 2, hold).as_slice() {
+    match decide_multi(
+        t,
+        std::slice::from_ref(&open),
+        &by_region,
+        2,
+        2,
+        hold_at(hold, &by_region),
+    )
+    .as_slice()
+    {
         [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 60)),
         other => panic!("expected Close, got {other:?}"),
     }
@@ -1225,17 +1587,7 @@ fn a_region_that_stops_reporting_is_no_evidence_of_a_recovery() {
         ("fra".to_string(), fra.clone()),
         ("hel".to_string(), hel.clone()),
     ];
-    assert!(
-        decide_multi(
-            t,
-            std::slice::from_ref(&open),
-            &quiet,
-            2,
-            2,
-            ChronoDuration::zero()
-        )
-        .is_empty()
-    );
+    assert!(decide_multi(t, std::slice::from_ref(&open), &quiet, 2, 2, Hold::NONE).is_empty());
 
     let back = vec![
         ("fra".to_string(), fra),
@@ -1245,16 +1597,7 @@ fn a_region_that_stops_reporting_is_no_evidence_of_a_recovery() {
             run(t, base, 1_440, 1_500, CheckStatus::Up),
         ),
     ];
-    match decide_multi(
-        t,
-        std::slice::from_ref(&open),
-        &back,
-        2,
-        2,
-        ChronoDuration::zero(),
-    )
-    .as_slice()
-    {
+    match decide_multi(t, std::slice::from_ref(&open), &back, 2, 2, Hold::NONE).as_slice() {
         [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 1_440)),
         other => panic!("expected Close, got {other:?}"),
     }
@@ -1274,16 +1617,7 @@ fn a_quiet_region_does_not_backdate_the_recovery_of_the_one_still_reporting() {
             run(t, base, 1_200, 1_500, CheckStatus::Up),
         ),
     ];
-    match decide_multi(
-        t,
-        std::slice::from_ref(&open),
-        &by_region,
-        2,
-        2,
-        ChronoDuration::zero(),
-    )
-    .as_slice()
-    {
+    match decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 2, Hold::NONE).as_slice() {
         [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 1_320)),
         other => panic!("expected Close, got {other:?}"),
     }
@@ -1306,16 +1640,7 @@ fn with_every_failing_region_quiet_the_regions_still_reporting_decide() {
             run(t, base, 1_230, 1_500, CheckStatus::Up),
         ),
     ];
-    match decide_multi(
-        t,
-        std::slice::from_ref(&open),
-        &by_region,
-        2,
-        1,
-        ChronoDuration::zero(),
-    )
-    .as_slice()
-    {
+    match decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 1, Hold::NONE).as_slice() {
         [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 1_230)),
         other => panic!("expected Close, got {other:?}"),
     }
@@ -1336,17 +1661,7 @@ fn with_every_failing_region_quiet_a_reporter_not_yet_confirmed_up_keeps_it_open
             run(t, base, 1_500, 1_500, CheckStatus::Down),
         ),
     ];
-    assert!(
-        decide_multi(
-            t,
-            std::slice::from_ref(&open),
-            &by_region,
-            2,
-            1,
-            ChronoDuration::zero()
-        )
-        .is_empty()
-    );
+    assert!(decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 1, Hold::NONE).is_empty());
 }
 
 #[test]
@@ -1365,8 +1680,29 @@ fn with_every_failing_region_quiet_the_hold_runs_from_the_last_reporter_up() {
             ("us".to_string(), us),
         ]
     };
-    assert!(decide_multi(t, std::slice::from_ref(&open), &window(1_500), 2, 2, hold).is_empty());
-    match decide_multi(t, std::slice::from_ref(&open), &window(1_620), 2, 2, hold).as_slice() {
+    let early = window(1_500);
+    assert_eq!(
+        recovering(&decide_multi(
+            t,
+            std::slice::from_ref(&open),
+            &early,
+            2,
+            2,
+            hold_at(hold, &early)
+        )),
+        Some(ts(base, 1_320))
+    );
+    let late = window(1_620);
+    match decide_multi(
+        t,
+        std::slice::from_ref(&open),
+        &late,
+        2,
+        2,
+        hold_at(hold, &late),
+    )
+    .as_slice()
+    {
         [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 1_320)),
         other => panic!("expected Close, got {other:?}"),
     }
@@ -1995,6 +2331,8 @@ fn open_at(target_id: Uuid, started_at: DateTime<Utc>, worst: CheckStatus) -> Op
         region: None,
         regions_down: Vec::new(),
         worst_status: worst,
+        recovering_since: None,
+        recovered: Vec::new(),
     }
 }
 
@@ -2012,14 +2350,7 @@ fn a_worse_confirmed_status_escalates_the_open_incident() {
         vec![result(t, ts(base, 0), CheckStatus::Degraded), down],
     )];
     assert_eq!(
-        decide_multi(
-            t,
-            std::slice::from_ref(&open),
-            &by_region,
-            1,
-            1,
-            ChronoDuration::zero()
-        ),
+        decide_multi(t, std::slice::from_ref(&open), &by_region, 1, 1, Hold::NONE),
         vec![Action::Escalate {
             incident_id: open.id,
             error_sample: Some("marked down: all trunks down".into()),
@@ -2041,20 +2372,11 @@ fn an_escalation_keeps_the_diagnosed_cause() {
             tunnel_down(t, ts(base, 60)),
         ],
     )];
-    let opening = match decide_multi(t, &[], &by_region, 1, 1, ChronoDuration::zero()).as_slice() {
+    let opening = match decide_multi(t, &[], &by_region, 1, 1, Hold::NONE).as_slice() {
         [Action::Open(new)] => new.error_sample.clone(),
         other => panic!("expected Open, got {other:?}"),
     };
-    match decide_multi(
-        t,
-        std::slice::from_ref(&open),
-        &by_region,
-        1,
-        1,
-        ChronoDuration::zero(),
-    )
-    .as_slice()
-    {
+    match decide_multi(t, std::slice::from_ref(&open), &by_region, 1, 1, Hold::NONE).as_slice() {
         [Action::Escalate { error_sample, .. }] => {
             assert_eq!(*error_sample, opening);
             assert_ne!(error_sample.as_deref(), Some("unexpected status 530"));
@@ -2086,18 +2408,17 @@ fn escalation_diagnostics_require_quorum_and_keep_region_agreement() {
                 )
             })
             .collect();
-        let opening =
-            match decide_multi(target, &[], &by_region, 2, 2, ChronoDuration::zero()).as_slice() {
-                [Action::Open(new)] => new.error_sample.clone(),
-                other => panic!("expected Open, got {other:?}"),
-            };
+        let opening = match decide_multi(target, &[], &by_region, 2, 2, Hold::NONE).as_slice() {
+            [Action::Open(new)] => new.error_sample.clone(),
+            other => panic!("expected Open, got {other:?}"),
+        };
         match decide_multi(
             target,
             std::slice::from_ref(&open),
             &by_region,
             2,
             2,
-            ChronoDuration::zero(),
+            Hold::NONE,
         )
         .as_slice()
         {
@@ -2156,27 +2477,12 @@ fn one_region_below_quorum_does_not_escalate() {
             .collect()
     };
     assert_eq!(
-        decide_multi(
-            t,
-            std::slice::from_ref(&open),
-            &down(1),
-            2,
-            2,
-            ChronoDuration::zero()
-        ),
+        decide_multi(t, std::slice::from_ref(&open), &down(1), 2, 2, Hold::NONE),
         vec![],
         "one recovery check closes nothing, and one region escalates nothing"
     );
     assert!(matches!(
-        decide_multi(
-            t,
-            std::slice::from_ref(&open),
-            &down(2),
-            2,
-            2,
-            ChronoDuration::zero()
-        )
-        .as_slice(),
+        decide_multi(t, std::slice::from_ref(&open), &down(2), 2, 2, Hold::NONE).as_slice(),
         [Action::Escalate { .. }]
     ));
 }
@@ -2195,17 +2501,7 @@ fn an_error_does_not_escalate_a_degraded_incident() {
             result(t, ts(base, 60), CheckStatus::Error),
         ],
     )];
-    assert!(
-        decide_multi(
-            t,
-            std::slice::from_ref(&open),
-            &by_region,
-            1,
-            1,
-            ChronoDuration::zero()
-        )
-        .is_empty()
-    );
+    assert!(decide_multi(t, std::slice::from_ref(&open), &by_region, 1, 1, Hold::NONE).is_empty());
 }
 
 /// The cause is the newest failure's, so a second set landing before the
@@ -2224,7 +2520,7 @@ fn an_incident_opens_with_the_newest_cause() {
         &[(String::new(), vec![first, second])],
         1,
         1,
-        ChronoDuration::zero(),
+        Hold::NONE,
     )
     .as_slice()
     {
@@ -2253,17 +2549,7 @@ fn escalation_never_lowers_and_never_repeats() {
             result(t, ts(base, 60), CheckStatus::Degraded),
         ],
     )];
-    assert!(
-        decide_multi(
-            t,
-            std::slice::from_ref(&open),
-            &by_region,
-            1,
-            1,
-            ChronoDuration::zero()
-        )
-        .is_empty()
-    );
+    assert!(decide_multi(t, std::slice::from_ref(&open), &by_region, 1, 1, Hold::NONE).is_empty());
 }
 
 /// As create stores it: the operator's set is the confirmation.

@@ -32,6 +32,7 @@ pub(super) fn apply_kind_param(form: &mut FormModel, kind: &str) -> bool {
     };
     form.check_type = kind;
     form.interval_s = crate::domain::interval_hints_for_kind(kind).default;
+    form.recovery_period_secs = crate::domain::default_recovery_period_secs_for_kind(kind);
     true
 }
 

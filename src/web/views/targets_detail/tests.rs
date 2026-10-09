@@ -1574,6 +1574,8 @@ fn domain_incident() -> crate::domain::Incident {
         regions_down: Vec::new(),
         regions_up: Vec::new(),
         origin: Default::default(),
+        recovering_since: None,
+        recovered: Vec::new(),
     }
 }
 
@@ -1628,6 +1630,7 @@ fn ongoing_row() -> IncidentRow {
         error_sample: "connection refused".into(),
         title: String::new(),
         ongoing: true,
+        recovering: false,
         uptime_note: "",
     }
 }
@@ -1644,6 +1647,7 @@ fn resolved_row() -> IncidentRow {
         error_sample: "HTTP 503 Service Unavailable".into(),
         title: String::new(),
         ongoing: false,
+        recovering: false,
         uptime_note: "",
     }
 }

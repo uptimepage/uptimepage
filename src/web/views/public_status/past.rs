@@ -4,7 +4,7 @@
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 
-use crate::domain::{IncidentImpact, IncidentStatusPhase, PublicIncident};
+use crate::domain::{IncidentImpact, IncidentStatusPhase, PublicIncident, outage_parts};
 use crate::i18n::Tr;
 
 use super::view::{UPDATE_PREVIEW_CHARS, impact_classes, phase_classes};
@@ -42,8 +42,8 @@ pub struct PastEntry {
     pub started_at: DateTime<Utc>,
     /// When the last of it ended; `None` while it is still open.
     pub ended_at: Option<DateTime<Utc>>,
-    /// How long it was down; for a folded row, the gaps between its incidents
-    /// are not counted.
+    /// How long it was down, less any stretch it was back up in; for a folded
+    /// row the gaps between its incidents are not counted either.
     pub duration: String,
     /// The latest update a person wrote, if any.
     pub message: Option<String>,
@@ -179,7 +179,7 @@ fn narrated(inc: &PublicIncident) -> Option<String> {
 }
 
 fn lasted(inc: &PublicIncident, now: DateTime<Utc>) -> i64 {
-    crate::domain::elapsed_at(inc.started_at, inc.ended_at, now).num_seconds()
+    downtime(&[inc], now)
 }
 
 fn single(inc: &PublicIncident, now: DateTime<Utc>, tr: Tr) -> PastEntry {
@@ -261,14 +261,19 @@ fn folded(group: &[&PublicIncident], now: DateTime<Utc>, tr: Tr) -> PastEntry {
     }
 }
 
-/// How long any of them was down, in seconds: overlaps count once and the
-/// healthy gaps between them not at all. `group` is ordered by start.
+/// How long any of them was down, in seconds: overlaps count once, and the
+/// healthy gaps between them and the stretches one was back up in not at all.
 fn downtime(group: &[&PublicIncident], now: DateTime<Utc>) -> i64 {
+    let mut parts: Vec<(DateTime<Utc>, DateTime<Utc>)> = group
+        .iter()
+        .flat_map(|inc| outage_parts(inc.started_at, inc.ended_at, &inc.recovered))
+        .map(|(from, until)| (from, until.unwrap_or(now)))
+        .collect();
+    parts.sort_unstable();
     let mut total = ChronoDuration::zero();
     let mut reach = DateTime::<Utc>::MIN_UTC;
-    for inc in group {
-        let end = inc.ended_at.unwrap_or(now);
-        let from = inc.started_at.max(reach);
+    for (start, end) in parts {
+        let from = start.max(reach);
         if end > from {
             total += end - from;
         }
@@ -341,10 +346,23 @@ mod tests {
                 ),
             ],
             postmortem: None,
+            recovered: Vec::new(),
         }
     }
 
     use IncidentImpact::{MajorOutage as Major, PartialOutage as Partial};
+
+    #[test]
+    fn a_stretch_an_incident_was_back_up_in_is_not_its_length() {
+        let c = Uuid::now_v7();
+        let mut held = incident(c, "API", at(5, 10, 0), 30, Major);
+        held.recovered = vec![crate::domain::Recovered {
+            from: at(5, 10, 5),
+            until: at(5, 10, 25),
+        }];
+        let past = build_past(&[held], now(), Tr::default());
+        assert_eq!(past.recent[0].duration, "10m");
+    }
 
     #[test]
     fn a_flapping_service_is_one_row() {

@@ -11,7 +11,8 @@ use crate::common;
 
 use common::{make_user, unique_slug};
 use sqlx::PgPool;
-use uptimepage::domain::{NewManualIncident, OrgId, UserId};
+use uptimepage::domain::{CheckStatus, NewManualIncident, OrgId, Recovered, UserId};
+use uptimepage::public_status::{IncidentStore, NewOpenIncident, PgIncidentStore};
 use uptimepage::storage::{
     Actor, IncidentNarrationStore, IncidentOpsStore, PgIncidentNarrationStore, PgIncidentOpsStore,
     TimeRange, create_org_with_owner,
@@ -130,6 +131,131 @@ async fn uptime_weighs_each_incident_by_its_impact_pg() {
         map.get(&target_id).copied(),
         Some(180),
         "ten minutes of partial outage count as three; degraded counts nothing"
+    );
+}
+
+/// An incident waiting out its recovery is back up, so its downtime stops
+/// where the recovery began.
+#[tokio::test]
+#[ignore]
+async fn a_recovering_incident_stops_counting_where_the_recovery_began_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, _user, target_id) = seed(&pool, "cdtrec").await;
+    sqlx::query(
+        "INSERT INTO incidents (org_id, target_id, started_at, recovering_since, \
+                                status_at_start, check_count, state, visibility, origin) \
+         VALUES ($1, $2, now() - interval '50 minute', now() - interval '40 minute', \
+                 'down', 1, 'triggered', 'public', 'monitor')",
+    )
+    .bind(org.0)
+    .bind(target_id)
+    .execute(&pool)
+    .await
+    .expect("insert recovering incident");
+
+    let now = chrono::Utc::now();
+    let range = TimeRange {
+        from: now - chrono::Duration::hours(1),
+        to: now,
+    };
+    let map = PgIncidentNarrationStore::new(pool.clone())
+        .confirmed_downtime_by_target(org, range, None)
+        .await
+        .expect("downtime rollup");
+    assert_eq!(map.get(&target_id).copied(), Some(600));
+}
+
+/// A failure inside the hold ends the recovery; the stretch it was back up in
+/// is kept on the row and stays out of the downtime, once however many
+/// writers record it.
+#[tokio::test]
+#[ignore]
+async fn a_stretch_back_up_inside_the_hold_is_not_downtime_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, _user, target_id) = seed(&pool, "cdtrelapse").await;
+    let writer = PgIncidentStore::new(pool.clone());
+    let now =
+        chrono::DurationRound::duration_trunc(chrono::Utc::now(), chrono::Duration::seconds(1))
+            .unwrap();
+    let at = |mins: i64| now - chrono::Duration::minutes(mins);
+    let id = writer
+        .insert_open(
+            org,
+            NewOpenIncident {
+                target_id,
+                started_at: at(10),
+                status_at_start: CheckStatus::Down,
+                check_count: 2,
+                error_sample: None,
+                region: None,
+                regions_down: vec![],
+                regions_up: vec![],
+            },
+        )
+        .await
+        .expect("insert")
+        .expect("opened");
+    writer
+        .set_recovering(org, id, Some(at(8)))
+        .await
+        .expect("recovering");
+    let stretch = Recovered {
+        from: at(8),
+        until: at(6),
+    };
+    writer.relapse(org, id, stretch).await.expect("relapse");
+    writer
+        .relapse(org, id, stretch)
+        .await
+        .expect("relapse again");
+    // One the writer only saw in the checks afterwards, with no mark set.
+    let unmarked = Recovered {
+        from: at(5),
+        until: at(4),
+    };
+    writer.relapse(org, id, unmarked).await.expect("unmarked");
+    assert!(writer.close(org, id, at(2)).await.expect("close"));
+
+    let narration = PgIncidentNarrationStore::new(pool.clone());
+    let incidents = narration
+        .list_for_target(
+            org,
+            target_id,
+            TimeRange {
+                from: at(60),
+                to: at(0),
+            },
+            10,
+            0,
+            false,
+        )
+        .await
+        .expect("list");
+    assert_eq!(
+        incidents[0].recovered,
+        [stretch, unmarked],
+        "each kept once"
+    );
+    assert_eq!(incidents[0].recovering_since, None);
+    let map = narration
+        .confirmed_downtime_by_target(
+            org,
+            TimeRange {
+                from: at(60),
+                to: at(0),
+            },
+            None,
+        )
+        .await
+        .expect("downtime rollup");
+    assert_eq!(
+        map.get(&target_id).copied(),
+        Some(5 * 60),
+        "8 minutes less the 3 back up"
     );
 }
 

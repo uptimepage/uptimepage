@@ -644,7 +644,7 @@ impl TargetStore for PostgresTargetStore {
         .bind(new.alert_confirmations.max(1) as i32)
         .bind(new.notify_recovery)
         .bind(new.renotify_interval_secs as i32)
-        .bind(new.recovery_period_secs as i32)
+        .bind(new.recovery_period() as i32)
         .fetch_one(&mut *tx)
         .await
         .map_err(|e| match owner_left_the_org(&e) {
@@ -959,6 +959,7 @@ impl TargetStore for PostgresTargetStore {
             // fields can be wrapped before binding.
             let mut check_specs: Vec<Json<serde_json::Value>> = Vec::with_capacity(len);
             for new in items {
+                recovery_periods.push(new.recovery_period() as i32);
                 let mut v = serde_json::to_value(&new.check).context("encoding check_spec JSON")?;
                 encrypt_in_place(&mut v, cipher)?;
                 names.push(new.name);
@@ -972,7 +973,6 @@ impl TargetStore for PostgresTargetStore {
                 confirmations.push(new.alert_confirmations.max(1) as i32);
                 recoveries.push(new.notify_recovery);
                 renotifies.push(new.renotify_interval_secs as i32);
-                recovery_periods.push(new.recovery_period_secs as i32);
                 policies.push(Json(new.region_policy.unwrap_or_default()));
             }
             sqlx::query_as::<_, TargetRow>(SQL)
@@ -1000,6 +1000,7 @@ impl TargetStore for PostgresTargetStore {
             // wire bytes, skipping the intermediate Value tree.
             let mut check_specs: Vec<Json<CheckSpec>> = Vec::with_capacity(len);
             for new in items {
+                recovery_periods.push(new.recovery_period() as i32);
                 names.push(new.name);
                 check_specs.push(Json(new.check));
                 intervals.push(new.interval.as_secs() as i32);
@@ -1011,7 +1012,6 @@ impl TargetStore for PostgresTargetStore {
                 confirmations.push(new.alert_confirmations.max(1) as i32);
                 recoveries.push(new.notify_recovery);
                 renotifies.push(new.renotify_interval_secs as i32);
-                recovery_periods.push(new.recovery_period_secs as i32);
                 policies.push(Json(new.region_policy.unwrap_or_default()));
             }
             sqlx::query_as::<_, TargetRow>(SQL)

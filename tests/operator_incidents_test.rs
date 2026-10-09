@@ -33,6 +33,8 @@ fn seed_incident() -> Incident {
         regions_down: Vec::new(),
         regions_up: Vec::new(),
         origin: Default::default(),
+        recovering_since: None,
+        recovered: Vec::new(),
     }
 }
 

@@ -41,9 +41,9 @@ pub use alert::{AlertBinding, TargetAlerts};
 pub use check::{
     CheckSpec, DnsCheck, DnsRecordType, DomainExpiryCheck, ExpectedStatus, FAST_INTERVAL_PRESETS,
     FlowCheck, FlowStep, HeartbeatCheck, HttpCheck, HttpMethod, IntervalHints, MAX_CHECK_TIMEOUT,
-    ManualCheck, PingCheck, SLOW_INTERVAL_PRESETS, TcpCheck, TlsCertCheck, interval_hints_for_kind,
-    is_monitorable, min_interval_secs_for_kind, publishes_no_expiry, reduced_domain_hint,
-    registered_domain,
+    ManualCheck, PingCheck, SLOW_INTERVAL_PRESETS, TcpCheck, TlsCertCheck,
+    default_recovery_period_secs_for_kind, interval_hints_for_kind, is_monitorable,
+    min_interval_secs_for_kind, publishes_no_expiry, reduced_domain_hint, registered_domain,
 };
 pub use check_error::{ErrorClass, ErrorFamily, classify_check_error, humanize_check_error};
 pub use credential::{CredentialAction, CredentialOrigin, LinkedIdentity, OauthProvider, WaysIn};
@@ -98,8 +98,8 @@ pub use public::{
     ComponentHistoryResponse, DayState, Downtime, ImpactSpan, IncidentImpact, IncidentSeverity,
     IncidentStatusPhase, OverallState, OverallStatus, PublicActionItem, PublicComponent,
     PublicComponentGroup, PublicComponentStatus, PublicIncident, PublicIncidentUpdate,
-    PublicMaintenance, PublicMaintenanceList, PublicPostmortem, PublicStatusPage, incident_impact,
-    stored_incident_impact,
+    PublicMaintenance, PublicMaintenanceList, PublicPostmortem, PublicStatusPage, Recovered,
+    incident_impact, outage_parts, stored_incident_impact,
 };
 pub use quota::{Plan, PlanLimits, QuotaEvent};
 pub use reserved_slugs::is_reserved;

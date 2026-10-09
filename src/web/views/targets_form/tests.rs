@@ -377,7 +377,7 @@ fn off_preset_interval_is_preserved_as_an_option() {
 }
 
 #[test]
-fn the_recovery_hold_defaults_off_and_keeps_an_off_preset_value() {
+fn the_recovery_hold_opens_on_the_kinds_default_and_keeps_an_off_preset_value() {
     let form = empty_create_form();
     let html = FormPage {
         active_tab: "targets",
@@ -385,12 +385,20 @@ fn the_recovery_hold_defaults_off_and_keeps_an_off_preset_value() {
     }
     .render()
     .unwrap();
-    assert!(html.contains(r#"name="recovery_period_secs" value="0" class="sr-only" checked"#));
+    assert!(html.contains(r#"name="recovery_period_secs" value="180" class="sr-only" checked"#));
+
+    let mut form = empty_create_form();
+    assert!(form.kind_recovery_json().contains(r#""heartbeat":0"#));
+    assert!(apply_kind_param(&mut form, "heartbeat"));
+    assert_eq!(
+        form.recovery_period_secs, 0,
+        "a heartbeat waits on its next ping"
+    );
 
     let mut form = empty_create_form();
     form.recovery_period_secs = 420;
     let offered: Vec<u32> = form.recovery_options().iter().map(|o| o.secs).collect();
-    assert_eq!(offered, [0, 120, 300, 420, 600, 900, 1_800]);
+    assert_eq!(offered, [0, 180, 300, 420, 600, 900, 1_800]);
     let html = FormPage {
         active_tab: "targets",
         form,
@@ -427,7 +435,7 @@ fn a_stored_cadence_below_the_suggestions_survives_an_edit() {
     let mut form = empty_create_form();
     form.check_type = "domain_expiry";
     form.interval_s = 3_600;
-    form.interval_pinned = true;
+    form.carried_over = true;
     let html = FormPage {
         active_tab: "targets",
         form,
@@ -437,6 +445,7 @@ fn a_stored_cadence_below_the_suggestions_survives_an_edit() {
     assert!(html.contains(r#"name="interval_s" value="3600" class="sr-only" checked"#));
     // Pinned, so the client leaves it alone.
     assert!(html.contains(r#"data-interval-touched="1""#));
+    assert!(html.contains(r#"data-recovery-touched="1""#));
     assert!(html.contains(r#"data-interval="3600""#));
 }
 

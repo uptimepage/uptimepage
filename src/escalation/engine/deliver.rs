@@ -5,15 +5,15 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::domain::{
-    EscalationPolicy, EscalationTargetType, IncidentState, NotificationReason, NotificationStatus,
-    OpsIncident, OrgId, UserId,
+    EscalationPolicy, EscalationTargetType, NotificationReason, NotificationStatus, OpsIncident,
+    OrgId, UserId,
 };
 use crate::error::Result;
 use crate::notifier::event::IncidentNotice;
 use crate::notifier::{EmailAlert, build_notifier, notify_following_moves};
 
 use super::Worker;
-use super::rules::{PageTarget, log_error_snippet, push_target, retry_after_hint};
+use super::rules::{PageTarget, Standing, log_error_snippet, push_target, retry_after_hint};
 use crate::metric_names;
 use crate::security::redaction::redact_url_paths;
 
@@ -63,16 +63,17 @@ fn note_send(transport: &str, started: Option<Instant>, outcome: SendOutcome) {
 }
 
 /// What a retry finds when it re-resolves its page.
+fn standing(incident: &crate::domain::OpsIncident) -> Standing {
+    Standing {
+        state: incident.state,
+        recovering: incident.recovering_since.is_some(),
+    }
+}
+
 pub(super) enum Rebuilt {
-    /// The notice to send, its channel, and the incident's current state for
+    /// The notice to send, its channel, and where the incident stands now for
     /// the staleness check.
-    Ready(
-        Box<(
-            IncidentNotice,
-            crate::domain::NotificationChannel,
-            IncidentState,
-        )>,
-    ),
+    Ready(Box<(IncidentNotice, crate::domain::NotificationChannel, Standing)>),
     /// The incident's monitor was deleted. The incident was closed with it,
     /// so there is nothing left to page about.
     MonitorDeleted,
@@ -102,7 +103,11 @@ impl Worker {
                 return Ok(Rebuilt::Gone);
             };
             let notice = self.notice(&incident, incident.target_name.clone(), reason, None);
-            return Ok(Rebuilt::Ready(Box::new((notice, channel, incident.state))));
+            return Ok(Rebuilt::Ready(Box::new((
+                notice,
+                channel,
+                standing(&incident),
+            ))));
         }
         let Some(target_id) = incident.target_id else {
             return Ok(Rebuilt::Gone);
@@ -114,7 +119,11 @@ impl Worker {
             return Ok(Rebuilt::Gone);
         };
         let notice = self.notice(&incident, Some(target.name.clone()), reason, None);
-        Ok(Rebuilt::Ready(Box::new((notice, channel, incident.state))))
+        Ok(Rebuilt::Ready(Box::new((
+            notice,
+            channel,
+            standing(&incident),
+        ))))
     }
 
     pub(super) async fn deliver(

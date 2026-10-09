@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::domain::{
     ComponentHistoryResponse, IncidentSeverity, IncidentStatusPhase, Locale, OrgId, PageRef,
-    PublicIncident, PublicIncidentUpdate, PublicMaintenanceList, PublicStatusPage,
+    PublicIncident, PublicIncidentUpdate, PublicMaintenanceList, PublicStatusPage, Recovered,
 };
 use crate::error::public::PublicAppError;
 use crate::i18n::Tr;
@@ -216,7 +216,7 @@ impl PublicSource for OrgPublicSource {
         let rows: Vec<IncidentRow> = sqlx::query_as::<_, IncidentRow>(&format!(
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
-                      i.origin, i.regions_up,
+                      i.origin, i.regions_up, i.recovered_from, i.recovered_until,
                       i.public_title, i.public_description, {kept}
                FROM incidents i
                WHERE i.org_id = $5
@@ -279,7 +279,7 @@ impl PublicSource for OrgPublicSource {
         let row: Option<IncidentRow> = sqlx::query_as::<_, IncidentRow>(&format!(
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
-                      i.origin, i.regions_up,
+                      i.origin, i.regions_up, i.recovered_from, i.recovered_until,
                       i.public_title, i.public_description, {kept}
                FROM incidents i
                WHERE i.id = $1
@@ -403,6 +403,7 @@ impl OrgPublicSource {
                     ),
                     status_phase,
                     updates: my_updates,
+                    recovered: Recovered::paired(r.recovered_from, r.recovered_until),
                     postmortem: None,
                 }
             })
@@ -472,6 +473,8 @@ struct IncidentRow {
     status_at_start: String,
     origin: String,
     regions_up: Option<Vec<String>>,
+    recovered_from: Vec<DateTime<Utc>>,
+    recovered_until: Vec<DateTime<Utc>>,
     public_title: Option<String>,
     #[allow(dead_code)]
     public_description: Option<String>,
@@ -686,6 +689,7 @@ mod tests {
             status_phase: IncidentStatusPhase::Investigating,
             updates,
             postmortem: None,
+            recovered: Vec::new(),
         }
     }
 

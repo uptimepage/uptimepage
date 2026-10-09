@@ -959,6 +959,121 @@ async fn due_for_reconcile_finds_only_unpaged_triggered_pg() {
     assert!(!due.iter().any(|d| d.id == acked));
 }
 
+/// Resolving by hand while the recovery is held ends the incident where the
+/// recovery began, as the writer would have: the wait is not downtime.
+#[tokio::test]
+#[ignore]
+async fn resolving_a_recovering_incident_ends_it_where_it_recovered_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, user, id) = seed(&pool, "increcres").await;
+    let recovered: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "UPDATE incidents SET recovering_since = date_trunc('second', now()) - interval '2 minutes' \
+         WHERE id = $1 RETURNING recovering_since",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .expect("mark recovering");
+    let store = PgIncidentOpsStore::new(pool.clone());
+    let resolved = updated(
+        store
+            .resolve(org, id, Actor::User(user), None)
+            .await
+            .expect("resolve"),
+    );
+    assert_eq!(resolved.ended_at, Some(recovered));
+    assert_eq!(resolved.recovering_since, None);
+    let duration: i32 = sqlx::query_scalar("SELECT duration_secs FROM incidents WHERE id = $1")
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        (175..=185).contains(&duration),
+        "about three minutes: {duration}"
+    );
+}
+
+/// While a recovery is held the monitor is back up, so nothing pages for it:
+/// not the next rung, not a reminder. Losing the recovery picks both up again.
+#[tokio::test]
+#[ignore]
+async fn a_recovering_incident_pages_nobody_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, _user, id) = seed(&pool, "increc").await;
+    let store = PgIncidentOpsStore::new(pool.clone());
+    let channel: Uuid = sqlx::query_scalar(
+        "INSERT INTO notification_channels (org_id, name, kind, config) \
+         VALUES ($1, 'ops', 'webhook', '{}'::jsonb) RETURNING id",
+    )
+    .bind(org.0)
+    .fetch_one(&pool)
+    .await
+    .expect("insert channel");
+    store
+        .record_notification(NewIncidentNotification {
+            org,
+            incident_id: id,
+            escalation_level: Some(0),
+            target_user_id: None,
+            channel_id: Some(channel),
+            transport: "webhook".into(),
+            reason: NotificationReason::Opened,
+            status: NotificationStatus::Sent,
+            attempt: 1,
+            error: None,
+            sent_at: Some(chrono::Utc::now()),
+            episode: 0,
+        })
+        .await
+        .expect("record");
+    sqlx::query(
+        "UPDATE incident_notifications SET created_at = now() - interval '2 hours' \
+         WHERE incident_id = $1",
+    )
+    .bind(id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let set = |sql: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(sql).bind(id).execute(&pool).await.unwrap();
+        }
+    };
+    let reminded = || async {
+        store
+            .due_for_renotify(chrono::Utc::now(), 1000)
+            .await
+            .unwrap()
+            .iter()
+            .any(|d| d.id == id)
+    };
+    let escalated = || async {
+        store
+            .due_for_escalation(chrono::Utc::now(), 1000, 30)
+            .await
+            .unwrap()
+            .iter()
+            .any(|c| c.due.id == id)
+    };
+
+    set("UPDATE incidents SET recovering_since = now() - interval '1 minute' WHERE id = $1").await;
+    assert!(!reminded().await, "no reminder while it is back up");
+    set("UPDATE incidents SET next_escalation_at = now() - interval '1 minute' WHERE id = $1")
+        .await;
+    assert!(!escalated().await, "no next rung while it is back up");
+
+    set("UPDATE incidents SET recovering_since = NULL WHERE id = $1").await;
+    assert!(escalated().await, "down again, the rung is due");
+    set("UPDATE incidents SET next_escalation_at = NULL WHERE id = $1").await;
+    assert!(reminded().await, "and so is the reminder");
+}
+
 #[tokio::test]
 #[ignore]
 async fn renotify_backoff_widens_with_each_reminder_pg() {

@@ -134,6 +134,7 @@ pub(super) fn seed_incident(ops: &InMemoryIncidentOpsStore, target_id: Option<Uu
         regions_up: Vec::new(),
         created_at: now,
         updated_at: now,
+        recovering_since: None,
     });
     id
 }
@@ -1314,6 +1315,7 @@ async fn reconcile_pages_an_incident_whose_open_signal_was_dropped() {
         regions_up: Vec::new(),
         created_at: now - chrono::Duration::seconds(120),
         updated_at: now - chrono::Duration::seconds(120),
+        recovering_since: None,
     });
     let targets = Arc::new(InMemoryTargetStore::from_vec(vec![target]));
     let policies = Arc::new(InMemoryEscalationPolicyStore::new());
@@ -1371,6 +1373,7 @@ async fn reconcile_leaves_an_incident_older_than_its_window_alone() {
         regions_up: Vec::new(),
         created_at: old,
         updated_at: old,
+        recovering_since: None,
     });
     let targets = Arc::new(InMemoryTargetStore::from_vec(vec![target]));
     let policies = Arc::new(InMemoryEscalationPolicyStore::new());

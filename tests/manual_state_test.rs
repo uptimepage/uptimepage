@@ -69,6 +69,10 @@ async fn a_manual_monitor_starts_up_and_takes_the_state_it_is_given() {
     let created = create(&router, json!({ "type": "manual" })).await;
     assert_eq!(created["check"], json!({ "type": "manual" }));
     assert_eq!(created["interval"], 60, "restated once a minute");
+    assert_eq!(
+        created["recovery_period_secs"], 0,
+        "a manual monitor closes on the state it is set to"
+    );
     let (status, refused) = send(
         &router,
         "POST",

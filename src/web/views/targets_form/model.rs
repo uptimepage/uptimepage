@@ -35,8 +35,9 @@ pub struct FormModel {
     /// The org plan's `min_check_interval_secs`, surfaced so the form's
     /// `min=`/JS guard mirror the same floor the API enforces (no magic 60).
     pub min_interval_s: u64,
-    /// Carried over from a real monitor, so the picker must not re-suggest over it.
-    pub interval_pinned: bool,
+    /// Carried over from a real monitor, so the pickers must not re-suggest
+    /// over its interval or its recovery hold.
+    pub carried_over: bool,
     pub enabled: bool,
     pub tags: Vec<String>,
     /// Free-text operator group label (drives Monitors-page bucketing).
@@ -268,6 +269,21 @@ impl FormModel {
         serde_json::Value::Object(hints).to_string()
     }
 
+    /// The recovery hold each kind opens with, so a kind switch on a new monitor
+    /// lands on the hold the server would give it.
+    pub fn kind_recovery_json(&self) -> String {
+        let holds: serde_json::Map<String, serde_json::Value> = CheckSpec::ALL_KINDS
+            .iter()
+            .map(|k| {
+                (
+                    (*k).to_string(),
+                    crate::domain::default_recovery_period_secs_for_kind(k).into(),
+                )
+            })
+            .collect();
+        serde_json::Value::Object(holds).to_string()
+    }
+
     /// Check-interval presets for http/tcp/ping/dns, filtered by the plan floor.
     pub fn interval_options_fast(&self) -> Vec<IntervalChoice> {
         self.interval_group(&FAST_INTERVAL_PRESETS, !self.slow_kind())
@@ -326,7 +342,7 @@ impl FormModel {
     /// Recovery-hold presets with the monitor's current hold selected; an
     /// off-preset stored value is preserved as its own option.
     pub fn recovery_options(&self) -> Vec<SecondsChoice> {
-        let mut values: Vec<u32> = vec![0, 120, 300, 600, 900, 1_800];
+        let mut values: Vec<u32> = vec![0, 180, 300, 600, 900, 1_800];
         if !values.contains(&self.recovery_period_secs) {
             values.push(self.recovery_period_secs);
             values.sort_unstable();

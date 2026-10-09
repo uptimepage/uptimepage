@@ -210,7 +210,7 @@ impl Worker {
         let Some(incident) = self.ops.get(d.org, d.id).await? else {
             return Ok(());
         };
-        if incident.state != IncidentState::Triggered {
+        if incident.state != IncidentState::Triggered || incident.recovering_since.is_some() {
             return Ok(());
         }
         let Some(target_id) = incident.target_id else {
@@ -304,8 +304,12 @@ impl Worker {
                 };
                 // Push the timer out rather than clearing it: nothing re-arms a
                 // cleared one but a fresh open, so the rest of the ladder would
-                // never page once the monitor came back.
-                if !target.enabled || self.alerts_suppressed(d.org, target.id).await {
+                // never page once the monitor came back. A recovery held since
+                // the claim waits the same way, in case the failure returns.
+                if !target.enabled
+                    || incident.recovering_since.is_some()
+                    || self.alerts_suppressed(d.org, target.id).await
+                {
                     let next_at =
                         Utc::now() + chrono::Duration::seconds(SUPPRESSED_ESCALATION_RETRY_SECS);
                     self.ops
@@ -704,12 +708,12 @@ impl Worker {
                 .await?;
             return Ok(());
         };
-        let (notice, channel, state) = *ready;
+        let (notice, channel, now) = *ready;
         // Terminal either way, but the two causes read alike on the row unless
         // it says which.
         let suppressed = if !channel.enabled {
             Some("channel was turned off before the retry landed")
-        } else if reason_is_stale(p.reason, state) {
+        } else if reason_is_stale(p.reason, now) {
             Some("incident state moved on before the retry landed")
         } else {
             None

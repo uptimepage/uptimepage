@@ -652,7 +652,10 @@ async fn rejects_zero_alert_confirmations() {
 async fn recovery_period_round_trips_and_is_bounded() {
     let app = app();
     let created = post_and_body(app.clone(), tcp_target("db")).await;
-    assert_eq!(created["recovery_period_secs"], 0, "off unless asked for");
+    assert_eq!(
+        created["recovery_period_secs"], 180,
+        "a probed monitor holds three minutes unless asked otherwise"
+    );
     let id = created["id"].as_str().unwrap().to_string();
     let path = format!("/api/v1/targets/{id}");
 
@@ -688,8 +691,15 @@ async fn recovery_period_round_trips_and_is_bounded() {
     let mut payload = tcp_target("db3");
     payload["recovery_period_secs"] = json!(1800);
     assert_eq!(
-        post_and_body(app, payload).await["recovery_period_secs"],
+        post_and_body(app.clone(), payload).await["recovery_period_secs"],
         1800
+    );
+    let mut payload = tcp_target("db4");
+    payload["recovery_period_secs"] = json!(0);
+    assert_eq!(
+        post_and_body(app, payload).await["recovery_period_secs"],
+        0,
+        "closing at once is still a choice"
     );
 }
 

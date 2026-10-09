@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::domain::{
     CheckStatus, Downtime, ImpactSpan, Incident, IncidentImpact, IncidentNarrationUpdate,
     IncidentOrigin, IncidentSeverity, IncidentStatusPhase, NewIncidentUpdate, OrgId,
-    PublicIncidentUpdate, stored_incident_impact,
+    PublicIncidentUpdate, Recovered, outage_parts, stored_incident_impact,
 };
 use std::collections::HashMap;
 
@@ -43,9 +43,10 @@ impl IncidentBrief {
     }
 }
 
-/// One downtime incident's span on a monitor, slim enough to paint a timeline.
-/// `origin`, `severity`, `status_at_start` and `regions_up` are what an impact
-/// is read from.
+/// One stretch of a downtime incident on a monitor, slim enough to paint a
+/// timeline. `origin`, `severity`, `status_at_start` and `regions_up` are what
+/// an impact is read from. An incident that was back up for a while is split
+/// around it, and one waiting out its recovery ends where the recovery began.
 #[derive(Debug, Clone)]
 pub struct IncidentSpan {
     pub target_id: Uuid,
@@ -65,6 +66,18 @@ impl IncidentSpan {
             &self.status_at_start,
             Some(&self.regions_up),
         )
+    }
+
+    /// The stretches of it the monitor was down, around those it was back up in.
+    fn split(self, recovered: &[Recovered]) -> Vec<IncidentSpan> {
+        outage_parts(self.started_at, self.ended_at, recovered)
+            .into_iter()
+            .map(|(started_at, ended_at)| IncidentSpan {
+                started_at,
+                ended_at,
+                ..self.clone()
+            })
+            .collect()
     }
 
     /// The part of `range` this incident covers; `None` when it covers none.
@@ -241,6 +254,9 @@ struct IncidentRow {
     regions_down: Option<Vec<String>>,
     regions_up: Option<Vec<String>>,
     origin: String,
+    recovering_since: Option<DateTime<Utc>>,
+    recovered_from: Vec<DateTime<Utc>>,
+    recovered_until: Vec<DateTime<Utc>>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -256,7 +272,8 @@ async fn load_with_updates(pool: &PgPool, id: Uuid, org_id: Uuid) -> Result<Opti
         r#"SELECT id, target_id, target_name, started_at, ended_at, severity, status_at_start,
                   check_count, error_sample, counts_as_downtime,
                   public_title, public_description,
-                  duration_secs, created_at, updated_at, regions_down, regions_up, origin
+                  duration_secs, created_at, updated_at, regions_down, regions_up, origin, recovering_since,
+                  recovered_from, recovered_until
            FROM incidents WHERE id = $1 AND org_id = $2"#,
     )
     .bind(id)
@@ -310,6 +327,8 @@ fn row_to_incident(row: IncidentRow, updates: Vec<UpdateRow>) -> Incident {
         regions_down: row.regions_down.unwrap_or_default(),
         regions_up: row.regions_up.unwrap_or_default(),
         origin: IncidentOrigin::from_db_str(&row.origin),
+        recovering_since: row.recovering_since,
+        recovered: Recovered::paired(row.recovered_from, row.recovered_until),
     }
 }
 
@@ -352,7 +371,8 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
                RETURNING id, target_id, target_name, started_at, ended_at, severity, status_at_start,
                          check_count, error_sample, counts_as_downtime,
                          public_title, public_description,
-                         duration_secs, created_at, updated_at, regions_down, regions_up, origin"#,
+                         duration_secs, created_at, updated_at, regions_down, regions_up, origin, recovering_since,
+                  recovered_from, recovered_until"#,
         )
         .bind(id)
         .bind(update.public_title.is_some())
@@ -543,7 +563,8 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
             r#"SELECT id, target_id, target_name, started_at, ended_at, severity, status_at_start,
                       check_count, error_sample, counts_as_downtime,
                       public_title, public_description,
-                      duration_secs, created_at, updated_at, regions_down, regions_up, origin
+                      duration_secs, created_at, updated_at, regions_down, regions_up, origin, recovering_since,
+                  recovered_from, recovered_until
                FROM incidents
                WHERE org_id = $1 AND target_id = $2
                  AND started_at < $4
@@ -602,8 +623,8 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
         targets: Option<&[Uuid]>,
     ) -> Result<Vec<IncidentSpan>> {
         let rows: Vec<IncidentSpanRow> = sqlx::query_as(
-            r#"SELECT target_id, started_at, ended_at, origin, severity, status_at_start,
-                      regions_up
+            r#"SELECT target_id, started_at, COALESCE(ended_at, recovering_since) AS ended_at,
+                      origin, severity, status_at_start, regions_up, recovered_from, recovered_until
                FROM incidents
                WHERE org_id = $1 AND target_id IS NOT NULL AND started_at < $3
                  AND (ended_at IS NULL OR ended_at >= $2)
@@ -620,14 +641,17 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
         .map_err(|e| anyhow::anyhow!("downtime_spans: {e}"))?;
         Ok(rows
             .into_iter()
-            .map(|r| IncidentSpan {
-                target_id: r.target_id,
-                started_at: r.started_at,
-                ended_at: r.ended_at,
-                origin: r.origin,
-                severity: IncidentSeverity::from_db_str(&r.severity),
-                status_at_start: r.status_at_start,
-                regions_up: r.regions_up.unwrap_or_default(),
+            .flat_map(|r| {
+                let span = IncidentSpan {
+                    target_id: r.target_id,
+                    started_at: r.started_at,
+                    ended_at: r.ended_at,
+                    origin: r.origin,
+                    severity: IncidentSeverity::from_db_str(&r.severity),
+                    status_at_start: r.status_at_start,
+                    regions_up: r.regions_up.unwrap_or_default(),
+                };
+                span.split(&Recovered::paired(r.recovered_from, r.recovered_until))
             })
             .collect())
     }
@@ -642,6 +666,8 @@ struct IncidentSpanRow {
     severity: String,
     status_at_start: String,
     regions_up: Option<Vec<String>>,
+    recovered_from: Vec<DateTime<Utc>>,
+    recovered_until: Vec<DateTime<Utc>>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -880,16 +906,18 @@ impl IncidentNarrationStore for InMemoryIncidentNarrationStore {
             .filter(|i| i.started_at < range.to && i.ended_at.is_none_or(|e| e >= range.from))
             .filter(|i| targets.is_none_or(|ids| i.target_id.is_some_and(|t| ids.contains(&t))))
             .filter_map(|i| {
-                Some(IncidentSpan {
+                let span = IncidentSpan {
                     target_id: i.target_id?,
                     started_at: i.started_at,
-                    ended_at: i.ended_at,
+                    ended_at: i.ended_at.or(i.recovering_since),
                     origin: i.origin.as_db_str().into(),
                     severity: i.severity,
                     status_at_start: i.status.as_str().into(),
                     regions_up: i.regions_up.clone(),
-                })
+                };
+                Some(span.split(&i.recovered))
             })
+            .flatten()
             .collect();
         out.sort_by_key(|s| s.started_at);
         Ok(out)
@@ -922,6 +950,8 @@ mod tests {
             regions_down: Vec::new(),
             regions_up: Vec::new(),
             origin: Default::default(),
+            recovering_since: None,
+            recovered: Vec::new(),
         }
     }
 
@@ -1271,6 +1301,39 @@ mod tests {
         assert_eq!(map.get(&t1).copied(), Some(1800));
         assert_eq!(map.get(&t2).copied(), Some(600));
         assert_eq!(map.get(&t3), None);
+    }
+
+    #[tokio::test]
+    async fn downtime_spans_leave_out_a_stretch_back_up_inside_an_incident() {
+        let store = InMemoryIncidentNarrationStore::new();
+        let t = Uuid::now_v7();
+        let now = Utc::now();
+        let mut i = sample();
+        i.target_id = Some(t);
+        i.started_at = now - ChronoDuration::minutes(50);
+        i.ended_at = Some(now - ChronoDuration::minutes(20));
+        i.recovered = vec![Recovered {
+            from: now - ChronoDuration::minutes(40),
+            until: now - ChronoDuration::minutes(30),
+        }];
+        store.seed(i);
+        let window = TimeRange {
+            from: now - ChronoDuration::hours(1),
+            to: now,
+        };
+        assert_eq!(
+            store
+                .downtime_spans(org(), window, None)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        let map = store
+            .confirmed_downtime_by_target(org(), window, None)
+            .await
+            .unwrap();
+        assert_eq!(map.get(&t).copied(), Some(1200));
     }
 
     #[tokio::test]

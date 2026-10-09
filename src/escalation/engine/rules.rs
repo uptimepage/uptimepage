@@ -199,16 +199,27 @@ pub(super) fn resolvable_channels(rows: &[crate::domain::IncidentNotification]) 
     out
 }
 
+/// Where an incident stands when a queued page is about to go out late.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Standing {
+    pub(super) state: IncidentState,
+    /// Back up and waiting out its recovery period.
+    pub(super) recovering: bool,
+}
+
 /// A queued page becomes stale if the incident moved past the state it
 /// describes before delivery succeeded: an outage notice once the incident is
-/// resolved, or a recovery notice once it has reopened.
-pub(super) fn reason_is_stale(reason: NotificationReason, state: IncidentState) -> bool {
+/// resolved, or a recovery notice once it has reopened. A page that would only
+/// raise the alarm further is stale while the monitor is back up.
+pub(super) fn reason_is_stale(reason: NotificationReason, now: Standing) -> bool {
+    let state = now.state;
     match reason {
-        NotificationReason::Opened
-        | NotificationReason::Reopened
-        | NotificationReason::Escalated => state == IncidentState::Resolved,
+        NotificationReason::Opened | NotificationReason::Reopened => {
+            state == IncidentState::Resolved
+        }
+        NotificationReason::Escalated => state == IncidentState::Resolved || now.recovering,
         // A reminder only says "still unacknowledged", which an ack ends.
-        NotificationReason::Reminder => state != IncidentState::Triggered,
+        NotificationReason::Reminder => state != IncidentState::Triggered || now.recovering,
         NotificationReason::Resolved | NotificationReason::MonitorDeleted => {
             state != IncidentState::Resolved
         }
@@ -277,14 +288,45 @@ mod tests {
         }
     }
 
+    fn standing(state: IncidentState) -> Standing {
+        Standing {
+            state,
+            recovering: false,
+        }
+    }
+
     #[test]
     fn a_queued_reminder_is_dropped_once_someone_acknowledges() {
         use IncidentState::{Acknowledged, Resolved, Triggered};
-        assert!(!reason_is_stale(NotificationReason::Reminder, Triggered));
-        assert!(reason_is_stale(NotificationReason::Reminder, Acknowledged));
-        assert!(reason_is_stale(NotificationReason::Reminder, Resolved));
+        assert!(!reason_is_stale(
+            NotificationReason::Reminder,
+            standing(Triggered)
+        ));
+        assert!(reason_is_stale(
+            NotificationReason::Reminder,
+            standing(Acknowledged)
+        ));
+        assert!(reason_is_stale(
+            NotificationReason::Reminder,
+            standing(Resolved)
+        ));
         // An opening page still lands on an acknowledged incident: the
         // responder took it, they did not learn about it twice.
-        assert!(!reason_is_stale(NotificationReason::Opened, Acknowledged));
+        assert!(!reason_is_stale(
+            NotificationReason::Opened,
+            standing(Acknowledged)
+        ));
+    }
+
+    #[test]
+    fn a_queued_alarm_is_dropped_while_the_monitor_is_back_up() {
+        let recovering = Standing {
+            state: IncidentState::Triggered,
+            recovering: true,
+        };
+        assert!(reason_is_stale(NotificationReason::Reminder, recovering));
+        assert!(reason_is_stale(NotificationReason::Escalated, recovering));
+        // The outage did happen; its closing notice will follow this one.
+        assert!(!reason_is_stale(NotificationReason::Opened, recovering));
     }
 }

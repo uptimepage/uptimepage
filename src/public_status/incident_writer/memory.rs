@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::domain::{CheckStatus, OrgId};
+use crate::domain::{CheckStatus, OrgId, Recovered};
 use crate::error::Result;
 
 use super::{IncidentStore, NewOpenIncident, OpenIncident};
@@ -37,6 +37,8 @@ pub struct MemIncident {
     pub region: Option<String>,
     pub regions_down: Vec<String>,
     pub regions_up: Vec<String>,
+    pub recovering_since: Option<DateTime<Utc>>,
+    pub recovered: Vec<Recovered>,
 }
 
 impl InMemoryIncidentStore {
@@ -88,6 +90,8 @@ impl IncidentStore for InMemoryIncidentStore {
                     region: i.region.clone(),
                     regions_down: i.regions_down.clone(),
                     worst_status: i.status_at_start,
+                    recovering_since: i.recovering_since,
+                    recovered: i.recovered.clone(),
                 })
                 .collect();
             if !open.is_empty() {
@@ -113,6 +117,8 @@ impl IncidentStore for InMemoryIncidentStore {
                 region: i.region.clone(),
                 regions_down: i.regions_down.clone(),
                 worst_status: i.status_at_start,
+                recovering_since: i.recovering_since,
+                recovered: i.recovered.clone(),
             });
         Ok(open)
     }
@@ -160,6 +166,8 @@ impl IncidentStore for InMemoryIncidentStore {
             region: new.region,
             regions_down: new.regions_down,
             regions_up: new.regions_up,
+            recovering_since: None,
+            recovered: Vec::new(),
         });
         g.inserts += 1;
         Ok(Some(id))
@@ -172,6 +180,7 @@ impl IncidentStore for InMemoryIncidentStore {
             for inc in bucket.iter_mut() {
                 if inc.id == incident_id && inc.ended_at.is_none() {
                     inc.ended_at = Some(ended_at);
+                    inc.recovering_since = None;
                     closed = true;
                 }
             }
@@ -180,6 +189,36 @@ impl IncidentStore for InMemoryIncidentStore {
             g.closes += 1;
         }
         Ok(closed)
+    }
+
+    async fn set_recovering(
+        &self,
+        _org: OrgId,
+        incident_id: Uuid,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        let mut g = self.inner.lock();
+        for inc in g.by_target.values_mut().flatten() {
+            if inc.id == incident_id && inc.ended_at.is_none() {
+                inc.recovering_since = since;
+            }
+        }
+        Ok(())
+    }
+
+    async fn relapse(&self, _org: OrgId, incident_id: Uuid, recovered: Recovered) -> Result<()> {
+        let mut g = self.inner.lock();
+        for inc in g.by_target.values_mut().flatten() {
+            if inc.id == incident_id && inc.ended_at.is_none() {
+                if !inc.recovered.iter().any(|r| r.from == recovered.from) {
+                    inc.recovered.push(recovered);
+                }
+                if inc.recovering_since == Some(recovered.from) {
+                    inc.recovering_since = None;
+                }
+            }
+        }
+        Ok(())
     }
 
     async fn widen(&self, _org: OrgId, incident_id: Uuid, regions: &[String]) -> Result<()> {

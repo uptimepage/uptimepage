@@ -76,6 +76,8 @@ pub struct IncidentRow {
     /// internal, so the shared view never carries one.
     pub title: String,
     pub ongoing: bool,
+    /// Back up and waiting out its recovery period before it closes.
+    pub recovering: bool,
     /// How much of it reaches the monitor's uptime, when that is not all of it.
     pub uptime_note: &'static str,
 }
@@ -505,6 +507,7 @@ impl From<Incident> for IncidentRow {
                 .unwrap_or_default(),
             title: String::new(),
             ongoing,
+            recovering: ongoing && inc.recovering_since.is_some(),
             uptime_note: uptime_note(&inc),
         }
     }
