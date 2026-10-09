@@ -48,6 +48,7 @@
         <td class="px-3 py-2 align-top">
           <div class="flex flex-col items-start gap-1.5">
             <span class="dashboard-chip dashboard-chip--flat">{{ row.state_label }}</span>
+            {% if row.recovering %}<span class="dashboard-chip dashboard-chip--flat" title="the monitor is back up; the incident closes once its recovery period has held">recovering</span>{% endif %}
             {% if !row.acks.ackers.is_empty() || row.state == "resolved" %}
             <div class="flex flex-wrap items-center gap-1.5">
               {% for a in row.acks.ackers %}

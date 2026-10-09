@@ -161,6 +161,25 @@ fn console_triggered_row_shows_ack_and_resolve() {
 }
 
 #[test]
+fn console_recovering_row_says_so_beside_its_state_and_actions() {
+    let mut inc = ops(IncidentState::Triggered);
+    inc.recovering_since = Some(Utc::now() - chrono::Duration::minutes(1));
+    let row = row_from(
+        inc,
+        Some("api-gateway".into()),
+        AckList::default(),
+        None,
+        None,
+        false,
+    );
+    assert!(row.recovering);
+    let html = page(vec![row]).render().unwrap();
+    assert!(html.contains(">recovering</span>"));
+    assert!(html.contains(r#"data-incident-action="acknowledge""#));
+    assert!(html.contains(r#"data-incident-action="resolve""#));
+}
+
+#[test]
 fn console_resolved_row_shows_reopen_only() {
     let mut inc = ops(IncidentState::Resolved);
     inc.ended_at = Some(Utc::now());

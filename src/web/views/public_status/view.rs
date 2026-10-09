@@ -112,6 +112,9 @@ pub struct IncidentHeader {
     pub phase_class: &'static str,
     pub started_at: DateTime<Utc>,
     pub ongoing: bool,
+    /// Back up and waiting out its recovery period: its phase reads
+    /// Monitoring, so it carries no red Ongoing badge.
+    pub recovering: bool,
     /// Elapsed at page-build `now`, for closed and ongoing incidents alike.
     pub duration: String,
     /// `2h ago`, while the incident is still open.
@@ -533,6 +536,7 @@ pub(super) fn build_incident_header(
         phase_class,
         started_at: i.started_at,
         ongoing: i.ended_at.is_none(),
+        recovering: i.recovering,
         duration: tr.duration(duration_secs),
         elapsed: i.ended_at.is_none().then(|| tr.ago(duration_secs)),
     }

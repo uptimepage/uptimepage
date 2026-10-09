@@ -1246,6 +1246,7 @@ fn brief(now: DateTime<Utc>) -> IncidentBrief {
         ended_at: None,
         public_title: None,
         latest_update: None,
+        recovering_since: None,
     }
 }
 
@@ -1261,6 +1262,27 @@ fn ack(
         anonymous: actor_id.is_none(),
         at,
     }
+}
+
+#[test]
+fn banner_marks_an_incident_waiting_out_its_recovery() {
+    let now = Utc::now();
+    let members = HashMap::new();
+    let viewer = UserId(Uuid::now_v7());
+    let down = DashboardActiveIncident::build(brief(now), &[], viewer, now, &members);
+    assert!(!down.recovering);
+    let back = DashboardActiveIncident::build(
+        IncidentBrief {
+            recovering_since: Some(now - Duration::minutes(1)),
+            ..brief(now)
+        },
+        &[],
+        viewer,
+        now,
+        &members,
+    );
+    assert!(back.recovering);
+    assert!(back.can_acknowledge, "still takes an ack");
 }
 
 #[test]

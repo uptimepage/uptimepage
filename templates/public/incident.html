@@ -28,7 +28,7 @@
                 <h1 class="text-2xl font-semibold tracking-tight break-words sm:text-3xl">{{ incident.header.title }}</h1>
                 <p class="flex flex-wrap items-center gap-2 text-sm">
                     {% call chips::sevphase(incident.header) %}{% endcall %}
-                    {% if incident.header.ongoing %}
+                    {% if incident.header.ongoing && !incident.header.recovering %}
                         <span class="status-badge status-badge--down">{{ tr.t("incident-ongoing") }}</span>
                     {% endif %}
                     {% if !incident.header.component_name.is_empty() %}

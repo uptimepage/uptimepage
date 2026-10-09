@@ -87,6 +87,9 @@ pub struct ConsoleRow {
     /// Coarse age: elapsed for ongoing, lifetime for resolved. Refreshed by the
     /// 10s table poll, so no client-side ticking.
     pub age: String,
+    /// Back up and waiting out its recovery period before it closes; shown
+    /// beside its state, which still takes an ack or a resolve.
+    pub recovering: bool,
     pub ongoing: bool,
 }
 
@@ -179,6 +182,7 @@ pub(super) fn row_from(
         assigned_to_me,
         started_at: inc.started_at,
         age,
+        recovering: ongoing && inc.recovering_since.is_some(),
         ongoing,
     }
 }

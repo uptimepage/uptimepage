@@ -78,6 +78,7 @@ fn active_incident(latest: Option<PublicIncidentUpdate>) -> IncidentBrief {
         ended_at: None,
         public_title: None,
         latest_update: latest,
+        recovering_since: None,
     }
 }
 

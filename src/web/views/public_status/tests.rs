@@ -315,6 +315,7 @@ fn active_incident_banner_renders_when_present() {
         }],
         postmortem: None,
         recovered: Vec::new(),
+        recovering: false,
     });
     let view = build_view(&p, &[], &Default::default(), Tr::default());
     let html = StatusFullPage {
@@ -535,6 +536,7 @@ fn incident_detail_renders() {
         ],
         postmortem: None,
         recovered: Vec::new(),
+        recovering: false,
     };
     let detail = IncidentDetailView::from_incident(&inc, Utc::now(), Tr::default());
     let html = IncidentDetailPage {
@@ -552,6 +554,34 @@ fn incident_detail_renders() {
     assert!(html.contains("Investigating"));
     assert!(html.contains("Resolved"));
     assert!(html.contains("Rolled back the deploy."));
+}
+
+#[test]
+fn a_recovering_incident_reads_as_monitoring_without_the_ongoing_badge() {
+    let mut inc = fake_incident(Utc::now() - ChronoDuration::minutes(20), 7, "API down");
+    inc.ended_at = None;
+    let page = |inc: &PublicIncident| {
+        IncidentDetailPage {
+            tr: Tr::default(),
+            branding: sample_branding(),
+            incident: IncidentDetailView::from_incident(inc, Utc::now(), Tr::default()),
+            generated_at: Utc::now(),
+            rss_url: RSS_URL,
+            og: OgMeta::default(),
+        }
+        .render()
+        .unwrap()
+    };
+    assert!(
+        page(&inc).contains("status-badge--down"),
+        "down and ongoing"
+    );
+
+    inc.status_phase = IncidentStatusPhase::Investigating.shown(true);
+    inc.recovering = true;
+    let html = page(&inc);
+    assert!(!html.contains("status-badge--down"), "{html}");
+    assert!(html.contains("public-phase--monitoring"));
 }
 
 #[test]
@@ -934,6 +964,7 @@ fn fake_incident(started_at: DateTime<Utc>, id_low: u8, title: &str) -> PublicIn
         updates: Vec::new(),
         postmortem: None,
         recovered: Vec::new(),
+        recovering: false,
     }
 }
 

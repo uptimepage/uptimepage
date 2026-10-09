@@ -891,11 +891,14 @@ async fn build_component_state_follows_confirmed_incidents() {
             .find(|c| c.id == major_id)
             .expect("component present");
         assert_eq!(major.current_status, PublicComponentStatus::Operational);
-        assert!(
-            page.active_incidents
-                .iter()
-                .any(|i| i.component_id == Some(major_id)),
-            "still open until the recovery holds"
+        let held = page
+            .active_incidents
+            .iter()
+            .find(|i| i.component_id == Some(major_id))
+            .expect("still open until the recovery holds");
+        assert_eq!(
+            held.status_phase,
+            uptimepage::domain::IncidentStatusPhase::Monitoring
         );
     };
 

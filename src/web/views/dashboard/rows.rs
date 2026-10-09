@@ -186,6 +186,8 @@ pub struct DashboardActiveIncident {
     pub severity_class: &'static str,
     pub latest_update: Option<DashboardIncidentUpdate>,
     pub can_acknowledge: bool,
+    /// Back up and waiting out its recovery period before it closes.
+    pub recovering: bool,
     /// Everyone who acknowledged it, first (credited) first.
     pub acknowledged: Vec<DashboardIncidentAck>,
 }
@@ -322,6 +324,8 @@ impl DashboardActiveIncident {
             target_name,
             severity,
             started_at,
+            ended_at,
+            recovering_since,
             public_title,
             latest_update,
             ..
@@ -345,6 +349,7 @@ impl DashboardActiveIncident {
                 message: u.message,
             }),
             can_acknowledge: !acks.mine,
+            recovering: ended_at.is_none() && recovering_since.is_some(),
             acknowledged: acks
                 .ackers
                 .into_iter()

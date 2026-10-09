@@ -442,6 +442,7 @@ impl OrgAggregator {
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
                       i.origin, i.regions_up, i.recovered_from, i.recovered_until,
+                      i.recovering_since,
                       i.public_title, i.public_description, {kept}
                FROM incidents i
                WHERE i.org_id = $1
@@ -476,6 +477,7 @@ impl OrgAggregator {
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
                       i.origin, i.regions_up, i.recovered_from, i.recovered_until,
+                      i.recovering_since,
                       i.public_title, i.public_description, {kept}
                FROM incidents i
                WHERE i.org_id = $3
@@ -629,6 +631,7 @@ impl OrgAggregator {
                     .clone()
                     .unwrap_or_else(|| tr.auto_incident_title(&component_name, &r.status_at_start));
                 let severity = IncidentSeverity::from_db_str(&r.severity);
+                let recovering = r.ended_at.is_none() && r.recovering_since.is_some();
                 PublicIncident {
                     id: r.id,
                     component_id: r.target_id,
@@ -643,9 +646,10 @@ impl OrgAggregator {
                         &r.status_at_start,
                         r.regions_up.as_deref(),
                     ),
-                    status_phase,
+                    status_phase: status_phase.shown(recovering),
                     updates: my_updates,
                     recovered: Recovered::paired(r.recovered_from, r.recovered_until),
+                    recovering,
                     postmortem: None,
                 }
             })
@@ -856,6 +860,7 @@ struct IncidentRow {
     regions_up: Option<Vec<String>>,
     recovered_from: Vec<DateTime<Utc>>,
     recovered_until: Vec<DateTime<Utc>>,
+    recovering_since: Option<DateTime<Utc>>,
     public_title: Option<String>,
     #[allow(dead_code)]
     public_description: Option<String>,

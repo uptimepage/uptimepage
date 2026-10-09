@@ -75,6 +75,7 @@ impl PublicSource for PublishedSource {
             }],
             postmortem: None,
             recovered: Vec::new(),
+            recovering: false,
         };
         Ok(Arc::new(PublicStatusPage {
             overall: OverallStatus {

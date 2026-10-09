@@ -310,6 +310,17 @@ impl IncidentStatusPhase {
         Self::Postmortem,
     ];
 
+    /// The phase a visitor sees: the latest update's, or Monitoring while the
+    /// monitor is back up and waiting out its recovery. Derived, so the saved
+    /// phase returns if the failure does, and an operator's own Monitoring,
+    /// Resolved or Postmortem stands.
+    pub fn shown(self, recovering: bool) -> Self {
+        match self {
+            Self::Investigating | Self::Identified if recovering => Self::Monitoring,
+            phase => phase,
+        }
+    }
+
     /// Stable string used in the Postgres `phase` CHECK constraint and the
     /// JSON wire form. Unknown DB values fall back to `Investigating` so a
     /// migration / corruption never panics a read path.
@@ -363,13 +374,19 @@ pub struct PublicIncident {
     /// the default unless narrated; `impact` is what the page shows.
     pub severity: IncidentSeverity,
     pub impact: IncidentImpact,
-    /// Most recent phase from operator updates; `investigating` if none.
+    /// The latest update's phase, `investigating` if none, or `monitoring`
+    /// while the monitor is back up and waiting out its recovery period. An
+    /// update's own `monitoring`, `resolved` or `postmortem` stands.
     pub status_phase: IncidentStatusPhase,
     pub updates: Vec<PublicIncidentUpdate>,
     /// Stretches it was back up in before the failure returned; not downtime.
     /// Kept off the wire.
     #[serde(skip)]
     pub recovered: Vec<Recovered>,
+    /// Back up and waiting out its recovery period; `status_phase` already
+    /// says Monitoring. Kept off the wire.
+    #[serde(skip)]
+    pub recovering: bool,
     /// Present only once an operator publishes a postmortem; never set on list
     /// views.
     #[serde(default)]
@@ -442,6 +459,21 @@ pub struct ComponentHistoryResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_recovering_incident_reads_as_monitoring_until_an_operator_says_otherwise() {
+        use IncidentStatusPhase::*;
+        assert_eq!(Investigating.shown(true), Monitoring);
+        assert_eq!(Identified.shown(true), Monitoring);
+        assert_eq!(
+            Investigating.shown(false),
+            Investigating,
+            "the saved phase returns"
+        );
+        for phase in [Monitoring, Resolved, Postmortem] {
+            assert_eq!(phase.shown(true), phase);
+        }
+    }
 
     #[test]
     fn impact_degraded_wins_over_region_split() {

@@ -33,8 +33,9 @@ pub struct PastEntry {
     pub impact_class: &'static str,
     /// Shown only when it says more than "resolved", such as a postmortem.
     pub phase: Option<PhaseChip>,
-    /// Still open; only the archive lists one, since the status page shows it
-    /// under its active incidents.
+    /// Still open and down; only the archive lists one, since the status page
+    /// shows it under its active incidents. One back up and waiting out its
+    /// recovery says so with its Monitoring phase instead.
     pub ongoing: bool,
     /// What leads the meta line: the component, or how many incidents.
     pub lead: String,
@@ -191,7 +192,7 @@ fn single(inc: &PublicIncident, now: DateTime<Utc>, tr: Tr) -> PastEntry {
         impact_label: tr.t(impact_id),
         impact_class,
         phase: telling_phase(inc.status_phase, tr),
-        ongoing: inc.ended_at.is_none(),
+        ongoing: inc.ended_at.is_none() && !inc.recovering,
         lead: inc.component_name.clone(),
         started_at: inc.started_at,
         ended_at: inc.ended_at,
@@ -347,6 +348,7 @@ mod tests {
             ],
             postmortem: None,
             recovered: Vec::new(),
+            recovering: false,
         }
     }
 

@@ -32,6 +32,8 @@ pub struct IncidentBrief {
     pub severity: IncidentSeverity,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
+    /// When the recovery it is waiting out began; the monitor is back up.
+    pub recovering_since: Option<DateTime<Utc>>,
     pub public_title: Option<String>,
     pub latest_update: Option<PublicIncidentUpdate>,
 }
@@ -486,7 +488,7 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
         };
         let sql = format!(
             r#"SELECT i.id, i.target_id, i.target_name,
-                      i.severity, i.started_at, i.ended_at, i.public_title,
+                      i.severity, i.started_at, i.ended_at, i.recovering_since, i.public_title,
                       u.posted_at AS update_posted_at,
                       u.phase     AS update_phase,
                       u.message   AS update_message,
@@ -678,6 +680,7 @@ struct IncidentBriefRow {
     severity: String,
     started_at: DateTime<Utc>,
     ended_at: Option<DateTime<Utc>>,
+    recovering_since: Option<DateTime<Utc>>,
     public_title: Option<String>,
     update_posted_at: Option<DateTime<Utc>>,
     update_phase: Option<String>,
@@ -702,6 +705,7 @@ fn row_to_brief(r: IncidentBriefRow) -> IncidentBrief {
         severity: IncidentSeverity::from_db_str(&r.severity),
         started_at: r.started_at,
         ended_at: r.ended_at,
+        recovering_since: r.recovering_since,
         public_title: r.public_title,
         latest_update,
     }
@@ -828,6 +832,7 @@ impl IncidentNarrationStore for InMemoryIncidentNarrationStore {
                 severity: i.severity,
                 started_at: i.started_at,
                 ended_at: i.ended_at,
+                recovering_since: i.recovering_since,
                 public_title: i.public_title.clone(),
                 latest_update: i.updates.last().cloned(),
             })

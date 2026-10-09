@@ -25,6 +25,7 @@
           <span class="dashboard-incident-banner__name">{{ inc.title }}</span>
           {% endif %}
           <span class="dashboard-incident-banner__age">{{ inc.age_label }}</span>
+          {% if inc.recovering %}<span class="dashboard-chip dashboard-chip--flat" title="the monitor is back up; the incident closes once its recovery period has held">recovering</span>{% endif %}
           <span class="dashboard-incident-banner__actions">
             {% if inc.can_acknowledge %}
             <button type="button" data-incident-action="acknowledge" data-incident-id="{{ inc.id }}"
