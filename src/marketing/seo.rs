@@ -50,7 +50,7 @@ pub(super) const LLMS_FACTS: &[(&str, &str)] = &[
     ),
     (
         "Status page",
-        "branded (logo + colour) on your own subdomain, or your own domain on Pro and Team",
+        "branded (logo + colour) on your own subdomain, or your own domain on Founding (one), Pro and Team",
     ),
     (
         "WordPress",

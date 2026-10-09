@@ -8,7 +8,7 @@ pub const LANDINGS: &[Landing] = &[
     Landing {
         path: "/status-page-for-saas",
         created: "2026-06-16",
-        lastmod: "2026-10-03",
+        lastmod: "2026-10-09",
         title: "Status Page & Uptime Monitoring for SaaS",
         eyebrow: "for saas teams",
         h1: "A status page your SaaS customers actually trust",
@@ -1061,7 +1061,7 @@ URL=https://app.uptimepage.dev/ping/your-token
     Landing {
         path: "/vs/statuspage",
         created: "2026-06-19",
-        lastmod: "2026-10-03",
+        lastmod: "2026-10-09",
         title: "Uptimepage vs Statuspage: Monitoring Built In",
         eyebrow: "switching status pages",
         h1: "Uptimepage vs Statuspage: monitoring built in",

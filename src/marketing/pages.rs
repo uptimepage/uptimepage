@@ -292,7 +292,7 @@ pub async fn architecture(State(cfg): State<Arc<MarketingCfg>>, headers: HeaderM
 
 pub(crate) const PRICING_PATH: &str = "/pricing";
 const PRICING_CREATED: &str = "2026-06-23";
-pub(crate) const PRICING_LASTMOD: &str = "2026-10-01";
+pub(crate) const PRICING_LASTMOD: &str = "2026-10-09";
 
 // Founding-claim figures shown on the pricing scarcity meter.
 const FOUNDING_TOTAL: u32 = 1000;

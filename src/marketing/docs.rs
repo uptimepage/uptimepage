@@ -238,7 +238,7 @@ pub const DOCS: &[DocPage] = &[
         section: Section::Guide,
         scope: Scope::Everyone,
         created: "2026-07-22",
-        lastmod: "2026-10-04",
+        lastmod: "2026-10-09",
         source: include_str!("../../docs/per-org-status.md"),
         dir: "",
     },

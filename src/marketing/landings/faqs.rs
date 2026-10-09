@@ -530,7 +530,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
             ),
             (
                 "Is a custom domain included?",
-                "Every org gets a branded subdomain on every plan, and Pro and Team can also serve the page on your own hostname, such as status.yourcompany.com. Branding, logo and colours are included on every plan.",
+                "Every org gets a branded subdomain on every plan. Founding can also serve one page on your own hostname, such as status.yourcompany.com, and Pro and Team can do it for every page. Branding, logo and colours are included on every plan.",
             ),
             (
                 "Is it free?",
@@ -638,7 +638,7 @@ pub(crate) fn page_faqs(path: &str) -> &'static [(&'static str, &'static str)] {
         "/status-page-for-saas" => &[
             (
                 "Can I put the status page on my own domain?",
-                "Yes, on Pro and Team. Every org gets a branded status page on its own subdomain with your logo and colours, and those plans can also serve it on your own hostname, such as status.yourcompany.com.",
+                "Yes, on Founding, Pro and Team. Every org gets a branded status page on its own subdomain with your logo and colours. Founding can also serve one page on your own hostname, such as status.yourcompany.com, and Pro and Team can do it for every page.",
             ),
             (
                 "How fast does it detect an outage?",
