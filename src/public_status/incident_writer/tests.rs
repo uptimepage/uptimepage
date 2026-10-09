@@ -1211,6 +1211,116 @@ fn a_lone_region_recovering_during_the_hold_does_not_redate_the_end() {
     }
 }
 
+#[test]
+fn a_region_that_stops_reporting_is_no_evidence_of_a_recovery() {
+    // fra and us opened it; us has gone quiet while fra still fails. With us
+    // out of the vote one failing region is below the majority, but hel never
+    // failed, so nothing has seen the outage end.
+    let base = mbase();
+    let t = Uuid::now_v7();
+    let open = open_since(t, ts(base, 0), &["fra", "us"]);
+    let fra = run(t, base, 1_200, 1_500, CheckStatus::Down);
+    let hel = run(t, base, 1_200, 1_500, CheckStatus::Up);
+    let quiet = vec![
+        ("fra".to_string(), fra.clone()),
+        ("hel".to_string(), hel.clone()),
+    ];
+    assert!(
+        decide_multi(
+            t,
+            std::slice::from_ref(&open),
+            &quiet,
+            2,
+            2,
+            ChronoDuration::zero()
+        )
+        .is_empty()
+    );
+
+    let back = vec![
+        ("fra".to_string(), fra),
+        ("hel".to_string(), hel),
+        (
+            "us".to_string(),
+            run(t, base, 1_440, 1_500, CheckStatus::Up),
+        ),
+    ];
+    match decide_multi(
+        t,
+        std::slice::from_ref(&open),
+        &back,
+        2,
+        2,
+        ChronoDuration::zero(),
+    )
+    .as_slice()
+    {
+        [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 1_440)),
+        other => panic!("expected Close, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_quiet_region_does_not_backdate_the_recovery_of_the_one_still_reporting() {
+    let base = mbase();
+    let t = Uuid::now_v7();
+    let open = open_since(t, ts(base, 0), &["fra", "us"]);
+    let mut fra = run(t, base, 1_200, 1_290, CheckStatus::Down);
+    fra.extend(run(t, base, 1_320, 1_500, CheckStatus::Up));
+    let by_region = vec![
+        ("fra".to_string(), fra),
+        (
+            "hel".to_string(),
+            run(t, base, 1_200, 1_500, CheckStatus::Up),
+        ),
+    ];
+    match decide_multi(
+        t,
+        std::slice::from_ref(&open),
+        &by_region,
+        2,
+        2,
+        ChronoDuration::zero(),
+    )
+    .as_slice()
+    {
+        [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 1_320)),
+        other => panic!("expected Close, got {other:?}"),
+    }
+}
+
+#[test]
+fn with_every_failing_region_quiet_the_regions_still_reporting_decide() {
+    // fra was the only region failing and has stopped reporting, as when it is
+    // taken off the monitor; hel and us both pass.
+    let base = mbase();
+    let t = Uuid::now_v7();
+    let open = open_since(t, ts(base, 0), &["fra"]);
+    let by_region = vec![
+        (
+            "hel".to_string(),
+            run(t, base, 1_200, 1_500, CheckStatus::Up),
+        ),
+        (
+            "us".to_string(),
+            run(t, base, 1_230, 1_500, CheckStatus::Up),
+        ),
+    ];
+    match decide_multi(
+        t,
+        std::slice::from_ref(&open),
+        &by_region,
+        2,
+        1,
+        ChronoDuration::zero(),
+    )
+    .as_slice()
+    {
+        [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 1_230)),
+        other => panic!("expected Close, got {other:?}"),
+    }
+}
+
 // ── full writer tick with InMemoryIncidentStore ─────────────────────────
 
 fn make_public_target(name: &str) -> Target {

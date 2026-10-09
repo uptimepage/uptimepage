@@ -233,9 +233,15 @@ fn confirmed_down_spans(
 /// a confirmation change nothing, so a stray failed check neither restarts the
 /// hold nor moves the end, and a lone region failing below the quorum is not
 /// the outage. An outage that confirms again inside the hold keeps the
-/// incident open, and its recovery restarts the wait. When the quorum is never
-/// reached in view, the end predates the window and is dated to when every
-/// region had been seen in it.
+/// incident open, and its recovery restarts the wait.
+///
+/// The recovery has to be confirmed by a region the outage was counted in. A
+/// region that never failed says nothing about one that stopped reporting, so
+/// silence cannot carry the count below the quorum while a region is still
+/// failing. Only when every region the outage was counted in has gone quiet
+/// and none still reporting is failing do the reporting ones decide. When the
+/// quorum is never reached in view, the end is the latest of those
+/// recoveries, or with none in view, when every region had been seen.
 fn recovered_at(
     inc: &OpenIncident,
     by_region: &[(String, Vec<CheckResult>)],
@@ -246,6 +252,7 @@ fn recovered_at(
     let mut events: Vec<(DateTime<Utc>, i32)> = Vec::new();
     let mut down_now = 0usize;
     let mut any_up = false;
+    let mut witnessed: Option<DateTime<Utc>> = None;
     let mut all_seen: Option<DateTime<Utc>> = None;
     let mut last_seen: Option<DateTime<Utc>> = None;
     for (region, results) in by_region {
@@ -256,8 +263,8 @@ fn recovered_at(
         last_seen = last_seen.max(Some(last.timestamp));
         // Without a breakdown (one unnamed region, or a row from before the
         // breakdown was kept) every region is taken as part of the outage.
-        let down_at_start = inc.regions_down.is_empty() || inc.regions_down.contains(region);
-        let (spans, state) = confirmed_down_spans(results, threshold, down_at_start);
+        let in_outage = inc.regions_down.is_empty() || inc.regions_down.contains(region);
+        let (spans, state) = confirmed_down_spans(results, threshold, in_outage);
         match state {
             Confirmed::Down => down_now += 1,
             Confirmed::Up => any_up = true,
@@ -267,10 +274,13 @@ fn recovered_at(
             events.push((from, 1));
             if let Some(to) = to {
                 events.push((to, -1));
+                if in_outage && state == Confirmed::Up {
+                    witnessed = witnessed.max(Some(to));
+                }
             }
         }
     }
-    if down_now >= quorum || !any_up {
+    if down_now >= quorum || (witnessed.is_none() && (down_now > 0 || !any_up)) {
         return None;
     }
     // A region failing at the instant another recovers is counted first, so
@@ -285,7 +295,7 @@ fn recovered_at(
         }
         down += delta;
     }
-    let onset = ended.or(all_seen)?;
+    let onset = ended.or(witnessed).or(all_seen)?;
     (last_seen? - onset >= recovery).then_some(onset)
 }
 
