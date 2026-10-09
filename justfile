@@ -299,6 +299,14 @@ seed-heartbeats:
 seed-flapping:
     bash scripts/seed-flapping.sh
 
+# Walk through incidents, the recovery period and the status page on the local
+# stack: a month of seeded history plus a live service that flaps inside its
+# recovery period. Needs `just up`, `just dev-login`, and the app running with
+# `UPTIMEPAGE_SECURITY__ALLOW_PRIVATE_TARGETS=true just run` in another
+# terminal. `just demo-recovery seed` or `just demo-recovery live` runs one half.
+demo-recovery mode="all":
+    bash scripts/demo-recovery.sh {{mode}}
+
 # Seed a photogenic operator tenant (40 monitors, 90d up history, resolved
 # incidents) for shooting the marketing screenshot gallery. Stop the dev-region
 # agents first; see the script header for the shoot-time stale-window override.
