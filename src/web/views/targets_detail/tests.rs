@@ -1550,12 +1550,11 @@ fn resolve_incident_range_key_defaults_to_30d() {
     assert_eq!(k(Some("90d")), "90d");
 }
 
-#[test]
-fn incident_row_falls_back_to_start_end_when_duration_secs_missing() {
+fn domain_incident() -> crate::domain::Incident {
     use chrono::TimeZone;
     let start = Utc.with_ymd_and_hms(2026, 5, 12, 8, 0, 0).unwrap();
     let end = Utc.with_ymd_and_hms(2026, 5, 12, 8, 7, 0).unwrap();
-    let inc = crate::domain::Incident {
+    crate::domain::Incident {
         id: Uuid::nil(),
         target_id: Some(Uuid::nil()),
         target_name: None,
@@ -1574,8 +1573,13 @@ fn incident_row_falls_back_to_start_end_when_duration_secs_missing() {
         updates: Vec::new(),
         regions_down: Vec::new(),
         regions_up: Vec::new(),
-    };
-    let row = IncidentRow::from(inc);
+        origin: Default::default(),
+    }
+}
+
+#[test]
+fn incident_row_falls_back_to_start_end_when_duration_secs_missing() {
+    let row = IncidentRow::from(domain_incident());
     assert!(!row.ongoing);
     assert_eq!(row.duration_secs, Some(7 * 60));
 }
@@ -1624,7 +1628,7 @@ fn ongoing_row() -> IncidentRow {
         error_sample: "connection refused".into(),
         title: String::new(),
         ongoing: true,
-        counts_as_downtime: true,
+        uptime_note: "",
     }
 }
 
@@ -1640,7 +1644,7 @@ fn resolved_row() -> IncidentRow {
         error_sample: "HTTP 503 Service Unavailable".into(),
         title: String::new(),
         ongoing: false,
-        counts_as_downtime: true,
+        uptime_note: "",
     }
 }
 
@@ -1738,9 +1742,37 @@ fn an_excluded_incident_says_so() {
     assert!(!counted.contains("not counted"), "{counted}");
 
     let mut row = resolved_row();
-    row.counts_as_downtime = false;
+    row.uptime_note = "not counted in uptime";
     let excluded = sample_incidents_page(vec![row], 1).render().unwrap();
     assert!(excluded.contains("not counted"), "{excluded}");
+}
+
+#[test]
+fn an_incident_row_says_how_much_of_it_uptime_counts() {
+    let base = domain_incident();
+    let note = |inc: crate::domain::Incident| IncidentRow::from(inc).uptime_note;
+    assert_eq!(note(base.clone()), "");
+    assert_eq!(
+        note(crate::domain::Incident {
+            regions_up: vec!["eu-helsinki".into()],
+            ..base.clone()
+        }),
+        "partial outage, 30% counted in uptime"
+    );
+    assert_eq!(
+        note(crate::domain::Incident {
+            status: crate::domain::CheckStatus::Degraded,
+            ..base.clone()
+        }),
+        "degraded, not counted in uptime"
+    );
+    assert_eq!(
+        note(crate::domain::Incident {
+            counts_as_downtime: false,
+            ..base
+        }),
+        "not counted in uptime"
+    );
 }
 
 #[test]

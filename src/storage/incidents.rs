@@ -12,8 +12,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::domain::{
-    CheckStatus, Incident, IncidentNarrationUpdate, IncidentSeverity, IncidentStatusPhase,
-    NewIncidentUpdate, OrgId, PublicIncidentUpdate,
+    CheckStatus, Downtime, ImpactSpan, Incident, IncidentImpact, IncidentNarrationUpdate,
+    IncidentOrigin, IncidentSeverity, IncidentStatusPhase, NewIncidentUpdate, OrgId,
+    PublicIncidentUpdate, stored_incident_impact,
 };
 use std::collections::HashMap;
 
@@ -43,7 +44,8 @@ impl IncidentBrief {
 }
 
 /// One downtime incident's span on a monitor, slim enough to paint a timeline.
-/// `origin`, `severity` and `status_at_start` are what an impact is read from.
+/// `origin`, `severity`, `status_at_start` and `regions_up` are what an impact
+/// is read from.
 #[derive(Debug, Clone)]
 pub struct IncidentSpan {
     pub target_id: Uuid,
@@ -52,15 +54,57 @@ pub struct IncidentSpan {
     pub origin: String,
     pub severity: IncidentSeverity,
     pub status_at_start: String,
+    pub regions_up: Vec<String>,
 }
 
 impl IncidentSpan {
+    pub fn impact(&self) -> IncidentImpact {
+        stored_incident_impact(
+            &self.origin,
+            self.severity,
+            &self.status_at_start,
+            Some(&self.regions_up),
+        )
+    }
+
     /// The part of `range` this incident covers; `None` when it covers none.
     pub fn clip(&self, range: TimeRange) -> Option<TimeRange> {
         let from = self.started_at.max(range.from);
         let to = self.ended_at.unwrap_or(range.to).min(range.to);
         (from < to).then_some(TimeRange { from, to })
     }
+}
+
+/// Downtime per monitor inside `range`, each instant counted once at the worst
+/// incident covering it; an open incident runs to the end of the range.
+pub fn downtime_by_target<'a>(
+    spans: impl IntoIterator<Item = &'a IncidentSpan>,
+    range: TimeRange,
+) -> HashMap<Uuid, Downtime> {
+    let mut by_target: HashMap<Uuid, Vec<ImpactSpan>> = HashMap::new();
+    for s in spans {
+        by_target.entry(s.target_id).or_default().push((
+            s.started_at,
+            s.ended_at.unwrap_or(range.to),
+            s.impact(),
+        ));
+    }
+    by_target
+        .into_iter()
+        .map(|(id, spans)| (id, Downtime::between(&spans, range.from, range.to)))
+        .collect()
+}
+
+/// [`downtime_by_target`] as uptime weighs it; monitors with none absent.
+pub fn weighted_downtime_by_target<'a>(
+    spans: impl IntoIterator<Item = &'a IncidentSpan>,
+    range: TimeRange,
+) -> HashMap<Uuid, i64> {
+    downtime_by_target(spans, range)
+        .into_iter()
+        .map(|(id, downtime)| (id, downtime.weighted_secs()))
+        .filter(|(_, secs)| *secs > 0)
+        .collect()
 }
 
 /// Which slice of an org's incidents [`IncidentNarrationStore::list_briefs`]
@@ -141,17 +185,28 @@ pub trait IncidentNarrationStore: Send + Sync {
     /// Operator-set titles for `ids`; an incident with none is absent. Internal,
     /// so they stay off the public [`Incident`] projection and out of shared views.
     async fn titles(&self, org: OrgId, ids: &[Uuid]) -> Result<HashMap<Uuid, String>>;
-    /// Confirmed downtime per target over `range`; targets with no overlap absent.
+    /// Confirmed downtime per target over `range`, weighted as
+    /// [`Downtime::weighted_secs`] weighs it; targets with none absent.
+    /// `targets` narrows it to those monitors.
     async fn confirmed_downtime_by_target(
         &self,
         org: OrgId,
         range: TimeRange,
-    ) -> Result<HashMap<Uuid, i64>>;
+        targets: Option<&[Uuid]>,
+    ) -> Result<HashMap<Uuid, i64>> {
+        let spans = self.downtime_spans(org, range, targets).await?;
+        Ok(weighted_downtime_by_target(&spans, range))
+    }
     /// Incidents of any origin open at some point in `range`.
     async fn count_overlapping(&self, org: OrgId, range: TimeRange) -> Result<u64>;
-    /// The incidents [`Self::confirmed_downtime_by_target`] sums, overlapping
-    /// `range`, oldest first.
-    async fn downtime_spans(&self, org: OrgId, range: TimeRange) -> Result<Vec<IncidentSpan>>;
+    /// The incidents [`Self::confirmed_downtime_by_target`] weighs, overlapping
+    /// `range`, oldest first; `targets` narrows them to those monitors.
+    async fn downtime_spans(
+        &self,
+        org: OrgId,
+        range: TimeRange,
+        targets: Option<&[Uuid]>,
+    ) -> Result<Vec<IncidentSpan>>;
 }
 
 // ── Postgres impl ────────────────────────────────────────────────────────
@@ -185,6 +240,7 @@ struct IncidentRow {
     updated_at: DateTime<Utc>,
     regions_down: Option<Vec<String>>,
     regions_up: Option<Vec<String>>,
+    origin: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -200,7 +256,7 @@ async fn load_with_updates(pool: &PgPool, id: Uuid, org_id: Uuid) -> Result<Opti
         r#"SELECT id, target_id, target_name, started_at, ended_at, severity, status_at_start,
                   check_count, error_sample, counts_as_downtime,
                   public_title, public_description,
-                  duration_secs, created_at, updated_at, regions_down, regions_up
+                  duration_secs, created_at, updated_at, regions_down, regions_up, origin
            FROM incidents WHERE id = $1 AND org_id = $2"#,
     )
     .bind(id)
@@ -253,6 +309,7 @@ fn row_to_incident(row: IncidentRow, updates: Vec<UpdateRow>) -> Incident {
             .collect(),
         regions_down: row.regions_down.unwrap_or_default(),
         regions_up: row.regions_up.unwrap_or_default(),
+        origin: IncidentOrigin::from_db_str(&row.origin),
     }
 }
 
@@ -295,7 +352,7 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
                RETURNING id, target_id, target_name, started_at, ended_at, severity, status_at_start,
                          check_count, error_sample, counts_as_downtime,
                          public_title, public_description,
-                         duration_secs, created_at, updated_at, regions_down, regions_up"#,
+                         duration_secs, created_at, updated_at, regions_down, regions_up, origin"#,
         )
         .bind(id)
         .bind(update.public_title.is_some())
@@ -486,7 +543,7 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
             r#"SELECT id, target_id, target_name, started_at, ended_at, severity, status_at_start,
                       check_count, error_sample, counts_as_downtime,
                       public_title, public_description,
-                      duration_secs, created_at, updated_at, regions_down, regions_up
+                      duration_secs, created_at, updated_at, regions_down, regions_up, origin
                FROM incidents
                WHERE org_id = $1 AND target_id = $2
                  AND started_at < $4
@@ -524,31 +581,6 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
         Ok(rows.into_iter().collect())
     }
 
-    async fn confirmed_downtime_by_target(
-        &self,
-        org: OrgId,
-        range: TimeRange,
-    ) -> Result<HashMap<Uuid, i64>> {
-        // FLOOR per incident to match the detail page's per-incident truncation.
-        let rows: Vec<(Uuid, i64)> = sqlx::query_as(
-            r#"SELECT target_id,
-                      SUM(GREATEST(0, FLOOR(EXTRACT(EPOCH FROM
-                          (LEAST(COALESCE(ended_at, $2), $2) - GREATEST(started_at, $1))))))::bigint
-               FROM incidents
-               WHERE org_id = $3 AND target_id IS NOT NULL AND started_at < $2
-                 AND (ended_at IS NULL OR ended_at >= $1)
-                 AND counts_as_downtime
-               GROUP BY target_id"#,
-        )
-        .bind(range.from)
-        .bind(range.to)
-        .bind(org.0)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("confirmed_downtime_by_target: {e}"))?;
-        Ok(rows.into_iter().collect())
-    }
-
     async fn count_overlapping(&self, org: OrgId, range: TimeRange) -> Result<u64> {
         let n: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM incidents \
@@ -563,18 +595,26 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
         Ok(n.max(0) as u64)
     }
 
-    async fn downtime_spans(&self, org: OrgId, range: TimeRange) -> Result<Vec<IncidentSpan>> {
+    async fn downtime_spans(
+        &self,
+        org: OrgId,
+        range: TimeRange,
+        targets: Option<&[Uuid]>,
+    ) -> Result<Vec<IncidentSpan>> {
         let rows: Vec<IncidentSpanRow> = sqlx::query_as(
-            r#"SELECT target_id, started_at, ended_at, origin, severity, status_at_start
+            r#"SELECT target_id, started_at, ended_at, origin, severity, status_at_start,
+                      regions_up
                FROM incidents
                WHERE org_id = $1 AND target_id IS NOT NULL AND started_at < $3
                  AND (ended_at IS NULL OR ended_at >= $2)
                  AND counts_as_downtime
+                 AND ($4::uuid[] IS NULL OR target_id = ANY($4))
                ORDER BY started_at"#,
         )
         .bind(org.0)
         .bind(range.from)
         .bind(range.to)
+        .bind(targets)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| anyhow::anyhow!("downtime_spans: {e}"))?;
@@ -587,6 +627,7 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
                 origin: r.origin,
                 severity: IncidentSeverity::from_db_str(&r.severity),
                 status_at_start: r.status_at_start,
+                regions_up: r.regions_up.unwrap_or_default(),
             })
             .collect())
     }
@@ -600,6 +641,7 @@ struct IncidentSpanRow {
     origin: String,
     severity: String,
     status_at_start: String,
+    regions_up: Option<Vec<String>>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -813,29 +855,6 @@ impl IncidentNarrationStore for InMemoryIncidentNarrationStore {
         Ok(HashMap::new())
     }
 
-    async fn confirmed_downtime_by_target(
-        &self,
-        _org: OrgId,
-        range: TimeRange,
-    ) -> Result<HashMap<Uuid, i64>> {
-        let mut out: HashMap<Uuid, i64> = HashMap::new();
-        for i in self.inner.lock().incidents.iter() {
-            // Downtime is per monitor; a declared incident naming none has no
-            // monitor to charge it to.
-            let Some(target_id) = i.target_id else {
-                continue;
-            };
-            if !i.counts_as_downtime {
-                continue;
-            }
-            if i.started_at < range.to && i.ended_at.is_none_or(|e| e >= range.from) {
-                let end = i.ended_at.unwrap_or(range.to).min(range.to);
-                let start = i.started_at.max(range.from);
-                *out.entry(target_id).or_default() += (end - start).num_seconds().max(0);
-            }
-        }
-        Ok(out)
-    }
     async fn count_overlapping(&self, _org: OrgId, range: TimeRange) -> Result<u64> {
         Ok(self
             .inner
@@ -846,7 +865,12 @@ impl IncidentNarrationStore for InMemoryIncidentNarrationStore {
             .count() as u64)
     }
 
-    async fn downtime_spans(&self, _org: OrgId, range: TimeRange) -> Result<Vec<IncidentSpan>> {
+    async fn downtime_spans(
+        &self,
+        _org: OrgId,
+        range: TimeRange,
+        targets: Option<&[Uuid]>,
+    ) -> Result<Vec<IncidentSpan>> {
         let mut out: Vec<IncidentSpan> = self
             .inner
             .lock()
@@ -854,15 +878,16 @@ impl IncidentNarrationStore for InMemoryIncidentNarrationStore {
             .iter()
             .filter(|i| i.counts_as_downtime)
             .filter(|i| i.started_at < range.to && i.ended_at.is_none_or(|e| e >= range.from))
+            .filter(|i| targets.is_none_or(|ids| i.target_id.is_some_and(|t| ids.contains(&t))))
             .filter_map(|i| {
                 Some(IncidentSpan {
                     target_id: i.target_id?,
                     started_at: i.started_at,
                     ended_at: i.ended_at,
-                    // The in-memory incident keeps no origin, so each reads as monitor-opened.
-                    origin: "monitor".into(),
+                    origin: i.origin.as_db_str().into(),
                     severity: i.severity,
                     status_at_start: i.status.as_str().into(),
+                    regions_up: i.regions_up.clone(),
                 })
             })
             .collect();
@@ -896,6 +921,7 @@ mod tests {
             updates: vec![],
             regions_down: Vec::new(),
             regions_up: Vec::new(),
+            origin: Default::default(),
         }
     }
 
@@ -1239,11 +1265,48 @@ mod tests {
             to: now,
         };
         let map = store
-            .confirmed_downtime_by_target(org(), window)
+            .confirmed_downtime_by_target(org(), window, None)
             .await
             .unwrap();
         assert_eq!(map.get(&t1).copied(), Some(1800));
         assert_eq!(map.get(&t2).copied(), Some(600));
         assert_eq!(map.get(&t3), None);
+    }
+
+    #[tokio::test]
+    async fn confirmed_downtime_by_target_weighs_each_incident_by_its_impact() {
+        let store = InMemoryIncidentNarrationStore::new();
+        let (partial, slow, declared) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        let now = Utc::now();
+        let mk = |tid: Uuid| {
+            let mut i = sample();
+            i.id = Uuid::now_v7();
+            i.target_id = Some(tid);
+            i.started_at = now - ChronoDuration::minutes(50);
+            i.ended_at = Some(now - ChronoDuration::minutes(40));
+            i
+        };
+        let mut p = mk(partial);
+        p.regions_up = vec!["eu-helsinki".into()];
+        store.seed(p);
+        let mut s = mk(slow);
+        s.status = CheckStatus::Degraded;
+        store.seed(s);
+        let mut d = mk(declared);
+        d.origin = IncidentOrigin::Manual;
+        d.severity = IncidentSeverity::Critical;
+        store.seed(d);
+
+        let window = TimeRange {
+            from: now - ChronoDuration::hours(1),
+            to: now,
+        };
+        let map = store
+            .confirmed_downtime_by_target(org(), window, None)
+            .await
+            .unwrap();
+        assert_eq!(map.get(&partial).copied(), Some(180));
+        assert_eq!(map.get(&slow), None, "degraded performance is not downtime");
+        assert_eq!(map.get(&declared).copied(), Some(600));
     }
 }

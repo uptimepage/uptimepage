@@ -787,11 +787,14 @@ impl ResultsStore for ClickhouseResultsStore {
             #[serde(with = "clickhouse::serde::uuid")]
             target_id: Uuid,
         }
+        // The minute rollup ages out first, so an older window reads the hour one.
+        let (table, tcol) = rollup_source(from);
         let q = self
             .client
             .query(&format!(
-                "SELECT DISTINCT target_id FROM check_results_1m \
-                 WHERE org_id = ? AND {MINUTE_WINDOW}"
+                "SELECT DISTINCT target_id FROM {table} \
+                 WHERE org_id = ? AND {tcol} >= fromUnixTimestamp(?) \
+                   AND {tcol} < fromUnixTimestamp(?)"
             ))
             .bind(org.0);
         let rows: Vec<Sampled> = bind_minute_window(q, from, to)

@@ -9,9 +9,8 @@ use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
 use crate::domain::metrics::{DashboardSparkBucket, FleetRibbonBucket, PriorPeriodSummary};
-use crate::domain::{IncidentImpact, uptime_pct_from_downtime};
-use crate::public_status::overall_status::stored_incident_impact;
-use crate::storage::{IncidentSpan, TimeRange};
+use crate::domain::uptime_pct_from_downtime;
+use crate::storage::{IncidentSpan, TimeRange, downtime_by_target, weighted_downtime_by_target};
 use crate::templates::format::fmt_ts;
 
 use super::*;
@@ -81,6 +80,32 @@ struct FleetSlot {
     up: u64,
 }
 
+/// The Uptime line as the all-regions card's figure reads it: each minute's
+/// weighted incident downtime over the monitors checked in the hour, plus any
+/// down in that minute. One set for every minute, so a monitor checked every
+/// few minutes does not swing the line between its checks.
+pub(super) fn confirmed_uptime_series(
+    rows: &[DashboardSparkBucket],
+    spans: &[IncidentSpan],
+    from: DateTime<Utc>,
+) -> Vec<Option<f32>> {
+    let checked: HashSet<Uuid> = rows
+        .iter()
+        .filter(|r| r.checks > 0)
+        .map(|r| r.target_id)
+        .collect();
+    (0..SPARK_BUCKETS as i64)
+        .map(|i| {
+            let minute = TimeRange {
+                from: from + Duration::minutes(i),
+                to: from + Duration::minutes(i + 1),
+            };
+            let downtime = weighted_downtime_by_target(spans, minute);
+            fleet_uptime_pct(&checked, &downtime, 60).map(|p| p as f32)
+        })
+        .collect()
+}
+
 /// Every monitor's rollup, not just the rows the table shows — the KPI values
 /// beside these lines are org-wide too.
 pub(super) fn fleet_sparks(rows: &[DashboardSparkBucket], from: DateTime<Utc>) -> FleetSparks {
@@ -107,12 +132,15 @@ pub(super) fn fleet_sparks(rows: &[DashboardSparkBucket], from: DateTime<Utc>) -
     }
 }
 
+/// `uptime_delta` is passed in because it compares whichever uptime the card
+/// shows: confirmed downtime on the all-regions view, raw checks on a region.
 pub(super) fn build_kpi_cards(
     kpis: &DashboardKpis,
     range: &'static str,
     checks_successful_label: String,
     current: &PriorPeriodSummary,
     prior: &PriorPeriodSummary,
+    uptime_delta: Option<KpiDelta>,
     sparks: &FleetSparks,
 ) -> Vec<KpiCardSpec> {
     let incidents_html = format!(
@@ -139,7 +167,7 @@ pub(super) fn build_kpi_cards(
             label: format!("Uptime · {range}"),
             value: kpis.uptime_pct_label.clone(),
             hint_html: incidents_html,
-            delta: uptime_delta(current, prior),
+            delta: uptime_delta,
             spark_tint: "ok",
             spark_path: uptime_path,
             spark_fill: uptime_fill,
@@ -289,35 +317,6 @@ pub(super) fn fleet_uptime_pct(
     (monitors > 0).then(|| uptime_pct_from_downtime(down, window_secs * monitors as i64))
 }
 
-/// Downtime per monitor inside `window`, overlapping incidents on one monitor
-/// counted once.
-fn downtime_by_target<'a>(
-    spans: impl IntoIterator<Item = &'a IncidentSpan>,
-    window: TimeRange,
-) -> HashMap<Uuid, i64> {
-    let mut parts: HashMap<Uuid, Vec<TimeRange>> = HashMap::new();
-    for s in spans {
-        if let Some(part) = s.clip(window) {
-            parts.entry(s.target_id).or_default().push(part);
-        }
-    }
-    parts
-        .into_iter()
-        .map(|(id, mut ranges)| {
-            ranges.sort_by_key(|r| r.from);
-            let (mut secs, mut reached) = (0, window.from);
-            for r in ranges {
-                let from = r.from.max(reached);
-                if r.to > from {
-                    secs += (r.to - from).num_seconds();
-                    reached = r.to;
-                }
-            }
-            (id, secs)
-        })
-        .collect()
-}
-
 /// Map CH ribbon rows → fixed-length 48-seg view. Buckets the storage
 /// layer omitted (no samples) become `none`. With `confirmed` a cell is
 /// coloured by the incidents overlapping it and the label is the fleet's
@@ -385,14 +384,8 @@ pub(super) fn build_fleet_ribbon(
     }
     let uptime_label = match confirmed {
         Some(c) => {
-            // Summed per incident, as the Uptime card's figure is.
-            let mut downtime: HashMap<Uuid, i64> = HashMap::new();
-            for s in &c.spans {
-                if let Some(part) = s.clip(c.window) {
-                    *downtime.entry(s.target_id).or_default() +=
-                        (part.to - part.from).num_seconds();
-                }
-            }
+            // Weighted as the Uptime card's figure is.
+            let downtime = weighted_downtime_by_target(&c.spans, c.window);
             let window_secs = (c.window.to - c.window.from).num_seconds();
             fleet_uptime_pct(&c.sampled, &downtime, window_secs)
                 .map_or_else(|| "—".into(), |p| format!("{p:.2}%"))
@@ -459,15 +452,11 @@ fn confirmed_paint(
             incidents: 0,
         };
     }
-    // Partial and major outages count alike, so the region split is not read.
-    let outages = hits.iter().copied().filter(|s| {
-        stored_incident_impact(&s.origin, s.severity, &s.status_at_start, None)
-            != IncidentImpact::Degraded
-    });
+    // Partial and major outages count alike here; degraded performance not.
     let cell_secs = (to - from).num_seconds();
-    let red = downtime_by_target(outages, cell)
+    let red = downtime_by_target(hits.iter().copied(), cell)
         .values()
-        .any(|&secs| secs * 2 >= cell_secs);
+        .any(|downtime| downtime.outage_secs() * 2 >= cell_secs);
     let mut seen = HashSet::with_capacity(hits.len());
     let drill: Vec<Uuid> = hits
         .iter()

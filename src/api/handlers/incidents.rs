@@ -38,7 +38,8 @@ use crate::storage::{Actor, IncidentOpsFilter, LifecycleOutcome};
                    back to auto-generated content when the public title is null. A severity change \
                    is recorded on the incident's internal timeline. `counts_as_downtime` decides \
                    whether the incident's duration reaches the monitor's uptime figure, and is \
-                   editable only on a declared incident.",
+                   editable only on a declared incident; its severity then sets how much \
+                   counts: minor none, major 30%, critical all of it.",
     params(("id" = Uuid, Path)),
     request_body(content = IncidentNarrationUpdate, example = json!({
         "title": "Checkout failing for EU customers",

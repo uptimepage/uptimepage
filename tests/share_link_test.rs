@@ -263,6 +263,7 @@ async fn share_incidents_rows_do_not_link_to_the_incident_page() {
         updates: vec![],
         regions_down: Vec::new(),
         regions_up: Vec::new(),
+        origin: Default::default(),
     });
 
     let (status, body) = get(&router, &format!("/m/{token}/incidents")).await;

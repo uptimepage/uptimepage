@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use super::CheckStatus;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OverallState {
@@ -44,21 +46,62 @@ pub enum DayState {
     NoData,
 }
 
-/// Time one component spent in each outage state over one day. An instant
-/// covered by two incidents counts once, at the worse of them.
+/// When an incident ran, and how bad it was.
+pub type ImpactSpan = (DateTime<Utc>, DateTime<Utc>, IncidentImpact);
+
+/// Time one monitor or component spent in each outage state over a range. An
+/// instant covered by two incidents counts once, at the worse of them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct DayDowntime {
+pub struct Downtime {
     pub major_secs: i64,
     pub partial_secs: i64,
     pub degraded_secs: i64,
 }
 
-impl DayDowntime {
-    /// Downtime as the day strip weighs it: a partial outage counts for 30% of
-    /// its length, as on Atlassian Statuspage, and degraded performance is not
-    /// downtime at all.
+impl Downtime {
+    /// Seconds in each state over `[from, to)`. Spans are clipped to the
+    /// range; an open incident is passed ending at `now`.
+    pub fn between(spans: &[ImpactSpan], from: DateTime<Utc>, to: DateTime<Utc>) -> Self {
+        let mut out = Self::default();
+        if to <= from {
+            return out;
+        }
+        let mut edges: Vec<(DateTime<Utc>, IncidentImpact, i32)> = Vec::new();
+        for &(start, end, impact) in spans {
+            let (start, end) = (start.clamp(from, to), end.clamp(from, to));
+            if start < end {
+                edges.push((start, impact, 1));
+                edges.push((end, impact, -1));
+            }
+        }
+        edges.sort_unstable_by_key(|(at, ..)| *at);
+        let mut open = [0i32; 3];
+        let mut since = from;
+        for (at, impact, delta) in edges {
+            let secs = (at - since).num_seconds();
+            if open[2] > 0 {
+                out.major_secs += secs;
+            } else if open[1] > 0 {
+                out.partial_secs += secs;
+            } else if open[0] > 0 {
+                out.degraded_secs += secs;
+            }
+            open[impact.rank()] += delta;
+            since = at;
+        }
+        out
+    }
+
+    /// Downtime as uptime figures and the day strip weigh it: a partial outage
+    /// counts for 30% of its length, as on Atlassian Statuspage, and degraded
+    /// performance is not downtime at all.
     pub fn weighted_secs(&self) -> i64 {
         self.major_secs + self.partial_secs * 3 / 10
+    }
+
+    /// Time something was out, whole or in part; degraded performance is not.
+    pub fn outage_secs(&self) -> i64 {
+        self.major_secs + self.partial_secs
     }
 }
 
@@ -74,7 +117,7 @@ pub struct PublicComponent {
     /// Time in each outage state per day, aligned with `history`. Tints the
     /// strip; not part of the wire shape.
     #[serde(skip)]
-    pub downtime: Vec<DayDowntime>,
+    pub downtime: Vec<Downtime>,
     /// Confirmed-incident downtime over the time the component was probed
     /// within the history span, as a percentage; `null` until it is probed.
     #[serde(default)]
@@ -105,6 +148,63 @@ pub enum IncidentImpact {
     Degraded,
     PartialOutage,
     MajorOutage,
+}
+
+impl IncidentImpact {
+    /// The wire name, as it serialises.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Degraded => "degraded",
+            Self::PartialOutage => "partial_outage",
+            Self::MajorOutage => "major_outage",
+        }
+    }
+
+    fn rank(self) -> usize {
+        match self {
+            Self::Degraded => 0,
+            Self::PartialOutage => 1,
+            Self::MajorOutage => 2,
+        }
+    }
+}
+
+/// Impact of one confirmed incident. `degraded` is whether the incident
+/// opened on a `degraded` check status (slow / rate-limited, not hard-failed);
+/// `any_region_up` is whether some region still answered when it opened —
+/// present regions in `regions_up` mean a partial, not total, loss.
+pub fn incident_impact(degraded: bool, any_region_up: bool) -> IncidentImpact {
+    if degraded {
+        IncidentImpact::Degraded
+    } else if any_region_up {
+        IncidentImpact::PartialOutage
+    } else {
+        IncidentImpact::MajorOutage
+    }
+}
+
+/// [`incident_impact`] read off a stored incident row. Manual incidents carry
+/// the operator's chosen severity; the check fields are placeholders on them.
+/// Monitor-opened incidents derive from what the probes saw, so the same
+/// outage reads the same on the day strip, the incident card, the uptime
+/// figures and the API.
+pub fn stored_incident_impact(
+    origin: &str,
+    severity: IncidentSeverity,
+    status_at_start: &str,
+    regions_up: Option<&[String]>,
+) -> IncidentImpact {
+    if origin == "manual" {
+        return match severity {
+            IncidentSeverity::Minor => IncidentImpact::Degraded,
+            IncidentSeverity::Major => IncidentImpact::PartialOutage,
+            IncidentSeverity::Critical => IncidentImpact::MajorOutage,
+        };
+    }
+    incident_impact(
+        status_at_start == CheckStatus::Degraded.as_str(),
+        regions_up.is_some_and(|r| !r.is_empty()),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
@@ -294,6 +394,72 @@ pub struct ComponentHistoryResponse {
 mod tests {
     use super::*;
 
+    #[test]
+    fn impact_degraded_wins_over_region_split() {
+        assert_eq!(incident_impact(true, true), IncidentImpact::Degraded);
+        assert_eq!(incident_impact(true, false), IncidentImpact::Degraded);
+    }
+
+    #[test]
+    fn impact_some_region_up_is_partial() {
+        assert_eq!(incident_impact(false, true), IncidentImpact::PartialOutage);
+    }
+
+    #[test]
+    fn impact_no_region_up_is_major() {
+        assert_eq!(incident_impact(false, false), IncidentImpact::MajorOutage);
+    }
+
+    #[test]
+    fn impact_ord_ranks_major_worst() {
+        assert!(IncidentImpact::MajorOutage > IncidentImpact::PartialOutage);
+        assert!(IncidentImpact::PartialOutage > IncidentImpact::Degraded);
+    }
+
+    fn at(min: i64) -> DateTime<Utc> {
+        use chrono::TimeZone;
+        Utc.with_ymd_and_hms(2026, 10, 4, 0, 0, 0).unwrap() + chrono::Duration::minutes(min)
+    }
+
+    fn mins(secs: i64) -> i64 {
+        secs / 60
+    }
+
+    #[test]
+    fn overlapping_incidents_count_once_at_the_worse_state() {
+        let spans = [
+            (at(60), at(120), IncidentImpact::PartialOutage),
+            (at(90), at(100), IncidentImpact::MajorOutage),
+            (at(110), at(130), IncidentImpact::Degraded),
+        ];
+        let d = Downtime::between(&spans, at(0), at(24 * 60));
+        assert_eq!(mins(d.major_secs), 10);
+        assert_eq!(mins(d.partial_secs), 50, "60–90 and 100–120");
+        assert_eq!(mins(d.degraded_secs), 10, "only 120–130 is degraded alone");
+        assert_eq!(mins(d.outage_secs()), 60);
+    }
+
+    #[test]
+    fn downtime_is_clipped_to_the_range() {
+        let spans = [(at(-30), at(15), IncidentImpact::MajorOutage)];
+        let d = Downtime::between(&spans, at(0), at(24 * 60));
+        assert_eq!(mins(d.major_secs), 15);
+        assert_eq!(
+            Downtime::between(&spans, at(15), at(15)),
+            Downtime::default()
+        );
+    }
+
+    #[test]
+    fn a_partial_outage_weighs_thirty_percent_and_degraded_nothing() {
+        let d = Downtime {
+            major_secs: 600,
+            partial_secs: 1_000,
+            degraded_secs: 7_200,
+        };
+        assert_eq!(d.weighted_secs(), 900);
+    }
+
     /// These strings are the public API's wire contract; renaming one silently
     /// breaks every status-page client and the badge endpoint.
     #[test]
@@ -313,5 +479,15 @@ mod tests {
             serde_json::to_string(&DayState::NoData).unwrap(),
             "\"no_data\""
         );
+        for impact in [
+            IncidentImpact::Degraded,
+            IncidentImpact::PartialOutage,
+            IncidentImpact::MajorOutage,
+        ] {
+            assert_eq!(
+                serde_json::to_string(&impact).unwrap(),
+                format!("\"{}\"", impact.as_str())
+            );
+        }
     }
 }

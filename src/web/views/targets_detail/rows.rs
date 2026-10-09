@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::domain::agent_wire::StepOutcome;
-use crate::domain::{CheckResult, Incident};
+use crate::domain::{CheckResult, Incident, IncidentImpact};
 use crate::storage::UptimeStats;
 use crate::templates::filters;
 use crate::templates::format::{fmt_human, fmt_ts};
@@ -76,7 +76,8 @@ pub struct IncidentRow {
     /// internal, so the shared view never carries one.
     pub title: String,
     pub ongoing: bool,
-    pub counts_as_downtime: bool,
+    /// How much of it reaches the monitor's uptime, when that is not all of it.
+    pub uptime_note: &'static str,
 }
 
 /// What a heartbeat's own clock says. `Some` for every heartbeat, so the live
@@ -473,6 +474,19 @@ impl From<CheckResult> for ResultRow {
     }
 }
 
+/// Uptime weighs an incident by its impact, so a counted one can still leave
+/// it untouched or dent it only partly.
+fn uptime_note(inc: &Incident) -> &'static str {
+    if !inc.counts_as_downtime {
+        return "not counted in uptime";
+    }
+    match inc.impact() {
+        IncidentImpact::MajorOutage => "",
+        IncidentImpact::PartialOutage => "partial outage, 30% counted in uptime",
+        IncidentImpact::Degraded => "degraded, not counted in uptime",
+    }
+}
+
 impl From<Incident> for IncidentRow {
     fn from(inc: Incident) -> Self {
         let ongoing = inc.ended_at.is_none();
@@ -491,7 +505,7 @@ impl From<Incident> for IncidentRow {
                 .unwrap_or_default(),
             title: String::new(),
             ongoing,
-            counts_as_downtime: inc.counts_as_downtime,
+            uptime_note: uptime_note(&inc),
         }
     }
 }

@@ -396,8 +396,12 @@ pub struct IncidentWindow {
     pub opened_at: String,
     /// RFC 3339 incident end, or `null` while ongoing.
     pub resolved_at: Option<String>,
-    /// `false` when this window is listed but explains none of the `uptime` gap.
+    /// `false` when this window is listed but kept out of `uptime`.
     pub counts_as_downtime: bool,
+    /// `major_outage`, `partial_outage` or `degraded`. A counted window
+    /// explains the `uptime` gap by it: a major outage in full, a partial
+    /// outage for 30% of its length, a degraded one not at all.
+    pub impact: String,
 }
 
 /// One region's share of a monitor's window, straight from its own checks.

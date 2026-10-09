@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::config::PublicStatusConfig;
 use crate::domain::OverallStatus;
 use crate::domain::{
-    DayDowntime, DayState, IncidentImpact, IncidentSeverity, IncidentStatusPhase, OverallState,
+    DayState, Downtime, IncidentImpact, IncidentSeverity, IncidentStatusPhase, OverallState,
     PublicComponent, PublicComponentGroup, PublicComponentStatus, PublicIncident,
     PublicIncidentUpdate, PublicMaintenance, PublicOrgBranding, PublicStatusPage,
 };
@@ -53,7 +53,7 @@ fn sample_page() -> PublicStatusPage {
                 description: Some("Customer-facing edge".into()),
                 current_status: PublicComponentStatus::Operational,
                 history: vec![DayState::Operational; HISTORY_LEN],
-                downtime: vec![DayDowntime::default(); HISTORY_LEN],
+                downtime: vec![Downtime::default(); HISTORY_LEN],
                 uptime_pct: Some(99.9),
                 detail_url: None,
             }],
@@ -138,7 +138,7 @@ fn day_strip_blob_links_overlapping_incident() {
     let comp_id = p.groups[0].components[0].id;
     let last = p.groups[0].components[0].history.len() - 1;
     p.groups[0].components[0].history[last] = DayState::MajorOutage;
-    p.groups[0].components[0].downtime[last] = DayDowntime {
+    p.groups[0].components[0].downtime[last] = Downtime {
         major_secs: 40 * 60,
         partial_secs: 5 * 60,
         degraded_secs: 0,

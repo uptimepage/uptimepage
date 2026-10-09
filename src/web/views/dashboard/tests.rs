@@ -29,6 +29,7 @@ fn sample_kpi_cards() -> Vec<KpiCardSpec> {
         "17.0k successful".into(),
         &zero,
         &zero,
+        None,
         &FleetSparks::default(),
     )
 }
@@ -106,6 +107,7 @@ fn incident_count_hint_names_the_selected_range() {
         "17.0k successful".into(),
         &zero,
         &zero,
+        None,
         &FleetSparks::default(),
     );
     assert!(
@@ -204,6 +206,7 @@ fn onboarding_state_skips_table() {
                 "0 successful".into(),
                 &zero,
                 &zero,
+                None,
                 &FleetSparks::default(),
             )
             .into_boxed_slice()
@@ -280,6 +283,41 @@ fn fleet_sparks_weight_by_check_count() {
 }
 
 #[test]
+fn the_all_regions_uptime_line_reads_weighted_downtime_like_its_figure() {
+    let from = Utc::now() - Duration::minutes(SPARK_MINUTES);
+    let rows: Vec<DashboardSparkBucket> = (0..SPARK_MINUTES)
+        .map(|m| spark_bucket(from, m, 100.0, 2, 2))
+        .collect();
+    let spans = [
+        span(Uuid::nil(), from + Duration::minutes(10), 5, "down"),
+        span(Uuid::nil(), from + Duration::minutes(30), 5, "degraded"),
+    ];
+    let line = confirmed_uptime_series(&rows, &spans, from);
+    assert_eq!(line[0], Some(100.0));
+    assert_eq!(
+        line[12],
+        Some(0.0),
+        "confirmed down, whatever the checks said"
+    );
+    assert_eq!(line[32], Some(100.0), "slow is not down");
+
+    // A second monitor checked every five minutes counts in every minute.
+    let slow = Uuid::now_v7();
+    let mut rows = rows;
+    rows.extend((0..SPARK_MINUTES).step_by(5).map(|m| DashboardSparkBucket {
+        target_id: slow,
+        ..spark_bucket(from, m, 100.0, 1, 1)
+    }));
+    let line = confirmed_uptime_series(&rows, &spans, from);
+    assert_eq!(line[12], Some(50.0));
+    assert_eq!(
+        line[13],
+        Some(50.0),
+        "between the slow monitor's checks too"
+    );
+}
+
+#[test]
 fn each_kpi_card_plots_its_own_metric() {
     let from = Utc::now() - Duration::minutes(SPARK_MINUTES);
     // Latency climbs while checks and uptime fall — three shapes, not one.
@@ -297,6 +335,7 @@ fn each_kpi_card_plots_its_own_metric() {
         "17.0k successful".into(),
         &zero,
         &zero,
+        None,
         &sparks,
     );
     let paths: Vec<&str> = cards.iter().map(|c| c.spark_path.as_str()).collect();
@@ -862,6 +901,7 @@ fn span(target_id: Uuid, from: DateTime<Utc>, mins: i64, status: &str) -> Incide
         origin: "monitor".into(),
         severity: IncidentSeverity::Major,
         status_at_start: status.into(),
+        regions_up: Vec::new(),
     }
 }
 
@@ -1096,6 +1136,7 @@ fn incident_hint_follows_the_count_it_shows() {
         "17.0k successful".into(),
         &zero,
         &zero,
+        None,
         &FleetSparks::default(),
     );
     assert!(cards[0].hint_html.starts_with("Failure streaks · 24h:"));

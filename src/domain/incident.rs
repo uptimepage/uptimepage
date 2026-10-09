@@ -5,7 +5,10 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::org::OrgId;
-use super::public::{IncidentSeverity, IncidentStatusPhase, PublicIncidentUpdate};
+use super::public::{
+    Downtime, IncidentImpact, IncidentSeverity, IncidentStatusPhase, PublicIncidentUpdate,
+    stored_incident_impact,
+};
 use super::result::CheckStatus;
 use super::user::UserId;
 
@@ -59,9 +62,23 @@ pub struct Incident {
     pub regions_down: Vec<String>,
     #[serde(default)]
     pub regions_up: Vec<String>,
+    /// Opened from a monitor's checks, or declared by an operator, whose
+    /// severity then sets its impact.
+    #[serde(default)]
+    pub origin: IncidentOrigin,
 }
 
 impl Incident {
+    /// How bad it was, read the way the status page reads it.
+    pub fn impact(&self) -> IncidentImpact {
+        stored_incident_impact(
+            self.origin.as_db_str(),
+            self.severity,
+            self.status.as_str(),
+            Some(&self.regions_up),
+        )
+    }
+
     /// The incident had a monitor that has since been deleted.
     pub fn monitor_deleted(&self) -> bool {
         self.target_id.is_none() && self.target_name.is_some()
@@ -95,23 +112,21 @@ pub fn elapsed_at(
     (end - started_at).max(ChronoDuration::zero())
 }
 
-/// Confirmed downtime in seconds: each incident's overlap with `[from, to]`,
-/// summed; an ongoing incident is clamped to `now`.
+/// Confirmed downtime in seconds over `[from, to]`, weighted by impact as
+/// [`Downtime::weighted_secs`] weighs it, so every uptime figure agrees with
+/// the status page. An ongoing incident runs to `now`.
 pub fn confirmed_downtime_secs(
     incidents: &[Incident],
     from: DateTime<Utc>,
     to: DateTime<Utc>,
     now: DateTime<Utc>,
 ) -> i64 {
-    incidents
+    let spans: Vec<_> = incidents
         .iter()
         .filter(|i| i.counts_as_downtime)
-        .map(|i| {
-            let end = i.ended_at.unwrap_or(now).min(to);
-            let start = i.started_at.max(from);
-            (end - start).num_seconds().max(0)
-        })
-        .sum()
+        .map(|i| (i.started_at, i.ended_at.unwrap_or(now), i.impact()))
+        .collect();
+    Downtime::between(&spans, from, to).weighted_secs()
 }
 
 /// Uptime over a window as `100 * (1 - downtime/window)`, clamped to [0, 100].
@@ -251,6 +266,7 @@ fn new_incident(
         updates: Vec::new(),
         regions_down: Vec::new(),
         regions_up: Vec::new(),
+        origin: IncidentOrigin::Monitor,
     }
 }
 
@@ -1208,6 +1224,49 @@ mod tests {
         excluded.counts_as_downtime = false;
         let incidents = vec![counted, excluded];
         assert_eq!(confirmed_downtime_secs(&incidents, from, to, now), 100);
+    }
+
+    #[test]
+    fn downtime_is_weighted_by_impact_the_way_the_status_page_weighs_it() {
+        let (from, to, now) = (ts(0), ts(10_000), ts(10_000));
+        let mk = |start: i64, status| {
+            let mut i = new_incident(Uuid::nil(), ts(start), status, None);
+            i.ended_at = Some(ts(start + 1_000));
+            i
+        };
+        let major = mk(0, CheckStatus::Down);
+        let mut partial = mk(2_000, CheckStatus::Down);
+        partial.regions_up = vec!["eu-helsinki".into()];
+        let slow = mk(4_000, CheckStatus::Degraded);
+        let mut declared_minor = mk(6_000, CheckStatus::Down);
+        declared_minor.origin = IncidentOrigin::Manual;
+        declared_minor.severity = IncidentSeverity::Minor;
+        let mut declared_critical = mk(8_000, CheckStatus::Down);
+        declared_critical.origin = IncidentOrigin::Manual;
+        declared_critical.severity = IncidentSeverity::Critical;
+        let one = |i: &Incident| confirmed_downtime_secs(std::slice::from_ref(i), from, to, now);
+        assert_eq!(one(&major), 1_000);
+        assert_eq!(one(&partial), 300, "a partial outage counts for 30%");
+        assert_eq!(one(&slow), 0, "degraded performance is not downtime");
+        assert_eq!(
+            one(&declared_minor),
+            0,
+            "a minor declaration reads as degraded"
+        );
+        assert_eq!(one(&declared_critical), 1_000);
+    }
+
+    #[test]
+    fn overlapping_incidents_on_one_monitor_count_once() {
+        let (from, to, now) = (ts(0), ts(10_000), ts(10_000));
+        let mut measured = new_incident(Uuid::nil(), ts(1_000), CheckStatus::Down, None);
+        measured.ended_at = Some(ts(2_000));
+        let mut declared = new_incident(Uuid::nil(), ts(1_500), CheckStatus::Down, None);
+        declared.ended_at = Some(ts(2_500));
+        declared.origin = IncidentOrigin::Manual;
+        declared.severity = IncidentSeverity::Critical;
+        let incidents = vec![measured, declared];
+        assert_eq!(confirmed_downtime_secs(&incidents, from, to, now), 1_500);
     }
 
     /// A client that omits these cannot page an org by accident.

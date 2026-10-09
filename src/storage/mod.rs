@@ -74,7 +74,7 @@ pub use incident_ops::{
 };
 pub use incidents::{
     InMemoryIncidentNarrationStore, IncidentBrief, IncidentBriefFilter, IncidentNarrationStore,
-    IncidentSpan, PgIncidentNarrationStore,
+    IncidentSpan, PgIncidentNarrationStore, downtime_by_target, weighted_downtime_by_target,
 };
 pub use linked_apps::{InMemoryLinkedAppStore, LinkedAppStore, PgLinkedAppStore};
 pub use maintenance::suppressing_window_sql;

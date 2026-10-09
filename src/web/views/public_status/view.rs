@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::domain::elapsed_at;
 use crate::domain::{
-    DayDowntime, DayState, IncidentImpact, IncidentStatusPhase, OverallState, PublicComponent,
+    DayState, Downtime, IncidentImpact, IncidentStatusPhase, OverallState, PublicComponent,
     PublicComponentGroup, PublicComponentStatus, PublicIncident, PublicIncidentUpdate,
     PublicMaintenance, PublicStatusPage,
 };
@@ -250,7 +250,7 @@ impl DayText {
 
     /// Each state the day spent time in, worst first. A day an incident
     /// touched for no measurable time still names the state it reached.
-    fn spans(&self, state: DayState, d: DayDowntime) -> Vec<DaySpan> {
+    fn spans(&self, state: DayState, d: Downtime) -> Vec<DaySpan> {
         let span = |s: DayState, duration: String| DaySpan {
             state: self.state(s).to_owned(),
             state_class: day_classes(s).2,
@@ -396,7 +396,7 @@ pub(super) fn build_history(component: &PublicComponent, text: &DayText) -> Vec<
         .collect()
 }
 
-fn downtime_at(component: &PublicComponent, idx: usize) -> DayDowntime {
+fn downtime_at(component: &PublicComponent, idx: usize) -> Downtime {
     component.downtime.get(idx).copied().unwrap_or_default()
 }
 

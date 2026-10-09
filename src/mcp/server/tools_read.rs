@@ -520,6 +520,7 @@ impl McpServer {
                 opened_at: inc.started_at.to_rfc3339(),
                 resolved_at: inc.ended_at.map(|e| e.to_rfc3339()),
                 counts_as_downtime: inc.counts_as_downtime,
+                impact: inc.impact().as_str().to_string(),
             })
             .collect();
 

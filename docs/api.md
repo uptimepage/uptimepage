@@ -788,11 +788,13 @@ Bucketing works like `/latency` but aims for about half as many slices. These re
 { "total": 8640, "up": 8635, "down": 0, "degraded": 0, "error": 5, "uptime_pct": 99.94 }
 ```
 
+`uptime_pct` is confirmed incident downtime over the window, weighted as the status page weights it: a partial outage counts for 30% of its length and degraded performance not at all. With `region` set it is that region's share of passing checks instead. It is `null` when the window holds no checks.
+
 ## Incidents query
 
 `GET /api/v1/targets/{id}/incidents?from=…&to=…&ongoing_only=false&limit=100&offset=0`
 
-Returns coalesced down / error periods. A contiguous run of bad statuses becomes one incident; an `up` result between two bad runs splits them. Ongoing incidents return `ended_at: null` and `duration_secs: null`.
+Returns coalesced down / error periods. A contiguous run of bad statuses becomes one incident; an `up` result between two bad runs splits them. Ongoing incidents return `ended_at: null` and `duration_secs: null`. `origin` is `monitor` for an incident the checks opened and `manual` for one an operator declared.
 
 ```jsonc
 {
@@ -805,7 +807,8 @@ Returns coalesced down / error periods. A contiguous run of bad statuses becomes
       "status":     "down",
       "duration_secs": 300,
       "check_count": 5,
-      "error_sample": "connection refused"
+      "error_sample": "connection refused",
+      "origin":     "monitor"
     }
   ],
   "limit": 100, "offset": 0, "has_more": false

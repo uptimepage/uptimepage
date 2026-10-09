@@ -25,8 +25,8 @@ use crate::pagination::page::CursorPage;
 
 use super::aggregator::{OrgAggregator, kept_component_name, on_page};
 use super::cache::{HistoryIncidentMarker, PageCache, PageCacheError, PageData};
-use super::overall_status::stored_incident_impact;
 use super::xml::xml_escape;
+use crate::domain::stored_incident_impact;
 
 #[derive(Debug, Clone, Copy)]
 pub struct IncidentListQuery {

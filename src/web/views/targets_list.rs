@@ -431,7 +431,7 @@ async fn build_page(state: &AppState, org: OrgId, params: &ListParams) -> WebRes
             ),
             state
                 .incident_narration_store
-                .confirmed_downtime_by_target(org, range),
+                .confirmed_downtime_by_target(org, range, Some(&ids)),
             state.results_store.last_check_times(
                 org,
                 &ids,

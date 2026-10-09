@@ -23,10 +23,10 @@ use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 use crate::domain::{
-    ComponentHistoryResponse, DayDowntime, DayState, IncidentSeverity, IncidentStatusPhase, Locale,
-    OrgId, PublicComponent, PublicComponentGroup, PublicComponentStatus, PublicIncident,
-    PublicIncidentUpdate, PublicMaintenance, PublicStatusPage, StatusPageId,
-    uptime_pct_from_downtime,
+    ComponentHistoryResponse, DayState, Downtime, ImpactSpan, IncidentSeverity,
+    IncidentStatusPhase, Locale, OrgId, PublicComponent, PublicComponentGroup,
+    PublicComponentStatus, PublicIncident, PublicIncidentUpdate, PublicMaintenance,
+    PublicStatusPage, StatusPageId, stored_incident_impact, uptime_pct_from_downtime,
 };
 use crate::error::Result;
 use crate::i18n::Tr;
@@ -36,8 +36,7 @@ use crate::storage::status_pages::COMPONENT_ORDER;
 
 use super::cache::{HistoryIncidentMarker, PageSettings};
 use super::overall_status::{
-    IncidentImpact, component_status, day_state, downtime_between, overall_state, overall_status,
-    stored_incident_impact,
+    IncidentImpact, component_status, day_state, overall_state, overall_status,
 };
 
 /// Aggregator-local configuration. Holds only the knobs the aggregator reads
@@ -690,14 +689,14 @@ impl OrgAggregator {
 /// time it spent in each state, slot for slot.
 struct DayStrip {
     states: Vec<DayState>,
-    downtime: Vec<DayDowntime>,
+    downtime: Vec<Downtime>,
 }
 
 impl DayStrip {
     fn silent(days: usize) -> Self {
         Self {
             states: vec![DayState::NoData; days],
-            downtime: vec![DayDowntime::default(); days],
+            downtime: vec![Downtime::default(); days],
         }
     }
 }
@@ -728,11 +727,10 @@ fn paint_strips(
 
     // Worst confirmed-incident impact per (component, day slot). Half-open on
     // the end timestamp — a window ending exactly at midnight does not touch
-    // that day — matching the popover's `day_overlap` so cell colour and
+    // that day — matching the popover's `day_related` so cell colour and
     // popover content never disagree.
     let mut worst: HashMap<Uuid, Vec<Option<IncidentImpact>>> = HashMap::new();
-    type Span = (DateTime<Utc>, DateTime<Utc>, IncidentImpact);
-    let mut spans: HashMap<Uuid, Vec<Vec<Span>>> = HashMap::new();
+    let mut spans: HashMap<Uuid, Vec<Vec<ImpactSpan>>> = HashMap::new();
     for w in windows {
         let slots = worst.entry(w.target_id).or_insert_with(|| vec![None; days]);
         let day_spans = spans
@@ -766,11 +764,11 @@ fn paint_strips(
             let downtime = (0..days)
                 .map(|i| {
                     let Some(spans) = day_spans.map(|s| &s[i]).filter(|s| !s.is_empty()) else {
-                        return DayDowntime::default();
+                        return Downtime::default();
                     };
                     let day = today - chrono::Days::new((days - 1 - i) as u64);
                     let start = day_start_utc(day);
-                    downtime_between(spans, start, (start + ChronoDuration::days(1)).min(now))
+                    Downtime::between(spans, start, (start + ChronoDuration::days(1)).min(now))
                 })
                 .collect();
             (*id, DayStrip { states, downtime })
@@ -781,8 +779,9 @@ fn paint_strips(
 /// Confirmed incident downtime over wall-clock time, from the first hour the
 /// component was probed within the span to `now`. `None` when nothing was
 /// probed. A day-count ratio would bill a four-minute outage as a tenth of a
-/// ten-day history. Windows are merged first: a declared outage over the same
-/// hours as a monitor-opened one is one stretch of downtime, not two.
+/// ten-day history. Weighted as the day strip weighs it, and a declared outage
+/// over the same hours as a monitor-opened one is one stretch of downtime,
+/// not two.
 fn component_uptime(
     component_ids: &[Uuid],
     presence: &[HistoryDayRow],
@@ -804,28 +803,12 @@ fn component_uptime(
         .map(|id| {
             let pct = first_seen.get(id).map(|seen| {
                 let from = (*seen).max(span_from);
-                let mut spans: Vec<(DateTime<Utc>, DateTime<Utc>)> = windows
+                let spans: Vec<ImpactSpan> = windows
                     .iter()
                     .filter(|w| w.target_id == *id)
-                    .map(|w| (w.started_at.max(from), w.ended_at.unwrap_or(now).min(now)))
-                    .filter(|(start, end)| end > start)
+                    .map(|w| (w.started_at, w.ended_at.unwrap_or(now), w.impact()))
                     .collect();
-                spans.sort_unstable();
-                let mut downtime_secs = 0i64;
-                let mut open: Option<(DateTime<Utc>, DateTime<Utc>)> = None;
-                for (start, end) in spans {
-                    match open {
-                        Some((s, e)) if start <= e => open = Some((s, e.max(end))),
-                        Some((s, e)) => {
-                            downtime_secs += (e - s).num_seconds();
-                            open = Some((start, end));
-                        }
-                        None => open = Some((start, end)),
-                    }
-                }
-                if let Some((s, e)) = open {
-                    downtime_secs += (e - s).num_seconds();
-                }
+                let downtime_secs = Downtime::between(&spans, from, now).weighted_secs();
                 uptime_pct_from_downtime(downtime_secs, (now - from).num_seconds())
             });
             (*id, pct)
@@ -1145,7 +1128,7 @@ mod tests {
         assert_eq!(strip.downtime[88].partial_secs, 30 * 60);
         assert_eq!(strip.downtime[89].partial_secs, 90 * 60);
         assert_eq!(strip.downtime[89].major_secs, 0);
-        assert_eq!(strip.downtime[87], DayDowntime::default());
+        assert_eq!(strip.downtime[87], Downtime::default());
     }
 
     #[test]
@@ -1213,6 +1196,34 @@ mod tests {
             component_uptime(&[t], &presence, &[measured, declared], now, 90)[&t].expect("probed");
         // Thirteen hours down out of twenty-four, counted once.
         assert!((45.0..46.0).contains(&pct), "{pct}");
+    }
+
+    #[test]
+    fn uptime_weighs_a_partial_outage_and_ignores_degraded_performance() {
+        let t = Uuid::now_v7();
+        let now = Utc.with_ymd_and_hms(2026, 5, 13, 12, 0, 0).unwrap();
+        let presence = [presence_row(t, now - ChronoDuration::days(1))];
+        let partial = window(
+            t,
+            "monitor",
+            "major",
+            "down",
+            Some(vec!["eu-helsinki".into()]),
+            now - ChronoDuration::hours(10),
+            Some(now),
+        );
+        let slow = window(
+            t,
+            "monitor",
+            "major",
+            "degraded",
+            None,
+            now - ChronoDuration::hours(20),
+            Some(now - ChronoDuration::hours(12)),
+        );
+        let pct = component_uptime(&[t], &presence, &[partial, slow], now, 90)[&t].expect("probed");
+        // Ten hours of partial outage count as three of twenty-four.
+        assert!((87.4..87.6).contains(&pct), "{pct}");
     }
 
     #[test]

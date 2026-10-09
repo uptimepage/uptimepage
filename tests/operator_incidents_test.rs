@@ -32,6 +32,7 @@ fn seed_incident() -> Incident {
         updates: vec![],
         regions_down: Vec::new(),
         regions_up: Vec::new(),
+        origin: Default::default(),
     }
 }
 

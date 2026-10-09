@@ -30,13 +30,15 @@ Declaring is quiet by default: the incident opens `internal` and pages nobody, s
 
 A declared incident does not dent the monitor's uptime unless you say it should. Uptime is measured from checks, and a declaration has no failing check behind it, so counting one by default would move a number nothing in the check history can explain. The declare form asks the question directly, and the incident stays listed either way with the monitor's incident list marking an excluded one `not counted`. Switch it on for a real outage the checks could not see, like payments failing while the site answers fine. Over the API this is `counts_as_downtime` on `POST /api/v1/incidents`, off unless set, and it can be flipped later with `PATCH /api/v1/incidents/{id}`. It also decides what the public page paints: see [Public status page](public-status.md). An incident a monitor opened always counts: its failed checks are the evidence, and the API refuses to move that with a `422`.
 
+Uptime weights the time an incident counts by how bad it was, as Atlassian Statuspage does. A major outage counts in full. A partial outage counts for 30% of its length: some region still reached the service, or a declared incident is of major severity. Degraded performance, or a declaration of minor severity, is not downtime at all. Two incidents over the same minutes count once. The dashboard, the monitor list and page, the uptime API, the MCP tools and the status page all weigh downtime this way. The status page counts only what it shows, so a declaration you never published moves the monitor's own figure but not the page's.
+
 ### A declaration and a detection on the same monitor
 
 The two are independent objects and hold separate slots, so a monitor can carry one of each at once. Walking the usual sequence:
 
 1. **You declare.** One `manual` incident opens, quiet unless you asked it to page, excluded from uptime unless you asked it to count. The writer ignores it from here on.
 2. **The monitor then goes down for real.** The writer sees no monitor incident open for it, so it opens its own, pages on-call, and derives visibility as usual. Both incidents are now open. Only the writer's one moves uptime; yours still reads `not counted`.
-3. **The monitor recovers.** The writer resolves the incident it opened, stamped at the recovery, and uptime is dented by exactly that window.
+3. **The monitor recovers.** The writer resolves the incident it opened, stamped at the recovery, and uptime is dented by exactly that window, weighted as above.
 
 Your declaration is left alone in step 3. The writer never resolves what a person opened, so a declaration stays open until someone closes it, and while it is open the org keeps reporting an active incident. Resolve declarations when you are done with them.
 

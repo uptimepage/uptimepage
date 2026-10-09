@@ -1,8 +1,8 @@
 //! Postgres-backed regression on what reaches the uptime figure.
-//! `confirmed_downtime_by_target` must skip target-less (manual) incidents: its
-//! `GROUP BY target_id` would otherwise return a NULL row and fail decoding into
-//! `Uuid`. The in-memory store can't reproduce this — its `Incident.target_id` is
-//! non-nullable. It must also skip a declared incident bound to a monitor.
+//! `confirmed_downtime_by_target` must skip target-less (manual) incidents: a
+//! NULL target would otherwise fail decoding into `Uuid`. It must also skip a
+//! declared incident bound to a monitor until asked to count it, and weigh each
+//! incident by the impact its row records.
 //!
 //! `#[ignore]`d by default; runs under `--run-ignored all` with `DATABASE_URL`
 //! set. The harness auto-applies migrations on first connect.
@@ -75,7 +75,7 @@ async fn confirmed_downtime_skips_null_target_incidents_pg() {
         to: now,
     };
     let map = store
-        .confirmed_downtime_by_target(org, range)
+        .confirmed_downtime_by_target(org, range, None)
         .await
         .expect("must not error on a null-target incident");
 
@@ -84,6 +84,52 @@ async fn confirmed_downtime_skips_null_target_incidents_pg() {
         map.get(&target_id).copied(),
         Some(600),
         "10 minutes of clamped downtime"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn uptime_weighs_each_incident_by_its_impact_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, _user, target_id) = seed(&pool, "cdtw").await;
+    for (start, end, status, regions_up) in [
+        (50, 40, "down", vec!["us-east"]),
+        (30, 20, "degraded", vec![]),
+    ] {
+        sqlx::query(
+            "INSERT INTO incidents (org_id, target_id, started_at, ended_at, status_at_start, \
+                                    check_count, state, visibility, origin, regions_down, \
+                                    regions_up) \
+             VALUES ($1, $2, now() - make_interval(mins => $3), \
+                     now() - make_interval(mins => $4), $5, 1, 'resolved', 'public', \
+                     'monitor', ARRAY['eu-west'], $6)",
+        )
+        .bind(org.0)
+        .bind(target_id)
+        .bind(start)
+        .bind(end)
+        .bind(status)
+        .bind(regions_up)
+        .execute(&pool)
+        .await
+        .expect("insert incident");
+    }
+
+    let now = chrono::Utc::now();
+    let range = TimeRange {
+        from: now - chrono::Duration::hours(1),
+        to: now,
+    };
+    let map = PgIncidentNarrationStore::new(pool.clone())
+        .confirmed_downtime_by_target(org, range, None)
+        .await
+        .expect("downtime rollup");
+    assert_eq!(
+        map.get(&target_id).copied(),
+        Some(180),
+        "ten minutes of partial outage count as three; degraded counts nothing"
     );
 }
 
@@ -133,7 +179,7 @@ async fn a_declared_incident_stays_out_of_uptime_until_asked_in_pg() {
         to: now,
     };
     let map = narration
-        .confirmed_downtime_by_target(org, range)
+        .confirmed_downtime_by_target(org, range, None)
         .await
         .expect("downtime rollup");
     assert!(
@@ -155,13 +201,35 @@ async fn a_declared_incident_stays_out_of_uptime_until_asked_in_pg() {
     .expect("incident exists");
 
     let map = narration
-        .confirmed_downtime_by_target(org, range)
+        .confirmed_downtime_by_target(org, range, None)
+        .await
+        .expect("downtime rollup");
+    assert_eq!(
+        map.get(&target_id).copied(),
+        Some(180),
+        "once counted, a declared major incident weighs as the partial outage the page shows"
+    );
+
+    IncidentNarrationStore::patch_narration(
+        &narration,
+        org,
+        declared.id,
+        uptimepage::domain::IncidentNarrationUpdate {
+            severity: Some(uptimepage::domain::IncidentSeverity::Critical),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("patch")
+    .expect("incident exists");
+    let map = narration
+        .confirmed_downtime_by_target(org, range, None)
         .await
         .expect("downtime rollup");
     assert_eq!(
         map.get(&target_id).copied(),
         Some(600),
-        "once counted, the declared ten minutes lands like any other"
+        "a critical declaration is a major outage, counted in full"
     );
 }
 
@@ -211,6 +279,7 @@ async fn a_monitor_opened_incident_cannot_be_excluded_pg() {
                 from: now - chrono::Duration::hours(1),
                 to: now,
             },
+            None,
         )
         .await
         .expect("downtime rollup");
@@ -268,7 +337,7 @@ async fn count_overlapping_counts_every_incident_spans_only_downtime_pg() {
         3,
         "monitor, declared and target-less incidents in the hour; not the older one"
     );
-    let spans = store.downtime_spans(org, range).await.expect("spans");
+    let spans = store.downtime_spans(org, range, None).await.expect("spans");
     assert_eq!(
         spans.len(),
         1,

@@ -1805,6 +1805,7 @@ fn incident_detail_maps_state_severity_and_updates() {
         updates: vec![update(IncidentStatusPhase::Investigating)],
         regions_down: vec!["us-east".into()],
         regions_up: vec!["eu-helsinki".into()],
+        origin: Default::default(),
     };
     let page = Uuid::now_v7();
     let d = incident_detail(&inc, &[page]);
@@ -1842,6 +1843,7 @@ fn incident_detail_names_a_deleted_monitor() {
         updates: Vec::new(),
         regions_down: Vec::new(),
         regions_up: Vec::new(),
+        origin: Default::default(),
     };
     let d = incident_detail(&inc, &[]);
     assert!(d.monitor_deleted);

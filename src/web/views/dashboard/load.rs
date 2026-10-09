@@ -1,24 +1,27 @@
 //! Snapshot assembly: the cached batched reads behind one dashboard render.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use moka::sync::Cache;
 use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::metrics::{DashboardMetrics, PriorPeriodSummary};
 use crate::domain::{CheckStatus, OrgId, UserId};
-use crate::storage::{IncidentBriefFilter, TargetFilter, TimeRange};
+use crate::storage::{
+    IncidentBriefFilter, IncidentSpan, TargetFilter, TimeRange, weighted_downtime_by_target,
+};
 use crate::web::error::WebResult;
 use crate::web::views::describe_check;
 use crate::web::views::incidents::members_map;
 
 use super::charts::{
     ACTIVE_INCIDENTS_LIMIT, ConfirmedRibbon, TYPE_CHIP_ORDER, avg_response_label,
-    build_fleet_ribbon, build_kpi_cards, build_type_counts, fleet_sparks, fleet_uptime_pct,
-    format_count, group_sparks, pct_label, range_span, ribbon_from, tally_status,
+    build_fleet_ribbon, build_kpi_cards, build_type_counts, confirmed_uptime_series, fleet_sparks,
+    fleet_uptime_pct, format_count, group_sparks, pct_label, range_span, ribbon_from, tally_status,
+    uptime_delta, uptime_pp_delta,
 };
 use super::*;
 
@@ -86,31 +89,56 @@ pub(super) async fn load_snapshot(
     Ok(snap)
 }
 
-/// The all-regions ribbon's incidents and checked monitors over the last 24
-/// hours. A region view paints from raw checks, so it reads neither.
-async fn confirmed_ribbon(
+/// What the all-regions view reads from incidents: the downtime spans over the
+/// period, the one before it and the ribbon's day, read once, with the
+/// monitors checked in the ribbon's day and in the prior period. A region view
+/// paints from raw checks, so it reads none of it.
+struct ConfirmedReads {
+    spans: Vec<IncidentSpan>,
+    ribbon: TimeRange,
+    ribbon_checked: HashSet<Uuid>,
+    prior: TimeRange,
+    prior_checked: HashSet<Uuid>,
+}
+
+async fn confirmed_reads(
     state: &AppState,
     org: OrgId,
-    to: DateTime<Utc>,
+    period: TimeRange,
     region: Option<&str>,
-) -> crate::error::Result<Option<ConfirmedRibbon>> {
+) -> crate::error::Result<Option<ConfirmedReads>> {
     if region.is_some() {
         return Ok(None);
     }
-    let window = TimeRange {
-        from: to - Duration::hours(RIBBON_HOURS),
-        to,
+    let ribbon = TimeRange {
+        from: period.to - Duration::hours(RIBBON_HOURS),
+        to: period.to,
     };
-    let (spans, sampled) = tokio::try_join!(
-        state.incident_narration_store.downtime_spans(org, window),
+    let prior = TimeRange {
+        from: period.from - (period.to - period.from),
+        to: period.from,
+    };
+    let all = TimeRange {
+        from: prior.from.min(ribbon.from),
+        to: period.to,
+    };
+    let (spans, ribbon_checked, prior_checked) = tokio::try_join!(
+        state
+            .incident_narration_store
+            .downtime_spans(org, all, None),
         state
             .results_store
-            .sampled_targets(org, window.from, window.to),
+            .sampled_targets(org, ribbon.from, ribbon.to),
+        state
+            .results_store
+            .sampled_targets(org, prior.from, prior.to),
     )?;
-    Ok(Some(ConfirmedRibbon {
-        window,
+    Ok(Some(ConfirmedReads {
         spans,
-        sampled,
+        ribbon,
+        ribbon_checked,
+        prior,
+        prior_checked,
     }))
 }
 
@@ -142,9 +170,8 @@ pub(super) async fn build_snapshot(
         (checks_total, checks_up, avg_ms_current),
         incidents,
         ribbon_rows,
-        ribbon_confirmed,
+        confirmed_reads,
         prior,
-        downtime_by_target,
     ) = tokio::try_join!(
         state.target_store.list(org, target_filter),
         state
@@ -173,18 +200,35 @@ pub(super) async fn build_snapshot(
         state
             .results_store
             .fleet_ribbon(org, ribbon_from(to), to, RIBBON_BUCKET_SECONDS, region),
-        confirmed_ribbon(state, org, to, region),
+        confirmed_reads(state, org, time_range, region),
         state
             .results_store
             .prior_period_summary(org, time_range, region),
-        state
-            .incident_narration_store
-            .confirmed_downtime_by_target(org, time_range),
     )?;
 
     let window_secs = (time_range.to - time_range.from).num_seconds();
     // A region filter keeps the raw per-region rate; only all-regions is confirmed.
     let confirmed = region.is_none();
+    let downtime_by_target: HashMap<Uuid, i64> = confirmed_reads
+        .as_ref()
+        .map(|c| weighted_downtime_by_target(&c.spans, time_range))
+        .unwrap_or_default();
+    let prior_uptime = confirmed_reads.as_ref().and_then(|c| {
+        let downtime = weighted_downtime_by_target(&c.spans, c.prior);
+        fleet_uptime_pct(&c.prior_checked, &downtime, window_secs)
+    });
+    let uptime_series = confirmed_reads
+        .as_ref()
+        .map(|c| confirmed_uptime_series(&spark_rows, &c.spans, spark_from));
+    let ribbon_confirmed = confirmed_reads.map(|c| ConfirmedRibbon {
+        window: c.ribbon,
+        spans: c
+            .spans
+            .into_iter()
+            .filter(|s| s.clip(c.ribbon).is_some())
+            .collect(),
+        sampled: c.ribbon_checked,
+    });
 
     let truncated = targets.len() > ROW_LIMIT;
     if truncated {
@@ -269,7 +313,10 @@ pub(super) async fn build_snapshot(
         })
         .collect();
 
-    let fleet_sparks = fleet_sparks(&spark_rows, spark_from);
+    let mut fleet_sparks = fleet_sparks(&spark_rows, spark_from);
+    if let Some(series) = uptime_series {
+        fleet_sparks.uptime = series;
+    }
     let checks_successful_label = format!("{} successful", format_count(checks_up));
     let current = PriorPeriodSummary {
         checks_total,
@@ -278,7 +325,7 @@ pub(super) async fn build_snapshot(
     };
     // Time-weighted over sampled monitors, plus any with downtime and no
     // checks, so the fleet KPI matches the rows.
-    let fleet_uptime_label = confirmed
+    let fleet_uptime = confirmed
         .then(|| {
             let sampled = metrics_by_target
                 .iter()
@@ -287,11 +334,18 @@ pub(super) async fn build_snapshot(
                 .collect();
             fleet_uptime_pct(&sampled, &downtime_by_target, window_secs)
         })
-        .flatten()
-        .map_or_else(
-            || pct_label(checks_total, checks_up),
-            |p| format!("{p:.2}%"),
-        );
+        .flatten();
+    let fleet_uptime_label = fleet_uptime.map_or_else(
+        || pct_label(checks_total, checks_up),
+        |p| format!("{p:.2}%"),
+    );
+    let uptime_delta = if confirmed {
+        fleet_uptime
+            .zip(prior_uptime)
+            .map(|(cur, prior)| uptime_pp_delta(cur, prior))
+    } else {
+        uptime_delta(&current, &prior)
+    };
     let kpis = DashboardKpis {
         uptime_pct_label: fleet_uptime_label,
         avg_response_ms_label: avg_response_label(avg_ms_current, checks_total),
@@ -310,6 +364,7 @@ pub(super) async fn build_snapshot(
         checks_successful_label,
         &current,
         &prior,
+        uptime_delta,
         &fleet_sparks,
     );
 

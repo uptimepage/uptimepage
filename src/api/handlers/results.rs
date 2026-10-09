@@ -256,9 +256,12 @@ pub async fn flow_steps(
     path = "/api/v1/targets/{id}/uptime",
     tag = "results",
     summary = "Uptime stats for a target over a time range",
-    description = "Counts per-status check totals and computes uptime percentage. \
-                   `uptime_pct` is null when the window holds no checks, which is \
-                   unknown rather than zero.",
+    description = "Counts per-status check totals and computes uptime percentage: \
+                   confirmed incident downtime over the window, a partial outage \
+                   counted at 30% and degraded performance not at all, or with \
+                   `region` set that region's share of passing checks. `uptime_pct` \
+                   is null when the window holds no checks, which is unknown rather \
+                   than zero.",
     params(
         ("id" = Uuid, Path),
         ("from" = Option<DateTime<Utc>>, Query, description = "Inclusive lower bound (default: now-24h)"),
