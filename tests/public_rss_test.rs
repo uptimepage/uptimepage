@@ -77,6 +77,7 @@ impl PublicSource for TwoIncidentSource {
                     posted_at: now - chrono::Duration::minutes(5),
                     phase: IncidentStatusPhase::Investigating,
                     message: INCIDENT_BODY.into(),
+                    generated: false,
                 }],
                 postmortem: None,
             },

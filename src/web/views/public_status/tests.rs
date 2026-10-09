@@ -10,9 +10,9 @@ use uuid::Uuid;
 use crate::config::PublicStatusConfig;
 use crate::domain::OverallStatus;
 use crate::domain::{
-    DayState, IncidentImpact, IncidentSeverity, IncidentStatusPhase, OverallState, PublicComponent,
-    PublicComponentGroup, PublicComponentStatus, PublicIncident, PublicIncidentUpdate,
-    PublicMaintenance, PublicOrgBranding, PublicStatusPage,
+    DayDowntime, DayState, IncidentImpact, IncidentSeverity, IncidentStatusPhase, OverallState,
+    PublicComponent, PublicComponentGroup, PublicComponentStatus, PublicIncident,
+    PublicIncidentUpdate, PublicMaintenance, PublicOrgBranding, PublicStatusPage,
 };
 use crate::i18n::Tr;
 use crate::public_status::HistoryIncidentMarker;
@@ -53,6 +53,7 @@ fn sample_page() -> PublicStatusPage {
                 description: Some("Customer-facing edge".into()),
                 current_status: PublicComponentStatus::Operational,
                 history: vec![DayState::Operational; HISTORY_LEN],
+                downtime: vec![DayDowntime::default(); HISTORY_LEN],
                 uptime_pct: Some(99.9),
                 detail_url: None,
             }],
@@ -121,6 +122,7 @@ fn day_strip_renders_trigger_buttons_and_blob() {
     // Shared popover + content template + JSON blob — each appears once.
     assert_eq!(html.matches(r#"id="day-popover""#).count(), 1);
     assert_eq!(html.matches(r#"id="day-popover-related-tpl""#).count(), 1);
+    assert_eq!(html.matches(r#"id="day-popover-span-tpl""#).count(), 1);
     assert_eq!(html.matches(r#"id="day-strip-data""#).count(), 1);
     // Roving tabindex: one `tabindex="0"` per component strip; the rest
     // are `tabindex="-1"`. Sample has 1 component × 90 days = 1 stop.
@@ -136,6 +138,11 @@ fn day_strip_blob_links_overlapping_incident() {
     let comp_id = p.groups[0].components[0].id;
     let last = p.groups[0].components[0].history.len() - 1;
     p.groups[0].components[0].history[last] = DayState::MajorOutage;
+    p.groups[0].components[0].downtime[last] = DayDowntime {
+        major_secs: 40 * 60,
+        partial_secs: 5 * 60,
+        degraded_secs: 0,
+    };
     let marker = HistoryIncidentMarker {
         id: Uuid::new_v4(),
         component_id: comp_id,
@@ -147,9 +154,42 @@ fn day_strip_blob_links_overlapping_incident() {
     // The JSON blob is the data source — assert against it, not the
     // rendered <li> markup (the JS builds those at runtime).
     assert!(view.day_strip_json.contains("Edge nodes returning 502"));
-    assert!(view.day_strip_json.contains("day-pop-status--maj"));
-    assert!(view.day_strip_json.contains("40m"));
-    assert!(view.day_strip_json.contains("\"show_badge\":true"));
+    let blob: serde_json::Value = serde_json::from_str(&view.day_strip_json).unwrap();
+    let today = &blob[comp_id.to_string()]["days"][last];
+    assert_eq!(
+        today["spans"],
+        serde_json::json!([
+            { "state": "Major outage", "state_class": "day-pop-status--maj", "duration": "40m" },
+            { "state": "Partial outage", "state_class": "day-pop-status--part", "duration": "5m" },
+        ]),
+        "worst first, each state with its own time"
+    );
+    assert_eq!(
+        blob[comp_id.to_string()]["days"][0]["spans"],
+        serde_json::json!([])
+    );
+}
+
+#[test]
+fn a_day_cell_is_coloured_by_how_long_it_was_down() {
+    let mut p = sample_page();
+    let c = &mut p.groups[0].components[0];
+    let n = c.history.len();
+    // A four-minute total outage, then a day that lost an hour and a half.
+    c.history[n - 2] = DayState::MajorOutage;
+    c.downtime[n - 2].major_secs = 4 * 60;
+    c.history[n - 1] = DayState::MajorOutage;
+    c.downtime[n - 1].major_secs = 90 * 60;
+    let view = build_view(&p, &[], &Default::default(), Tr::default());
+    let cells = &view.groups[0].components[0].history;
+    assert_eq!(cells[n - 2].class, "day-cell--deg");
+    assert_eq!(cells[n - 1].class, "day-cell--maj");
+    assert!(
+        cells[n - 2].aria_label.ends_with("— Major outage 4m"),
+        "{}",
+        cells[n - 2].aria_label
+    );
+    assert!(cells[0].aria_label.ends_with("— Operational"));
 }
 
 #[test]
@@ -188,7 +228,7 @@ fn day_strip_blob_html_safe() {
 }
 
 #[test]
-fn day_overlap_clamps_to_day_window() {
+fn day_related_keeps_incidents_touching_the_day() {
     let comp_id = Uuid::new_v4();
     let now = Utc::now();
     let day_start = now
@@ -205,13 +245,11 @@ fn day_overlap_clamps_to_day_window() {
         ended_at: Some(day_start + ChronoDuration::hours(2)),
     };
     let pool: Vec<&HistoryIncidentMarker> = vec![&inc];
-    let (dur, links) = day_overlap(&pool, day_start, day_end, now);
-    assert_eq!(links.len(), 1);
-    assert_eq!(dur, ChronoDuration::hours(2));
+    assert_eq!(day_related(&pool, day_start, day_end, now).len(), 1);
+    let before = day_start - ChronoDuration::days(1);
+    assert!(day_related(&pool, before - ChronoDuration::days(1), before, now).is_empty());
     let empty: Vec<&HistoryIncidentMarker> = Vec::new();
-    let (dur2, links2) = day_overlap(&empty, day_start, day_end, now);
-    assert!(links2.is_empty());
-    assert_eq!(dur2, ChronoDuration::zero());
+    assert!(day_related(&empty, day_start, day_end, now).is_empty());
 }
 
 #[test]
@@ -273,6 +311,7 @@ fn active_incident_banner_renders_when_present() {
             posted_at: Utc::now() - ChronoDuration::minutes(2),
             phase: IncidentStatusPhase::Identified,
             message: "Rolling back the deploy.".into(),
+            generated: false,
         }],
         postmortem: None,
     });
@@ -484,11 +523,13 @@ fn incident_detail_renders() {
                 posted_at: Utc::now() - ChronoDuration::minutes(25),
                 phase: IncidentStatusPhase::Investigating,
                 message: "Looking into it.".into(),
+                generated: false,
             },
             PublicIncidentUpdate {
                 posted_at: Utc::now() - ChronoDuration::minutes(5),
                 phase: IncidentStatusPhase::Resolved,
                 message: "Rolled back the deploy.".into(),
+                generated: false,
             },
         ],
         postmortem: None,
@@ -900,6 +941,7 @@ fn a_long_update_is_cut_by_characters_not_bytes() {
         posted_at: Utc::now(),
         phase: IncidentStatusPhase::Identified,
         message: format!("{}ü{}", "a".repeat(239), "b".repeat(20)),
+        generated: false,
     });
     let summary = build_incident_summary(&inc, Utc::now(), Tr::default());
     assert_eq!(
@@ -928,9 +970,9 @@ fn bucket_by_month_groups_consecutive_incidents() {
     let buckets = bucket_by_month(&items, now, Tr::default());
     assert_eq!(buckets.len(), 2);
     assert_eq!(buckets[0].label, "May 2026");
-    assert_eq!(buckets[0].incidents.len(), 2);
+    assert_eq!(buckets[0].rows.len(), 2);
     assert_eq!(buckets[1].label, "April 2026");
-    assert_eq!(buckets[1].incidents.len(), 1);
+    assert_eq!(buckets[1].rows.len(), 1);
 }
 
 #[test]
@@ -1088,5 +1130,88 @@ fn branding_defaults_when_all_fields_null() {
     assert!(
         !html.contains("/status/branding/logo"),
         "no logo img when path unset"
+    );
+}
+
+#[test]
+fn past_incidents_render_as_rows_with_older_ones_folded_away() {
+    let mut p = sample_page();
+    let now = p.generated_at;
+    // Two blips on one component twenty minutes apart, and one from last month.
+    p.recent_incidents = vec![
+        fake_incident(now - ChronoDuration::hours(2), 1, "API degraded"),
+        fake_incident(now - ChronoDuration::minutes(155), 2, "API degraded again"),
+        fake_incident(now - ChronoDuration::days(20), 3, "API slow"),
+    ];
+    let view = build_view(&p, &[], &Default::default(), Tr::default());
+    let html = StatusRegion {
+        tr: Tr::default(),
+        view,
+    }
+    .render()
+    .unwrap();
+    assert!(html.contains("Past incidents (30 days)"));
+    let folded = format!(
+        r#"<details class="past-fold" id="past-{}" data-keep-open>"#,
+        Uuid::from_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2])
+    );
+    assert!(html.contains(&folded), "the two blips share one row");
+    assert!(html.contains("2 incidents"));
+    assert!(html.contains(r#"<details class="past-earlier" id="past-earlier" data-keep-open>"#));
+    assert!(html.contains("1 earlier incident"));
+    assert!(html.contains(r#"data-tz="day-time""#));
+    assert!(!html.contains("No incidents in the past 7 days."));
+
+    p.recent_incidents.truncate(0);
+    p.recent_incidents
+        .push(fake_incident(now - ChronoDuration::days(20), 3, "API slow"));
+    let view = build_view(&p, &[], &Default::default(), Tr::default());
+    let html = StatusRegion {
+        tr: Tr::default(),
+        view,
+    }
+    .render()
+    .unwrap();
+    assert!(html.contains("No incidents in the past 7 days."));
+    assert!(!html.contains("past-fold\""));
+}
+
+#[test]
+fn the_status_page_loads_the_script_that_keeps_rows_open() {
+    let view = build_view(&sample_page(), &[], &Default::default(), Tr::default());
+    let html = StatusFullPage {
+        tr: Tr::default(),
+        view,
+        branding: sample_branding(),
+        og: OgMeta::default(),
+    }
+    .render()
+    .unwrap();
+    assert!(html.contains(&crate::templates::assets::url("js/public/keep_open.js")));
+}
+
+#[test]
+fn a_day_touched_for_no_measurable_time_still_names_its_state() {
+    let mut p = sample_page();
+    let comp_id = p.groups[0].components[0].id;
+    let last = p.groups[0].components[0].history.len() - 1;
+    p.groups[0].components[0].history[last] = DayState::PartialOutage;
+    let view = build_view(&p, &[], &Default::default(), Tr::default());
+    let cell = &view.groups[0].components[0].history[last];
+    assert_eq!(
+        cell.class, "day-cell--deg",
+        "off green, at the lightest tint"
+    );
+    assert!(
+        cell.aria_label.ends_with("— Partial outage"),
+        "{}",
+        cell.aria_label
+    );
+    let blob: serde_json::Value = serde_json::from_str(&view.day_strip_json).unwrap();
+    assert_eq!(
+        blob[comp_id.to_string()]["days"][last]["spans"],
+        serde_json::json!([
+            { "state": "Partial outage", "state_class": "day-pop-status--part", "duration": "" },
+        ])
     );
 }

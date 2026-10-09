@@ -192,6 +192,7 @@ struct UpdateRow {
     posted_at: DateTime<Utc>,
     phase: String,
     message: String,
+    generated: bool,
 }
 
 async fn load_with_updates(pool: &PgPool, id: Uuid, org_id: Uuid) -> Result<Option<Incident>> {
@@ -211,7 +212,7 @@ async fn load_with_updates(pool: &PgPool, id: Uuid, org_id: Uuid) -> Result<Opti
         return Ok(None);
     };
     let updates: Vec<UpdateRow> = sqlx::query_as(
-        r#"SELECT posted_at, phase, message
+        r#"SELECT posted_at, phase, message, generated
            FROM incident_updates
            WHERE incident_id = $1 AND org_id = $2
            ORDER BY posted_at ASC"#,
@@ -247,6 +248,7 @@ fn row_to_incident(row: IncidentRow, updates: Vec<UpdateRow>) -> Incident {
                 posted_at: u.posted_at,
                 phase: IncidentStatusPhase::from_db_str(&u.phase),
                 message: u.message,
+                generated: u.generated,
             })
             .collect(),
         regions_down: row.regions_down.unwrap_or_default(),
@@ -312,7 +314,7 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
         .map_err(|e| anyhow::anyhow!("patch_narration: {e}"))?;
         let Some(row) = row else { return Ok(None) };
         let updates: Vec<UpdateRow> = sqlx::query_as(
-            r#"SELECT posted_at, phase, message
+            r#"SELECT posted_at, phase, message, generated
                FROM incident_updates
                WHERE incident_id = $1 AND org_id = $2
                ORDER BY posted_at ASC"#,
@@ -375,6 +377,7 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
             posted_at,
             phase: IncidentStatusPhase::from_db_str(&phase),
             message,
+            generated: false,
         }))
     }
 
@@ -409,10 +412,11 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
                       i.severity, i.started_at, i.ended_at, i.public_title,
                       u.posted_at AS update_posted_at,
                       u.phase     AS update_phase,
-                      u.message   AS update_message
+                      u.message   AS update_message,
+                      u.generated AS update_generated
                FROM incidents i
                LEFT JOIN LATERAL (
-                   SELECT posted_at, phase, message
+                   SELECT posted_at, phase, message, generated
                    FROM incident_updates iu
                    WHERE iu.incident_id = i.id AND iu.org_id = i.org_id
                    ORDER BY iu.posted_at DESC
@@ -610,6 +614,7 @@ struct IncidentBriefRow {
     update_posted_at: Option<DateTime<Utc>>,
     update_phase: Option<String>,
     update_message: Option<String>,
+    update_generated: Option<bool>,
 }
 
 fn row_to_brief(r: IncidentBriefRow) -> IncidentBrief {
@@ -618,6 +623,7 @@ fn row_to_brief(r: IncidentBriefRow) -> IncidentBrief {
             posted_at,
             phase: IncidentStatusPhase::from_db_str(&phase),
             message,
+            generated: r.update_generated.unwrap_or_default(),
         }),
         _ => None,
     };
@@ -718,6 +724,7 @@ impl IncidentNarrationStore for InMemoryIncidentNarrationStore {
             posted_at: Utc::now(),
             phase: new.phase,
             message: new.message,
+            generated: false,
         };
         inc.updates.push(entry.clone());
         inc.updated_at = Some(entry.posted_at);

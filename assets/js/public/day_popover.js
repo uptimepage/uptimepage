@@ -39,18 +39,23 @@
     function fill(p, e) {
         slot(p, "date").textContent = e.date;
 
-        var badge = slot(p, "badge");
+        var spans = slot(p, "spans");
         var none = slot(p, "none");
-        if (e.show_badge) {
-            badge.className = "day-pop-status " + e.state_class;
-            slot(p, "state").textContent = e.state;
-            var dur = slot(p, "duration");
-            if (e.downtime) { dur.textContent = e.downtime; dur.hidden = false; }
-            else { dur.textContent = ""; dur.hidden = true; }
-            badge.hidden = false;
+        while (spans.firstChild) spans.removeChild(spans.firstChild);
+        var spanTpl = document.getElementById("day-popover-span-tpl");
+        if (e.spans && e.spans.length && spanTpl) {
+            for (var s = 0; s < e.spans.length; s++) {
+                var row = spanTpl.content.cloneNode(true);
+                var li = row.querySelector("li");
+                li.className = "day-pop-status " + e.spans[s].state_class;
+                li.querySelector(".day-pop-status__label").textContent = e.spans[s].state;
+                li.querySelector(".day-pop-status__duration").textContent = e.spans[s].duration;
+                spans.appendChild(row);
+            }
+            spans.hidden = false;
             none.hidden = true;
         } else {
-            badge.hidden = true;
+            spans.hidden = true;
             none.hidden = false;
         }
 

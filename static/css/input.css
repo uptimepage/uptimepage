@@ -2182,6 +2182,14 @@
         margin: 0;
         color: var(--color-slate-700);
     }
+    .day-popover__spans {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+    }
     .day-popover__related-heading {
         margin: 0.75rem 0 0.35rem 0;
         font-size: 0.7rem;
@@ -2566,6 +2574,43 @@
         background: var(--theme-state-ok-bg);
         color: var(--theme-state-ok-fg-strong);
         border-color: var(--theme-state-ok-line-soft);
+    }
+
+    /* Past-incident rows (public/_past_incidents.html): one line per
+       incident; a folded row and the older-incidents toggle open in place. */
+    .past-row { @apply px-5 py-3; }
+    .past-fold__summary,
+    .past-earlier__summary {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+        cursor: pointer;
+        list-style: none;
+    }
+    .past-fold__summary { justify-content: space-between; }
+    .past-earlier__summary {
+        @apply text-sm font-medium;
+        color: var(--theme-text-muted);
+    }
+    .past-fold__summary::-webkit-details-marker,
+    .past-earlier__summary::-webkit-details-marker { display: none; }
+    .past-fold__summary::after,
+    .past-earlier__summary::after {
+        content: "▸";
+        content: "▸" / "";
+        flex-shrink: 0;
+        color: var(--theme-text-quiet);
+        transition: transform 150ms ease;
+    }
+    .past-fold[open] > .past-fold__summary::after,
+    .past-earlier[open] > .past-earlier__summary::after { transform: rotate(90deg); }
+    .past-fold__items {
+        @apply mt-2 flex flex-col gap-1.5 pl-3;
+        border-left: 1px solid var(--theme-line);
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .past-fold__summary::after,
+        .past-earlier__summary::after { transition: none; }
     }
 
     /* Small inline status line — for JS-set messages ("Saved", error toasts,

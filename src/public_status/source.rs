@@ -347,7 +347,7 @@ impl OrgPublicSource {
         }
         let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
         let updates: Vec<UpdateRow> = sqlx::query_as::<_, UpdateRow>(
-            r#"SELECT incident_id, posted_at, phase, message
+            r#"SELECT incident_id, posted_at, phase, message, generated
                FROM incident_updates
                WHERE incident_id = ANY($1) AND org_id = $2
                ORDER BY incident_id, posted_at ASC"#,
@@ -374,6 +374,7 @@ impl OrgPublicSource {
                         posted_at: u.posted_at,
                         phase: IncidentStatusPhase::from_db_str(&u.phase),
                         message: u.message.clone(),
+                        generated: u.generated,
                     })
                     .collect();
                 my_updates.sort_by_key(|u| u.posted_at);
@@ -483,6 +484,7 @@ struct UpdateRow {
     posted_at: DateTime<Utc>,
     phase: String,
     message: String,
+    generated: bool,
 }
 
 /// Where a feed's links point. The channel link is the page a reader lands on
@@ -696,6 +698,7 @@ mod tests {
             posted_at: posted,
             phase,
             message: message.into(),
+            generated: false,
         }
     }
 

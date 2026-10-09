@@ -301,17 +301,39 @@ pub(crate) fn status_page_required() -> crate::error::AppError {
     )
 }
 
+/// What a public update says, and whether the platform wrote it because the
+/// operator gave no words of their own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateText {
+    pub message: String,
+    pub generated: bool,
+}
+
+impl UpdateText {
+    /// The operator's words when they gave any, else the platform's `fallback`.
+    pub fn or_default(written: Option<&str>, fallback: &str) -> Self {
+        match written.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(text) => Self {
+                message: text.to_string(),
+                generated: false,
+            },
+            None => Self {
+                message: fallback.to_string(),
+                generated: true,
+            },
+        }
+    }
+}
+
 /// Body of the update that publishing an incident posts for it. Subscribers are
 /// notified per update, so publishing without one would reach nobody; shared so
 /// a confirmation prompt can show the text before it goes out.
-pub fn opening_update_message(title: Option<&str>, description: Option<&str>) -> String {
+pub fn opening_update_message(title: Option<&str>, description: Option<&str>) -> UpdateText {
     let non_blank = |s: &&str| !s.trim().is_empty();
-    description
-        .filter(non_blank)
-        .or(title.filter(non_blank))
-        .map(str::trim)
-        .unwrap_or("We are investigating this incident.")
-        .to_string()
+    UpdateText::or_default(
+        description.filter(non_blank).or(title.filter(non_blank)),
+        "We are investigating this incident.",
+    )
 }
 
 /// Public opening line for a monitor-opened incident that lands on a status

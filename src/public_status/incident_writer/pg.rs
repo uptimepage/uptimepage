@@ -187,8 +187,8 @@ impl IncidentStore for PgIncidentStore {
                    RETURNING id, org_id, visibility
                ),
                ins AS (
-                   INSERT INTO incident_updates (org_id, incident_id, phase, message, author)
-                   SELECT org_id, id, 'investigating', $10, 'system'
+                   INSERT INTO incident_updates (org_id, incident_id, phase, message, author, generated)
+                   SELECT org_id, id, 'investigating', $10, 'system', true
                    FROM opened WHERE visibility = 'public'
                )
                SELECT id FROM opened"#,
@@ -257,8 +257,8 @@ impl IncidentStore for PgIncidentStore {
                    RETURNING id, org_id, visibility
                ),
                ins AS (
-                   INSERT INTO incident_updates (org_id, incident_id, phase, message, author)
-                   SELECT org_id, id, 'resolved', $4, 'system'
+                   INSERT INTO incident_updates (org_id, incident_id, phase, message, author, generated)
+                   SELECT org_id, id, 'resolved', $4, 'system', true
                    FROM closed WHERE visibility = 'public'
                )
                SELECT id FROM closed"#,

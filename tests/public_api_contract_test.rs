@@ -70,6 +70,7 @@ impl PublicSource for FakePublicSource {
             description: Some("Primary REST endpoint".into()),
             current_status: PublicComponentStatus::Operational,
             history: vec![DayState::Operational; 90],
+            downtime: Vec::new(),
             uptime_pct: Some(99.9),
             detail_url: None,
         };
@@ -87,6 +88,7 @@ impl PublicSource for FakePublicSource {
                 posted_at: Utc::now(),
                 phase: IncidentStatusPhase::Investigating,
                 message: "Rolling back the deploy.".into(),
+                generated: false,
             }],
             postmortem: None,
         };

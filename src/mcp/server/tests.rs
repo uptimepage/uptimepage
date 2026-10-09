@@ -86,6 +86,7 @@ fn update(phase: IncidentStatusPhase) -> PublicIncidentUpdate {
         posted_at: Utc::now(),
         phase,
         message: "msg".into(),
+        generated: false,
     }
 }
 

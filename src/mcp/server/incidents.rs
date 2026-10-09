@@ -187,7 +187,7 @@ impl McpServer {
             .await?;
         // Publishing posts an opening update, and that update is what reaches
         // subscribers, so the prompt has to show the words they will receive.
-        let opening = opening_update_message(title.as_deref(), description.as_deref());
+        let opening = opening_update_message(title.as_deref(), description.as_deref()).message;
         require_confirmation(
             ctx,
             auth,

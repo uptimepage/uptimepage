@@ -2603,3 +2603,75 @@ async fn pages_are_refused_for_an_incident_with_a_monitor_pg() {
         codes,
     );
 }
+
+/// Lines the platform words itself are marked so a listing can leave them
+/// out, even when posted under the person who acted; their own words are not.
+#[tokio::test]
+#[ignore]
+async fn default_public_lines_are_marked_generated_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let store = PgIncidentOpsStore::new(pool.clone());
+    let lines = |id: Uuid| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (String, String, bool)>(
+                "SELECT phase, message, generated FROM incident_updates \
+                 WHERE incident_id = $1 ORDER BY posted_at, id",
+            )
+            .bind(id)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    let (org, user, id) = seed(&pool, "incgendefault").await;
+    store
+        .publish(org, id, None, None, None, Actor::User(user))
+        .await
+        .unwrap()
+        .expect("published");
+    store
+        .resolve(org, id, Actor::User(user), None)
+        .await
+        .expect("resolve");
+    assert_eq!(
+        lines(id).await,
+        [
+            (
+                "investigating".to_string(),
+                "We are investigating this incident.".to_string(),
+                true
+            ),
+            (
+                "resolved".to_string(),
+                "This incident has been resolved.".to_string(),
+                true
+            ),
+        ]
+    );
+
+    let (org, user, id) = seed(&pool, "incgenwritten").await;
+    store
+        .publish(
+            org,
+            id,
+            None,
+            Some("Payments are failing".into()),
+            None,
+            Actor::User(user),
+        )
+        .await
+        .unwrap()
+        .expect("published");
+    store
+        .resolve(org, id, Actor::User(user), Some("Rolled back".into()))
+        .await
+        .expect("resolve");
+    assert!(
+        lines(id).await.iter().all(|(_, _, generated)| !generated),
+        "the operator's own words"
+    );
+}

@@ -1,5 +1,4 @@
-{%- import "public/_incident_chips.html" as chips -%}
-{%- import "public/_incident_card.html" as card -%}
+{%- import "public/_past_incidents.html" as past -%}
 <!doctype html>
 <html lang="{{ tr.lang() }}"{% if let Some(l) = tr.date_locale() %} data-time-locale="{{ l }}"{% endif %}>
 <head>
@@ -37,11 +36,7 @@
                         class="text-sm font-semibold uppercase tracking-wide text-quiet">
                         {{ bucket.label }}
                     </h2>
-                    <ul class="public-callout public-callout--neutral divide-y divide-[color:var(--theme-line)] overflow-hidden p-0">
-                        {% for inc in bucket.incidents %}
-                        <li class="p-5">{% call card::card(inc) %}{% endcall %}</li>
-                        {% endfor %}
-                    </ul>
+                    {% call past::rows(bucket.rows.as_slice()) %}{% endcall %}
                 </section>
             {% endfor %}
 

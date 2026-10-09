@@ -115,7 +115,12 @@ maintenance-upcoming = Upcoming
 maintenance-starts = Starts
 maintenance-ends = ends
 maintenance-affects = affects
-legend-label = Status colour key
+legend-label = Colour key: downtime per day
+legend-no-downtime = No downtime
+legend-brief = Under 20 min
+legend-outage = 20–60 min
+legend-extended = 1 hour or more
+legend-partial-note = Colour counts a partial outage at 30% of its length, and degraded performance not at all.
 group-other = Other
 component-uptime-history = uptime history
 component-uptime-history-sr = for { $name }, opens in a new tab
@@ -136,13 +141,24 @@ history-summary-outages =
 no-components = No public components have been configured yet.
 past-incidents-heading = Past incidents (30 days)
 older-incidents = Older incidents →
+past-none-recent = No incidents in the past 7 days.
+past-earlier =
+    { $count ->
+        [one] 1 earlier incident
+       *[other] { $count } earlier incidents
+    }
+past-incident-count =
+    { $count ->
+        [one] 1 incident
+       *[other] { $count } incidents
+    }
+past-components-more = { $names } and { $count } more
 popover-no-downtime = No downtime recorded on this day.
 popover-related = Related
 
 ## Incidents
 
 incident-ongoing = Ongoing
-incident-resolved-suffix = (resolved)
 incident-ended = Ended
 incident-duration = Duration
 incident-updates = Updates

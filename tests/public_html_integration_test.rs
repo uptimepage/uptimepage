@@ -53,6 +53,7 @@ impl PublicSource for PublishedSource {
             description: Some("primary edge".into()),
             current_status: PublicComponentStatus::MajorOutage,
             history: vec![DayState::Operational; 90],
+            downtime: Vec::new(),
             uptime_pct: Some(99.9),
             detail_url: None,
         };
@@ -70,6 +71,7 @@ impl PublicSource for PublishedSource {
                 posted_at: Utc::now() - chrono::Duration::minutes(2),
                 phase: IncidentStatusPhase::Investigating,
                 message: "Engineers paged.".into(),
+                generated: false,
             }],
             postmortem: None,
         };
@@ -234,6 +236,7 @@ impl PublicSource for EmptyDataSource {
             description: None,
             current_status: PublicComponentStatus::Operational,
             history: vec![DayState::NoData; 90],
+            downtime: Vec::new(),
             uptime_pct: Some(99.9),
             detail_url: None,
         };
@@ -307,6 +310,7 @@ impl PublicSource for MaintenanceDominatesSource {
             description: None,
             current_status: PublicComponentStatus::Maintenance,
             history,
+            downtime: Vec::new(),
             uptime_pct: Some(99.9),
             detail_url: None,
         };

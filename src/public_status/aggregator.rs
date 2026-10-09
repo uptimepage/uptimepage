@@ -23,8 +23,8 @@ use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 use crate::domain::{
-    ComponentHistoryResponse, DayState, IncidentSeverity, IncidentStatusPhase, Locale, OrgId,
-    PublicComponent, PublicComponentGroup, PublicComponentStatus, PublicIncident,
+    ComponentHistoryResponse, DayDowntime, DayState, IncidentSeverity, IncidentStatusPhase, Locale,
+    OrgId, PublicComponent, PublicComponentGroup, PublicComponentStatus, PublicIncident,
     PublicIncidentUpdate, PublicMaintenance, PublicStatusPage, StatusPageId,
     uptime_pct_from_downtime,
 };
@@ -36,7 +36,7 @@ use crate::storage::status_pages::COMPONENT_ORDER;
 
 use super::cache::{HistoryIncidentMarker, PageSettings};
 use super::overall_status::{
-    IncidentImpact, component_status, day_state, overall_state, overall_status,
+    IncidentImpact, component_status, day_state, downtime_between, overall_state, overall_status,
     stored_incident_impact,
 };
 
@@ -190,7 +190,7 @@ impl OrgAggregator {
                 .or_insert(impact);
         }
 
-        let history_by_target =
+        let mut strip_by_target =
             paint_strips(&component_ids, &day_presence, &paint_windows, now, days);
         let mut uptime_by_target =
             component_uptime(&component_ids, &day_presence, &paint_windows, now, days);
@@ -198,10 +198,12 @@ impl OrgAggregator {
         let mut groups: Vec<PublicComponentGroup> = Vec::new();
         for c in &components {
             let maint = maintenance_by_target.contains(&c.id);
-            let history = history_by_target
-                .get(&c.id)
-                .cloned()
-                .unwrap_or_else(|| vec![DayState::NoData; days as usize]);
+            let DayStrip {
+                states: history,
+                downtime,
+            } = strip_by_target
+                .remove(&c.id)
+                .unwrap_or_else(|| DayStrip::silent(days as usize));
             // Read the evidence off the strip the page is about to render,
             // so the pill and the history under it cannot disagree.
             let has_evidence = history.iter().any(|d| *d != DayState::NoData);
@@ -212,6 +214,7 @@ impl OrgAggregator {
                 description: c.description.clone(),
                 current_status: current,
                 history,
+                downtime,
                 uptime_pct: uptime_by_target.remove(&c.id).flatten(),
                 detail_url: c.detail_url.clone(),
             };
@@ -281,7 +284,8 @@ impl OrgAggregator {
         )?;
         let history = paint_strips(&ids, &day_presence, &paint_windows, now, span)
             .remove(&id)
-            .unwrap_or_else(|| vec![DayState::NoData; span as usize]);
+            .unwrap_or_else(|| DayStrip::silent(span as usize))
+            .states;
         let history = pad_or_truncate(history, days as usize);
 
         Ok(ComponentHistoryResponse {
@@ -583,7 +587,7 @@ impl OrgAggregator {
         }
         let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
         let updates: Vec<IncidentUpdateRow> = sqlx::query_as::<_, IncidentUpdateRow>(
-            r#"SELECT incident_id, posted_at, phase, message
+            r#"SELECT incident_id, posted_at, phase, message, generated
                FROM incident_updates
                WHERE incident_id = ANY($1) AND org_id = $2
                ORDER BY incident_id, posted_at ASC"#,
@@ -609,6 +613,7 @@ impl OrgAggregator {
                         posted_at: u.posted_at,
                         phase: IncidentStatusPhase::from_db_str(&u.phase),
                         message: u.message.clone(),
+                        generated: u.generated,
                     })
                     .collect();
                 let status_phase = my_updates
@@ -681,17 +686,33 @@ impl OrgAggregator {
     }
 }
 
+/// One component's day strip, oldest first: the state each day reached and the
+/// time it spent in each state, slot for slot.
+struct DayStrip {
+    states: Vec<DayState>,
+    downtime: Vec<DayDowntime>,
+}
+
+impl DayStrip {
+    fn silent(days: usize) -> Self {
+        Self {
+            states: vec![DayState::NoData; days],
+            downtime: vec![DayDowntime::default(); days],
+        }
+    }
+}
+
 /// Day-strip cells: data presence from the hour rollup (`NoData` detection),
 /// outage paint from confirmed incident windows — a raw check blip that never
-/// confirmed into an incident leaves the day green. Returns one oldest-first
-/// `Vec<DayState>` of length `span_days` per component.
+/// confirmed into an incident leaves the day green. Returns one strip of
+/// `span_days` slots per component.
 fn paint_strips(
     component_ids: &[Uuid],
     presence: &[HistoryDayRow],
     windows: &[PaintWindowRow],
     now: DateTime<Utc>,
     span_days: u32,
-) -> HashMap<Uuid, Vec<DayState>> {
+) -> HashMap<Uuid, DayStrip> {
     let days = span_days as usize;
     let from = now - ChronoDuration::days(span_days as i64);
 
@@ -710,14 +731,20 @@ fn paint_strips(
     // that day — matching the popover's `day_overlap` so cell colour and
     // popover content never disagree.
     let mut worst: HashMap<Uuid, Vec<Option<IncidentImpact>>> = HashMap::new();
+    type Span = (DateTime<Utc>, DateTime<Utc>, IncidentImpact);
+    let mut spans: HashMap<Uuid, Vec<Vec<Span>>> = HashMap::new();
     for w in windows {
         let slots = worst.entry(w.target_id).or_insert_with(|| vec![None; days]);
+        let day_spans = spans
+            .entry(w.target_id)
+            .or_insert_with(|| vec![Vec::new(); days]);
         let impact = w.impact();
         let end = w.ended_at.unwrap_or(now).min(now);
         let mut d = w.started_at.max(from).date_naive();
         while day_start_utc(d) < end {
             if let Some(i) = days_ago_index(d, now, span_days) {
                 slots[i] = slots[i].max(Some(impact));
+                day_spans[i].push((w.started_at, end, impact));
             }
             match d.succ_opt() {
                 Some(next) => d = next,
@@ -726,15 +753,27 @@ fn paint_strips(
         }
     }
 
+    let today = now.date_naive();
     component_ids
         .iter()
         .map(|id| {
             let data = has_data.get(id);
             let impacts = worst.get(id);
-            let strip = (0..days)
+            let day_spans = spans.get(id);
+            let states = (0..days)
                 .map(|i| day_state(data.is_some_and(|v| v[i]), impacts.and_then(|v| v[i])))
                 .collect();
-            (*id, strip)
+            let downtime = (0..days)
+                .map(|i| {
+                    let Some(spans) = day_spans.map(|s| &s[i]).filter(|s| !s.is_empty()) else {
+                        return DayDowntime::default();
+                    };
+                    let day = today - chrono::Days::new((days - 1 - i) as u64);
+                    let start = day_start_utc(day);
+                    downtime_between(spans, start, (start + ChronoDuration::days(1)).min(now))
+                })
+                .collect();
+            (*id, DayStrip { states, downtime })
         })
         .collect()
 }
@@ -870,6 +909,7 @@ struct IncidentUpdateRow {
     posted_at: DateTime<Utc>,
     phase: String,
     message: String,
+    generated: bool,
 }
 
 // ── CH row types ────────────────────────────────────────────────────────────
@@ -1068,10 +1108,61 @@ mod tests {
             presence_row(t, midnight - ChronoDuration::hours(3)),
         ];
         let strips = paint_strips(&[t], &presence, &[w], now, 90);
-        let strip = &strips[&t];
+        let strip = &strips[&t].states;
         // Yesterday (the incident's real day) painted, today untouched.
         assert_eq!(strip[88], DayState::MajorOutage);
         assert_eq!(strip[89], DayState::Operational);
+    }
+
+    #[test]
+    fn each_day_carries_the_time_it_spent_down() {
+        // A four-minute total outage before midnight and a two-hour partial
+        // one that runs across it: each day gets only its own share.
+        let t = Uuid::now_v7();
+        let now = Utc.with_ymd_and_hms(2026, 5, 13, 12, 0, 0).unwrap();
+        let midnight = Utc.with_ymd_and_hms(2026, 5, 13, 0, 0, 0).unwrap();
+        let blip = window(
+            t,
+            "monitor",
+            "major",
+            "down",
+            None,
+            midnight - ChronoDuration::hours(5),
+            Some(midnight - ChronoDuration::hours(5) + ChronoDuration::minutes(4)),
+        );
+        let partial = window(
+            t,
+            "monitor",
+            "major",
+            "down",
+            Some(vec!["eu".into()]),
+            midnight - ChronoDuration::minutes(30),
+            Some(midnight + ChronoDuration::minutes(90)),
+        );
+        let strips = paint_strips(&[t], &[], &[blip, partial], now, 90);
+        let strip = &strips[&t];
+        assert_eq!(strip.downtime[88].major_secs, 240);
+        assert_eq!(strip.downtime[88].partial_secs, 30 * 60);
+        assert_eq!(strip.downtime[89].partial_secs, 90 * 60);
+        assert_eq!(strip.downtime[89].major_secs, 0);
+        assert_eq!(strip.downtime[87], DayDowntime::default());
+    }
+
+    #[test]
+    fn an_open_incident_counts_until_now() {
+        let t = Uuid::now_v7();
+        let now = Utc.with_ymd_and_hms(2026, 5, 13, 12, 0, 0).unwrap();
+        let open = window(
+            t,
+            "monitor",
+            "major",
+            "down",
+            None,
+            now - ChronoDuration::minutes(25),
+            None,
+        );
+        let strips = paint_strips(&[t], &[], &[open], now, 90);
+        assert_eq!(strips[&t].downtime[89].major_secs, 25 * 60);
     }
 
     #[test]
@@ -1156,7 +1247,7 @@ mod tests {
             None,
         );
         let strips = paint_strips(&[t], &[], &[w], now, 90);
-        let strip = &strips[&t];
+        let strip = &strips[&t].states;
         assert_eq!(
             strip[89],
             DayState::MajorOutage,

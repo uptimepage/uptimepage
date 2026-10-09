@@ -44,6 +44,24 @@ pub enum DayState {
     NoData,
 }
 
+/// Time one component spent in each outage state over one day. An instant
+/// covered by two incidents counts once, at the worse of them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DayDowntime {
+    pub major_secs: i64,
+    pub partial_secs: i64,
+    pub degraded_secs: i64,
+}
+
+impl DayDowntime {
+    /// Downtime as the day strip weighs it: a partial outage counts for 30% of
+    /// its length, as on Atlassian Statuspage, and degraded performance is not
+    /// downtime at all.
+    pub fn weighted_secs(&self) -> i64 {
+        self.major_secs + self.partial_secs * 3 / 10
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PublicComponent {
     pub id: Uuid,
@@ -53,6 +71,10 @@ pub struct PublicComponent {
     pub current_status: PublicComponentStatus,
     /// Daily history, oldest first.
     pub history: Vec<DayState>,
+    /// Time in each outage state per day, aligned with `history`. Tints the
+    /// strip; not part of the wire shape.
+    #[serde(skip)]
+    pub downtime: Vec<DayDowntime>,
     /// Confirmed-incident downtime over the time the component was probed
     /// within the history span, as a percentage; `null` until it is probed.
     #[serde(default)]
@@ -172,6 +194,11 @@ pub struct PublicIncidentUpdate {
     pub posted_at: DateTime<Utc>,
     pub phase: IncidentStatusPhase,
     pub message: String,
+    /// The platform wrote the words (a detection or recovery note, or the
+    /// default line of a resolve or publish without one), so a listing can
+    /// leave the boilerplate out. Not part of the wire shape.
+    #[serde(skip)]
+    pub generated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

@@ -14,6 +14,9 @@
 //   data-tz="date"    — the day alone ("Today", "Yesterday", then the date),
 //                        tooltip included. For an instant known only to the
 //                        hour, where a clock time would be made up.
+//   data-tz="day-time" — the date and time, short ("Oct 6, 4:22 PM", the year
+//                        added once it is not this one). For compact lists of
+//                        past events, where seconds are noise.
 // The title tooltip otherwise carries the full local timestamp with zone name.
 //
 // The server emits a UTC fallback as the element's text, so the page is fully
@@ -155,6 +158,8 @@
             var mode = el.getAttribute("data-tz");
             var full = mode === "date" ? fullDateFmt.format(then) : fullFmt.format(then);
             el.textContent = mode === "exact" ? exactFmt.format(then)
+                : mode === "day-time" ? (then.getFullYear() === now.getFullYear()
+                    ? dayTimeFmt.format(then) : dayTimeYearFmt.format(then))
                 : mode === "at" ? atLabel(then, now)
                 : mode === "date" ? dayLabel(then, now)
                 : relativeLabel(then, now);

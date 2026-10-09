@@ -28,6 +28,7 @@ use crate::web::robots;
 
 mod branding;
 mod og;
+mod past;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -36,13 +37,14 @@ pub use branding::{
     BrandingView, render_about, resolve_branding, safe_brand_color, safe_brand_text_for,
 };
 pub use og::OgMeta;
+pub use past::{PastEntry, PastIncidents, PastItem, PhaseChip};
 pub use view::{
     ComponentView, DayCell, GroupView, IncidentDetailView, IncidentHeader, IncidentSummary,
     IncidentUpdateView, MaintenanceView, RSS_URL, StatusView,
 };
 
 use og::build_og_meta;
-use view::{build_incident_summary, build_view};
+use view::build_view;
 
 /// Default page size for the archive view. Small enough that each render is
 /// snappy on the unauthenticated, edge-cached path; the keyset cursor walks
@@ -105,7 +107,7 @@ pub struct IncidentArchivePage {
 pub struct MonthBucket {
     /// Already formatted ("May 2026"), so the template renders it verbatim.
     pub label: String,
-    pub incidents: Vec<IncidentSummary>,
+    pub rows: Vec<PastEntry>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -425,23 +427,26 @@ pub async fn archive(
     )
 }
 
-/// Group sorted-DESC incidents into per-month buckets. Sort order is
-/// preserved within and across buckets because the caller hands us rows
-/// already ordered by `(started_at DESC, id DESC)` via the keyset query.
+/// Group sorted-DESC incidents into per-month buckets, each folded into rows
+/// the way the status page folds them. Months come out newest first because
+/// the caller hands us rows ordered by `(started_at DESC, id DESC)` via the
+/// keyset query.
 fn bucket_by_month(items: &[PublicIncident], now: DateTime<Utc>, tr: Tr) -> Vec<MonthBucket> {
-    let mut out: Vec<MonthBucket> = Vec::new();
+    let mut months: Vec<(String, Vec<PublicIncident>)> = Vec::new();
     for incident in items {
         let label = tr.month_year(incident.started_at);
-        let summary = build_incident_summary(incident, now, tr);
-        match out.last_mut() {
-            Some(bucket) if bucket.label == label => bucket.incidents.push(summary),
-            _ => out.push(MonthBucket {
-                label,
-                incidents: vec![summary],
-            }),
+        match months.last_mut() {
+            Some((month, incidents)) if *month == label => incidents.push(incident.clone()),
+            _ => months.push((label, vec![incident.clone()])),
         }
     }
-    out
+    months
+        .into_iter()
+        .map(|(label, incidents)| MonthBucket {
+            label,
+            rows: past::build_rows(&incidents, now, tr),
+        })
+        .collect()
 }
 
 /// Maps a `PublicAppError` to an HTML response for the rendered routes —

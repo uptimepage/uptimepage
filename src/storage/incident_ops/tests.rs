@@ -14,18 +14,14 @@ use super::{
 
 #[test]
 fn resolved_public_message_uses_note_or_default() {
-    assert_eq!(
-        resolved_public_message(Some("rolled back deploy")),
-        "rolled back deploy"
-    );
-    assert_eq!(
-        resolved_public_message(Some("   ")),
-        "This incident has been resolved."
-    );
-    assert_eq!(
-        resolved_public_message(None),
-        "This incident has been resolved."
-    );
+    let written = resolved_public_message(Some("rolled back deploy"));
+    assert_eq!(written.message, "rolled back deploy");
+    assert!(!written.generated, "the operator's own words");
+    for blank in [Some("   "), None] {
+        let default = resolved_public_message(blank);
+        assert_eq!(default.message, "This incident has been resolved.");
+        assert!(default.generated, "the platform wrote it");
+    }
 }
 
 fn org() -> OrgId {

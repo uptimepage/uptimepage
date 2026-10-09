@@ -115,7 +115,12 @@ maintenance-upcoming = Demnächst
 maintenance-starts = Beginnt
 maintenance-ends = endet
 maintenance-affects = betrifft
-legend-label = Farblegende
+legend-label = Farblegende: Ausfallzeit pro Tag
+legend-no-downtime = Keine Ausfallzeit
+legend-brief = Unter 20 Min.
+legend-outage = 20–60 Min.
+legend-extended = 1 Stunde oder mehr
+legend-partial-note = Die Farbe zählt einen Teilausfall mit 30 % seiner Dauer und eine Beeinträchtigung gar nicht.
 group-other = Sonstige
 component-uptime-history = Verfügbarkeitsverlauf
 component-uptime-history-sr = für { $name }, öffnet in neuem Tab
@@ -152,13 +157,24 @@ history-summary-outages =
 no-components = Es wurden noch keine öffentlichen Komponenten eingerichtet.
 past-incidents-heading = Vergangene Störungen (30 Tage)
 older-incidents = Ältere Störungen →
+past-none-recent = Keine Störungen in den letzten 7 Tagen.
+past-earlier =
+    { $count ->
+        [one] 1 frühere Störung
+       *[other] { $count } frühere Störungen
+    }
+past-incident-count =
+    { $count ->
+        [one] 1 Störung
+       *[other] { $count } Störungen
+    }
+past-components-more = { $names } und { $count } weitere
 popover-no-downtime = An diesem Tag wurde keine Ausfallzeit erfasst.
 popover-related = Zugehörig
 
 ## Incidents
 
 incident-ongoing = Andauernd
-incident-resolved-suffix = (behoben)
 incident-ended = Beendet
 incident-duration = Dauer
 incident-updates = Updates

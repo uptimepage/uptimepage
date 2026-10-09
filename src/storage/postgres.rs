@@ -363,8 +363,8 @@ async fn close_incidents_of_deleted_targets(
                JOIN targets t ON t.id = s.target_id AND t.org_id = $2
                ON CONFLICT (incident_id, status_page_id) DO NOTHING
            ), told AS (
-               INSERT INTO incident_updates (org_id, incident_id, phase, message, author)
-               SELECT $2, c.id, 'resolved', $4, COALESCE($3::uuid::text, 'system')
+               INSERT INTO incident_updates (org_id, incident_id, phase, message, author, generated)
+               SELECT $2, c.id, 'resolved', $4, COALESCE($3::uuid::text, 'system'), true
                FROM closed c WHERE c.id IN (SELECT id FROM shown)
            ), muted AS (
                UPDATE incident_notifications

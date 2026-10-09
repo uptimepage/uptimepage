@@ -5,7 +5,7 @@
    No whitespace may surround the div: an outerHTML swap inserts every
    top-level node of the response and removes only the target. -#}
 {%- import "public/_incident_chips.html" as chips -%}
-{%- import "public/_incident_card.html" as card -%}
+{%- import "public/_past_incidents.html" as past -%}
 <div id="status-region"
      hx-get="?fragment=1"
      hx-trigger="every 30s, sm:poll-resume from:body"
@@ -124,16 +124,17 @@
 
     {# --- Components by group --- #}
     {% if view.has_components %}
-        {# Status legend — one key for every colour the 90-day strips use,
-           so a visitor can read a bar without hovering for the tooltip. #}
+        {# Colour key — a day's colour is how long it was down, so a visitor
+           can read a bar without hovering for the tooltip. #}
         <ul class="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-quiet"
             aria-label="{{ tr.t("legend-label") }}">
-            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--op"></span>{{ tr.t("state-operational") }}</li>
-            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--deg"></span>{{ tr.t("state-degraded") }}</li>
-            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--part"></span>{{ tr.t("state-partial-outage") }}</li>
-            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--maj"></span>{{ tr.t("state-major-outage") }}</li>
+            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--op"></span>{{ tr.t("legend-no-downtime") }}</li>
+            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--deg"></span>{{ tr.t("legend-brief") }}</li>
+            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--part"></span>{{ tr.t("legend-outage") }}</li>
+            <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--maj"></span>{{ tr.t("legend-extended") }}</li>
             <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--mnt"></span>{{ tr.t("state-maintenance") }}</li>
             <li class="flex items-center gap-1.5"><span class="legend-dot legend-dot--none"></span>{{ tr.t("state-no-data") }}</li>
+            <li>{{ tr.t("legend-partial-note") }}</li>
         </ul>
 
         {% for group in view.groups %}
@@ -193,16 +194,22 @@
         </section>
     {% endif %}
 
-    {# --- Recent incidents --- #}
-    {% if !view.recent_incidents.is_empty() %}
+    {# --- Past incidents: the last week in view, the rest folded away --- #}
+    {% if !view.past.is_empty() %}
     <section aria-labelledby="recent-incidents-heading" class="space-y-3">
         <h2 id="recent-incidents-heading"
             class="text-sm font-semibold uppercase tracking-wide text-quiet">{{ tr.t("past-incidents-heading") }}</h2>
-        <ul class="public-callout public-callout--neutral divide-y divide-[color:var(--theme-line)] overflow-hidden p-0">
-            {% for inc in view.recent_incidents %}
-            <li class="p-5">{% call card::card(inc) %}{% endcall %}</li>
-            {% endfor %}
-        </ul>
+        {% if view.past.recent.is_empty() %}
+        <p class="text-sm text-quiet">{{ tr.t("past-none-recent") }}</p>
+        {% else %}
+        {% call past::rows(view.past.recent.as_slice()) %}{% endcall %}
+        {% endif %}
+        {% if !view.past.earlier.is_empty() %}
+        <details class="past-earlier" id="past-earlier" data-keep-open>
+            <summary class="past-earlier__summary" id="past-earlier-summary">{{ view.past.earlier_label }}</summary>
+            <div class="mt-3">{% call past::rows(view.past.earlier.as_slice()) %}{% endcall %}</div>
+        </details>
+        {% endif %}
         {% if view.recent_incidents_has_more %}
         <p class="text-right text-sm">
             <a href="/status/incidents" class="font-medium hover:underline text-accent">
@@ -218,14 +225,12 @@
        `</` is escaped to `<\/` server-side before reaching `|safe`. #}
     <div id="day-popover" role="dialog" aria-labelledby="day-popover-date" hidden>
         <p class="day-popover__date" data-slot="date" id="day-popover-date"></p>
-        <div class="day-pop-status" data-slot="badge" hidden>
-            <span class="day-pop-status__label" data-slot="state"></span>
-            <span class="day-pop-status__duration" data-slot="duration"></span>
-        </div>
+        <ul class="day-popover__spans" data-slot="spans" hidden></ul>
         <p class="day-popover__none" data-slot="none" hidden>{{ tr.t("popover-no-downtime") }}</p>
         <p class="day-popover__related-heading" data-slot="related-heading" hidden>{{ tr.t("popover-related") }}</p>
         <ul class="day-popover__related-list" data-slot="related-list"></ul>
     </div>
+    <template id="day-popover-span-tpl"><li class="day-pop-status"><span class="day-pop-status__label"></span><span class="day-pop-status__duration"></span></li></template>
     <template id="day-popover-related-tpl"><li><a></a></li></template>
     <script id="day-strip-data" type="application/json">{{ view.day_strip_json|safe }}</script>
 

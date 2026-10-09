@@ -24,8 +24,8 @@ use super::{
     AUTO_RESOLVED_MESSAGE, Acknowledged, Actor, ClaimedEscalation, ClosingNotice,
     DueClosingNotices, DueIncident, EmergencyAck, INCIDENT_DETAIL_ROW_CAP, IncidentOpsFilter,
     IncidentOpsStore, IncidentStateCounts, LifecycleOutcome, PendingNotification,
-    QUEUED_TAKEOVER_SECS, opening_update_message, pages_with_monitor, status_page_required,
-    unnamed_sender,
+    QUEUED_TAKEOVER_SECS, UpdateText, opening_update_message, pages_with_monitor,
+    status_page_required, unnamed_sender,
 };
 
 pub struct PgIncidentOpsStore {
@@ -128,11 +128,8 @@ fn like_contains(s: &str) -> String {
 }
 
 /// Public resolution line: the note, or a default when blank.
-pub(super) fn resolved_public_message(note: Option<&str>) -> String {
-    match note.map(str::trim).filter(|s| !s.is_empty()) {
-        Some(n) => n.to_string(),
-        None => "This incident has been resolved.".to_string(),
-    }
+pub(super) fn resolved_public_message(note: Option<&str>) -> UpdateText {
+    UpdateText::or_default(note, "This incident has been resolved.")
 }
 
 #[derive(sqlx::FromRow)]
@@ -403,7 +400,7 @@ impl PgIncidentOpsStore {
         actor: Actor,
         note: Option<String>,
         update_sql: &str,
-        public_resolution: Option<String>,
+        public_resolution: Option<UpdateText>,
         expect_generation: Option<i64>,
     ) -> Result<Acknowledged> {
         let unlisted = |outcome| {
@@ -519,7 +516,7 @@ impl PgIncidentOpsStore {
         // An incident unpublished before it resolves still has subscribers who
         // were told it opened; write the closing update whenever it was ever
         // public, not only while currently public.
-        if let Some(message) = public_resolution
+        if let Some(resolution) = public_resolution
             && !unchanged
             && (row.visibility == "public" || incident_was_published(&mut tx, org, id).await?)
         {
@@ -528,13 +525,15 @@ impl PgIncidentOpsStore {
                 .map(|u| u.0.to_string())
                 .unwrap_or_else(|| "system".to_string());
             sqlx::query(
-                r#"INSERT INTO incident_updates (org_id, incident_id, phase, message, author)
-                   VALUES ($1, $2, 'resolved', $3, $4)"#,
+                r#"INSERT INTO incident_updates
+                       (org_id, incident_id, phase, message, author, generated)
+                   VALUES ($1, $2, 'resolved', $3, $4, $5)"#,
             )
             .bind(org.0)
             .bind(id)
-            .bind(message)
+            .bind(resolution.message)
             .bind(author)
+            .bind(resolution.generated)
             .execute(&mut *tx)
             .await
             .map_err(|e| anyhow::anyhow!("resolve public update: {e}"))?;
@@ -957,7 +956,10 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             Actor::System,
             None,
             &sql,
-            Some(AUTO_RESOLVED_MESSAGE.to_string()),
+            Some(UpdateText {
+                message: AUTO_RESOLVED_MESSAGE.to_string(),
+                generated: true,
+            }),
             None,
         )
         .await
@@ -1166,13 +1168,15 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                     .map(|u| u.0.to_string())
                     .unwrap_or_else(|| "system".to_string());
                 sqlx::query(
-                    "INSERT INTO incident_updates (org_id, incident_id, phase, message, author) \
-                     VALUES ($1, $2, 'investigating', $3, $4)",
+                    "INSERT INTO incident_updates \
+                         (org_id, incident_id, phase, message, author, generated) \
+                     VALUES ($1, $2, 'investigating', $3, $4, $5)",
                 )
                 .bind(org.0)
                 .bind(id)
-                .bind(opening_message)
+                .bind(opening_message.message)
                 .bind(author)
+                .bind(opening_message.generated)
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| anyhow::anyhow!("publish opening update: {e}"))?;

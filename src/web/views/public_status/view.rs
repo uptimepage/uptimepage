@@ -6,15 +6,19 @@ use uuid::Uuid;
 
 use crate::domain::elapsed_at;
 use crate::domain::{
-    DayState, IncidentImpact, IncidentStatusPhase, OverallState, PublicComponent,
+    DayDowntime, DayState, IncidentImpact, IncidentStatusPhase, OverallState, PublicComponent,
     PublicComponentGroup, PublicComponentStatus, PublicIncident, PublicIncidentUpdate,
     PublicMaintenance, PublicStatusPage,
 };
 use crate::i18n::Tr;
 use crate::public_status::HistoryIncidentMarker;
-use crate::public_status::overall_status::overall_label_id;
+use crate::public_status::overall_status::{day_tone, overall_label_id};
+
+use super::past::{PastIncidents, build_past};
 
 pub const RSS_URL: &str = "/api/public/v1/incidents.rss";
+/// Characters of an update a listing shows before cutting it off.
+pub(super) const UPDATE_PREVIEW_CHARS: usize = 241;
 pub(super) const HISTORY_LEN: usize = 90;
 
 pub struct StatusView {
@@ -28,7 +32,7 @@ pub struct StatusView {
     pub groups: Vec<GroupView>,
     pub active_heading: String,
     pub active_incidents: Vec<IncidentSummary>,
-    pub recent_incidents: Vec<IncidentSummary>,
+    pub past: PastIncidents,
     /// True when the org has more incidents past the rendered window. Drives
     /// the "older incidents" archive link in the recent-incidents section.
     pub recent_incidents_has_more: bool,
@@ -79,12 +83,16 @@ pub(super) struct DayStripComponent {
 #[derive(serde::Serialize)]
 pub(super) struct DayPopoverEntry {
     date: String,
+    /// Time in each state that day, worst first; empty on a day without any.
+    spans: Vec<DaySpan>,
+    related: Vec<DayRelated>,
+}
+
+#[derive(serde::Serialize)]
+pub(super) struct DaySpan {
     state: String,
     state_class: &'static str,
-    show_badge: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    downtime: Option<String>,
-    related: Vec<DayRelated>,
+    duration: String,
 }
 
 #[derive(serde::Serialize)]
@@ -112,7 +120,6 @@ pub struct IncidentHeader {
 
 pub struct IncidentSummary {
     pub header: IncidentHeader,
-    pub ended_at: Option<DateTime<Utc>>,
     pub latest_message: Option<String>,
     pub permalink: String,
 }
@@ -171,11 +178,7 @@ pub(super) fn build_view(
         .iter()
         .map(|i| build_incident_summary(i, now, tr))
         .collect::<Vec<_>>();
-    let recent = page
-        .recent_incidents
-        .iter()
-        .map(|i| build_incident_summary(i, now, tr))
-        .collect::<Vec<_>>();
+    let past = build_past(&page.recent_incidents, now, tr);
 
     let active_m = page
         .active_maintenance
@@ -203,7 +206,7 @@ pub(super) fn build_view(
         has_active_incident: !active.is_empty(),
         active_heading: tr.t_args("active-incidents-heading", [("count", active.len().into())]),
         active_incidents: active,
-        recent_incidents: recent,
+        past,
         recent_incidents_has_more: page.recent_incidents_has_more,
         has_maintenance: !active_m.is_empty() || !upcoming_m.is_empty(),
         active_maintenance: active_m,
@@ -243,6 +246,33 @@ impl DayText {
 
     fn state(&self, s: DayState) -> &str {
         &self.states[state_slot(s)]
+    }
+
+    /// Each state the day spent time in, worst first. A day an incident
+    /// touched for no measurable time still names the state it reached.
+    fn spans(&self, state: DayState, d: DayDowntime) -> Vec<DaySpan> {
+        let span = |s: DayState, duration: String| DaySpan {
+            state: self.state(s).to_owned(),
+            state_class: day_classes(s).2,
+            duration,
+        };
+        let spans: Vec<DaySpan> = [
+            (DayState::MajorOutage, d.major_secs),
+            (DayState::PartialOutage, d.partial_secs),
+            (DayState::Degraded, d.degraded_secs),
+        ]
+        .into_iter()
+        .filter(|(_, secs)| *secs > 0)
+        .map(|(s, secs)| span(s, self.tr.duration(secs)))
+        .collect();
+        match state {
+            DayState::MajorOutage | DayState::PartialOutage | DayState::Degraded
+                if spans.is_empty() =>
+            {
+                vec![span(state, String::new())]
+            }
+            _ => spans,
+        }
     }
 
     fn ago(&self, days_ago: usize) -> &str {
@@ -320,7 +350,7 @@ pub(super) fn build_component(
         status_label: tr.t(status_id),
         status_class,
         status_icon,
-        history: build_history(c, &c.history, text),
+        history: build_history(c, text),
         history_label: tr.t_args("day-strip-label", [("name", c.name.as_str().into())]),
         uptime_label,
         history_summary: history_summary(&c.history, tr),
@@ -332,29 +362,42 @@ pub(super) fn build_component(
     }
 }
 
-pub(super) fn build_history(
-    component: &PublicComponent,
-    states: &[DayState],
-    text: &DayText,
-) -> Vec<DayCell> {
+/// One cell per day, coloured by how long the component was down rather than
+/// only the worst state it touched; the label says both.
+pub(super) fn build_history(component: &PublicComponent, text: &DayText) -> Vec<DayCell> {
+    let states = &component.history;
     let total = states.len().max(1);
     states
         .iter()
         .enumerate()
         .map(|(idx, s)| {
             let days_ago = total - 1 - idx;
+            let downtime = downtime_at(component, idx);
+            let spans = text.spans(*s, downtime);
+            let said = if spans.is_empty() {
+                text.state(*s).to_owned()
+            } else {
+                spans
+                    .iter()
+                    .map(|span| {
+                        format!("{} {}", span.state, span.duration)
+                            .trim_end()
+                            .to_owned()
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
             DayCell {
-                class: day_classes(*s).0,
+                class: day_classes(day_tone(*s, downtime)).0,
                 day_index: idx,
-                aria_label: format!(
-                    "{} ({}) — {}",
-                    component.name,
-                    text.ago(days_ago),
-                    text.state(*s)
-                ),
+                aria_label: format!("{} ({}) — {said}", component.name, text.ago(days_ago)),
             }
         })
         .collect()
+}
+
+fn downtime_at(component: &PublicComponent, idx: usize) -> DayDowntime {
+    component.downtime.get(idx).copied().unwrap_or_default()
 }
 
 /// Build the inline popover blob. UTC day boundary matches the
@@ -380,25 +423,15 @@ pub(super) fn build_day_strip_json(
         for c in &group.components {
             let total = c.history.len().max(1);
             let markers = by_comp.get(&c.id).unwrap_or(&empty);
-            let days = c
-                .history
-                .iter()
-                .enumerate()
-                .map(|(idx, s)| {
+            let days = (0..c.history.len())
+                .map(|idx| {
                     let days_ago = total - 1 - idx;
                     let day_start = today_start - ChronoDuration::days(days_ago as i64);
                     let day_end = day_start + ChronoDuration::days(1);
-                    let (downtime, related) = day_overlap(markers, day_start, day_end, now);
-                    let show_badge = !matches!(s, DayState::Operational | DayState::NoData)
-                        || !related.is_empty();
                     DayPopoverEntry {
                         date: text.date(days_ago).to_owned(),
-                        state: text.state(*s).to_owned(),
-                        state_class: day_classes(*s).2,
-                        show_badge,
-                        downtime: (downtime > ChronoDuration::zero())
-                            .then(|| text.tr.duration(downtime.num_seconds())),
-                        related,
+                        spans: text.spans(c.history[idx], downtime_at(c, idx)),
+                        related: day_related(markers, day_start, day_end, now),
                     }
                 })
                 .collect();
@@ -422,31 +455,22 @@ pub(super) fn build_day_strip_json(
         .replace('&', "\\u0026")
 }
 
-/// Sum incident time overlapping `[day_start, day_end)`. Caller pre-filters
-/// to one component's markers. Open-ended incidents clamp to `now`.
-pub(super) fn day_overlap(
+/// Links to the incidents overlapping `[day_start, day_end)`. Caller
+/// pre-filters to one component's markers. Open-ended incidents clamp to `now`.
+pub(super) fn day_related(
     incidents: &[&HistoryIncidentMarker],
     day_start: DateTime<Utc>,
     day_end: DateTime<Utc>,
     now: DateTime<Utc>,
-) -> (ChronoDuration, Vec<DayRelated>) {
-    let mut total = ChronoDuration::zero();
-    let mut links = Vec::new();
-    for inc in incidents {
-        let end = inc.ended_at.unwrap_or(now);
-        if inc.started_at >= day_end || end <= day_start {
-            continue;
-        }
-        let overlap_start = inc.started_at.max(day_start);
-        let overlap_end = end.min(day_end);
-        let overlap = (overlap_end - overlap_start).max(ChronoDuration::zero());
-        total += overlap;
-        links.push(DayRelated {
+) -> Vec<DayRelated> {
+    incidents
+        .iter()
+        .filter(|inc| inc.started_at < day_end && inc.ended_at.unwrap_or(now) > day_start)
+        .map(|inc| DayRelated {
             title: inc.title.clone(),
             url: format!("/status/incidents/{}", inc.id),
-        });
-    }
-    (total, links)
+        })
+        .collect()
 }
 
 /// Day tally under the strip: how many days had checks, and how many of those
@@ -520,14 +544,12 @@ pub(super) fn build_incident_summary(
     tr: Tr,
 ) -> IncidentSummary {
     let header = build_incident_header(i, now, tr);
-    let latest_message = i
-        .updates
-        .last()
-        .map(|u: &PublicIncidentUpdate| crate::text::truncate_chars(&u.message, 241));
+    let latest_message = i.updates.last().map(|u: &PublicIncidentUpdate| {
+        crate::text::truncate_chars(&u.message, UPDATE_PREVIEW_CHARS)
+    });
     IncidentSummary {
         permalink: format!("/status/incidents/{}", header.id),
         header,
-        ended_at: i.ended_at,
         latest_message,
     }
 }
