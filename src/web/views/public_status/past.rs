@@ -9,7 +9,7 @@ use crate::i18n::Tr;
 
 use super::view::{UPDATE_PREVIEW_CHARS, impact_classes, phase_classes};
 
-/// Incidents that started within this long stay in view; older ones fold away
+/// Incidents that ended within this long stay in view; older ones fold away
 /// behind one toggle.
 const RECENT_DAYS: i64 = 7;
 /// Repeat incidents on one component closer together than this read as one
@@ -40,7 +40,10 @@ pub struct PastEntry {
     pub lead: String,
     /// When it began, which is also what the listing is ordered by.
     pub started_at: DateTime<Utc>,
-    /// How long it lasted; for a folded row, first start to last end.
+    /// When the last of it ended; `None` while it is still open.
+    pub ended_at: Option<DateTime<Utc>>,
+    /// How long it was down; for a folded row, the gaps between its incidents
+    /// are not counted.
     pub duration: String,
     /// The latest update a person wrote, if any.
     pub message: Option<String>,
@@ -77,8 +80,8 @@ impl PastIncidents {
     }
 }
 
-/// The status page's listing: the last week in view, the rest folded away.
-/// Open incidents are left to the active list above it.
+/// The status page's listing: what ended in the last week in view, the rest
+/// folded away. Open incidents are left to the active list above it.
 pub(super) fn build_past(
     incidents: &[PublicIncident],
     now: DateTime<Utc>,
@@ -88,7 +91,7 @@ pub(super) fn build_past(
     let closed: Vec<&PublicIncident> = incidents.iter().filter(|i| i.ended_at.is_some()).collect();
     let (recent, earlier): (Vec<PastEntry>, Vec<PastEntry>) = fold(&closed, now, tr)
         .into_iter()
-        .partition(|e| e.started_at >= cutoff);
+        .partition(|e| e.ended_at.is_none_or(|end| end >= cutoff));
     let earlier_count: usize = earlier.iter().map(|e| e.items.len().max(1)).sum();
     PastIncidents {
         recent,
@@ -191,6 +194,7 @@ fn single(inc: &PublicIncident, now: DateTime<Utc>, tr: Tr) -> PastEntry {
         ongoing: inc.ended_at.is_none(),
         lead: inc.component_name.clone(),
         started_at: inc.started_at,
+        ended_at: inc.ended_at,
         duration: tr.duration(lasted(inc, now)),
         message: narrated(inc),
         items: Vec::new(),
@@ -221,8 +225,6 @@ fn folded(group: &[&PublicIncident], now: DateTime<Utc>, tr: Tr) -> PastEntry {
             ],
         ),
     };
-    let first = group[0].started_at;
-    let last = group.iter().filter_map(|i| i.ended_at).max().unwrap_or(now);
     let one_component = names.len() <= 1;
     PastEntry {
         key: group[0].id.to_string(),
@@ -233,8 +235,9 @@ fn folded(group: &[&PublicIncident], now: DateTime<Utc>, tr: Tr) -> PastEntry {
         phase: None,
         ongoing: false,
         lead: tr.t_args("past-incident-count", [("count", group.len().into())]),
-        started_at: first,
-        duration: tr.duration((last - first).num_seconds()),
+        started_at: group[0].started_at,
+        ended_at: group.iter().filter_map(|i| i.ended_at).max(),
+        duration: tr.duration(downtime(group, now)),
         message: None,
         items: group
             .iter()
@@ -256,6 +259,22 @@ fn folded(group: &[&PublicIncident], now: DateTime<Utc>, tr: Tr) -> PastEntry {
             })
             .collect(),
     }
+}
+
+/// How long any of them was down, in seconds: overlaps count once and the
+/// healthy gaps between them not at all. `group` is ordered by start.
+fn downtime(group: &[&PublicIncident], now: DateTime<Utc>) -> i64 {
+    let mut total = ChronoDuration::zero();
+    let mut reach = DateTime::<Utc>::MIN_UTC;
+    for inc in group {
+        let end = inc.ended_at.unwrap_or(now);
+        let from = inc.started_at.max(reach);
+        if end > from {
+            total += end - from;
+        }
+        reach = reach.max(end);
+    }
+    total.num_seconds()
 }
 
 fn permalink(inc: &PublicIncident) -> String {
@@ -351,7 +370,10 @@ mod tests {
         assert_eq!(row.lead, "7 incidents");
         assert_eq!(row.impact_label, "Major outage", "the worst of them");
         assert_eq!(row.started_at, at(4, 4, 31));
-        assert_eq!(row.duration, "2h 19m", "first start to last end");
+        assert_eq!(
+            row.duration, "1h 2m",
+            "the gaps between them are not counted"
+        );
         assert_eq!(row.items.len(), 7);
         assert_eq!(row.items[0].started_at, at(4, 4, 31), "oldest first inside");
         assert!(row.items.iter().all(|i| i.component_name.is_empty()));
@@ -381,6 +403,7 @@ mod tests {
         assert_eq!(blip.lead, "NODE 01");
         assert!(blip.permalink.is_some());
         assert_eq!(outage.items.len(), 4);
+        assert_eq!(outage.duration, "17m", "overlaps count once");
         assert!(outage.title.ends_with(" and 1 more"), "{}", outage.title);
         assert!(outage.items.iter().all(|i| !i.component_name.is_empty()));
     }
@@ -485,10 +508,18 @@ mod tests {
     }
 
     #[test]
-    fn rows_are_ordered_and_cut_off_by_the_time_they_show() {
-        // A run of blips that began just before the week's cutoff shows its
-        // first start, so it sits with the earlier incidents, not above a
-        // later single one.
+    fn a_long_outage_that_ended_this_week_is_in_view() {
+        let start = Utc.with_ymd_and_hms(2026, 9, 30, 9, 0, 0).unwrap();
+        let incidents = vec![incident(Uuid::now_v7(), "API", start, 8 * 24 * 60, Major)];
+        let past = build_past(&incidents, now(), Tr::default());
+        assert_eq!(past.recent.len(), 1);
+        assert!(past.earlier.is_empty());
+    }
+
+    #[test]
+    fn a_row_that_ran_into_the_last_week_stays_in_view_in_order_of_its_start() {
+        // A run of blips that began before the week's cutoff and ended after
+        // it is part of the week, and sits below a later single one.
         let c = Uuid::now_v7();
         let incidents: Vec<PublicIncident> = (0..5)
             .map(|i| {
@@ -504,9 +535,8 @@ mod tests {
             .collect();
         let past = build_past(&incidents, now(), Tr::default());
         let recent: Vec<&str> = past.recent.iter().map(|e| e.title.as_str()).collect();
-        assert_eq!(recent, ["API error"]);
-        assert_eq!(past.earlier.len(), 1);
-        assert_eq!(past.earlier[0].started_at, at(1, 10, 0));
-        assert_eq!(past.earlier_label, "5 earlier incidents");
+        assert_eq!(recent, ["API error", "WEBMAIL"]);
+        assert_eq!(past.recent[1].started_at, at(1, 10, 0));
+        assert!(past.earlier.is_empty());
     }
 }
