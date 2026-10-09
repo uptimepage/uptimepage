@@ -1321,6 +1321,57 @@ fn with_every_failing_region_quiet_the_regions_still_reporting_decide() {
     }
 }
 
+#[test]
+fn with_every_failing_region_quiet_a_reporter_not_yet_confirmed_up_keeps_it_open() {
+    let base = mbase();
+    let t = Uuid::now_v7();
+    let open = open_since(t, ts(base, 0), &["fra"]);
+    let by_region = vec![
+        (
+            "hel".to_string(),
+            run(t, base, 1_200, 1_500, CheckStatus::Up),
+        ),
+        (
+            "us".to_string(),
+            run(t, base, 1_500, 1_500, CheckStatus::Down),
+        ),
+    ];
+    assert!(
+        decide_multi(
+            t,
+            std::slice::from_ref(&open),
+            &by_region,
+            2,
+            1,
+            ChronoDuration::zero()
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn with_every_failing_region_quiet_the_hold_runs_from_the_last_reporter_up() {
+    // us failed on its own, below the majority, and passes again from 1_320:
+    // the regions still reporting have only all been up since then.
+    let base = mbase();
+    let t = Uuid::now_v7();
+    let open = open_since(t, ts(base, 0), &["fra"]);
+    let hold = ChronoDuration::minutes(5);
+    let window = |to| {
+        let mut us = run(t, base, 1_200, 1_290, CheckStatus::Down);
+        us.extend(run(t, base, 1_320, to, CheckStatus::Up));
+        vec![
+            ("hel".to_string(), run(t, base, 1_200, to, CheckStatus::Up)),
+            ("us".to_string(), us),
+        ]
+    };
+    assert!(decide_multi(t, std::slice::from_ref(&open), &window(1_500), 2, 2, hold).is_empty());
+    match decide_multi(t, std::slice::from_ref(&open), &window(1_620), 2, 2, hold).as_slice() {
+        [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 1_320)),
+        other => panic!("expected Close, got {other:?}"),
+    }
+}
+
 // ── full writer tick with InMemoryIncidentStore ─────────────────────────
 
 fn make_public_target(name: &str) -> Target {

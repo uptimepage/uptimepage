@@ -168,11 +168,12 @@ pub fn decide_multi(
 }
 
 /// A region's confirmed state: down after `threshold` failures in a row, up
-/// after `threshold` passes in a row. A shorter run changes neither.
+/// after `threshold` passes in a row, dated from the first of those passes. A
+/// shorter run changes neither.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Confirmed {
     Unknown,
-    Up,
+    Up(DateTime<Utc>),
     Down,
 }
 
@@ -208,17 +209,17 @@ fn confirmed_down_spans(
             continue;
         }
         match (bad, state) {
-            (true, Confirmed::Up | Confirmed::Unknown) => {
+            (true, Confirmed::Up(_) | Confirmed::Unknown) => {
                 state = Confirmed::Down;
                 since = Some(start);
             }
             (false, Confirmed::Down) => {
-                state = Confirmed::Up;
+                state = Confirmed::Up(start);
                 if let Some(from) = since.take() {
                     spans.push((from, Some(start)));
                 }
             }
-            (false, Confirmed::Unknown) => state = Confirmed::Up,
+            (false, Confirmed::Unknown) => state = Confirmed::Up(start),
             _ => {}
         }
     }
@@ -233,15 +234,16 @@ fn confirmed_down_spans(
 /// a confirmation change nothing, so a stray failed check neither restarts the
 /// hold nor moves the end, and a lone region failing below the quorum is not
 /// the outage. An outage that confirms again inside the hold keeps the
-/// incident open, and its recovery restarts the wait.
+/// incident open, and its recovery restarts the wait. When the quorum is never
+/// reached in view, the end is the latest recovery of a region the outage was
+/// counted in.
 ///
 /// The recovery has to be confirmed by a region the outage was counted in. A
 /// region that never failed says nothing about one that stopped reporting, so
 /// silence cannot carry the count below the quorum while a region is still
-/// failing. Only when every region the outage was counted in has gone quiet
-/// and none still reporting is failing do the reporting ones decide. When the
-/// quorum is never reached in view, the end is the latest of those
-/// recoveries, or with none in view, when every region had been seen.
+/// failing. Only when every region the outage was counted in has gone quiet do
+/// the regions still reporting decide, and then every one of them has to be
+/// confirmed up: the end is when the last of them was.
 fn recovered_at(
     inc: &OpenIncident,
     by_region: &[(String, Vec<CheckResult>)],
@@ -251,15 +253,14 @@ fn recovered_at(
 ) -> Option<DateTime<Utc>> {
     let mut events: Vec<(DateTime<Utc>, i32)> = Vec::new();
     let mut down_now = 0usize;
-    let mut any_up = false;
+    let mut undecided = false;
     let mut witnessed: Option<DateTime<Utc>> = None;
-    let mut all_seen: Option<DateTime<Utc>> = None;
+    let mut all_up_since: Option<DateTime<Utc>> = None;
     let mut last_seen: Option<DateTime<Utc>> = None;
     for (region, results) in by_region {
-        let (Some(first), Some(last)) = (results.first(), results.last()) else {
+        let Some(last) = results.last() else {
             continue;
         };
-        all_seen = all_seen.max(Some(first.timestamp));
         last_seen = last_seen.max(Some(last.timestamp));
         // Without a breakdown (one unnamed region, or a row from before the
         // breakdown was kept) every region is taken as part of the outage.
@@ -267,35 +268,43 @@ fn recovered_at(
         let (spans, state) = confirmed_down_spans(results, threshold, in_outage);
         match state {
             Confirmed::Down => down_now += 1,
-            Confirmed::Up => any_up = true,
-            Confirmed::Unknown => {}
+            Confirmed::Up(since) => {
+                all_up_since = all_up_since.max(Some(since));
+                if in_outage {
+                    witnessed = witnessed.max(Some(since));
+                }
+            }
+            Confirmed::Unknown => undecided = true,
         }
         for (from, to) in spans {
             events.push((from, 1));
             if let Some(to) = to {
                 events.push((to, -1));
-                if in_outage && state == Confirmed::Up {
-                    witnessed = witnessed.max(Some(to));
-                }
             }
         }
     }
-    if down_now >= quorum || (witnessed.is_none() && (down_now > 0 || !any_up)) {
+    if down_now >= quorum {
         return None;
     }
-    // A region failing at the instant another recovers is counted first, so
-    // the handover is not mistaken for the outage ending.
-    events.sort_by_key(|(at, delta)| (*at, -delta));
-    let quorum = quorum as i32;
-    let mut down = 0;
-    let mut ended = None;
-    for (at, delta) in events {
-        if down >= quorum && down + delta < quorum {
-            ended = Some(at);
+    let onset = match witnessed {
+        Some(recovered) => {
+            // A region failing at the instant another recovers is counted
+            // first, so the handover is not mistaken for the outage ending.
+            events.sort_by_key(|(at, delta)| (*at, -delta));
+            let quorum = quorum as i32;
+            let mut down = 0;
+            let mut ended = None;
+            for (at, delta) in events {
+                if down >= quorum && down + delta < quorum {
+                    ended = Some(at);
+                }
+                down += delta;
+            }
+            ended.unwrap_or(recovered)
         }
-        down += delta;
-    }
-    let onset = ended.or(witnessed).or(all_seen)?;
+        None if down_now == 0 && !undecided => all_up_since?,
+        None => return None,
+    };
     (last_seen? - onset >= recovery).then_some(onset)
 }
 
