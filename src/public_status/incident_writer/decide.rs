@@ -33,10 +33,6 @@ pub enum Action {
 struct Verdict<'a> {
     region: &'a str,
     bad: &'a [CheckResult],
-    good: &'a [CheckResult],
-    /// The region failed somewhere in view, so its trailing good run is a
-    /// recovery, not just a region that was never down.
-    failed: bool,
 }
 
 /// Single-region convenience over [`decide_multi`]: one region, combined
@@ -84,14 +80,9 @@ pub fn decide_multi(
 
     let verdicts: Vec<Verdict> = by_region
         .iter()
-        .map(|(region, results)| {
-            let good = trailing_good_run(results);
-            Verdict {
-                region,
-                bad: trailing_bad_run(results),
-                good,
-                failed: good.len() < results.len(),
-            }
+        .map(|(region, results)| Verdict {
+            region,
+            bad: trailing_bad_run(results),
         })
         .collect();
 
@@ -129,10 +120,9 @@ pub fn decide_multi(
             }
         }
         Some(inc) => {
-            // Close once below quorum and the recovery has held; ended_at is
-            // when it began, so the hold is not counted as downtime.
-            if bad.len() < quorum
-                && let Some(ended) = recovered_at(&verdicts, threshold, recovery)
+            // Close once the outage is over and its recovery has held;
+            // ended_at is when it ended, so the hold is not counted as downtime.
+            if let Some(ended) = recovered_at(inc, by_region, threshold, quorum, recovery)
                 && ended > inc.started_at
             {
                 return vec![Action::Close {
@@ -177,32 +167,126 @@ pub fn decide_multi(
     }
 }
 
-/// When the outage ended, once its recovery has held for `recovery`: the
-/// latest onset among regions back up for a full confirmation run. A region up
-/// throughout may never have failed, so it dates the end only alongside a
-/// region seen recovering, or when every region has been up for the whole
-/// window and the recovery itself is older than the window. A region failing
-/// again restarts its own run, so a renewed outage restarts the hold.
-fn recovered_at(
-    verdicts: &[Verdict],
+/// A region's confirmed state: down after `threshold` failures in a row, up
+/// after `threshold` passes in a row. A shorter run changes neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Confirmed {
+    Unknown,
+    Up,
+    Down,
+}
+
+/// A stretch a region was confirmed down; open-ended while it still is.
+type DownSpan = (DateTime<Utc>, Option<DateTime<Utc>>);
+
+/// The stretches one region was confirmed down, each dated from the first
+/// check of the run that confirmed it to the first check of the run that
+/// confirmed the recovery (`None` while still down), and where it stands now.
+/// `down_at_start` is for a region the open incident already counts as down,
+/// whose failing run may have begun before the window.
+fn confirmed_down_spans(
+    results: &[CheckResult],
     threshold: usize,
+    down_at_start: bool,
+) -> (Vec<DownSpan>, Confirmed) {
+    let mut state = if down_at_start {
+        Confirmed::Down
+    } else {
+        Confirmed::Unknown
+    };
+    let mut since = down_at_start.then_some(DateTime::<Utc>::MIN_UTC);
+    let mut spans = Vec::new();
+    let mut run: Option<(bool, DateTime<Utc>, usize)> = None;
+    for r in results {
+        let bad = r.status.is_bad();
+        let (start, len) = match run {
+            Some((was_bad, start, len)) if was_bad == bad => (start, len + 1),
+            _ => (r.timestamp, 1),
+        };
+        run = Some((bad, start, len));
+        if len != threshold {
+            continue;
+        }
+        match (bad, state) {
+            (true, Confirmed::Up | Confirmed::Unknown) => {
+                state = Confirmed::Down;
+                since = Some(start);
+            }
+            (false, Confirmed::Down) => {
+                state = Confirmed::Up;
+                if let Some(from) = since.take() {
+                    spans.push((from, Some(start)));
+                }
+            }
+            (false, Confirmed::Unknown) => state = Confirmed::Up,
+            _ => {}
+        }
+    }
+    if let Some(from) = since {
+        spans.push((from, None));
+    }
+    (spans, state)
+}
+
+/// When the outage ended, once its recovery has held for `recovery`: the last
+/// moment the regions confirmed down fell below the quorum. Runs shorter than
+/// a confirmation change nothing, so a stray failed check neither restarts the
+/// hold nor moves the end, and a lone region failing below the quorum is not
+/// the outage. An outage that confirms again inside the hold keeps the
+/// incident open, and its recovery restarts the wait. When the quorum is never
+/// reached in view, the end predates the window and is dated to when every
+/// region had been seen in it.
+fn recovered_at(
+    inc: &OpenIncident,
+    by_region: &[(String, Vec<CheckResult>)],
+    threshold: usize,
+    quorum: usize,
     recovery: ChronoDuration,
 ) -> Option<DateTime<Utc>> {
-    let held: Vec<&Verdict> = verdicts
-        .iter()
-        .filter(|v| v.good.len() >= threshold)
-        .collect();
-    let witnessed = held.iter().any(|v| v.failed);
-    if !witnessed && verdicts.iter().any(|v| v.failed) {
+    let mut events: Vec<(DateTime<Utc>, i32)> = Vec::new();
+    let mut down_now = 0usize;
+    let mut any_up = false;
+    let mut all_seen: Option<DateTime<Utc>> = None;
+    let mut last_seen: Option<DateTime<Utc>> = None;
+    for (region, results) in by_region {
+        let (Some(first), Some(last)) = (results.first(), results.last()) else {
+            continue;
+        };
+        all_seen = all_seen.max(Some(first.timestamp));
+        last_seen = last_seen.max(Some(last.timestamp));
+        // Without a breakdown (one unnamed region, or a row from before the
+        // breakdown was kept) every region is taken as part of the outage.
+        let down_at_start = inc.regions_down.is_empty() || inc.regions_down.contains(region);
+        let (spans, state) = confirmed_down_spans(results, threshold, down_at_start);
+        match state {
+            Confirmed::Down => down_now += 1,
+            Confirmed::Up => any_up = true,
+            Confirmed::Unknown => {}
+        }
+        for (from, to) in spans {
+            events.push((from, 1));
+            if let Some(to) = to {
+                events.push((to, -1));
+            }
+        }
+    }
+    if down_now >= quorum || !any_up {
         return None;
     }
-    let onset = held.iter().map(|v| v.good[0].timestamp).max()?;
-    let seen = held
-        .iter()
-        .filter_map(|v| v.good.last())
-        .map(|r| r.timestamp)
-        .max()?;
-    (seen - onset >= recovery).then_some(onset)
+    // A region failing at the instant another recovers is counted first, so
+    // the handover is not mistaken for the outage ending.
+    events.sort_by_key(|(at, delta)| (*at, -delta));
+    let quorum = quorum as i32;
+    let mut down = 0;
+    let mut ended = None;
+    for (at, delta) in events {
+        if down >= quorum && down + delta < quorum {
+            ended = Some(at);
+        }
+        down += delta;
+    }
+    let onset = ended.or(all_seen)?;
+    (last_seen? - onset >= recovery).then_some(onset)
 }
 
 fn worst_status(bad: &[&Verdict]) -> Option<CheckStatus> {
@@ -300,15 +384,6 @@ fn trailing_bad_run(results: &[CheckResult]) -> &[CheckResult] {
     let split = results
         .iter()
         .rposition(|r| !r.status.is_bad())
-        .map(|i| i + 1)
-        .unwrap_or(0);
-    &results[split..]
-}
-
-fn trailing_good_run(results: &[CheckResult]) -> &[CheckResult] {
-    let split = results
-        .iter()
-        .rposition(|r| r.status.is_bad())
         .map(|i| i + 1)
         .unwrap_or(0);
     &results[split..]

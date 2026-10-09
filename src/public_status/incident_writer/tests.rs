@@ -1106,6 +1106,111 @@ fn a_lone_region_failing_during_the_hold_is_not_part_of_the_outage() {
     );
 }
 
+#[test]
+fn a_region_still_failing_alone_does_not_keep_the_outage_open() {
+    // fra is blocked for good and us recovered before the window: one region
+    // down is below the majority, so the outage is over even though nothing
+    // in view saw it end.
+    let base = mbase();
+    let t = Uuid::now_v7();
+    let open = open_since(t, ts(base, 0), &["fra", "us"]);
+    let by_region = vec![
+        (
+            "fra".to_string(),
+            run(t, base, 1_200, 1_500, CheckStatus::Down),
+        ),
+        (
+            "hel".to_string(),
+            run(t, base, 1_200, 1_500, CheckStatus::Up),
+        ),
+        (
+            "us".to_string(),
+            run(t, base, 1_200, 1_500, CheckStatus::Up),
+        ),
+    ];
+    match decide_multi(
+        t,
+        std::slice::from_ref(&open),
+        &by_region,
+        2,
+        2,
+        ChronoDuration::zero(),
+    )
+    .as_slice()
+    {
+        [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 1_200)),
+        other => panic!("expected Close, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_stray_failed_check_neither_restarts_the_hold_nor_moves_the_end() {
+    let base = mbase();
+    let t = Uuid::now_v7();
+    let open = open_since(t, ts(base, 0), &[]);
+    let hold = ChronoDuration::minutes(10);
+    let mut results = run(t, base, 0, 30, CheckStatus::Down);
+    results.extend(run(t, base, 60, 270, CheckStatus::Up));
+    results.extend(run(t, base, 300, 300, CheckStatus::Down));
+    results.extend(run(t, base, 330, 660, CheckStatus::Up));
+    let by_region = vec![(String::new(), results)];
+    match decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 1, hold).as_slice() {
+        [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 60)),
+        other => panic!("expected Close, got {other:?}"),
+    }
+}
+
+#[test]
+fn another_regions_blip_is_not_the_recovery_of_the_one_that_failed() {
+    // Any-down: fra has been failing for two hours and passes one check; hel
+    // had a single timeout minutes ago. fra has not confirmed a recovery.
+    let base = mbase();
+    let t = Uuid::now_v7();
+    let open = open_since(t, ts(base, 0), &["fra"]);
+    let mut fra = run(t, base, 7_000, 7_170, CheckStatus::Down);
+    fra.extend(run(t, base, 7_200, 7_200, CheckStatus::Up));
+    let mut hel = run(t, base, 7_000, 7_050, CheckStatus::Up);
+    hel.extend(run(t, base, 7_080, 7_080, CheckStatus::Down));
+    hel.extend(run(t, base, 7_110, 7_200, CheckStatus::Up));
+    let by_region = vec![("fra".to_string(), fra), ("hel".to_string(), hel)];
+    assert!(
+        decide_multi(
+            t,
+            std::slice::from_ref(&open),
+            &by_region,
+            2,
+            1,
+            ChronoDuration::zero()
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn a_lone_region_recovering_during_the_hold_does_not_redate_the_end() {
+    let base = mbase();
+    let t = Uuid::now_v7();
+    let open = open_since(t, ts(base, 0), &["fra", "us"]);
+    let hold = ChronoDuration::minutes(5);
+    let recovered = || {
+        let mut results = run(t, base, 0, 30, CheckStatus::Down);
+        results.extend(run(t, base, 60, 360, CheckStatus::Up));
+        results
+    };
+    let mut hel = run(t, base, 0, 150, CheckStatus::Up);
+    hel.extend(run(t, base, 180, 240, CheckStatus::Down));
+    hel.extend(run(t, base, 270, 360, CheckStatus::Up));
+    let by_region = vec![
+        ("fra".to_string(), recovered()),
+        ("hel".to_string(), hel),
+        ("us".to_string(), recovered()),
+    ];
+    match decide_multi(t, std::slice::from_ref(&open), &by_region, 2, 2, hold).as_slice() {
+        [Action::Close { ended_at, .. }] => assert_eq!(*ended_at, ts(base, 60)),
+        other => panic!("expected Close, got {other:?}"),
+    }
+}
+
 // ── full writer tick with InMemoryIncidentStore ─────────────────────────
 
 fn make_public_target(name: &str) -> Target {
