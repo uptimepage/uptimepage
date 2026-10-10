@@ -65,7 +65,16 @@
           style="font-family: var(--font-mono); font-weight: 600; letter-spacing: -0.01em;">
         sign in to uptimepage
       </h2>
+      {% if let Some(next) = checkout %}
+      {% if let Some(plan) = next.plan %}
+      <p class="text-sm text-muted">You picked {{ plan|capitalize }}{% if next.yearly %}, billed yearly{% endif %}. Sign in or create an account, and checkout opens next.</p>
+      <p class="text-xs text-quiet">Nothing is charged until you confirm checkout.</p>
+      {% else %}
+      <p class="text-sm text-muted">Sign in, and billing opens next.</p>
+      {% endif %}
+      {% else %}
       <p class="text-sm text-muted">First sign-in creates your account &mdash; free.</p>
+      {% endif %}
     </header>
 
     {% if github_enabled %}

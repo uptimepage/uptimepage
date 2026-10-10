@@ -7,13 +7,16 @@
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::extract::{Query, State};
+use axum::http::Uri;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
 use crate::app::AppState;
 use crate::auth::url::safe_redirect_target;
+use crate::domain::Interval;
 use crate::request::auth::Session;
 use crate::templates::filters;
+use crate::web::views::billing::BillingQuery;
 
 /// Sentinel matched against `nav` in base.html so the header doesn't render
 /// "Dashboard" / "Targets" links on the bare login page.
@@ -59,6 +62,36 @@ pub struct LoginPage {
     pub ready: bool,
     /// Umami website id, or `None` on self-hosted and dev.
     pub analytics: Option<&'static str>,
+    /// Set when sign-in leads to billing, so the card says checkout comes
+    /// next instead of promising a free account.
+    pub checkout: Option<CheckoutNext>,
+}
+
+/// The plans the pricing page links to checkout.
+const CHECKOUT_PLANS: [&str; 2] = ["pro", "team"];
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct CheckoutNext {
+    /// `None` when the link names no plan in [`CHECKOUT_PLANS`].
+    pub plan: Option<&'static str>,
+    pub yearly: bool,
+}
+
+/// Read the way the billing page reads it, so the card cannot promise what
+/// that page then refuses. Plans come from a closed set, so a crafted link
+/// cannot put its own words on the card.
+fn checkout_next(redirect_after: &str) -> Option<CheckoutNext> {
+    let uri: Uri = redirect_after.parse().ok()?;
+    if uri.path() != "/settings/billing" {
+        return None;
+    }
+    let Query(q) = Query::<BillingQuery>::try_from_uri(&uri).ok()?;
+    Some(CheckoutNext {
+        plan: q
+            .plan
+            .and_then(|plan| CHECKOUT_PLANS.into_iter().find(|p| *p == plan)),
+        yearly: q.interval.as_deref().and_then(Interval::parse) == Some(Interval::Year),
+    })
 }
 
 /// Start-URL with the carried-through login params (redirect_after, invitation).
@@ -83,20 +116,25 @@ pub async fn login(
     // Someone signed in who named a destination is not here to sign in. Bare
     // `/login` still renders, so a second account is still reachable, and an
     // invitation keeps its own accept flow.
+    let redirect_after = q.redirect_after.as_deref().and_then(safe_redirect_target);
     if session.user_id().is_some()
         && q.invitation.is_none()
-        && let Some(target) = q.redirect_after.as_deref().and_then(safe_redirect_target)
+        && let Some(target) = redirect_after
     {
         return Redirect::to(target).into_response();
     }
 
     let mut params: Vec<(&str, String)> = Vec::new();
-    if let Some(r) = q.redirect_after.as_deref().and_then(safe_redirect_target) {
+    if let Some(r) = redirect_after {
         params.push(("redirect_after", r.to_string()));
     }
     if let Some(inv) = q.invitation.as_deref() {
         params.push(("invitation", inv.to_string()));
     }
+    // An invitation lands on the inviting org, never on `redirect_after`.
+    let checkout = redirect_after
+        .filter(|_| state.billing.is_some() && q.invitation.is_none())
+        .and_then(checkout_next);
 
     use crate::auth::login_audit::LoginMethod;
     let last = crate::request::login_hint::get(&cookies);
@@ -129,6 +167,7 @@ pub async fn login(
         invitation_hint: q.invitation,
         ready: login_ready(&state).await,
         analytics: crate::analytics::website_id(&state.cfg.auth.public_base_url),
+        checkout,
     }
     .into_response()
 }
@@ -1518,7 +1557,71 @@ mod tests {
             invitation_hint: None,
             ready: true,
             analytics: None,
+            checkout: None,
         }
+    }
+
+    #[test]
+    fn checkout_next_names_only_the_pricing_page_plans() {
+        assert_eq!(
+            checkout_next("/settings/billing?plan=pro&interval=month"),
+            Some(CheckoutNext {
+                plan: Some("pro"),
+                yearly: false
+            })
+        );
+        assert_eq!(
+            checkout_next("/settings/billing?plan=team&interval=year"),
+            Some(CheckoutNext {
+                plan: Some("team"),
+                yearly: true
+            })
+        );
+        assert_eq!(
+            checkout_next("/settings/billing?plan=Free%20money"),
+            Some(CheckoutNext {
+                plan: None,
+                yearly: false
+            })
+        );
+        assert_eq!(
+            checkout_next("/settings/billing"),
+            Some(CheckoutNext {
+                plan: None,
+                yearly: false
+            })
+        );
+        assert_eq!(checkout_next("/settings/billing/payment-method"), None);
+        // The billing page rejects a repeated key, so no checkout is promised.
+        assert_eq!(checkout_next("/settings/billing?plan=pro&plan=team"), None);
+        assert_eq!(checkout_next("/settings/billingx?plan=pro"), None);
+        assert_eq!(checkout_next("/targets/new?plan=pro"), None);
+    }
+
+    #[test]
+    fn login_page_says_checkout_comes_next() {
+        let mut page = login_page(true, true, false, false, false, true);
+        page.checkout = Some(CheckoutNext {
+            plan: Some("pro"),
+            yearly: true,
+        });
+        let html = page.render().unwrap();
+        assert!(html.contains("You picked Pro, billed yearly."));
+        assert!(html.contains("Nothing is charged until you confirm checkout."));
+        assert!(!html.contains("creates your account"));
+
+        page.checkout = Some(CheckoutNext {
+            plan: None,
+            yearly: false,
+        });
+        let html = page.render().unwrap();
+        assert!(html.contains("Sign in, and billing opens next."));
+        assert!(!html.contains("You picked"));
+
+        page.checkout = None;
+        let html = page.render().unwrap();
+        assert!(html.contains("creates your account"));
+        assert!(!html.contains("checkout opens next"));
     }
 
     #[test]
