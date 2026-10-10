@@ -137,6 +137,10 @@ pub fn min_interval_secs_for_kind(kind: &str) -> u64 {
     }
 }
 
+/// Long enough that a service falling over again within minutes stays one
+/// incident.
+pub const DEFAULT_RECOVERY_PERIOD_SECS: u32 = 180;
+
 /// The recovery hold a new monitor of this kind gets unless it asks for
 /// another. Only a monitor probed for availability gets one. An expiry check
 /// runs hours apart and a heartbeat waits on the job's next ping, so a hold
@@ -144,7 +148,7 @@ pub fn min_interval_secs_for_kind(kind: &str) -> u64 {
 /// the state it is set to.
 pub fn default_recovery_period_secs_for_kind(kind: &str) -> u32 {
     match kind {
-        "http" | "tcp" | "ping" | "dns" | "flow" => super::target::DEFAULT_RECOVERY_PERIOD_SECS,
+        "http" | "tcp" | "ping" | "dns" | "flow" => DEFAULT_RECOVERY_PERIOD_SECS,
         _ => 0,
     }
 }

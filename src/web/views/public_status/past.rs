@@ -7,7 +7,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use crate::domain::{IncidentImpact, IncidentStatusPhase, PublicIncident, outage_parts};
 use crate::i18n::Tr;
 
-use super::view::{UPDATE_PREVIEW_CHARS, impact_classes, phase_classes};
+use super::incident_display::{UPDATE_PREVIEW_CHARS, impact_classes, phase_classes};
 
 /// Incidents that ended within this long stay in view; older ones fold away
 /// behind one toggle.

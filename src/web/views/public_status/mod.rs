@@ -27,6 +27,7 @@ use crate::web::error::{NotFoundPage, UnavailablePage};
 use crate::web::robots;
 
 mod branding;
+mod incident_display;
 mod og;
 mod past;
 #[cfg(test)]

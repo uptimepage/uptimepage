@@ -6,19 +6,17 @@ use uuid::Uuid;
 
 use crate::domain::elapsed_at;
 use crate::domain::{
-    DayState, Downtime, IncidentImpact, IncidentStatusPhase, OverallState, PublicComponent,
-    PublicComponentGroup, PublicComponentStatus, PublicIncident, PublicIncidentUpdate,
-    PublicMaintenance, PublicStatusPage,
+    DayState, Downtime, OverallState, PublicComponent, PublicComponentGroup, PublicComponentStatus,
+    PublicIncident, PublicIncidentUpdate, PublicMaintenance, PublicStatusPage,
 };
 use crate::i18n::Tr;
 use crate::public_status::HistoryIncidentMarker;
 use crate::public_status::overall_status::{day_tone, overall_label_id};
 
+use super::incident_display::{UPDATE_PREVIEW_CHARS, impact_classes, phase_classes};
 use super::past::{PastIncidents, build_past};
 
 pub const RSS_URL: &str = "/api/public/v1/incidents.rss";
-/// Characters of an update a listing shows before cutting it off.
-pub(super) const UPDATE_PREVIEW_CHARS: usize = 241;
 pub(super) const HISTORY_LEN: usize = 90;
 
 pub struct StatusView {
@@ -673,34 +671,5 @@ pub(super) fn day_classes(s: DayState) -> (&'static str, &'static str, &'static 
         DayState::MajorOutage => ("day-cell--maj", "state-major-outage", "day-pop-status--maj"),
         DayState::Maintenance => ("day-cell--mnt", "state-maintenance", "day-pop-status--mnt"),
         DayState::NoData => ("day-cell--none", "state-no-data", "day-pop-status--none"),
-    }
-}
-
-/// Same words as the day strip's [`day_classes`], so one outage reads the
-/// same in the strip popover, the incident card and the detail page.
-pub(super) fn impact_classes(i: IncidentImpact) -> (&'static str, &'static str) {
-    match i {
-        IncidentImpact::Degraded => ("state-degraded", "public-chip public-sev--minor"),
-        IncidentImpact::PartialOutage => ("state-partial-outage", "public-chip public-sev--major"),
-        IncidentImpact::MajorOutage => ("state-major-outage", "public-chip public-sev--critical"),
-    }
-}
-
-pub(super) fn phase_classes(p: IncidentStatusPhase) -> (&'static str, &'static str) {
-    match p {
-        IncidentStatusPhase::Investigating => (
-            "phase-investigating",
-            "public-chip public-phase--investigating",
-        ),
-        IncidentStatusPhase::Identified => {
-            ("phase-identified", "public-chip public-phase--identified")
-        }
-        IncidentStatusPhase::Monitoring => {
-            ("phase-monitoring", "public-chip public-phase--monitoring")
-        }
-        IncidentStatusPhase::Resolved => ("phase-resolved", "public-chip public-phase--resolved"),
-        IncidentStatusPhase::Postmortem => {
-            ("phase-postmortem", "public-chip public-phase--postmortem")
-        }
     }
 }

@@ -19,10 +19,6 @@ pub const MAX_TAG_LEN: usize = 50;
 /// writer reads back over the hold to date the recovery, so it is bounded.
 pub const MAX_RECOVERY_PERIOD_SECS: u32 = 1800;
 
-/// The hold a monitor probed for availability gets unless it asks for another,
-/// so a service that falls over again within minutes stays one incident.
-pub const DEFAULT_RECOVERY_PERIOD_SECS: u32 = 180;
-
 /// How many regions must agree a monitor is down before it alerts. `Any`,
 /// `Majority`, and `All` track the live region count; `Count` is a fixed number
 /// the user chose. Resolved to a concrete threshold by [`Self::required`].
@@ -419,5 +415,21 @@ mod default_owner_tests {
         new.owner_user_id = Some(Some(named));
         new.default_owner(UserId(Uuid::new_v4()));
         assert_eq!(new.owner(), Some(named));
+    }
+}
+
+#[cfg(test)]
+mod recovery_period_tests {
+    use super::*;
+    use crate::domain::default_recovery_period_secs_for_kind;
+
+    #[test]
+    fn every_kinds_default_hold_fits_the_bound() {
+        for kind in CheckSpec::ALL_KINDS {
+            assert!(
+                default_recovery_period_secs_for_kind(kind) <= MAX_RECOVERY_PERIOD_SECS,
+                "{kind}"
+            );
+        }
     }
 }

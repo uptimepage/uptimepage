@@ -1,6 +1,8 @@
 //! The form's own model: the whole monitor form as the template reads it, plus
 //! every dropdown and picker it offers.
 
+use crate::domain::check::DEFAULT_RECOVERY_PERIOD_SECS;
+use crate::domain::target::MAX_RECOVERY_PERIOD_SECS;
 use crate::domain::{
     CheckSpec, FAST_INTERVAL_PRESETS, RegionIncidentPolicy, SLOW_INTERVAL_PRESETS,
 };
@@ -342,11 +344,17 @@ impl FormModel {
     /// Recovery-hold presets with the monitor's current hold selected; an
     /// off-preset stored value is preserved as its own option.
     pub fn recovery_options(&self) -> Vec<SecondsChoice> {
-        let mut values: Vec<u32> = vec![0, 180, 300, 600, 900, 1_800];
-        if !values.contains(&self.recovery_period_secs) {
-            values.push(self.recovery_period_secs);
-            values.sort_unstable();
-        }
+        let mut values: Vec<u32> = vec![
+            0,
+            DEFAULT_RECOVERY_PERIOD_SECS,
+            300,
+            600,
+            900,
+            MAX_RECOVERY_PERIOD_SECS,
+            self.recovery_period_secs,
+        ];
+        values.sort_unstable();
+        values.dedup();
         values
             .into_iter()
             .map(|secs| SecondsChoice {
