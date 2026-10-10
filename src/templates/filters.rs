@@ -166,7 +166,7 @@ mod display {
     /// Unlike `humanize_dur` it never rounds, so config values round-trip.
     #[askama::filter_fn]
     pub fn exact_dur(value: &u64, _: &dyn askama::Values) -> askama::Result<String> {
-        Ok(crate::templates::format::exact_duration(*value))
+        Ok(crate::duration::exact_duration(*value))
     }
 
     /// `{{ bytes|human_bytes }}` → `"512 KB"` / `"2 MB"`. Floors to the

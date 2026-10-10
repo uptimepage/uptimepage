@@ -19,6 +19,7 @@ use crate::domain::{
     CheckResult, CheckSpec, NewTarget, NewTargetWithRegions, NotificationReason, OrgId, Target,
     TargetUpdate, min_interval_secs_for_kind,
 };
+use crate::duration::exact_duration;
 use crate::error::ApiError;
 use crate::error::codes;
 use crate::error::{AppError, Result};
@@ -32,7 +33,6 @@ use crate::storage::TargetFilter;
 use crate::storage::traits::ChannelEdit;
 use crate::target_ops::SetManualState;
 use crate::targets::{HeartbeatInfo, heartbeat_info, heartbeat_info_from};
-use crate::templates::format::exact_duration;
 
 const BULK_MAX: usize = 10_000;
 const LIST_LIMIT_DEFAULT: usize = 50;

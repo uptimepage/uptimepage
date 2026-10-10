@@ -36,8 +36,8 @@ use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, Uri, header};
 use axum::response::{IntoResponse, Redirect, Response};
 
-use crate::api::types::LatencySeries;
 use crate::app::AppState;
+use crate::domain::metrics::LatencySeries;
 use crate::domain::{PageRef, ResolvedShare};
 use crate::error::AppError;
 use crate::error::codes;
@@ -58,7 +58,7 @@ use crate::web::views::targets_detail::{
     load_incidents_data, load_live_data_cached, ongoing_for_target, read_liveness,
     resolve_incident_window, resolve_window,
 };
-use crate::web::views::{RangeOption, build_range_options, describe_check, resolve_range_key};
+use crate::web::views::{RangeOption, build_range_options, resolve_range_key};
 
 /// Where a share is opened, relative to the page showing it as a detail link.
 enum Placement {
@@ -347,7 +347,7 @@ pub async fn detail(
     let ongoing_count = ongoing_for_target(&state, resolved.org, resolved.target_id).await;
     let config_json = serde_json::to_string_pretty(&target.check)
         .map_err(|e| AppError::Other(anyhow::anyhow!(e)))?;
-    let (kind, address) = describe_check(&target.check);
+    let (kind, address) = target.check.describe();
     let range_base_path = format!("/m/{token}");
     let all_regions = state
         .target_store
@@ -497,7 +497,7 @@ pub async fn incidents(
     let time_range = TimeRange { from, to };
     let labels = WindowLabels::new(from, to);
     let data = load_incidents_data(&state, resolved.org, resolved.target_id, time_range).await?;
-    let (kind, address) = describe_check(&target.check);
+    let (kind, address) = target.check.describe();
     let range_base_path = format!("/m/{token}/incidents");
     let results_base = format!("/m/{token}");
     let last_status = badge_status(

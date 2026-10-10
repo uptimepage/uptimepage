@@ -7,12 +7,13 @@ use crate::api::handlers::orgs::{
 };
 use crate::api::types::{
     BulkAction, BulkActionFailure, BulkActionRequest, BulkActionResponse, DashboardSummary,
-    FlowStepSeries, Last24hSummary, LatencySeries, LatencySeriesByRegion, StatusBreakdown,
-    SystemSummary, TestRequest, TestResponse,
+    FlowStepSeries, Last24hSummary, LatencySeriesByRegion, StatusBreakdown, SystemSummary,
+    TestRequest, TestResponse,
 };
 use crate::domain::Role;
 use crate::domain::metrics::{
-    FlowStepBucket, FlowStepTrend, LatencyBucket, RegionLatencySeries, TagCount, TargetsSummary,
+    FlowStepBucket, FlowStepTrend, LatencyBucket, LatencySeries, RegionLatencySeries, TagCount,
+    TargetsSummary,
 };
 use crate::domain::{
     ActorType, AlertBinding, ChannelConfig, ChannelKind, CheckResult, CheckSpec, CheckStatus,

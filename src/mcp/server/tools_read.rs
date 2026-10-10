@@ -22,7 +22,6 @@ use crate::domain::{AlertAction, WriteSource};
 use crate::domain::{confirmed_downtime_secs, uptime_pct_from_downtime};
 use crate::storage::incidents::IncidentBriefFilter;
 use crate::storage::{TargetFilter, TimeRange};
-use crate::web::views::describe_check;
 
 use crate::mcp::auth::McpAuth;
 use crate::mcp::cursor;
@@ -359,7 +358,7 @@ impl McpServer {
         .copied();
 
         let last = latest.first();
-        let (_, address) = describe_check(&target.check);
+        let (_, address) = target.check.describe();
         Ok(Json(MonitorDetail {
             id: target.id.to_string(),
             name: sanitize_data(&target.name),

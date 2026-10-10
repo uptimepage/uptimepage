@@ -31,7 +31,7 @@ use crate::storage::NotificationChannelStore;
 use crate::storage::traits::TargetFilter;
 use crate::templates::filters;
 use crate::web::error::WebResult;
-use crate::web::views::{describe_check, json_pretty, resolve_org};
+use crate::web::views::{json_pretty, resolve_org};
 
 const TAB_NOTIFICATIONS: &str = "notifications";
 
@@ -470,7 +470,7 @@ async fn org_monitor_cards(
         )
         .await?;
     let card = |t: Target| {
-        let (kind, addr) = describe_check(&t.check);
+        let (kind, addr) = t.check.describe();
         MonitorCard {
             id: t.id.to_string(),
             name: t.name,

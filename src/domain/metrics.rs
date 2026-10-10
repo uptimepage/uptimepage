@@ -86,6 +86,15 @@ pub struct LatencyBucket {
     pub samples: u64,
 }
 
+/// Bucketed latency series for one monitor over a range, plus the bucket
+/// width the server chose. Returned by `GET /targets/{id}/latency`.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct LatencySeries {
+    pub buckets: Vec<LatencyBucket>,
+    /// Bucket width in seconds (always a multiple of the 60s rollup grain).
+    pub bucket_seconds: u32,
+}
+
 /// One region's latency buckets — a single overlay line.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct RegionLatencySeries {

@@ -25,10 +25,10 @@ use std::collections::HashMap;
 use crate::domain::{
     OnCallScheduleDetail, OnCallWindow, RotationType, UserId, Weekday, on_call_shifts,
 };
+use crate::duration::exact_duration;
 use crate::error::{AppError, codes};
 use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser};
 use crate::templates::filters;
-use crate::templates::format::exact_duration;
 use crate::web::error::WebResult;
 use crate::web::views::on_call_calendar::{CalendarModel, calendar, overrides_from};
 use crate::web::views::on_call_roster::{MemberChoice, Roster, org_members};

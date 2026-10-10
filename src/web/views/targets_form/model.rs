@@ -11,7 +11,7 @@ use super::fields::{
     DnsFields, DomainExpiryFields, FlowFields, HeartbeatFields, HttpFields, PingFields, TcpFields,
     TlsCertFields,
 };
-use crate::templates::format::exact_duration;
+use crate::duration::exact_duration;
 
 /// One row in the monitor form's Alerts section: an org channel plus whether
 /// this monitor binds to it. Channels are pure delivery targets — the firing

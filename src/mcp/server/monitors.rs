@@ -16,7 +16,6 @@ use crate::targets::validate::{
     validate_alert_confirmations, validate_group_name, validate_recovery_period,
     validate_region_policy, validate_renotify_interval,
 };
-use crate::web::views::describe_check;
 
 use crate::mcp::auth::McpAuth;
 use crate::mcp::confirm::require_confirmation;
@@ -396,7 +395,7 @@ impl McpServer {
             .await
             .map_err(config_error)?;
 
-        let address = describe_check(&new.check).1;
+        let address = new.check.describe().1;
         let probe = if new.check.is_passive() {
             None
         } else {

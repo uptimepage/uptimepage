@@ -15,15 +15,16 @@ use crate::domain::{
     CheckStatus, FAST_INTERVAL_PRESETS, OrgId, SLOW_INTERVAL_PRESETS, Target,
     uptime_pct_from_downtime,
 };
+use crate::duration::exact_duration;
 use crate::request::{AuthedBrowser, CurrentOrg};
 use crate::storage::TimeRange;
 use crate::storage::orgs::list_members;
 use crate::storage::traits::{TargetFilter, TargetSort};
 use crate::templates::filters;
-use crate::templates::format::{exact_duration, humanize_duration};
+use crate::templates::format::humanize_duration;
 use crate::web::avatar::{avatar_color, initials_from};
 use crate::web::error::WebResult;
-use crate::web::views::{PageSizeLink, PagerLink, channel_kind_label, describe_check};
+use crate::web::views::{PageSizeLink, PagerLink, channel_kind_label};
 
 const DEFAULT_LIMIT: usize = 50;
 const MAX_LIMIT: usize = 200;
@@ -719,7 +720,7 @@ fn build_row(
     owner_lookup: &HashMap<Uuid, MemberLite>,
     flapping: &std::collections::HashSet<Uuid>,
 ) -> MonitorRow {
-    let (kind, address) = describe_check(&t.check);
+    let (kind, address) = t.check.describe();
     let class = match metrics {
         // `last_status` alone is whichever region reported last.
         Some(m) if m.samples > 0 => match folded {

@@ -19,7 +19,7 @@ use crate::templates::filters;
 use crate::web::error::WebResult;
 use crate::web::views::coverage;
 use crate::web::views::region_display::{LabeledRegion, labeled_regions};
-use crate::web::views::{RangeOption, build_range_options, describe_check, resolve_range_key};
+use crate::web::views::{RangeOption, build_range_options, resolve_range_key};
 
 use load::{
     FLAP_WINDOW_HOURS, LAST_RESULT_WINDOW_DAYS, alerts_nobody, attach_titles, flaps_by_region,
@@ -262,7 +262,7 @@ pub async fn index(
             .await?;
         coverage::panel(&target.check, &covered)
     };
-    let (kind, address) = describe_check(&target.check);
+    let (kind, address) = target.check.describe();
     let share_count = state
         .monitor_share_store
         .count_active_for_target(org, target.id)
@@ -673,7 +673,7 @@ pub async fn incidents(
         } else {
             None
         };
-    let (kind, address) = describe_check(&target.check);
+    let (kind, address) = target.check.describe();
     let share_count = state
         .monitor_share_store
         .count_active_for_target(org, target.id)

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::domain::metrics::{FlowStepTrend, LatencyBucket, RegionLatencySeries, TargetsSummary};
+use crate::domain::metrics::{FlowStepTrend, RegionLatencySeries, TargetsSummary};
 use crate::domain::{CheckResult, CheckSpec};
 
 #[derive(Debug, Clone, Default, Serialize, ToSchema)]
@@ -140,15 +140,6 @@ pub struct TestResponse {
     /// Region the test ran in, echoed so a fan-out caller can correlate rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,
-}
-
-/// Bucketed latency series for one monitor over a range, plus the bucket
-/// width the server chose. Returned by `GET /targets/{id}/latency`.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct LatencySeries {
-    pub buckets: Vec<LatencyBucket>,
-    /// Bucket width in seconds (always a multiple of the 60s rollup grain).
-    pub bucket_seconds: u32,
 }
 
 /// Per-region latency for one monitor — each region overlaid as its own line.

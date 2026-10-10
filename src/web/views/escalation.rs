@@ -18,10 +18,10 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::{EscalationTargetType, OrgId, UserId};
+use crate::duration::exact_duration;
 use crate::error::AppError;
 use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser};
 use crate::templates::filters;
-use crate::templates::format::exact_duration;
 use crate::web::error::WebResult;
 use crate::web::views::on_call_roster::{MemberChoice, org_members};
 use crate::web::views::resolve_org;

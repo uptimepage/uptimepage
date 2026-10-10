@@ -50,10 +50,9 @@ pub mod whatsapp;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 
-use crate::domain::{CheckSpec, OrgId};
+use crate::domain::OrgId;
 use crate::error::AppError;
 use crate::request::CurrentOrg;
-use crate::templates::format::exact_duration;
 use crate::web::error::WebError;
 
 /// Shared range tab descriptor — the per-page handler builds a `Vec`
@@ -123,30 +122,6 @@ pub(crate) fn resolve_org(
 /// falling back to an empty object so the textarea is never blank/invalid.
 pub(crate) fn json_pretty<T: Serialize>(m: &T) -> String {
     serde_json::to_string_pretty(m).unwrap_or_else(|_| "{}".into())
-}
-
-/// Maps a `CheckSpec` to a UI-friendly `(kind, address)` pair.
-/// Used by the list and detail views; centralized so adding a new
-/// check variant updates both call-sites.
-pub(crate) fn describe_check(spec: &CheckSpec) -> (&'static str, String) {
-    match spec {
-        CheckSpec::Http(h) => ("HTTP", h.url.to_string()),
-        CheckSpec::Tcp(c) => ("TCP", format!("{}:{}", c.host, c.port)),
-        CheckSpec::Ping(c) => ("PING", c.host.clone()),
-        CheckSpec::Heartbeat(c) => (
-            "HEARTBEAT",
-            format!(
-                "ping every {} (+{} grace)",
-                exact_duration(c.period.as_secs()),
-                exact_duration(c.grace.as_secs())
-            ),
-        ),
-        CheckSpec::Manual(_) => ("MANUAL", "set by hand".to_string()),
-        CheckSpec::TlsCert(c) => ("TLS", format!("{}:{}", c.host, c.port)),
-        CheckSpec::DomainExpiry(c) => ("DOMAIN", c.domain.clone()),
-        CheckSpec::Dns(c) => ("DNS", format!("{} {}", c.record_type.as_str(), c.domain)),
-        CheckSpec::Flow(c) => ("FLOW", c.start_url.to_string()),
-    }
 }
 
 /// UI label for a transport. The Telegram pair swap names on purpose: the

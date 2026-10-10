@@ -14,7 +14,6 @@ use crate::storage::{
     IncidentBriefFilter, IncidentSpan, TargetFilter, TimeRange, weighted_downtime_by_target,
 };
 use crate::web::error::WebResult;
-use crate::web::views::describe_check;
 use crate::web::views::incidents::members_map;
 
 use super::charts::{
@@ -281,7 +280,7 @@ pub(super) async fn build_snapshot(
     let rows: Vec<DashboardRow> = targets
         .into_iter()
         .map(|t| {
-            let (kind, address) = describe_check(&t.check);
+            let (kind, address) = t.check.describe();
             let metrics = metrics_by_target.get(&t.id);
             let spark = spark_by_target
                 .get(&t.id)

@@ -5,8 +5,9 @@ use serde::Deserialize;
 use utoipa::IntoParams;
 use uuid::Uuid;
 
-use crate::api::types::{FlowStepSeries, LatencySeries, LatencySeriesByRegion};
+use crate::api::types::{FlowStepSeries, LatencySeriesByRegion};
 use crate::app::AppState;
+use crate::domain::metrics::LatencySeries;
 use crate::domain::{confirmed_downtime_secs, humanize_check_error, uptime_pct_from_downtime};
 use crate::error::ApiError;
 use crate::error::codes;
