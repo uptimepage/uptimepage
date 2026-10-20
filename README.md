@@ -246,6 +246,8 @@ To stop: `docker compose down`, or `docker compose down -v` to delete the data t
 
 **On an ARM host?** Release tags are `linux/amd64` and `linux/arm64`. `latest`, which tracks the newest commit on `main`, is amd64 only, so pin a release on ARM.
 
+**ClickHouse system logs are off.** Stock ClickHouse keeps two dozen `system.*_log` tables that grow without bound and use CPU at idle. Uptimepage reads none of them, so [`config/clickhouse-quiet.xml`](config/clickhouse-quiet.xml) turns them all off; to get one back for debugging, delete its line there and run `docker compose up -d --force-recreate clickhouse` (a plain restart can keep reading the old file). A stack started before this setting existed keeps its old tables: run `docker compose up -d` first so ClickHouse restarts with the setting, then list them with `SELECT name, formatReadableSize(total_bytes) FROM system.tables WHERE database = 'system' AND name LIKE '%\_log%'` and remove each with `DROP TABLE system.<name>`.
+
 **Signing in later.** The bootstrap link works once. For repeat sign-in, and to invite a team, set up OAuth with GitHub, GitLab, Google or Microsoft, or an email provider for magic links (`[auth.github]`, `[auth.gitlab]`, `[auth.google]`, `[auth.microsoft]`, `[email]` in `config/default.toml`, or the matching env vars). See [docs/authentication.md](docs/authentication.md).
 
 **Packaging this for an app store?** Step 2 needs a terminal. Set `UPTIMEPAGE_BOOTSTRAP__EMAIL` instead and the first boot seeds that owner and logs a sign-in link, no shell required. See [First-run owner](docs/configuration.md#first-run-owner).

@@ -35,6 +35,9 @@ services:
       - "9000:9000"
     volumes:
       - ch_data:/var/lib/clickhouse
+    configs:
+      - source: clickhouse_quiet
+        target: /etc/clickhouse-server/config.d/quiet.xml
     ulimits:
       nofile:
         soft: 262144
@@ -95,3 +98,7 @@ services:
 volumes:
   pg_data:
   ch_data:
+
+configs:
+  clickhouse_quiet:
+    file: ./config/clickhouse-quiet.xml

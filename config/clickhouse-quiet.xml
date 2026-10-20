@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<!--
+  Stock system log tables grow without bound and burn idle CPU, and Uptimepage
+  reads none of them, so every one is off. remove="1" on a table this
+  ClickHouse version lacks is a no-op.
+-->
+<clickhouse>
+    <logger>
+        <level>information</level>
+        <size>100M</size>
+        <count>3</count>
+    </logger>
+    <asynchronous_metrics_update_period_s>60</asynchronous_metrics_update_period_s>
+    <aggregated_zookeeper_log remove="1"/>
+    <asynchronous_insert_log remove="1"/>
+    <asynchronous_metric_log remove="1"/>
+    <background_schedule_pool_log remove="1"/>
+    <backup_log remove="1"/>
+    <blob_storage_log remove="1"/>
+    <crash_log remove="1"/>
+    <delta_lake_metadata_log remove="1"/>
+    <error_log remove="1"/>
+    <iceberg_metadata_log remove="1"/>
+    <instrumentation_trace_log remove="1"/>
+    <latency_log remove="1"/>
+    <metric_log remove="1"/>
+    <opentelemetry_span_log remove="1"/>
+    <part_log remove="1"/>
+    <processors_profile_log remove="1"/>
+    <query_log remove="1"/>
+    <query_metric_log remove="1"/>
+    <query_thread_log remove="1"/>
+    <query_views_log remove="1"/>
+    <s3queue_log remove="1"/>
+    <session_log remove="1"/>
+    <text_log remove="1"/>
+    <trace_log remove="1"/>
+    <zookeeper_connection_log remove="1"/>
+    <zookeeper_log remove="1"/>
+</clickhouse>
