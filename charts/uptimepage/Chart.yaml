@@ -2,8 +2,8 @@ apiVersion: v2
 name: uptimepage
 description: Self-hosted uptime monitoring, incidents, and status pages
 type: application
-version: 0.7.1
-appVersion: "1.4.0"
+version: 0.8.0
+appVersion: "1.5.0"
 # `-0` so vendor builds (v1.31.1-gke.x) satisfy the constraint.
 kubeVersion: ">=1.29.0-0"
 home: https://uptimepage.dev
@@ -31,7 +31,7 @@ annotations:
   # Artifact Hub scans what it finds here, so it has to track appVersion.
   artifacthub.io/images: |
     - name: uptimepage
-      image: ghcr.io/uptimepage/uptimepage:1.4.0
+      image: ghcr.io/uptimepage/uptimepage:1.5.0
   artifacthub.io/screenshots: |
     - title: Monitor dashboard
       url: https://uptimepage.dev/static/marketing/uptime-monitoring-dashboard.webp
@@ -49,7 +49,9 @@ annotations:
       url: https://uptimepage.dev/static/marketing/blog-maintenance-day.webp
   artifacthub.io/changes: |
     - kind: changed
-      description: Tracks application 1.4.0
+      description: Tracks application 1.5.0
+    - kind: added
+      description: Artifact Hub screenshots of the dashboard, channels, status page and day history
     - kind: changed
       description: The ingress proxy timeout defaults to 150s so a test or check-now (up to 145s) is no longer cut off, and the schema refuses less, so an upgrade that pins a lower value fails until you raise it
     - kind: changed

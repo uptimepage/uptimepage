@@ -3,7 +3,7 @@
   "name": "dev.uptimepage/uptimepage",
   "title": "Uptimepage",
   "description": "Monitor uptime and incidents, run checks, and publish status updates from your Uptimepage org.",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "websiteUrl": "https://uptimepage.dev/mcp-server",
   "repository": {
     "url": "https://github.com/uptimepage/uptimepage",
