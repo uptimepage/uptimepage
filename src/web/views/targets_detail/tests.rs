@@ -100,6 +100,7 @@ fn sample_page() -> DetailPage {
         registered_domain: None,
         coverage: None,
         interval_s: 60,
+        slowed: None,
         enabled: true,
         plan_held: false,
         tags: vec!["prod".into()],
@@ -223,6 +224,39 @@ fn a_held_manual_card_says_a_change_waits_for_the_plan() {
         html.contains("Held and paused:</span> a change is kept and takes effect once your plan covers this monitor and you enable it"),
         "{html}"
     );
+}
+
+#[test]
+fn a_slowed_monitor_says_how_often_it_is_checked_and_since_when() {
+    use crate::domain::long_down::LONG_DOWN;
+    let mut p = sample_page();
+    let since = chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 10, 18, 10, 2, 0).unwrap();
+    p.slowed = Some(super::SlowedView {
+        since,
+        interval_s: LONG_DOWN.interval.as_secs(),
+        after: LONG_DOWN.after_words(),
+    });
+    let html = p.render().unwrap();
+    let slow = crate::duration::exact_duration(LONG_DOWN.interval.as_secs());
+    let own = crate::duration::exact_duration(60);
+    assert!(
+        html.contains(&format!("interval:{slow} (own: {own})")),
+        "{html}"
+    );
+    let notice = &html[html.find("data-slowed-notice").expect("notice")..];
+    assert!(notice.contains(&format!(
+        "Down from every region for {}, so checked every {slow} since",
+        LONG_DOWN.after_words()
+    )));
+    assert!(notice.contains("2026-10-18 10:02 UTC"));
+    assert!(notice.contains(&format!(
+        "goes back to {own} when its incident closes or you edit it"
+    )));
+
+    p.slowed = None;
+    let html = p.render().unwrap();
+    assert!(!html.contains("data-slowed-notice"));
+    assert!(html.contains(&format!("interval:{own}</span>")));
 }
 
 #[test]
@@ -1626,6 +1660,7 @@ fn sample_incidents_page(incidents: Vec<IncidentRow>, ongoing_count: usize) -> I
         kind: "HTTP",
         address: "https://example.com".into(),
         interval_s: 60,
+        slowed: None,
         enabled: true,
         tags: vec!["prod".into()],
         managed_by: None,

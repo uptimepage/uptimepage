@@ -131,7 +131,12 @@ pub struct Target {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(nullable = true)]
     pub plan_hold_at: Option<DateTime<Utc>>,
-    #[serde(skip)]
+    /// Set while the monitor has been down from every region long enough to be
+    /// checked at the slower long-down interval instead of `interval`.
+    /// Read-only; cleared when its incident closes, a maintenance window
+    /// covering it starts, it is edited, or a check someone runs passes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = true, read_only)]
     pub slowed_at: Option<DateTime<Utc>>,
 }
 
@@ -459,5 +464,22 @@ mod recovery_period_tests {
                 "{kind}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod slowed_at_tests {
+    use super::*;
+    use crate::scheduler::registry::tests::a_target;
+
+    #[test]
+    fn the_api_omits_slowed_at_until_it_is_set() {
+        let t = a_target(Duration::from_secs(60));
+        assert!(serde_json::to_value(&t).unwrap().get("slowed_at").is_none());
+        let slowed = Target {
+            slowed_at: Some(Utc::now()),
+            ..t
+        };
+        assert!(serde_json::to_value(&slowed).unwrap()["slowed_at"].is_string());
     }
 }

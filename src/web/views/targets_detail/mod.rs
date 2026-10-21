@@ -10,7 +10,8 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::app::AppState;
-use crate::domain::{CheckSpec, CheckStatus};
+use crate::domain::long_down::LONG_DOWN;
+use crate::domain::{CheckSpec, CheckStatus, Target};
 use crate::error::AppError;
 use crate::error::codes;
 use crate::request::{AuthedBrowser, CurrentOrg};
@@ -70,6 +71,26 @@ pub struct DetailParams {
     pub region: Option<String>,
 }
 
+/// A monitor checked at the long-down interval, for the header token and notice.
+pub struct SlowedView {
+    pub since: DateTime<Utc>,
+    pub interval_s: u64,
+    pub after: String,
+}
+
+impl SlowedView {
+    fn of(target: &Target) -> Option<Self> {
+        let since = target
+            .slowed_at
+            .filter(|_| target.enabled && target.plan_hold_at.is_none())?;
+        Some(Self {
+            since,
+            interval_s: LONG_DOWN.slowed_interval(target.interval).as_secs(),
+            after: LONG_DOWN.after_words(),
+        })
+    }
+}
+
 #[derive(Template, WebTemplate)]
 #[template(path = "targets/incidents.html")]
 pub struct IncidentsPage {
@@ -81,6 +102,7 @@ pub struct IncidentsPage {
     pub kind: &'static str,
     pub address: String,
     pub interval_s: u64,
+    pub slowed: Option<SlowedView>,
     pub enabled: bool,
     pub tags: Vec<String>,
     /// `terraform`/`api` chip for externally-managed monitors; `None` (UI) hides it.
@@ -125,6 +147,7 @@ pub struct DetailPage {
     pub kind: &'static str,
     pub address: String,
     pub interval_s: u64,
+    pub slowed: Option<SlowedView>,
     pub enabled: bool,
     /// Over the plan's caps, so not checked until the plan covers it again.
     pub plan_held: bool,
@@ -380,6 +403,7 @@ pub async fn index(
         .flatten();
     let last_status = badge_status(folded.unwrap_or(live.last_status), liveness.as_ref());
 
+    let slowed = SlowedView::of(&target);
     Ok(DetailPage {
         active_tab: "targets",
         subtab: SUBTAB_MONITOR,
@@ -389,6 +413,7 @@ pub async fn index(
         kind,
         address,
         interval_s: target.interval.as_secs(),
+        slowed,
         enabled: target.enabled,
         plan_held: target.plan_hold_at.is_some(),
         tags: target.tags,
@@ -706,6 +731,7 @@ pub async fn incidents(
         read_liveness(&state, org, &target).await.as_ref(),
     );
 
+    let slowed = SlowedView::of(&target);
     Ok(IncidentsPage {
         active_tab: "targets",
         subtab: SUBTAB_INCIDENTS,
@@ -715,6 +741,7 @@ pub async fn incidents(
         kind,
         address,
         interval_s: target.interval.as_secs(),
+        slowed,
         enabled: target.enabled,
         tags: target.tags,
         managed_by: target.write_source.managed_label(),

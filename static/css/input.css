@@ -4626,6 +4626,17 @@
         border: 1px solid var(--theme-state-bad-line-soft);
     }
 
+    /* Checked at the long-down interval. Neutral and dashed: it is us checking
+       less often, not the monitor misbehaving (flapping) or us not running it
+       (held). */
+    .slowed-chip {
+        @apply inline-flex cursor-help items-center rounded font-mono text-[9.5px] font-medium uppercase;
+        padding: 1px 5px;
+        color: var(--theme-text-muted);
+        letter-spacing: 0.05em;
+        border: 1px dashed var(--theme-text-quiet);
+    }
+
     .monitors-tag {
         @apply inline-flex items-center gap-1 rounded font-mono text-[10.5px] font-medium;
         padding: 1px 6px;

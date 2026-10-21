@@ -10,6 +10,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::app::AppState;
+use crate::domain::long_down::LONG_DOWN;
 use crate::domain::metrics::DashboardMetrics;
 use crate::domain::{
     CheckStatus, FAST_INTERVAL_PRESETS, OrgId, SLOW_INTERVAL_PRESETS, Target,
@@ -21,7 +22,7 @@ use crate::storage::TimeRange;
 use crate::storage::orgs::list_members;
 use crate::storage::traits::{TargetFilter, TargetSort};
 use crate::templates::filters;
-use crate::templates::format::humanize_duration;
+use crate::templates::format::{fmt_human, humanize_duration};
 use crate::web::avatar::{avatar_color, initials_from};
 use crate::web::error::WebResult;
 use crate::web::views::{PageSizeLink, PagerLink, channel_kind_label};
@@ -107,6 +108,8 @@ pub struct MonitorRow {
     /// rather than hidden: the row is still the customer's, and a monitor that
     /// silently vanished from the list would read as data loss.
     pub plan_held: bool,
+    /// Hover text of the `slowed` chip while checked at the long-down interval.
+    pub slowed_title: Option<String>,
 }
 
 pub struct OwnerView {
@@ -762,7 +765,22 @@ fn build_row(
         managed_by: t.write_source.managed_label(),
         flapping: flapping.contains(&t.id),
         plan_held: t.plan_hold_at.is_some(),
+        slowed_title: slowed_title(t),
     }
+}
+
+fn slowed_title(t: &Target) -> Option<String> {
+    let since = t
+        .slowed_at
+        .filter(|_| t.enabled && t.plan_hold_at.is_none())?;
+    Some(format!(
+        "Down from every region for {}, so checked every {} since {} instead of every {}. \
+         It goes back when its incident closes, you edit it, or a check you run passes.",
+        LONG_DOWN.after_words(),
+        exact_duration(LONG_DOWN.slowed_interval(t.interval).as_secs()),
+        fmt_human(since),
+        exact_duration(t.interval.as_secs()),
+    ))
 }
 
 fn bucket_by_group(rows: Vec<MonitorRow>) -> Vec<GroupBlock> {
@@ -935,6 +953,7 @@ mod tests {
             managed_by: None,
             flapping: false,
             plan_held: false,
+            slowed_title: None,
         }
     }
 
@@ -1185,6 +1204,42 @@ mod tests {
         let html = page.render().unwrap();
         assert!(html.contains("flapping-chip"));
         assert!(html.contains(">flapping<"));
+    }
+
+    #[test]
+    fn a_slowed_row_titles_its_chip_with_the_long_down_values() {
+        use crate::domain::long_down::LONG_DOWN;
+        let since = chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 10, 18, 10, 2, 0).unwrap();
+        let t = Target {
+            slowed_at: Some(since),
+            ..crate::scheduler::registry::tests::a_target(std::time::Duration::from_secs(60))
+        };
+        let paused = Target {
+            enabled: false,
+            ..t.clone()
+        };
+        assert!(
+            slowed_title(&paused).is_none(),
+            "a paused monitor is not being checked"
+        );
+        let title = slowed_title(&t).expect("slowed");
+        assert_eq!(
+            title,
+            format!(
+                "Down from every region for {}, so checked every {} since 2026-10-18 10:02 UTC \
+                 instead of every {}. It goes back when its incident closes, you edit it, \
+                 or a check you run passes.",
+                LONG_DOWN.after_words(),
+                exact_duration(LONG_DOWN.interval.as_secs()),
+                exact_duration(60),
+            )
+        );
+        assert!(
+            slowed_title(&crate::scheduler::registry::tests::a_target(
+                std::time::Duration::from_secs(60)
+            ))
+            .is_none()
+        );
     }
 
     #[test]

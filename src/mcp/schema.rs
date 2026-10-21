@@ -69,6 +69,12 @@ pub struct MonitorListItem {
     pub group_name: Option<String>,
     /// Check interval in seconds.
     pub interval_secs: u64,
+    /// RFC 3339 time it moved to the slower long-down interval because every
+    /// region has failed for days. `null` while it runs at `interval_secs`.
+    pub slowed_at: Option<String>,
+    /// How often it is checked: `interval_secs`, or the long-down interval
+    /// while `slowed_at` is set. Report this, not `interval_secs`.
+    pub checked_every_secs: u64,
     pub enabled: bool,
     /// RFC 3339 time of the most recent observation, minute-granular. `null`
     /// when the monitor has not reported in the window.
@@ -286,6 +292,14 @@ pub struct MonitorDetail {
     pub regions: Vec<String>,
     pub enabled: bool,
     pub interval_secs: u64,
+    /// RFC 3339 time it moved to the slower long-down interval because every
+    /// region has failed for days. `null` while it runs at `interval_secs`.
+    /// Cleared when its incident closes, a maintenance window covering it
+    /// starts, it is edited, or a `run_check_now` passes.
+    pub slowed_at: Option<String>,
+    /// How often it is checked: `interval_secs`, or the long-down interval
+    /// while `slowed_at` is set. Report this, not `interval_secs`.
+    pub checked_every_secs: u64,
     /// Channel ids bound to this monitor, for the read half of
     /// `update_monitor(channel_ids)`, which replaces the whole set. Empty means
     /// none is bound, which is not the same as alerting nobody: a channel whose

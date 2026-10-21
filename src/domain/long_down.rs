@@ -15,6 +15,11 @@ pub const LONG_DOWN: LongDown = LongDown {
 };
 
 impl LongDown {
+    /// The rate a slowed monitor runs at: never faster than its own.
+    pub fn slowed_interval(&self, own: Duration) -> Duration {
+        own.max(self.interval)
+    }
+
     pub fn after_words(&self) -> String {
         words(self.after)
     }

@@ -69,7 +69,7 @@ pub fn govern_with(plans: &PlanMap, targets: &mut [(OrgId, Target)]) {
             target.interval = governed_interval(target.interval, plan, target.check.kind());
         }
         if target.slowed_at.is_some() {
-            target.interval = target.interval.max(LONG_DOWN.interval);
+            target.interval = LONG_DOWN.slowed_interval(target.interval);
         }
     }
 }

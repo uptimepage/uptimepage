@@ -1,6 +1,6 @@
 {# Shared header for the Monitor and Incidents sub-tabs. Inputs (all
    fields exist on both `DetailPage` and `IncidentsPage`): id, name,
-   kind, address, interval_s, enabled, tags, managed_by, last_status,
+   kind, address, interval_s, slowed, enabled, tags, managed_by, last_status,
    last_at_iso, alerts_nobody. Kept in sync because both views populate the
    same shape from `target_store.get` + the most-recent check row. #}
 {% import "targets/partials/_status_badge.html" as sb %}
@@ -75,7 +75,7 @@
   {% endif %}
   <span class="cli-brackets ml-2" data-last-check
         data-last-at="{{ last_at_iso }}"
-        data-enabled="{{ enabled }}">interval:{{ interval_s|exact_dur }}</span>
+        data-enabled="{{ enabled }}">{% if let Some(s) = slowed %}interval:{{ s.interval_s|exact_dur }} (own: {{ interval_s|exact_dur }}){% else %}interval:{{ interval_s|exact_dur }}{% endif %}</span>
 </p>
 <div>
   {% for tag in tags %}
@@ -98,3 +98,11 @@
 </div>
 {% endif %}
 {% include "targets/partials/_status_banner.html" %}
+{% if let Some(s) = slowed %}
+<div class="alert-card alert-card--muted" role="note" data-slowed-notice>
+  Down from every region for {{ s.after }}, so checked every {{ s.interval_s|exact_dur }} since
+  <time datetime="{{ s.since|iso_ts }}" data-tz="exact">{{ s.since|human_ts }}</time>.
+  It goes back to {{ interval_s|exact_dur }} when its incident closes or you edit it. After a fix,
+  <span class="text-body">run check now</span>: a passing check puts it back at once.
+</div>
+{% endif %}

@@ -16,6 +16,7 @@ use rmcp::{RoleServer, tool, tool_router};
 use uuid::Uuid;
 
 use crate::auth::scope::Scope;
+use crate::domain::long_down::LONG_DOWN;
 use crate::domain::metrics::DashboardMetrics;
 use crate::domain::target::Target;
 use crate::domain::{AlertAction, WriteSource};
@@ -268,6 +269,8 @@ impl McpServer {
                     state: current_state(m, folded.get(&t.id).copied()).to_string(),
                     group_name: t.group_name.as_deref().map(sanitize_data),
                     interval_secs: t.interval.as_secs(),
+                    slowed_at: t.slowed_at.map(|at| at.to_rfc3339()),
+                    checked_every_secs: checked_every(&t).as_secs(),
                     enabled: t.enabled,
                     last_checked_at: m.and_then(|m| ts_to_rfc3339(m.last_minute_ts)),
                 }
@@ -373,6 +376,8 @@ impl McpServer {
             },
             enabled: target.enabled,
             interval_secs: target.interval.as_secs(),
+            slowed_at: target.slowed_at.map(|at| at.to_rfc3339()),
+            checked_every_secs: checked_every(&target).as_secs(),
             alert_channel_ids: target
                 .alerts
                 .iter()
@@ -1206,4 +1211,11 @@ pub(super) struct IncidentPage {
     pub(super) open_only: bool,
     pub(super) range: TimeRange,
     pub(super) target_id: Option<Uuid>,
+}
+
+fn checked_every(target: &Target) -> std::time::Duration {
+    match target.slowed_at {
+        Some(_) => LONG_DOWN.slowed_interval(target.interval),
+        None => target.interval,
+    }
 }
