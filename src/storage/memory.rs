@@ -1283,7 +1283,12 @@ impl TargetStore for InMemoryTargetStore {
         target_id: Uuid,
         _regions: &[String],
     ) -> Result<bool> {
-        Ok(self.targets.lock().iter().any(|t| t.id == target_id))
+        let mut guard = self.targets.lock();
+        let Some(t) = guard.iter_mut().find(|t| t.id == target_id) else {
+            return Ok(false);
+        };
+        t.updated_at = Utc::now();
+        Ok(true)
     }
 }
 

@@ -50,6 +50,16 @@ async fn seed_target(pool: &PgPool, org_id: Uuid) -> Uuid {
     id
 }
 
+async fn updated_at(pool: &PgPool, target: Uuid) -> chrono::DateTime<chrono::Utc> {
+    let (at,): (chrono::DateTime<chrono::Utc>,) =
+        sqlx::query_as("SELECT updated_at FROM targets WHERE id = $1")
+            .bind(target)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    at
+}
+
 async fn ensure_region(pool: &PgPool, id: &str) {
     sqlx::query("INSERT INTO regions (id, name) VALUES ($1, $1) ON CONFLICT DO NOTHING")
         .bind(id)
@@ -270,6 +280,46 @@ async fn set_and_read_target_regions_honours_enabled_and_org() {
             .await
             .unwrap()
     );
+}
+
+#[tokio::test]
+#[ignore]
+async fn set_target_regions_moves_updated_at_for_the_owner_only() {
+    use uptimepage::domain::OrgId;
+    use uptimepage::storage::{PostgresTargetStore, TargetStore};
+
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    ensure_region(&pool, "eu-touch").await;
+    let org = seed_org(&pool).await;
+    let other = seed_org(&pool).await;
+    let target = seed_target(&pool, org).await;
+    let store = PostgresTargetStore::from_pool(pool.clone(), None);
+    let (stale,): (chrono::DateTime<chrono::Utc>,) = sqlx::query_as(
+        "UPDATE targets SET updated_at = now() - interval '1 hour' \
+         WHERE id = $1 RETURNING updated_at",
+    )
+    .bind(target)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert!(
+        !store
+            .set_target_regions(OrgId(other), target, &["eu-touch".to_string()])
+            .await
+            .unwrap()
+    );
+    assert_eq!(updated_at(&pool, target).await, stale);
+
+    assert!(
+        store
+            .set_target_regions(OrgId(org), target, &["eu-touch".to_string()])
+            .await
+            .unwrap()
+    );
+    assert!(updated_at(&pool, target).await > stale + chrono::Duration::minutes(59));
 }
 
 #[tokio::test]

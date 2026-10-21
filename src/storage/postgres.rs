@@ -1689,14 +1689,14 @@ impl TargetStore for PostgresTargetStore {
         regions: &[String],
     ) -> Result<bool> {
         let mut tx = self.pool.begin().await.context("set regions: begin")?;
-        let owns: (bool,) =
-            sqlx::query_as("SELECT EXISTS(SELECT 1 FROM targets WHERE id = $1 AND org_id = $2)")
+        let touched =
+            sqlx::query("UPDATE targets SET updated_at = now() WHERE id = $1 AND org_id = $2")
                 .bind(target_id)
                 .bind(org.0)
-                .fetch_one(&mut *tx)
+                .execute(&mut *tx)
                 .await
-                .context("set regions: ownership")?;
-        if !owns.0 {
+                .context("set regions: touch")?;
+        if touched.rows_affected() == 0 {
             tx.rollback().await.ok();
             return Ok(false);
         }
