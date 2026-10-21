@@ -317,3 +317,15 @@ Every kind has a floor, and your plan sets its own on top. The effective minimum
 The API enforces only the floor, so Terraform and the REST API can go faster than the suggestion. They rarely should.
 
 Faster is not better. Interval decides how quickly you detect an outage, but the consecutive-failure setting decides how quickly you are told about one, and that is usually where the real tuning is. See [Notifications](notifications.md).
+
+### Long-down monitors
+
+A monitor that has failed every check from every region for 3 days, with its incident open for as long, is checked every 15 minutes instead of on its own interval. It is usually a test server that was switched off or a site that moved. Every region keeps checking it on its own schedule, so a recovery is still seen within 15 minutes.
+
+It goes back to its own interval when its incident closes or is resolved, or when a maintenance window covering it starts. Any change you make to the monitor (an edit, pause or resume, or setting its regions, channels or escalation policy) puts it back at once. So does a check you run from its page that passes, which is the quickest way back after a fix. A maintenance window or an edit in the last 3 days restarts the count.
+
+Only monitors whose interval is under 15 minutes are slowed, so TLS certificate and domain expiry monitors never are. Heartbeat and manual monitors are not probed, so neither are they.
+
+The outage itself is unchanged. The incident stays open, uptime counts the whole stretch as down, and your status pages say what they said before. When the server comes back on its own, the incident closes by its usual rules, which take longer at the slower rate because each region confirms with its own consecutive checks 15 minutes apart. Its recorded end can trail the real recovery by up to 15 minutes.
+
+The monitor's owner, or the organization's first owner when it names none, gets one email when it is slowed, listing every monitor slowed for them since they last heard, each with a link to its page where you can pause or delete it. The monitor page and the monitors list mark it while it lasts, and the API returns `slowed_at`. The stored interval never changes, so Terraform sees no drift.

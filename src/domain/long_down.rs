@@ -59,6 +59,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_docs_state_the_long_down_values() {
+        let docs = include_str!("../../docs/monitor-types.md");
+        let section = &docs[docs.find("### Long-down monitors").expect("section")..];
+        let after = LONG_DOWN.after_words();
+        let every = LONG_DOWN.interval_words();
+        for phrase in [
+            format!("from every region for {after}"),
+            format!("checked every {every} instead of on its own interval"),
+            format!("seen within {every}"),
+            format!("in the last {after}"),
+            format!("interval is under {every}"),
+            format!("consecutive checks {every} apart"),
+            format!("trail the real recovery by up to {every}"),
+        ] {
+            assert!(section.contains(&phrase), "docs must say: {phrase}");
+        }
+    }
+
+    #[test]
     fn durations_read_as_prose() {
         assert_eq!(words(Duration::from_secs(3 * 86_400)), "3 days");
         assert_eq!(words(Duration::from_secs(15 * 60)), "15 minutes");

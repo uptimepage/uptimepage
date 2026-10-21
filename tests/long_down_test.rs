@@ -265,7 +265,7 @@ fn mail_with(sender: Arc<dyn EmailSender>) -> OwnerMail {
             from_name: "Uptimepage".into(),
         },
         public_base_url: "https://app.test".into(),
-        docs_url: Some("https://docs.test/monitor-types#intervals".into()),
+        docs_url: Some("https://docs.test/monitor-types#long-down-monitors".into()),
     }
 }
 

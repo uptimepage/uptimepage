@@ -810,7 +810,7 @@ async fn main() -> Result<()> {
     let long_down_slow_handle: JoinHandle<()> = {
         let results = results_store.clone();
         let quotas = Arc::clone(&quotas);
-        let mail = owner_mail("/monitor-types#intervals");
+        let mail = owner_mail("/monitor-types#long-down-monitors");
         tokio::spawn(run_purge_loop_from_boot(
             pg_pool_for_stores.clone(),
             root.clone(),
