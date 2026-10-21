@@ -1,10 +1,12 @@
-//! Plan ceilings applied to handed-out work. Never written back to the row.
+//! What sets the rate of handed-out work: plan ceilings and long-down slowing.
+//! Never written back to the row.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 
+use crate::domain::long_down::LONG_DOWN;
 use crate::domain::quota::{PlanMap, RegionCaps};
 use crate::domain::{OrgId, Plan, Target, min_interval_secs_for_kind};
 use crate::error::Result;
@@ -66,6 +68,9 @@ pub fn govern_with(plans: &PlanMap, targets: &mut [(OrgId, Target)]) {
         if let Some(Some(plan)) = plans.get(org) {
             target.interval = governed_interval(target.interval, plan, target.check.kind());
         }
+        if target.slowed_at.is_some() {
+            target.interval = target.interval.max(LONG_DOWN.interval);
+        }
     }
 }
 
@@ -103,10 +108,10 @@ pub fn plan_digest(plans: &PlanMap) -> String {
     crate::security::sha256_hex(&parts.join(","))
 }
 
-/// Applies the plan floor to the incident writer's walk over enabled targets.
+/// Applies [`govern_with`] to the incident writer's walk over enabled targets.
 /// It must see the same interval the scheduler runs: the writer sizes its
 /// lookback window from it, and a window sized to the stored rate cannot hold
-/// enough results from a monitor the plan has slowed down.
+/// enough results from a monitor the plan or a long outage has slowed down.
 pub struct PlanGoverned<S: ?Sized> {
     inner: Arc<S>,
     quotas: Arc<QuotaService>,
@@ -133,8 +138,82 @@ impl<S: EnabledTargetStream + ?Sized> EnabledTargetStream for PlanGoverned<S> {
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
+
     use super::*;
+    use crate::domain::{CheckSpec, HeartbeatCheck};
     use crate::quotas::service::unlimited_plan;
+    use crate::scheduler::registry::tests::a_target;
+
+    const ORG: OrgId = OrgId(uuid::Uuid::nil());
+
+    fn handed_out(plan: Option<Plan>, target: Target) -> Duration {
+        let plans = PlanMap::from([(ORG, plan.map(Arc::new))]);
+        let mut targets = [(ORG, target)];
+        govern_with(&plans, &mut targets);
+        targets[0].1.interval
+    }
+
+    fn slowed(interval_secs: u64) -> Target {
+        Target {
+            slowed_at: Some(Utc::now()),
+            ..a_target(Duration::from_secs(interval_secs))
+        }
+    }
+
+    #[test]
+    fn a_slowed_monitor_is_handed_out_at_the_long_down_interval() {
+        assert_eq!(handed_out(None, slowed(60)), LONG_DOWN.interval);
+        assert_eq!(
+            handed_out(Some(unlimited_plan()), slowed(60)),
+            LONG_DOWN.interval
+        );
+    }
+
+    #[test]
+    fn a_slowed_monitor_already_at_or_past_the_long_down_interval_keeps_its_own() {
+        let at = LONG_DOWN.interval.as_secs();
+        assert_eq!(handed_out(None, slowed(at)), LONG_DOWN.interval);
+        assert_eq!(
+            handed_out(None, slowed(at * 4)),
+            Duration::from_secs(at * 4)
+        );
+    }
+
+    #[test]
+    fn a_monitor_not_slowed_runs_at_its_governed_interval() {
+        let got = handed_out(
+            Some(plan_with_floor(120)),
+            a_target(Duration::from_secs(60)),
+        );
+        assert_eq!(got, Duration::from_secs(120));
+    }
+
+    #[test]
+    fn the_plan_floor_and_slowing_compose() {
+        let floor = LONG_DOWN.interval.as_secs() as i32 * 2;
+        assert_eq!(
+            handed_out(Some(plan_with_floor(floor)), slowed(60)),
+            Duration::from_secs(floor as u64)
+        );
+        assert_eq!(
+            handed_out(Some(plan_with_floor(120)), slowed(60)),
+            LONG_DOWN.interval
+        );
+    }
+
+    #[test]
+    fn a_slowed_passive_monitor_is_left_alone() {
+        let heartbeat = Target {
+            check: CheckSpec::Heartbeat(HeartbeatCheck {
+                period: Duration::from_secs(60),
+                grace: Duration::from_secs(0),
+                max_runtime: None,
+            }),
+            ..slowed(60)
+        };
+        assert_eq!(handed_out(None, heartbeat), Duration::from_secs(60));
+    }
 
     fn plan_with_floor(secs: i32) -> Plan {
         Plan {

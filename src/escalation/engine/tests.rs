@@ -92,6 +92,7 @@ pub(super) fn target_with_channel_recovery(channel_id: Uuid, notify_recovery: bo
         created_at: Utc::now(),
         updated_at: Utc::now(),
         plan_hold_at: None,
+        slowed_at: None,
     }
 }
 

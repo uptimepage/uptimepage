@@ -1,4 +1,4 @@
-//! Configured-monitor, active-user and notification-channel counts from
+//! Configured-monitor, long-down, active-user and notification-channel counts from
 //! Postgres, refreshed on a slow cadence and scrape-cached so request load
 //! never reaches Postgres.
 
@@ -84,6 +84,17 @@ async fn sweep(pg: &PgPool) -> Result<()> {
     .await
     .context("count orgs with a notification channel")?;
     metrics::gauge!(metric_names::ORGS_WITH_CHANNELS).set(orgs_with_channels as f64);
+
+    let long_down: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM targets t \
+             JOIN organizations o ON o.id = t.org_id AND o.deleted_at IS NULL \
+             WHERE t.slowed_at IS NOT NULL \
+             /* SAFE: operator-wide inventory gauge, counts every live org by design */",
+    )
+    .fetch_one(pg)
+    .await
+    .context("count long-down monitors")?;
+    metrics::gauge!(metric_names::LONG_DOWN_MONITORS).set(long_down as f64);
 
     Ok(())
 }

@@ -66,6 +66,7 @@ mod latency_buckets_test;
 mod linked_apps_test;
 mod load_test_public;
 mod logging_audit_test;
+mod long_down_test;
 mod maintenance_audit_test;
 mod maintenance_history_test;
 mod maintenance_ui_test;

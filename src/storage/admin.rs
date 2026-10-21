@@ -473,8 +473,8 @@ impl AdminRepo {
     }
 
     /// Cheap config-pull validator for one region: a digest over the assigned
-    /// targets' ids and a hash of each `check_spec`, plus count + max
-    /// `updated_at`. The per-row `check_spec` hash means the etag changes on any
+    /// targets' ids, a hash of each `check_spec` and its `slowed_at`, plus
+    /// count + max `updated_at`. The per-row `check_spec` hash means the etag changes on any
     /// content rewrite — including a credential re-encrypt (KEK rotation) that
     /// leaves `updated_at` untouched — so an agent never serves stale config off
     /// a `304`. Still no decrypt: it hashes the stored (encrypted) ciphertext.
@@ -495,7 +495,8 @@ impl AdminRepo {
         // edit (which never touches targets.updated_at) still bumps the etag.
         let sql = format!(
             "SELECT count(*)::bigint, max(t.updated_at), \
-                        md5(coalesce(string_agg(t.id::text || ':' || md5(t.check_spec::text), \
+                        md5(coalesce(string_agg(t.id::text || ':' || md5(t.check_spec::text) \
+                                                || ':' || coalesce(t.slowed_at::text, ''), \
                                                 ',' ORDER BY t.id), '')), \
                         (SELECT md5(coalesce(string_agg( \
                                  v.id::text || ':' || extract(epoch from v.updated_at)::text, \

@@ -267,6 +267,7 @@ fn headers_render_as_row_inputs() {
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         plan_hold_at: None,
+        slowed_at: None,
     };
     let form = form_from_target(t).unwrap();
     assert_eq!(form.http.headers.len(), 2);
@@ -604,6 +605,7 @@ fn edit_form_renders_target_with_sealed_auth() {
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         plan_hold_at: None,
+        slowed_at: None,
     };
     let form = form_from_target(t).unwrap();
     assert_eq!(form.submit_method, "PATCH");
@@ -643,6 +645,7 @@ fn edit_form_maps_tcp_target_fields() {
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         plan_hold_at: None,
+        slowed_at: None,
     };
     let form = form_from_target(t).unwrap();
     assert_eq!(form.check_type, "tcp");
@@ -686,6 +689,7 @@ fn edit_form_maps_tls_cert_target_fields() {
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         plan_hold_at: None,
+        slowed_at: None,
     };
     let form = form_from_target(t).unwrap();
     assert_eq!(form.check_type, "tls_cert");
@@ -736,6 +740,7 @@ fn edit_form_maps_domain_expiry_target_fields() {
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         plan_hold_at: None,
+        slowed_at: None,
     };
     let form = form_from_target(t).unwrap();
     assert_eq!(form.check_type, "domain_expiry");
@@ -772,6 +777,7 @@ fn edit_form_maps_heartbeat_target_fields() {
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         plan_hold_at: None,
+        slowed_at: None,
     };
     let form = form_from_target(t).unwrap();
     assert_eq!(form.check_type, "heartbeat");
@@ -814,6 +820,7 @@ fn dns_target(check: crate::domain::DnsCheck) -> Target {
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         plan_hold_at: None,
+        slowed_at: None,
     }
 }
 

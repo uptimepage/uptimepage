@@ -803,6 +803,27 @@ async fn main() -> Result<()> {
         ))
     };
 
+    let long_down_slow_handle: JoinHandle<()> = {
+        let results = results_store.clone();
+        let quotas = Arc::clone(&quotas);
+        tokio::spawn(run_purge_loop_from_boot(
+            pg_pool_for_stores.clone(),
+            root.clone(),
+            Duration::from_secs(60 * 60),
+            "long_down_slow",
+            async move |pool: &sqlx::PgPool| {
+                uptimepage::jobs::long_down::slow_pass(pool, results.as_ref(), &quotas).await
+            },
+        ))
+    };
+    let long_down_restore_handle: JoinHandle<()> = tokio::spawn(run_purge_loop_from_boot(
+        pg_pool_for_stores.clone(),
+        root.clone(),
+        Duration::from_secs(60),
+        "long_down_restore",
+        uptimepage::jobs::long_down::restore_pass,
+    ));
+
     // Magic-link sweep only runs when the method is wired into the router.
     // When disabled the routes 404, no rows are ever inserted, and the ticker
     // would be dead weight.
@@ -1100,6 +1121,8 @@ async fn main() -> Result<()> {
             subscriber_delivery_cleanup_handle,
             heartbeat_prev_token_cleanup_handle,
             heartbeat_nudge_handle,
+            long_down_slow_handle,
+            long_down_restore_handle,
             plan_holds_handle,
         );
         if let Some(h) = magic_link_cleanup_handle {

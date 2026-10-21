@@ -97,7 +97,10 @@ macro_rules! target_columns {
             ".updated_at",
             ", ",
             $t,
-            ".plan_hold_at"
+            ".plan_hold_at",
+            ", ",
+            $t,
+            ".slowed_at"
         )
     };
 }
@@ -285,6 +288,7 @@ pub(crate) struct TargetRow {
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) updated_at: DateTime<Utc>,
     pub(crate) plan_hold_at: Option<DateTime<Utc>>,
+    pub(crate) slowed_at: Option<DateTime<Utc>>,
 }
 
 /// Cap on named monitors in one audit row's metadata: past this the count
@@ -353,6 +357,7 @@ pub(crate) fn decode_target_row(row: TargetRow, cipher: Option<&Cipher>) -> Resu
         created_at: row.created_at,
         updated_at: row.updated_at,
         plan_hold_at: row.plan_hold_at,
+        slowed_at: row.slowed_at,
     })
 }
 

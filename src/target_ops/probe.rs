@@ -1,8 +1,9 @@
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::ad_hoc_dispatch::{Awaited, DeliveredResult, RegionState};
 use crate::domain::agent_wire::{DispatchKind, DispatchedCheck};
-use crate::domain::{CheckResult, CheckSpec, OrgId, Target};
+use crate::domain::{CheckResult, CheckSpec, CheckStatus, OrgId, Target};
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::targets::flow_capable_set;
@@ -47,7 +48,28 @@ impl TargetOps<'_> {
                 target.check.clone(),
             )
             .await?;
+        if let Some(seen) = target.slowed_at
+            && matches!(view.result.status, CheckStatus::Up | CheckStatus::Degraded)
+        {
+            self.restore_long_down(org, target.id, seen).await;
+        }
         Ok(view.result)
+    }
+
+    async fn restore_long_down(&self, org: OrgId, target_id: Uuid, seen: DateTime<Utc>) {
+        let Some(pool) = self.db else {
+            return;
+        };
+        match crate::storage::long_down::clear_checked(pool, org, target_id, seen).await {
+            Ok(true) => {
+                metrics::counter!(crate::metric_names::LONG_DOWN_RESTORED, "reason" => "check_now")
+                    .increment(1);
+            }
+            Ok(false) => {}
+            Err(err) => {
+                tracing::warn!(%target_id, error = %err, "long-down restore after check now failed")
+            }
+        }
     }
 
     /// Dispatch a target's first check in every assigned region so its status

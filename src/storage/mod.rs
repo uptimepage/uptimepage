@@ -19,6 +19,7 @@ pub mod incident_ops;
 pub mod incidents;
 pub mod linked_apps;
 pub mod locks;
+pub mod long_down;
 pub mod maintenance;
 pub mod manual;
 pub mod memory;

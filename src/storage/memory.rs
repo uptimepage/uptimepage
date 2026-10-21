@@ -17,9 +17,9 @@ use crate::domain::{
 };
 use crate::error::Result;
 use crate::storage::traits::{
-    ChannelEdit, ClampedRange, FailingServer, IntervalOutcome, RegionFlaps, RegionLatestStatus,
-    RegionOption, ResultSink, ResultsStore, TagAddOutcome, TargetFilter, TargetStore, TimeRange,
-    UptimeStats, rollup_bucket_secs,
+    ChannelEdit, ClampedRange, FailingServer, IntervalOutcome, PassMarks, RegionFlaps,
+    RegionLatestStatus, RegionOption, ResultSink, ResultsStore, TagAddOutcome, TargetFilter,
+    TargetStore, TimeRange, UptimeStats, rollup_bucket_secs,
 };
 
 #[derive(Default)]
@@ -275,6 +275,39 @@ impl ResultsStore for InMemorySink {
                 .or_insert(r.timestamp);
         }
         Ok(latest)
+    }
+
+    async fn pass_marks(
+        &self,
+        targets: &[(OrgId, Uuid)],
+        since: DateTime<Utc>,
+    ) -> Result<HashMap<Uuid, PassMarks>> {
+        use chrono::DurationRound;
+        let mut marks: HashMap<Uuid, PassMarks> = HashMap::new();
+        for r in self.results.lock().iter() {
+            if !targets.contains(&(OrgId(r.org_id), r.target_id)) {
+                continue;
+            }
+            let Ok(hour) = r.timestamp.duration_trunc(chrono::TimeDelta::hours(1)) else {
+                continue;
+            };
+            if hour < since {
+                continue;
+            }
+            let passed =
+                matches!(r.status, CheckStatus::Up | CheckStatus::Degraded).then_some(hour);
+            marks
+                .entry(r.target_id)
+                .and_modify(|m| {
+                    m.last_checked = m.last_checked.max(hour);
+                    m.last_passed = m.last_passed.max(passed);
+                })
+                .or_insert(PassMarks {
+                    last_checked: hour,
+                    last_passed: passed,
+                });
+        }
+        Ok(marks)
     }
 
     async fn latest_status_by_region(
@@ -730,6 +763,7 @@ impl InMemoryTargetStore {
             created_at: now,
             updated_at: now,
             plan_hold_at: None,
+            slowed_at: None,
         }
     }
 }

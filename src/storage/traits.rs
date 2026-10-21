@@ -435,6 +435,14 @@ pub struct FailingServer {
     pub checks: u64,
 }
 
+/// A monitor's newest hour buckets across its regions: the newest holding any
+/// check, and the newest holding an up or degraded one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PassMarks {
+    pub last_checked: DateTime<Utc>,
+    pub last_passed: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RegionLatestStatus {
     pub target_id: Uuid,
@@ -627,6 +635,14 @@ pub trait ResultsStore: Send + Sync {
         target_ids: &[Uuid],
         since: DateTime<Utc>,
     ) -> Result<HashMap<Uuid, DateTime<Utc>>>;
+    /// [`PassMarks`] per monitor over the hour buckets starting at or after
+    /// `since`, from the hour rollup. Filtered to the `(org, target)` pairs;
+    /// a monitor with no check in those buckets is absent.
+    async fn pass_marks(
+        &self,
+        targets: &[(OrgId, Uuid)],
+        since: DateTime<Utc>,
+    ) -> Result<HashMap<Uuid, PassMarks>>;
     /// Each region's latest verdict, to fold against the monitor's policy. A
     /// region with no samples in `range` is absent, and so out of the quorum
     /// denominator.

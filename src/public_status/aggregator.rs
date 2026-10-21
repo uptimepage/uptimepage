@@ -33,7 +33,7 @@ use crate::error::Result;
 use crate::i18n::Tr;
 use crate::security::Cipher;
 use crate::storage::capability_token;
-use crate::storage::maintenance::started_sql;
+use crate::storage::maintenance::{started_sql, window_spans_sql};
 use crate::storage::status_pages::COMPONENT_ORDER;
 
 use super::cache::{HistoryMarker, MarkerKind, PageSettings};
@@ -689,26 +689,14 @@ impl OrgAggregator {
         }
         let since = now - ChronoDuration::days(span_days as i64);
         let rows = sqlx::query_as::<_, WindowSpanRow>(&format!(
-            r#"SELECT mw.id, mw.title, held.target_id,
-                      GREATEST(mw.starts_at, held.joined_at) AS starts_at,
-                      LEAST(mw.ends_at, held.left_at) AS ends_at, held.departed,
-                      mw.starts_at AS window_starts_at, mw.ends_at AS window_ends_at
-               FROM maintenance_windows mw
-               JOIN (SELECT mwc.maintenance_id, mwc.target_id, mwc.joined_at,
-                            'infinity'::timestamptz AS left_at, false AS departed
-                     FROM maintenance_window_components mwc
-                     WHERE mwc.org_id = $1 AND mwc.target_id = ANY($2)
-                     UNION ALL
-                     SELECT d.maintenance_id, d.target_id, d.joined_at, d.left_at, true
-                     FROM maintenance_window_departures d
-                     WHERE d.org_id = $1 AND d.target_id = ANY($2)) held
-                 ON held.maintenance_id = mw.id
-               WHERE mw.org_id = $1
-                 AND {started}
-                 AND LEAST(mw.ends_at, held.left_at) >= $4
-                 AND GREATEST(mw.starts_at, held.joined_at) < LEAST(mw.ends_at, held.left_at)
+            r#"SELECT s.id, s.title, s.target_id, s.span_start AS starts_at,
+                      s.span_end AS ends_at, s.departed,
+                      s.starts_at AS window_starts_at, s.ends_at AS window_ends_at
+               FROM ({spans}) s
+               WHERE {started} AND s.span_end >= $4
                ORDER BY 4"#,
-            started = started_sql("mw.", "$3"),
+            spans = window_spans_sql("$1", "$2"),
+            started = started_sql("s.", "$3"),
         ))
         .bind(org.0)
         .bind(component_ids)

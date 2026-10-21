@@ -1761,6 +1761,7 @@ fn make_public_target(name: &str) -> Target {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         plan_hold_at: None,
+        slowed_at: None,
     }
 }
 
@@ -1854,6 +1855,82 @@ fn lookback_reaches_back_over_the_recovery_period() {
         ChronoDuration::seconds(2 * (2 * 60 + 900)),
         "the start of a recovery that has held must still be in view"
     );
+}
+
+#[test]
+fn a_slowed_monitor_is_judged_over_the_long_down_interval() {
+    use crate::domain::long_down::LONG_DOWN;
+    let w = writer_with_lookback(
+        Arc::new(InMemoryTargetStore::new()),
+        Arc::new(InMemorySink::new()),
+        Arc::new(InMemoryIncidentStore::new()),
+        ChronoDuration::minutes(10),
+    );
+    let mut target = make_public_target("slowed");
+    target.interval = StdDuration::from_secs(60);
+    target.alert_confirmations = 2;
+    target.recovery_period_secs = 180;
+    target.slowed_at = Some(Utc::now());
+    let mut handed = [(OrgId(Uuid::nil()), target)];
+    crate::quotas::effective::govern_with(&Default::default(), &mut handed);
+    let slow = LONG_DOWN.interval.as_secs() as i64;
+    assert_eq!(
+        w.lookback_for(&handed[0].1),
+        ChronoDuration::seconds(2 * (2 * slow + 180))
+    );
+}
+
+#[tokio::test]
+async fn a_window_left_empty_by_a_restore_decides_nothing_on_an_open_incident() {
+    let mut target = make_public_target("api");
+    target.interval = StdDuration::from_secs(15 * 60);
+    target.alert_confirmations = 2;
+    let now = Utc::now();
+    let sink = Arc::new(InMemorySink::new());
+    let incidents = Arc::new(InMemoryIncidentStore::new());
+    seed_results(
+        &sink,
+        vec![
+            result(
+                target.id,
+                now - ChronoDuration::minutes(30),
+                CheckStatus::Down,
+            ),
+            result(
+                target.id,
+                now - ChronoDuration::minutes(15),
+                CheckStatus::Down,
+            ),
+        ],
+    )
+    .await;
+    let slowed = Arc::new(InMemoryTargetStore::from_vec(vec![target.clone()]));
+    writer_with_lookback(
+        slowed,
+        sink.clone(),
+        incidents.clone(),
+        ChronoDuration::minutes(10),
+    )
+    .tick_once()
+    .await
+    .expect("tick opens");
+    assert_eq!(incidents.insert_count(), 1);
+
+    target.interval = StdDuration::from_secs(60);
+    let restored = Arc::new(InMemoryTargetStore::from_vec(vec![target.clone()]));
+    writer_with_lookback(
+        restored,
+        sink,
+        incidents.clone(),
+        ChronoDuration::minutes(10),
+    )
+    .tick_once()
+    .await
+    .expect("tick");
+    assert_eq!(incidents.insert_count(), 1);
+    assert_eq!(incidents.close_count(), 0);
+    assert_eq!(incidents.widen_count(), 0);
+    assert!(incidents.all_for(target.id)[0].ended_at.is_none());
 }
 
 #[tokio::test]

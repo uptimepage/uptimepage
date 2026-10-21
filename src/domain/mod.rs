@@ -15,6 +15,7 @@ pub mod incident;
 pub mod interpolate;
 pub mod linked_app;
 pub mod locale;
+pub mod long_down;
 pub mod mailbox;
 pub mod maintenance;
 pub mod manual;

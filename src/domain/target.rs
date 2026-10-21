@@ -131,6 +131,8 @@ pub struct Target {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(nullable = true)]
     pub plan_hold_at: Option<DateTime<Utc>>,
+    #[serde(skip)]
+    pub slowed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

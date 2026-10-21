@@ -80,6 +80,9 @@ these names verbatim.
 | `uptimepage_result_queue_depth` | gauge | depth of the result channel buffer (sampled). Present on both the agent (egress to the control plane) and the brain (ingest to storage); separate them by `role` |
 | `uptimepage_circuit_breakers_open` | gauge | currently-open breakers (sampled). Probe-side — read the `role=probe` series |
 | `uptimepage_monitors_unmonitored` | gauge | monitors whose covering probes have all gone silent (no fresh results), from the silence sweep. Distinct from down: these have no data at all |
+| `uptimepage_long_down_monitors` | gauge | monitors down from every region long enough to be checked at the slower long-down interval, sampled from Postgres every minute |
+| `uptimepage_long_down_slowed_total` | counter | monitors moved to the slower long-down interval by the hourly slow pass |
+| `uptimepage_long_down_restored_total{reason}` | counter | long-down monitors put back on their own interval: `incident` (its incident closed or was resolved), `maintenance` (a window covering it started), `check_now` (a check someone ran passed). An edit clears it in Postgres and is not counted |
 | `uptimepage_agent_up{region,agent}` | gauge | 1 if a regional agent checked in within the staleness window, else 0. Emitted by the control plane from `agents.last_seen_at`, so it covers remote agents that Alloy can't scrape. Per-agent series can freeze on agent removal, so alerts use `uptimepage_agents_enabled_down` |
 | `uptimepage_agent_last_seen_age_seconds{region,agent}` | gauge | seconds since a regional agent last checked in. Climbs unbounded when an agent goes dark |
 | `uptimepage_agents_enabled_down` | gauge | count of enabled regional agents currently past the staleness window. Recomputed every sweep so it never latches. The dead-man signal for a probe region going dark |

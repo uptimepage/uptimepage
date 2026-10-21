@@ -63,6 +63,10 @@ fn prime_event_counters() {
     for reason in ["signature", "malformed", "failed", "stalled"] {
         metrics::counter!(metric_names::BILLING_WEBHOOK_REJECTED, "reason" => reason).increment(0);
     }
+    metrics::counter!(metric_names::LONG_DOWN_SLOWED).increment(0);
+    for reason in ["incident", "maintenance", "check_now"] {
+        metrics::counter!(metric_names::LONG_DOWN_RESTORED, "reason" => reason).increment(0);
+    }
     metrics::counter!(metric_names::BILLING_PROVIDER_CANCEL_FAILED).increment(0);
     metrics::counter!(metric_names::BILLING_PROVIDER_DATE_FAILED).increment(0);
     for reason in [
@@ -260,6 +264,18 @@ fn register_descriptions() {
     describe_gauge!(
         "uptimepage_monitors_unmonitored",
         "Monitors whose covering probes have all gone silent (no fresh results), sampled by the silence sweep. Distinct from down: these have no data at all"
+    );
+    describe_gauge!(
+        "uptimepage_long_down_monitors",
+        "Monitors down from every region long enough to be checked at the slower long-down interval, sampled from Postgres every minute"
+    );
+    describe_counter!(
+        "uptimepage_long_down_slowed_total",
+        "Monitors moved to the slower long-down interval"
+    );
+    describe_counter!(
+        "uptimepage_long_down_restored_total",
+        "Long-down monitors put back on their own interval by the restore pass or a check someone ran, labelled by reason (incident | maintenance | check_now). An edit clears it in Postgres and is not counted"
     );
     describe_counter!(
         "uptimepage_telegram_send_deferred_total",

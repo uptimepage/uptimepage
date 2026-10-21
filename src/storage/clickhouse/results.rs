@@ -21,8 +21,8 @@ use crate::domain::{
 };
 use crate::error::Result;
 use crate::storage::traits::{
-    ClampedRange, FailingServer, FlowRunView, RegionFlaps, RegionLatestStatus, ResultsStore,
-    TimeRange, UptimeStats, rollup_bucket_secs,
+    ClampedRange, FailingServer, FlowRunView, PassMarks, RegionFlaps, RegionLatestStatus,
+    ResultsStore, TimeRange, UptimeStats, rollup_bucket_secs,
 };
 
 use super::{
@@ -358,6 +358,21 @@ fn row_to_result(row: OwnedResultRow, org_id: Uuid) -> CheckResult {
         error: row.error,
         details: row.details.as_deref().and_then(CheckDetails::parse),
     }
+}
+
+/// About 80 bytes a pair, so a query stays far below ClickHouse's
+/// `max_query_size` (256 KiB by default) however many targets are asked about.
+const PAIRS_PER_QUERY: usize = 500;
+
+/// `(org_id, target_id)` tuples for an IN clause. Typed ids, so the literal
+/// list is injection-safe; it hits the sort-key prefix so CH prunes by org
+/// instead of scanning every tenant's granules.
+fn pair_list(targets: &[(OrgId, Uuid)]) -> String {
+    targets
+        .iter()
+        .map(|(o, t)| format!("('{}','{}')", o.0, t))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 #[async_trait]
@@ -763,14 +778,7 @@ impl ResultsStore for ClickhouseResultsStore {
             return Ok(Vec::new());
         }
         let limit = per_target_limit.min(10_000) as u64;
-        // Pair IN over typed, unique ids (injection-safe): hits the
-        // (org_id, target_id, ...) sort-key prefix so CH prunes by org instead
-        // of scanning every tenant's granules.
-        let pair_list = targets
-            .iter()
-            .map(|(o, t)| format!("('{}','{}')", o.0, t))
-            .collect::<Vec<_>>()
-            .join(",");
+        let pair_list = pair_list(targets);
         let rows: Vec<MultiResultRow> = self
             .client
             .query(&format!(
@@ -1052,6 +1060,51 @@ impl ResultsStore for ClickhouseResultsStore {
             .into_iter()
             .map(|r| (r.target_id, from_unix_secs(r.last_ts)))
             .collect())
+    }
+
+    async fn pass_marks(
+        &self,
+        targets: &[(OrgId, Uuid)],
+        since: DateTime<Utc>,
+    ) -> Result<HashMap<Uuid, PassMarks>> {
+        #[derive(Row, Deserialize)]
+        struct MarksRow {
+            #[serde(with = "clickhouse::serde::uuid")]
+            target_id: Uuid,
+            last_checked: u32,
+            last_passed: u32,
+        }
+        let mut marks = HashMap::with_capacity(targets.len());
+        for chunk in targets.chunks(PAIRS_PER_QUERY) {
+            let pair_list = pair_list(chunk);
+            let rows: Vec<MarksRow> = self
+                .client
+                .query(&format!(
+                    "SELECT target_id, toUInt32(max(hour)) AS last_checked, \
+                            toUInt32(maxIf(hour, passed > 0)) AS last_passed \
+                     FROM ( \
+                        SELECT target_id, hour, \
+                               countIfMerge(up_checks) + countIfMerge(degraded_checks) AS passed \
+                        FROM check_results_1h \
+                        WHERE (org_id, target_id) IN ({pair_list}) \
+                          AND hour >= fromUnixTimestamp(?) \
+                        GROUP BY target_id, hour \
+                     ) \
+                     GROUP BY target_id"
+                ))
+                .bind(since.timestamp())
+                .fetch_all::<MarksRow>()
+                .await
+                .context("clickhouse pass_marks")?;
+            marks.extend(rows.into_iter().map(|r| {
+                let mark = PassMarks {
+                    last_checked: from_unix_secs(r.last_checked),
+                    last_passed: (r.last_passed > 0).then(|| from_unix_secs(r.last_passed)),
+                };
+                (r.target_id, mark)
+            }));
+        }
+        Ok(marks)
     }
 
     async fn latest_status_by_region(

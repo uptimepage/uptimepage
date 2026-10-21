@@ -694,6 +694,35 @@ pub(crate) fn started_sql(alias: &str, now: &str) -> String {
     format!("{alias}deleted_at IS NULL AND {alias}starts_at <= {now}")
 }
 
+/// Every stretch a monitor in the array `targets` spent in one of `org`'s
+/// windows, as a relation of the window's `id`, `title`, `starts_at`,
+/// `ends_at` and `deleted_at`, plus `target_id`, `departed`, and the stretch's
+/// own `span_start` and `span_end`. A stretch runs from when the monitor joined
+/// or the window started until the window ended, was cancelled or dropped it.
+/// Empty stretches are left out, so a window cancelled or left before its
+/// start never covered anything.
+pub(crate) fn window_spans_sql(org: &str, targets: &str) -> String {
+    format!(
+        "SELECT mw.id, mw.title, mw.starts_at, mw.ends_at, mw.deleted_at,
+                held.target_id, held.departed,
+                GREATEST(mw.starts_at, held.joined_at) AS span_start,
+                LEAST(mw.ends_at, held.left_at, mw.deleted_at) AS span_end
+         FROM maintenance_windows mw
+         JOIN (SELECT mwc.maintenance_id, mwc.target_id, mwc.joined_at,
+                      'infinity'::timestamptz AS left_at, false AS departed
+               FROM maintenance_window_components mwc
+               WHERE mwc.org_id = {org} AND mwc.target_id = ANY({targets})
+               UNION ALL
+               SELECT d.maintenance_id, d.target_id, d.joined_at, d.left_at, true
+               FROM maintenance_window_departures d
+               WHERE d.org_id = {org} AND d.target_id = ANY({targets})) held
+           ON held.maintenance_id = mw.id
+         WHERE mw.org_id = {org}
+           AND GREATEST(mw.starts_at, held.joined_at)
+             < LEAST(mw.ends_at, held.left_at, mw.deleted_at)"
+    )
+}
+
 /// Pins the started windows each monitor a page is losing is in, or was in
 /// before the window dropped it, to that page, so they stay in its history. `leaving` names a relation with
 /// `status_page_id`, `target_id` and the `name` the page gave the monitor;

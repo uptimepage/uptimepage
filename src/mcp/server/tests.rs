@@ -663,6 +663,7 @@ fn stored_monitor() -> Target {
         updated_at: Utc::now(),
         write_source: WriteSource::Ui,
         plan_hold_at: None,
+        slowed_at: None,
     }
 }
 

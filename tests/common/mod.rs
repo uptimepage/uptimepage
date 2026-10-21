@@ -1321,6 +1321,7 @@ pub fn http_target(addr: SocketAddr, path: &str, interval_ms: u64) -> Target {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         plan_hold_at: None,
+        slowed_at: None,
     }
 }
 
