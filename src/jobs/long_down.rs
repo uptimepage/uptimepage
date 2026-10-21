@@ -10,7 +10,10 @@ use uuid::Uuid;
 
 use crate::domain::OrgId;
 use crate::domain::long_down::LONG_DOWN;
+use crate::email::EmailTemplate;
+use crate::email::templates::monitors_slowed::SlowedMonitor;
 use crate::error::Result;
+use crate::jobs::owner_mail::{OwnerMail, RECIPIENT, RECIPIENT_JOINS, StampFailures};
 use crate::metric_names;
 use crate::quotas::QuotaService;
 use crate::quotas::effective::{governed_interval, resolve_plans};
@@ -70,6 +73,23 @@ fn hour_of(at: DateTime<Utc>) -> DateTime<Utc> {
 
 fn window_start(end: DateTime<Utc>) -> DateTime<Utc> {
     hour_of(end - TimeDelta::seconds(after_secs()))
+}
+
+/// The hourly pass: slows what is long-down, then mails whoever has not heard
+/// about theirs. Returns how many were slowed.
+pub async fn sweep(
+    pool: &PgPool,
+    results: &dyn ResultsStore,
+    quotas: &QuotaService,
+    mail: &OwnerMail,
+) -> Result<u64> {
+    let slowed = slow_pass(pool, results, quotas).await;
+    match mail_pass(pool, mail).await {
+        Ok(0) => {}
+        Ok(sent) => tracing::info!(sent, "long-down mail"),
+        Err(err) => tracing::warn!(error = %err, "long-down mail pass failed"),
+    }
+    slowed
 }
 
 /// Slows every monitor that is long-down now and returns how many.
@@ -189,4 +209,72 @@ pub async fn restore_pass(pool: &PgPool) -> Result<u64> {
         metrics::counter!(metric_names::LONG_DOWN_RESTORED, "reason" => reason).increment(1);
     }
     Ok(restored.len() as u64)
+}
+
+/// One mail per recipient listing every slowed monitor they have not heard
+/// about, each stamped only after the provider accepts. Returns mails sent.
+pub async fn mail_pass(pool: &PgPool, cfg: &OwnerMail) -> Result<u64> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: Uuid,
+        name: String,
+        org_name: Option<String>,
+        recipient: String,
+    }
+    let rows: Vec<Row> = sqlx::query_as(&format!(
+        "SELECT t.id, t.name, o.name AS org_name, {RECIPIENT} AS recipient \
+           FROM targets t \
+           JOIN organizations o ON o.id = t.org_id AND o.deleted_at IS NULL \
+           {RECIPIENT_JOINS} \
+          WHERE t.slowed_at IS NOT NULL \
+            AND (t.slowed_notified_at IS NULL OR t.slowed_notified_at < t.slowed_at) \
+            AND t.enabled AND {NOT_HELD_PREDICATE} \
+            AND {RECIPIENT} IS NOT NULL \
+          ORDER BY recipient, o.name, t.name \
+          /* SAFE: fleet-wide job, each mail goes to the monitor's own owner */"
+    ))
+    .fetch_all(pool)
+    .await
+    .context("slowed monitors to mail")?;
+
+    let mut sent = 0;
+    let mut stamps = StampFailures::default();
+    for group in rows.chunk_by(|a, b| a.recipient == b.recipient) {
+        let monitors = group
+            .iter()
+            .map(|r| SlowedMonitor {
+                name: r.name.clone(),
+                org_name: r.org_name.clone(),
+                url: cfg.monitor_url(r.id),
+            })
+            .collect();
+        let template = EmailTemplate::MonitorsSlowed {
+            monitors,
+            docs_url: cfg.docs_url.clone(),
+        };
+        if let Err(err) = cfg
+            .email
+            .sender
+            .send(cfg.to(&group[0].recipient, template))
+            .await
+        {
+            metrics::counter!(metric_names::LONG_DOWN_MAIL, "outcome" => "failed").increment(1);
+            tracing::warn!(error = %err, "long-down mail not sent, retrying next pass");
+            continue;
+        }
+        metrics::counter!(metric_names::LONG_DOWN_MAIL, "outcome" => "sent").increment(1);
+        sent += 1;
+        let ids: Vec<Uuid> = group.iter().map(|r| r.id).collect();
+        let stamped = sqlx::query(
+            "UPDATE targets SET slowed_notified_at = now() WHERE id = ANY($1) \
+             /* SAFE: ids come from the fleet-wide read above */",
+        )
+        .bind(&ids)
+        .execute(pool)
+        .await;
+        if stamps.should_stop(stamped, "long-down mail", sent) {
+            break;
+        }
+    }
+    Ok(sent)
 }

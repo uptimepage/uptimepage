@@ -123,9 +123,10 @@ async fn isolated_pool(tag: &str) -> Option<(sqlx::PgPool, String)> {
 async fn run_nudge(
     pool: &sqlx::PgPool,
 ) -> (u64, std::sync::Arc<uptimepage::email::InMemoryEmailSender>) {
-    use uptimepage::jobs::heartbeat_nudge::{NudgeConfig, nudge_unwired_heartbeats};
+    use uptimepage::jobs::heartbeat_nudge::nudge_unwired_heartbeats;
+    use uptimepage::jobs::owner_mail::OwnerMail;
     let sender = std::sync::Arc::new(uptimepage::email::InMemoryEmailSender::new());
-    let cfg = std::sync::Arc::new(NudgeConfig {
+    let cfg = std::sync::Arc::new(OwnerMail {
         email: uptimepage::notifier::EmailDelivery {
             sender: sender.clone(),
             from_address: "noreply@test.example".into(),
@@ -568,7 +569,8 @@ async fn migration_047_backfills_wired_rows_and_withdraws_false_incidents_live_p
 #[ignore = "requires DATABASE_URL; run via DATABASE_URL=... cargo test -- --ignored"]
 async fn the_nudge_tells_the_owner_once_about_an_unwired_heartbeat_live_pg() {
     use uptimepage::email::EmailTemplate;
-    use uptimepage::jobs::heartbeat_nudge::{NudgeConfig, nudge_unwired_heartbeats};
+    use uptimepage::jobs::heartbeat_nudge::nudge_unwired_heartbeats;
+    use uptimepage::jobs::owner_mail::OwnerMail;
 
     let Some((pool, db)) = isolated_pool("hb_nudge").await else {
         return;
@@ -622,7 +624,7 @@ async fn the_nudge_tells_the_owner_once_about_an_unwired_heartbeat_live_pg() {
     .unwrap();
 
     let sender = std::sync::Arc::new(uptimepage::email::InMemoryEmailSender::new());
-    let cfg = std::sync::Arc::new(NudgeConfig {
+    let cfg = std::sync::Arc::new(OwnerMail {
         email: uptimepage::notifier::EmailDelivery {
             sender: sender.clone(),
             from_address: "noreply@test.example".into(),
@@ -706,7 +708,8 @@ async fn the_nudge_falls_back_to_the_org_owner_and_skips_dead_orgs_live_pg() {
 #[ignore = "requires DATABASE_URL; run via DATABASE_URL=... cargo test -- --ignored"]
 async fn a_failed_nudge_is_not_stamped_and_retries_live_pg() {
     use uptimepage::email::{EmailError, EmailResult, EmailSender, MessageId, TransactionalEmail};
-    use uptimepage::jobs::heartbeat_nudge::{NudgeConfig, nudge_unwired_heartbeats};
+    use uptimepage::jobs::heartbeat_nudge::nudge_unwired_heartbeats;
+    use uptimepage::jobs::owner_mail::OwnerMail;
 
     struct DeadSender;
     #[async_trait::async_trait]
@@ -728,7 +731,7 @@ async fn a_failed_nudge_is_not_stamped_and_retries_live_pg() {
         .await
         .unwrap();
 
-    let dead = std::sync::Arc::new(NudgeConfig {
+    let dead = std::sync::Arc::new(OwnerMail {
         email: uptimepage::notifier::EmailDelivery {
             sender: std::sync::Arc::new(DeadSender),
             from_address: "noreply@test.example".into(),
@@ -1185,7 +1188,7 @@ async fn nudged_at(pool: &sqlx::PgPool, target: Uuid) -> Option<chrono::DateTime
 #[tokio::test]
 #[ignore = "requires DATABASE_URL; run via DATABASE_URL=... cargo test -- --ignored"]
 async fn a_store_that_refuses_every_stamp_stops_the_sweep_live_pg() {
-    use uptimepage::jobs::heartbeat_nudge::STAMP_FAILURE_LIMIT;
+    use uptimepage::jobs::owner_mail::STAMP_FAILURE_LIMIT;
 
     let Some((pool, db)) = isolated_pool("hb_nudge_wedge").await else {
         return;

@@ -67,6 +67,9 @@ fn prime_event_counters() {
     for reason in ["incident", "maintenance", "check_now"] {
         metrics::counter!(metric_names::LONG_DOWN_RESTORED, "reason" => reason).increment(0);
     }
+    for outcome in ["sent", "failed"] {
+        metrics::counter!(metric_names::LONG_DOWN_MAIL, "outcome" => outcome).increment(0);
+    }
     metrics::counter!(metric_names::BILLING_PROVIDER_CANCEL_FAILED).increment(0);
     metrics::counter!(metric_names::BILLING_PROVIDER_DATE_FAILED).increment(0);
     for reason in [
@@ -276,6 +279,10 @@ fn register_descriptions() {
     describe_counter!(
         "uptimepage_long_down_restored_total",
         "Long-down monitors put back on their own interval by the restore pass or a check someone ran, labelled by reason (incident | maintenance | check_now). An edit clears it in Postgres and is not counted"
+    );
+    describe_counter!(
+        "uptimepage_long_down_mail_total",
+        "Mails telling an owner their monitors are checked at the long-down interval, labelled by outcome (sent | failed)"
     );
     describe_counter!(
         "uptimepage_telegram_send_deferred_total",

@@ -83,6 +83,7 @@ these names verbatim.
 | `uptimepage_long_down_monitors` | gauge | monitors down from every region long enough to be checked at the slower long-down interval, sampled from Postgres every minute |
 | `uptimepage_long_down_slowed_total` | counter | monitors moved to the slower long-down interval by the hourly slow pass |
 | `uptimepage_long_down_restored_total{reason}` | counter | long-down monitors put back on their own interval: `incident` (its incident closed or was resolved), `maintenance` (a window covering it started), `check_now` (a check someone ran passed). An edit clears it in Postgres and is not counted |
+| `uptimepage_long_down_mail_total{outcome}` | counter | mails telling an owner their monitors are now checked at the long-down interval, one per recipient per hourly pass. `failed` is retried on the next pass |
 | `uptimepage_agent_up{region,agent}` | gauge | 1 if a regional agent checked in within the staleness window, else 0. Emitted by the control plane from `agents.last_seen_at`, so it covers remote agents that Alloy can't scrape. Per-agent series can freeze on agent removal, so alerts use `uptimepage_agents_enabled_down` |
 | `uptimepage_agent_last_seen_age_seconds{region,agent}` | gauge | seconds since a regional agent last checked in. Climbs unbounded when an agent goes dark |
 | `uptimepage_agents_enabled_down` | gauge | count of enabled regional agents currently past the staleness window. Recomputed every sweep so it never latches. The dead-man signal for a probe region going dark |

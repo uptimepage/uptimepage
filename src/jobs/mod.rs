@@ -7,6 +7,7 @@ pub mod custom_domains;
 pub mod disposable_refresh;
 pub mod heartbeat_nudge;
 pub mod long_down;
+pub mod owner_mail;
 pub mod periodic;
 pub mod purge_deleted;
 pub mod retention;

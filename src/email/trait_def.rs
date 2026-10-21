@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 use super::templates::incident_alert::IncidentAlert;
+use super::templates::monitors_slowed::SlowedMonitor;
 use super::templates::subscriber_maintenance::MaintenanceNotice;
 use super::templates::{self, RenderedEmail};
 use crate::domain::{Landing, Locale};
@@ -132,6 +133,12 @@ pub enum EmailTemplate {
         monitor_url: Option<String>,
         docs_url: Option<String>,
         org_name: Option<String>,
+    },
+    /// Told once per slow episode, to one person per monitor, listing every
+    /// monitor slowed for them in that pass.
+    MonitorsSlowed {
+        monitors: Vec<SlowedMonitor>,
+        docs_url: Option<String>,
     },
     /// An in-app help request relayed to the operator's support address.
     /// Everything but `message` and `page_url` is server-derived, and
@@ -308,6 +315,9 @@ impl EmailTemplate {
                     org_name: org_name.as_deref(),
                 },
             ),
+            EmailTemplate::MonitorsSlowed { monitors, docs_url } => {
+                templates::monitors_slowed::render(site_name, monitors, docs_url.as_deref())
+            }
             EmailTemplate::IncidentAlert(alert) => {
                 templates::incident_alert::render(site_name, alert)
             }
@@ -456,6 +466,9 @@ impl EmailTemplate {
             EmailTemplate::ChannelVerification { verify_url, .. } => Some(verify_url),
             EmailTemplate::ChannelFailing { channel_url, .. } => channel_url.as_deref(),
             EmailTemplate::HeartbeatNeverPinged { monitor_url, .. } => monitor_url.as_deref(),
+            EmailTemplate::MonitorsSlowed { monitors, .. } => {
+                monitors.first().and_then(|m| m.url.as_deref())
+            }
             EmailTemplate::IncidentAlert(_) => None,
             EmailTemplate::SubscriberConfirm { confirm_url, .. } => Some(confirm_url),
             EmailTemplate::PageAccessCode { url, .. } => Some(url),

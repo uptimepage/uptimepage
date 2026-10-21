@@ -3,6 +3,8 @@
 
 use crate::common;
 
+use std::sync::Arc;
+
 use chrono::{DateTime, Duration, Utc};
 use common::{
     default_http_check, delete_org_and_account, make_user, pg_pool_from_env, unique_slug,
@@ -11,7 +13,12 @@ use sqlx::PgPool;
 use uptimepage::config::AppConfig;
 use uptimepage::domain::quota::RegionCaps;
 use uptimepage::domain::{CheckResult, CheckSpec, CheckStatus, ExpectedStatus, OrgId, UserId};
-use uptimepage::jobs::long_down::{restore_pass, slow_pass};
+use uptimepage::email::{
+    EmailError, EmailResult, EmailSender, EmailTemplate, InMemoryEmailSender, MessageId,
+    TransactionalEmail,
+};
+use uptimepage::jobs::long_down::{mail_pass, restore_pass, slow_pass};
+use uptimepage::jobs::owner_mail::OwnerMail;
 use uptimepage::quotas::QuotaService;
 use uptimepage::quotas::effective::{plan_digest, region_targets, resolve_plans};
 use uptimepage::storage::admin::AdminRepo;
@@ -198,12 +205,67 @@ impl Monitor {
             .expect(sql);
     }
 
+    /// Makes the account's user the org's owner, the one the mail goes to.
+    async fn owned(&self) -> String {
+        sqlx::query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'owner')")
+            .bind(self.user.0)
+            .bind(self.org.0)
+            .execute(&self.pool)
+            .await
+            .expect("membership");
+        sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
+            .bind(self.user.0)
+            .fetch_one(&self.pool)
+            .await
+            .expect("email")
+    }
+
+    /// Another monitor in the same org, slowed with this one.
+    async fn sibling(&self, name: &str) -> Uuid {
+        sqlx::query_scalar(
+            "INSERT INTO targets (org_id, name, check_spec, interval_secs, enabled) \
+             VALUES ($1, $2, $3, 60, true) RETURNING id",
+        )
+        .bind(self.org.0)
+        .bind(name)
+        .bind(http())
+        .fetch_one(&self.pool)
+        .await
+        .expect("sibling")
+    }
+
+    async fn notified_at(&self) -> Option<DateTime<Utc>> {
+        sqlx::query_scalar("SELECT slowed_notified_at FROM targets WHERE id = $1")
+            .bind(self.id)
+            .fetch_one(&self.pool)
+            .await
+            .expect("slowed_notified_at")
+    }
+
     async fn cleanup(self) {
         delete_org_and_account(&self.pool, self.org.0).await;
         let _ = sqlx::query("DELETE FROM users WHERE id = $1")
             .bind(self.user.0)
             .execute(&self.pool)
             .await;
+    }
+}
+
+/// The mail pass reads every slowed monitor, so each mail test owns its database.
+async fn isolated(tag: &str) -> Option<(PgPool, String)> {
+    let (url, name) = common::fresh_test_db(tag).await?;
+    Some((common::open_test_pool(&url).await, name))
+}
+
+fn mail_with(sender: Arc<dyn EmailSender>) -> OwnerMail {
+    OwnerMail {
+        email: uptimepage::notifier::EmailDelivery {
+            sender,
+            from_address: "noreply@test.example".into(),
+            from_name: "Uptimepage".into(),
+        },
+        public_base_url: "https://app.test".into(),
+        docs_url: Some("https://docs.test/monitor-types#intervals".into()),
     }
 }
 
@@ -791,4 +853,132 @@ async fn pass_marks_answers_for_more_targets_than_one_query_can_hold() {
     assert_eq!(marks.len(), 2);
     assert_eq!(marks[&first].last_passed, None);
     assert!(marks[&last].last_passed.is_some());
+}
+
+fn mailed_names(email: &TransactionalEmail) -> Vec<String> {
+    let EmailTemplate::MonitorsSlowed { monitors, .. } = &email.template else {
+        panic!("wrong template: {:?}", email.template);
+    };
+    monitors.iter().map(|m| m.name.clone()).collect()
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn each_owner_gets_one_mail_listing_their_slowed_monitors_once() {
+    let Some((pool, db)) = isolated("ld_mail").await else {
+        return;
+    };
+    let acme = Monitor::new(&pool).await;
+    let acme_owner = acme.owned().await;
+    acme.sibling("staging-web").await;
+    let other = Monitor::new(&pool).await;
+    let other_owner = other.owned().await;
+    sqlx::query("UPDATE targets SET slowed_at = now()")
+        .execute(&pool)
+        .await
+        .expect("slow");
+
+    let sender = Arc::new(InMemoryEmailSender::new());
+    let cfg = mail_with(sender.clone());
+    assert_eq!(mail_pass(&pool, &cfg).await.expect("mail"), 2);
+    let sent = sender.sent();
+    let to_acme = sent
+        .iter()
+        .find(|m| m.to.address == acme_owner)
+        .expect("acme mail");
+    assert_eq!(mailed_names(to_acme), ["staging-web", "switched off"]);
+    let to_other = sent
+        .iter()
+        .find(|m| m.to.address == other_owner)
+        .expect("other mail");
+    assert_eq!(mailed_names(to_other), ["switched off"]);
+    let EmailTemplate::MonitorsSlowed { monitors, .. } = &to_other.template else {
+        unreachable!()
+    };
+    assert_eq!(
+        monitors[0].url.as_deref(),
+        Some(format!("https://app.test/targets/{}", other.id).as_str())
+    );
+
+    sender.clear();
+    assert_eq!(
+        mail_pass(&pool, &cfg).await.expect("mail"),
+        0,
+        "once per episode"
+    );
+
+    other
+        .exec("UPDATE targets SET slowed_at = now() + interval '1 second' WHERE id = $1")
+        .await;
+    assert_eq!(
+        mail_pass(&pool, &cfg).await.expect("mail"),
+        1,
+        "a new episode mails again"
+    );
+
+    drop(pool);
+    common::drop_test_db(&db).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_failed_mail_is_not_stamped_and_goes_out_next_pass() {
+    struct DeadSender;
+    #[async_trait::async_trait]
+    impl EmailSender for DeadSender {
+        async fn send(&self, _: TransactionalEmail) -> EmailResult<MessageId> {
+            Err(EmailError::Transport("provider unreachable".into()))
+        }
+    }
+    let Some((pool, db)) = isolated("ld_mail_fail").await else {
+        return;
+    };
+    let m = Monitor::new(&pool).await;
+    m.owned().await;
+    m.exec("UPDATE targets SET slowed_at = now() WHERE id = $1")
+        .await;
+
+    let dead = mail_with(Arc::new(DeadSender));
+    assert_eq!(mail_pass(&pool, &dead).await.expect("mail"), 0);
+    assert!(m.notified_at().await.is_none());
+
+    let sender = Arc::new(InMemoryEmailSender::new());
+    assert_eq!(
+        mail_pass(&pool, &mail_with(sender.clone()))
+            .await
+            .expect("mail"),
+        1
+    );
+    assert!(m.notified_at().await.is_some());
+
+    drop(m);
+    drop(pool);
+    common::drop_test_db(&db).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_monitor_restored_before_its_mail_gets_none() {
+    let Some((pool, db)) = isolated("ld_mail_restored").await else {
+        return;
+    };
+    let m = Monitor::long_down(&pool).await;
+    m.owned().await;
+    m.slow().await;
+    assert!(m.is_slowed().await);
+    m.close_incident().await;
+    m.restore().await;
+
+    let sender = Arc::new(InMemoryEmailSender::new());
+    assert_eq!(
+        mail_pass(&pool, &mail_with(sender.clone()))
+            .await
+            .expect("mail"),
+        0
+    );
+    assert!(sender.is_empty());
+
+    drop(m);
+    drop(pool);
+    common::drop_test_db(&db).await;
 }

@@ -780,18 +780,22 @@ async fn main() -> Result<()> {
         uptimepage::storage::heartbeats::purge_expired_prev_tokens,
     ));
 
-    // 6h, not daily: the three-day age is the real gate, and the tick only
-    // bounds how late the reminder lands.
-    let heartbeat_nudge_handle: JoinHandle<()> = {
-        let nudge = Arc::new(uptimepage::jobs::heartbeat_nudge::NudgeConfig {
+    let owner_mail = |docs_path: &str| {
+        Arc::new(uptimepage::jobs::owner_mail::OwnerMail {
             email: uptimepage::notifier::EmailDelivery {
                 sender: email_sender.clone(),
                 from_address: cfg.email.from_address.clone(),
                 from_name: cfg.email.from_name.clone(),
             },
             public_base_url: cfg.auth.public_base_url.clone(),
-            docs_url: Some(uptimepage::templates::filters::docs_link("/monitor-types")),
-        });
+            docs_url: Some(uptimepage::templates::filters::docs_link(docs_path)),
+        })
+    };
+
+    // 6h, not daily: the three-day age is the real gate, and the tick only
+    // bounds how late the reminder lands.
+    let heartbeat_nudge_handle: JoinHandle<()> = {
+        let nudge = owner_mail("/monitor-types");
         tokio::spawn(run_purge_loop(
             pg_pool_for_stores.clone(),
             root.clone(),
@@ -806,13 +810,14 @@ async fn main() -> Result<()> {
     let long_down_slow_handle: JoinHandle<()> = {
         let results = results_store.clone();
         let quotas = Arc::clone(&quotas);
+        let mail = owner_mail("/monitor-types#intervals");
         tokio::spawn(run_purge_loop_from_boot(
             pg_pool_for_stores.clone(),
             root.clone(),
             Duration::from_secs(60 * 60),
             "long_down_slow",
             async move |pool: &sqlx::PgPool| {
-                uptimepage::jobs::long_down::slow_pass(pool, results.as_ref(), &quotas).await
+                uptimepage::jobs::long_down::sweep(pool, results.as_ref(), &quotas, &mail).await
             },
         ))
     };
