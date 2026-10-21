@@ -3,11 +3,14 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import vm from "node:vm";
 
-const source = readFileSync(new URL("../../assets/js/marketing/referral_source.js", import.meta.url), "utf8");
+import { tagSource } from "../../assets/js/_source.js";
+
+const source = readFileSync(new URL("../../assets/js/marketing/referral_source.js", import.meta.url), "utf8")
+    .replace(/^import .*;\n/gm, "");
 
 function send(url, referrer = "") {
     const window = {};
-    vm.runInNewContext(source, { window, URL, location: { origin: "https://uptimepage.test" } });
+    vm.runInNewContext(source, { window, URL, tagSource, location: { origin: "https://uptimepage.test" } });
     return window.tagReferralSource("event", { url, referrer });
 }
 

@@ -923,7 +923,7 @@ fn powered_by_shown_by_default() {
     .unwrap();
     assert!(html.contains("Powered by"));
     assert!(
-        html.contains(r#"<a href="https://uptimepage.dev" class="hover:text-body">uptimepage</a>"#)
+        html.contains(r#"<a href="https://uptimepage.dev/?utm_source=status-page&amp;utm_medium=powered-by" class="hover:text-body">uptimepage</a>"#)
     );
 }
 
