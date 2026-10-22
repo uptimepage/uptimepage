@@ -41,7 +41,7 @@ use crate::auth::url::token_link;
 use crate::auth::{fingerprint, magic_link};
 use crate::config::SessionConfig;
 use crate::domain::email_norm;
-use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
+use crate::email::{EmailAddress, EmailTemplate, SendClass, TransactionalEmail};
 use crate::error::Result;
 use crate::security::sign_in_code::RedeemedVia;
 use crate::security::token_hash;
@@ -213,7 +213,7 @@ pub async fn request(
                     }
                 }
             }
-            if let Err(err) = sender.send(outgoing).await {
+            if let Err(err) = sender.send(outgoing, SendClass::Immediate).await {
                 tracing::warn!(error = %err, "magic_link: email send failed (background)");
                 if let Err(err) = magic_link::release_send(&throttle_pool, created_id).await {
                     tracing::warn!(error = %err, "magic_link: send release failed");

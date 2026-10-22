@@ -707,17 +707,8 @@ async fn the_nudge_falls_back_to_the_org_owner_and_skips_dead_orgs_live_pg() {
 #[tokio::test]
 #[ignore = "requires DATABASE_URL; run via DATABASE_URL=... cargo test -- --ignored"]
 async fn a_failed_nudge_is_not_stamped_and_retries_live_pg() {
-    use uptimepage::email::{EmailError, EmailResult, EmailSender, MessageId, TransactionalEmail};
     use uptimepage::jobs::heartbeat_nudge::nudge_unwired_heartbeats;
     use uptimepage::jobs::owner_mail::OwnerMail;
-
-    struct DeadSender;
-    #[async_trait::async_trait]
-    impl EmailSender for DeadSender {
-        async fn send(&self, _: TransactionalEmail) -> EmailResult<MessageId> {
-            Err(EmailError::Transport("provider unreachable".into()))
-        }
-    }
 
     let Some((pool, db)) = isolated_pool("hb_nudge_fail").await else {
         return;
@@ -733,7 +724,7 @@ async fn a_failed_nudge_is_not_stamped_and_retries_live_pg() {
 
     let dead = std::sync::Arc::new(OwnerMail {
         email: uptimepage::notifier::EmailDelivery {
-            sender: std::sync::Arc::new(DeadSender),
+            sender: std::sync::Arc::new(common::UnreachableEmail),
             from_address: "noreply@test.example".into(),
             from_name: "Uptimepage".into(),
         },

@@ -26,7 +26,7 @@ use crate::auth::invitations as inv;
 use crate::auth::url::token_link;
 use crate::domain::email_norm;
 use crate::domain::{OrgId, Organization, Role, UserId};
-use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
+use crate::email::{EmailAddress, EmailTemplate, SendClass, TransactionalEmail};
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::request::{BrowserUser, CurrentUser, VerifiedBrowserUser};
@@ -351,10 +351,14 @@ async fn send_invitation_email(
             expires_at,
         },
     };
-    state.email_sender.send(outgoing).await.map_err(|err| {
-        tracing::warn!(error = %err, org = %org_row.id.0, "invitation send failed");
-        AppError::Other(anyhow::anyhow!("invitation send failed: {err}"))
-    })?;
+    state
+        .email_sender
+        .send(outgoing, SendClass::Immediate)
+        .await
+        .map_err(|err| {
+            tracing::warn!(error = %err, org = %org_row.id.0, "invitation send failed");
+            AppError::Other(anyhow::anyhow!("invitation send failed: {err}"))
+        })?;
     if let Err(err) = inv::record_send(pool, org_row.id, inviter_id, invitation_id).await {
         tracing::warn!(error = %err, org = %org_row.id.0, "invitation send not recorded");
     }

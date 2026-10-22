@@ -10,8 +10,8 @@ use uuid::Uuid;
 
 use crate::domain::OrgId;
 use crate::domain::long_down::LONG_DOWN;
-use crate::email::EmailTemplate;
 use crate::email::templates::monitors_slowed::SlowedMonitor;
+use crate::email::{EmailTemplate, SendClass};
 use crate::error::Result;
 use crate::jobs::owner_mail::{OwnerMail, RECIPIENT, RECIPIENT_JOINS, StampFailures};
 use crate::metric_names;
@@ -255,11 +255,15 @@ pub async fn mail_pass(pool: &PgPool, cfg: &OwnerMail) -> Result<u64> {
         if let Err(err) = cfg
             .email
             .sender
-            .send(cfg.to(&group[0].recipient, template))
+            .send(cfg.to(&group[0].recipient, template), SendClass::Bulk)
             .await
         {
             metrics::counter!(metric_names::LONG_DOWN_MAIL, "outcome" => "failed").increment(1);
             tracing::warn!(error = %err, "long-down mail not sent, retrying next pass");
+            // A spent or unreachable send budget fails the rest of the pass too.
+            if err.is_pacing() {
+                break;
+            }
             continue;
         }
         metrics::counter!(metric_names::LONG_DOWN_MAIL, "outcome" => "sent").increment(1);

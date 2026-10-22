@@ -293,6 +293,18 @@ fn register_descriptions() {
         "Wait imposed on a Telegram send by the send budget before the slot opened, in milliseconds"
     );
     describe_counter!(
+        "uptimepage_email_sends_total",
+        "Sends through the email gate, labelled by class (immediate | bulk) and outcome (sent | rate_limited | quota_exceeded | refused | rejected | in_progress | transport answer a request; deferred | gate_unavailable made none). A batch counts once"
+    );
+    describe_histogram!(
+        "uptimepage_email_gate_wait_ms",
+        "Wait for a send slot before a request goes to the email provider, labelled by class, in milliseconds"
+    );
+    describe_counter!(
+        "uptimepage_email_gate_fallback_total",
+        "Times an instance could not reach the shared send budget in Postgres and paced its own mail for 30 s. Bulk mail waits while it does"
+    );
+    describe_counter!(
         "uptimepage_rdap_singleflight_total",
         "RDAP singleflight outcomes per domain: hit (cached) or miss (fetched)"
     );

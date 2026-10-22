@@ -17,7 +17,7 @@ use crate::app::AppState;
 use crate::auth::url::token_link;
 use crate::domain::email_norm;
 use crate::domain::{NewSubscriber, PageRef, SubscriberChannel};
-use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
+use crate::email::{EmailAddress, EmailTemplate, SendClass, TransactionalEmail};
 use crate::http_outbound::post_bytes_with_headers;
 use crate::i18n::Tr;
 use crate::public_status::access::{Access, same_origin};
@@ -267,7 +267,11 @@ pub async fn subscribe(
                 unsubscribe_url,
             },
         };
-        if let Err(err) = state.email_sender.send(outgoing).await {
+        if let Err(err) = state
+            .email_sender
+            .send(outgoing, SendClass::Immediate)
+            .await
+        {
             tracing::warn!(error = %err, "subscriber confirm send failed");
         }
     }

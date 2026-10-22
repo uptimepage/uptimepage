@@ -267,7 +267,10 @@ async fn log_only_sender_renders_invitation_via_tracing() {
             expires_at: Utc::now() + chrono::Duration::days(7),
         },
     };
-    let id = sender.send(invite).await.expect("log-only send");
+    let id = sender
+        .send(invite, uptimepage::email::SendClass::Immediate)
+        .await
+        .expect("log-only send");
     assert!(id.0.starts_with("log-only-"));
 }
 
@@ -285,7 +288,10 @@ async fn in_memory_sender_captures_for_assertion() {
             expires_at: Utc::now() + chrono::Duration::days(7),
         },
     };
-    sender.send(email).await.expect("memory send");
+    sender
+        .send(email, uptimepage::email::SendClass::Immediate)
+        .await
+        .expect("memory send");
     let captured = sender.sent();
     assert_eq!(captured.len(), 1);
     match &captured[0].template {

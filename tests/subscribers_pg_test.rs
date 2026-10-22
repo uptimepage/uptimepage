@@ -320,6 +320,34 @@ async fn fanout_lists_verified_recent_public_updates_only() {
         .unwrap()
     );
 
+    // A send held back by pacing never uses up an attempt: it is claimed
+    // again past the cap.
+    for _ in 0..=uptimepage::storage::subscribers::FANOUT_MAX_ATTEMPTS {
+        subscriber_deliveries::mark(
+            &pool,
+            p.subscriber_id,
+            INCIDENT_UPDATE,
+            p.update_id,
+            "",
+            Some("email send budget unavailable on this instance"),
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(
+            subscriber_deliveries::claim(
+                &pool,
+                p.subscriber_id,
+                p.org_id,
+                INCIDENT_UPDATE,
+                p.update_id,
+                ""
+            )
+            .await
+            .unwrap()
+        );
+    }
+
     // Once marked sent it drops out of the candidate set.
     subscriber_deliveries::mark(
         &pool,
@@ -328,6 +356,7 @@ async fn fanout_lists_verified_recent_public_updates_only() {
         p.update_id,
         "",
         None,
+        true,
     )
     .await
     .unwrap();
@@ -703,7 +732,7 @@ async fn maintenance_fanout_scheduled_and_completed() {
             .unwrap()
     );
 
-    subscriber_deliveries::mark(&pool, sub_id, MAINTENANCE, future, "scheduled", None)
+    subscriber_deliveries::mark(&pool, sub_id, MAINTENANCE, future, "scheduled", None, true)
         .await
         .unwrap();
     let after = subscriber_maintenance::list_pending(&pool, 100)
@@ -1115,7 +1144,7 @@ async fn a_maintenance_update_reaches_each_subscriber_once_and_keeps_reaching_a_
             .await
             .unwrap()
     );
-    subscriber_deliveries::mark(&pool, sub_id, MAINTENANCE_UPDATE, closing, "", None)
+    subscriber_deliveries::mark(&pool, sub_id, MAINTENANCE_UPDATE, closing, "", None, true)
         .await
         .unwrap();
     assert!(

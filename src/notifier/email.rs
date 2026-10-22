@@ -120,7 +120,7 @@ impl Notifier for EmailNotifier {
         };
         self.delivery
             .sender
-            .send(outgoing)
+            .send(outgoing, crate::email::SendClass::Immediate)
             .await
             .map(|_| ())
             .map_err(|e| {

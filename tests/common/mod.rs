@@ -63,6 +63,47 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 use uuid::Uuid;
 
+/// A provider that never answers, for a test of what a failed send leaves.
+pub struct UnreachableEmail;
+
+#[async_trait::async_trait]
+impl EmailSender for UnreachableEmail {
+    async fn send(
+        &self,
+        _: uptimepage::email::TransactionalEmail,
+        _: uptimepage::email::SendClass,
+    ) -> uptimepage::email::EmailResult<uptimepage::email::MessageId> {
+        Err(unreachable_provider())
+    }
+
+    fn prepare_batch(
+        &self,
+        emails: Vec<uptimepage::email::TransactionalEmail>,
+        key: String,
+    ) -> uptimepage::email::EmailResult<uptimepage::email::PreparedBatch> {
+        let len = emails.len();
+        Ok(uptimepage::email::PreparedBatch::from_parts(
+            key,
+            Default::default(),
+            len,
+        ))
+    }
+
+    async fn send_prepared(
+        &self,
+        batch: uptimepage::email::PreparedBatch,
+    ) -> uptimepage::email::BatchResult {
+        Err(uptimepage::email::BatchFailure {
+            error: unreachable_provider(),
+            batch,
+        })
+    }
+}
+
+fn unreachable_provider() -> uptimepage::email::EmailError {
+    uptimepage::email::EmailError::Transport("provider unreachable".into())
+}
+
 /// Outbound HTTP client + in-memory email sender shared by every test
 /// `AppState` builder. The "memory" provider buffers sends so tests can
 /// assert against them.
@@ -75,7 +116,8 @@ pub fn build_test_outbound_and_email() -> (OutboundHttpClient, Arc<dyn EmailSend
         provider: EmailProvider::Memory,
         ..Default::default()
     };
-    let sender = build_email_sender(&cfg, guard);
+    let sender = build_email_sender(&cfg, guard, "postgres://localhost/unused")
+        .expect("memory sender needs no database");
     (http, sender)
 }
 

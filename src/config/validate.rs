@@ -415,6 +415,9 @@ impl AppConfig {
                 "email.from_address is required when email.provider = \"resend\"",
             ));
         }
+        if e.resend.rate_limit_per_second == 0 {
+            return Err(err("email.resend.rate_limit_per_second must be at least 1"));
+        }
         Ok(())
     }
 

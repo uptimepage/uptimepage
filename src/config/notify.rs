@@ -260,6 +260,10 @@ pub struct ResendConfig {
     /// are not consumed.
     #[serde(default = "empty_secret", with = "secret_str")]
     pub webhook_secret: SecretString,
+    /// Requests per second the provider allows the whole team, across every
+    /// key and every instance. The shared gate paces at most of it and keeps
+    /// the rest for an instance that cannot reach the gate.
+    pub rate_limit_per_second: u32,
 }
 
 impl ResendConfig {
@@ -273,6 +277,7 @@ impl Default for ResendConfig {
         Self {
             api_key: empty_secret(),
             webhook_secret: empty_secret(),
+            rate_limit_per_second: 10,
         }
     }
 }

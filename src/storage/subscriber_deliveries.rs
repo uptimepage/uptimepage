@@ -47,6 +47,8 @@ pub async fn claim(
     Ok(claimed.is_some())
 }
 
+/// `counts` is false for a send held back by pacing: it goes out again
+/// without using up an attempt.
 pub async fn mark(
     pool: &PgPool,
     subscriber_id: Uuid,
@@ -54,12 +56,13 @@ pub async fn mark(
     event_ref: Uuid,
     phase: &str,
     error: Option<&str>,
+    counts: bool,
 ) -> Result<()> {
     sqlx::query(
         "UPDATE status_page_subscriber_deliveries
          SET status = CASE WHEN $5::text IS NULL THEN 'sent' ELSE 'failed' END,
              error = $5,
-             attempts = attempts + CASE WHEN $5::text IS NULL THEN 0 ELSE 1 END,
+             attempts = attempts + CASE WHEN $5::text IS NULL OR NOT $6 THEN 0 ELSE 1 END,
              sent_at = CASE WHEN $5::text IS NULL THEN now() ELSE sent_at END
          WHERE subscriber_id = $1 AND event_kind = $2 AND event_ref = $3 AND phase = $4",
     )
@@ -68,6 +71,7 @@ pub async fn mark(
     .bind(event_ref)
     .bind(phase)
     .bind(error)
+    .bind(counts)
     .execute(pool)
     .await
     .context("subscriber_deliveries::mark")?;

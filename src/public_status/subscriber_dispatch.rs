@@ -14,7 +14,9 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::email::templates::subscriber_maintenance::MaintenanceNotice;
-use crate::email::{EmailAddress, EmailSender, EmailTemplate, TransactionalEmail};
+use crate::email::{
+    EmailAddress, EmailError, EmailSender, EmailTemplate, SendClass, TransactionalEmail,
+};
 use crate::http_outbound::{OutboundHttpClient, post_bytes_with_headers};
 use crate::storage::subscriber_deliveries::{
     self, INCIDENT_UPDATE, MAINTENANCE, MAINTENANCE_UPDATE,
@@ -23,6 +25,20 @@ use crate::storage::subscriber_maintenance::{self, PendingMaintenance, PendingMa
 use crate::storage::subscribers::{self, PendingUpdate};
 
 const SEND_CONCURRENCY: usize = 8;
+
+/// What to log and store for one delivery, and whether it used an attempt: a
+/// send held back by pacing did not.
+fn outcome(delivered: anyhow::Result<()>) -> (Option<String>, bool) {
+    match delivered {
+        Ok(()) => (None, true),
+        Err(e) => {
+            let pacing = e
+                .downcast_ref::<EmailError>()
+                .is_some_and(EmailError::is_pacing);
+            (Some(format!("{e:#}")), !pacing)
+        }
+    }
+}
 
 pub struct SubscriberDispatchConfig {
     pub tick_interval: Duration,
@@ -114,7 +130,7 @@ impl SubscriberDispatcher {
         // can't stall the batch past the tick. Each marks its own outcome.
         stream::iter(claimed)
             .for_each_concurrent(SEND_CONCURRENCY, |p| async move {
-                let error = self.deliver_incident(&p).await.err().map(|e| e.to_string());
+                let (error, counts) = outcome(self.deliver_incident(&p).await);
                 if let Some(err) = &error {
                     tracing::warn!(error = %err, subscriber = %p.subscriber_id, "subscriber delivery failed");
                 }
@@ -125,6 +141,7 @@ impl SubscriberDispatcher {
                     p.update_id,
                     "",
                     error.as_deref(),
+                    counts,
                 )
                 .await
                 {
@@ -155,7 +172,7 @@ impl SubscriberDispatcher {
         }
         stream::iter(claimed)
             .for_each_concurrent(SEND_CONCURRENCY, |m| async move {
-                let error = self.deliver_maintenance(&m).await.err().map(|e| e.to_string());
+                let (error, counts) = outcome(self.deliver_maintenance(&m).await);
                 if let Some(err) = &error {
                     tracing::warn!(error = %err, subscriber = %m.subscriber_id, "maintenance delivery failed");
                 }
@@ -166,6 +183,7 @@ impl SubscriberDispatcher {
                     m.maintenance_id,
                     &m.phase,
                     error.as_deref(),
+                    counts,
                 )
                 .await
                 {
@@ -196,11 +214,7 @@ impl SubscriberDispatcher {
         }
         stream::iter(claimed)
             .for_each_concurrent(SEND_CONCURRENCY, |u| async move {
-                let error = self
-                    .deliver_maintenance_update(&u)
-                    .await
-                    .err()
-                    .map(|e| e.to_string());
+                let (error, counts) = outcome(self.deliver_maintenance_update(&u).await);
                 if let Some(err) = &error {
                     tracing::warn!(error = %err, subscriber = %u.subscriber_id, "maintenance update delivery failed");
                 }
@@ -211,6 +225,7 @@ impl SubscriberDispatcher {
                     u.update_id,
                     "",
                     error.as_deref(),
+                    counts,
                 )
                 .await
                 {
@@ -369,9 +384,9 @@ impl SubscriberDispatcher {
 
     async fn send(&self, outgoing: TransactionalEmail) -> anyhow::Result<()> {
         self.email
-            .send(outgoing)
+            .send(outgoing, SendClass::Bulk)
             .await
-            .map_err(|e| anyhow::anyhow!("subscriber send: {e}"))?;
+            .map_err(|e| anyhow::Error::new(e).context("subscriber send"))?;
         Ok(())
     }
 

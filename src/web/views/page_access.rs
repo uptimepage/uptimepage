@@ -29,7 +29,7 @@ use crate::domain::{
     AccessEventKind, AccessEventMethod, MAX_PAGE_PASSWORD_CHARS, PageAccess, PageRef,
     normalize_email,
 };
-use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
+use crate::email::{EmailAddress, EmailTemplate, SendClass, TransactionalEmail};
 use crate::error::public::PublicAppError;
 use crate::i18n::Tr;
 use crate::public_status::access::{
@@ -451,7 +451,7 @@ async fn send_code(
             expires_in_minutes: CODE_TTL_MINUTES as u32,
         },
     };
-    if let Err(e) = mail.sender.send(outgoing).await {
+    if let Err(e) = mail.sender.send(outgoing, SendClass::Immediate).await {
         tracing::warn!(error = %e, "page access: code mail failed");
         if let Err(e) = codes::release_send(&pool, page, created.id).await {
             tracing::warn!(error = %e, "page access: send release failed");

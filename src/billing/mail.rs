@@ -9,7 +9,7 @@ use sqlx::PgPool;
 use crate::config::AppConfig;
 use crate::domain::{AccountId, UserId};
 use crate::email::EmailSender;
-use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
+use crate::email::{EmailAddress, EmailTemplate, SendClass, TransactionalEmail};
 use crate::notifier::EmailDelivery;
 
 pub struct Mailer {
@@ -77,7 +77,12 @@ impl Mailer {
             to: EmailAddress::new(email.clone(), email),
             template,
         };
-        if let Err(err) = self.delivery.sender.send(outgoing).await {
+        if let Err(err) = self
+            .delivery
+            .sender
+            .send(outgoing, SendClass::Immediate)
+            .await
+        {
             tracing::warn!(account = %account, error = %err, "billing mail not sent");
         }
     }

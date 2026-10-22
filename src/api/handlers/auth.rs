@@ -254,7 +254,10 @@ pub fn notify_credential_change_labelled(
     };
     let sender = state.email_sender.clone();
     tokio::spawn(async move {
-        if let Err(err) = sender.send(outgoing).await {
+        if let Err(err) = sender
+            .send(outgoing, crate::email::SendClass::Immediate)
+            .await
+        {
             tracing::warn!(error = %err, ?change, "sign-in-method email send failed");
         }
     });

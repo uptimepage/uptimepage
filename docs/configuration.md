@@ -62,7 +62,7 @@ Override `UPTIMEPAGE_CONFIG_PATH` to point at an alternate base config file.
 | `bootstrap` | `email`, `org_name` | Seeds the first owner at boot when the instance has no users, for installs with no terminal to run `bootstrap-owner` in. Empty `email` (default) disables it. See [First-run owner](#first-run-owner) below |
 | `mcp` | `enabled`, `oauth_enabled`, `resource_uri`, `allowed_origins`, `access_token_ttl_secs` | LLM connector (MCP) server at `/mcp`. Off by default; OAuth requires real HTTPS `resource_uri` + `auth.public_base_url`. See [MCP server](mcp.md) |
 | `email` | `provider`, `from_name`, `from_address`, `support_address` | Every mail the product sends. `provider` ∈ `"resend" \| "log"` (`"memory"` is the test harness buffer and refused at boot). `from_address` is required by `resend` and should be an inbox somebody reads; a `no-reply@` sender is warned at boot. A set `support_address` mounts the in-app help form at `/help` and relays it there, with the sender as `Reply-To`; empty (default) leaves the page, its endpoint and its nav entry absent |
-| `email.resend` | `api_key`, `webhook_secret` | `api_key` required when `email.provider = "resend"`. A set `webhook_secret` (the endpoint's Svix `whsec_…` signing secret) mounts `POST /hooks/resend`: a permanently bounced or spam-complaining address gets every email channel pointed at it disabled, with the reason shown on the channel form |
+| `email.resend` | `api_key`, `webhook_secret`, `rate_limit_per_second` | `api_key` required when `email.provider = "resend"`. `rate_limit_per_second` (default 10) is what Resend allows your team across every key: all instances share 80% of it through Postgres and an instance that cannot reach Postgres sends alone at 20% (see [Deployment](deployment.md#email-provider-resend)). A set `webhook_secret` (the endpoint's Svix `whsec_…` signing secret) mounts `POST /hooks/resend`: a permanently bounced or spam-complaining address gets every email channel pointed at it disabled, with the reason shown on the channel form |
 | `whatsapp_app` | `enabled`, `access_token`, `phone_number_id`, `public_number`, `app_secret`, `verify_token`, `template_name`, `language_code` | Operator WhatsApp number behind one-tap `whatsapp_app` channels (`wa.me` deep link + `/hooks/whatsapp` Meta webhook). `enabled = true` AND complete creds mount the surface — the flag is a deliberate spend gate, since alert sends are operator-paid Meta template messages. Inbound `stop` disables the sender's channels |
 
 ## Public status routing
@@ -153,6 +153,7 @@ support_address = ""                 # set it and /help appears; empty = no help
 [email.resend]
 api_key = ""                         # required when provider = "resend"
 webhook_secret = ""                  # whsec_… of the Resend webhook endpoint
+rate_limit_per_second = 10           # Resend's limit for the whole team; instances share it
 
 [billing]
 provider = "none"                    # "paddle" turns on checkout + the webhook receiver; "none" leaves it all absent

@@ -45,6 +45,7 @@ mod discord_connect_pg_test;
 mod disposable_domains_pg_test;
 mod disposable_sources_live_test;
 mod domain_expiry_test;
+mod email_gate_test;
 mod email_policy_gate_test;
 mod enum_drift_test;
 mod error_classes_test;

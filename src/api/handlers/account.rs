@@ -23,7 +23,7 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::auth::account;
 use crate::domain::{UserId, strip_served_stale};
-use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
+use crate::email::{EmailAddress, EmailTemplate, SendClass, TransactionalEmail};
 use crate::error::ApiError;
 use crate::error::{AppError, Result};
 use crate::metric_names;
@@ -652,7 +652,11 @@ pub async fn delete_account(
             scheduled_purge_at: outcome.grace_deadline,
         },
     };
-    if let Err(err) = state.email_sender.send(outgoing).await {
+    if let Err(err) = state
+        .email_sender
+        .send(outgoing, SendClass::Immediate)
+        .await
+    {
         tracing::warn!(error = %err, "account-deletion confirmation email send failed");
     }
 
@@ -734,7 +738,11 @@ pub async fn restore_account(
         to: EmailAddress::new(outcome.email.clone(), outcome.email.clone()),
         template: EmailTemplate::AccountRestored,
     };
-    if let Err(err) = state.email_sender.send(outgoing).await {
+    if let Err(err) = state
+        .email_sender
+        .send(outgoing, SendClass::Immediate)
+        .await
+    {
         tracing::warn!(error = %err, "account-restored confirmation email send failed");
     }
 

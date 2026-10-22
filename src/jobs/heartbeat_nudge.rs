@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::email::EmailTemplate;
+use crate::email::{EmailError, EmailTemplate, SendClass};
 use crate::jobs::owner_mail::{OwnerMail, RECIPIENT, RECIPIENT_JOINS, StampFailures};
 
 /// Long enough that a monitor created ahead of a deploy is not nagged mid-work,
@@ -62,8 +62,12 @@ pub async fn nudge_unwired_heartbeats(pool: &PgPool, cfg: &OwnerMail) -> Result<
     let mut sent = 0;
     let mut stamps = StampFailures::default();
     for c in candidates {
-        if !send_one(&c, cfg).await {
-            continue;
+        match send_one(&c, cfg).await {
+            Ok(()) => {}
+            // The budget is spent or out of reach for the moment: the rest of
+            // the pass would only wait and fail the same way.
+            Err(err) if err.is_pacing() => break,
+            Err(_) => continue,
         }
         sent += 1;
         let stamped = sqlx::query(
@@ -81,7 +85,7 @@ pub async fn nudge_unwired_heartbeats(pool: &PgPool, cfg: &OwnerMail) -> Result<
     Ok(sent)
 }
 
-async fn send_one(c: &Candidate, cfg: &OwnerMail) -> bool {
+async fn send_one(c: &Candidate, cfg: &OwnerMail) -> Result<(), EmailError> {
     let template = EmailTemplate::HeartbeatNeverPinged {
         monitor_name: c.monitor_name.clone(),
         waiting_secs: (Utc::now() - c.created_at).num_seconds().max(0),
@@ -90,15 +94,16 @@ async fn send_one(c: &Candidate, cfg: &OwnerMail) -> bool {
         org_name: c.org_name.clone(),
     };
     let outgoing = cfg.to(&c.recipient, template);
-    match cfg.email.sender.send(outgoing).await {
-        Ok(_) => true,
-        Err(err) => {
+    cfg.email
+        .sender
+        .send(outgoing, SendClass::Bulk)
+        .await
+        .map(|_| ())
+        .inspect_err(|err| {
             tracing::warn!(
                 target_id = %c.target_id,
                 error = %err,
                 "heartbeat nudge not sent, retrying next tick"
             );
-            false
-        }
-    }
+        })
 }

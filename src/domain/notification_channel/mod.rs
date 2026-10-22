@@ -199,7 +199,9 @@ impl ChannelKind {
     /// failure.
     pub const fn provider_throttle_hint(self) -> bool {
         match self {
-            Self::Telegram | Self::TelegramApp | Self::Discord | Self::DiscordApp => true,
+            Self::Telegram | Self::TelegramApp | Self::Discord | Self::DiscordApp | Self::Email => {
+                true
+            }
             Self::Webhook
             | Self::Slack
             | Self::SlackApp
@@ -207,7 +209,6 @@ impl ChannelKind {
             | Self::WhatsAppApp
             | Self::MsTeams
             | Self::GoogleChat
-            | Self::Email
             | Self::PagerDuty
             | Self::Ntfy
             | Self::Gotify

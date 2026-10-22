@@ -203,6 +203,10 @@ support_address = ""
 [email.resend]
 # From https://resend.com/api-keys. Required when provider = "resend".
 api_key = ""
+# Requests per second Resend allows your team, across every key (10 unless
+# they raised it). All instances share 80% of it through Postgres; the other
+# 20% is what an instance that cannot reach Postgres may use on its own.
+rate_limit_per_second = 10
 
 [billing]
 # "paddle" turns on checkout, the webhook receiver at /hooks/billing/paddle,

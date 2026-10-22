@@ -1,7 +1,11 @@
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::trait_def::{EmailResult, EmailSender, MessageId, TransactionalEmail};
+use super::trait_def::{
+    BatchFailure, BatchResult, EmailError, EmailResult, EmailSender, MessageId, PreparedBatch,
+    SendClass, TransactionalEmail, check_batch_size,
+};
 
 pub struct LogOnlyEmailSender {
     site_name: String,
@@ -79,9 +83,16 @@ pub(crate) fn mask_email(addr: &str) -> String {
     }
 }
 
+/// What a log-only batch keeps of each mail: enough to say it went.
+#[derive(Serialize, Deserialize)]
+struct LoggedMail {
+    to: String,
+    subject: String,
+}
+
 #[async_trait]
 impl EmailSender for LogOnlyEmailSender {
-    async fn send(&self, email: TransactionalEmail) -> EmailResult<MessageId> {
+    async fn send(&self, email: TransactionalEmail, _class: SendClass) -> EmailResult<MessageId> {
         let rendered = email.template.render(&self.site_name);
         // Recipient masked; the rendered body is deliberately not logged.
         let to = mask_email(&email.to.address);
@@ -107,6 +118,48 @@ impl EmailSender for LogOnlyEmailSender {
         }
 
         Ok(MessageId(format!("log-only-{}", Uuid::now_v7())))
+    }
+
+    fn prepare_batch(
+        &self,
+        emails: Vec<TransactionalEmail>,
+        key: String,
+    ) -> EmailResult<PreparedBatch> {
+        check_batch_size(emails.len())?;
+        let logged: Vec<LoggedMail> = emails
+            .iter()
+            .map(|e| LoggedMail {
+                to: mask_email(&e.to.address),
+                subject: e.template.render(&self.site_name).subject,
+            })
+            .collect();
+        let body = serde_json::to_vec(&logged)
+            .map_err(|e| EmailError::Transport(format!("serialize: {e}")))?;
+        Ok(PreparedBatch::from_parts(key, body.into(), emails.len()))
+    }
+
+    async fn send_prepared(&self, batch: PreparedBatch) -> BatchResult {
+        let logged: Vec<LoggedMail> = match serde_json::from_slice(batch.body()) {
+            Ok(logged) => logged,
+            Err(e) => {
+                return Err(BatchFailure {
+                    error: EmailError::Transport(format!("parse batch: {e}")),
+                    batch,
+                });
+            }
+        };
+        Ok(logged
+            .into_iter()
+            .map(|mail| {
+                tracing::info!(
+                    to = %mail.to,
+                    subject = %mail.subject,
+                    batch = %batch.key(),
+                    "📧 EMAIL (not actually sent — log-only mode)"
+                );
+                Ok(MessageId(format!("log-only-{}", Uuid::now_v7())))
+            })
+            .collect())
     }
 }
 

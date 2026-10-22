@@ -11,7 +11,7 @@ use crate::config::{AppConfig, TransactionalEmailConfig};
 use crate::domain::{
     ChannelConfig, ChannelKind, NotificationChannel, OrgId, UserId, validate_channel_name,
 };
-use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
+use crate::email::{EmailAddress, EmailTemplate, SendClass, TransactionalEmail};
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::quotas::QuotaService;
@@ -68,7 +68,7 @@ pub async fn mint_and_send_verification(
         };
         let sender = delivery.sender;
         tokio::spawn(async move {
-            if let Err(err) = sender.send(outgoing).await {
+            if let Err(err) = sender.send(outgoing, SendClass::Immediate).await {
                 tracing::warn!(%channel_id, error = %err, "channel verification mail failed");
             }
         });

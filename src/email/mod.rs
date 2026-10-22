@@ -2,6 +2,7 @@
 //! sender behind `crate::notifier`'s alert mail and status-page subscriber
 //! updates. Provider is pluggable per the top-level `[email]` config table.
 
+pub mod gate;
 pub mod log_only;
 pub mod memory;
 pub mod resend;
@@ -15,31 +16,39 @@ use crate::config::{EmailProvider, TransactionalEmailConfig};
 use crate::http_outbound::build_single_use_outbound_client;
 use crate::security::SsrfGuard;
 
+pub use gate::{GatedEmailSender, SendGate};
 pub use log_only::LogOnlyEmailSender;
 pub(crate) use log_only::mask_email;
 pub use memory::InMemoryEmailSender;
 pub use resend::ResendEmailSender;
 pub use templates::RenderedEmail;
 pub use trait_def::{
-    EmailAddress, EmailError, EmailResult, EmailSender, EmailTemplate, MessageId,
-    TransactionalEmail,
+    BatchFailure, BatchResult, EmailAddress, EmailError, EmailResult, EmailSender, EmailTemplate,
+    MAX_BATCH, MessageId, PreparedBatch, SendClass, TransactionalEmail,
 };
 
 /// Builds an `EmailSender` from config. Whether the config is complete is
-/// the validator's question, asked at boot.
+/// the validator's question, asked at boot. Only a provider that leaves the
+/// machine sits behind the send gate, which books its slots in the database
+/// at `database_url`.
 pub fn build_email_sender(
     config: &TransactionalEmailConfig,
     guard: SsrfGuard,
-) -> Arc<dyn EmailSender> {
-    match config.provider {
-        EmailProvider::Resend => Arc::new(ResendEmailSender::new(
-            config.resend.api_key.clone(),
-            config.from_name.clone(),
-            build_single_use_outbound_client(guard),
-        )),
+    database_url: &str,
+) -> sqlx::Result<Arc<dyn EmailSender>> {
+    Ok(match config.provider {
+        EmailProvider::Resend => {
+            let resend = Arc::new(ResendEmailSender::new(
+                config.resend.api_key.clone(),
+                config.from_name.clone(),
+                build_single_use_outbound_client(guard),
+            ));
+            let gate = SendGate::connect_lazy(database_url, config.resend.rate_limit_per_second)?;
+            Arc::new(GatedEmailSender::new(resend, gate))
+        }
         EmailProvider::Log => Arc::new(LogOnlyEmailSender::new(config.from_name.clone())),
         EmailProvider::Memory => Arc::new(InMemoryEmailSender::new()),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -129,7 +138,7 @@ mod tests {
     async fn log_only_sender_emits_tracing_and_returns_id() {
         let sender = LogOnlyEmailSender::new("Uptimepage [TEST]");
         let id = sender
-            .send(sample_invitation())
+            .send(sample_invitation(), SendClass::Immediate)
             .await
             .expect("log-only send");
         assert!(id.0.starts_with("log-only-"));
@@ -139,8 +148,14 @@ mod tests {
     async fn in_memory_sender_captures_sent_emails() {
         let sender = InMemoryEmailSender::new();
         assert!(sender.is_empty());
-        let id1 = sender.send(sample_invitation()).await.unwrap();
-        let id2 = sender.send(sample_magic_link()).await.unwrap();
+        let id1 = sender
+            .send(sample_invitation(), SendClass::Immediate)
+            .await
+            .unwrap();
+        let id2 = sender
+            .send(sample_magic_link(), SendClass::Immediate)
+            .await
+            .unwrap();
         assert_eq!(id1.0, "memory-0");
         assert_eq!(id2.0, "memory-1");
 
@@ -158,13 +173,15 @@ mod tests {
         }
     }
 
+    const UNUSED_DB: &str = "postgres://localhost/unused";
+
     #[test]
     fn factory_log_provider() {
         let cfg = TransactionalEmailConfig {
             provider: EmailProvider::Log,
             ..Default::default()
         };
-        let sender = build_email_sender(&cfg, SsrfGuard::strict());
+        let sender = build_email_sender(&cfg, SsrfGuard::strict(), UNUSED_DB).unwrap();
         let _ = format!("{:p}", Arc::as_ptr(&sender));
     }
 
@@ -174,12 +191,12 @@ mod tests {
             provider: EmailProvider::Memory,
             ..Default::default()
         };
-        let sender = build_email_sender(&cfg, SsrfGuard::strict());
+        let sender = build_email_sender(&cfg, SsrfGuard::strict(), UNUSED_DB).unwrap();
         let _ = sender;
     }
 
-    #[test]
-    fn factory_resend_constructs() {
+    #[tokio::test]
+    async fn factory_resend_constructs_without_touching_the_database() {
         let cfg = TransactionalEmailConfig {
             provider: EmailProvider::Resend,
             resend: crate::config::ResendConfig {
@@ -188,7 +205,25 @@ mod tests {
             },
             ..Default::default()
         };
-        let sender = build_email_sender(&cfg, SsrfGuard::strict());
+        let sender = build_email_sender(&cfg, SsrfGuard::strict(), UNUSED_DB).unwrap();
         let _ = sender;
+    }
+
+    #[tokio::test]
+    async fn a_resent_batch_key_is_answered_again_without_a_second_mail() {
+        let sender = InMemoryEmailSender::new();
+        let batch = sender
+            .prepare_batch(vec![sample_invitation(), sample_magic_link()], "k1".into())
+            .unwrap();
+        let first = sender.send_prepared(batch.clone()).await.unwrap();
+        let again = sender.send_prepared(batch).await.unwrap();
+        assert_eq!(sender.len(), 2);
+        let ids = |r: &[EmailResult<MessageId>]| {
+            r.iter()
+                .map(|m| m.as_ref().unwrap().0.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&first), ids(&again));
+        assert!(sender.prepare_batch(Vec::new(), "k2".into()).is_err());
     }
 }

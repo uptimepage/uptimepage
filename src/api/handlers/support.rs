@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::email::templates::support_request::short_ref;
-use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
+use crate::email::{EmailAddress, EmailTemplate, SendClass, TransactionalEmail};
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::request::auth::{CurrentOrg, Session};
@@ -121,19 +121,23 @@ pub async fn create(
         },
     };
 
-    state.email_sender.send(email).await.map_err(|e| {
-        tracing::error!(
-            request_id = %request_id,
-            org = %org.0,
-            topic = %topic,
-            error = %e,
-            "support request delivery failed"
-        );
-        AppError::ServiceUnavailable {
-            code: codes::SUPPORT_DELIVERY_FAILED,
-            message: "could not deliver your message, please try again shortly".into(),
-        }
-    })?;
+    state
+        .email_sender
+        .send(email, SendClass::Immediate)
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                request_id = %request_id,
+                org = %org.0,
+                topic = %topic,
+                error = %e,
+                "support request delivery failed"
+            );
+            AppError::ServiceUnavailable {
+                code: codes::SUPPORT_DELIVERY_FAILED,
+                message: "could not deliver your message, please try again shortly".into(),
+            }
+        })?;
     // No message body: it is customer prose and the logs outlive the ticket.
     tracing::info!(
         request_id = %request_id,

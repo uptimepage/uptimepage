@@ -112,7 +112,12 @@ impl FailingChannelMail {
                 to: crate::email::EmailAddress::new(to.clone(), to.clone()),
                 template: template.clone(),
             };
-            match self.email.sender.send(outgoing).await {
+            match self
+                .email
+                .sender
+                .send(outgoing, crate::email::SendClass::Immediate)
+                .await
+            {
                 Ok(_) => told = true,
                 Err(err) => {
                     tracing::warn!(org_id = %self.org.0, error = %err, "channel-failure mail not sent");

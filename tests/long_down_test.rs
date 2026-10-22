@@ -13,10 +13,7 @@ use sqlx::PgPool;
 use uptimepage::config::AppConfig;
 use uptimepage::domain::quota::RegionCaps;
 use uptimepage::domain::{CheckResult, CheckSpec, CheckStatus, ExpectedStatus, OrgId, UserId};
-use uptimepage::email::{
-    EmailError, EmailResult, EmailSender, EmailTemplate, InMemoryEmailSender, MessageId,
-    TransactionalEmail,
-};
+use uptimepage::email::{EmailSender, EmailTemplate, InMemoryEmailSender, TransactionalEmail};
 use uptimepage::jobs::long_down::{mail_pass, restore_pass, slow_pass};
 use uptimepage::jobs::owner_mail::OwnerMail;
 use uptimepage::quotas::QuotaService;
@@ -923,13 +920,6 @@ async fn each_owner_gets_one_mail_listing_their_slowed_monitors_once() {
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
 async fn a_failed_mail_is_not_stamped_and_goes_out_next_pass() {
-    struct DeadSender;
-    #[async_trait::async_trait]
-    impl EmailSender for DeadSender {
-        async fn send(&self, _: TransactionalEmail) -> EmailResult<MessageId> {
-            Err(EmailError::Transport("provider unreachable".into()))
-        }
-    }
     let Some((pool, db)) = isolated("ld_mail_fail").await else {
         return;
     };
@@ -938,7 +928,7 @@ async fn a_failed_mail_is_not_stamped_and_goes_out_next_pass() {
     m.exec("UPDATE targets SET slowed_at = now() WHERE id = $1")
         .await;
 
-    let dead = mail_with(Arc::new(DeadSender));
+    let dead = mail_with(Arc::new(common::UnreachableEmail));
     assert_eq!(mail_pass(&pool, &dead).await.expect("mail"), 0);
     assert!(m.notified_at().await.is_none());
 

@@ -67,6 +67,8 @@ Setup:
 
 Boot refuses `provider = "resend"` without both the API key and the from address, and warns when the from address is a `no-reply@` one: fail-fast over send-time surprise.
 
+Resend limits requests per second for the whole team, across every API key, so every instance books its sends in one Postgres row and together they stay under `email.resend.rate_limit_per_second` (10 unless Resend raised yours). Sign-in links, alerts, billing notices and other mail someone is waiting for go ahead of status-page subscriber updates and owner reminders. When Resend still answers 429, every instance waits the time it names. An instance that cannot reach Postgres keeps sending sign-in links and alerts at a fifth of the limit and holds subscriber updates until it can.
+
 ### Public status surface
 
 The Caddyfile carries an `@public` matcher that handles the public status paths ahead of the catch-all and adds a per-IP rate limit (60 req/min) via the [`caddy-ratelimit`](https://github.com/mholt/caddy-ratelimit) plugin. The stock `caddy:2-alpine` image doesn't include that plugin, so the production deployment uses a custom `custom-caddy:2` image built with `xcaddy`:

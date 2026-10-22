@@ -1,7 +1,9 @@
 use std::fmt;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use hyper::body::Bytes;
 use thiserror::Error;
 
 use super::templates::incident_alert::IncidentAlert;
@@ -13,17 +15,162 @@ use crate::i18n::Tr;
 
 pub type EmailResult<T> = Result<T, EmailError>;
 
+/// Who is waiting on a mail, which decides how it queues for a send slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendClass {
+    /// A person waiting on it, or an alert.
+    Immediate,
+    /// A sweep over many recipients that can wait seconds.
+    Bulk,
+}
+
+impl SendClass {
+    pub fn as_label(self) -> &'static str {
+        match self {
+            Self::Immediate => "immediate",
+            Self::Bulk => "bulk",
+        }
+    }
+}
+
+/// Every provider answer keeps the `email provider rejected:` prefix it has
+/// always logged with; the kind is what a retry decision reads.
 #[derive(Debug, Error)]
 pub enum EmailError {
+    /// The provider's rate limit, or no send slot before the caller's
+    /// deadline. The `"retry_after":N` fragment rides the escalation engine's
+    /// vendor-hint path.
+    #[error("email provider rejected: {detail} {{\"retry_after\":{secs}}}", secs = .retry_after.as_secs().max(1))]
+    RateLimited {
+        retry_after: Duration,
+        detail: String,
+    },
+    /// The daily quota resets at `until`; the monthly one has no time we know.
+    #[error("email provider rejected: {detail}")]
+    QuotaExceeded {
+        until: Option<DateTime<Utc>>,
+        detail: String,
+    },
+    /// Our key or sending domain, not the recipient.
+    #[error("email provider refused our account: {0}")]
+    Refused(String),
+    /// This message will never be accepted as it is.
     #[error("email provider rejected: {0}")]
-    ProviderRejected(String),
+    Rejected(String),
+    /// A request with the same idempotency key is still being processed; only
+    /// the same key with the same bytes may follow it.
+    #[error("email provider rejected: {0}")]
+    InProgress(String),
+    /// The send budget had no slot before the caller's deadline. Nothing was
+    /// sent; the fragment tells the escalation engine when to come back.
+    #[error("email send deferred by the send budget {{\"retry_after\":{secs}}}", secs = .retry_after.as_secs().max(1))]
+    Deferred { retry_after: Duration },
+    /// This instance's send gate cannot reach the shared budget, and Bulk
+    /// mail does not send on the local fallback. Nothing was sent.
+    #[error("email send budget unavailable on this instance")]
+    GateUnavailable,
+    /// A 5xx, a timeout or a dropped connection: the provider may or may not
+    /// have taken the mail.
     #[error("transport error: {0}")]
     Transport(String),
 }
 
+impl EmailError {
+    /// Held back by pacing, ours or the provider's: nothing about this mail
+    /// was refused, so it says nothing against sending it again.
+    pub fn is_pacing(&self) -> bool {
+        matches!(
+            self,
+            Self::RateLimited { .. } | Self::Deferred { .. } | Self::GateUnavailable
+        )
+    }
+
+    pub fn as_label(&self) -> &'static str {
+        match self {
+            Self::RateLimited { .. } => "rate_limited",
+            Self::QuotaExceeded { .. } => "quota_exceeded",
+            Self::Refused(_) => "refused",
+            Self::Rejected(_) => "rejected",
+            Self::InProgress(_) => "in_progress",
+            Self::Deferred { .. } => "deferred",
+            Self::GateUnavailable => "gate_unavailable",
+            Self::Transport(_) => "transport",
+        }
+    }
+}
+
+/// The most mails one batch request may carry.
+pub const MAX_BATCH: usize = 100;
+
+/// Every provider refuses the same batch sizes, so a fake cannot accept what
+/// the real one would not.
+pub(crate) fn check_batch_size(len: usize) -> EmailResult<()> {
+    if (1..=MAX_BATCH).contains(&len) {
+        Ok(())
+    } else {
+        Err(EmailError::Rejected(format!(
+            "a batch takes 1 to {MAX_BATCH} mails, not {len}"
+        )))
+    }
+}
+
+/// One batch request as it goes on the wire, so a retry after an unknown
+/// outcome sends the same bytes under the same idempotency key. The provider
+/// answers a reused key with a changed body as a rejection, so a batch is
+/// never rendered twice.
+#[derive(Debug, Clone)]
+pub struct PreparedBatch {
+    key: String,
+    body: Bytes,
+    len: usize,
+}
+
+impl PreparedBatch {
+    /// Also how a batch stored after an unknown outcome is rebuilt.
+    pub fn from_parts(key: String, body: Bytes, len: usize) -> Self {
+        Self { key, body, len }
+    }
+
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    pub fn body(&self) -> &Bytes {
+        &self.body
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+/// The whole request failed; `batch` is handed back unchanged for a retry.
+#[derive(Debug)]
+pub struct BatchFailure {
+    pub error: EmailError,
+    pub batch: PreparedBatch,
+}
+
+/// One result per mail, in the order they were prepared.
+pub type BatchResult = Result<Vec<EmailResult<MessageId>>, BatchFailure>;
+
 #[async_trait]
 pub trait EmailSender: Send + Sync {
-    async fn send(&self, email: TransactionalEmail) -> EmailResult<MessageId>;
+    async fn send(&self, email: TransactionalEmail, class: SendClass) -> EmailResult<MessageId>;
+
+    /// Renders up to [`MAX_BATCH`] mails into one request under `key`.
+    fn prepare_batch(
+        &self,
+        emails: Vec<TransactionalEmail>,
+        key: String,
+    ) -> EmailResult<PreparedBatch>;
+
+    /// Bulk only. Sends exactly the prepared bytes.
+    async fn send_prepared(&self, batch: PreparedBatch) -> BatchResult;
 }
 
 #[derive(Debug, Clone)]
