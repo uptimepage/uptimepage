@@ -724,23 +724,26 @@ async fn main() -> Result<()> {
     ));
 
     let subscriber_dispatch_handle: JoinHandle<()> = {
-        let dispatcher = uptimepage::public_status::subscriber_dispatch::SubscriberDispatcher::new(
+        use uptimepage::public_status::subscriber_dispatch::{
+            SubscriberDispatchConfig, SubscriberDispatcher,
+        };
+        let dispatcher = Arc::new(SubscriberDispatcher::new(
             pg_pool_for_stores.clone(),
             email_sender.clone(),
             outbound_http.clone(),
-            uptimepage::public_status::subscriber_dispatch::SubscriberDispatchConfig {
-                tick_interval: Duration::from_secs(20),
-                batch_limit: 200,
-                base_domain: cfg.public_status.base_domain.clone(),
-                public_base_url: cfg.auth.public_base_url.clone(),
-                subdomain_routes: cfg.tenancy.subdomain_public_routes,
-                unsubscribe_secret: unsubscribe_secret.clone(),
-                from_address: cfg.email.from_address.clone(),
-                from_name: cfg.email.from_name.clone(),
-            },
-        );
+            SubscriberDispatchConfig::new(
+                uptimepage::public_status::subscriber_notice::PageLinks {
+                    base_domain: cfg.public_status.base_domain.clone(),
+                    public_base_url: cfg.auth.public_base_url.clone(),
+                    subdomain_routes: cfg.tenancy.subdomain_public_routes,
+                },
+                unsubscribe_secret.clone(),
+                cfg.email.from_address.clone(),
+                cfg.email.from_name.clone(),
+            ),
+        ));
         let token = root.clone();
-        tokio::spawn(async move { dispatcher.run(token).await })
+        tokio::spawn(dispatcher.run(token))
     };
 
     let subscriber_token_cleanup_handle: JoinHandle<()> = tokio::spawn(run_purge_loop(
@@ -756,7 +759,11 @@ async fn main() -> Result<()> {
         root.clone(),
         Duration::from_secs(6 * 60 * 60),
         "subscriber_delivery_cleanup",
-        uptimepage::storage::subscriber_deliveries::purge_old,
+        async |pool: &sqlx::PgPool| {
+            let notices = uptimepage::storage::subscriber_notices::purge_old(pool).await?;
+            let outages = uptimepage::storage::subscriber_outages::purge_old(pool).await?;
+            Ok::<u64, sqlx::Error>(notices + outages)
+        },
     ));
 
     // A plan moves by an operator UPDATE, which notifies nothing, so this turns

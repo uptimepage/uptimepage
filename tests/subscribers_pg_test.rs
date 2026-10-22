@@ -1,29 +1,48 @@
 //! Live-Postgres contract for public status-page subscribers: subscribe →
-//! confirm → unsubscribe round-trip, the stateless unsubscribe HMAC, and the
-//! fan-out candidate query (verified-only, lookback, per-pair claim).
+//! confirm → unsubscribe, the stateless unsubscribe HMAC, what the planner
+//! decides each page's subscribers hear, outages told once at each end, and
+//! the senders' leases.
 //!
-//! Live-PG ignored: needs `DATABASE_URL`. Migrations are auto-applied by
-//! `pg_pool_from_env` on first connect.
+//! Live-PG ignored: needs `DATABASE_URL`. The planner reads every page in its
+//! database, so each planner test runs in a database of its own.
 
 use crate::common;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
+use async_trait::async_trait;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use uptimepage::domain::{NewSubscriber, SubscriberChannel};
-use uptimepage::storage::subscriber_deliveries::{
-    self, INCIDENT_UPDATE, MAINTENANCE, MAINTENANCE_UPDATE,
+use uptimepage::email::{
+    BatchFailure, BatchResult, EmailError, EmailResult, EmailSender, EmailTemplate,
+    InMemoryEmailSender, MessageId, PreparedBatch, SendClass, TransactionalEmail,
 };
-use uptimepage::storage::subscriber_maintenance;
+use uptimepage::public_status::subscriber_dispatch::{
+    SubscriberDispatchConfig, SubscriberDispatcher,
+};
+use uptimepage::public_status::subscriber_notice::PageLinks;
+use uptimepage::storage::subscriber_deliveries::{self, Outcome};
 use uptimepage::storage::subscribers::{self, ConfirmMint};
 
 use common::{drop_test_db, fresh_test_db, open_test_pool, pg_pool_from_env, unique_slug};
 
-use crate::common::MIGRATOR;
+async fn isolated(tag: &str) -> Option<(PgPool, String)> {
+    let (url, name) = fresh_test_db(tag).await?;
+    Some((open_test_pool(&url).await, name))
+}
+
+async fn done(pool: PgPool, name: &str) {
+    pool.close().await;
+    drop_test_db(name).await;
+}
 
 async fn seed_org(pool: &PgPool) -> Uuid {
     let slug = unique_slug("sub-org");
-    let row: (Uuid,) = sqlx::query_as(
+    sqlx::query_scalar(
         "WITH a AS (INSERT INTO accounts DEFAULT VALUES RETURNING id) \
          INSERT INTO organizations (slug, name, account_id) \
          SELECT $1, 'sub', a.id FROM a RETURNING id",
@@ -31,33 +50,31 @@ async fn seed_org(pool: &PgPool) -> Uuid {
     .bind(slug)
     .fetch_one(pool)
     .await
-    .unwrap();
-    row.0
+    .unwrap()
 }
 
-async fn seed_target(pool: &PgPool, org: Uuid) -> Uuid {
-    let row: (Uuid,) = sqlx::query_as(
+async fn seed_target(pool: &PgPool, org: Uuid, name: &str) -> Uuid {
+    sqlx::query_scalar(
         r#"INSERT INTO targets (org_id, name, check_spec, interval_secs)
-           VALUES ($1, 'mon', '{"type":"http","url":"https://example.com/"}'::jsonb, 60)
+           VALUES ($1, $2, '{"type":"http","url":"https://example.com/"}'::jsonb, 60)
            RETURNING id"#,
     )
     .bind(org)
+    .bind(name)
     .fetch_one(pool)
     .await
-    .unwrap();
-    row.0
+    .unwrap()
 }
 
 async fn seed_page(pool: &PgPool, org: Uuid) -> Uuid {
-    let row: (Uuid,) = sqlx::query_as(
+    sqlx::query_scalar(
         "INSERT INTO status_pages (org_id, slug, name, enabled) VALUES ($1, $2, 'Acme', true) RETURNING id",
     )
     .bind(org)
     .bind(unique_slug("subpage"))
     .fetch_one(pool)
     .await
-    .unwrap();
-    row.0
+    .unwrap()
 }
 
 async fn add_component(pool: &PgPool, org: Uuid, page: Uuid, target: Uuid) {
@@ -72,22 +89,23 @@ async fn add_component(pool: &PgPool, org: Uuid, page: Uuid, target: Uuid) {
     .unwrap();
 }
 
-async fn seed_public_incident(pool: &PgPool, org: Uuid, target: Uuid) -> Uuid {
-    let row: (Uuid,) = sqlx::query_as(
+async fn seed_incident(pool: &PgPool, org: Uuid, target: Uuid, visibility: &str) -> Uuid {
+    sqlx::query_scalar(
         "INSERT INTO incidents (org_id, target_id, started_at, status_at_start, visibility, public_title)
-         VALUES ($1, $2, now(), 'down', 'public', 'Elevated errors')
+         VALUES ($1, $2, now(), 'down', $3, 'Elevated errors')
          RETURNING id",
     )
     .bind(org)
     .bind(target)
+    .bind(visibility)
     .fetch_one(pool)
     .await
-    .unwrap();
-    row.0
+    .unwrap()
 }
 
+/// A person's update, `age_hours` old.
 async fn add_update(pool: &PgPool, org: Uuid, incident: Uuid, age_hours: i64) -> Uuid {
-    let row: (Uuid,) = sqlx::query_as(
+    sqlx::query_scalar(
         "INSERT INTO incident_updates (org_id, incident_id, phase, message, posted_at)
          VALUES ($1, $2, 'investigating', 'looking into it', now() - make_interval(hours => $3))
          RETURNING id",
@@ -97,22 +115,7 @@ async fn add_update(pool: &PgPool, org: Uuid, incident: Uuid, age_hours: i64) ->
     .bind(age_hours as i32)
     .fetch_one(pool)
     .await
-    .unwrap();
-    row.0
-}
-
-async fn seed_internal_incident(pool: &PgPool, org: Uuid, target: Uuid) -> Uuid {
-    let row: (Uuid,) = sqlx::query_as(
-        "INSERT INTO incidents (org_id, target_id, started_at, status_at_start, visibility, public_title)
-         VALUES ($1, $2, now(), 'down', 'internal', 'Elevated errors')
-         RETURNING id",
-    )
-    .bind(org)
-    .bind(target)
-    .fetch_one(pool)
-    .await
-    .unwrap();
-    row.0
+    .unwrap()
 }
 
 async fn mark_published(pool: &PgPool, org: Uuid, incident: Uuid) {
@@ -128,7 +131,7 @@ async fn mark_published(pool: &PgPool, org: Uuid, incident: Uuid) {
 }
 
 async fn add_resolved_update(pool: &PgPool, org: Uuid, incident: Uuid) -> Uuid {
-    let row: (Uuid,) = sqlx::query_as(
+    sqlx::query_scalar(
         "INSERT INTO incident_updates (org_id, incident_id, phase, message)
          VALUES ($1, $2, 'resolved', 'all clear')
          RETURNING id",
@@ -137,8 +140,7 @@ async fn add_resolved_update(pool: &PgPool, org: Uuid, incident: Uuid) -> Uuid {
     .bind(incident)
     .fetch_one(pool)
     .await
-    .unwrap();
-    row.0
+    .unwrap()
 }
 
 async fn confirmed_subscriber(pool: &PgPool, org: Uuid, page: Uuid, email: &str) -> Uuid {
@@ -168,11 +170,56 @@ async fn confirmed_subscriber(pool: &PgPool, org: Uuid, page: Uuid, email: &str)
     sub.id
 }
 
-async fn cleanup(pool: &PgPool, org: Uuid) {
-    let _ = sqlx::query("DELETE FROM organizations WHERE id = $1")
-        .bind(org)
-        .execute(pool)
-        .await;
+fn config() -> SubscriberDispatchConfig {
+    let mut cfg = SubscriberDispatchConfig::new(
+        PageLinks {
+            base_domain: "example.com".into(),
+            public_base_url: "https://app.example.com".into(),
+            subdomain_routes: true,
+        },
+        "dispatch-secret".into(),
+        "status@example.com".into(),
+        "Status".into(),
+    );
+    cfg.tick_interval = Duration::from_secs(60);
+    cfg
+}
+
+fn dispatcher(pool: PgPool, email: Arc<dyn EmailSender>) -> SubscriberDispatcher {
+    let (http, _) = common::build_test_outbound_and_email();
+    SubscriberDispatcher::new(pool, email, http, config())
+}
+
+/// What a subscriber has waiting: (notice kind, source, phase), oldest first.
+async fn owed(pool: &PgPool, sub: Uuid) -> Vec<(String, Uuid, String)> {
+    sqlx::query_as(
+        "SELECT n.kind, n.source_ref, n.phase FROM status_page_subscriber_deliveries d
+         JOIN status_page_notices n ON n.id = d.notice_id
+         WHERE d.subscriber_id = $1 AND d.status = 'queued'
+         ORDER BY n.created_at, n.id",
+    )
+    .bind(sub)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+fn kinds(owed: &[(String, Uuid, String)]) -> Vec<&str> {
+    owed.iter().map(|(k, _, _)| k.as_str()).collect()
+}
+
+fn sources(owed: &[(String, Uuid, String)], kind: &str) -> Vec<Uuid> {
+    owed.iter()
+        .filter(|(k, _, _)| k == kind)
+        .map(|(_, s, _)| *s)
+        .collect()
+}
+
+fn mails_to(mem: &InMemoryEmailSender, to: &str) -> Vec<TransactionalEmail> {
+    mem.sent()
+        .into_iter()
+        .filter(|e| e.to.address == to)
+        .collect()
 }
 
 #[tokio::test]
@@ -184,34 +231,17 @@ async fn subscribe_confirm_unsubscribe_roundtrip() {
     let org = seed_org(&pool).await;
     let page = seed_page(&pool, org).await;
     let email = format!("{}@example.com", unique_slug("rt"));
+    let new = || NewSubscriber {
+        status_page_id: page,
+        org_id: org,
+        channel: SubscriberChannel::Email,
+        target: email.clone(),
+        config: serde_json::json!({}),
+    };
 
-    let sub = subscribers::subscribe(
-        &pool,
-        &NewSubscriber {
-            status_page_id: page,
-            org_id: org,
-            channel: SubscriberChannel::Email,
-            target: email.clone(),
-            config: serde_json::json!({}),
-        },
-    )
-    .await
-    .unwrap();
+    let sub = subscribers::subscribe(&pool, &new()).await.unwrap();
     assert!(sub.verified_at.is_none(), "starts pending");
-
-    // Re-subscribe is idempotent: same row, still pending.
-    let again = subscribers::subscribe(
-        &pool,
-        &NewSubscriber {
-            status_page_id: page,
-            org_id: org,
-            channel: SubscriberChannel::Email,
-            target: email.clone(),
-            config: serde_json::json!({}),
-        },
-    )
-    .await
-    .unwrap();
+    let again = subscribers::subscribe(&pool, &new()).await.unwrap();
     assert_eq!(again.id, sub.id, "re-subscribe folds onto one row");
 
     let ConfirmMint::Created { token } =
@@ -226,38 +256,34 @@ async fn subscribe_confirm_unsubscribe_roundtrip() {
         .unwrap()
         .expect("confirm");
     assert!(confirmed.is_verified());
-    // Single-use: a second confirm of the same token loses.
     assert!(subscribers::confirm(&pool, &token).await.unwrap().is_none());
 
-    // Unsubscribe HMAC: right token verifies, a wrong one does not.
     let secret = "test-salt";
     let mac = subscribers::unsubscribe_token(secret, sub.id);
     assert!(subscribers::verify_unsubscribe(secret, sub.id, &mac));
     assert!(!subscribers::verify_unsubscribe(secret, sub.id, "nope"));
 
     assert!(subscribers::unsubscribe(&pool, sub.id).await.unwrap());
-    // Idempotent: a second unsubscribe is a no-op, not an error.
     assert!(!subscribers::unsubscribe(&pool, sub.id).await.unwrap());
 
-    cleanup(&pool, org).await;
+    let _ = sqlx::query("DELETE FROM organizations WHERE id = $1")
+        .bind(org)
+        .execute(&pool)
+        .await;
 }
 
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
-async fn fanout_lists_verified_recent_public_updates_only() {
-    let Some(pool) = pg_pool_from_env().await else {
+async fn an_update_reaches_verified_subscribers_inside_the_lookback_once() {
+    let Some((pool, name)) = isolated("subfresh").await else {
         return;
     };
     let org = seed_org(&pool).await;
-    let target = seed_target(&pool, org).await;
+    let target = seed_target(&pool, org, "mon").await;
     let page = seed_page(&pool, org).await;
     add_component(&pool, org, page, target).await;
-
-    // Verified subscriber, then a fresh public update — verified_at precedes
-    // posted_at so the update is eligible.
-    let sub_id = confirmed_subscriber(&pool, org, page, "v@example.com").await;
-    // An unverified subscriber on the same page must never be a candidate.
-    subscribers::subscribe(
+    let sub = confirmed_subscriber(&pool, org, page, "v@example.com").await;
+    let pending = subscribers::subscribe(
         &pool,
         &NewSubscriber {
             status_page_id: page,
@@ -270,135 +296,85 @@ async fn fanout_lists_verified_recent_public_updates_only() {
     .await
     .unwrap();
 
-    let incident = seed_public_incident(&pool, org, target).await;
+    let incident = seed_incident(&pool, org, target, "public").await;
     let fresh = add_update(&pool, org, incident, 0).await;
-    let stale = add_update(&pool, org, incident, 48).await; // outside 24h lookback
+    let _stale = add_update(&pool, org, incident, 48).await;
 
-    let pending = subscribers::list_pending(&pool, 100).await.unwrap();
-    let mine: Vec<_> = pending
-        .iter()
-        .filter(|p| p.subscriber_id == sub_id)
-        .collect();
+    let mem = Arc::new(InMemoryEmailSender::new());
+    let disp = dispatcher(pool.clone(), mem.clone());
+    disp.plan_once().await.unwrap();
+    let mine = owed(&pool, sub).await;
     assert_eq!(
-        mine.len(),
-        1,
-        "only the fresh update, only the verified sub"
-    );
-    let p = mine[0];
-    assert_eq!(p.update_id, fresh);
-    assert_ne!(p.update_id, stale);
-    assert_eq!(p.incident_title(), "Elevated errors");
-    assert_eq!(
-        p.page_name, "sub",
-        "no display name: the org's, as on the page"
-    );
-    assert_eq!(p.phase, "investigating");
-
-    // Claiming is exclusive: the first wins, an immediate re-claim loses.
-    assert!(
-        subscriber_deliveries::claim(
-            &pool,
-            p.subscriber_id,
-            p.org_id,
-            INCIDENT_UPDATE,
-            p.update_id,
-            ""
-        )
-        .await
-        .unwrap()
+        sources(&mine, "incident_update"),
+        [fresh],
+        "only the fresh update"
     );
     assert!(
-        !subscriber_deliveries::claim(
-            &pool,
-            p.subscriber_id,
-            p.org_id,
-            INCIDENT_UPDATE,
-            p.update_id,
-            ""
-        )
-        .await
-        .unwrap()
+        owed(&pool, pending.id).await.is_empty(),
+        "never the unverified"
     );
 
-    // A send held back by pacing never uses up an attempt: it is claimed
-    // again past the cap.
-    for _ in 0..=uptimepage::storage::subscribers::FANOUT_MAX_ATTEMPTS {
-        subscriber_deliveries::mark(
-            &pool,
-            p.subscriber_id,
-            INCIDENT_UPDATE,
-            p.update_id,
-            "",
-            Some("email send budget unavailable on this instance"),
-            false,
-        )
-        .await
-        .unwrap();
-        assert!(
-            subscriber_deliveries::claim(
-                &pool,
-                p.subscriber_id,
-                p.org_id,
-                INCIDENT_UPDATE,
-                p.update_id,
-                ""
-            )
-            .await
-            .unwrap()
-        );
-    }
+    disp.run_once().await.unwrap();
+    let mails = mails_to(&mem, "v@example.com");
+    assert_eq!(mails.len(), 1);
+    let rendered = mails[0].template.render("Uptimepage");
+    assert!(
+        rendered.subject.contains("Elevated errors"),
+        "{}",
+        rendered.subject
+    );
+    assert!(
+        rendered.subject.starts_with("[sub]"),
+        "the org's name, as on the page"
+    );
+    assert!(mails[0].template.list_unsubscribe_url().is_some());
 
-    // Once marked sent it drops out of the candidate set.
-    subscriber_deliveries::mark(
-        &pool,
-        p.subscriber_id,
-        INCIDENT_UPDATE,
-        p.update_id,
-        "",
-        None,
-        true,
-    )
-    .await
-    .unwrap();
-    let after = subscribers::list_pending(&pool, 100).await.unwrap();
-    assert!(after.iter().all(|q| q.subscriber_id != sub_id));
-
-    cleanup(&pool, org).await;
+    disp.run_once().await.unwrap();
+    assert_eq!(mails_to(&mem, "v@example.com").len(), 1, "no duplicate");
+    done(pool, &name).await;
 }
 
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
-async fn an_activated_custom_domain_is_published_only_while_the_plan_sells_one() {
-    let Some(pool) = pg_pool_from_env().await else {
+async fn a_mail_links_the_custom_domain_only_once_it_is_activated_on_a_plan_that_sells_one() {
+    let Some((pool, name)) = isolated("subcd").await else {
         return;
     };
     let org = seed_org(&pool).await;
-    let target = seed_target(&pool, org).await;
+    let target = seed_target(&pool, org, "mon").await;
     let page = seed_page(&pool, org).await;
     add_component(&pool, org, page, target).await;
-    let sub_id = confirmed_subscriber(&pool, org, page, "cd@example.com").await;
-    let incident = seed_public_incident(&pool, org, target).await;
+    confirmed_subscriber(&pool, org, page, "cd@example.com").await;
+    let incident = seed_incident(&pool, org, target, "public").await;
     add_update(&pool, org, incident, 0).await;
+    let domain = format!("{}.example.net", unique_slug("st"));
     sqlx::query(
-        "UPDATE status_pages SET custom_domain = $2, custom_domain_verified_at = now() \
-         WHERE id = $1",
+        "UPDATE status_pages SET custom_domain = $2, custom_domain_verified_at = now() WHERE id = $1",
     )
     .bind(page)
-    .bind(format!("{}.example.com", unique_slug("st")))
+    .bind(&domain)
     .execute(&pool)
     .await
     .unwrap();
 
-    let mine = |pending: Vec<subscribers::PendingUpdate>| {
-        pending
-            .into_iter()
-            .find(|p| p.subscriber_id == sub_id)
-            .expect("the update is pending")
+    let disp = dispatcher(pool.clone(), Arc::new(InMemoryEmailSender::new()));
+    let origin = async || -> String {
+        sqlx::query("DELETE FROM status_page_notices")
+            .execute(&pool)
+            .await
+            .unwrap();
+        disp.plan_once().await.unwrap();
+        sqlx::query_scalar(
+            "SELECT payload -> 'page' ->> 'origin' FROM status_page_notices
+             WHERE kind = 'incident_update'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
     };
-    let on_free = mine(subscribers::list_pending(&pool, 100).await.unwrap());
     assert!(
-        !on_free.custom_domain_published,
-        "a plan without custom domains links the page's own subdomain"
+        !origin().await.contains(&domain),
+        "a free plan links the subdomain"
     );
 
     sqlx::query(
@@ -409,11 +385,9 @@ async fn an_activated_custom_domain_is_published_only_while_the_plan_sells_one()
     .execute(&pool)
     .await
     .unwrap();
-    let verified_only = mine(subscribers::list_pending(&pool, 100).await.unwrap());
     assert!(
-        !verified_only.custom_domain_published,
-        "verification permits a certificate, it does not move a mailed link: \
-         the host has completed no handshake yet and mail cannot be recalled"
+        !origin().await.contains(&domain),
+        "verification permits a certificate, it does not move a mailed link"
     );
 
     sqlx::query("UPDATE status_pages SET custom_domain_activated_at = now() WHERE id = $1")
@@ -421,10 +395,8 @@ async fn an_activated_custom_domain_is_published_only_while_the_plan_sells_one()
         .execute(&pool)
         .await
         .unwrap();
-    let activated = mine(subscribers::list_pending(&pool, 100).await.unwrap());
-    assert!(activated.custom_domain_published);
-
-    cleanup(&pool, org).await;
+    assert_eq!(origin().await, format!("https://{domain}"));
+    done(pool, &name).await;
 }
 
 /// An incident with no monitor has no component to route by, so its updates
@@ -432,7 +404,7 @@ async fn an_activated_custom_domain_is_published_only_while_the_plan_sells_one()
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
 async fn a_page_incident_reaches_only_the_subscribers_of_its_pages() {
-    let Some(pool) = pg_pool_from_env().await else {
+    let Some((pool, name)) = isolated("subposted").await else {
         return;
     };
     let org = seed_org(&pool).await;
@@ -461,67 +433,57 @@ async fn a_page_incident_reaches_only_the_subscribers_of_its_pages() {
     .unwrap();
     let update = add_update(&pool, org, incident, 0).await;
 
-    let pending = subscribers::list_pending(&pool, 1000).await.unwrap();
-    let mine: Vec<_> = pending.iter().filter(|p| p.update_id == update).collect();
-    assert_eq!(mine.len(), 1, "one delivery, to the posted page only");
-    assert_eq!(mine[0].subscriber_id, told);
-    assert_eq!(mine[0].incident_title(), "Network outage in Frankfurt");
-    assert!(pending.iter().all(|p| p.subscriber_id != untold));
-
-    cleanup(&pool, org).await;
+    let mem = Arc::new(InMemoryEmailSender::new());
+    dispatcher(pool.clone(), mem.clone())
+        .plan_once()
+        .await
+        .unwrap();
+    assert_eq!(
+        sources(&owed(&pool, told).await, "incident_update"),
+        [update]
+    );
+    assert!(owed(&pool, untold).await.is_empty());
+    done(pool, &name).await;
 }
 
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
-async fn unpublished_incident_fans_out_only_the_resolved_closer() {
-    let Some(pool) = pg_pool_from_env().await else {
+async fn an_unpublished_incident_tells_only_its_resolved_closer() {
+    let Some((pool, name)) = isolated("subunpub").await else {
         return;
     };
     let org = seed_org(&pool).await;
-    let target = seed_target(&pool, org).await;
+    let target = seed_target(&pool, org, "mon").await;
     let page = seed_page(&pool, org).await;
     add_component(&pool, org, page, target).await;
-    let sub_id = confirmed_subscriber(&pool, org, page, "u@example.com").await;
+    let sub = confirmed_subscriber(&pool, org, page, "u@example.com").await;
 
-    // Published then unpublished: investigating update is suppressed while
-    // internal, the resolved closer still reaches subscribers who were notified.
-    let incident = seed_internal_incident(&pool, org, target).await;
+    let incident = seed_incident(&pool, org, target, "internal").await;
     mark_published(&pool, org, incident).await;
     let investigating = add_update(&pool, org, incident, 0).await;
     let resolved = add_resolved_update(&pool, org, incident).await;
 
-    // Never published, resolved while internal: subscribers never heard of it,
-    // so even the resolved update must not fan out. Its own target — the open
-    // incident index allows only one open incident per monitor.
-    let target2 = seed_target(&pool, org).await;
+    let target2 = seed_target(&pool, org, "mon2").await;
     add_component(&pool, org, page, target2).await;
-    let silent = seed_internal_incident(&pool, org, target2).await;
+    let silent = seed_incident(&pool, org, target2, "internal").await;
     let silent_resolved = add_resolved_update(&pool, org, silent).await;
 
-    let pending = subscribers::list_pending(&pool, 100).await.unwrap();
-    let mine: Vec<_> = pending
-        .iter()
-        .filter(|p| p.subscriber_id == sub_id)
-        .map(|p| p.update_id)
-        .collect();
+    dispatcher(pool.clone(), Arc::new(InMemoryEmailSender::new()))
+        .plan_once()
+        .await
+        .unwrap();
+    let told = sources(&owed(&pool, sub).await, "incident_update");
+    assert!(told.contains(&resolved), "the closer reaches subscribers");
+    assert!(!told.contains(&investigating), "the rest stays suppressed");
     assert!(
-        mine.contains(&resolved),
-        "resolved closer reaches subscriber"
+        !told.contains(&silent_resolved),
+        "never published, never told"
     );
-    assert!(
-        !mine.contains(&investigating),
-        "internal investigating update stays suppressed"
-    );
-    assert!(
-        !mine.contains(&silent_resolved),
-        "never-published incident stays fully silent"
-    );
-
-    cleanup(&pool, org).await;
+    done(pool, &name).await;
 }
 
 async fn seed_maintenance(pool: &PgPool, org: Uuid, start_h: i64, end_h: i64) -> Uuid {
-    let row: (Uuid,) = sqlx::query_as(
+    sqlx::query_scalar(
         "INSERT INTO maintenance_windows (org_id, title, description, starts_at, ends_at)
          VALUES ($1, 'DB upgrade', 'brief blip', now() + make_interval(hours => $2),
                  now() + make_interval(hours => $3))
@@ -532,8 +494,7 @@ async fn seed_maintenance(pool: &PgPool, org: Uuid, start_h: i64, end_h: i64) ->
     .bind(end_h as i32)
     .fetch_one(pool)
     .await
-    .unwrap();
-    row.0
+    .unwrap()
 }
 
 async fn add_maintenance_component(pool: &PgPool, org: Uuid, mid: Uuid, target: Uuid) {
@@ -551,92 +512,87 @@ async fn add_maintenance_component(pool: &PgPool, org: Uuid, mid: Uuid, target: 
 
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
-async fn a_cancelled_maintenance_window_is_not_fanned_out() {
-    let Some(pool) = pg_pool_from_env().await else {
+async fn maintenance_tells_scheduled_and_completed_inside_the_lookback_and_never_a_cancelled_window()
+ {
+    let Some((pool, name)) = isolated("submaint").await else {
         return;
     };
     let org = seed_org(&pool).await;
-    let target = seed_target(&pool, org).await;
+    let target = seed_target(&pool, org, "mon").await;
     let page = seed_page(&pool, org).await;
     add_component(&pool, org, page, target).await;
-    let sub_id = confirmed_subscriber(&pool, org, page, "cancelled@example.com").await;
-    let window = seed_maintenance(&pool, org, 24, 25).await;
-    add_maintenance_component(&pool, org, window, target).await;
+    let sub = confirmed_subscriber(&pool, org, page, "m@example.com").await;
 
-    let pending_for = |pending: Vec<subscriber_maintenance::PendingMaintenance>| {
-        pending
-            .into_iter()
-            .filter(|m| m.subscriber_id == sub_id)
-            .count()
-    };
-    assert_eq!(
-        pending_for(
-            subscriber_maintenance::list_pending(&pool, 100)
-                .await
-                .unwrap()
-        ),
-        1,
-        "the announced window is pending"
-    );
-
+    let future = seed_maintenance(&pool, org, 24, 25).await;
+    add_maintenance_component(&pool, org, future, target).await;
+    let past = seed_maintenance(&pool, org, -2, -1).await;
+    add_maintenance_component(&pool, org, past, target).await;
+    let old = seed_maintenance(&pool, org, -26, -25).await;
+    add_maintenance_component(&pool, org, old, target).await;
+    let cancelled = seed_maintenance(&pool, org, 24, 25).await;
+    add_maintenance_component(&pool, org, cancelled, target).await;
     sqlx::query("UPDATE maintenance_windows SET deleted_at = now() WHERE id = $1")
-        .bind(window)
+        .bind(cancelled)
         .execute(&pool)
         .await
         .unwrap();
 
+    dispatcher(pool.clone(), Arc::new(InMemoryEmailSender::new()))
+        .plan_once()
+        .await
+        .unwrap();
+    let mut mine: Vec<(Uuid, String)> = owed(&pool, sub)
+        .await
+        .into_iter()
+        .filter(|(k, _, _)| k == "maintenance")
+        .map(|(_, s, p)| (s, p))
+        .collect();
+    mine.sort();
+    let mut want = vec![
+        (future, "scheduled".to_string()),
+        (past, "completed".to_string()),
+    ];
+    want.sort();
     assert_eq!(
-        pending_for(
-            subscriber_maintenance::list_pending(&pool, 100)
-                .await
-                .unwrap()
-        ),
-        0,
-        "a cancelled window is no longer announced"
+        mine, want,
+        "the old window is past the lookback, the cancelled one silent"
     );
-    cleanup(&pool, org).await;
-}
-
-async fn pending_counts(pool: &PgPool, sub: Uuid) -> (usize, usize) {
-    let updates = subscribers::list_pending(pool, 1000)
-        .await
-        .unwrap()
-        .into_iter()
-        .filter(|p| p.subscriber_id == sub)
-        .count();
-    let windows = subscriber_maintenance::list_pending(pool, 1000)
-        .await
-        .unwrap()
-        .into_iter()
-        .filter(|m| m.subscriber_id == sub)
-        .count();
-    (updates, windows)
+    done(pool, &name).await;
 }
 
 /// A page that 404s (Off, held, or its org deleted) mails its subscribers
-/// nothing about incidents or maintenance until it is served again.
+/// nothing until it is served again, and what was already planned for it is
+/// skipped rather than sent.
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
 async fn a_page_that_is_not_served_mails_its_subscribers_nothing() {
-    let Some(pool) = pg_pool_from_env().await else {
+    let Some((pool, name)) = isolated("subquiet").await else {
         return;
     };
     let org = seed_org(&pool).await;
-    let target = seed_target(&pool, org).await;
+    let target = seed_target(&pool, org, "mon").await;
     let page = seed_page(&pool, org).await;
     add_component(&pool, org, page, target).await;
     let sub = confirmed_subscriber(&pool, org, page, "quiet@example.com").await;
-    let incident = seed_public_incident(&pool, org, target).await;
+    let incident = seed_incident(&pool, org, target, "public").await;
     add_update(&pool, org, incident, 0).await;
     let window = seed_maintenance(&pool, org, 24, 25).await;
     add_maintenance_component(&pool, org, window, target).await;
 
-    assert_eq!(
-        pending_counts(&pool, sub).await,
-        (1, 1),
-        "a served page mails"
-    );
-
+    let mem = Arc::new(InMemoryEmailSender::new());
+    let disp = dispatcher(pool.clone(), mem.clone());
+    let restore = async || {
+        sqlx::query("UPDATE status_pages SET enabled = true, plan_hold_at = NULL WHERE id = $1")
+            .bind(page)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE organizations SET deleted_at = NULL WHERE id = $1")
+            .bind(org)
+            .execute(&pool)
+            .await
+            .unwrap();
+    };
     for (state, sql, id) in [
         (
             "Off",
@@ -655,220 +611,42 @@ async fn a_page_that_is_not_served_mails_its_subscribers_nothing() {
         ),
     ] {
         sqlx::query(sql).bind(id).execute(&pool).await.unwrap();
-        assert_eq!(
-            pending_counts(&pool, sub).await,
-            (0, 0),
-            "{state}: mails nobody"
-        );
-        sqlx::query("UPDATE status_pages SET enabled = true, plan_hold_at = NULL WHERE id = $1")
-            .bind(page)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("UPDATE organizations SET deleted_at = NULL WHERE id = $1")
-            .bind(org)
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert_eq!(
-            pending_counts(&pool, sub).await,
-            (1, 1),
-            "{state}: served again"
-        );
+        disp.plan_once().await.unwrap();
+        assert!(owed(&pool, sub).await.is_empty(), "{state}: plans nothing");
+        restore().await;
     }
 
-    cleanup(&pool, org).await;
-}
-
-#[tokio::test]
-#[ignore = "needs live Postgres (DATABASE_URL)"]
-async fn maintenance_fanout_scheduled_and_completed() {
-    let Some(pool) = pg_pool_from_env().await else {
-        return;
-    };
-    let org = seed_org(&pool).await;
-    let target = seed_target(&pool, org).await;
-    let page = seed_page(&pool, org).await;
-    add_component(&pool, org, page, target).await;
-
-    let sub_id = confirmed_subscriber(&pool, org, page, "m@example.com").await;
-    // Backdate the subscription so a window that already ended still counts as
-    // "after they subscribed".
-    sqlx::query(
-        "UPDATE status_page_subscribers SET verified_at = now() - interval '3 hours' WHERE id = $1",
-    )
-    .bind(sub_id)
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    let future = seed_maintenance(&pool, org, 24, 25).await;
-    add_maintenance_component(&pool, org, future, target).await;
-    let past = seed_maintenance(&pool, org, -2, -1).await;
-    add_maintenance_component(&pool, org, past, target).await;
-
-    let pending = subscriber_maintenance::list_pending(&pool, 100)
-        .await
-        .unwrap();
-    let mine: Vec<_> = pending
-        .iter()
-        .filter(|m| m.subscriber_id == sub_id)
-        .collect();
-    assert_eq!(mine.len(), 2, "one scheduled + one completed");
-    let scheduled = mine.iter().find(|m| m.maintenance_id == future).unwrap();
-    assert_eq!(scheduled.phase, "scheduled");
-    let completed = mine.iter().find(|m| m.maintenance_id == past).unwrap();
-    assert_eq!(completed.phase, "completed");
-
-    // Claim is exclusive per (subscriber, window, phase).
-    assert!(
-        subscriber_deliveries::claim(&pool, sub_id, org, MAINTENANCE, future, "scheduled")
-            .await
-            .unwrap()
-    );
-    assert!(
-        !subscriber_deliveries::claim(&pool, sub_id, org, MAINTENANCE, future, "scheduled")
-            .await
-            .unwrap()
-    );
-
-    subscriber_deliveries::mark(&pool, sub_id, MAINTENANCE, future, "scheduled", None, true)
-        .await
-        .unwrap();
-    let after = subscriber_maintenance::list_pending(&pool, 100)
-        .await
-        .unwrap();
-    assert!(
-        after
-            .iter()
-            .all(|m| !(m.subscriber_id == sub_id && m.maintenance_id == future)),
-        "sent scheduled drops out"
-    );
-}
-
-#[tokio::test]
-#[ignore = "needs live Postgres (DATABASE_URL)"]
-async fn maintenance_fanout_reaches_back_only_the_lookback_for_completed_windows() {
-    let Some(pool) = pg_pool_from_env().await else {
-        return;
-    };
-    let org = seed_org(&pool).await;
-    let target = seed_target(&pool, org).await;
-    let page = seed_page(&pool, org).await;
-    add_component(&pool, org, page, target).await;
-
-    let sub_id = confirmed_subscriber(&pool, org, page, "lookback@example.com").await;
-    sqlx::query(
-        "UPDATE status_page_subscribers SET verified_at = now() - interval '5 days' WHERE id = $1",
-    )
-    .bind(sub_id)
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    let inside = seed_maintenance(&pool, org, -24, -23).await;
-    add_maintenance_component(&pool, org, inside, target).await;
-    let outside = seed_maintenance(&pool, org, -26, -25).await;
-    add_maintenance_component(&pool, org, outside, target).await;
-
-    let pending = subscriber_maintenance::list_pending(&pool, 100)
-        .await
-        .unwrap();
-    let reached: Vec<Uuid> = pending
-        .iter()
-        .filter(|m| m.subscriber_id == sub_id)
-        .map(|m| m.maintenance_id)
-        .collect();
-    assert_eq!(reached, [inside]);
-    cleanup(&pool, org).await;
-}
-
-fn dispatcher(
-    pool: PgPool,
-    email: std::sync::Arc<dyn uptimepage::email::EmailSender>,
-) -> uptimepage::public_status::subscriber_dispatch::SubscriberDispatcher {
-    use uptimepage::public_status::subscriber_dispatch::{
-        SubscriberDispatchConfig, SubscriberDispatcher,
-    };
-    let (http, _) = common::build_test_outbound_and_email();
-    SubscriberDispatcher::new(
-        pool,
-        email,
-        http,
-        SubscriberDispatchConfig {
-            tick_interval: std::time::Duration::from_secs(60),
-            batch_limit: 100,
-            base_domain: "example.com".into(),
-            public_base_url: "https://app.example.com".into(),
-            subdomain_routes: true,
-            unsubscribe_secret: "dispatch-secret".into(),
-            from_address: "status@example.com".into(),
-            from_name: "Status".into(),
-        },
-    )
-}
-
-#[tokio::test]
-#[ignore = "needs live Postgres (DATABASE_URL)"]
-async fn dispatcher_sends_incident_email_end_to_end() {
-    // Isolated DB: run_once sweeps globally, so a shared DB would let it claim
-    // other parallel tests' pending rows (and vice versa).
-    let Some((db_url, db_name)) = fresh_test_db("subdisp").await else {
-        return;
-    };
-    let pool = open_test_pool(&db_url).await;
-    MIGRATOR.run(&pool).await.unwrap();
-
-    let org = seed_org(&pool).await;
-    let target = seed_target(&pool, org).await;
-    let page = seed_page(&pool, org).await;
-    add_component(&pool, org, page, target).await;
-    confirmed_subscriber(&pool, org, page, "e2e@example.com").await;
-    let incident = seed_public_incident(&pool, org, target).await;
-    add_update(&pool, org, incident, 0).await;
-
-    let mem = std::sync::Arc::new(uptimepage::email::InMemoryEmailSender::new());
-    let disp = dispatcher(pool.clone(), mem.clone());
-    disp.run_once().await.unwrap();
-
-    let sent = mem.sent();
-    let mine: Vec<_> = sent
-        .iter()
-        .filter(|e| e.to.address == "e2e@example.com")
-        .collect();
-    assert_eq!(mine.len(), 1, "one incident email sent");
-    assert!(
-        mine[0].template.list_unsubscribe_url().is_some(),
-        "carries a one-click unsubscribe url"
-    );
-
-    // Idempotent: a second sweep sends nothing new (delivery logged 'sent').
-    disp.run_once().await.unwrap();
-    let after = mem.sent();
+    disp.plan_once().await.unwrap();
     assert_eq!(
-        after
-            .iter()
-            .filter(|e| e.to.address == "e2e@example.com")
-            .count(),
-        1,
-        "no duplicate send"
+        kinds(&owed(&pool, sub).await).len(),
+        2,
+        "served: update and window"
     );
-
-    drop(pool);
-    drop_test_db(&db_name).await;
+    sqlx::query("UPDATE status_pages SET enabled = false WHERE id = $1")
+        .bind(page)
+        .execute(&pool)
+        .await
+        .unwrap();
+    disp.run_once().await.unwrap();
+    assert!(mem.is_empty(), "turned off before sending: skipped");
+    let skipped: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM status_page_subscriber_deliveries WHERE status = 'skipped'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(skipped, 2);
+    done(pool, &name).await;
 }
 
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
 async fn a_german_page_mails_its_subscribers_in_german() {
-    let Some((db_url, db_name)) = fresh_test_db("subde").await else {
+    let Some((pool, name)) = isolated("subde").await else {
         return;
     };
-    let pool = open_test_pool(&db_url).await;
-    MIGRATOR.run(&pool).await.unwrap();
-
     let org = seed_org(&pool).await;
-    let target = seed_target(&pool, org).await;
+    let target = seed_target(&pool, org, "mon").await;
     let page = seed_page(&pool, org).await;
     sqlx::query("UPDATE status_pages SET public_locale = 'de' WHERE id = $1")
         .bind(page)
@@ -878,26 +656,19 @@ async fn a_german_page_mails_its_subscribers_in_german() {
     add_component(&pool, org, page, target).await;
     let sub = confirmed_subscriber(&pool, org, page, "de@example.com").await;
     assert_eq!(
-        uptimepage::storage::subscribers::page_locale(&pool, sub)
-            .await
-            .unwrap(),
+        subscribers::page_locale(&pool, sub).await.unwrap(),
         Some(uptimepage::domain::Locale::De),
         "unsubscribe pages follow the subscriber's page"
     );
-    let incident = seed_public_incident(&pool, org, target).await;
+    let incident = seed_incident(&pool, org, target, "public").await;
     add_update(&pool, org, incident, 0).await;
 
-    let mem = std::sync::Arc::new(uptimepage::email::InMemoryEmailSender::new());
+    let mem = Arc::new(InMemoryEmailSender::new());
     dispatcher(pool.clone(), mem.clone())
         .run_once()
         .await
         .unwrap();
-
-    let sent = mem.sent();
-    let mail = sent
-        .iter()
-        .find(|e| e.to.address == "de@example.com")
-        .expect("German subscriber mailed");
+    let mail = mails_to(&mem, "de@example.com").pop().expect("mailed");
     let rendered = mail.template.render("Uptimepage");
     assert!(
         rendered.subject.ends_with("Untersuchung läuft"),
@@ -905,24 +676,20 @@ async fn a_german_page_mails_its_subscribers_in_german() {
         rendered.subject
     );
     assert!(rendered.html_body.contains(r#"<html lang="de">"#));
-
-    drop(pool);
-    drop_test_db(&db_name).await;
+    done(pool, &name).await;
 }
 
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
-async fn webhook_subscriber_appears_in_pending() {
-    let Some(pool) = pg_pool_from_env().await else {
+async fn a_webhook_subscriber_gets_every_update_including_the_platforms_own() {
+    let Some((pool, name)) = isolated("subhook").await else {
         return;
     };
     let org = seed_org(&pool).await;
-    let target = seed_target(&pool, org).await;
+    let target = seed_target(&pool, org, "mon").await;
     let page = seed_page(&pool, org).await;
     add_component(&pool, org, page, target).await;
-
-    // Webhook subscriber, verified directly (what the confirmation ping does).
-    let sub = subscribers::subscribe(
+    let hook = subscribers::subscribe(
         &pool,
         &NewSubscriber {
             status_page_id: page,
@@ -934,21 +701,36 @@ async fn webhook_subscriber_appears_in_pending() {
     )
     .await
     .unwrap();
-    assert!(sub.verified_at.is_none(), "starts pending");
-    subscribers::mark_verified(&pool, sub.id).await.unwrap();
+    subscribers::mark_verified(&pool, hook.id).await.unwrap();
+    let mail = confirmed_subscriber(&pool, org, page, "mail@example.com").await;
 
-    let incident = seed_public_incident(&pool, org, target).await;
-    add_update(&pool, org, incident, 0).await;
+    let incident = seed_incident(&pool, org, target, "public").await;
+    let generated: Uuid = sqlx::query_scalar(
+        "INSERT INTO incident_updates (org_id, incident_id, phase, message, author, generated)
+         VALUES ($1, $2, 'investigating', 'Automatically detected', 'system', true) RETURNING id",
+    )
+    .bind(org)
+    .bind(incident)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let written = add_update(&pool, org, incident, 0).await;
 
-    let pending = subscribers::list_pending(&pool, 100).await.unwrap();
-    let mine = pending
-        .iter()
-        .find(|p| p.subscriber_id == sub.id)
-        .expect("webhook subscriber pending");
-    assert_eq!(mine.channel, "webhook");
-    assert_eq!(mine.target, "https://hook.example.com/x");
-
-    cleanup(&pool, org).await;
+    dispatcher(pool.clone(), Arc::new(InMemoryEmailSender::new()))
+        .plan_once()
+        .await
+        .unwrap();
+    let mut hooked = sources(&owed(&pool, hook.id).await, "incident_update");
+    hooked.sort();
+    let mut both = vec![generated, written];
+    both.sort();
+    assert_eq!(hooked, both, "a program hears each update");
+    assert_eq!(
+        sources(&owed(&pool, mail).await, "incident_update"),
+        [written],
+        "an inbox hears what a person wrote; the outage mail covers the rest"
+    );
+    done(pool, &name).await;
 }
 
 async fn post_maintenance_update(pool: &PgPool, org: Uuid, window: Uuid, message: &str) -> Uuid {
@@ -967,22 +749,13 @@ async fn post_maintenance_update(pool: &PgPool, org: Uuid, window: Uuid, message
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
 async fn a_late_update_reaches_a_page_whose_monitor_left_the_window_before_the_page_had_it() {
-    let Some(pool) = pg_pool_from_env().await else {
+    let Some((pool, name)) = isolated("subleft").await else {
         return;
     };
     let org = seed_org(&pool).await;
-    let target = seed_target(&pool, org).await;
+    let target = seed_target(&pool, org, "mon").await;
     let page = seed_page(&pool, org).await;
-    let sub_id = confirmed_subscriber(&pool, org, page, "left@example.com").await;
-    sqlx::query(
-        "UPDATE status_page_subscribers SET verified_at = now() - interval '3 hours' WHERE id = $1",
-    )
-    .bind(sub_id)
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    // The window dropped the monitor before the page had it, and has ended.
+    let sub = confirmed_subscriber(&pool, org, page, "left@example.com").await;
     let window = seed_maintenance(&pool, org, -2, -1).await;
     sqlx::query(
         "INSERT INTO maintenance_window_departures (org_id, maintenance_id, target_id, left_at)
@@ -997,39 +770,36 @@ async fn a_late_update_reaches_a_page_whose_monitor_left_the_window_before_the_p
     add_component(&pool, org, page, target).await;
     let late = post_maintenance_update(&pool, org, window, "How it went.").await;
 
-    let owed: Vec<Uuid> = subscriber_maintenance::list_pending_updates(&pool, 100)
+    dispatcher(pool.clone(), Arc::new(InMemoryEmailSender::new()))
+        .plan_once()
         .await
-        .unwrap()
-        .into_iter()
-        .filter(|u| u.subscriber_id == sub_id)
-        .map(|u| u.update_id)
-        .collect();
+        .unwrap();
     assert_eq!(
-        owed,
+        sources(&owed(&pool, sub).await, "maintenance_update"),
         [late],
         "the page shows the window, so it hears the update"
     );
+    done(pool, &name).await;
 }
 
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
 async fn a_maintenance_update_reaches_each_subscriber_once_and_keeps_reaching_a_page_that_kept_it()
 {
-    let Some(pool) = pg_pool_from_env().await else {
+    let Some((pool, name)) = isolated("subkeptmw").await else {
         return;
     };
     let org = seed_org(&pool).await;
-    let target = seed_target(&pool, org).await;
+    let target = seed_target(&pool, org, "mon").await;
     let page = seed_page(&pool, org).await;
     add_component(&pool, org, page, target).await;
-    let sub_id = confirmed_subscriber(&pool, org, page, "upd@example.com").await;
-    sqlx::query(
-        "UPDATE status_page_subscribers SET verified_at = now() - interval '3 hours' WHERE id = $1",
-    )
-    .bind(sub_id)
-    .execute(&pool)
-    .await
-    .unwrap();
+    let sub = confirmed_subscriber(&pool, org, page, "upd@example.com").await;
+    let mem = Arc::new(InMemoryEmailSender::new());
+    let disp = dispatcher(pool.clone(), mem.clone());
+    let updates = async || {
+        disp.plan_once().await.unwrap();
+        sources(&owed(&pool, sub).await, "maintenance_update")
+    };
 
     let window = seed_maintenance(&pool, org, -1, 1).await;
     add_maintenance_component(&pool, org, window, target).await;
@@ -1042,42 +812,27 @@ async fn a_maintenance_update_reaches_each_subscriber_once_and_keeps_reaching_a_
         .execute(&pool)
         .await
         .unwrap();
-
-    let owed = |pending: Vec<subscriber_maintenance::PendingMaintenanceUpdate>| -> Vec<Uuid> {
-        pending
-            .into_iter()
-            .filter(|u| u.subscriber_id == sub_id)
-            .map(|u| u.update_id)
-            .collect()
-    };
-    let mine = owed(
-        subscriber_maintenance::list_pending_updates(&pool, 100)
-            .await
-            .unwrap(),
-    );
     assert_eq!(
-        mine,
+        updates().await,
         [update],
-        "a cancelled window's update stays silent: {silent}"
+        "a cancelled window stays silent: {silent}"
     );
+    disp.run_once().await.unwrap();
 
-    // The monitor leaves the page; the page kept the window, so a later
-    // update still reaches its subscribers.
+    // The monitor leaves the page: a page that never kept the window hears
+    // nothing more of it.
     sqlx::query("DELETE FROM status_page_components WHERE status_page_id = $1 AND target_id = $2")
         .bind(page)
         .bind(target)
         .execute(&pool)
         .await
         .unwrap();
+    let unheard = post_maintenance_update(&pool, org, window, "Still going.").await;
     assert!(
-        owed(
-            subscriber_maintenance::list_pending_updates(&pool, 100)
-                .await
-                .unwrap()
-        )
-        .is_empty(),
-        "a page that never kept the window hears nothing"
+        updates().await.is_empty(),
+        "{unheard} is not this page's news"
     );
+
     sqlx::query(
         "INSERT INTO maintenance_status_pages
              (org_id, maintenance_id, status_page_id, target_ref, component_name)
@@ -1090,86 +845,41 @@ async fn a_maintenance_update_reaches_each_subscriber_once_and_keeps_reaching_a_
     .execute(&pool)
     .await
     .unwrap();
+    let running = post_maintenance_update(&pool, org, window, "Nearly there.").await;
     assert!(
-        owed(
-            subscriber_maintenance::list_pending_updates(&pool, 100)
-                .await
-                .unwrap()
-        )
-        .is_empty(),
-        "a kept window is history: nothing while it runs"
+        updates().await.is_empty(),
+        "a kept window is history: {running} while it runs"
     );
+
     sqlx::query("UPDATE maintenance_windows SET ends_at = clock_timestamp() WHERE id = $1")
         .bind(window)
         .execute(&pool)
         .await
         .unwrap();
     let closing = post_maintenance_update(&pool, org, window, "Finished.").await;
+    assert_eq!(updates().await, [closing], "what was said once it ended");
+
+    disp.run_once().await.unwrap();
+    assert!(updates().await.is_empty(), "sent once");
     assert_eq!(
-        owed(
-            subscriber_maintenance::list_pending_updates(&pool, 100)
-                .await
-                .unwrap()
-        ),
-        [closing],
-        "only what was said once it ended: {update} stays unsent"
+        mails_to(&mem, "upd@example.com").len(),
+        4,
+        "scheduled, update, completed, closing"
     );
-
-    let ended = seed_maintenance(&pool, org, -2, -1).await;
-    add_maintenance_component(&pool, org, ended, target).await;
-    sqlx::query(
-        "INSERT INTO maintenance_status_pages
-             (org_id, maintenance_id, status_page_id, target_ref, component_name)
-         VALUES ($1, $2, $3, $4, 'API')",
-    )
-    .bind(org)
-    .bind(ended)
-    .bind(page)
-    .bind(target)
-    .execute(&pool)
-    .await
-    .unwrap();
-    let notices = subscriber_maintenance::list_pending(&pool, 100)
-        .await
-        .unwrap();
-    assert!(
-        notices.iter().any(|m| m.subscriber_id == sub_id
-            && m.maintenance_id == ended
-            && m.phase == "completed"),
-        "a page that kept the window is told it completed"
-    );
-
-    assert!(
-        subscriber_deliveries::claim(&pool, sub_id, org, MAINTENANCE_UPDATE, closing, "")
-            .await
-            .unwrap()
-    );
-    subscriber_deliveries::mark(&pool, sub_id, MAINTENANCE_UPDATE, closing, "", None, true)
-        .await
-        .unwrap();
-    assert!(
-        owed(
-            subscriber_maintenance::list_pending_updates(&pool, 100)
-                .await
-                .unwrap()
-        )
-        .is_empty(),
-        "sent once"
-    );
-    cleanup(&pool, org).await;
+    done(pool, &name).await;
 }
 
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
 async fn a_page_that_kept_an_incident_hears_how_it_ended() {
-    let Some(pool) = pg_pool_from_env().await else {
+    let Some((pool, name)) = isolated("subkept").await else {
         return;
     };
     let org = seed_org(&pool).await;
-    let target = seed_target(&pool, org).await;
+    let target = seed_target(&pool, org, "mon").await;
     let page = seed_page(&pool, org).await;
-    let sub_id = confirmed_subscriber(&pool, org, page, "kept@example.com").await;
-    let incident = seed_public_incident(&pool, org, target).await;
+    let sub = confirmed_subscriber(&pool, org, page, "kept@example.com").await;
+    let incident = seed_incident(&pool, org, target, "public").await;
     sqlx::query(
         "INSERT INTO incident_status_pages (org_id, incident_id, status_page_id, component_name)
          VALUES ($1, $2, $3, 'API')",
@@ -1191,23 +901,20 @@ async fn a_page_that_kept_an_incident_hears_how_it_ended() {
     .await
     .unwrap();
 
-    let owed = |pending: Vec<subscribers::PendingUpdate>| -> Vec<Uuid> {
-        pending
-            .into_iter()
-            .filter(|p| p.subscriber_id == sub_id)
-            .map(|p| p.update_id)
-            .collect()
-    };
+    let disp = dispatcher(pool.clone(), Arc::new(InMemoryEmailSender::new()));
+    disp.plan_once().await.unwrap();
     assert!(
-        owed(subscribers::list_pending(&pool, 100).await.unwrap()).is_empty(),
-        "the monitor left the page, so the open incident is not its news, not even {advisory}"
+        owed(&pool, sub).await.is_empty(),
+        "the monitor left the page, so the open incident is not its news: {meanwhile}, {advisory}"
     );
 
-    sqlx::query("UPDATE incidents SET ended_at = now(), resolved_at = now(), state = 'resolved' WHERE id = $1")
-        .bind(incident)
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE incidents SET ended_at = now(), resolved_at = now(), state = 'resolved' WHERE id = $1",
+    )
+    .bind(incident)
+    .execute(&pool)
+    .await
+    .unwrap();
     let resolved = add_resolved_update(&pool, org, incident).await;
     let postmortem: Uuid = sqlx::query_scalar(
         "INSERT INTO incident_updates (org_id, incident_id, phase, message, posted_at)
@@ -1219,29 +926,30 @@ async fn a_page_that_kept_an_incident_hears_how_it_ended() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(
-        owed(subscribers::list_pending(&pool, 100).await.unwrap()),
-        [resolved, postmortem],
-        "how it ended reaches the page that kept it, {meanwhile} and {advisory} do not"
-    );
-    cleanup(&pool, org).await;
+    disp.plan_once().await.unwrap();
+    let mut told = sources(&owed(&pool, sub).await, "incident_update");
+    told.sort();
+    let mut want = vec![resolved, postmortem];
+    want.sort();
+    assert_eq!(told, want, "how it ended reaches the page that kept it");
+    done(pool, &name).await;
 }
 
-/// The worker can run after several updates have piled up. A page that kept
+/// The planner can run after several updates have piled up. A page that kept
 /// the incident must still get the closing update and what followed it, even
 /// when a later update carries the resolved label too.
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
 async fn a_later_resolved_update_does_not_hide_the_closing_one_from_a_kept_page() {
     use uptimepage::storage::{Actor, IncidentOpsStore, PgIncidentOpsStore};
-    let Some(pool) = pg_pool_from_env().await else {
+    let Some((pool, name)) = isolated("subrestate").await else {
         return;
     };
     let org = seed_org(&pool).await;
-    let target = seed_target(&pool, org).await;
+    let target = seed_target(&pool, org, "mon").await;
     let page = seed_page(&pool, org).await;
-    let sub_id = confirmed_subscriber(&pool, org, page, "late@example.com").await;
-    let incident = seed_public_incident(&pool, org, target).await;
+    let sub = confirmed_subscriber(&pool, org, page, "late@example.com").await;
+    let incident = seed_incident(&pool, org, target, "public").await;
     sqlx::query(
         "INSERT INTO incident_status_pages (org_id, incident_id, status_page_id, component_name)
          VALUES ($1, $2, $3, 'API')",
@@ -1252,7 +960,6 @@ async fn a_later_resolved_update_does_not_hide_the_closing_one_from_a_kept_page(
     .execute(&pool)
     .await
     .unwrap();
-
     PgIncidentOpsStore::new(pool.clone())
         .resolve(
             uptimepage::domain::OrgId(org),
@@ -1269,33 +976,999 @@ async fn a_later_resolved_update_does_not_hide_the_closing_one_from_a_kept_page(
     .fetch_one(&pool)
     .await
     .unwrap();
-    let later = |phase: &'static str, secs: i32| {
-        let pool = pool.clone();
-        async move {
-            sqlx::query_scalar::<_, Uuid>(
-                "INSERT INTO incident_updates (org_id, incident_id, phase, message, posted_at)
-                 VALUES ($1, $2, $3, 'more', now() + make_interval(secs => $4))
-                 RETURNING id",
-            )
-            .bind(org)
-            .bind(incident)
-            .bind(phase)
-            .bind(secs)
-            .fetch_one(&pool)
-            .await
-            .unwrap()
-        }
+    let later = async |phase: &str, secs: i32| -> Uuid {
+        sqlx::query_scalar(
+            "INSERT INTO incident_updates (org_id, incident_id, phase, message, posted_at)
+             VALUES ($1, $2, $3, 'more', now() + make_interval(secs => $4))
+             RETURNING id",
+        )
+        .bind(org)
+        .bind(incident)
+        .bind(phase)
+        .bind(secs)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
     };
     let postmortem = later("postmortem", 1).await;
     let restated = later("resolved", 2).await;
 
-    let mine: Vec<Uuid> = subscribers::list_pending(&pool, 100)
+    dispatcher(pool.clone(), Arc::new(InMemoryEmailSender::new()))
+        .plan_once()
         .await
-        .unwrap()
-        .into_iter()
-        .filter(|p| p.subscriber_id == sub_id)
-        .map(|p| p.update_id)
-        .collect();
-    assert_eq!(mine, [closing, postmortem, restated]);
-    cleanup(&pool, org).await;
+        .unwrap();
+    let mut told = sources(&owed(&pool, sub).await, "incident_update");
+    told.sort();
+    let mut want = vec![closing, postmortem, restated];
+    want.sort();
+    assert_eq!(told, want);
+    done(pool, &name).await;
+}
+
+/// Five monitors on a page, as the incident writer opens and closes them:
+/// generated openers and closers, written a little in the past so the gather
+/// and settle times have run.
+struct Outage {
+    org: Uuid,
+    page: Uuid,
+    incidents: Vec<Uuid>,
+}
+
+async fn five_down(pool: &PgPool, opened_mins_ago: i32) -> Outage {
+    let org = seed_org(pool).await;
+    let page = seed_page(pool, org).await;
+    let mut incidents = Vec::new();
+    for name in ["Website", "API", "Dashboard", "Checkout", "Webhooks"] {
+        let target = seed_target(pool, org, name).await;
+        add_component(pool, org, page, target).await;
+        let incident: Uuid = sqlx::query_scalar(
+            "INSERT INTO incidents (org_id, target_id, started_at, status_at_start, visibility)
+             VALUES ($1, $2, now() - make_interval(mins => $3 + 1), 'down', 'public')
+             RETURNING id",
+        )
+        .bind(org)
+        .bind(target)
+        .bind(opened_mins_ago)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO incident_updates (org_id, incident_id, phase, message, author, generated,
+                                           posted_at)
+             VALUES ($1, $2, 'investigating', 'Automatically detected', 'system', true,
+                     now() - make_interval(mins => $3))",
+        )
+        .bind(org)
+        .bind(incident)
+        .bind(opened_mins_ago)
+        .execute(pool)
+        .await
+        .unwrap();
+        incidents.push(incident);
+    }
+    Outage {
+        org,
+        page,
+        incidents,
+    }
+}
+
+async fn close_all(pool: &PgPool, outage: &Outage, ended_mins_ago: i32, posted_mins_ago: i32) {
+    for incident in &outage.incidents {
+        sqlx::query(
+            "UPDATE incidents SET ended_at = now() - make_interval(mins => $3),
+                                  resolved_at = now() - make_interval(mins => $4),
+                                  state = 'resolved'
+             WHERE id = $1 AND org_id = $2",
+        )
+        .bind(incident)
+        .bind(outage.org)
+        .bind(ended_mins_ago)
+        .bind(posted_mins_ago)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO incident_updates (org_id, incident_id, phase, message, author, generated,
+                                           posted_at)
+             VALUES ($1, $2, 'resolved', 'Automatically resolved', 'system', true,
+                     now() - make_interval(mins => $3))",
+        )
+        .bind(outage.org)
+        .bind(incident)
+        .bind(posted_mins_ago)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
+fn outage_mail(mail: &TransactionalEmail) -> (bool, usize) {
+    match &mail.template {
+        EmailTemplate::SubscriberOutage(o) => (o.resolved, o.components.len()),
+        other => panic!("expected an outage mail, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn five_monitors_down_together_send_one_mail_when_it_starts_and_one_when_it_ends() {
+    let Some((pool, name)) = isolated("subfive").await else {
+        return;
+    };
+    let outage = five_down(&pool, 2).await;
+    confirmed_subscriber(&pool, outage.org, outage.page, "five@example.com").await;
+    let mem = Arc::new(InMemoryEmailSender::new());
+    let disp = dispatcher(pool.clone(), mem.clone());
+
+    disp.run_once().await.unwrap();
+    let mails = mails_to(&mem, "five@example.com");
+    assert_eq!(mails.len(), 1, "one started mail, no mail per monitor");
+    assert_eq!(outage_mail(&mails[0]), (false, 5));
+
+    disp.run_once().await.unwrap();
+    assert_eq!(
+        mails_to(&mem, "five@example.com").len(),
+        1,
+        "planning twice adds nothing"
+    );
+    let notices: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM status_page_notices WHERE kind LIKE 'outage%'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(notices, 1);
+
+    close_all(&pool, &outage, 7, 6).await;
+    disp.run_once().await.unwrap();
+    let mails = mails_to(&mem, "five@example.com");
+    assert_eq!(mails.len(), 2, "one resolved mail");
+    assert_eq!(outage_mail(&mails[1]), (true, 5));
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn an_outage_that_opened_and_closed_between_two_passes_sends_one_summary() {
+    let Some((pool, name)) = isolated("subblip").await else {
+        return;
+    };
+    let outage = five_down(&pool, 20).await;
+    close_all(&pool, &outage, 18, 15).await;
+    confirmed_subscriber(&pool, outage.org, outage.page, "blip@example.com").await;
+    let mem = Arc::new(InMemoryEmailSender::new());
+    dispatcher(pool.clone(), mem.clone())
+        .run_once()
+        .await
+        .unwrap();
+    let mails = mails_to(&mem, "blip@example.com");
+    assert_eq!(mails.len(), 1, "no started mail for what was already over");
+    assert_eq!(outage_mail(&mails[0]), (true, 5));
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_started_notice_held_back_until_its_outage_ended_is_never_sent() {
+    use uptimepage::public_status::subscriber_planner;
+    let Some((pool, name)) = isolated("subheld").await else {
+        return;
+    };
+    let outage = five_down(&pool, 2).await;
+    let sub = confirmed_subscriber(&pool, outage.org, outage.page, "held@example.com").await;
+    let links = config().links;
+    subscriber_planner::plan(&pool, &links).await.unwrap();
+    close_all(&pool, &outage, 7, 6).await;
+    subscriber_planner::plan(&pool, &links).await.unwrap();
+
+    let mem = Arc::new(InMemoryEmailSender::new());
+    dispatcher(pool.clone(), mem.clone())
+        .run_once()
+        .await
+        .unwrap();
+    let mails = mails_to(&mem, "held@example.com");
+    assert_eq!(mails.len(), 1);
+    assert_eq!(outage_mail(&mails[0]), (true, 5), "only the resolved mail");
+    assert!(owed(&pool, sub).await.is_empty());
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_started_delivery_still_queued_when_the_outage_ends_is_skipped() {
+    use uptimepage::public_status::subscriber_planner;
+    let Some((pool, name)) = isolated("subskip").await else {
+        return;
+    };
+    let outage = five_down(&pool, 2).await;
+    confirmed_subscriber(&pool, outage.org, outage.page, "skip@example.com").await;
+    let mem = Arc::new(InMemoryEmailSender::new());
+    let disp = dispatcher(pool.clone(), mem.clone());
+    disp.plan_once().await.unwrap();
+    close_all(&pool, &outage, 7, 6).await;
+    subscriber_planner::plan(&pool, &config().links)
+        .await
+        .unwrap();
+    let skipped: Vec<String> = sqlx::query_scalar(
+        "SELECT d.status FROM status_page_subscriber_deliveries d
+         JOIN status_page_notices n ON n.id = d.notice_id WHERE n.kind = 'outage_started'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(skipped, ["queued"], "planning leaves it; the claim decides");
+    disp.run_once().await.unwrap();
+    let skipped: Vec<String> = sqlx::query_scalar(
+        "SELECT d.status FROM status_page_subscriber_deliveries d
+         JOIN status_page_notices n ON n.id = d.notice_id WHERE n.kind = 'outage_started'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(skipped, ["skipped"]);
+    let mails = mails_to(&mem, "skip@example.com");
+    assert_eq!(mails.len(), 1);
+    assert_eq!(outage_mail(&mails[0]), (true, 5));
+    done(pool, &name).await;
+}
+
+async fn subscribers_for(pool: &PgPool, org: Uuid, page: Uuid, n: usize) -> Vec<String> {
+    let mut emails = Vec::new();
+    for i in 0..n {
+        let email = format!("s{i}@example.com");
+        confirmed_subscriber(pool, org, page, &email).await;
+        emails.push(email);
+    }
+    emails
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn two_instances_fan_out_one_notice_once() {
+    let Some((pool, name)) = isolated("subfan").await else {
+        return;
+    };
+    let org = seed_org(&pool).await;
+    let target = seed_target(&pool, org, "mon").await;
+    let page = seed_page(&pool, org).await;
+    add_component(&pool, org, page, target).await;
+    subscribers_for(&pool, org, page, 30).await;
+    let incident = seed_incident(&pool, org, target, "public").await;
+    add_update(&pool, org, incident, 0).await;
+
+    let mem: Arc<dyn EmailSender> = Arc::new(InMemoryEmailSender::new());
+    let (blue, green) = (
+        dispatcher(pool.clone(), mem.clone()),
+        dispatcher(pool.clone(), mem),
+    );
+    let (a, b) = tokio::join!(blue.plan_once(), green.plan_once());
+    a.unwrap();
+    b.unwrap();
+    let deliveries: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM status_page_subscriber_deliveries")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(deliveries, 30);
+    done(pool, &name).await;
+}
+
+/// Sends slowly, so a unit outlives a short lease unless it is renewed.
+struct Slow {
+    inner: InMemoryEmailSender,
+    wait: Duration,
+    batches: AtomicUsize,
+}
+
+#[async_trait]
+impl EmailSender for Slow {
+    async fn send(&self, email: TransactionalEmail, class: SendClass) -> EmailResult<MessageId> {
+        self.inner.send(email, class).await
+    }
+
+    fn prepare_batch(
+        &self,
+        emails: Vec<TransactionalEmail>,
+        key: String,
+    ) -> EmailResult<PreparedBatch> {
+        self.inner.prepare_batch(emails, key)
+    }
+
+    async fn send_prepared(&self, batch: PreparedBatch) -> BatchResult {
+        self.batches.fetch_add(1, Ordering::SeqCst);
+        tokio::time::sleep(self.wait).await;
+        self.inner.send_prepared(batch).await
+    }
+}
+
+fn slow_dispatcher(pool: PgPool, email: Arc<dyn EmailSender>) -> SubscriberDispatcher {
+    let (http, _) = common::build_test_outbound_and_email();
+    let mut cfg = config();
+    cfg.lease = Duration::from_millis(800);
+    cfg.renew_every = Duration::from_millis(200);
+    SubscriberDispatcher::new(pool, email, http, cfg)
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn two_instances_with_a_sender_slower_than_the_lease_send_each_delivery_once() {
+    let Some((pool, name)) = isolated("sublease").await else {
+        return;
+    };
+    let org = seed_org(&pool).await;
+    let page = seed_page(&pool, org).await;
+    let emails = subscribers_for(&pool, org, page, 3).await;
+    for i in 0..4 {
+        let target = seed_target(&pool, org, &format!("mon{i}")).await;
+        add_component(&pool, org, page, target).await;
+        let incident = seed_incident(&pool, org, target, "public").await;
+        add_update(&pool, org, incident, 0).await;
+    }
+    let slow = Arc::new(Slow {
+        inner: InMemoryEmailSender::new(),
+        wait: Duration::from_millis(2000),
+        batches: AtomicUsize::new(0),
+    });
+    let (blue, green) = (
+        Arc::new(slow_dispatcher(pool.clone(), slow.clone())),
+        Arc::new(slow_dispatcher(pool.clone(), slow.clone())),
+    );
+    blue.plan_once().await.unwrap();
+    let drain = |d: Arc<SubscriberDispatcher>, pool: PgPool| async move {
+        loop {
+            subscriber_deliveries::release_expired(&pool).await.unwrap();
+            if !d.send_unit("email").await.unwrap() {
+                break;
+            }
+        }
+    };
+    tokio::join!(drain(blue, pool.clone()), drain(green, pool.clone()));
+    for email in &emails {
+        assert_eq!(
+            mails_to(&slow.inner, email).len(),
+            4,
+            "{email}: each update once"
+        );
+    }
+    assert_eq!(
+        slow.batches.load(Ordering::SeqCst),
+        4,
+        "one request per notice"
+    );
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_stopped_workers_rows_go_to_another_and_its_late_write_changes_nothing() {
+    let Some((pool, name)) = isolated("substopped").await else {
+        return;
+    };
+    let org = seed_org(&pool).await;
+    let target = seed_target(&pool, org, "mon").await;
+    let page = seed_page(&pool, org).await;
+    add_component(&pool, org, page, target).await;
+    let sub = confirmed_subscriber(&pool, org, page, "stopped@example.com").await;
+    let incident = seed_incident(&pool, org, target, "public").await;
+    add_update(&pool, org, incident, 0).await;
+    let mem = Arc::new(InMemoryEmailSender::new());
+    let disp = dispatcher(pool.clone(), mem.clone());
+    disp.plan_once().await.unwrap();
+
+    // A worker claims the unit and dies before it sends or renews.
+    let gone = Uuid::now_v7();
+    let (_, claimed) =
+        subscriber_deliveries::claim(&pool, "email", 100, gone, Duration::from_millis(300))
+            .await
+            .unwrap()
+            .expect("claimed");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    disp.run_once().await.unwrap();
+    assert_eq!(mails_to(&mem, "stopped@example.com").len(), 1);
+
+    let late = subscriber_deliveries::record(
+        &pool,
+        gone,
+        &[Outcome {
+            id: claimed[0].id,
+            status: "failed",
+            error: Some("late".into()),
+            attempts: 9,
+            retry_in: Duration::ZERO,
+        }],
+    )
+    .await
+    .unwrap();
+    assert_eq!(late, 0);
+    let status: String = sqlx::query_scalar(
+        "SELECT status FROM status_page_subscriber_deliveries WHERE subscriber_id = $1",
+    )
+    .bind(sub)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, "sent");
+    done(pool, &name).await;
+}
+
+/// Holds every batch back as pacing would.
+struct Paced(InMemoryEmailSender);
+
+#[async_trait]
+impl EmailSender for Paced {
+    async fn send(&self, email: TransactionalEmail, class: SendClass) -> EmailResult<MessageId> {
+        self.0.send(email, class).await
+    }
+
+    fn prepare_batch(
+        &self,
+        emails: Vec<TransactionalEmail>,
+        key: String,
+    ) -> EmailResult<PreparedBatch> {
+        self.0.prepare_batch(emails, key)
+    }
+
+    async fn send_prepared(&self, batch: PreparedBatch) -> BatchResult {
+        Err(BatchFailure {
+            error: EmailError::GateUnavailable,
+            batch,
+        })
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_send_held_back_by_pacing_uses_no_attempt() {
+    let Some((pool, name)) = isolated("subpaced").await else {
+        return;
+    };
+    let org = seed_org(&pool).await;
+    let target = seed_target(&pool, org, "mon").await;
+    let page = seed_page(&pool, org).await;
+    add_component(&pool, org, page, target).await;
+    let sub = confirmed_subscriber(&pool, org, page, "paced@example.com").await;
+    let incident = seed_incident(&pool, org, target, "public").await;
+    add_update(&pool, org, incident, 0).await;
+    dispatcher(pool.clone(), Arc::new(Paced(InMemoryEmailSender::new())))
+        .run_once()
+        .await
+        .unwrap();
+    let (status, attempts): (String, i32) = sqlx::query_as(
+        "SELECT status, attempts FROM status_page_subscriber_deliveries WHERE subscriber_id = $1",
+    )
+    .bind(sub)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((status.as_str(), attempts), ("queued", 0));
+    done(pool, &name).await;
+}
+
+/// The migration's seed, run on a database that already holds what
+/// subscribers were told: nothing told before it goes out again, and an
+/// outage still open sends exactly its resolved mail when it closes.
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn the_cutover_sends_nothing_already_told_and_still_ends_what_is_open() {
+    let Some((pool, name)) = isolated("subcutover").await else {
+        return;
+    };
+    let closed = five_down(&pool, 30).await;
+    close_all(&pool, &closed, 25, 22).await;
+    confirmed_subscriber(&pool, closed.org, closed.page, "closed@example.com").await;
+    let open = five_down(&pool, 3).await;
+    confirmed_subscriber(&pool, open.org, open.page, "open@example.com").await;
+    let manual = seed_org(&pool).await;
+    let manual_page = seed_page(&pool, manual).await;
+    confirmed_subscriber(&pool, manual, manual_page, "manual@example.com").await;
+    let declared: Uuid = sqlx::query_scalar(
+        "INSERT INTO incidents (org_id, started_at, status_at_start, origin, visibility, public_title)
+         VALUES ($1, now(), 'down', 'manual', 'public', 'Declared') RETURNING id",
+    )
+    .bind(manual)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO incident_status_pages (org_id, incident_id, status_page_id) VALUES ($1, $2, $3)",
+    )
+    .bind(manual)
+    .bind(declared)
+    .bind(manual_page)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let told_update = add_update(&pool, manual, declared, 0).await;
+    // Posted moments before the deploy: the old log never got to it.
+    let untold_update = add_update(&pool, manual, declared, 0).await;
+
+    // What the old log had sent in the last moments: the declared incident's
+    // first update. The monitors' updates are minutes old, so the old
+    // dispatcher had settled them whether its log shows a delivery or not.
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query(
+        "CREATE TEMP TABLE told (status_page_id uuid, org_id uuid, event_kind text,
+                                 event_ref uuid, phase text) ON COMMIT DROP",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO told VALUES ($1, $2, 'incident_update', $3, '')")
+        .bind(manual_page)
+        .bind(manual)
+        .bind(told_update)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let migration = include_str!("../migrations/postgres/105_subscriber_notices.up.sql");
+    let seed = &migration[migration
+        .find("-- What subscribers were already told")
+        .expect("the seed section")..];
+    sqlx::raw_sql(seed).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+
+    let mem = Arc::new(InMemoryEmailSender::new());
+    let disp = dispatcher(pool.clone(), mem.clone());
+    disp.run_once().await.unwrap();
+    let sent: Vec<String> = mem.sent().into_iter().map(|m| m.to.address).collect();
+    assert_eq!(
+        sent,
+        ["manual@example.com"],
+        "only what the old log never sent goes out"
+    );
+    let untold: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM status_page_notices WHERE source_ref = $1 AND payload <> '{}'::jsonb",
+    )
+    .bind(untold_update)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(untold, 1);
+    mem.clear();
+
+    close_all(&pool, &open, 8, 6).await;
+    disp.run_once().await.unwrap();
+    let mails = mem.sent();
+    assert_eq!(
+        mails.len(),
+        5,
+        "each seeded outage ends on its own: {mails:?}"
+    );
+    assert!(mails.iter().all(|m| m.to.address == "open@example.com"));
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_pages_first_subscriber_gets_no_backlog() {
+    let Some((pool, name)) = isolated("subfirst").await else {
+        return;
+    };
+    let org = seed_org(&pool).await;
+    let target = seed_target(&pool, org, "mon").await;
+    let page = seed_page(&pool, org).await;
+    add_component(&pool, org, page, target).await;
+    let incident = seed_incident(&pool, org, target, "public").await;
+    add_update(&pool, org, incident, 2).await;
+    let disp = dispatcher(pool.clone(), Arc::new(InMemoryEmailSender::new()));
+    disp.plan_once().await.unwrap();
+
+    let sub = confirmed_subscriber(&pool, org, page, "first@example.com").await;
+    disp.plan_once().await.unwrap();
+    assert!(
+        owed(&pool, sub).await.is_empty(),
+        "posted before they subscribed"
+    );
+    let next = add_update(&pool, org, incident, 0).await;
+    disp.plan_once().await.unwrap();
+    assert_eq!(sources(&owed(&pool, sub).await, "incident_update"), [next]);
+    done(pool, &name).await;
+}
+
+fn components(mail: &TransactionalEmail) -> Vec<String> {
+    match &mail.template {
+        EmailTemplate::SubscriberOutage(o) => o.components.iter().map(|c| c.name.clone()).collect(),
+        other => panic!("expected an outage mail, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_monitor_that_flapped_back_in_is_one_component() {
+    let Some((pool, name)) = isolated("subflap").await else {
+        return;
+    };
+    let org = seed_org(&pool).await;
+    let page = seed_page(&pool, org).await;
+    let target = seed_target(&pool, org, "API").await;
+    add_component(&pool, org, page, target).await;
+    confirmed_subscriber(&pool, org, page, "flap@example.com").await;
+    // Down 30 to 28 minutes ago, close posted 27; down again 25 to 23, close 22.
+    for (start, end, posted) in [(30, 28, 27), (25, 23, 22)] {
+        let incident: Uuid = sqlx::query_scalar(
+            "INSERT INTO incidents (org_id, target_id, started_at, ended_at, resolved_at, state,
+                                    status_at_start, visibility)
+             VALUES ($1, $2, now() - make_interval(mins => $3), now() - make_interval(mins => $4),
+                     now() - make_interval(mins => $5), 'resolved', 'down', 'public')
+             RETURNING id",
+        )
+        .bind(org)
+        .bind(target)
+        .bind(start)
+        .bind(end)
+        .bind(posted)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO incident_updates (org_id, incident_id, phase, message, author, generated,
+                                           posted_at)
+             VALUES ($1, $2, 'investigating', 'Automatically detected', 'system', true,
+                     now() - make_interval(mins => $3))",
+        )
+        .bind(org)
+        .bind(incident)
+        .bind(start - 1)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let mem = Arc::new(InMemoryEmailSender::new());
+    dispatcher(pool.clone(), mem.clone())
+        .run_once()
+        .await
+        .unwrap();
+    let mails = mails_to(&mem, "flap@example.com");
+    assert_eq!(mails.len(), 1, "one summary for both flaps");
+    assert_eq!(components(&mails[0]), ["API"]);
+    let rendered = mails[0].template.render("Uptimepage");
+    assert!(
+        rendered.subject.contains("API down"),
+        "{}",
+        rendered.subject
+    );
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn the_started_mail_lists_what_is_down_and_the_resolved_mail_what_came_back() {
+    let Some((pool, name)) = isolated("subleave").await else {
+        return;
+    };
+    let outage = five_down(&pool, 2).await;
+    confirmed_subscriber(&pool, outage.org, outage.page, "leave@example.com").await;
+    // Website came back inside the first minute.
+    sqlx::query(
+        "UPDATE incidents SET ended_at = now() - interval '90 seconds',
+                              resolved_at = now() - interval '80 seconds', state = 'resolved'
+         WHERE id = $1",
+    )
+    .bind(outage.incidents[0])
+    .execute(&pool)
+    .await
+    .unwrap();
+    let mem = Arc::new(InMemoryEmailSender::new());
+    let disp = dispatcher(pool.clone(), mem.clone());
+    disp.run_once().await.unwrap();
+    let started = mails_to(&mem, "leave@example.com");
+    assert_eq!(
+        components(&started[0]),
+        ["API", "Dashboard", "Checkout", "Webhooks"]
+    );
+
+    // Webhooks is taken off the page while still down; the rest recover.
+    sqlx::query(
+        "DELETE FROM status_page_components WHERE status_page_id = $1
+           AND target_id = (SELECT target_id FROM incidents WHERE id = $2)",
+    )
+    .bind(outage.page)
+    .bind(outage.incidents[4])
+    .execute(&pool)
+    .await
+    .unwrap();
+    disp.run_once().await.unwrap();
+    // Webhooks' incident ends later too, off the page.
+    let rest = Outage {
+        org: outage.org,
+        page: outage.page,
+        incidents: outage.incidents[1..5].to_vec(),
+    };
+    close_all(&pool, &rest, 8, 7).await;
+    // Website's early recovery and Webhooks' removal closed their memberships
+    // at the passes above; let the settle run out for them too.
+    sqlx::query(
+        "UPDATE status_page_outage_members SET closed_at = now() - interval '6 minutes'
+         WHERE incident_id = ANY($1)",
+    )
+    .bind(vec![outage.incidents[0], outage.incidents[4]])
+    .execute(&pool)
+    .await
+    .unwrap();
+    disp.run_once().await.unwrap();
+    let mails = mails_to(&mem, "leave@example.com");
+    assert_eq!(mails.len(), 2);
+    assert_eq!(
+        components(&mails[1]),
+        ["Website", "API", "Dashboard", "Checkout"],
+        "Webhooks is still down: the resolved mail does not call it back up"
+    );
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_page_that_kept_a_monitor_incident_mails_its_automatic_closer() {
+    let Some((pool, name)) = isolated("subkeptauto").await else {
+        return;
+    };
+    let org = seed_org(&pool).await;
+    let target = seed_target(&pool, org, "mon").await;
+    let page = seed_page(&pool, org).await;
+    let sub = confirmed_subscriber(&pool, org, page, "keptauto@example.com").await;
+    let incident = seed_incident(&pool, org, target, "public").await;
+    sqlx::query(
+        "INSERT INTO incident_status_pages (org_id, incident_id, status_page_id, component_name)
+         VALUES ($1, $2, $3, 'API')",
+    )
+    .bind(org)
+    .bind(incident)
+    .bind(page)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE incidents SET ended_at = now(), resolved_at = now(), state = 'resolved' WHERE id = $1",
+    )
+    .bind(incident)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let closer: Uuid = sqlx::query_scalar(
+        "INSERT INTO incident_updates (org_id, incident_id, phase, message, author, generated)
+         VALUES ($1, $2, 'resolved', 'Automatically resolved', 'system', true) RETURNING id",
+    )
+    .bind(org)
+    .bind(incident)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    dispatcher(pool.clone(), Arc::new(InMemoryEmailSender::new()))
+        .plan_once()
+        .await
+        .unwrap();
+    assert_eq!(
+        sources(&owed(&pool, sub).await, "incident_update"),
+        [closer],
+        "no outage on this page tells it, so the closer goes out itself"
+    );
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn an_outage_taken_off_the_page_before_it_was_announced_tells_only_its_end() {
+    let Some((pool, name)) = isolated("subhidden").await else {
+        return;
+    };
+    let outage = five_down(&pool, 2).await;
+    confirmed_subscriber(&pool, outage.org, outage.page, "hidden@example.com").await;
+    for incident in &outage.incidents {
+        mark_published(&pool, outage.org, *incident).await;
+    }
+    sqlx::query("UPDATE incidents SET visibility = 'internal' WHERE org_id = $1")
+        .bind(outage.org)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mem = Arc::new(InMemoryEmailSender::new());
+    let disp = dispatcher(pool.clone(), mem.clone());
+    disp.run_once().await.unwrap();
+    assert!(mem.is_empty(), "unpublished: no started mail");
+
+    close_all(&pool, &outage, 7, 6).await;
+    disp.run_once().await.unwrap();
+    let mails = mails_to(&mem, "hidden@example.com");
+    assert_eq!(mails.len(), 1, "it was published once, so its end is told");
+    assert_eq!(outage_mail(&mails[0]), (true, 5));
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_deleted_monitors_close_is_told_by_its_outage_once() {
+    let Some((pool, name)) = isolated("subdeleted").await else {
+        return;
+    };
+    let outage = five_down(&pool, 2).await;
+    let sub = confirmed_subscriber(&pool, outage.org, outage.page, "deleted@example.com").await;
+    let mem = Arc::new(InMemoryEmailSender::new());
+    let disp = dispatcher(pool.clone(), mem.clone());
+    disp.run_once().await.unwrap();
+
+    // What deleting a monitor leaves: its incident closed, kept on the page,
+    // the component gone, and an automatic closer.
+    let gone = outage.incidents[0];
+    sqlx::query(
+        "UPDATE incidents SET ended_at = now(), resolved_at = now(), state = 'resolved' WHERE id = $1",
+    )
+    .bind(gone)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO incident_status_pages (org_id, incident_id, status_page_id, component_name)
+         VALUES ($1, $2, $3, 'Website')",
+    )
+    .bind(outage.org)
+    .bind(gone)
+    .bind(outage.page)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "DELETE FROM status_page_components WHERE status_page_id = $1
+           AND target_id = (SELECT target_id FROM incidents WHERE id = $2)",
+    )
+    .bind(outage.page)
+    .bind(gone)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO incident_updates (org_id, incident_id, phase, message, author, generated)
+         VALUES ($1, $2, 'resolved', 'The monitor was deleted', 'system', true)",
+    )
+    .bind(outage.org)
+    .bind(gone)
+    .execute(&pool)
+    .await
+    .unwrap();
+    disp.plan_once().await.unwrap();
+    assert!(
+        sources(&owed(&pool, sub).await, "incident_update").is_empty(),
+        "the outage tells it; no mail of its own"
+    );
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_component_taken_off_the_page_while_down_still_has_its_recovery_mailed() {
+    let Some((pool, name)) = isolated("subleftclose").await else {
+        return;
+    };
+    let outage = five_down(&pool, 2).await;
+    let sub = confirmed_subscriber(&pool, outage.org, outage.page, "leftclose@example.com").await;
+    let disp = dispatcher(pool.clone(), Arc::new(InMemoryEmailSender::new()));
+    disp.run_once().await.unwrap();
+    // Removing a component keeps its incident on the page.
+    let left = outage.incidents[4];
+    sqlx::query(
+        "INSERT INTO incident_status_pages (org_id, incident_id, status_page_id, component_name)
+         VALUES ($1, $2, $3, 'Webhooks')",
+    )
+    .bind(outage.org)
+    .bind(left)
+    .bind(outage.page)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "DELETE FROM status_page_components WHERE status_page_id = $1
+           AND target_id = (SELECT target_id FROM incidents WHERE id = $2)",
+    )
+    .bind(outage.page)
+    .bind(left)
+    .execute(&pool)
+    .await
+    .unwrap();
+    disp.run_once().await.unwrap();
+
+    sqlx::query(
+        "UPDATE incidents SET ended_at = now(), resolved_at = now(), state = 'resolved' WHERE id = $1",
+    )
+    .bind(left)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let closer: Uuid = sqlx::query_scalar(
+        "INSERT INTO incident_updates (org_id, incident_id, phase, message, author, generated)
+         VALUES ($1, $2, 'resolved', 'Automatically resolved', 'system', true) RETURNING id",
+    )
+    .bind(outage.org)
+    .bind(left)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    disp.plan_once().await.unwrap();
+    assert_eq!(
+        sources(&owed(&pool, sub).await, "incident_update"),
+        [closer],
+        "its outage will not tell it, so its own closer does"
+    );
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn an_outage_that_leaves_the_page_and_comes_back_is_not_announced_twice() {
+    let Some((pool, name)) = isolated("subback").await else {
+        return;
+    };
+    let outage = five_down(&pool, 2).await;
+    confirmed_subscriber(&pool, outage.org, outage.page, "back@example.com").await;
+    let mem = Arc::new(InMemoryEmailSender::new());
+    let disp = dispatcher(pool.clone(), mem.clone());
+    disp.run_once().await.unwrap();
+    assert_eq!(mails_to(&mem, "back@example.com").len(), 1);
+
+    let page_on = async |on: bool| {
+        sqlx::query("UPDATE status_pages SET enabled = $2 WHERE id = $1")
+            .bind(outage.page)
+            .bind(on)
+            .execute(&pool)
+            .await
+            .unwrap();
+    };
+    page_on(false).await;
+    disp.run_once().await.unwrap();
+    // The page stays off past the settle; the outage ends with nothing to say.
+    sqlx::query("UPDATE status_page_outage_members SET closed_at = now() - interval '6 minutes'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE status_page_outages SET recovered_at = now() - interval '6 minutes'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    disp.run_once().await.unwrap();
+    page_on(true).await;
+    disp.run_once().await.unwrap();
+    assert_eq!(
+        mails_to(&mem, "back@example.com").len(),
+        1,
+        "still the same outage to its readers: no second started mail"
+    );
+
+    close_all(&pool, &outage, 7, 6).await;
+    disp.run_once().await.unwrap();
+    let mails = mails_to(&mem, "back@example.com");
+    assert_eq!(mails.len(), 2, "and one resolved mail at the end");
+    assert_eq!(outage_mail(&mails[1]), (true, 5));
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_reopened_incident_is_news_again() {
+    let Some((pool, name)) = isolated("subreopen").await else {
+        return;
+    };
+    let outage = five_down(&pool, 20).await;
+    close_all(&pool, &outage, 18, 15).await;
+    confirmed_subscriber(&pool, outage.org, outage.page, "reopen@example.com").await;
+    let mem = Arc::new(InMemoryEmailSender::new());
+    let disp = dispatcher(pool.clone(), mem.clone());
+    disp.run_once().await.unwrap();
+    assert_eq!(mails_to(&mem, "reopen@example.com").len(), 1, "the summary");
+
+    sqlx::query(
+        "UPDATE incidents SET ended_at = NULL, resolved_at = NULL, state = 'triggered'
+         WHERE id = $1",
+    )
+    .bind(outage.incidents[0])
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE incident_updates SET posted_at = now() - interval '2 minutes' WHERE incident_id = $1 AND phase = 'investigating'")
+        .bind(outage.incidents[0])
+        .execute(&pool)
+        .await
+        .unwrap();
+    disp.run_once().await.unwrap();
+    let mails = mails_to(&mem, "reopen@example.com");
+    assert_eq!(mails.len(), 2, "down again is told");
+    assert_eq!(outage_mail(&mails[1]), (false, 1));
+    done(pool, &name).await;
 }

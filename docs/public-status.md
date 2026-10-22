@@ -265,6 +265,10 @@ On a [private page](#who-can-open-a-page) only someone signed in subscribes, and
 
 Subscribers receive public incident updates as they are posted (payload `type` `incident_update`), maintenance announcements when a window is scheduled and when it completes (`type` `maintenance`, `phase` `scheduled` or `completed`), and the updates posted to a window (`type` `maintenance_update`, `phase` `scheduled`, `in_progress` or `completed`). Internal incident activity is never sent; the feed carries exactly what the public page shows.
 
+**One mail per outage.** Monitors on a page that fail together reach an email subscriber as one outage, not one mail per monitor. Incidents belong together when they overlap and began within 15 minutes of each other, the same rule the page history folds by. The first mail goes a minute after the first failure and lists every component affected by then, each linking to its incident. The second goes once every component is back and the page has stayed quiet for 5 minutes, and says how long each was down; the same monitor failing again inside those 5 minutes stays part of the outage, so a flapping monitor sends one pair of mails. An outage that was over within its first minute sends only the second mail. Five monitors down for two minutes send each subscriber two mails instead of ten. Updates someone writes, and every update of an incident you declared yourself, still go out one by one, as written. Webhook subscribers are unchanged: they get every incident update, the automatic ones included.
+
+Subscriber mail goes out through the same send budget as the rest of the product's mail, 100 recipients to a request, after sign-in links and alerts. A subscriber who confirms after something was posted does not get it.
+
 The page owner sees the subscriber list, with counts per channel, in the status-page editor, and can remove any subscriber there or via `DELETE /api/v1/status-pages/{id}/subscribers/{subscriber_id}`.
 
 ## Refresh behaviour

@@ -9,6 +9,7 @@ use thiserror::Error;
 use super::templates::incident_alert::IncidentAlert;
 use super::templates::monitors_slowed::SlowedMonitor;
 use super::templates::subscriber_maintenance::MaintenanceNotice;
+use super::templates::subscriber_outage::OutageMail;
 use super::templates::{self, RenderedEmail};
 use crate::domain::{Landing, Locale};
 use crate::i18n::Tr;
@@ -312,6 +313,9 @@ pub enum EmailTemplate {
         last_error: Option<String>,
         channel_url: Option<String>,
     },
+    /// One outage on a page, started or ended, for a confirmed subscriber:
+    /// every monitor that failed together, in one mail.
+    SubscriberOutage(OutageMail),
     /// A maintenance-window announcement, completion or posted update for a
     /// confirmed subscriber.
     SubscriberMaintenance {
@@ -537,6 +541,7 @@ impl EmailTemplate {
                     app_version,
                 },
             ),
+            EmailTemplate::SubscriberOutage(mail) => templates::subscriber_outage::render(mail),
             EmailTemplate::SubscriberMaintenance {
                 locale,
                 page_name,
@@ -621,6 +626,7 @@ impl EmailTemplate {
             EmailTemplate::PageAccessCode { url, .. } => Some(url),
             EmailTemplate::SubscriberIncident { incident_url, .. } => Some(incident_url),
             EmailTemplate::SubscriberMaintenance { page_url, .. } => Some(page_url),
+            EmailTemplate::SubscriberOutage(mail) => Some(&mail.page_url),
             EmailTemplate::SupportRequest { .. } => None,
             EmailTemplate::PaymentFailed { fix_url, .. } => Some(fix_url),
             EmailTemplate::DowngradeScheduled { keep_url, .. }
@@ -676,6 +682,7 @@ impl EmailTemplate {
             | EmailTemplate::SubscriberConfirm {
                 unsubscribe_url, ..
             } => Some(unsubscribe_url),
+            EmailTemplate::SubscriberOutage(mail) => Some(&mail.unsubscribe_url),
             EmailTemplate::ChannelVerification { decline_url, .. } => decline_url.as_deref(),
             _ => None,
         }

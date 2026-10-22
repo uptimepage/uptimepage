@@ -163,6 +163,39 @@ pub fn facts(rows: &[(&str, String)]) -> String {
     )
 }
 
+/// Linked names with a short state on the right, one row each. Names and
+/// states are escaped here.
+pub fn link_rows(rows: &[(&str, &str, String)]) -> String {
+    if rows.is_empty() {
+        return String::new();
+    }
+    let body = rows
+        .iter()
+        .map(|(url, name, right)| {
+            format!(
+                "<tr>\
+                 <td style=\"padding:9px 12px 9px 0;border-bottom:1px solid {LINE_SOFT};\
+                 font-family:{SANS};font-size:14px;line-height:1.5;color:{INK};\
+                 word-break:break-word;\">\
+                 <a href=\"{url}\" style=\"color:{INK};text-decoration:underline;\">{name}</a></td>\
+                 <td align=\"right\" style=\"padding:9px 0;border-bottom:1px solid {LINE_SOFT};\
+                 font-family:{MONO};font-size:11px;line-height:1.5;letter-spacing:0.06em;\
+                 color:{INK_QUIET};white-space:nowrap;font-variant-numeric:tabular-nums;\">\
+                 {right}</td>\
+                 </tr>",
+                url = attr_escape(url),
+                name = html_escape(name),
+                right = html_escape(&right.to_uppercase()),
+            )
+        })
+        .collect::<String>();
+    format!(
+        "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" \
+         border=\"0\" style=\"width:100%;margin:2px 0 20px;border-collapse:collapse;\">\n\
+         {body}\n</table>\n"
+    )
+}
+
 /// Verbatim machine output — an error sample, a customer's own message.
 pub fn code_block(text: &str) -> String {
     format!(

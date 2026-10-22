@@ -56,3 +56,13 @@ pub(crate) const PAGE_NOT_HELD: &str = page_not_held!();
 /// so its subscribers hear nothing either. For a query that aliases the page
 /// `sp` and joins [`PAGE_PLAN_JOIN`].
 pub(crate) const PAGE_SERVED: &str = page_served!();
+
+/// The columns of a [`crate::public_status::subscriber_notice::PageRow`], for
+/// a query that aliases the page `sp` and joins [`PAGE_PLAN_JOIN`].
+pub(crate) fn page_row_columns() -> String {
+    format!(
+        "sp.id AS page_id, sp.org_id, {PAGE_PUBLIC_NAME} AS page_name, sp.public_locale, \
+         sp.slug::text AS slug, sp.custom_domain::text AS custom_domain, \
+         {PAGE_CUSTOM_DOMAIN_PUBLISHED} AS custom_domain_published"
+    )
+}

@@ -11,11 +11,10 @@ use uuid::Uuid;
 use crate::domain::{Locale, NewSubscriber, Subscriber, SubscriberChannel};
 use crate::error::Result;
 use crate::i18n::Tr;
+use crate::public_status::subscriber_notice::PageRow;
 use crate::security::sha256_hex;
 use crate::security::token_hash::generate_raw_token;
-use crate::storage::page_sql::{
-    PAGE_CUSTOM_DOMAIN_PUBLISHED, PAGE_PLAN_JOIN, PAGE_PUBLIC_NAME, PAGE_SERVED,
-};
+use crate::storage::page_sql::{PAGE_PLAN_JOIN, PAGE_SERVED, page_row_columns};
 
 pub const CONFIRM_TTL_HOURS: i64 = 24;
 /// Confirm mints per subscriber per 24 h — bounds re-subscribe mail spam.
@@ -391,128 +390,142 @@ pub async fn purge_old_tokens(pool: &PgPool) -> sqlx::Result<u64> {
     Ok(unconfirmed.rows_affected() + tokens.rows_affected())
 }
 
-/// How far back the dispatcher will reach for an unsent public update, so a
-/// page going public (or a subscriber confirming) can't resurrect a long tail
-/// of historical updates as a notification burst.
+/// How far back the planner reaches for something to tell, so a page going
+/// public (or a subscriber confirming) can't resurrect a long tail of history
+/// as a notification burst.
 pub const FANOUT_LOOKBACK_HOURS: i64 = 24;
-/// Failed deliveries retried up to this many times before the row is parked.
+/// Failed deliveries are tried up to this many times.
 pub const FANOUT_MAX_ATTEMPTS: i32 = 3;
-/// A `queued` claim older than this is treated as an orphan (worker crashed
-/// mid-send) and may be re-claimed.
-pub(crate) const CLAIM_ORPHAN_MINUTES: i64 = 10;
 
+/// An incident update a page's subscribers have not been told yet.
 #[derive(Debug, sqlx::FromRow)]
-pub struct PendingUpdate {
-    pub subscriber_id: Uuid,
+pub struct UpdateNoticeRow {
+    #[sqlx(flatten)]
+    pub page: PageRow,
     pub update_id: Uuid,
-    pub org_id: Uuid,
-    pub channel: String,
-    pub target: String,
     pub phase: String,
     pub message: String,
+    pub generated: bool,
     pub incident_id: Uuid,
+    pub origin: String,
+    /// Reaches the page through one of its components, as opposed to a page
+    /// that kept the incident after its monitor left.
+    via_component: bool,
+    /// One of the page's outages tells this incident's end.
+    via_outage: bool,
     public_title: Option<String>,
     component_name: String,
     status_at_start: String,
-    pub page_name: String,
-    public_locale: String,
-    pub slug: String,
-    pub custom_domain: Option<String>,
-    pub custom_domain_published: bool,
-    pub signing_secret: Option<String>,
 }
 
-impl PendingUpdate {
+impl UpdateNoticeRow {
     pub fn locale(&self) -> Locale {
-        Locale::from_db(&self.public_locale)
+        Locale::from_db(&self.page.public_locale)
     }
 
-    /// The page's own title for the incident, so a mail about an unnarrated
-    /// monitor-opened incident is not headed "Status update".
+    /// A monitor incident's own words come from the platform; a page that
+    /// shows its monitor, or already holds it in an outage, tells them through
+    /// the outage mail, and only webhooks get each update. Everything a person
+    /// wrote, every update of a declared incident, and what a page that kept
+    /// the incident with no outage hears goes to both.
+    pub fn email_too(&self) -> bool {
+        !(self.origin == "monitor" && self.generated && (self.via_component || self.via_outage))
+    }
+
     pub fn incident_title(&self) -> String {
-        self.public_title
-            .as_deref()
-            .filter(|t| !t.is_empty())
-            .map(str::to_owned)
-            .unwrap_or_else(|| {
-                Tr::new(self.locale())
-                    .auto_incident_title(&self.component_name, &self.status_at_start)
-            })
+        incident_title(
+            self.locale(),
+            self.public_title.as_deref(),
+            &self.component_name,
+            &self.status_at_start,
+        )
     }
 }
 
-/// Verified subscribers (email or webhook) with an unclaimed update on an
-/// ever-published incident, posted since they subscribed and within the
-/// lookback. The incident→page link is `incident.target_id` ∈ the page's
-/// curated components, or for an incident with no monitor, the pages it was
-/// published to or, once its monitor was deleted, kept on. A page that kept a
-/// monitor's incident after the monitor left it hears, once it closed, the
-/// closing update and what came after, such as the postmortem: what was
-/// posted at or after `resolved_at`, which the close writes in the same
-/// transaction as its update. What was said before, an early "resolved"
-/// included, stays in its history. Updates flow while the incident is public; once
-/// unpublished, only the `resolved` closer still fans out, so an incident taken
-/// off the page before it ends doesn't strand subscribers on its last update.
-pub async fn list_pending(pool: &PgPool, limit: i64) -> Result<Vec<PendingUpdate>> {
+/// The page's own title for an incident, so a mail about an unnarrated
+/// monitor-opened incident is not headed "Status update".
+pub(crate) fn incident_title(
+    locale: Locale,
+    public_title: Option<&str>,
+    component_name: &str,
+    status_at_start: &str,
+) -> String {
+    public_title
+        .filter(|t| !t.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| Tr::new(locale).auto_incident_title(component_name, status_at_start))
+}
+
+/// Updates inside the lookback that a served page shows and has no notice
+/// for yet, whether or not the page has a subscriber today, so a notice is
+/// written when its update is posted and someone subscribing later never gets
+/// the backlog. The
+/// incident→page link is `incident.target_id` ∈ the page's curated components,
+/// or for an incident with no monitor, the pages it was published to or, once
+/// its monitor was deleted, kept on. A page that kept a monitor's incident
+/// after the monitor left it hears, once it closed, the closing update and what
+/// came after, such as the postmortem: what was posted at or after
+/// `resolved_at`, which the close writes in the same transaction as its update.
+/// What was said before, an early "resolved" included, stays in its history.
+/// Updates flow while the incident is public; once unpublished, only the
+/// `resolved` closer still goes out, so an incident taken off the page before it
+/// ends doesn't strand subscribers on its last update.
+pub async fn pending_update_notices(
+    conn: &mut sqlx::PgConnection,
+    limit: i64,
+) -> Result<Vec<UpdateNoticeRow>> {
     let sql = format!(
-        "SELECT s.id AS subscriber_id, u.id AS update_id, s.org_id, s.channel, s.target,
-                u.phase, u.message,
-                i.id AS incident_id, i.public_title, i.status_at_start,
+        "SELECT {page},
+                u.id AS update_id, u.phase, u.message, u.generated,
+                i.id AS incident_id, i.origin, i.public_title, i.status_at_start,
+                (t.id IS NOT NULL AND t.plan_hold_at IS NULL) AS via_component,
+                -- A member that left the page while down is not told by its
+                -- outage's resolved mail, so its own closer still is.
+                EXISTS (SELECT 1 FROM status_page_outage_members m
+                        WHERE m.status_page_id = sp.id AND m.incident_id = i.id
+                          AND m.org_id = i.org_id
+                          AND NOT (m.closed_at IS NOT NULL AND m.ended_at IS NULL)) AS via_outage,
                 COALESCE(NULLIF(c.public_name, ''), t.name,
                          (SELECT isp.component_name FROM incident_status_pages isp
                           WHERE isp.incident_id = i.id AND isp.org_id = i.org_id
-                            AND isp.status_page_id = s.status_page_id), '') AS component_name,
-                {PAGE_PUBLIC_NAME} AS page_name,
-                sp.public_locale,
-                sp.slug::text AS slug,
-                sp.custom_domain::text AS custom_domain,
-                {PAGE_CUSTOM_DOMAIN_PUBLISHED} AS custom_domain_published,
-                s.config ->> 'signing_secret' AS signing_secret
-         FROM status_page_subscribers s
-         JOIN status_pages sp ON sp.id = s.status_page_id
+                            AND isp.status_page_id = sp.id), '') AS component_name
+         FROM incident_updates u
+         JOIN incidents i ON i.id = u.incident_id AND i.org_id = u.org_id
+         JOIN status_pages sp ON sp.org_id = i.org_id
          {PAGE_PLAN_JOIN}
-         JOIN incidents i ON i.org_id = s.org_id
          LEFT JOIN status_page_components c
-              ON c.status_page_id = s.status_page_id AND c.org_id = s.org_id
-             AND c.target_id = i.target_id
+              ON c.status_page_id = sp.id AND c.org_id = sp.org_id AND c.target_id = i.target_id
          LEFT JOIN targets t ON t.id = c.target_id AND t.org_id = c.org_id
-         JOIN incident_updates u ON u.incident_id = i.id AND u.org_id = i.org_id
-              AND (i.visibility = 'public'
-                   OR (u.phase = 'resolved'
-                       AND EXISTS (SELECT 1 FROM incident_events e
-                                   WHERE e.incident_id = i.id AND e.kind = 'published')))
-         WHERE s.channel IN ('email', 'webhook') AND s.verified_at IS NOT NULL
+         WHERE u.posted_at >= now() - make_interval(hours => $2)
            AND {PAGE_SERVED}
+           AND (i.visibility = 'public'
+                OR (u.phase = 'resolved'
+                    AND EXISTS (SELECT 1 FROM incident_events e
+                                WHERE e.incident_id = i.id AND e.org_id = i.org_id
+                                  AND e.kind = 'published')))
            -- The page drops a held monitor from its component list, so mailing
            -- about one would send readers to a page that shows neither the
            -- component nor the incident.
            AND ((t.id IS NOT NULL AND t.plan_hold_at IS NULL)
-                OR ((i.target_id IS NULL
-                     OR u.posted_at >= i.resolved_at)
+                OR ((i.target_id IS NULL OR u.posted_at >= i.resolved_at)
                     AND EXISTS (
                     SELECT 1 FROM incident_status_pages isp
                     WHERE isp.incident_id = i.id AND isp.org_id = i.org_id
-                      AND isp.status_page_id = s.status_page_id)))
-           AND u.posted_at >= s.verified_at
-           AND u.posted_at >= now() - make_interval(hours => $2)
+                      AND isp.status_page_id = sp.id)))
            AND NOT EXISTS (
-               SELECT 1 FROM status_page_subscriber_deliveries n
-               WHERE n.subscriber_id = s.id AND n.event_kind = 'incident_update'
-                 AND n.event_ref = u.id AND n.phase = ''
-                 AND (n.status = 'sent'
-                   OR (n.status = 'queued' AND n.created_at > now() - make_interval(mins => $3))
-                   OR (n.status = 'failed' AND n.attempts >= $4)))
+               SELECT 1 FROM status_page_notices n
+               WHERE n.status_page_id = sp.id AND n.kind = 'incident_update'
+                 AND n.source_ref = u.id AND n.phase = '')
          ORDER BY u.posted_at
-         LIMIT $1"
+         LIMIT $1",
+        page = page_row_columns(),
     );
-    let rows = sqlx::query_as::<_, PendingUpdate>(&sql)
+    let rows = sqlx::query_as::<_, UpdateNoticeRow>(&sql)
         .bind(limit)
         .bind(FANOUT_LOOKBACK_HOURS as i32)
-        .bind(CLAIM_ORPHAN_MINUTES as i32)
-        .bind(FANOUT_MAX_ATTEMPTS)
-        .fetch_all(pool)
+        .fetch_all(conn)
         .await
-        .context("subscribers::list_pending")?;
+        .context("subscribers::pending_update_notices")?;
     Ok(rows)
 }
 
@@ -624,26 +637,52 @@ pub fn unsubscribe_url(secret: &str, origin: &str, subscriber_id: Uuid) -> Strin
 mod tests {
     use super::*;
 
-    fn pending(public_title: Option<&str>, public_locale: &str) -> PendingUpdate {
-        PendingUpdate {
-            subscriber_id: Uuid::nil(),
+    fn pending(public_title: Option<&str>, public_locale: &str) -> UpdateNoticeRow {
+        UpdateNoticeRow {
+            page: PageRow {
+                page_id: Uuid::nil(),
+                org_id: Uuid::nil(),
+                page_name: "acme".into(),
+                public_locale: public_locale.into(),
+                slug: "acme".into(),
+                custom_domain: None,
+                custom_domain_published: false,
+            },
             update_id: Uuid::nil(),
-            org_id: Uuid::nil(),
-            channel: "email".into(),
-            target: "a@example.com".into(),
             phase: "investigating".into(),
             message: String::new(),
+            generated: false,
             incident_id: Uuid::nil(),
+            origin: "monitor".into(),
+            via_component: true,
+            via_outage: true,
             public_title: public_title.map(str::to_owned),
             component_name: "Painel Cloud".into(),
             status_at_start: "down".into(),
-            page_name: "acme".into(),
-            public_locale: public_locale.into(),
-            slug: "acme".into(),
-            custom_domain: None,
-            custom_domain_published: false,
-            signing_secret: None,
         }
+    }
+
+    #[test]
+    fn only_a_monitor_incidents_own_words_skip_the_inbox() {
+        let mut row = pending(None, "en");
+        row.generated = true;
+        assert!(!row.email_too(), "the outage mail covers it");
+        row.generated = false;
+        assert!(row.email_too(), "a person wrote it");
+        row.origin = "manual".into();
+        row.generated = true;
+        assert!(
+            row.email_too(),
+            "a declared incident is told update by update"
+        );
+        row.origin = "monitor".into();
+        row.via_component = false;
+        assert!(!row.email_too(), "its outage still tells it");
+        row.via_outage = false;
+        assert!(
+            row.email_too(),
+            "a page that kept it has no outage to tell it"
+        );
     }
 
     #[test]

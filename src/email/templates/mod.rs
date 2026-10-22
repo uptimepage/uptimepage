@@ -15,6 +15,7 @@ pub mod page_access_code;
 pub mod subscriber_confirm;
 pub mod subscriber_incident;
 pub mod subscriber_maintenance;
+pub mod subscriber_outage;
 pub mod support_request;
 
 use crate::i18n::Tr;

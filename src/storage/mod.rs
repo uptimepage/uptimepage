@@ -44,6 +44,8 @@ pub mod silence;
 pub mod status_pages;
 pub mod subscriber_deliveries;
 pub mod subscriber_maintenance;
+pub mod subscriber_notices;
+pub mod subscriber_outages;
 pub mod subscribers;
 pub mod subscriptions;
 pub mod traits;

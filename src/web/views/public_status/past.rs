@@ -13,6 +13,7 @@ use crate::public_status::history::HistoryEntry;
 use fluent_templates::fluent_bundle::FluentValue;
 
 use super::incident_display::{UPDATE_PREVIEW_CHARS, impact_classes, phase_classes};
+use crate::public_status::outages::STARTED_TOGETHER;
 
 /// Rows that ended within this long stay in view; older ones fold away
 /// behind one toggle.
@@ -20,10 +21,6 @@ const RECENT_DAYS: i64 = 7;
 /// Repeat incidents on one component closer together than this read as one
 /// disruption.
 const FOLD_GAP: ChronoDuration = ChronoDuration::hours(1);
-/// Incidents on different components read as one fault only when they
-/// overlap and began within this long of each other, so one long incident
-/// does not swallow every unrelated one that happens during it.
-const STARTED_TOGETHER: ChronoDuration = ChronoDuration::minutes(15);
 /// Component names a row spells out before it counts the rest.
 const NAMED_COMPONENTS: usize = 3;
 const MAINTENANCE_CHIP: &str = "public-chip public-sev--mnt";

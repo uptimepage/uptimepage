@@ -226,7 +226,7 @@
       "id": "subd",
       "col": "core",
       "t": "subscriber_dispatch",
-      "s": "claim by insert, 20 s tick"
+      "s": "notices, outages, leased sends"
     },
     {
       "id": "jobs",
@@ -885,7 +885,7 @@
     {
       "id": "subscribers",
       "name": "Status page subscriber fan-out",
-      "desc": "A published incident update reaches subscribers",
+      "desc": "A published update, or an outage on the page, reaches subscribers",
       "steps": [
         {
           "f": "op-ui",
@@ -908,14 +908,20 @@
         {
           "f": "subd",
           "t": "pg",
-          "h": "claim",
-          "d": "The claim is an INSERT into subscriber_deliveries, so a crash or a second replica cannot double-send."
+          "h": "plan",
+          "d": "Each update becomes one notice per page. Monitors that fail together on a page become one outage, told once when it starts and once when it ends."
+        },
+        {
+          "f": "subd",
+          "t": "pg",
+          "h": "fan out + claim",
+          "d": "A notice fans out once into a delivery per subscriber. A sender claims only the unit it sends, under a lease it renews and a token every write checks, so a second replica cannot double-send."
         },
         {
           "f": "subd",
           "t": "resend",
           "h": "email fan-out",
-          "d": "Confirm and unsubscribe links are built off the page origin, so a white-labelled page never leaks the app host."
+          "d": "100 to a request through the shared send gate. Unsubscribe links are built off the page origin, so a white-labelled page never leaks the app host."
         },
         {
           "f": "subd",
@@ -927,7 +933,7 @@
           "f": "subd",
           "t": "pg",
           "h": "mark outcome",
-          "d": "Each send records its own result; RFC 8058 one-click unsubscribe is a POST."
+          "d": "Each unit records its result the moment it is done; RFC 8058 one-click unsubscribe is a POST."
         }
       ]
     },
