@@ -1069,8 +1069,8 @@ fn sanitised_retry_after(raw: &str) -> bool {
         })
 }
 
-/// Back-pressure is not an outage, so 429/503 maps to `Degraded` and opens no
-/// incident. An `expected_status` that accepts them is honoured first.
+/// Back-pressure is not an outage, so 429/503 maps to `Degraded`, not `Down`.
+/// An `expected_status` that accepts them is honoured first.
 fn classify_outcome(
     status_code: u16,
     status_ok: bool,
