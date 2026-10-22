@@ -249,6 +249,37 @@ pub(crate) fn install_default_crypto_provider() {
     }
 }
 
+/// Clients for unit tests that probe loopback or assert the SSRF guard.
+#[cfg(test)]
+pub(crate) fn test_clients(allow_private_targets: bool) -> HttpClients {
+    build_clients(
+        &HttpClientConfig {
+            tcp_keepalive_secs: 60,
+            user_agent: "test".into(),
+        },
+        &CheckerConfig {
+            max_concurrent_checks: 8,
+            default_timeout_ms: 2_000,
+            connect_timeout_ms: 2_000,
+            default_check_interval_secs: 60,
+            per_host_max_inflight: tokio::sync::Semaphore::MAX_PERMITS,
+            rdap_max_inflight: tokio::sync::Semaphore::MAX_PERMITS,
+        },
+        &DnsConfig {
+            cache_size: 16,
+            positive_ttl_secs: 300,
+            negative_ttl_secs: 60,
+            servers: vec![],
+        },
+        &SecurityConfig {
+            allow_private_targets,
+            credentials_kek_base64: secrecy::SecretString::from(String::new()),
+            trusted_proxies: vec![],
+        },
+    )
+    .expect("build clients")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

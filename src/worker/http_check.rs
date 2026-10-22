@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use base64::Engine as _;
@@ -9,12 +10,12 @@ use flate2::read::GzDecoder;
 use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use hyper::body::Bytes as HBytes;
 use hyper::header::{
-    ACCEPT, ACCEPT_ENCODING, AUTHORIZATION, HOST, HeaderName, HeaderValue, LOCATION, RETRY_AFTER,
-    USER_AGENT,
+    ACCEPT, ACCEPT_ENCODING, AUTHORIZATION, COOKIE, HOST, HeaderName, HeaderValue, LOCATION,
+    RETRY_AFTER, USER_AGENT,
 };
-use hyper::{Method, Request, Uri};
+use hyper::{HeaderMap, Method, Request, Uri};
 use metrics::counter;
-use url::{Host, Url};
+use url::{Host, Position, Url};
 use uuid::Uuid;
 
 use crate::domain::{
@@ -29,8 +30,23 @@ use crate::http_outbound::error_chain;
 use crate::metric_names;
 use crate::security::redaction::scrub_url;
 
+mod redirect_jar;
+
+use redirect_jar::{RedirectJar, cookie_header};
+
 /// Redirect-hop ceiling, and the fallback when following is on but `max_redirects` is 0.
 const MAX_REDIRECT_HOPS: u8 = HttpCheck::MAX_REDIRECTS;
+
+// The hop budget bounds how many responses set cookies, not how much they
+// set, so the redirect jar has caps of its own. Anything over one is skipped.
+
+/// RFC 6265 §6.1 minimum per cookie: name, value and attributes together.
+const MAX_SET_COOKIE_BYTES: usize = 4096;
+/// RFC 6265 §6.1 per-domain minimum, plenty for one execution.
+const MAX_JAR_COOKIES: usize = 50;
+/// How far jar cookies may grow the `Cookie` value. Keeps the header line
+/// under the 8190-byte field limit Apache and nginx default to.
+const MAX_COOKIE_HEADER_BYTES: usize = 8000;
 
 /// Past this the read is abandoned rather than left to allocate freely.
 /// Status pages, the dominant target shape, sit well under 100 KiB.
@@ -176,6 +192,11 @@ async fn probe_hops(
     let mut current = check.url.clone();
     let mut method = check.method;
     let mut send_body = check.body.clone();
+    // Empty, it allocates nothing.
+    let mut jar = RedirectJar::default();
+    // Every request a redirect answered, so a spent budget can tell a loop
+    // from a long chain.
+    let mut sent: Vec<SentRequest> = Vec::new();
 
     for hop in 0..=max_hops {
         trail.network = NetworkPath::default();
@@ -223,6 +244,7 @@ async fn probe_hops(
         // Request-target form depends on the negotiated protocol; `same_origin`
         // gates credential-bearing headers on cross-origin redirects.
         let same_origin = current.origin() == origin;
+        let jar_cookies = jar.cookies_for(&current);
         let req = match build_request(
             method,
             &uri,
@@ -231,6 +253,7 @@ async fn probe_hops(
             same_origin,
             alpn_h2,
             clients,
+            &jar_cookies,
         ) {
             Ok(r) => r,
             Err(err) => return early(&format!("request build failed: {err}"), None),
@@ -266,6 +289,15 @@ async fn probe_hops(
         let status_code = response.status().as_u16();
 
         if check.follow_redirects && is_redirect(status_code) {
+            sent.push(SentRequest::new(&current, method, &send_body, &jar));
+            jar.store_response(response.headers(), &current);
+            // 301/302/303 degrade to a bodyless GET: browser behaviour, and a
+            // monitor must never silently replay a POST.
+            if !matches!(status_code, 307 | 308) {
+                method = HttpMethod::Get;
+                send_body = None;
+            }
+
             if hop == max_hops {
                 counter!(metric_names::CHECK_REDIRECTS, "outcome" => "limit_exceeded").increment(1);
                 tracing::warn!(
@@ -273,15 +305,20 @@ async fn probe_hops(
                     hops = max_hops,
                     "redirect limit exceeded"
                 );
-                return early("too many redirects", Some(status_code));
+                // Only once the budget is spent: a cookie gate sends the
+                // probe back to a URL on purpose, with a cookie it lacked.
+                let looped = redirect_target(response.headers(), &current).is_some_and(|next| {
+                    sent.contains(&SentRequest::new(&next, method, &send_body, &jar))
+                });
+                let reason = if looped {
+                    "redirect loop"
+                } else {
+                    "too many redirects"
+                };
+                return early(reason, Some(status_code));
             }
 
-            let next = match response
-                .headers()
-                .get(LOCATION)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|loc| current.join(loc).ok())
-            {
+            let next = match redirect_target(response.headers(), &current) {
                 Some(u) => u,
                 None => {
                     counter!(metric_names::CHECK_REDIRECTS, "outcome" => "invalid_location")
@@ -303,13 +340,6 @@ async fn probe_hops(
                     "redirect to unsupported scheme"
                 );
                 return early("unsupported redirect scheme", Some(status_code));
-            }
-
-            // 301/302/303 degrade to a bodyless GET: browser behaviour, and a
-            // monitor must never silently replay a POST.
-            if !matches!(status_code, 307 | 308) {
-                method = HttpMethod::Get;
-                send_body = None;
             }
 
             counter!(metric_names::CHECK_REDIRECTS, "outcome" => "followed").increment(1);
@@ -871,6 +901,10 @@ fn snapshot_body(decoded: &[u8]) -> String {
     out
 }
 
+/// With `include_auth`, the configured `Cookie` rows and `jar_cookies` go out
+/// merged as one header. Without it only `jar_cookies` do: they are scoped to
+/// the host being asked.
+#[allow(clippy::too_many_arguments)]
 fn build_request(
     method: HttpMethod,
     uri: &Uri,
@@ -879,6 +913,7 @@ fn build_request(
     include_auth: bool,
     alpn_h2: bool,
     clients: &HttpClients,
+    jar_cookies: &[(&str, &str)],
 ) -> Result<Request<Full<HBytes>>, hyper::http::Error> {
     let body_bytes: HBytes = match body {
         Some(b) => HBytes::from(b.clone().into_bytes()),
@@ -929,6 +964,9 @@ fn build_request(
         if field_authz.is_some() && k.eq_ignore_ascii_case("authorization") {
             continue;
         }
+        if k.eq_ignore_ascii_case("cookie") {
+            continue;
+        }
         // A credential must not follow a hostile `Location` off-origin.
         if !include_auth
             && PROBE_REDACT_HEADERS
@@ -957,8 +995,32 @@ fn build_request(
     if let Some(val) = field_authz {
         builder = builder.header(AUTHORIZATION, val);
     }
+    let configured = include_auth.then(|| configured_cookie(check)).flatten();
+    if let Some(val) = cookie_header(configured.as_deref(), jar_cookies)
+        .and_then(|merged| HeaderValue::try_from(merged).ok())
+    {
+        builder = builder.header(COOKIE, val);
+    }
 
     builder.body(Full::new(body_bytes))
+}
+
+/// The configured `Cookie` rows, whatever the case of their name, as one
+/// value, in name order so every run merges them alike. Separators at a row's
+/// ends are dropped so the join makes no empty pair. A row hyper would reject
+/// is left out, as the plain path drops it.
+fn configured_cookie(check: &HttpCheck) -> Option<String> {
+    let rows: BTreeMap<&str, &str> = check
+        .headers
+        .iter()
+        .filter(|(k, v)| k.eq_ignore_ascii_case("cookie") && HeaderValue::try_from(*v).is_ok())
+        .map(|(k, v)| {
+            let pairs = v.trim_matches(|c: char| c == ';' || c.is_ascii_whitespace());
+            (k.as_str(), pairs)
+        })
+        .filter(|(_, pairs)| !pairs.is_empty())
+        .collect();
+    (!rows.is_empty()).then(|| rows.into_values().collect::<Vec<_>>().join("; "))
 }
 
 /// A value hyper rejects is no replacement: the loop drops it and the request
@@ -1009,6 +1071,39 @@ fn effective_max_redirects(check: &HttpCheck) -> u8 {
 
 fn is_redirect(code: u16) -> bool {
     matches!(code, 301 | 302 | 303 | 307 | 308)
+}
+
+fn redirect_target(headers: &HeaderMap, current: &Url) -> Option<Url> {
+    headers
+        .get(LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|loc| current.join(loc).ok())
+}
+
+/// One request as the server sees it. The fragment never leaves the client,
+/// so it is not part of it; the jar's cookies are, since a gate answers the
+/// same URL differently once they come back.
+#[derive(PartialEq)]
+struct SentRequest {
+    target: String,
+    method: HttpMethod,
+    body: bool,
+    cookies: Vec<(String, String)>,
+}
+
+impl SentRequest {
+    fn new(url: &Url, method: HttpMethod, body: &Option<String>, jar: &RedirectJar) -> Self {
+        Self {
+            target: url[..Position::AfterQuery].to_owned(),
+            method,
+            body: body.is_some(),
+            cookies: jar
+                .cookies_for(url)
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect(),
+        }
+    }
 }
 
 /// Not interchangeable: our cap is a decision, malformed bytes are a fault,
@@ -1193,6 +1288,7 @@ fn has_timeout_in_chain(err: &(dyn std::error::Error + 'static)) -> bool {
 mod tests {
     use std::time::Duration;
 
+    use hyper::header::SET_COOKIE;
     use url::Url;
 
     use super::*;
@@ -1992,5 +2088,80 @@ mod tests {
             crate::domain::ErrorClass::BodyOverCap,
             "the decoded cap must classify like the raw one"
         );
+    }
+
+    #[test]
+    fn a_fragment_does_not_make_a_different_request() {
+        let page = Url::parse("http://example.com/a?q=1").unwrap();
+        let jar = RedirectJar::default();
+        let sent = |url: &Url, method| SentRequest::new(url, method, &None, &jar);
+        let first = sent(&page, HttpMethod::Get);
+        assert!(first == sent(&page.join("/a?q=1#top").unwrap(), HttpMethod::Get));
+        assert!(first != sent(&page.join("/a?q=2").unwrap(), HttpMethod::Get));
+        assert!(first != sent(&page, HttpMethod::Post));
+    }
+
+    #[test]
+    fn a_cookie_the_earlier_request_lacked_makes_a_different_request() {
+        let page = Url::parse("http://example.com/").unwrap();
+        let mut jar = RedirectJar::default();
+        let before = SentRequest::new(&page, HttpMethod::Get, &None, &jar);
+        let mut headers = HeaderMap::new();
+        headers.append(SET_COOKIE, HeaderValue::from_static("gate=1"));
+        jar.store_response(&headers, &page);
+        let after = SentRequest::new(&page, HttpMethod::Get, &None, &jar);
+        assert!(before != after);
+        jar.store_response(&headers, &page);
+        assert!(after == SentRequest::new(&page, HttpMethod::Get, &None, &jar));
+    }
+
+    /// The probe is crate-private, so this lives here rather than with the
+    /// redirect-cookie integration tests.
+    #[tokio::test]
+    async fn the_probe_never_shows_a_jar_cookie_value() {
+        use axum::routing::get;
+        use hyper::StatusCode;
+
+        let app = axum::Router::new()
+            .route(
+                "/",
+                get(|| async {
+                    (
+                        StatusCode::FOUND,
+                        [(LOCATION, "/read"), (SET_COOKIE, "gate=jar-secret")],
+                    )
+                }),
+            )
+            .route(
+                "/read",
+                get(|headers: HeaderMap| async move {
+                    let status = if headers.get(COOKIE).is_some_and(|v| v == "gate=jar-secret") {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::FORBIDDEN
+                    };
+                    (status, [(SET_COOKIE, "next=jar-secret")], "fine")
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let (result, probe) = execute_http_check_probe(
+            Uuid::nil(),
+            Uuid::nil(),
+            &check(&format!("http://{addr}/"), true, 5),
+            &crate::http_client::client::test_clients(true),
+        )
+        .await;
+
+        assert_eq!(result.status, CheckStatus::Up, "{:?}", result.error);
+        assert!(
+            probe
+                .response_headers_preview
+                .iter()
+                .any(|h| h.name == "set-cookie")
+        );
+        assert!(!format!("{probe:?}").contains("jar-secret"), "{probe:?}");
     }
 }

@@ -124,6 +124,7 @@ backoff = { version = "0.4", features = ["tokio"] }
 url = { version = "2.5", features = ["serde"] }
 idna = "1.1"
 psl = "2.1"
+cookie_store = { version = "0.22", default-features = false }
 # Anti-abuse: compiled URL-pattern deny-list + YAML domain deny-list loader.
 regex = "1"
 serde_norway = "0.9"

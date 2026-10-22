@@ -743,6 +743,10 @@ mod tests {
             ErrorClass::RateLimited,
         ),
         ("rate-limited 503", ErrorClass::RateLimited),
+        // One class for both, so dashboards and alert grouping do not split
+        // when a spent budget turns out to be a loop.
+        ("too many redirects", ErrorClass::Other),
+        ("redirect loop", ErrorClass::Other),
         ("dns: domain not found", ErrorClass::DnsNoRecord),
         ("dns: no address records", ErrorClass::DnsNoRecord),
         ("dns: no IPv4 address", ErrorClass::DnsNoRecord),

@@ -1,6 +1,6 @@
 # Uptimepage Bot
 
-**Last updated:** 2026-10-20
+**Last updated:** 2026-10-22
 
 If you found this page in your server logs, our bot requested a page on your site. This page explains what it is, why it happened, and how to stop it.
 
@@ -35,6 +35,7 @@ We are sorry for the churn. If your monitor started failing around that date for
 We request the exact URL that was configured. Nothing else.
 
 - We follow redirects, up to 10 hops.
+- If a redirect sets a cookie, we send it back on the later hops of that same check, as a browser would. We drop it when the check ends, so the next check starts with no cookies.
 - We request one URL per check. We do not follow links on your pages.
 - We do not crawl or spider your site.
 - We do not scan ports.

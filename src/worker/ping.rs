@@ -113,35 +113,7 @@ async fn echo(ip: IpAddr, timeout: Duration) -> Result<Duration, EchoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{CheckerConfig, DnsConfig, HttpClientConfig, SecurityConfig};
-    use crate::http_client::build_clients;
-
-    fn clients(allow_private_targets: bool) -> HttpClients {
-        let http_cfg = HttpClientConfig {
-            tcp_keepalive_secs: 60,
-            user_agent: "test".into(),
-        };
-        let checker_cfg = CheckerConfig {
-            max_concurrent_checks: 8,
-            default_timeout_ms: 2_000,
-            connect_timeout_ms: 2_000,
-            default_check_interval_secs: 60,
-            per_host_max_inflight: tokio::sync::Semaphore::MAX_PERMITS,
-            rdap_max_inflight: tokio::sync::Semaphore::MAX_PERMITS,
-        };
-        let dns_cfg = DnsConfig {
-            cache_size: 16,
-            positive_ttl_secs: 300,
-            negative_ttl_secs: 60,
-            servers: vec![],
-        };
-        let security_cfg = SecurityConfig {
-            allow_private_targets,
-            credentials_kek_base64: secrecy::SecretString::from(String::new()),
-            trusted_proxies: vec![],
-        };
-        build_clients(&http_cfg, &checker_cfg, &dns_cfg, &security_cfg).expect("build clients")
-    }
+    use crate::http_client::client::test_clients;
 
     fn spec(host: &str, timeout_ms: u64) -> PingCheck {
         PingCheck {
@@ -165,7 +137,7 @@ mod tests {
             eprintln!("skipping: unprivileged ICMP unavailable on this host");
             return;
         }
-        let clients = clients(true);
+        let clients = test_clients(true);
         let result = execute_ping_check(
             Uuid::new_v4(),
             Uuid::new_v4(),
@@ -179,7 +151,7 @@ mod tests {
 
     #[tokio::test]
     async fn ssrf_guarded_host_is_down_with_reason() {
-        let clients = clients(false);
+        let clients = test_clients(false);
         let result = execute_ping_check(
             Uuid::new_v4(),
             Uuid::new_v4(),
@@ -200,7 +172,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_failure_is_down() {
-        let clients = clients(true);
+        let clients = test_clients(true);
         let result = execute_ping_check(
             Uuid::new_v4(),
             Uuid::new_v4(),
