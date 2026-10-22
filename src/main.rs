@@ -762,7 +762,8 @@ async fn main() -> Result<()> {
         async |pool: &sqlx::PgPool| {
             let notices = uptimepage::storage::subscriber_notices::purge_old(pool).await?;
             let outages = uptimepage::storage::subscriber_outages::purge_old(pool).await?;
-            Ok::<u64, sqlx::Error>(notices + outages)
+            let batches = uptimepage::storage::subscriber_deliveries::purge_batches(pool).await?;
+            Ok::<u64, sqlx::Error>(notices + outages + batches)
         },
     ));
 

@@ -933,7 +933,7 @@
           "f": "subd",
           "t": "pg",
           "h": "mark outcome",
-          "d": "Each unit records its result the moment it is done; RFC 8058 one-click unsubscribe is a POST."
+          "d": "Each unit records its result the moment it is done. The provider's rate limits and outages never use up a mail; a batch with no clear answer is stored and sent again as the same request. RFC 8058 one-click unsubscribe is a POST."
         }
       ]
     },

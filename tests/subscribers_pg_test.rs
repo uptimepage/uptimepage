@@ -182,6 +182,7 @@ fn config() -> SubscriberDispatchConfig {
         "Status".into(),
     );
     cfg.tick_interval = Duration::from_secs(60);
+    cfg.resend_waits = vec![Duration::ZERO; 2];
     cfg
 }
 
@@ -1357,11 +1358,12 @@ async fn a_stopped_workers_rows_go_to_another_and_its_late_write_changes_nothing
 
     // A worker claims the unit and dies before it sends or renews.
     let gone = Uuid::now_v7();
-    let (_, claimed) =
+    let claimed =
         subscriber_deliveries::claim(&pool, "email", 100, gone, Duration::from_millis(300))
             .await
             .unwrap()
-            .expect("claimed");
+            .expect("claimed")
+            .deliveries;
     tokio::time::sleep(Duration::from_millis(500)).await;
     disp.run_once().await.unwrap();
     assert_eq!(mails_to(&mem, "stopped@example.com").len(), 1);
@@ -1375,11 +1377,13 @@ async fn a_stopped_workers_rows_go_to_another_and_its_late_write_changes_nothing
             error: Some("late".into()),
             attempts: 9,
             retry_in: Duration::ZERO,
+            batch_key: None,
         }],
+        None,
     )
     .await
     .unwrap();
-    assert_eq!(late, 0);
+    assert!(late.is_empty());
     let status: String = sqlx::query_scalar(
         "SELECT status FROM status_page_subscriber_deliveries WHERE subscriber_id = $1",
     )
@@ -1441,6 +1445,590 @@ async fn a_send_held_back_by_pacing_uses_no_attempt() {
     .await
     .unwrap();
     assert_eq!((status.as_str(), attempts), ("queued", 0));
+    done(pool, &name).await;
+}
+
+/// One delivery as it stands: (status, attempts, batch key).
+async fn delivery_state(pool: &PgPool, id: Uuid) -> Option<(String, i32, Option<String>)> {
+    sqlx::query_as(
+        "SELECT status, attempts, batch_key FROM status_page_subscriber_deliveries WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+}
+
+async fn make_due(pool: &PgPool) {
+    sqlx::query(
+        "UPDATE status_page_subscriber_deliveries SET next_attempt_at = now()
+         WHERE status = 'queued'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn stored_batches(pool: &PgPool) -> Vec<(String, Vec<u8>, Vec<Uuid>)> {
+    sqlx::query_as("SELECT key, request, delivery_ids FROM status_page_delivery_batches")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// Answers batch requests with `errors` in order, then sends. Remembers
+/// every request, bounces the mail to `bounce` by its position, and answers
+/// with at most `answers` results. With `steal` set, another sender takes
+/// the unit while an error is being answered.
+struct Flaky {
+    inner: InMemoryEmailSender,
+    errors: std::sync::Mutex<std::collections::VecDeque<EmailError>>,
+    requests: std::sync::Mutex<Vec<(String, Vec<u8>)>>,
+    order: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
+    bounce: std::sync::Mutex<Option<String>>,
+    answers: std::sync::Mutex<Option<usize>>,
+    steal: std::sync::Mutex<Option<PgPool>>,
+    stolen_by: std::sync::Mutex<Option<Uuid>>,
+}
+
+impl Flaky {
+    fn new(errors: impl IntoIterator<Item = EmailError>) -> Self {
+        Self {
+            inner: InMemoryEmailSender::new(),
+            errors: std::sync::Mutex::new(errors.into_iter().collect()),
+            requests: Default::default(),
+            order: Default::default(),
+            bounce: Default::default(),
+            answers: Default::default(),
+            steal: Default::default(),
+            stolen_by: Default::default(),
+        }
+    }
+
+    fn requests(&self) -> Vec<(String, Vec<u8>)> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl EmailSender for Flaky {
+    async fn send(&self, email: TransactionalEmail, class: SendClass) -> EmailResult<MessageId> {
+        self.inner.send(email, class).await
+    }
+
+    fn prepare_batch(
+        &self,
+        emails: Vec<TransactionalEmail>,
+        key: String,
+    ) -> EmailResult<PreparedBatch> {
+        let to = emails.iter().map(|e| e.to.address.clone()).collect();
+        self.order.lock().unwrap().insert(key.clone(), to);
+        self.inner.prepare_batch(emails, key)
+    }
+
+    async fn send_prepared(&self, batch: PreparedBatch) -> BatchResult {
+        self.requests
+            .lock()
+            .unwrap()
+            .push((batch.key().to_owned(), batch.body().to_vec()));
+        let error = self.errors.lock().unwrap().pop_front();
+        if let Some(error) = error {
+            let thief = self.steal.lock().unwrap().clone();
+            if let Some(pool) = thief {
+                *self.stolen_by.lock().unwrap() = Some(steal_held(&pool).await);
+            }
+            return Err(BatchFailure { error, batch });
+        }
+        let order = self.order.lock().unwrap().get(batch.key()).cloned();
+        let bounce = self.bounce.lock().unwrap().clone();
+        let answers = self.answers.lock().unwrap().unwrap_or(usize::MAX);
+        let results = self.inner.send_prepared(batch).await?;
+        Ok(results
+            .into_iter()
+            .zip(order.unwrap_or_default())
+            .map(|(result, to)| {
+                if bounce.as_deref() == Some(to.as_str()) {
+                    Err(EmailError::Rejected("bounced".into()))
+                } else {
+                    result
+                }
+            })
+            .take(answers)
+            .collect())
+    }
+}
+
+async fn one_update_to(pool: &PgPool, subscribers: usize) -> (Uuid, Uuid) {
+    let org = seed_org(pool).await;
+    let target = seed_target(pool, org, "mon").await;
+    let page = seed_page(pool, org).await;
+    add_component(pool, org, page, target).await;
+    subscribers_for(pool, org, page, subscribers).await;
+    let incident = seed_incident(pool, org, target, "public").await;
+    add_update(pool, org, incident, 0).await;
+    (org, page)
+}
+
+/// A batch the provider may have taken is sent again in process, then
+/// stored and sent again as it was, its results read by stored position.
+async fn a_batch_with_no_clear_answer_goes_out_again_as_it_was(
+    tag: &str,
+    error: fn() -> EmailError,
+    attempts: i32,
+) {
+    let Some((pool, name)) = isolated(tag).await else {
+        return;
+    };
+    one_update_to(&pool, 4).await;
+    let flaky = Arc::new(Flaky::new((0..3).map(|_| error())));
+    let disp = dispatcher(pool.clone(), flaky.clone());
+    disp.run_once().await.unwrap();
+
+    let first = flaky.requests();
+    assert_eq!(first.len(), 3, "sent, then twice more in process");
+    assert!(first.iter().all(|r| *r == first[0]), "same key and bytes");
+    let [(key, request, ids)] = stored_batches(&pool).await.try_into().unwrap();
+    assert_eq!((&key, &request), (&first[0].0, &first[0].1));
+    assert_eq!(ids.len(), 4);
+    for id in &ids {
+        assert_eq!(
+            delivery_state(&pool, *id).await,
+            Some(("queued".into(), attempts, Some(key.clone())))
+        );
+    }
+
+    // The subscriber at position 0 leaves; the mail at position 2 bounces.
+    let at = |i: usize| {
+        let pool = pool.clone();
+        let id = ids[i];
+        async move {
+            sqlx::query_as::<_, (Uuid, String)>(
+                "SELECT s.id, s.target FROM status_page_subscriber_deliveries d
+                 JOIN status_page_subscribers s ON s.id = d.subscriber_id WHERE d.id = $1",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let (gone, _) = at(0).await;
+    let (_, bounced) = at(2).await;
+    subscribers::unsubscribe(&pool, gone).await.unwrap();
+    *flaky.bounce.lock().unwrap() = Some(bounced);
+    make_due(&pool).await;
+    disp.run_once().await.unwrap();
+
+    let all = flaky.requests();
+    assert_eq!(all.len(), 4);
+    assert_eq!(all[3], first[0], "the stored request, not a new render");
+    assert_eq!(delivery_state(&pool, ids[0]).await, None);
+    let status = |i: usize| {
+        let pool = pool.clone();
+        let id = ids[i];
+        async move { delivery_state(&pool, id).await.unwrap().0 }
+    };
+    assert_eq!(status(1).await, "sent");
+    assert_eq!(status(2).await, "failed", "its own bounce, by position");
+    assert_eq!(status(3).await, "sent");
+    assert!(stored_batches(&pool).await.is_empty(), "settled");
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_timed_out_batch_goes_out_again_as_it_was() {
+    a_batch_with_no_clear_answer_goes_out_again_as_it_was(
+        "subtimeout",
+        || EmailError::Transport("no response within 30s".into()),
+        1,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_batch_still_in_progress_goes_out_again_as_it_was_without_an_attempt() {
+    a_batch_with_no_clear_answer_goes_out_again_as_it_was(
+        "subinprogress",
+        || EmailError::InProgress("concurrent_idempotent_requests".into()),
+        0,
+    )
+    .await;
+}
+
+/// Another sender takes every held row, as after a lease ran out.
+async fn steal_held(pool: &PgPool) -> Uuid {
+    let thief = Uuid::now_v7();
+    sqlx::query(
+        "UPDATE status_page_subscriber_deliveries SET claim_token = $1 WHERE status = 'sending'",
+    )
+    .bind(thief)
+    .execute(pool)
+    .await
+    .unwrap();
+    thief
+}
+
+async fn held_by(pool: &PgPool) -> Vec<(String, Option<Uuid>)> {
+    sqlx::query_as("SELECT status, claim_token FROM status_page_subscriber_deliveries")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_sender_that_lost_its_unit_sends_it_no_more() {
+    let Some((pool, name)) = isolated("sublostresend").await else {
+        return;
+    };
+    one_update_to(&pool, 2).await;
+    let flaky = Arc::new(Flaky::new(
+        (0..3).map(|_| EmailError::Transport("no response within 30s".into())),
+    ));
+    *flaky.steal.lock().unwrap() = Some(pool.clone());
+    let disp = dispatcher(pool.clone(), flaky.clone());
+    disp.plan_once().await.unwrap();
+    assert!(disp.send_unit("email").await.unwrap());
+    assert_eq!(flaky.requests().len(), 1, "no resend once the unit is gone");
+    let thief = *flaky.stolen_by.lock().unwrap();
+    assert!(thief.is_some());
+    for (status, token) in held_by(&pool).await {
+        assert_eq!(
+            (status.as_str(), token),
+            ("sending", thief),
+            "left to its new sender"
+        );
+    }
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_batch_that_timed_out_before_a_rate_limit_is_still_kept() {
+    let Some((pool, name)) = isolated("subtimedrate").await else {
+        return;
+    };
+    one_update_to(&pool, 2).await;
+    let rate_limited = || EmailError::RateLimited {
+        retry_after: Duration::from_secs(5),
+        detail: "rate_limit_exceeded".into(),
+    };
+    let flaky = Arc::new(Flaky::new([
+        EmailError::Transport("no response within 30s".into()),
+        rate_limited(),
+    ]));
+    dispatcher(pool.clone(), flaky.clone())
+        .run_once()
+        .await
+        .unwrap();
+    assert_eq!(
+        flaky.requests().len(),
+        2,
+        "a rate limit is not resent in process"
+    );
+    let [(key, _, ids)] = stored_batches(&pool).await.try_into().unwrap();
+    for id in &ids {
+        assert_eq!(
+            delivery_state(&pool, *id).await,
+            Some(("queued".into(), 0, Some(key.clone()))),
+            "the first try may have gone through"
+        );
+    }
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn mails_the_answer_leaves_out_are_built_anew() {
+    let Some((pool, name)) = isolated("subshort").await else {
+        return;
+    };
+    one_update_to(&pool, 2).await;
+    let flaky = Arc::new(Flaky::new([]));
+    *flaky.answers.lock().unwrap() = Some(0);
+    let disp = dispatcher(pool.clone(), flaky.clone());
+    disp.run_once().await.unwrap();
+    let ids: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM status_page_subscriber_deliveries ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    for id in &ids {
+        assert_eq!(
+            delivery_state(&pool, *id).await,
+            Some(("queued".into(), 1, None))
+        );
+    }
+    assert!(
+        stored_batches(&pool).await.is_empty(),
+        "the batch was answered"
+    );
+    *flaky.answers.lock().unwrap() = None;
+    make_due(&pool).await;
+    disp.run_once().await.unwrap();
+    let requests = flaky.requests();
+    assert_eq!(requests.len(), 2);
+    assert_ne!(
+        requests[1].0, requests[0].0,
+        "the same deliveries, but not a replay of the cached answer"
+    );
+    for id in &ids {
+        assert_eq!(delivery_state(&pool, *id).await.unwrap().0, "sent");
+    }
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_stored_batch_refused_as_a_whole_is_let_go_and_built_again() {
+    let Some((pool, name)) = isolated("substoredrefused").await else {
+        return;
+    };
+    one_update_to(&pool, 2).await;
+    let timeout = || EmailError::Transport("no response within 30s".into());
+    let flaky = Arc::new(Flaky::new([
+        timeout(),
+        timeout(),
+        timeout(),
+        EmailError::Rejected("422 validation_error".into()),
+    ]));
+    let disp = dispatcher(pool.clone(), flaky.clone());
+    disp.run_once().await.unwrap();
+    let [(_, _, ids)] = stored_batches(&pool).await.try_into().unwrap();
+    make_due(&pool).await;
+    disp.run_once().await.unwrap();
+    assert!(
+        stored_batches(&pool).await.is_empty(),
+        "never taken as it was"
+    );
+    for id in &ids {
+        assert_eq!(
+            delivery_state(&pool, *id).await,
+            Some(("queued".into(), 1, None))
+        );
+    }
+    make_due(&pool).await;
+    disp.run_once().await.unwrap();
+    let requests = flaky.requests();
+    assert_eq!(requests.len(), 5);
+    assert_ne!(requests[4].0, requests[0].0);
+    for id in &ids {
+        assert_eq!(delivery_state(&pool, *id).await.unwrap().0, "sent");
+    }
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_provider_outage_never_gives_up_on_a_mail() {
+    let Some((pool, name)) = isolated("suboutage").await else {
+        return;
+    };
+    one_update_to(&pool, 1).await;
+    let flaky = Arc::new(Flaky::new(
+        (0..20).map(|_| EmailError::Transport("502 bad gateway".into())),
+    ));
+    let disp = dispatcher(pool.clone(), flaky);
+    disp.run_once().await.unwrap();
+    let [(key, _, ids)] = stored_batches(&pool).await.try_into().unwrap();
+    sqlx::query("UPDATE status_page_subscriber_deliveries SET attempts = 30")
+        .execute(&pool)
+        .await
+        .unwrap();
+    make_due(&pool).await;
+    disp.run_once().await.unwrap();
+    assert_eq!(
+        delivery_state(&pool, ids[0]).await,
+        Some(("queued".into(), 31, Some(key))),
+        "it waits for the provider until the notice expires"
+    );
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_batch_refused_as_a_whole_waits_without_an_attempt() {
+    let Some((pool, name)) = isolated("subwhole").await else {
+        return;
+    };
+    one_update_to(&pool, 2).await;
+    let flaky = Arc::new(Flaky::new([EmailError::Rejected(
+        "422 validation_error: invalid from".into(),
+    )]));
+    dispatcher(pool.clone(), flaky.clone())
+        .run_once()
+        .await
+        .unwrap();
+    assert_eq!(
+        flaky.requests().len(),
+        1,
+        "a refusal is not resent in process"
+    );
+    let rows: Vec<(String, i32, f64)> = sqlx::query_as(
+        "SELECT status, attempts, EXTRACT(EPOCH FROM next_attempt_at - now())::float8
+         FROM status_page_subscriber_deliveries",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2);
+    for (status, attempts, due_in) in rows {
+        assert_eq!((status.as_str(), attempts), ("queued", 0));
+        assert!((890.0..=901.0).contains(&due_in), "{due_in}");
+    }
+    assert!(stored_batches(&pool).await.is_empty());
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_delivery_still_unsent_a_day_after_its_notice_expires() {
+    let Some((pool, name)) = isolated("subexpiry").await else {
+        return;
+    };
+    one_update_to(&pool, 1).await;
+    dispatcher(pool.clone(), Arc::new(Paced(InMemoryEmailSender::new())))
+        .run_once()
+        .await
+        .unwrap();
+    sqlx::query("UPDATE status_page_notices SET created_at = now() - INTERVAL '25 hours'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    make_due(&pool).await;
+    let mem = Arc::new(InMemoryEmailSender::new());
+    dispatcher(pool.clone(), mem.clone())
+        .run_once()
+        .await
+        .unwrap();
+    assert!(mem.sent().is_empty());
+    let statuses: Vec<String> =
+        sqlx::query_scalar("SELECT status FROM status_page_subscriber_deliveries")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(statuses, ["expired"]);
+    done(pool, &name).await;
+}
+
+/// A webhook receiver answering each POST with the next of `answers`.
+async fn receiver(answers: Vec<(u16, Option<&'static str>)>) -> String {
+    use axum::http::{HeaderValue, StatusCode, header::RETRY_AFTER};
+    use axum::response::IntoResponse;
+    let answers = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(
+        answers,
+    )));
+    let app = axum::Router::new().route(
+        "/hook",
+        axum::routing::post(move || {
+            let answers = answers.clone();
+            async move {
+                let (status, wait) = answers.lock().unwrap().pop_front().unwrap_or((204, None));
+                let mut res = StatusCode::from_u16(status).unwrap().into_response();
+                if let Some(wait) = wait {
+                    res.headers_mut()
+                        .insert(RETRY_AFTER, HeaderValue::from_static(wait));
+                }
+                res
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    format!("http://127.0.0.1:{port}/hook")
+}
+
+/// A page whose one subscriber is a webhook at a receiver answering with
+/// `answers`, with one update to tell it.
+async fn update_to_receiver(pool: &PgPool, answers: Vec<(u16, Option<&'static str>)>) -> Uuid {
+    let org = seed_org(pool).await;
+    let target = seed_target(pool, org, "mon").await;
+    let page = seed_page(pool, org).await;
+    add_component(pool, org, page, target).await;
+    let hook = subscribers::subscribe(
+        pool,
+        &NewSubscriber {
+            status_page_id: page,
+            org_id: org,
+            channel: SubscriberChannel::Webhook,
+            target: receiver(answers).await,
+            config: serde_json::json!({}),
+        },
+    )
+    .await
+    .unwrap();
+    subscribers::mark_verified(pool, hook.id).await.unwrap();
+    let incident = seed_incident(pool, org, target, "public").await;
+    add_update(pool, org, incident, 0).await;
+    hook.id
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_webhook_out_of_attempts_is_given_up() {
+    let Some((pool, name)) = isolated("subhookcap").await else {
+        return;
+    };
+    let hook = update_to_receiver(&pool, vec![(500, None)]).await;
+    let disp = dispatcher(pool.clone(), Arc::new(InMemoryEmailSender::new()));
+    disp.plan_once().await.unwrap();
+    sqlx::query("UPDATE status_page_subscriber_deliveries SET attempts = 7")
+        .execute(&pool)
+        .await
+        .unwrap();
+    disp.run_once().await.unwrap();
+    let (status, attempts): (String, i32) = sqlx::query_as(
+        "SELECT status, attempts FROM status_page_subscriber_deliveries WHERE subscriber_id = $1",
+    )
+    .bind(hook)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((status.as_str(), attempts), ("failed", 8));
+    done(pool, &name).await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_receiver_that_asks_to_wait_is_waited_for_without_an_attempt() {
+    let Some((pool, name)) = isolated("subhookwait").await else {
+        return;
+    };
+    let hook = update_to_receiver(&pool, vec![(429, Some("120")), (500, None)]).await;
+    let disp = dispatcher(pool.clone(), Arc::new(InMemoryEmailSender::new()));
+    let state = || {
+        sqlx::query_as::<_, (String, i32, f64)>(
+            "SELECT status, attempts, EXTRACT(EPOCH FROM next_attempt_at - now())::float8
+             FROM status_page_subscriber_deliveries WHERE subscriber_id = $1",
+        )
+        .bind(hook)
+        .fetch_one(&pool)
+    };
+
+    disp.run_once().await.unwrap();
+    let (status, attempts, due_in) = state().await.unwrap();
+    assert_eq!(
+        (status.as_str(), attempts),
+        ("queued", 0),
+        "429 asked to wait"
+    );
+    assert!(
+        (110.0..=121.0).contains(&due_in),
+        "at its Retry-After: {due_in}"
+    );
+
+    make_due(&pool).await;
+    disp.run_once().await.unwrap();
+    let (status, attempts, due_in) = state().await.unwrap();
+    assert_eq!((status.as_str(), attempts), ("queued", 1), "a 500 counts");
+    assert!((25.0..=46.0).contains(&due_in), "backoff: {due_in}");
+
+    make_due(&pool).await;
+    disp.run_once().await.unwrap();
+    assert_eq!(state().await.unwrap().0, "sent");
     done(pool, &name).await;
 }
 

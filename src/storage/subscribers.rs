@@ -394,8 +394,6 @@ pub async fn purge_old_tokens(pool: &PgPool) -> sqlx::Result<u64> {
 /// public (or a subscriber confirming) can't resurrect a long tail of history
 /// as a notification burst.
 pub const FANOUT_LOOKBACK_HOURS: i64 = 24;
-/// Failed deliveries are tried up to this many times.
-pub const FANOUT_MAX_ATTEMPTS: i32 = 3;
 
 /// An incident update a page's subscribers have not been told yet.
 #[derive(Debug, sqlx::FromRow)]

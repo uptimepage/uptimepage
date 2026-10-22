@@ -7,11 +7,13 @@
 //! next unit it will send itself, keeps its lease alive while the unit is in
 //! hand, and writes the outcome as soon as the unit is done.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::Utc;
 use futures::FutureExt;
 use sqlx::PgPool;
 use tokio::task::JoinSet;
@@ -19,18 +21,16 @@ use tokio::time::{Instant, MissedTickBehavior, interval, interval_at, sleep};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::email::{EmailAddress, EmailError, EmailSender, MAX_BATCH, MessageId};
-use crate::http_outbound::{OutboundHttpClient, post_bytes_with_headers};
+use crate::email::{BatchResult, EmailAddress, EmailError, EmailSender, MAX_BATCH, PreparedBatch};
+use crate::http_outbound::{OutboundHttpClient, PostAnswer, post_json_for_answer};
+use crate::metric_names;
 use crate::public_status::subscriber_notice::{NoticePayload, PageLinks};
 use crate::public_status::subscriber_planner;
+use crate::public_status::subscriber_retry::{self, Next, WEBHOOK_MAX_ATTEMPTS};
 use crate::security::sha256_hex;
 use crate::storage::locks::try_job;
-use crate::storage::subscriber_deliveries::{self, Claimed, Outcome};
+use crate::storage::subscriber_deliveries::{self, Claimed, Outcome, SentBatch, StoredBatch, Unit};
 use crate::storage::subscriber_notices::{self, EMAIL, WEBHOOK};
-use crate::storage::subscribers::FANOUT_MAX_ATTEMPTS;
-
-/// Wait before a failed delivery is tried again.
-const RETRY_IN: Duration = Duration::from_secs(20);
 
 pub struct SubscriberDispatchConfig {
     pub tick_interval: Duration,
@@ -40,6 +40,9 @@ pub struct SubscriberDispatchConfig {
     pub renew_every: Duration,
     pub email_workers: usize,
     pub webhook_workers: usize,
+    /// Waits before a batch that got no clear answer is sent again in
+    /// process, same key and bytes, before it is stored for later.
+    pub resend_waits: Vec<Duration>,
     pub links: PageLinks,
     pub unsubscribe_secret: String,
     pub from_address: String,
@@ -59,6 +62,7 @@ impl SubscriberDispatchConfig {
             renew_every: Duration::from_secs(20),
             email_workers: 8,
             webhook_workers: 16,
+            resend_waits: vec![Duration::from_secs(2), Duration::from_secs(5)],
             links,
             unsubscribe_secret,
             from_address,
@@ -115,6 +119,15 @@ impl SubscriberDispatcher {
     async fn tick(&self) {
         if let Err(err) = self.plan_once().await {
             tracing::warn!(error = %err, "subscriber_dispatch: planning failed");
+        }
+        match subscriber_deliveries::oldest_due(&self.pool).await {
+            Ok(channels) => {
+                for (channel, waited) in channels {
+                    metrics::gauge!(metric_names::SUBSCRIBER_OLDEST_DUE, "channel" => channel)
+                        .set(waited);
+                }
+            }
+            Err(err) => tracing::warn!(error = %err, "subscriber_dispatch: backlog read failed"),
         }
     }
 
@@ -189,38 +202,136 @@ impl SubscriberDispatcher {
         } else {
             1
         };
-        let Some((notice, deliveries)) =
+        let Some(unit) =
             subscriber_deliveries::claim(&self.pool, channel, max, token, self.cfg.lease).await?
         else {
             return Ok(false);
         };
-        let outcomes = if !notice.deliverable {
-            deliveries
-                .iter()
-                .map(|d| skipped(d, "the page or the outage no longer calls for it"))
-                .collect()
+        let notice_id = unit.notice.id;
+        let tried_before: HashMap<Uuid, i32> =
+            unit.deliveries.iter().map(|d| (d.id, d.attempts)).collect();
+        let (outcomes, request) = if unit.notice.expired {
+            settle_all(unit, "expired", "still unsent a day after the notice")
+        } else if !unit.notice.deliverable {
+            settle_all(
+                unit,
+                "skipped",
+                "the page or the outage no longer calls for it",
+            )
+        } else if channel == EMAIL {
+            self.send_mail(token, unit).await
         } else {
-            match serde_json::from_value::<NoticePayload>(notice.payload) {
-                Err(err) => deliveries
-                    .iter()
-                    .map(|d| failed(d, format!("unreadable notice {}: {err}", notice.id), true))
-                    .collect(),
-                Ok(payload) if channel == EMAIL => {
-                    self.send_mail(token, &payload, &deliveries).await
-                }
-                Ok(payload) => self.send_webhook(token, &payload, &deliveries).await,
-            }
+            (self.send_webhook(token, unit).await, None)
         };
-        subscriber_deliveries::record(&self.pool, token, &outcomes).await?;
+        log_failures(notice_id, channel, &outcomes, &tried_before);
+        let batch = request.as_ref().map(|r| SentBatch {
+            key: r.batch.key(),
+            notice_id,
+            request: r.batch.body(),
+            delivery_ids: &r.delivery_ids,
+        });
+        let statuses = subscriber_deliveries::record(&self.pool, token, &outcomes, batch).await?;
+        let mut settled: HashMap<String, u64> = HashMap::new();
+        for status in statuses.into_iter().filter(|s| s != "queued") {
+            *settled.entry(status).or_default() += 1;
+        }
+        for (status, count) in settled {
+            metrics::counter!(metric_names::SUBSCRIBER_DELIVERIES, "channel" => channel, "status" => status)
+                .increment(count);
+        }
         Ok(true)
     }
 
-    async fn send_mail(
+    async fn send_mail(&self, token: Uuid, unit: Unit) -> (Vec<Outcome>, Option<MailRequest>) {
+        let Unit {
+            notice,
+            deliveries,
+            stored,
+        } = unit;
+        let kept = stored.is_some();
+        let request = match stored {
+            Some(stored) => MailRequest::from(stored),
+            None => match self.prepare(notice.payload, &deliveries) {
+                Ok(request) => request,
+                Err(error) => {
+                    let outcomes = deliveries
+                        .iter()
+                        .map(|d| outcome(d, Next::GiveUp(error.clone()), None))
+                        .collect();
+                    return (outcomes, None);
+                }
+            },
+        };
+        let sent = self.send_batch(token, request.batch.clone()).await;
+        let Some((answer, maybe_taken)) = sent else {
+            return (Vec::new(), None);
+        };
+        let now = Utc::now();
+        let (rows, nexts, keep): (Vec<&Claimed>, Vec<Next>, bool) = match answer {
+            // Results go by position in the request as it was built. A
+            // delivery removed since has no row left to write. An answered
+            // request is settled: sent again under its key it only brings
+            // back the same answer, so a mail it left open is built anew.
+            Ok(results) => {
+                let held: HashMap<Uuid, &Claimed> = deliveries.iter().map(|d| (d.id, d)).collect();
+                let mut results = results.into_iter();
+                let (rows, nexts): (Vec<&Claimed>, Vec<Next>) = request
+                    .delivery_ids
+                    .iter()
+                    .filter_map(|id| {
+                        let result = results.next().unwrap_or_else(|| {
+                            Err(EmailError::Transport("no answer for this mail".into()))
+                        });
+                        let d = *held.get(id)?;
+                        let next = match result {
+                            Ok(_) => Next::Sent,
+                            Err(err) => subscriber_retry::after_mail(&err, d.attempts, now),
+                        };
+                        Some((d, next))
+                    })
+                    .unzip();
+                (rows, nexts, false)
+            }
+            // A request the provider may have taken, on this try or any
+            // before it, is kept until every delivery in it is settled, so
+            // it only ever goes out again as is. One refused as a whole was
+            // never taken, so it is let go and built again once fixed.
+            Err(failure) => {
+                let refused = matches!(failure.error, EmailError::Rejected(_));
+                if refused {
+                    tracing::error!(
+                        notice = %notice.id,
+                        error = %failure.error,
+                        "subscriber_dispatch: the provider refused a whole batch; it waits until the request is fixed"
+                    );
+                }
+                let nexts = deliveries
+                    .iter()
+                    .map(|d| subscriber_retry::after_batch(&failure.error, d.attempts, now))
+                    .collect();
+                (
+                    deliveries.iter().collect(),
+                    nexts,
+                    !refused && (kept || maybe_taken),
+                )
+            }
+        };
+        let key = keep.then(|| request.batch.key());
+        let outcomes = rows
+            .into_iter()
+            .zip(nexts)
+            .map(|(d, next)| outcome(d, next, key))
+            .collect();
+        (outcomes, Some(request))
+    }
+
+    fn prepare(
         &self,
-        token: Uuid,
-        payload: &NoticePayload,
+        payload: serde_json::Value,
         deliveries: &[Claimed],
-    ) -> Vec<Outcome> {
+    ) -> Result<MailRequest, String> {
+        let payload: NoticePayload =
+            serde_json::from_value(payload).map_err(|e| format!("unreadable notice: {e}"))?;
         let from = EmailAddress::new(self.cfg.from_address.clone(), self.cfg.from_name.clone());
         let emails = deliveries
             .iter()
@@ -230,99 +341,146 @@ impl SubscriberDispatcher {
                 payload.email(from.clone(), &d.target, unsubscribe)
             })
             .collect();
-        let batch = match self.email.prepare_batch(emails, batch_key(deliveries)) {
-            Ok(batch) => batch,
-            Err(err) => {
-                return deliveries
-                    .iter()
-                    .map(|d| failed(d, err.to_string(), true))
-                    .collect();
-            }
-        };
-        let sent = self
-            .held(token, async {
-                // The rows may have gone to another instance while this one
-                // waited; then the unit is theirs and nothing is sent here.
-                match subscriber_deliveries::renew(&self.pool, token, self.cfg.lease).await {
-                    Ok(true) => Some(self.email.send_prepared(batch).await),
-                    _ => None,
+        let batch = self
+            .email
+            .prepare_batch(emails, batch_key(deliveries))
+            .map_err(|e| e.to_string())?;
+        Ok(MailRequest {
+            batch,
+            delivery_ids: deliveries.iter().map(|d| d.id).collect(),
+        })
+    }
+
+    /// Sends a batch, and sends it again under the same key and bytes while
+    /// the provider may have taken it without saying so. `true` alongside
+    /// the last answer when any try left that open. `None` once the unit is
+    /// no longer this claim's.
+    async fn send_batch(
+        &self,
+        token: Uuid,
+        mut batch: PreparedBatch,
+    ) -> Option<(BatchResult, bool)> {
+        let mut maybe_taken = false;
+        let mut waits = self.cfg.resend_waits.iter();
+        loop {
+            let answer = self.held(token, self.email.send_prepared(batch)).await?;
+            match answer {
+                Err(failure) if subscriber_retry::outcome_unknown(&failure.error) => {
+                    maybe_taken = true;
+                    let Some(wait) = waits.next() else {
+                        return Some((Err(failure), true));
+                    };
+                    batch = failure.batch;
+                    sleep(*wait).await;
                 }
-            })
-            .await;
-        match sent {
-            None => Vec::new(),
-            Some(Ok(results)) => {
-                let mut results = results.into_iter();
-                deliveries
-                    .iter()
-                    .map(|d| {
-                        let result = results.next().unwrap_or_else(|| {
-                            Err(EmailError::Transport("no answer for this mail".into()))
-                        });
-                        mail_outcome(d, result)
-                    })
-                    .collect()
+                answered => return Some((answered, maybe_taken)),
             }
-            Some(Err(failure)) => deliveries
-                .iter()
-                .map(|d| mail_outcome(d, Err(share_error(&failure.error))))
-                .collect(),
         }
     }
 
     /// A webhook unit is one delivery.
-    async fn send_webhook(
-        &self,
-        token: Uuid,
-        payload: &NoticePayload,
-        deliveries: &[Claimed],
-    ) -> Vec<Outcome> {
-        let [d] = deliveries else {
-            return deliveries
+    async fn send_webhook(&self, token: Uuid, unit: Unit) -> Vec<Outcome> {
+        let [d] = unit.deliveries.as_slice() else {
+            let error = "a webhook unit holds one delivery".to_owned();
+            return unit
+                .deliveries
                 .iter()
-                .map(|d| failed(d, "a webhook unit holds one delivery".into(), true))
+                .map(|d| outcome(d, Next::GiveUp(error.clone()), None))
                 .collect();
+        };
+        let payload: NoticePayload = match serde_json::from_value(unit.notice.payload) {
+            Ok(payload) => payload,
+            Err(err) => {
+                return vec![outcome(
+                    d,
+                    Next::GiveUp(format!("unreadable notice: {err}")),
+                    None,
+                )];
+            }
         };
         let unsubscribe = payload.unsubscribe_url(&self.cfg.unsubscribe_secret, d.subscriber_id);
         let Some(body) = payload.webhook(&unsubscribe) else {
-            return vec![skipped(d, "not sent to webhooks")];
+            return vec![settle(d, "skipped", "not sent to webhooks")];
         };
-        let posted = self
-            .held(token, async {
-                match subscriber_deliveries::renew(&self.pool, token, self.cfg.lease).await {
-                    Ok(true) => Some(
-                        self.post_webhook(&d.target, &body, d.signing_secret.as_deref())
-                            .await,
-                    ),
-                    _ => None,
-                }
-            })
+        let url = match url::Url::parse(&d.target) {
+            Ok(url) => url,
+            Err(err) => {
+                return vec![outcome(
+                    d,
+                    Next::GiveUp(format!("bad webhook url: {err}")),
+                    None,
+                )];
+            }
+        };
+        let body = match serde_json::to_vec(&body) {
+            Ok(body) => body,
+            Err(err) => {
+                return vec![outcome(
+                    d,
+                    Next::GiveUp(format!("webhook body: {err}")),
+                    None,
+                )];
+            }
+        };
+        let answer = self
+            .held(
+                token,
+                self.post_webhook(&url, body, d.signing_secret.as_deref()),
+            )
             .await;
-        match posted {
+        match answer {
             None => Vec::new(),
-            Some(Ok(())) => vec![sent(d)],
-            Some(Err(err)) => vec![failed(d, format!("{err:#}"), true)],
+            Some(answer) => vec![webhook_outcome(
+                d,
+                subscriber_retry::after_webhook(&answer, d.attempts),
+            )],
         }
     }
 
-    /// Runs `work` while renewing the unit's lease, so the lease only runs
-    /// out when this worker is gone.
-    async fn held<T>(&self, token: Uuid, work: impl Future<Output = T>) -> T {
-        let renew = async {
+    /// Runs one try while renewing the unit's lease, so the lease only runs
+    /// out when this worker is gone. `None` when the rows are no longer this
+    /// claim's, found before the try starts or while it runs: they belong to
+    /// another sender, and this one sends nothing more. A try already under
+    /// way still finishes, so what it has to record about the provider, such
+    /// as a rate limit, is not cut off; its answer is dropped.
+    async fn held<T>(&self, token: Uuid, work: impl Future<Output = T>) -> Option<T> {
+        if !self.owns(token).await {
+            return None;
+        }
+        let lost = async {
             let every = self.cfg.renew_every;
             let mut ticks = interval_at(Instant::now() + every, every);
             loop {
                 ticks.tick().await;
-                if let Err(err) =
-                    subscriber_deliveries::renew(&self.pool, token, self.cfg.lease).await
-                {
-                    tracing::warn!(error = %err, "subscriber_dispatch: lease renewal failed");
+                match subscriber_deliveries::renew(&self.pool, token, self.cfg.lease).await {
+                    Ok(true) => {}
+                    Ok(false) => return,
+                    Err(err) => {
+                        tracing::warn!(error = %err, "subscriber_dispatch: lease renewal failed");
+                    }
                 }
             }
         };
+        tokio::pin!(work);
         tokio::select! {
-            out = work => out,
-            _ = renew => unreachable!("the renewal loop never ends"),
+            out = &mut work => Some(out),
+            () = lost => {
+                work.await;
+                None
+            }
+        }
+    }
+
+    /// Whether the unit is still this claim's, renewing its lease if so. A
+    /// check that fails counts as still owned, as a failed renewal does: the
+    /// lease was renewed at most one renewal ago and outlasts it.
+    async fn owns(&self, token: Uuid) -> bool {
+        match subscriber_deliveries::renew(&self.pool, token, self.cfg.lease).await {
+            Ok(owned) => owned,
+            Err(err) => {
+                tracing::warn!(error = %err, "subscriber_dispatch: lease renewal failed");
+                true
+            }
         }
     }
 
@@ -332,12 +490,10 @@ impl SubscriberDispatcher {
     /// receiver can verify authenticity.
     async fn post_webhook(
         &self,
-        url: &str,
-        payload: &serde_json::Value,
+        url: &url::Url,
+        body: Vec<u8>,
         signing_secret: Option<&str>,
-    ) -> anyhow::Result<()> {
-        let parsed = url::Url::parse(url).map_err(|e| anyhow::anyhow!("bad webhook url: {e}"))?;
-        let body = serde_json::to_vec(payload)?;
+    ) -> Result<PostAnswer, String> {
         let mut headers = std::collections::BTreeMap::new();
         if let Some(secret) = signing_secret {
             let ts = chrono::Utc::now().timestamp();
@@ -347,82 +503,127 @@ impl SubscriberDispatcher {
                 crate::security::mac::webhook_signature(secret, ts, &body),
             );
         }
-        post_bytes_with_headers(&self.http, &parsed, body, &headers)
+        post_json_for_answer(&self.http, url, body, &headers)
             .await
-            .map_err(|e| anyhow::anyhow!("webhook post: {e}"))
+            .map_err(|e| format!("webhook post: {e}"))
     }
 }
 
-/// The same deliveries make the same key, so a resend of one batch is the
-/// same request to the provider.
-fn batch_key(deliveries: &[Claimed]) -> String {
-    let mut ids: Vec<String> = deliveries.iter().map(|d| d.id.to_string()).collect();
-    ids.sort();
-    format!("notice-batch:{}", sha256_hex(&ids.join(",")))
+/// A mail unit as it goes out: the request, and position by position the
+/// delivery each of its mails is for.
+struct MailRequest {
+    batch: PreparedBatch,
+    delivery_ids: Vec<Uuid>,
 }
 
-fn mail_outcome(d: &Claimed, result: Result<MessageId, EmailError>) -> Outcome {
-    match result {
-        Ok(_) => sent(d),
-        Err(err) => {
-            let counts = !err.is_pacing();
-            failed(d, err.to_string(), counts)
+impl From<StoredBatch> for MailRequest {
+    fn from(stored: StoredBatch) -> Self {
+        Self {
+            batch: PreparedBatch::from_parts(
+                stored.key,
+                stored.request.into(),
+                stored.delivery_ids.len(),
+            ),
+            delivery_ids: stored.delivery_ids,
         }
     }
 }
 
-/// A batch's one error, handed to each of its mails.
-fn share_error(err: &EmailError) -> EmailError {
-    match err {
-        EmailError::RateLimited {
-            retry_after,
-            detail,
-        } => EmailError::RateLimited {
-            retry_after: *retry_after,
-            detail: detail.clone(),
-        },
-        EmailError::Deferred { retry_after } => EmailError::Deferred {
-            retry_after: *retry_after,
-        },
-        EmailError::GateUnavailable => EmailError::GateUnavailable,
-        other => EmailError::Transport(other.to_string()),
+/// The same deliveries make the same key, so a batch built again after its
+/// sender stopped mid-request is the same request to the provider. Their
+/// attempts are part of it: once an answered batch left a mail unsent, that
+/// mail's next request is a new one, not a replay of the cached answer.
+fn batch_key(deliveries: &[Claimed]) -> String {
+    let mut parts: Vec<String> = deliveries
+        .iter()
+        .map(|d| format!("{}:{}", d.id, d.attempts))
+        .collect();
+    parts.sort();
+    format!("notice-batch:{}", sha256_hex(&parts.join(",")))
+}
+
+/// `stored_key` is the stored batch a delivery going back to the queue waits
+/// for, if any.
+fn outcome(d: &Claimed, next: Next, stored_key: Option<&str>) -> Outcome {
+    let (status, error, attempts, retry_in, batch_key) = match next {
+        Next::Sent => ("sent", None, d.attempts, Duration::ZERO, None),
+        Next::GiveUp(error) => ("failed", Some(error), d.attempts + 1, Duration::ZERO, None),
+        Next::Retry {
+            error,
+            counts,
+            after,
+            ..
+        } => {
+            let attempts = d.attempts + i32::from(counts);
+            let key = stored_key.map(str::to_owned);
+            ("queued", Some(error), attempts, after, key)
+        }
+    };
+    Outcome {
+        id: d.id,
+        status,
+        error,
+        attempts,
+        retry_in,
+        batch_key,
     }
 }
 
-fn sent(d: &Claimed) -> Outcome {
-    Outcome {
-        id: d.id,
-        status: "sent",
-        error: None,
-        attempts: d.attempts,
-        retry_in: Duration::ZERO,
+/// Only a webhook delivery runs out of attempts.
+fn webhook_outcome(d: &Claimed, next: Next) -> Outcome {
+    match next {
+        Next::Retry {
+            error,
+            counts: true,
+            ..
+        } if d.attempts + 1 >= WEBHOOK_MAX_ATTEMPTS => outcome(d, Next::GiveUp(error), None),
+        next => outcome(d, next, None),
     }
 }
 
-fn skipped(d: &Claimed, why: &str) -> Outcome {
+fn settle(d: &Claimed, status: &'static str, why: &str) -> Outcome {
     Outcome {
         id: d.id,
-        status: "skipped",
+        status,
         error: Some(why.to_owned()),
         attempts: d.attempts,
         retry_in: Duration::ZERO,
+        batch_key: None,
     }
 }
 
-/// `counts` is false for a send held back by pacing: it goes out again
-/// without using up an attempt.
-fn failed(d: &Claimed, error: String, counts: bool) -> Outcome {
-    let attempts = d.attempts + i32::from(counts);
-    tracing::warn!(delivery = %d.id, error = %error, "subscriber delivery failed");
-    Outcome {
-        id: d.id,
-        status: if attempts >= FANOUT_MAX_ATTEMPTS {
-            "failed"
-        } else {
-            "queued"
-        },
-        error: Some(error),
-        attempts,
-        retry_in: RETRY_IN,
+/// Settles every delivery of a unit unsent. A stored batch goes with them.
+fn settle_all(unit: Unit, status: &'static str, why: &str) -> (Vec<Outcome>, Option<MailRequest>) {
+    let outcomes = unit
+        .deliveries
+        .iter()
+        .map(|d| settle(d, status, why))
+        .collect();
+    let request = unit.stored.map(MailRequest::from);
+    (outcomes, request)
+}
+
+/// One line per unit, not per delivery: a batch shares its answer. A retry
+/// that used an attempt is a warning; one only waiting on pacing is not.
+fn log_failures(
+    notice: Uuid,
+    channel: &str,
+    outcomes: &[Outcome],
+    tried_before: &HashMap<Uuid, i32>,
+) {
+    let failed = outcomes.iter().filter(|o| o.status == "failed").count();
+    let (tried, waiting): (Vec<&Outcome>, Vec<&Outcome>) = outcomes
+        .iter()
+        .filter(|o| o.status == "queued")
+        .partition(|o| tried_before.get(&o.id).is_some_and(|&n| o.attempts > n));
+    let error = outcomes
+        .iter()
+        .find(|o| o.status == "failed" || o.status == "queued")
+        .and_then(|o| o.error.as_deref());
+    let (tried, waiting) = (tried.len(), waiting.len());
+    if failed > 0 || tried > 0 {
+        tracing::warn!(%notice, channel, failed, tried, waiting, error, "subscriber deliveries failed");
+    } else if waiting > 0 {
+        tracing::debug!(%notice, channel, waiting, error, "subscriber deliveries wait to be sent");
     }
 }

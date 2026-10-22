@@ -19,6 +19,7 @@ pub mod source;
 pub mod subscriber_dispatch;
 pub mod subscriber_notice;
 pub mod subscriber_planner;
+pub mod subscriber_retry;
 pub mod urls;
 pub mod xml;
 

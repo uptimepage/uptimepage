@@ -168,6 +168,60 @@ async fn post_bytes_ct(
     payload: Vec<u8>,
     headers: &std::collections::BTreeMap<String, String>,
 ) -> Result<()> {
+    let answer = post_for_answer(client, url, content_type, payload, headers).await?;
+    if !answer.status.is_success() {
+        // Losing the body costs a diagnostic; losing the status costs the
+        // retry decision the escalation engine reads from it.
+        return Err(AppError::Other(anyhow::anyhow!(
+            "endpoint returned {}: {}",
+            answer.status,
+            answer.body
+        )));
+    }
+    Ok(())
+}
+
+/// The wait a `Retry-After` asks for in seconds, fractions allowed. A date,
+/// garbage or a number no `Duration` holds reads as no wait asked.
+pub fn retry_after(headers: &hyper::HeaderMap) -> Option<Duration> {
+    let secs: f64 = headers
+        .get(hyper::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    Duration::try_from_secs_f64(secs).ok()
+}
+
+/// How an endpoint answered a POST: its status, the wait a `Retry-After`
+/// asked for, and for a non-2xx a bounded body for the log.
+#[derive(Debug)]
+pub struct PostAnswer {
+    pub status: StatusCode,
+    pub retry_after: Option<Duration>,
+    pub body: String,
+}
+
+/// POST JSON with caller-supplied headers and hand back the answer whatever
+/// its status, for a caller that decides on it. Only a request that got no
+/// answer is an error.
+pub async fn post_json_for_answer(
+    client: &OutboundHttpClient,
+    url: &Url,
+    payload: Vec<u8>,
+    headers: &std::collections::BTreeMap<String, String>,
+) -> Result<PostAnswer> {
+    post_for_answer(client, url, "application/json", payload, headers).await
+}
+
+async fn post_for_answer(
+    client: &OutboundHttpClient,
+    url: &Url,
+    content_type: &str,
+    payload: Vec<u8>,
+    headers: &std::collections::BTreeMap<String, String>,
+) -> Result<PostAnswer> {
     use hyper::header::{HeaderName, HeaderValue};
     let mut builder = Request::post(url.as_str()).header(CONTENT_TYPE, content_type);
     for (k, v) in headers {
@@ -185,16 +239,18 @@ async fn post_bytes_ct(
     let at = exchange_deadline();
     let resp = with_request_timeout(url, at, client.request(req)).await?;
     let status = resp.status();
-    if !status.is_success() {
-        // Losing the body costs a diagnostic; losing the status costs the
-        // retry decision the escalation engine reads from it.
+    let retry_after = retry_after(resp.headers());
+    let body = if status.is_success() {
+        String::new()
+    } else {
         let bytes = diagnostic_body(url, at, resp.into_body(), MAX_RESPONSE_BYTES).await;
-        let body = String::from_utf8_lossy(&bytes);
-        return Err(AppError::Other(anyhow::anyhow!(
-            "endpoint returned {status}: {body}"
-        )));
-    }
-    Ok(())
+        String::from_utf8_lossy(&bytes).into_owned()
+    };
+    Ok(PostAnswer {
+        status,
+        retry_after,
+        body,
+    })
 }
 
 /// POST JSON and parse a `2xx` response body into `R`. Like [`post_json`] but

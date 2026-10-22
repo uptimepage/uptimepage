@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Days, Utc};
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Bytes;
-use hyper::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue, RETRY_AFTER};
+use hyper::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap};
 use hyper::{Request, StatusCode};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
@@ -111,7 +111,7 @@ impl ResendEmailSender {
             .map_err(|_| EmailError::Transport(format!("no response within {REQUEST_TIMEOUT:?}")))?
             .map_err(|e| EmailError::Transport(error_chain(e)))?;
         let status = resp.status();
-        let retry_after = resp.headers().get(RETRY_AFTER).and_then(parse_retry_after);
+        let retry_after = parse_retry_after(resp.headers());
         let collected = tokio::time::timeout_at(
             at,
             Limited::new(resp.into_body(), MAX_RESEND_RESPONSE_BYTES).collect(),
@@ -225,9 +225,8 @@ fn next_utc_midnight(now: DateTime<Utc>) -> Option<DateTime<Utc>> {
 }
 
 /// Seconds, as Resend sends it. A date or garbage reads as absent.
-fn parse_retry_after(value: &HeaderValue) -> Option<Duration> {
-    let secs: f64 = value.to_str().ok()?.trim().parse().ok()?;
-    (secs.is_finite() && secs >= 0.0).then(|| Duration::from_secs_f64(secs).min(MAX_RETRY_AFTER))
+fn parse_retry_after(headers: &HeaderMap) -> Option<Duration> {
+    crate::http_outbound::retry_after(headers).map(|wait| wait.min(MAX_RETRY_AFTER))
 }
 
 #[async_trait]
@@ -294,6 +293,7 @@ fn from_header(from: &EmailAddress) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hyper::header::{HeaderValue, RETRY_AFTER};
 
     #[test]
     fn from_header_quotes_the_display_name_only_when_it_must() {
@@ -374,12 +374,17 @@ mod tests {
     #[test]
     fn a_rate_limit_waits_what_the_header_asks_within_a_cap() {
         let at = Utc::now();
-        let header = |v: &str| parse_retry_after(&HeaderValue::from_str(v).unwrap());
+        let header = |v: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(RETRY_AFTER, HeaderValue::from_str(v).unwrap());
+            parse_retry_after(&headers)
+        };
         assert_eq!(header("2"), Some(Duration::from_secs(2)));
         assert_eq!(header("0.5"), Some(Duration::from_millis(500)));
         assert_eq!(header("999999"), Some(MAX_RETRY_AFTER));
         assert_eq!(header("Wed, 21 Oct 2026 07:28:00 GMT"), None);
         assert_eq!(header("-1"), None);
+        assert_eq!(header("1e30"), None);
         let e = classify(StatusCode::TOO_MANY_REQUESTS, header("3"), "not json", at);
         assert!(
             matches!(e, EmailError::RateLimited { retry_after, .. } if retry_after.as_secs() == 3)

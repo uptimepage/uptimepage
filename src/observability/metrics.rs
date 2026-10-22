@@ -305,6 +305,14 @@ fn register_descriptions() {
         "Times an instance could not reach the shared send budget in Postgres and paced its own mail for 30 s. Bulk mail waits while it does"
     );
     describe_counter!(
+        "uptimepage_subscriber_deliveries_total",
+        "Status page subscriber deliveries settled, labelled by channel (email | webhook) and status (sent | failed | skipped | expired)"
+    );
+    describe_gauge!(
+        "uptimepage_subscriber_delivery_oldest_due_seconds",
+        "How long the oldest due subscriber delivery has waited for a sender, labelled by channel, in seconds"
+    );
+    describe_counter!(
         "uptimepage_rdap_singleflight_total",
         "RDAP singleflight outcomes per domain: hit (cached) or miss (fetched)"
     );
