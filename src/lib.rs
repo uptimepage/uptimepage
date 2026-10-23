@@ -37,6 +37,8 @@ pub(crate) mod robots;
 pub mod router;
 pub mod scheduler;
 pub mod security;
+#[cfg(test)]
+mod site_contract;
 pub mod slack;
 pub mod storage;
 pub mod target_ops;

@@ -26,6 +26,16 @@ mod error;
 mod schema;
 mod server;
 
+/// The tools this server serves, by name, in order.
+#[cfg(test)]
+pub(crate) fn tool_names() -> Vec<String> {
+    server::McpServer::tool_router()
+        .list_all()
+        .into_iter()
+        .map(|tool| tool.name.to_string())
+        .collect()
+}
+
 use std::sync::Arc;
 
 use axum::Router;

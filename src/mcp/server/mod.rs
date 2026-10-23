@@ -49,7 +49,7 @@ impl McpServer {
     }
 
     /// The served surface: reads plus writes, in one router.
-    fn tool_router() -> ToolRouter<Self> {
+    pub(crate) fn tool_router() -> ToolRouter<Self> {
         Self::read_router() + Self::write_router()
     }
 }

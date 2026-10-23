@@ -54,6 +54,24 @@ pub fn pending_pick(cookies: &Cookies) -> Option<AppTheme> {
     }
 }
 
+/// The themes `static/css/input.css` paints dark, which the site's theme
+/// script must also know.
+#[cfg(test)]
+pub(crate) fn dark_app_themes() -> Vec<String> {
+    let css = include_str!("../../static/css/input.css");
+    let (before, _) = css
+        .split_once("{ color-scheme: dark; }")
+        .expect("static/css/input.css has a `{ color-scheme: dark; }` rule");
+    let rule = before.rsplit('}').next().unwrap_or(before);
+    let mut themes: Vec<String> = rule
+        .split(',')
+        .filter_map(|sel| sel.trim().strip_prefix(".theme-"))
+        .map(str::to_owned)
+        .collect();
+    themes.sort();
+    themes
+}
+
 #[cfg(test)]
 mod tests {
     use crate::domain::AppTheme;
@@ -68,17 +86,7 @@ mod tests {
 
     #[test]
     fn the_marketing_site_knows_every_dark_app_theme() {
-        let css = include_str!("../../static/css/input.css");
-        let rule = css
-            .split("{ color-scheme: dark; }")
-            .next()
-            .and_then(|before| before.rsplit('}').next())
-            .expect("color-scheme: dark rule");
-        let mut in_css: Vec<String> = rule
-            .split(',')
-            .filter_map(|sel| sel.trim().strip_prefix(".theme-"))
-            .map(str::to_owned)
-            .collect();
+        let in_css = super::dark_app_themes();
         let js = include_str!("../../assets/js/marketing/theme.js");
         let list = js
             .split("DARK_APP_THEMES = [")
@@ -86,7 +94,6 @@ mod tests {
             .and_then(|rest| rest.split(']').next())
             .expect("DARK_APP_THEMES in theme.js");
         let mut in_js = quoted(list);
-        in_css.sort();
         in_js.sort();
         assert!(!in_css.is_empty());
         assert_eq!(in_css, in_js);

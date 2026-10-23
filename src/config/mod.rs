@@ -45,7 +45,8 @@ pub use notify::{
 pub use observability::{GrafanaConfig, HeartbeatConfig, LogFormat, ObservabilityConfig};
 pub use ops::{AgentConfig, EscalationConfig, FlowConfig, McpConfig, OperatorConfig};
 pub use public::{
-    LegalConfig, MarketingConfig, PublicStatusConfig, RetentionConfig, SiteConfig, TenancyConfig,
+    CHECK_RESULTS_HISTORY_MONTHS, CHECK_RESULTS_RAW_DAYS, FLOW_EVIDENCE_DAYS, LegalConfig,
+    MarketingConfig, PublicStatusConfig, RetentionConfig, SiteConfig, TenancyConfig,
 };
 pub use runtime::{
     CheckerConfig, CircuitBreakerConfig, DisclosureConfig, DnsConfig, HttpClientConfig,

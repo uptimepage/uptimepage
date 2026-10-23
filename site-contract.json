@@ -1,0 +1,72 @@
+{
+  "dark_app_themes": [
+    "dark",
+    "dim",
+    "dracula",
+    "night",
+    "synthwave",
+    "terminal"
+  ],
+  "mcp_tools": [
+    "acknowledge_incident",
+    "add_status_page_components",
+    "cancel_maintenance",
+    "create_maintenance",
+    "create_monitor",
+    "create_monitors",
+    "create_status_page",
+    "get_flow_runs",
+    "get_flow_step_trend",
+    "get_incident",
+    "get_incident_metrics",
+    "get_maintenance",
+    "get_monitor",
+    "get_monitor_history",
+    "get_org_health",
+    "get_org_usage",
+    "get_status_page",
+    "list_incidents",
+    "list_maintenance",
+    "list_monitors",
+    "list_notification_channels",
+    "list_regions",
+    "list_status_page_viewers",
+    "list_status_pages",
+    "list_tags",
+    "list_variables",
+    "pause_monitor",
+    "post_incident_update",
+    "post_maintenance_update",
+    "publish_incident",
+    "resolve_incident",
+    "resume_monitor",
+    "run_check_now",
+    "set_monitor_state",
+    "unpublish_incident",
+    "update_maintenance",
+    "update_monitor",
+    "update_status_page",
+    "update_status_page_component"
+  ],
+  "product_version": "1.5.0",
+  "retention_days": {
+    "account_deletion_grace": 30,
+    "audit_log": 730,
+    "check_results_raw": 30,
+    "flow_evidence": 7,
+    "link_codes": 8,
+    "login_attempts": 180,
+    "mcp_audit": 730,
+    "private_page_access": 365,
+    "quota_events": 90,
+    "session_max": 90
+  },
+  "retention_months": {
+    "check_results_history": 13
+  },
+  "theme_cookies": {
+    "app": "sm_app_theme",
+    "pick": "sm_theme_pick"
+  },
+  "user_agent_template": "Mozilla/5.0 (compatible; uptimepage/1.5.0; +{bot_url})"
+}

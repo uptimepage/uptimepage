@@ -142,6 +142,15 @@ impl Default for TenancyConfig {
     }
 }
 
+/// Raw check results and the 1-minute rollup: a ClickHouse TTL set by the
+/// migrations rather than config, and quoted by the hosted Privacy Policy.
+pub const CHECK_RESULTS_RAW_DAYS: u32 = 30;
+/// The hourly rollup's ClickHouse TTL, which carries the history.
+pub const CHECK_RESULTS_HISTORY_MONTHS: u32 = 13;
+/// Flow failure evidence and heartbeat output: content from behind the
+/// customer's own login, so it goes sooner than the signal.
+pub const FLOW_EVIDENCE_DAYS: u32 = 7;
+
 /// Long-horizon data-retention windows for the daily purge job. Every field
 /// here is bound by `jobs::retention`; an unhonoured knob is worse than a
 /// missing one, so `check_results_days` lives only in the ClickHouse

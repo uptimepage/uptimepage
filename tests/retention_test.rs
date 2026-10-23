@@ -8,7 +8,10 @@
 use crate::common;
 
 use common::make_user;
-use uptimepage::config::{RetentionConfig, SessionConfig, TenancyConfig};
+use uptimepage::config::{
+    CHECK_RESULTS_HISTORY_MONTHS, CHECK_RESULTS_RAW_DAYS, FLOW_EVIDENCE_DAYS, RetentionConfig,
+    SessionConfig, TenancyConfig,
+};
 use uptimepage::jobs::retention::purge_old_data;
 use uptimepage::security::app_link::PUSHOVER_OFFER_COOLDOWN;
 use uptimepage::storage::create_org_with_owner;
@@ -264,16 +267,6 @@ async fn purges_past_window_and_keeps_fresh_rows() {
 /// updated, this fails — one source of truth.
 #[test]
 fn windows_match_privacy_policy_and_clickhouse_ttl() {
-    // check-result retention is the ClickHouse table TTLs, not an app-side
-    // knob — keep these in lockstep with the CH migrations and the public
-    // claims in `docs/legal/privacy.md`. Raw + 1m rollup live 30 days; the 1h
-    // rollup carries the aggregated history 13 months.
-    const CHECK_RESULTS_RAW_DAYS: u32 = 30;
-    const CHECK_RESULTS_HISTORY_MONTHS: u32 = 13;
-    // Traces live the raw window. What they captured is content from behind the
-    // customer's own login, so it goes sooner. Heartbeat pings split the same
-    // way: the signal keeps, the job's own output takes the evidence window.
-    const FLOW_EVIDENCE_DAYS: u32 = 7;
     let r = RetentionConfig::default();
     let s = SessionConfig::default();
     let grace = TenancyConfig::default().deletion_grace_period_days;
@@ -334,6 +327,9 @@ fn windows_match_privacy_policy_and_clickhouse_ttl() {
         ("audit_log_days", r.audit_log_days),
         ("mcp_audit_days", r.mcp_audit_days),
         ("api_tokens_post_expiry_days", r.api_tokens_post_expiry_days),
+        ("page_access_events_days", r.page_access_events_days),
+        ("absolute_timeout_days", s.absolute_timeout_days),
+        ("deletion_grace_period_days", grace),
     ] {
         assert!(
             shipped
@@ -341,7 +337,7 @@ fn windows_match_privacy_policy_and_clickhouse_ttl() {
                 .filter_map(|l| l.split_once('='))
                 .any(|(k, v)| k.trim() == key
                     && v.split('#').next().unwrap_or_default().trim() == days.to_string()),
-            "config/default.toml {key} disagrees with RetentionConfig::default() ({days})"
+            "config/default.toml {key} disagrees with its Rust default ({days})"
         );
     }
 
