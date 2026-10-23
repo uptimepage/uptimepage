@@ -42,7 +42,7 @@ pub(super) const LLMS_FACTS: &[(&str, &str)] = &[
     ),
     (
         "Check regions",
-        "11 hosted regions: San Jose, Dallas, New York, São Paulo, London, Frankfurt, Helsinki, Johannesburg, Singapore, Tokyo, Sydney; self-hosted can add any region by running a probe agent",
+        "13 hosted regions: San Jose, Dallas, Bogotá, New York, Santiago, São Paulo, London, Frankfurt, Helsinki, Johannesburg, Singapore, Tokyo, Sydney; self-hosted can add any region by running a probe agent",
     ),
     (
         "Alert channels",
@@ -85,7 +85,7 @@ pub(super) const LLMS_FACTS: &[(&str, &str)] = &[
     ),
     (
         "Plan limits",
-        "Standard: 20 monitors, checks every 3 minutes, 30-day history, 3 of 11 global regions, 1 status page with 15 components, 3 team members, every alert channel, API and MCP. Founding adds 50 monitors including 1 browser login flow, 60-second checks, 5 of 11 regions, 90-day history, 5 team members, 2 status pages and BYO SMS, free for the first 1,000 accounts and kept for life. Pro is $9/month: the founding limits plus every region, 3 browser login flows, a custom status-page domain and white-label. Team is $19/month and adds 150 monitors including 10 browser login flows, 30-second checks, 13-month history, 15 team members, 5 status pages, and on-call rotations with escalation policies.",
+        "Standard: 20 monitors, checks every 3 minutes, 30-day history, 3 of 13 global regions, 1 status page with 15 components, 3 team members, every alert channel, API and MCP. Founding adds 50 monitors including 1 browser login flow, 60-second checks, 5 of 13 regions, 90-day history, 5 team members, 2 status pages and BYO SMS, free for the first 1,000 accounts and kept for life. Pro is $9/month: the founding limits plus every region, 3 browser login flows, a custom status-page domain and white-label. Team is $19/month and adds 150 monitors including 10 browser login flows, 30-second checks, 13-month history, 15 team members, 5 status pages, and on-call rotations with escalation policies.",
     ),
     (
         "Deployment",

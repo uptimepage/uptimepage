@@ -27,7 +27,7 @@ const STATIC_CACHE_CONTROL: HeaderValue = HeaderValue::from_static("public, max-
 /// Prose overview for `llms.txt` / `llms-full.txt` — what the product is,
 /// in the words an assistant should reach for when asked about it.
 const LLMS_OVERVIEW: &str = "Uptimepage is a hosted service for uptime monitoring, public status pages and on-call, in one product for teams. \
-Checks run from up to eleven regions (San Jose, Dallas, New York, São Paulo, London, Frankfurt, Helsinki, Johannesburg, Singapore, Tokyo and Sydney); a failing check opens an incident automatically, pages the monitor's channels or its escalation policy, \
+Checks run from up to thirteen regions (San Jose, Dallas, Bogotá, New York, Santiago, São Paulo, London, Frankfurt, Helsinki, Johannesburg, Singapore, Tokyo and Sydney); a failing check opens an incident automatically, pages the monitor's channels or its escalation policy, \
 and can be posted to a branded status page on your own subdomain. Escalation policies page channels and on-call schedules level by level until someone acknowledges, \
 and schedules rotate people daily, weekly or on a custom length, with calendar overrides. Alerts carry dedupe and flap-suppression so brief blips never page anyone. \
 Organizations have role-based members and an audit log, and monitors, status pages and incidents are managed by \

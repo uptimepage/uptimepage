@@ -9,6 +9,8 @@ This page covers the hosted service at `uptimepage.dev`. If you run your own ins
 | `us-west` | San Jose, United States |
 | `us-central` | Dallas, United States |
 | `us-east` | Secaucus, United States (New York metro) |
+| `sa-co` | Bogotá, Colombia |
+| `sa-cl` | Santiago, Chile |
 | `sa-br` | São Paulo, Brazil |
 | `eu-london` | London, United Kingdom |
 | `eu-frankfurt` | Frankfurt, Germany |

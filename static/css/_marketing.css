@@ -3349,16 +3349,18 @@ html:has(.mk-hero),
 /* One 12s loop shared by every flow; negative delays stagger the arrivals and
    leave the map already in motion on first paint. */
 .mk-map__flow { --mk-flow-delay: 0s; }
-.mk-map__flow--2 { --mk-flow-delay: -1.09s; }
-.mk-map__flow--3 { --mk-flow-delay: -2.18s; }
-.mk-map__flow--4 { --mk-flow-delay: -3.27s; }
-.mk-map__flow--5 { --mk-flow-delay: -4.36s; }
-.mk-map__flow--6 { --mk-flow-delay: -5.45s; }
-.mk-map__flow--7 { --mk-flow-delay: -6.55s; }
-.mk-map__flow--8 { --mk-flow-delay: -7.64s; }
-.mk-map__flow--9 { --mk-flow-delay: -8.73s; }
-.mk-map__flow--10 { --mk-flow-delay: -9.82s; }
-.mk-map__flow--11 { --mk-flow-delay: -10.91s; }
+.mk-map__flow--2 { --mk-flow-delay: -0.92s; }
+.mk-map__flow--3 { --mk-flow-delay: -1.85s; }
+.mk-map__flow--4 { --mk-flow-delay: -2.77s; }
+.mk-map__flow--5 { --mk-flow-delay: -3.69s; }
+.mk-map__flow--6 { --mk-flow-delay: -4.62s; }
+.mk-map__flow--7 { --mk-flow-delay: -5.54s; }
+.mk-map__flow--8 { --mk-flow-delay: -6.46s; }
+.mk-map__flow--9 { --mk-flow-delay: -7.38s; }
+.mk-map__flow--10 { --mk-flow-delay: -8.31s; }
+.mk-map__flow--11 { --mk-flow-delay: -9.23s; }
+.mk-map__flow--12 { --mk-flow-delay: -10.15s; }
+.mk-map__flow--13 { --mk-flow-delay: -11.08s; }
 
 .mk-map__arc {
     fill: none;

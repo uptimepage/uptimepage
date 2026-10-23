@@ -1128,7 +1128,7 @@ URL=https://app.uptimepage.dev/ping/your-token
             },
             Section {
                 heading: "Checks from several regions",
-                body: "The hosted service probes from San Jose, Dallas, New York, São Paulo, London, Frankfurt, Helsinki, Johannesburg, Singapore, Tokyo and Sydney, and a majority has to agree before an incident opens. Self-hosted, you run region agents on your own machines; each authenticates with a scoped, org-bound token.",
+                body: "The hosted service probes from San Jose, Dallas, Bogotá, New York, Santiago, São Paulo, London, Frankfurt, Helsinki, Johannesburg, Singapore, Tokyo and Sydney, and a majority has to agree before an incident opens. Self-hosted, you run region agents on your own machines; each authenticates with a scoped, org-bound token.",
             },
         ],
         code: None,
