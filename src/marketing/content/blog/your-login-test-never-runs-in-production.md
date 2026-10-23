@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "Your E2E login test never runs in production"
 date = "2026-08-01"
 updated = "2026-10-01"

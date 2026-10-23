@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "Why DNS returns different IP addresses on different resolvers"
 date = "2026-09-05"
 slug = "why-dns-returns-different-ip-addresses"

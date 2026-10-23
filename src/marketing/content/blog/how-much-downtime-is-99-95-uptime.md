@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "How much downtime is 99.95% uptime? 21.6 minutes a month"
 date = "2026-08-02"
 slug = "how-much-downtime-is-99-95-uptime"

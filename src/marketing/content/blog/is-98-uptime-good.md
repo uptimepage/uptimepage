@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "Is 98% uptime good? It allows 7.3 days of downtime a year"
 meta_title = "Is 98% Uptime Good? When It Works and When It Fails"
 date = "2026-07-17"

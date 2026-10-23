@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "Scheduling in Rust: one heap, not a timer per task"
 date = "2026-08-05"
 slug = "rust-scheduler-one-heap"

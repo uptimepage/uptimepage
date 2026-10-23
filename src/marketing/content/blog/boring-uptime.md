@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "Why your uptime monitor should be boring"
 date = "2026-05-20"
 updated = "2026-07-24"

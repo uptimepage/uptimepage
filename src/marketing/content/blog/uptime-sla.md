@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "What is an uptime SLA? Percentages, credits and fine print"
 date = "2026-08-06"
 slug = "uptime-sla"

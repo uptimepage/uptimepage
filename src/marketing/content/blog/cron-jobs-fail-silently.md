@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "Your cron job can fail for months and nothing will tell you"
 date = "2026-08-26"
 updated = "2026-10-04"

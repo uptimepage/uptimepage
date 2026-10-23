@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "The status page you can't fake: measured uptime, not published"
 date = "2026-07-15"
 updated = "2026-08-08"

@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "Error budgets, explained: SLOs, burn rate, when to stop shipping"
 date = "2026-07-13"
 updated = "2026-07-15"

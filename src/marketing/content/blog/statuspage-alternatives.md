@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "11 best Statuspage alternatives in 2026, free and paid"
 date = "2026-08-06"
 updated = "2026-09-24"

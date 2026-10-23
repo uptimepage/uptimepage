@@ -41,6 +41,16 @@ to an AGPL-compatible license allow-list enforced in CI.
 
 AGPL-3.0 does not grant trademark rights (section 7(e)). Running uptimepage for your own organisation, modified or not, keeps the name. A service you run for other people, or a modified version you distribute, needs its own name. See [TRADEMARKS.md](TRADEMARKS.md).
 
+## Blog posts
+
+The blog posts in `src/marketing/content/blog/` were written by Artem Senenko. As additional terms under sections 7(b) and 7(c) of the AGPL-3.0, anyone who copies, publishes or adapts a post, in whole or in part, must:
+
+- name Artem Senenko as its author, visibly, next to the text
+- not misrepresent who wrote the original text; crediting your own additions is fine
+- mark an adapted post clearly as changed from the original
+
+Each post repeats this in a comment at the top of its file.
+
 ## Commercial licensing
 
 If AGPL-3.0 doesn't fit your use case — for example, you want to 

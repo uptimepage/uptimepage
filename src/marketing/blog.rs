@@ -987,6 +987,24 @@ mod tests {
         );
     }
 
+    /// AGPL section 7 wants the attribution terms stated in each file they cover.
+    #[test]
+    fn every_post_carries_the_attribution_notice() {
+        const NOTICE: &str = "# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see \"Blog posts\" in LICENSING.md.";
+        for f in BLOG_DIR
+            .files()
+            .filter(|f| f.path().extension().and_then(|e| e.to_str()) == Some("md"))
+        {
+            let raw = f.contents_utf8().expect("utf-8 post");
+            let (front, _) = split_front_matter(raw).expect("front matter");
+            assert!(
+                front.lines().any(|l| l == NOTICE),
+                "{} lacks the attribution notice",
+                f.path().display()
+            );
+        }
+    }
+
     #[test]
     fn faq_front_matter_mirrors_visible_answers() {
         for post in load_posts() {

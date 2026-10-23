@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "How I stop one bad probe from waking you at 3 a.m."
 date = "2026-07-25"
 slug = "stop-false-uptime-alerts"

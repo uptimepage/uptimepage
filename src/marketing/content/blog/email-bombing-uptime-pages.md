@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "Email bombing through uptime monitoring pages"
 date = "2026-07-04"
 slug = "email-bombing-uptime-pages"

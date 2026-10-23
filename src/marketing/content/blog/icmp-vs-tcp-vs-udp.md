@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "ICMP vs TCP vs UDP: the difference, explained for developers"
 date = "2026-09-02"
 slug = "icmp-vs-tcp-vs-udp"

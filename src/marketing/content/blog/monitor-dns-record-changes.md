@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "How to get alerted when someone changes your DNS records"
 date = "2026-10-12"
 slug = "monitor-dns-record-changes"

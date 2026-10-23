@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "How to monitor an MCP server"
 date = "2026-08-18"
 updated = "2026-10-01"

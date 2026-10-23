@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "The mystery of the \"down\" website"
 date = "2026-06-18"
 updated = "2026-09-24"

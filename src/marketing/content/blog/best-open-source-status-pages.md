@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "Best open-source status pages you can self-host (2026)"
 date = "2026-09-24"
 updated = "2026-10-01"

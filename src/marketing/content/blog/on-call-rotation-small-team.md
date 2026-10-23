@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "Google says on-call needs eight engineers. You have three."
 meta_title = "On-call rotation for a small team: what works with three people"
 date = "2026-10-06"

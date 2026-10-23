@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "Why I dropped reqwest for hyper in my Rust uptime prober"
 date = "2026-07-07"
 updated = "2026-09-18"

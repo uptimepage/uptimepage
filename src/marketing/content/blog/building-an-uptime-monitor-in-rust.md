@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "Building an uptime monitor in Rust: one binary, two databases"
 date = "2026-06-30"
 updated = "2026-10-17"

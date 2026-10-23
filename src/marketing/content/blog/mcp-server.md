@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "Your monitors can talk to an AI, with your permission"
 date = "2026-06-03"
 updated = "2026-10-02"

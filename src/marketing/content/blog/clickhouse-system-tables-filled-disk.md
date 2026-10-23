@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "ClickHouse disk full: system tables ate 12 GB (the fix)"
 date = "2026-07-09"
 updated = "2026-10-01"

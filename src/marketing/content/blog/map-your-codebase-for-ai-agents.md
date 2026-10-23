@@ -1,4 +1,5 @@
 +++
+# Written by Artem Senenko. Attribution required under AGPL-3.0 sections 7(b) and 7(c); see "Blog posts" in LICENSING.md.
 title = "How I mapped my codebase for humans and AI agents"
 date = "2026-07-23"
 slug = "map-your-codebase-for-ai-agents"
