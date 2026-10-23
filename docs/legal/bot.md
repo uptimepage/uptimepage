@@ -1,6 +1,6 @@
 # Uptimepage Bot
 
-**Last updated:** 2026-10-22
+**Last updated:** 2026-10-23
 
 If you found this page in your server logs, our bot requested a page on your site. This page explains what it is, why it happened, and how to stop it.
 
@@ -86,6 +86,12 @@ Two things to know:
 If a **Deny** rule with a persistent action already matched one of our probes, Vercel stores that IP at the platform firewall for the timeout you configured. Adding the bypass rule stops new blocks, but an existing one has to expire.
 
 If you would rather not open a path by header, point the monitor at a health endpoint outside the firewall's scope, or exempt just that path.
+
+## Not Every uptimepage Request Is Ours
+
+uptimepage is open source, so anyone can run their own copy, and its probes send the same `uptimepage/` token. A copy we do not run links its operator's page, or the project's [Probe identity](https://github.com/uptimepage/uptimepage/blob/main/docs/bot.md) page when its operator has not set one. A `User-Agent` is only a header, and any client can copy ours.
+
+If you are not sure a request came from us, email the URL or domain to **hello@uptimepage.dev**. We will check whether it is monitored through our service and, as below, block it if you ask. We cannot stop a copy we do not run; for that, contact whoever controls the IP address the request came from.
 
 ## If You Did Not Authorise This
 

@@ -48,8 +48,9 @@ create it first.
 # Copy the compose file + env template to the box, then:
 cp .env.agent.example .env
 # Edit .env: set AGENT_TOKEN (the sm_agent_ token above), AGENT_REGION
-# (eu-helsinki), AGENT_CONTROL_PLANE_URL, and pin UPTIMEPAGE_IMAGE to the
-# same image the control plane runs.
+# (eu-helsinki), AGENT_CONTROL_PLANE_URL, AGENT_BOT_URL (your bot page, see
+# docs/bot.md), and pin UPTIMEPAGE_IMAGE to the same image the control
+# plane runs.
 
 docker compose -f docker-compose.agent.yml up -d
 docker compose -f docker-compose.agent.yml logs -f agent

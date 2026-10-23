@@ -1306,6 +1306,7 @@ fn default_dns() -> DnsConfig {
 fn build_clients_with(dns_cfg: DnsConfig) -> uptimepage::error::Result<HttpClients> {
     let http_cfg = HttpClientConfig {
         tcp_keepalive_secs: 30,
+        bot_url: String::new(),
         user_agent: "Uptimepage/test".into(),
     };
     let checker_cfg = CheckerConfig {

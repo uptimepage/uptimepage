@@ -251,11 +251,9 @@ impl AppConfig {
             }
         }
         for contact in &d.contact {
-            let usable = url::Url::parse(contact).is_ok_and(|u| match u.scheme() {
-                "https" => u.host().is_some(),
-                "mailto" | "tel" => !u.path().is_empty(),
-                _ => false,
-            });
+            let usable = is_absolute_url(contact, &["https"])
+                || url::Url::parse(contact)
+                    .is_ok_and(|u| matches!(u.scheme(), "mailto" | "tel") && !u.path().is_empty());
             if !usable {
                 return Err(err(format!(
                     "security.disclosure.contact entries are mailto:, tel: or https:// URIs \
@@ -264,9 +262,7 @@ impl AppConfig {
             }
         }
         let ack = &d.acknowledgments;
-        if !ack.is_empty()
-            && !url::Url::parse(ack).is_ok_and(|u| u.scheme() == "https" && u.host().is_some())
-        {
+        if !ack.is_empty() && !is_absolute_url(ack, &["https"]) {
             return Err(err(format!(
                 "security.disclosure.acknowledgments must be an https:// URL (got {ack:?})"
             )));
@@ -289,9 +285,7 @@ impl AppConfig {
             if url.is_empty() {
                 continue;
             }
-            let absolute = url::Url::parse(url)
-                .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some());
-            if !absolute {
+            if !is_absolute_url(url, &["http", "https"]) {
                 return Err(err(format!(
                     "legal.{key} must be an absolute http(s) URL (got {url:?})"
                 )));
@@ -649,6 +643,32 @@ impl AppConfig {
         Ok(())
     }
 
+    pub fn validate_http_client(&self) -> Result<()> {
+        fn err(msg: String) -> crate::error::AppError {
+            crate::error::AppError::Other(anyhow::anyhow!(msg))
+        }
+        let c = &self.http_client;
+        if c.user_agent.is_empty() {
+            // `;` and `)` close the `(compatible; …)` comment the URL sits in.
+            let url = c.bot_url();
+            let usable = url.is_ascii()
+                && !url.contains(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '(' | ')'))
+                && is_absolute_url(url, &["http", "https"]);
+            if !usable {
+                return Err(err(format!(
+                    "http_client.bot_url must be an absolute ASCII http(s) URL with no spaces, \
+                     ';' or parentheses (got {url:?})"
+                )));
+            }
+        } else if axum::http::HeaderValue::from_str(&c.user_agent).is_err() {
+            return Err(err(format!(
+                "http_client.user_agent is not a valid header value (got {:?})",
+                c.user_agent
+            )));
+        }
+        Ok(())
+    }
+
     /// Validate the regional-agent section. Only enforced when `agent.enabled`.
     pub fn validate_runtime(&self) -> Result<()> {
         fn err(msg: &str) -> crate::error::AppError {
@@ -721,4 +741,9 @@ impl AppConfig {
         }
         Ok(())
     }
+}
+
+/// A URL a browser can follow from anywhere: one of `schemes`, with a host.
+fn is_absolute_url(url: &str, schemes: &[&str]) -> bool {
+    url::Url::parse(url).is_ok_and(|u| schemes.contains(&u.scheme()) && u.host().is_some())
 }

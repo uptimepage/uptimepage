@@ -1,4 +1,4 @@
-use super::runtime::default_user_agent;
+use super::runtime::{PROJECT_BOT_URL, user_agent_linking};
 use super::*;
 use config::FileFormat;
 use secrecy::ExposeSecret;
@@ -25,15 +25,40 @@ fn a_partial_quotas_table_keeps_the_other_defaults() {
     assert_eq!(partial.plan_cache_ttl_secs, 300);
 }
 
-/// The bot page spells the version out by hand, so a stale sample teaches
+/// Both bot pages spell the version out by hand, so a stale sample teaches
 /// site owners to allowlist a string our probes no longer send.
 #[test]
-fn the_bot_page_quotes_the_user_agent_we_actually_send() {
+fn each_bot_page_quotes_the_user_agent_that_links_it() {
+    for (page, bot_url) in [
+        (
+            include_str!("../../docs/legal/bot.md"),
+            "https://uptimepage.dev/bot",
+        ),
+        (include_str!("../../docs/bot.md"), PROJECT_BOT_URL),
+    ] {
+        let sent = user_agent_linking(bot_url);
+        assert!(
+            page.contains(&sent),
+            "the page linked as {bot_url} does not quote {sent:?}"
+        );
+    }
+}
+
+#[test]
+fn an_override_replaces_the_whole_user_agent() {
+    let mut cfg = AppConfig::load().expect("load").http_client;
+    cfg.bot_url = String::new();
     assert!(
-        include_str!("../../docs/legal/bot.md").contains(&default_user_agent()),
-        "docs/legal/bot.md does not quote {:?}",
-        default_user_agent()
+        cfg.effective_user_agent()
+            .ends_with(&format!("; +{PROJECT_BOT_URL})"))
     );
+    cfg.bot_url = "https://status.example.test/bot".into();
+    assert!(
+        cfg.effective_user_agent()
+            .ends_with("; +https://status.example.test/bot)")
+    );
+    cfg.user_agent = "acme-probe/2".into();
+    assert_eq!(cfg.effective_user_agent(), "acme-probe/2");
 }
 
 fn scheduler_from(toml: &str) -> SchedulerConfig {
@@ -821,4 +846,35 @@ fn disclosure_fields_without_a_contact_do_not_boot() {
         ..DisclosureConfig::default()
     };
     assert!(cfg.validate_disclosure().is_err());
+}
+
+#[test]
+fn the_bot_url_cannot_break_the_user_agent() {
+    let mut cfg = AppConfig::load().expect("load");
+    assert!(
+        cfg.validate_http_client().is_ok(),
+        "the default links docs/bot.md"
+    );
+    for bad in [
+        "/bot",
+        "https://example.test/a bot",
+        "https://example.test/bot;x",
+        "https://example.test/(bot)",
+    ] {
+        cfg.http_client.bot_url = bad.into();
+        assert!(cfg.validate_http_client().is_err(), "{bad:?}");
+    }
+    cfg.http_client.bot_url = "https://exämple.test/bot".into();
+    assert!(
+        cfg.validate_http_client().is_err(),
+        "not ASCII, so not a header value"
+    );
+
+    cfg.http_client.user_agent = "acme-probe/2".into();
+    assert!(
+        cfg.validate_http_client().is_ok(),
+        "an override leaves bot_url unused"
+    );
+    cfg.http_client.user_agent = "acme\nX-Injected: 1".into();
+    assert!(cfg.validate_http_client().is_err(), "not a header value");
 }

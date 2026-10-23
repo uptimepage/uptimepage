@@ -41,6 +41,9 @@ services:
       UPTIMEPAGE_AGENT__PULL_INTERVAL_SECS: ${AGENT_PULL_INTERVAL_SECS:-30}
       UPTIMEPAGE_AGENT__FLUSH_INTERVAL_SECS: ${AGENT_FLUSH_INTERVAL_SECS:-5}
       UPTIMEPAGE_AGENT__BUFFER_CAPACITY: ${AGENT_BUFFER_CAPACITY:-10000}
+      # Linked from the probe's User-Agent: a page saying who runs this agent.
+      # Empty links the project's page.
+      UPTIMEPAGE_HTTP_CLIENT__BOT_URL: ${AGENT_BOT_URL:-}
       UPTIMEPAGE_OBSERVABILITY__LOG_FORMAT: json
       RUST_LOG: ${RUST_LOG:-info,uptimepage=info}
     # No container healthcheck: the runtime image is distroless (no shell to

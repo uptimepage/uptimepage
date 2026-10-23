@@ -335,6 +335,7 @@ mod tests {
         let clients = crate::http_client::build_clients(
             &crate::config::HttpClientConfig {
                 tcp_keepalive_secs: 30,
+                bot_url: String::new(),
                 user_agent: "Uptimepage/test".into(),
             },
             &crate::config::CheckerConfig {

@@ -124,6 +124,7 @@ fn default_check(addr: SocketAddr) -> HttpCheck {
 fn build_test_clients() -> HttpClients {
     let http_cfg = HttpClientConfig {
         tcp_keepalive_secs: 60,
+        bot_url: String::new(),
         user_agent: "Uptimepage/bench".into(),
     };
     let checker_cfg = CheckerConfig {

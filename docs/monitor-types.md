@@ -26,7 +26,7 @@ The default. Requests a URL and decides up or down from the response.
 
 Beyond status codes you can require a substring in the body, send custom headers, pick the method, post a body, and control redirect following. Expected status can be an exact code, a range, or a set, so an endpoint that legitimately answers 204 or 301 does not need a workaround.
 
-A check sends `User-Agent: Mozilla/5.0 (compatible; uptimepage/<version>; +https://uptimepage.dev/bot)`, `Accept: */*`, and `Accept-Encoding: gzip, br`. Setting `User-Agent` or `Accept` in the monitor's headers replaces the default rather than adding a second copy, so a target that needs its own identity string gets exactly one. `Accept-Encoding` is fixed: it advertises the compression the checker can actually decode, and a response in any other codec could not be matched against your body assertion.
+A check sends `User-Agent: Mozilla/5.0 (compatible; uptimepage/<version>; +<bot_url>)`, where `bot_url` is the page the instance's operator set (see [Probe identity](bot.md)), `Accept: */*`, and `Accept-Encoding: gzip, br`. Setting `User-Agent` or `Accept` in the monitor's headers replaces the default rather than adding a second copy, so a target that needs its own identity string gets exactly one. `Accept-Encoding` is fixed: it advertises the compression the checker can actually decode, and a response in any other codec could not be matched against your body assertion.
 
 Two behaviours worth knowing, because they prevent false pages:
 

@@ -25,7 +25,13 @@ rdap_max_inflight = 1
 
 [http_client]
 tcp_keepalive_secs = 60
-# user_agent defaults to the crate version; set it only to override.
+# Linked from every probe's User-Agent. Point it at a page that says who runs
+# this instance and how to reach them. Empty links the project's page, which
+# tells site owners the request came from a self-hosted copy.
+bot_url = ""
+# Replaces the whole User-Agent. Empty keeps
+# "Mozilla/5.0 (compatible; uptimepage/<version>; +<bot_url>)".
+user_agent = ""
 
 [dns]
 cache_size = 50000

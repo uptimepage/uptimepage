@@ -48,23 +48,48 @@ pub struct HttpClientConfig {
     /// TCP keep-alive for the in-flight connection. Checks connect fresh each
     /// run (no pool), so this only spans one request's body read.
     pub tcp_keepalive_secs: u64,
-    /// Identifiable so site owners allowlist our probes instead of blocking them.
-    #[serde(default = "default_user_agent")]
+    /// Linked from the `User-Agent`, so a site owner reading their logs finds
+    /// whoever runs this probe rather than whoever wrote it. Empty links
+    /// [`PROJECT_BOT_URL`].
+    #[serde(default)]
+    pub bot_url: String,
+    /// Replaces the generated `User-Agent` outright. Empty keeps it.
+    #[serde(default)]
     pub user_agent: String,
+}
+
+/// Tells a site owner the probe is someone's self-hosted copy.
+pub const PROJECT_BOT_URL: &str = "https://github.com/uptimepage/uptimepage/blob/main/docs/bot.md";
+
+impl HttpClientConfig {
+    /// The header every probe sends: the override when set, else the
+    /// generated one.
+    pub fn effective_user_agent(&self) -> String {
+        if !self.user_agent.is_empty() {
+            return self.user_agent.clone();
+        }
+        user_agent_linking(self.bot_url())
+    }
+
+    pub fn bot_url(&self) -> &str {
+        if self.bot_url.is_empty() {
+            PROJECT_BOT_URL
+        } else {
+            &self.bot_url
+        }
+    }
 }
 
 /// The crawler convention (`Googlebot` and friends use the same shape). The
 /// `Mozilla/5.0 (compatible; …)` prefix is what CDNs parse before deciding
-/// whether to compress a response — without it some origins answer a probe with
-/// megabytes of uncompressed HTML — while `compatible` and the product token
-/// keep the claim honest: no browser engine is named.
-pub(super) fn default_user_agent() -> String {
-    concat!(
-        "Mozilla/5.0 (compatible; uptimepage/",
-        env!("CARGO_PKG_VERSION"),
-        "; +https://uptimepage.dev/bot)"
+/// whether to compress a response — without it some origins answer a probe
+/// with megabytes of uncompressed HTML — while `compatible` and the product
+/// token keep the claim honest: no browser engine is named.
+pub(super) fn user_agent_linking(bot_url: &str) -> String {
+    format!(
+        "Mozilla/5.0 (compatible; uptimepage/{}; +{bot_url})",
+        env!("CARGO_PKG_VERSION")
     )
-    .to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

@@ -102,7 +102,7 @@ pub fn build_clients(
         ttfb_ms: histogram!(metric_names::CHECK_TTFB_MS),
         connect_ms: histogram!(metric_names::CHECK_CONNECT_MS),
         tls_ms: histogram!(metric_names::CHECK_TLS_MS),
-        user_agent: Arc::from(http_cfg.user_agent.as_str()),
+        user_agent: Arc::from(http_cfg.effective_user_agent()),
         resolver,
         ssrf_guard,
         connect_timeout: Duration::from_millis(checker_cfg.connect_timeout_ms),
@@ -255,6 +255,7 @@ pub(crate) fn test_clients(allow_private_targets: bool) -> HttpClients {
     build_clients(
         &HttpClientConfig {
             tcp_keepalive_secs: 60,
+            bot_url: String::new(),
             user_agent: "test".into(),
         },
         &CheckerConfig {

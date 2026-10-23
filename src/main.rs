@@ -153,6 +153,7 @@ async fn main() -> Result<()> {
     cfg.validate_site()?;
     cfg.validate_legal()?;
     cfg.validate_disclosure()?;
+    cfg.validate_http_client()?;
     cfg.validate_custom_domain_ask()?;
     // Central Telegram bot: a set bot_token without a username / strong
     // webhook secret / https base is a clean startup error, not a half-up bot.

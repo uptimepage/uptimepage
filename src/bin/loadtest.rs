@@ -64,6 +64,7 @@ async fn main() {
 
     let http_cfg = HttpClientConfig {
         tcp_keepalive_secs: 60,
+        bot_url: String::new(),
         user_agent: "Uptimepage-LoadTest/1.0".into(),
     };
     let checker_cfg = CheckerConfig {
