@@ -1,5 +1,5 @@
 //! Build-time compiled changelog. One Markdown file per shipped change under
-//! `src/marketing/content/changelog/`, rendered once at boot the same way the
+//! `changelog/` at the repository root, rendered once at boot the same way the
 //! blog is: sanitised HTML, a Markdown twin for `Accept: text/markdown`, and an
 //! Atom feed, all held in `OnceLock` caches.
 //!
@@ -36,7 +36,7 @@ const PAGE_CACHE_CONTROL: HeaderValue =
 const FEED_CACHE_CONTROL: HeaderValue = HeaderValue::from_static("public, max-age=3600");
 const ATOM: HeaderValue = HeaderValue::from_static("application/atom+xml; charset=utf-8");
 
-static ENTRY_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/src/marketing/content/changelog");
+static ENTRY_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/changelog");
 
 #[derive(Debug, Clone)]
 pub struct Entry {

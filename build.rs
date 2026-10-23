@@ -250,12 +250,13 @@ fn main() {
     ] {
         println!("cargo::rerun-if-changed=static/js/{lib}");
     }
-    // `include_dir!` does NOT emit a watcher of its own. Without this
-    // an added blog post lands in main, a warm `cargo build` reuses the
-    // cached binary, and the new post 404s on a route that was already
-    // merged. Belt-and-braces — `src` above already covers it, but
-    // pinning the content tree makes the dependency explicit.
+    // `include_dir!` does NOT emit a watcher of its own. Without these an
+    // added post or changelog entry lands in main, a warm `cargo build` reuses
+    // the cached binary, and the new page 404s on a route that was already
+    // merged. `src` above covers the blog; `changelog/` sits outside it, so its
+    // line is the only one that rebuilds on a new entry.
     println!("cargo::rerun-if-changed=src/marketing/content");
+    println!("cargo::rerun-if-changed=changelog");
     // `static_loader!` embeds each catalogue through include_str!, which tracks
     // edits to a file but not a locale directory added beside them.
     println!("cargo::rerun-if-changed=locales");
