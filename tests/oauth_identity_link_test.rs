@@ -140,6 +140,7 @@ async fn an_auto_link_is_told_apart_from_a_deliberate_one() {
         &github,
         uptimepage::security::Admission::Clear,
         uptimepage::auth::oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("signup");
@@ -161,6 +162,7 @@ async fn an_auto_link_is_told_apart_from_a_deliberate_one() {
         &google,
         uptimepage::security::Admission::Clear,
         uptimepage::auth::oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("email match");
@@ -627,6 +629,7 @@ async fn removing_a_method_records_it_and_leaves_the_others() {
         },
         uptimepage::security::Admission::Clear,
         uptimepage::auth::oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("signup");
@@ -701,6 +704,7 @@ async fn removing_a_method_that_was_never_there_is_a_404() {
         },
         uptimepage::security::Admission::Clear,
         uptimepage::auth::oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("signup");

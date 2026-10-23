@@ -607,7 +607,12 @@ async fn finish_login(
         None => oauth_login::SignupOrg::Create,
     };
     let resolved = match oauth_login::upsert_identity_and_signup_org(
-        pool, provider, &identity, admission, signup_org,
+        pool,
+        provider,
+        &identity,
+        admission,
+        signup_org,
+        state.cfg.legal.consent(),
     )
     .await
     {

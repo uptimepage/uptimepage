@@ -230,6 +230,44 @@ impl AppConfig {
         Ok(())
     }
 
+    pub fn validate_legal(&self) -> Result<()> {
+        fn err(msg: String) -> crate::error::AppError {
+            crate::error::AppError::Other(anyhow::anyhow!(msg))
+        }
+        let l = &self.legal;
+        for (key, _, url) in l.policies() {
+            if url.is_empty() {
+                continue;
+            }
+            let absolute = url::Url::parse(url)
+                .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some());
+            if !absolute {
+                return Err(err(format!(
+                    "legal.{key} must be an absolute http(s) URL (got {url:?})"
+                )));
+            }
+        }
+        // A version without its page would record acceptance of a document
+        // nobody was shown; a page without one would record nothing.
+        for (doc, url, version) in [
+            ("terms", &l.terms_url, &l.terms_version),
+            ("privacy", &l.privacy_url, &l.privacy_version),
+        ] {
+            if url.is_empty() != version.is_empty() {
+                return Err(err(format!(
+                    "legal.{doc}_url and legal.{doc}_version go together: set both or neither"
+                )));
+            }
+            if version.trim() != version.as_str() {
+                return Err(err(format!(
+                    "legal.{doc}_version is recorded verbatim, so it must not carry \
+                     surrounding whitespace (got {version:?})"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Trace-export config is a clean startup error when inconsistent,
     /// never a runtime panic. Credentials are required only when export
     /// is actually active (`tracing_enabled` AND `grafana.enabled`); the
@@ -330,6 +368,11 @@ impl AppConfig {
         if !self.quotas.enforce_plan_features {
             return Err(err(
                 "billing.provider = \"paddle\" sells plans, so quotas.enforce_plan_features must be true",
+            ));
+        }
+        if self.legal.terms_url.is_empty() {
+            return Err(err(
+                "billing.provider = \"paddle\" needs legal.terms_url: checkout asks the buyer to accept it",
             ));
         }
         if super::PaddleEnvironment::parse(&b.paddle.environment).is_none() {

@@ -44,7 +44,9 @@ pub use notify::{
 };
 pub use observability::{GrafanaConfig, HeartbeatConfig, LogFormat, ObservabilityConfig};
 pub use ops::{AgentConfig, EscalationConfig, FlowConfig, McpConfig, OperatorConfig};
-pub use public::{MarketingConfig, PublicStatusConfig, RetentionConfig, SiteConfig, TenancyConfig};
+pub use public::{
+    LegalConfig, MarketingConfig, PublicStatusConfig, RetentionConfig, SiteConfig, TenancyConfig,
+};
 pub use runtime::{
     CheckerConfig, CircuitBreakerConfig, DnsConfig, HttpClientConfig, RuntimeConfig,
     SchedulerConfig, SecurityConfig, ServerConfig,
@@ -188,6 +190,8 @@ pub struct AppConfig {
     pub marketing: MarketingConfig,
     #[serde(default)]
     pub site: SiteConfig,
+    #[serde(default)]
+    pub legal: LegalConfig,
     #[serde(default)]
     pub mcp: McpConfig,
     #[serde(default)]

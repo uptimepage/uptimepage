@@ -181,6 +181,7 @@ pub async fn checkout(
             account,
             choice.plan_id.trim(),
             choice.interval,
+            &state.cfg.legal.terms_version,
         )
         .await?;
     Ok(Json(Handoff { url: url.into() }))

@@ -61,6 +61,49 @@ impl SiteConfig {
     }
 }
 
+/// `[legal]`. The operator's own policies, linked from the app. Each URL is
+/// optional; a missing one is neither linked nor recorded as accepted.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct LegalConfig {
+    pub terms_url: String,
+    pub privacy_url: String,
+    pub cookies_url: String,
+    pub refund_url: String,
+    pub impressum_url: String,
+    pub abuse_url: String,
+    pub security_policy_url: String,
+    /// Recorded on every account created while `terms_url` is set.
+    pub terms_version: String,
+    /// Recorded on every account created while `privacy_url` is set.
+    pub privacy_version: String,
+}
+
+impl LegalConfig {
+    /// `(key, footer label, url)` in footer order.
+    pub fn policies(&self) -> [(&'static str, &'static str, &str); 7] {
+        [
+            ("terms_url", "Terms", &self.terms_url),
+            ("privacy_url", "Privacy", &self.privacy_url),
+            ("refund_url", "Refunds", &self.refund_url),
+            ("cookies_url", "Cookies", &self.cookies_url),
+            ("impressum_url", "Impressum", &self.impressum_url),
+            ("abuse_url", "Abuse", &self.abuse_url),
+            ("security_policy_url", "Security", &self.security_policy_url),
+        ]
+    }
+
+    pub fn consent(&self) -> crate::domain::consent::Consent<'_> {
+        fn shown<'a>(url: &str, version: &'a str) -> Option<&'a str> {
+            (!url.is_empty()).then_some(version)
+        }
+        crate::domain::consent::Consent {
+            terms: shown(&self.terms_url, &self.terms_version),
+            privacy: shown(&self.privacy_url, &self.privacy_version),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct TenancyConfig {

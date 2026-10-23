@@ -94,6 +94,16 @@ services:
       UPTIMEPAGE_SITE__ORIGIN: "http://lvh.me:8080"
       # Plan gates as on the hosted service, so locked features can be inspected.
       UPTIMEPAGE_QUOTAS__ENFORCE_PLAN_FEATURES: "true"
+      # The policies the marketing site serves, as on the hosted service.
+      UPTIMEPAGE_LEGAL__TERMS_URL: "http://lvh.me:8080/terms"
+      UPTIMEPAGE_LEGAL__PRIVACY_URL: "http://lvh.me:8080/privacy"
+      UPTIMEPAGE_LEGAL__COOKIES_URL: "http://lvh.me:8080/cookies"
+      UPTIMEPAGE_LEGAL__REFUND_URL: "http://lvh.me:8080/refund-policy"
+      UPTIMEPAGE_LEGAL__IMPRESSUM_URL: "http://lvh.me:8080/impressum"
+      UPTIMEPAGE_LEGAL__ABUSE_URL: "http://lvh.me:8080/abuse-policy"
+      UPTIMEPAGE_LEGAL__SECURITY_POLICY_URL: "http://lvh.me:8080/security-policy"
+      UPTIMEPAGE_LEGAL__TERMS_VERSION: "v2"
+      UPTIMEPAGE_LEGAL__PRIVACY_VERSION: "v2"
       # Tenancy boot guards: ip/ua fingerprint salt is mandatory under SaaS.
       # Fixed dev-only value — never used outside the local stack.
       UPTIMEPAGE_AUTH__FINGERPRINT_SALT: "dev-only-fingerprint-salt-not-for-prod"

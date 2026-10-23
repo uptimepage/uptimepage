@@ -672,10 +672,14 @@ async fn a_stranger_opening_an_account_gets_an_org_of_their_own() {
     let pool = open_pool(&db).await;
     MIGRATOR.run(&pool).await.unwrap();
 
-    let (user, created) =
-        uptimepage::storage::users::create_signup_user(&pool, "cold@example.test", None)
-            .await
-            .expect("signup");
+    let (user, created) = uptimepage::storage::users::create_signup_user(
+        &pool,
+        "cold@example.test",
+        None,
+        uptimepage::domain::consent::Consent::default(),
+    )
+    .await
+    .expect("signup");
     assert!(created, "a brand-new account");
 
     let (org_id, role): (Uuid, String) =
@@ -700,6 +704,51 @@ async fn a_stranger_opening_an_account_gets_an_org_of_their_own() {
     drop_pg(&name).await;
 }
 
+/// An account records the version of each policy the page showed, and no
+/// version for a policy the deployment does not publish.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn signup_and_invite_record_only_the_policies_shown() {
+    let Some((db, name)) = fresh_pg().await else {
+        return;
+    };
+    let pool = open_pool(&db).await;
+    MIGRATOR.run(&pool).await.unwrap();
+    let consent = uptimepage::domain::consent::Consent {
+        terms: Some("v7"),
+        privacy: None,
+    };
+
+    let (signed_up, _) =
+        uptimepage::storage::users::create_signup_user(&pool, "terms@example.test", None, consent)
+            .await
+            .expect("signup");
+    let (invited, _) = uptimepage::storage::users::create_invited_user(
+        &pool,
+        "invited@example.test",
+        None,
+        uptimepage::domain::consent::Consent::default(),
+    )
+    .await
+    .expect("invite");
+
+    for (user, expected) in [
+        (signed_up, (Some("v7".to_owned()), None)),
+        (invited, (None, None)),
+    ] {
+        let recorded: (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT terms_version, privacy_version FROM users WHERE id = $1")
+                .bind(user.0)
+                .fetch_one(&pool)
+                .await
+                .expect("user row");
+        assert_eq!(recorded, expected);
+    }
+
+    pool.close().await;
+    drop_pg(&name).await;
+}
+
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
 async fn a_second_account_on_one_address_is_refused() {
@@ -709,15 +758,23 @@ async fn a_second_account_on_one_address_is_refused() {
     let pool = open_pool(&db).await;
     MIGRATOR.run(&pool).await.unwrap();
 
-    let (first, _) =
-        uptimepage::storage::users::create_signup_user(&pool, "dup@example.test", None)
-            .await
-            .expect("first");
+    let (first, _) = uptimepage::storage::users::create_signup_user(
+        &pool,
+        "dup@example.test",
+        None,
+        uptimepage::domain::consent::Consent::default(),
+    )
+    .await
+    .expect("first");
     // Two links racing resolve to one account, not an error and not a second org.
-    let (second, created) =
-        uptimepage::storage::users::create_signup_user(&pool, "dup@example.test", None)
-            .await
-            .expect("the loser resolves the winner");
+    let (second, created) = uptimepage::storage::users::create_signup_user(
+        &pool,
+        "dup@example.test",
+        None,
+        uptimepage::domain::consent::Consent::default(),
+    )
+    .await
+    .expect("the loser resolves the winner");
     assert!(!created, "it created nothing");
     assert_eq!(second, first, "and hands back the same account");
 

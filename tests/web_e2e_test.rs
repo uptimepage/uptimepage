@@ -713,53 +713,98 @@ async fn operator_pages_redirect_to_login_when_unauthenticated_saas() {
     }
 }
 
-/// Every legal/policy page is public, renders the trusted markdown into the
-/// `.legal-doc` shell, and never exposes the authenticated operator nav.
+/// The license bundle is public, renders into the `.legal-doc` shell, and
+/// never exposes the authenticated operator nav.
 #[tokio::test]
-async fn legal_pages_render_public_without_auth_nav() {
-    let cases = [
-        ("/terms", "Terms of Service"),
-        ("/privacy", "Privacy Policy"),
-        ("/cookies", "Cookie Policy"),
-        ("/refund-policy", "Refund Policy"),
-        ("/impressum", "Impressum"),
-        ("/abuse-policy", "Abuse Policy"),
-        ("/security-policy", "Security Policy"),
-    ];
-    for (path, heading) in cases {
+async fn the_license_page_renders_public_without_auth_nav() {
+    let resp = app()
+        .oneshot(Request::get("/licenses").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(html_ct(&resp).starts_with("text/html"));
+    let body = body_text(resp).await;
+    assert!(body.contains("<h1>Third-Party Licenses</h1>"));
+    assert!(body.contains(r#"<article class="legal-doc">"#));
+    assert!(
+        !body.contains("hx-post=\"/auth/logout\""),
+        "no authenticated nav"
+    );
+    assert!(
+        body.contains("window.smApplyTheme"),
+        "paints in the visitor's theme like the sign-in page"
+    );
+}
+
+/// The operator's policies live wherever `[legal]` points; the app serves
+/// none of its own.
+#[tokio::test]
+async fn the_app_serves_no_policy_pages() {
+    for path in ["/terms", "/privacy", "/impressum", "/abuse-policy"] {
         let resp = app()
             .oneshot(Request::get(path).body(Body::empty()).unwrap())
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK, "{path} should be 200");
-        assert!(
-            html_ct(&resp).starts_with("text/html"),
-            "{path} should be HTML"
-        );
-        let body = body_text(resp).await;
-        assert!(
-            body.contains(&format!("<h1>{heading}</h1>")),
-            "{path} should render the markdown H1 {heading:?}"
-        );
-        assert!(
-            body.contains(r#"<article class="legal-doc">"#),
-            "{path} should use the legal-doc shell"
-        );
-        // Standalone layout: no operator nav, no logout button.
-        assert!(
-            !body.contains("hx-post=\"/auth/logout\""),
-            "{path} must not expose the authenticated nav"
-        );
-        assert!(
-            body.contains("window.smApplyTheme"),
-            "{path} should paint in the visitor's theme like the sign-in page"
-        );
-        // Footer cross-links to the sibling policies.
-        assert!(
-            body.contains(r#"href="/privacy""#) && body.contains(r#"href="/security-policy""#),
-            "{path} should carry the legal footer links"
-        );
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{path}");
     }
+}
+
+/// A link to a policy page the app used to serve lands on the configured one.
+#[tokio::test]
+async fn a_former_policy_path_redirects_to_the_configured_policy() {
+    let app = build_test_app_with_web_and_owner(|cfg| {
+        cfg.legal.privacy_url = "https://example.test/privacy".into();
+        cfg.legal.privacy_version = "v1".into();
+    });
+    let resp = app
+        .clone()
+        .oneshot(Request::get("/privacy").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(
+        resp.headers().get(header::LOCATION).unwrap(),
+        "https://example.test/privacy"
+    );
+    let resp = app
+        .oneshot(Request::get("/terms").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "terms_url is not set");
+}
+
+/// The footer links the operator's own policies, and only those it publishes.
+#[tokio::test]
+async fn the_footer_links_only_the_configured_policies() {
+    let app = build_test_app_with_web_and_owner(|cfg| {
+        cfg.legal.terms_url = "https://example.test/terms".into();
+        cfg.legal.terms_version = "v7".into();
+        cfg.legal.abuse_url = "https://example.test/abuse".into();
+    });
+    let resp = app
+        .oneshot(Request::get("/licenses").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let body = body_text(resp).await;
+    assert!(
+        body.contains(r#"href="https://example.test/terms" class="hover:text-body">Terms</a>"#)
+    );
+    assert!(
+        body.contains(r#"href="https://example.test/abuse" class="hover:text-body">Abuse</a>"#)
+    );
+    for unset in [
+        ">Privacy</a>",
+        ">Refunds</a>",
+        ">Cookies</a>",
+        ">Impressum</a>",
+        ">Security</a>",
+    ] {
+        assert!(!body.contains(unset), "{unset} is not configured");
+    }
+    assert!(
+        body.contains(r#"href="/licenses""#),
+        "the license bundle always stays"
+    );
 }
 
 /// The channel edit page splits monitors by alert binding: bound ones are
@@ -882,20 +927,6 @@ async fn variables_page_and_partial_render_with_secret_redacted() {
     assert!(
         !html.contains("sk-super-secret-9f3a"),
         "secret value must never reach the page"
-    );
-}
-
-/// The Privacy Policy uses Markdown tables; table rendering must be on.
-#[tokio::test]
-async fn privacy_policy_renders_markdown_tables() {
-    let resp = app()
-        .oneshot(Request::get("/privacy").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    let body = body_text(resp).await;
-    assert!(
-        body.contains("<table>") && body.contains("Lawful basis"),
-        "privacy policy should render its data table"
     );
 }
 

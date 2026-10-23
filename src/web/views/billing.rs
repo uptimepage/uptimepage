@@ -108,6 +108,8 @@ pub struct BillingPage {
     /// The cadence the live subscription bills on, if any.
     pub current_interval: Option<&'static str>,
     pub yearly_on_sale: bool,
+    /// Always set: a billing provider does not boot without it.
+    pub terms_url: String,
 }
 
 /// `GET /settings/billing`: where the account stands and what the owner can
@@ -201,6 +203,7 @@ pub async fn billing_page(
         interval: interval.as_db_str(),
         current_interval: sub.interval.map(Interval::as_db_str),
         yearly_on_sale,
+        terms_url: state.cfg.legal.terms_url.clone(),
     }
     .into_response())
 }

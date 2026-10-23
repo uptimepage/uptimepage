@@ -65,6 +65,9 @@ pub struct LoginPage {
     /// Set when sign-in leads to billing, so the card says checkout comes
     /// next instead of promising a free account.
     pub checkout: Option<CheckoutNext>,
+    /// Signup records the version of each policy linked here, and only those.
+    pub terms_url: String,
+    pub privacy_url: String,
 }
 
 /// The plans the pricing page links to checkout.
@@ -168,6 +171,8 @@ pub async fn login(
         ready: login_ready(&state).await,
         analytics: crate::analytics::website_id(&state.cfg.auth.public_base_url),
         checkout,
+        terms_url: state.cfg.legal.terms_url.clone(),
+        privacy_url: state.cfg.legal.privacy_url.clone(),
     }
     .into_response()
 }
@@ -1558,6 +1563,8 @@ mod tests {
             ready: true,
             analytics: None,
             checkout: None,
+            terms_url: String::new(),
+            privacy_url: String::new(),
         }
     }
 
@@ -1813,11 +1820,22 @@ mod tests {
 
     #[test]
     fn the_signup_page_shows_what_signup_records() {
-        let html = login_page(true, false, false, false, false, true)
-            .render()
-            .unwrap();
-        assert!(html.contains(r#"href="/terms""#));
-        assert!(html.contains(r#"href="/privacy""#));
+        let mut page = login_page(true, false, false, false, false, true);
+        assert!(!page.render().unwrap().contains("you agree"));
+
+        page.terms_url = "https://example.test/terms".into();
+        let html = page.render().unwrap();
+        assert!(html.contains(r#"agree to our <a href="https://example.test/terms""#));
+        assert!(
+            html.contains("Terms</a>."),
+            "no stray space before the period"
+        );
+        assert!(!html.contains("Privacy Policy"));
+
+        page.privacy_url = "https://example.test/privacy".into();
+        let html = page.render().unwrap();
+        assert!(html.contains(r#"href="https://example.test/terms""#));
+        assert!(html.contains(r#"href="https://example.test/privacy""#));
     }
 
     #[test]

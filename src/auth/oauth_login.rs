@@ -201,6 +201,7 @@ pub async fn upsert_identity_and_signup_org(
     identity: &RemoteIdentity,
     admission: crate::security::Admission,
     signup_org: SignupOrg,
+    consent: crate::domain::consent::Consent<'_>,
 ) -> Result<ResolvedIdentity> {
     let mut tx = pool.begin().await.context("phase C: begin tx")?;
 
@@ -357,8 +358,8 @@ pub async fn upsert_identity_and_signup_org(
     )
     .bind(email)
     .bind(identity.display_name.as_deref())
-    .bind(crate::domain::consent::TERMS_VERSION)
-    .bind(crate::domain::consent::PRIVACY_VERSION)
+    .bind(consent.terms)
+    .bind(consent.privacy)
     .bind(email_risk.map(crate::security::EmailRisk::as_db_str))
     .fetch_one(&mut *tx)
     .await

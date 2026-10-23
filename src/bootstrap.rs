@@ -12,6 +12,7 @@ use crate::auth::scope::ScopeSet;
 use crate::auth::url::token_link;
 use crate::auth::{api_tokens, magic_link};
 use crate::config::AppConfig;
+use crate::domain::consent::Consent;
 use crate::domain::{OrgId, UserId, generate_signup_slug};
 use crate::error::{AppError, Result};
 use crate::quotas::QuotaService;
@@ -79,8 +80,9 @@ async fn ensure_owner_org(
     email: &str,
     org_name: &str,
 ) -> Result<(UserId, OrgId)> {
-    // The operator's own address from config, not a stranger's from a form.
-    let (user, _) = users::create_invited_user(pool, email, None).await?;
+    // The operator's own address from config, not a stranger's from a form,
+    // and no page showed them a policy.
+    let (user, _) = users::create_invited_user(pool, email, None, Consent::default()).await?;
 
     let org = match orgs::oldest_membership_for_user(pool, user).await? {
         Some(existing) => existing,

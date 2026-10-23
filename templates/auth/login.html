@@ -181,12 +181,15 @@
 
     {# Signup records terms_version and privacy_version, so the documents have
        to be on the page that creates the account. #}
+    {% if !terms_url.is_empty() || !privacy_url.is_empty() %}
     <p class="text-center text-xs text-muted">
         By continuing you agree to our
-        <a href="/terms" class="underline decoration-dotted underline-offset-2">Terms</a>
-        and
-        <a href="/privacy" class="underline decoration-dotted underline-offset-2">Privacy Policy</a>.
+        {%- if !terms_url.is_empty() %} <a href="{{ terms_url }}" class="underline decoration-dotted underline-offset-2">Terms</a>{% endif -%}
+        {%- if !terms_url.is_empty() && !privacy_url.is_empty() %} and{% endif -%}
+        {%- if !privacy_url.is_empty() %} <a href="{{ privacy_url }}" class="underline decoration-dotted underline-offset-2">Privacy Policy</a>{% endif -%}
+        .
     </p>
+    {% endif %}
 
     {% if let Some(inv) = invitation_hint %}
     <p class="alert-card alert-card--muted text-xs">

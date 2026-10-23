@@ -1693,7 +1693,7 @@ async fn a_checkout_asks_after_the_last_subscription_before_selling_another() {
     );
     let err = h
         .billing
-        .checkout(&h.pool, &h.quotas, account, "pro", Interval::Month)
+        .checkout(&h.pool, &h.quotas, account, "pro", Interval::Month, "v2")
         .await
         .expect_err("a live subscription is not doubled");
     assert!(
@@ -1746,7 +1746,7 @@ async fn a_checkout_asks_after_the_last_subscription_before_selling_another() {
             .insert(sub.clone(), snapshot(&sub, status, TEAM_MONTH, Utc::now()));
         let err = h
             .billing
-            .checkout(&h.pool, &h.quotas, account, "pro", Interval::Month)
+            .checkout(&h.pool, &h.quotas, account, "pro", Interval::Month, "v2")
             .await
             .expect_err("still runs at the provider");
         assert!(err.to_string().contains(way_out), "{status:?}: {err}");
@@ -1755,7 +1755,7 @@ async fn a_checkout_asks_after_the_last_subscription_before_selling_another() {
     h.provider.fetch_fails.store(true, Ordering::Relaxed);
     let err = h
         .billing
-        .checkout(&h.pool, &h.quotas, account, "pro", Interval::Month)
+        .checkout(&h.pool, &h.quotas, account, "pro", Interval::Month, "v2")
         .await
         .expect_err("no answer, no sale");
     assert!(err.to_string().contains("no response"), "{err}");
@@ -1776,7 +1776,7 @@ async fn a_checkout_asks_after_the_last_subscription_before_selling_another() {
         snapshot(&sub, SubscriptionStatus::Canceled, TEAM_MONTH, Utc::now()),
     );
     h.billing
-        .checkout(&h.pool, &h.quotas, account, "pro", Interval::Month)
+        .checkout(&h.pool, &h.quotas, account, "pro", Interval::Month, "v2")
         .await
         .expect("checkout");
     assert_eq!(row(&h.pool, account).await.status, BillingStatus::Canceled);
@@ -1792,7 +1792,7 @@ async fn a_checkout_asks_after_the_last_subscription_before_selling_another() {
     // One the provider no longer knows charges nobody.
     h.provider.subscriptions.lock().unwrap().remove(&sub);
     h.billing
-        .checkout(&h.pool, &h.quotas, account, "pro", Interval::Month)
+        .checkout(&h.pool, &h.quotas, account, "pro", Interval::Month, "v2")
         .await
         .expect("checkout after the provider lost it");
 }

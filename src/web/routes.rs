@@ -20,6 +20,7 @@ pub fn routes(state: AppState) -> Router {
     let cfg = &state.cfg;
     crate::templates::filters::set_support_ui(cfg.email.support_enabled());
     crate::templates::filters::set_billing_ui(state.billing.is_some());
+    crate::templates::filters::set_legal_links(&cfg.legal);
     let mut r = Router::new()
         .route("/", get(views::dashboard::root))
         .route("/targets", get(views::targets_list::index))
@@ -212,13 +213,6 @@ pub fn routes(state: AppState) -> Router {
             "/web/partials/settings/api-tokens",
             get(views::auth::settings::api_tokens_partial),
         )
-        .route("/terms", get(views::legal::terms))
-        .route("/privacy", get(views::legal::privacy))
-        .route("/cookies", get(views::legal::cookies))
-        .route("/refund-policy", get(views::legal::refund_policy))
-        .route("/impressum", get(views::legal::impressum))
-        .route("/abuse-policy", get(views::legal::abuse_policy))
-        .route("/security-policy", get(views::legal::security_policy))
         .route("/licenses", get(views::legal::licenses))
         .route(
             crate::security::disclosure::PATH,
@@ -402,6 +396,27 @@ pub fn routes(state: AppState) -> Router {
                 async move { Redirect::temporary(&catalog) }
             }),
         );
+    }
+
+    // The app once served these itself, and provider consent screens and old
+    // mail still link them.
+    const FORMER_POLICY_PATHS: [(&str, &str); 7] = [
+        ("terms_url", "/terms"),
+        ("privacy_url", "/privacy"),
+        ("refund_url", "/refund-policy"),
+        ("cookies_url", "/cookies"),
+        ("impressum_url", "/impressum"),
+        ("abuse_url", "/abuse-policy"),
+        ("security_policy_url", "/security-policy"),
+    ];
+    for (key, _, url) in cfg.legal.policies() {
+        let path = FORMER_POLICY_PATHS
+            .iter()
+            .find_map(|(k, path)| (*k == key).then_some(*path));
+        if let Some(path) = path.filter(|_| !url.is_empty()) {
+            let to = url.to_owned();
+            r = r.route(path, get(move || async move { Redirect::permanent(&to) }));
+        }
     }
 
     assets::mount_static(r)

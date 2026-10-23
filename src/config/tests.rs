@@ -719,3 +719,69 @@ fn a_billing_provider_requires_plan_enforcement() {
     let other = cfg.validate_billing().map_err(|e| e.to_string());
     assert!(!format!("{other:?}").contains("enforce_plan_features"));
 }
+
+#[test]
+fn a_policy_url_and_its_version_go_together() {
+    let mut cfg = AppConfig::load().expect("load");
+    cfg.legal = LegalConfig::default();
+    assert!(
+        cfg.validate_legal().is_ok(),
+        "no policies is a valid deployment"
+    );
+
+    cfg.legal.terms_url = "https://example.test/terms".into();
+    assert!(
+        cfg.validate_legal().is_err(),
+        "a page without a version records nothing"
+    );
+    cfg.legal.terms_version = "v2".into();
+    assert!(cfg.validate_legal().is_ok());
+
+    cfg.legal.terms_version = " v2".into();
+    assert!(cfg.validate_legal().is_err(), "recorded verbatim");
+    cfg.legal.terms_version = "v2".into();
+
+    cfg.legal.privacy_version = "v2".into();
+    assert!(cfg.validate_legal().is_err(), "a version without its page");
+}
+
+#[test]
+fn a_policy_url_is_absolute() {
+    let mut cfg = AppConfig::load().expect("load");
+    cfg.legal = LegalConfig::default();
+    for (url, ok) in [
+        ("https://example.test/impressum", true),
+        ("http://lvh.me:8080/impressum", true),
+        ("/impressum", false),
+        ("mailto:legal@example.test", false),
+    ] {
+        cfg.legal.impressum_url = url.into();
+        assert_eq!(cfg.validate_legal().is_ok(), ok, "{url:?}");
+    }
+}
+
+#[test]
+fn consent_names_only_the_policies_shown() {
+    let legal = LegalConfig {
+        terms_url: "https://example.test/terms".into(),
+        terms_version: "v2".into(),
+        ..LegalConfig::default()
+    };
+    assert_eq!(
+        legal.consent(),
+        crate::domain::consent::Consent {
+            terms: Some("v2"),
+            privacy: None,
+        }
+    );
+}
+
+#[test]
+fn a_billing_provider_requires_terms_to_accept() {
+    let mut cfg = AppConfig::load().expect("load");
+    cfg.billing.provider = "paddle".into();
+    cfg.quotas.enforce_plan_features = true;
+    cfg.legal = LegalConfig::default();
+    let refused = cfg.validate_billing().expect_err("no terms");
+    assert!(refused.to_string().contains("legal.terms_url"));
+}

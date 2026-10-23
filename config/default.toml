@@ -454,6 +454,22 @@ blog_enabled = true
 # host redirects /.well-known/api-catalog there. Empty when there is none.
 origin = ""
 
+[legal]
+# Your own policy pages, as absolute URLs. Each one set is linked in the app
+# footer; terms and privacy are also shown at signup, and their versions are
+# recorded on every account created while they are set. Leave a URL empty to
+# publish no such policy: nothing links to it and nothing is recorded. A
+# billing provider requires terms_url.
+terms_url = ""
+privacy_url = ""
+cookies_url = ""
+refund_url = ""
+impressum_url = ""
+abuse_url = ""
+security_policy_url = ""
+terms_version = ""
+privacy_version = ""
+
 [mcp]
 # Read-only Model Context Protocol server at /mcp (Streamable HTTP). Off by
 # default; enable per deployment once the dedicated `mcp.` host + Caddy route

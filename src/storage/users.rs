@@ -6,6 +6,7 @@ use anyhow::Context;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::domain::consent::Consent;
 use crate::domain::{AppTheme, DisplayPrefs, OrgId, TimeFormat, UserId};
 use crate::error::{AppError, Result};
 use crate::security::EmailRisk;
@@ -110,6 +111,7 @@ pub async fn create_signup_user(
     pool: &PgPool,
     email: &str,
     risk: Option<EmailRisk>,
+    consent: Consent<'_>,
 ) -> Result<(UserId, bool)> {
     let mut tx = pool.begin().await.context("create_signup_user: begin")?;
     let inserted: Option<(Uuid,)> = sqlx::query_as(
@@ -119,8 +121,8 @@ pub async fn create_signup_user(
          RETURNING id",
     )
     .bind(email)
-    .bind(crate::domain::consent::TERMS_VERSION)
-    .bind(crate::domain::consent::PRIVACY_VERSION)
+    .bind(consent.terms)
+    .bind(consent.privacy)
     .bind(risk.map(EmailRisk::as_db_str))
     .fetch_optional(&mut *tx)
     .await
@@ -156,6 +158,7 @@ pub async fn create_invited_user(
     pool: &PgPool,
     email: &str,
     risk: Option<EmailRisk>,
+    consent: Consent<'_>,
 ) -> Result<(UserId, bool)> {
     let inserted: Option<(Uuid,)> = sqlx::query_as(
         "INSERT INTO users (email, email_verified_at, terms_version, privacy_version, email_risk) \
@@ -164,8 +167,8 @@ pub async fn create_invited_user(
          RETURNING id",
     )
     .bind(email)
-    .bind(crate::domain::consent::TERMS_VERSION)
-    .bind(crate::domain::consent::PRIVACY_VERSION)
+    .bind(consent.terms)
+    .bind(consent.privacy)
     .bind(risk.map(EmailRisk::as_db_str))
     .fetch_optional(pool)
     .await

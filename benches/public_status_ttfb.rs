@@ -133,16 +133,11 @@ fn ok_result(target_id: Uuid, org_id: Uuid, secs_ago: i64) -> CheckResult {
 
 async fn make_user(pool: &PgPool) -> UserId {
     let email = format!("ttfb-{}@bench.example", Uuid::now_v7());
-    let (id,): (Uuid,) = sqlx::query_as(
-        r#"INSERT INTO users (email, terms_version, privacy_version)
-           VALUES ($1, $2, $3) RETURNING id"#,
-    )
-    .bind(&email)
-    .bind(uptimepage::domain::consent::TERMS_VERSION)
-    .bind(uptimepage::domain::consent::PRIVACY_VERSION)
-    .fetch_one(pool)
-    .await
-    .expect("seed user");
+    let (id,): (Uuid,) = sqlx::query_as(r#"INSERT INTO users (email) VALUES ($1) RETURNING id"#)
+        .bind(&email)
+        .fetch_one(pool)
+        .await
+        .expect("seed user");
     UserId(id)
 }
 

@@ -127,6 +127,46 @@ async fn oauth_state_consume_rejects_expired() {
     drop_pg(&name).await;
 }
 
+/// An OAuth signup records what the login page showed, like every other way in.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn an_oauth_signup_records_the_policies_shown() {
+    let Some((db_url, name)) = fresh_pg().await else {
+        return;
+    };
+    let pool = open_pool(&db_url).await;
+    MIGRATOR.run(&pool).await.expect("migrate");
+    let identity = RemoteIdentity {
+        provider_user_id: "777".into(),
+        provider_username: None,
+        verified_email: Some("consent@example.test".into()),
+        display_name: None,
+    };
+    let resolved = oauth_login::upsert_identity_and_signup_org(
+        &pool,
+        OauthProvider::Github,
+        &identity,
+        uptimepage::security::Admission::Clear,
+        oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent {
+            terms: Some("v7"),
+            privacy: Some("v3"),
+        },
+    )
+    .await
+    .expect("upsert");
+    let recorded: (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT terms_version, privacy_version FROM users WHERE id = $1")
+            .bind(resolved.user_id.0)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(recorded, (Some("v7".into()), Some("v3".into())));
+
+    pool.close().await;
+    drop_pg(&name).await;
+}
+
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
 async fn upsert_creates_user_and_signup_org_for_new_identity() {
@@ -148,6 +188,7 @@ async fn upsert_creates_user_and_signup_org_for_new_identity() {
         &identity,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("upsert");
@@ -171,6 +212,7 @@ async fn upsert_creates_user_and_signup_org_for_new_identity() {
         &identity,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("re-upsert");
@@ -211,6 +253,7 @@ async fn upsert_links_existing_user_on_email_match() {
         &identity,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("upsert");
@@ -277,6 +320,7 @@ async fn upsert_reports_pending_deletion_without_restoring_on_reauth() {
         &identity,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("soft-deleted identity resolves on re-auth");
@@ -330,6 +374,7 @@ async fn upsert_links_a_second_provider_and_reports_it_for_the_notice() {
         &github_id,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("github signup");
@@ -350,6 +395,7 @@ async fn upsert_links_a_second_provider_and_reports_it_for_the_notice() {
         &google_id,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("google link");
@@ -373,6 +419,7 @@ async fn upsert_links_a_second_provider_and_reports_it_for_the_notice() {
         &google_id,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("google re-auth");
@@ -405,6 +452,7 @@ async fn an_identity_on_file_outranks_a_matching_address() {
         },
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("owner signup");
@@ -429,6 +477,7 @@ async fn an_identity_on_file_outranks_a_matching_address() {
         },
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("identity match");
@@ -475,6 +524,7 @@ async fn upsert_matches_tombstoned_user_by_email_on_new_provider() {
         &github_id,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("github signup");
@@ -496,6 +546,7 @@ async fn upsert_matches_tombstoned_user_by_email_on_new_provider() {
         &google_id,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("google email-match");
@@ -536,6 +587,7 @@ async fn link_adds_a_second_provider_to_a_signed_in_account() {
         &github_id,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("github signup");
@@ -577,6 +629,7 @@ async fn link_adds_a_second_provider_to_a_signed_in_account() {
         &gitlab_id,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("gitlab sign-in");
@@ -608,6 +661,7 @@ async fn link_refuses_a_provider_account_that_opens_someone_else() {
         &mk("a-1", "a@example.test"),
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("a signup");
@@ -617,6 +671,7 @@ async fn link_refuses_a_provider_account_that_opens_someone_else() {
         &mk("b-1", "b@example.test"),
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("b signup");
@@ -666,6 +721,7 @@ async fn unlink_holds_the_last_way_in_only_when_email_cannot_open_it() {
         &github_id,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("github signup");
@@ -764,6 +820,7 @@ async fn unlink_without_a_subject_cannot_empty_the_account() {
         &first,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("github signup");
@@ -849,6 +906,7 @@ async fn unlink_reports_a_method_that_is_not_on_the_account() {
         &github_id,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("github signup");
@@ -913,6 +971,7 @@ async fn upsert_reports_pending_deletion_on_google_reauth() {
         &identity,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("google re-auth resolves");
@@ -1293,6 +1352,7 @@ async fn a_disabled_provider_is_a_row_not_a_way_in() {
         },
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("signup");
@@ -1367,6 +1427,7 @@ async fn signup_and_a_later_link_both_leave_a_trail() {
         },
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("signup");
@@ -1491,6 +1552,7 @@ async fn deferred_signup_leaves_an_invitee_with_only_the_joined_org() {
         &identity,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Defer,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("upsert");
@@ -1524,6 +1586,7 @@ async fn deferred_signup_leaves_an_invitee_with_only_the_joined_org() {
         &identity,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Defer,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("re-upsert");
@@ -1555,6 +1618,7 @@ async fn deferred_signup_gets_a_personal_org_when_the_invitation_does_not_land()
         &identity,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Defer,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("upsert");
@@ -1632,6 +1696,7 @@ async fn a_user_removed_from_their_signup_org_gets_a_new_personal_org() {
         &identity,
         uptimepage::security::Admission::Clear,
         oauth_login::SignupOrg::Create,
+        uptimepage::domain::consent::Consent::default(),
     )
     .await
     .expect("upsert");

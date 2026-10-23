@@ -653,8 +653,13 @@ async fn bootstrap_invited_user(
     if let Some(risk) = risk {
         crate::security::email_policy::record("invite_accept", "flagged", risk);
     }
-    let (user_id, created) =
-        crate::storage::users::create_invited_user(pool, &row.email, risk).await?;
+    let (user_id, created) = crate::storage::users::create_invited_user(
+        pool,
+        &row.email,
+        risk,
+        state.cfg.legal.consent(),
+    )
+    .await?;
     if created {
         tracing::info!(user_id = %user_id.0, via = "invitation", "magic-link bootstrap created account");
     }
@@ -705,8 +710,13 @@ async fn bootstrap_unknown_email(
             return Ok(None);
         }
     };
-    let (user_id, created) =
-        crate::storage::users::create_signup_user(state.require_db()?, &row.email, risk).await?;
+    let (user_id, created) = crate::storage::users::create_signup_user(
+        state.require_db()?,
+        &row.email,
+        risk,
+        state.cfg.legal.consent(),
+    )
+    .await?;
     if created {
         tracing::info!(user_id = %user_id.0, via = "open_signup", "magic-link bootstrap created account");
     }

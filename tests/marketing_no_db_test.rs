@@ -1312,6 +1312,13 @@ async fn legal_pages_render_without_db() {
     }
 }
 
+/// The Privacy Policy's data table is Markdown; table rendering must be on.
+#[tokio::test]
+async fn the_privacy_policy_renders_its_data_table() {
+    let (_, body, _) = get("/privacy").await;
+    assert!(body.contains("<table>") && body.contains("Lawful basis"));
+}
+
 #[tokio::test]
 async fn sitemap_lists_legal_routes() {
     let (status, body, _) = get("/sitemap.xml").await;

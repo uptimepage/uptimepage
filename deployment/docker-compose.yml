@@ -238,6 +238,17 @@ services:
       # Plans gate features only where someone sells them; the self-host
       # operator owns the plans rows.
       UPTIMEPAGE_QUOTAS__ENFORCE_PLAN_FEATURES: ${UPTIMEPAGE_QUOTAS__ENFORCE_PLAN_FEATURES:-false}
+      # The operator's own policies; each one left empty is neither linked nor
+      # recorded as accepted at signup.
+      UPTIMEPAGE_LEGAL__TERMS_URL: ${UPTIMEPAGE_LEGAL__TERMS_URL:-}
+      UPTIMEPAGE_LEGAL__PRIVACY_URL: ${UPTIMEPAGE_LEGAL__PRIVACY_URL:-}
+      UPTIMEPAGE_LEGAL__COOKIES_URL: ${UPTIMEPAGE_LEGAL__COOKIES_URL:-}
+      UPTIMEPAGE_LEGAL__REFUND_URL: ${UPTIMEPAGE_LEGAL__REFUND_URL:-}
+      UPTIMEPAGE_LEGAL__IMPRESSUM_URL: ${UPTIMEPAGE_LEGAL__IMPRESSUM_URL:-}
+      UPTIMEPAGE_LEGAL__ABUSE_URL: ${UPTIMEPAGE_LEGAL__ABUSE_URL:-}
+      UPTIMEPAGE_LEGAL__SECURITY_POLICY_URL: ${UPTIMEPAGE_LEGAL__SECURITY_POLICY_URL:-}
+      UPTIMEPAGE_LEGAL__TERMS_VERSION: ${UPTIMEPAGE_LEGAL__TERMS_VERSION:-}
+      UPTIMEPAGE_LEGAL__PRIVACY_VERSION: ${UPTIMEPAGE_LEGAL__PRIVACY_VERSION:-}
       # Read-only + write MCP server for LLM connectors. Deploy-managed:
       # deploy.yml upserts UPTIMEPAGE_MCP_ENABLED / _OAUTH_ENABLED from the repo
       # variables MCP_ENABLED / MCP_OAUTH_ENABLED (default off here when unset).

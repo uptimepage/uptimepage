@@ -376,11 +376,12 @@ The single binary serves both the `/api/v1/*` JSON surface and a server-rendered
 
 ## Legal
 
-A running instance serves its policies at `/terms`, `/privacy`, `/cookies`,
-`/impressum`, `/abuse-policy`, `/security-policy`, and an RFC 9116
-`/.well-known/security.txt`. The source documents are in
-[`docs/legal/`](docs/legal/). GDPR self-service (data export, account
-deletion, recovery) lives under `/settings/account`.
+Policies belong to whoever runs the instance. Point the `[legal]` URLs at your
+own terms, privacy policy and the rest: the app links each one you set, shows
+terms and privacy at signup and records their versions on new accounts, and
+links nothing you leave empty. See [docs/configuration.md](docs/configuration.md).
+GDPR self-service (data export, account deletion, recovery) lives under
+`/settings/account`.
 
 ## License
 

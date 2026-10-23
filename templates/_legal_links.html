@@ -1,13 +1,4 @@
-<a href="/terms" class="hover:text-body">Terms</a>
+{% for link in ""|legal_links %}
+<a href="{{ link.url }}" class="hover:text-body">{{ link.label }}</a>
 <span class="mx-1">·</span>
-<a href="/privacy" class="hover:text-body">Privacy</a>
-<span class="mx-1">·</span>
-<a href="/refund-policy" class="hover:text-body">Refunds</a>
-<span class="mx-1">·</span>
-<a href="/cookies" class="hover:text-body">Cookies</a>
-<span class="mx-1">·</span>
-<a href="/impressum" class="hover:text-body">Impressum</a>
-<span class="mx-1">·</span>
-<a href="/abuse-policy" class="hover:text-body">Abuse</a>
-<span class="mx-1">·</span>
-<a href="/security-policy" class="hover:text-body">Security</a>
+{% endfor %}

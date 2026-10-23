@@ -66,9 +66,14 @@ async fn seeds_owner_org_and_a_usable_link() {
     assert_eq!(user_count(&pool).await, 1);
     assert_eq!(link_count(&pool).await, 1);
 
-    let (user, created) = users::create_invited_user(&pool, "owner@example.test", None)
-        .await
-        .expect("lookup owner");
+    let (user, created) = users::create_invited_user(
+        &pool,
+        "owner@example.test",
+        None,
+        uptimepage::domain::consent::Consent::default(),
+    )
+    .await
+    .expect("lookup owner");
     assert!(!created, "seeding must have created the owner already");
 
     let org = orgs_store::oldest_membership_for_user(&pool, user)
@@ -148,9 +153,14 @@ async fn existing_unrelated_user_blocks_seeding() {
     let Some((pool, name)) = fresh_pool().await else {
         return;
     };
-    users::create_invited_user(&pool, "someone@example.test", None)
-        .await
-        .expect("pre-existing user");
+    users::create_invited_user(
+        &pool,
+        "someone@example.test",
+        None,
+        uptimepage::domain::consent::Consent::default(),
+    )
+    .await
+    .expect("pre-existing user");
 
     seed_first_owner(&pool, &cfg_with("owner@example.test"))
         .await
@@ -376,9 +386,14 @@ async fn signup_orgs_ignore_the_boot_seeding_default() {
     let Some((pool, name)) = fresh_pool().await else {
         return;
     };
-    let (user, _) = users::create_invited_user(&pool, "signup@example.test", None)
-        .await
-        .expect("user");
+    let (user, _) = users::create_invited_user(
+        &pool,
+        "signup@example.test",
+        None,
+        uptimepage::domain::consent::Consent::default(),
+    )
+    .await
+    .expect("user");
 
     let mut tx = pool.begin().await.unwrap();
     let org = orgs_store::create_signup_org_with_owner_in_tx(&mut tx, user, "signup-co", "Signup")

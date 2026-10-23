@@ -95,6 +95,34 @@ mod static_refs {
         Ok(*SUPPORT_UI.get().unwrap_or(&false))
     }
 
+    pub struct LegalLink {
+        pub label: &'static str,
+        pub url: String,
+    }
+
+    static LEGAL_LINKS: std::sync::OnceLock<Vec<LegalLink>> = std::sync::OnceLock::new();
+
+    /// Set once at startup from `[legal]`, so a deployment links only the
+    /// policies it publishes.
+    pub fn set_legal_links(legal: &crate::config::LegalConfig) {
+        let links = legal
+            .policies()
+            .into_iter()
+            .filter(|(_, _, url)| !url.is_empty())
+            .map(|(_, label, url)| LegalLink {
+                label,
+                url: url.to_owned(),
+            })
+            .collect();
+        let _ = LEGAL_LINKS.set(links);
+    }
+
+    /// `{% for link in ""|legal_links %}` → the operator's policy links.
+    #[askama::filter_fn]
+    pub fn legal_links(_: &str, _: &dyn askama::Values) -> askama::Result<&'static [LegalLink]> {
+        Ok(LEGAL_LINKS.get().map_or(&[], Vec::as_slice))
+    }
+
     static BILLING_UI: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
     /// Set once at startup from whether a payment provider is configured, so

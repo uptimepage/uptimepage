@@ -10,7 +10,7 @@ use url::Url;
 
 use super::lifecycle::{Billing, cancel_despite_refusal, smaller};
 use super::provider::{ChangeTiming, CheckoutRequest, SubscriptionSnapshot, SubscriptionStatus};
-use crate::domain::{AccountId, BillingStatus, Interval, Subscription, consent};
+use crate::domain::{AccountId, BillingStatus, Interval, Subscription};
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::quotas::QuotaService;
@@ -35,6 +35,7 @@ impl Billing {
         account: AccountId,
         plan_id: &str,
         interval: Interval,
+        terms_version: &str,
     ) -> Result<Url> {
         let sub = self.subscription(pool, account).await?;
         let refused = match self.lingering(pool, quotas, &sub).await? {
@@ -73,7 +74,7 @@ impl Billing {
             json!({
                 "plan": plan_id,
                 "interval": interval.as_db_str(),
-                "terms": consent::TERMS_VERSION,
+                "terms": terms_version,
             }),
         )
         .await?;
