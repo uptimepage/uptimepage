@@ -92,28 +92,3 @@ fn non_reserved_subdomain_rejected() {
     let err = cfg.validate_marketing().expect_err("must reject");
     assert!(err.to_string().contains("reserved_subdomains"));
 }
-
-#[test]
-fn parent_cookie_domain_rejected() {
-    // `.example.com` rides along to the apex marketing host and
-    // fractures the CDN cache. Host-only is mandatory once marketing is
-    // enabled.
-    let mut cfg = valid_cfg();
-    cfg.auth.session.cookie_domain = ".example.com".into();
-    let err = cfg.validate_marketing().expect_err("must reject");
-    assert!(err.to_string().contains("cookie_domain"));
-}
-
-#[test]
-fn host_only_cookie_passes() {
-    let mut cfg = valid_cfg();
-    cfg.auth.session.cookie_domain = String::new();
-    cfg.validate_marketing().expect("host-only ok");
-}
-
-#[test]
-fn disjoint_cookie_domain_passes() {
-    let mut cfg = valid_cfg();
-    cfg.auth.session.cookie_domain = ".other-zone.net".into();
-    cfg.validate_marketing().expect("disjoint zone ok");
-}

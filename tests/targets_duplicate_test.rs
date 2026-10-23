@@ -401,7 +401,8 @@ async fn a_heartbeat_copy_gets_its_own_ping_url() {
 #[ignore]
 async fn without_on_call_the_copies_alert_their_channels_only() {
     // The hosted service sells on-call by plan; a free account has none.
-    let Some(rig) = Rig::with("dup_oncall", |cfg| cfg.marketing.enabled = true).await else {
+    let Some(rig) = Rig::with("dup_oncall", |cfg| cfg.quotas.enforce_plan_features = true).await
+    else {
         return;
     };
     let source = rig

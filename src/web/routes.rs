@@ -388,12 +388,11 @@ pub fn routes(state: AppState) -> Router {
     r = r.merge(crate::oauth::routes(cfg));
 
     // This host serves the API the catalog describes, so an agent handed an
-    // API URL looks for it here. The document itself stays single-sourced on
-    // the marketing host.
-    if cfg.marketing.enabled && !cfg.marketing.canonical_origin.is_empty() {
+    // API URL looks for it here. The document itself lives on the site.
+    if !cfg.site.origin.is_empty() {
         let catalog = format!(
             "{}{}",
-            cfg.marketing.canonical_origin.trim_end_matches('/'),
+            cfg.site.origin,
             crate::marketing::discovery::CATALOG_PATH
         );
         r = r.route(

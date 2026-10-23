@@ -560,7 +560,8 @@ async fn a_plan_without_sms_refuses_a_text_message_channel() {
     let Some(pool) = pg_pool_from_env().await else {
         return;
     };
-    let (app, _org) = build_test_app_with_pg_store(pool, |cfg| cfg.marketing.enabled = true).await;
+    let (app, _org) =
+        build_test_app_with_pg_store(pool, |cfg| cfg.quotas.enforce_plan_features = true).await;
 
     let resp = app
         .oneshot(
@@ -618,7 +619,8 @@ async fn a_plan_without_sms_refuses_a_patch_into_a_text_message_channel() {
     let Some(pool) = pg_pool_from_env().await else {
         return;
     };
-    let (app, _org) = build_test_app_with_pg_store(pool, |cfg| cfg.marketing.enabled = true).await;
+    let (app, _org) =
+        build_test_app_with_pg_store(pool, |cfg| cfg.quotas.enforce_plan_features = true).await;
 
     let created = app
         .clone()
@@ -676,7 +678,8 @@ async fn a_self_hosted_install_may_add_a_text_message_channel() {
     let Some(pool) = pg_pool_from_env().await else {
         return;
     };
-    let (app, _org) = build_test_app_with_pg_store(pool, |cfg| cfg.marketing.enabled = false).await;
+    let (app, _org) =
+        build_test_app_with_pg_store(pool, |cfg| cfg.quotas.enforce_plan_features = false).await;
 
     let resp = app
         .oneshot(sms_create_request(&unique_slug("sms")))
@@ -699,7 +702,7 @@ async fn an_existing_text_message_channel_stays_editable_after_a_downgrade() {
     // One org on a plan without SMS, holding a channel from when it had one:
     // seeded directly, because the create path is exactly what now refuses it.
     let (app, org) = build_test_app_with_pg_store(pool.clone(), |cfg| {
-        cfg.marketing.enabled = true;
+        cfg.quotas.enforce_plan_features = true;
     })
     .await;
     let name = unique_slug("sms");
@@ -760,7 +763,8 @@ async fn a_plan_without_sms_refuses_a_test_send_of_one() {
     };
     // The rehearsal for a create the plan would refuse has to refuse too, or
     // the entitlement is decorative: the send goes out all the same.
-    let (app, _org) = build_test_app_with_pg_store(pool, |cfg| cfg.marketing.enabled = true).await;
+    let (app, _org) =
+        build_test_app_with_pg_store(pool, |cfg| cfg.quotas.enforce_plan_features = true).await;
 
     let resp = app
         .oneshot(
@@ -789,7 +793,8 @@ async fn a_patch_to_an_unknown_channel_is_not_found_not_forbidden() {
     };
     // The gate must not answer ahead of the lookup, or a caller learns the
     // plan from an id that was never theirs.
-    let (app, _org) = build_test_app_with_pg_store(pool, |cfg| cfg.marketing.enabled = true).await;
+    let (app, _org) =
+        build_test_app_with_pg_store(pool, |cfg| cfg.quotas.enforce_plan_features = true).await;
 
     let resp = app
         .oneshot(
@@ -891,7 +896,8 @@ async fn a_plan_without_on_call_refuses_a_new_escalation_policy() {
     // The test app's org lands on the seeded default, which 060 left without
     // on-call; the gate must answer before the cap does, so the customer is
     // told the tier is the reason rather than being shown a limit of zero.
-    let (app, _org) = build_test_app_with_pg_store(pool, |cfg| cfg.marketing.enabled = true).await;
+    let (app, _org) =
+        build_test_app_with_pg_store(pool, |cfg| cfg.quotas.enforce_plan_features = true).await;
 
     let resp = app
         .oneshot(escalation_policy_request())
@@ -909,7 +915,8 @@ async fn a_plan_without_on_call_refuses_a_new_schedule() {
     let Some(pool) = pg_pool_from_env().await else {
         return;
     };
-    let (app, _org) = build_test_app_with_pg_store(pool, |cfg| cfg.marketing.enabled = true).await;
+    let (app, _org) =
+        build_test_app_with_pg_store(pool, |cfg| cfg.quotas.enforce_plan_features = true).await;
 
     let resp = app
         .oneshot(
@@ -941,7 +948,8 @@ async fn clearing_an_escalation_binding_is_allowed_without_the_feature() {
     let Some(pool) = pg_pool_from_env().await else {
         return;
     };
-    let (app, _org) = build_test_app_with_pg_store(pool, |cfg| cfg.marketing.enabled = true).await;
+    let (app, _org) =
+        build_test_app_with_pg_store(pool, |cfg| cfg.quotas.enforce_plan_features = true).await;
 
     // Unwiring is never new coverage, so an org that has lost the tier can
     // still take itself off a ladder it is already on.
@@ -969,7 +977,8 @@ async fn resending_the_current_binding_is_allowed_without_the_feature() {
         return;
     };
     let (app, org) =
-        build_test_app_with_pg_store(pool.clone(), |cfg| cfg.marketing.enabled = true).await;
+        build_test_app_with_pg_store(pool.clone(), |cfg| cfg.quotas.enforce_plan_features = true)
+            .await;
     let (policy,): (Uuid,) = sqlx::query_as(
         "INSERT INTO escalation_policies (org_id, name) VALUES ($1, 'ladder') RETURNING id",
     )
@@ -1016,7 +1025,8 @@ async fn a_self_hosted_install_may_build_an_on_call_ladder() {
     let Some(pool) = pg_pool_from_env().await else {
         return;
     };
-    let (app, _org) = build_test_app_with_pg_store(pool, |cfg| cfg.marketing.enabled = false).await;
+    let (app, _org) =
+        build_test_app_with_pg_store(pool, |cfg| cfg.quotas.enforce_plan_features = false).await;
 
     let resp = app
         .oneshot(escalation_policy_request())
@@ -1081,8 +1091,10 @@ async fn dropping_one_of_two_contacts_works_without_the_on_call_tier() {
     let b = seed_contact(&pool, org, user, "cb").await;
 
     let app = common::with_session(
-        common::build_saas_router_with_pg_cfg(pool.clone(), |cfg| cfg.marketing.enabled = true)
-            .await,
+        common::build_saas_router_with_pg_cfg(pool.clone(), |cfg| {
+            cfg.quotas.enforce_plan_features = true
+        })
+        .await,
         user,
         Some(org),
         None,
@@ -1150,7 +1162,8 @@ async fn a_plan_without_on_call_gets_the_team_pitch_in_place_of_the_pages() {
     let Some(pool) = pg_pool_from_env().await else {
         return;
     };
-    let (app, _org) = build_test_app_with_pg_store(pool, |cfg| cfg.marketing.enabled = true).await;
+    let (app, _org) =
+        build_test_app_with_pg_store(pool, |cfg| cfg.quotas.enforce_plan_features = true).await;
 
     for (list, new) in [
         ("/settings/on-call", "/settings/on-call/new"),
@@ -1178,7 +1191,8 @@ async fn a_downgraded_org_keeps_its_schedules_under_a_notice() {
         return;
     };
     let (app, org) =
-        build_test_app_with_pg_store(pool.clone(), |cfg| cfg.marketing.enabled = true).await;
+        build_test_app_with_pg_store(pool.clone(), |cfg| cfg.quotas.enforce_plan_features = true)
+            .await;
     sqlx::query("INSERT INTO on_call_schedules (org_id, name) VALUES ($1, 'primary')")
         .bind(org.0)
         .execute(&pool)
@@ -1200,7 +1214,8 @@ async fn a_team_org_gets_the_working_pages() {
         return;
     };
     let (app, org) =
-        build_test_app_with_pg_store(pool.clone(), |cfg| cfg.marketing.enabled = true).await;
+        build_test_app_with_pg_store(pool.clone(), |cfg| cfg.quotas.enforce_plan_features = true)
+            .await;
     move_to_plan(&pool, org, "team").await;
 
     for (list, new) in [
@@ -1227,7 +1242,8 @@ async fn a_self_hosted_install_gets_the_working_pages_on_any_plan() {
     let Some(pool) = pg_pool_from_env().await else {
         return;
     };
-    let (app, _org) = build_test_app_with_pg_store(pool, |cfg| cfg.marketing.enabled = false).await;
+    let (app, _org) =
+        build_test_app_with_pg_store(pool, |cfg| cfg.quotas.enforce_plan_features = false).await;
 
     let (status, _, html) = page(&app, "/settings/on-call").await;
     assert_eq!(status, StatusCode::OK);
@@ -1242,7 +1258,8 @@ async fn a_signed_out_browser_is_sent_to_sign_in() {
         return;
     };
     let (app, _org) =
-        build_test_app_with_pg_store_anon(pool, |cfg| cfg.marketing.enabled = true).await;
+        build_test_app_with_pg_store_anon(pool, |cfg| cfg.quotas.enforce_plan_features = true)
+            .await;
 
     for uri in ["/settings/on-call", "/settings/escalation"] {
         let (status, location, _) = page(&app, uri).await;

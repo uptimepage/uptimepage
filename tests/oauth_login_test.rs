@@ -536,7 +536,7 @@ async fn logout_ends_this_session_and_logout_all_ends_every_one() {
 #[ignore = "needs live Postgres (DATABASE_URL)"]
 async fn a_signup_takes_the_theme_picked_on_the_website() {
     let Some(rig) = rig_with("oauth_theme_signup", &["gitlab_oauth"], |cfg| {
-        cfg.marketing.enabled = true;
+        cfg.site.origin = "https://uptimepage.test".into();
         cfg.public_status.base_domain = "uptimepage.test".into();
     })
     .await
@@ -596,10 +596,7 @@ async fn a_sign_in_keeps_the_account_theme_whatever_the_browser_holds() {
     assert_eq!(rig.theme_of(user).await, "system");
     let mirror = picked.set_cookie("sm_app_theme").expect("theme mirror");
     assert!(mirror.starts_with("sm_app_theme=system;"), "{mirror}");
-    assert!(
-        !mirror.contains("Domain="),
-        "no marketing site, host-only: {mirror}"
-    );
+    assert!(!mirror.contains("Domain="), "no site, host-only: {mirror}");
     assert!(
         picked.set_cookie("sm_theme_pick").is_none(),
         "the pick stays the website's"

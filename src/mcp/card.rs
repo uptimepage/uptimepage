@@ -25,12 +25,13 @@ const ANY_ORIGIN: HeaderValue = HeaderValue::from_static("*");
 pub(super) async fn server_card(State(state): State<AppState>) -> Response {
     let endpoint = state.cfg.mcp.resource_uri.clone();
     let info = McpServer::new(state.clone()).get_info();
-    let website = state.cfg.marketing.canonical_origin.clone();
-    let namespace = reverse_dns(host_of(if website.is_empty() {
-        &endpoint
-    } else {
-        &website
-    }));
+    let website = state.cfg.site.origin.clone();
+    let host = state
+        .cfg
+        .site
+        .host()
+        .unwrap_or_else(|| host_of(&endpoint).to_owned());
+    let namespace = reverse_dns(&host);
 
     let card = json!({
         "name": format!("{namespace}/{}", info.server_info.name),

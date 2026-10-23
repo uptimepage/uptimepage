@@ -300,6 +300,9 @@ rate_limit_seconds = 60
 # Cache TTLs for plan / usage lookups.
 plan_cache_ttl_secs = 300
 usage_cache_ttl_secs = 10
+# Gate features (on-call, SMS, white-label, private pages) on the plan. Leave
+# false on self-host: the operator owns the plans rows.
+enforce_plan_features = false
 
 [rate_limits]
 # Per-org / per-user limits come from the plans table. These mirror the
@@ -444,6 +447,12 @@ reserved_subdomains = ["www", "app"]
 # Mount the /blog routes. The post sources live in
 # `src/marketing/content/blog/` and are compiled into the binary.
 blog_enabled = true
+
+[site]
+# The origin that serves this deployment's marketing pages, such as
+# https://example.com. Status page cards take their image from it and the app
+# host redirects /.well-known/api-catalog there. Empty when there is none.
+origin = ""
 
 [mcp]
 # Read-only Model Context Protocol server at /mcp (Streamable HTTP). Off by

@@ -974,10 +974,9 @@ async fn channel_form_gates_one_tap_telegram_on_central_bot() {
 /// The host serving the API points agents at the catalog rather than 404ing
 /// on the path they are specified to look at.
 #[tokio::test]
-async fn api_catalog_redirects_to_the_marketing_host() {
+async fn api_catalog_redirects_to_the_site() {
     let app = build_test_app_with_web_and_owner(|cfg| {
-        cfg.marketing.enabled = true;
-        cfg.marketing.canonical_origin = "https://example.test".into();
+        cfg.site.origin = "https://example.test".into();
     });
     let resp = app
         .oneshot(

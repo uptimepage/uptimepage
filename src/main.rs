@@ -147,9 +147,10 @@ async fn main() -> Result<()> {
     // Same for the email-admission knobs: an unrecognised signup_policy
     // would otherwise degrade to "let everything through" in silence.
     cfg.validate_email_policy()?;
-    // Marketing host/URL/cookie invariants. Skipped wholesale when
+    // Marketing host/URL invariants. Skipped wholesale when
     // marketing.enabled = false (the default).
     cfg.validate_marketing()?;
+    cfg.validate_site()?;
     cfg.validate_custom_domain_ask()?;
     // Central Telegram bot: a set bot_token without a username / strong
     // webhook secret / https base is a clean startup error, not a half-up bot.

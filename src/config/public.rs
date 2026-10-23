@@ -41,6 +41,26 @@ impl Default for MarketingConfig {
     }
 }
 
+/// `[site]`. The website that serves this deployment's marketing pages.
+/// Empty when there is none.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SiteConfig {
+    /// A bare origin, as `url::Origin` serialises it.
+    pub origin: String,
+}
+
+impl SiteConfig {
+    /// `None` unless the origin is written exactly as it serialises. Cookies
+    /// ignore the port, so this is what a cookie domain is matched against.
+    pub fn host(&self) -> Option<String> {
+        let url = url::Url::parse(&self.origin).ok()?;
+        let bare = matches!(url.scheme(), "http" | "https")
+            && url.origin().ascii_serialization() == self.origin;
+        url.host_str().filter(|_| bare).map(str::to_owned)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct TenancyConfig {

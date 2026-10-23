@@ -646,3 +646,76 @@ fn a_discord_public_key_must_be_one() {
     assert!(read("not a key").is_err());
     assert!(read(&key[2..]).is_err());
 }
+
+#[test]
+fn the_site_origin_is_a_bare_origin() {
+    let mut cfg = AppConfig::load().expect("load");
+    cfg.marketing.enabled = false;
+    cfg.auth.session.cookie_domain = String::new();
+    for (origin, ok) in [
+        ("", true),
+        ("https://example.test", true),
+        ("http://lvh.me:8080", true),
+        ("https://example.test/", false),
+        ("https://example.test/docs", false),
+        ("https://Example.test", false),
+        ("https://example.test:443", false),
+        ("https://user@example.test", false),
+        ("ftp://example.test", false),
+        ("https://", false),
+    ] {
+        cfg.site.origin = origin.into();
+        assert_eq!(cfg.validate_site().is_ok(), ok, "{origin:?}");
+    }
+}
+
+/// A session cookie scoped to the site's zone would ride along to every site
+/// request.
+#[test]
+fn a_session_cookie_covering_the_site_does_not_boot() {
+    let mut cfg = AppConfig::load().expect("load");
+    cfg.site.origin = "https://example.test:8443".into();
+    for (cookie_domain, ok) in [
+        (".example.test", false),
+        ("example.test", false),
+        ("app.example.test", true),
+        (".other-zone.net", true),
+        ("", true),
+    ] {
+        cfg.auth.session.cookie_domain = cookie_domain.into();
+        assert_eq!(cfg.validate_site().is_ok(), ok, "{cookie_domain:?}");
+    }
+}
+
+/// The marketing router serves the base domain, so the cookie guard and
+/// everything else keyed on the site origin must name it.
+#[test]
+fn marketing_needs_a_site_origin() {
+    let mut cfg = AppConfig::load().expect("load");
+    cfg.auth.session.cookie_domain = String::new();
+    cfg.marketing.enabled = true;
+    cfg.public_status.base_domain = "example.test".into();
+    cfg.site.origin = String::new();
+    assert!(cfg.validate_site().is_err());
+    cfg.site.origin = "https://example.org".into();
+    assert!(
+        cfg.validate_site().is_err(),
+        "marketing serves the base domain"
+    );
+    cfg.site.origin = "https://example.test".into();
+    assert!(cfg.validate_site().is_ok());
+}
+
+/// Selling plans whose features nothing enforces would hand every buyer's
+/// feature to the free tier.
+#[test]
+fn a_billing_provider_requires_plan_enforcement() {
+    let mut cfg = AppConfig::load().expect("load");
+    cfg.billing.provider = "paddle".into();
+    cfg.quotas.enforce_plan_features = false;
+    let refused = cfg.validate_billing().expect_err("enforcement off");
+    assert!(refused.to_string().contains("enforce_plan_features"));
+    cfg.quotas.enforce_plan_features = true;
+    let other = cfg.validate_billing().map_err(|e| e.to_string());
+    assert!(!format!("{other:?}").contains("enforce_plan_features"));
+}

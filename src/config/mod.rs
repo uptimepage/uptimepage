@@ -44,7 +44,7 @@ pub use notify::{
 };
 pub use observability::{GrafanaConfig, HeartbeatConfig, LogFormat, ObservabilityConfig};
 pub use ops::{AgentConfig, EscalationConfig, FlowConfig, McpConfig, OperatorConfig};
-pub use public::{MarketingConfig, PublicStatusConfig, RetentionConfig, TenancyConfig};
+pub use public::{MarketingConfig, PublicStatusConfig, RetentionConfig, SiteConfig, TenancyConfig};
 pub use runtime::{
     CheckerConfig, CircuitBreakerConfig, DnsConfig, HttpClientConfig, RuntimeConfig,
     SchedulerConfig, SecurityConfig, ServerConfig,
@@ -187,6 +187,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub marketing: MarketingConfig,
     #[serde(default)]
+    pub site: SiteConfig,
+    #[serde(default)]
     pub mcp: McpConfig,
     #[serde(default)]
     pub escalation: EscalationConfig,
@@ -231,11 +233,9 @@ impl AppConfig {
 
     /// Whether the org may add on-call coverage.
     ///
-    /// Self-host is exempt for the same reason it is exempt from the SMS gate: the
-    /// operator owns the `plans` row, so gating them against it means nothing.
     /// The plan's caps still decide how many of each it may keep.
     pub fn on_call_available(&self, plan: &crate::domain::Plan) -> bool {
-        !self.marketing.enabled || plan.on_call_enabled
+        !self.quotas.enforce_plan_features || plan.on_call_enabled
     }
 
     /// The apps whose button presses reach this deployment.

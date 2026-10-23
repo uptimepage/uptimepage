@@ -185,18 +185,45 @@ impl AppConfig {
                 )));
             }
         }
-        // The session cookie must not be scoped to a parent zone that the
-        // marketing host inherits; otherwise the app's session ID rides
-        // along to the apex and the marketing CDN cache becomes Vary:
-        // Cookie. Host-only (empty Domain) is always safe.
+        Ok(())
+    }
+
+    pub fn validate_site(&self) -> Result<()> {
+        fn err(msg: String) -> crate::error::AppError {
+            crate::error::AppError::Other(anyhow::anyhow!(msg))
+        }
+        let origin = self.site.origin.as_str();
+        if origin.is_empty() {
+            if self.marketing.enabled {
+                return Err(err(
+                    "marketing.enabled = true requires site.origin, the origin it is served on"
+                        .into(),
+                ));
+            }
+            return Ok(());
+        }
+        let Some(host) = self.site.host() else {
+            return Err(err(format!(
+                "site.origin must be a bare origin such as https://example.com, lowercase, \
+                 with no path, trailing slash, credentials or default port (got {origin:?})"
+            )));
+        };
+        let base = self.public_status.base_domain.trim();
+        if self.marketing.enabled && host != base {
+            return Err(err(format!(
+                "marketing is served on public_status.base_domain {base:?}, so site.origin \
+                 must name that host (got {origin:?})"
+            )));
+        }
+        // A session cookie scoped to a zone the site inherits rides along to
+        // every site request and makes its cache Vary: Cookie.
         let cd = self.auth.session.cookie_domain.trim();
         if !cd.is_empty() {
             let stripped = cd.trim_start_matches('.');
-            if stripped == base || base.ends_with(&format!(".{stripped}")) {
+            if stripped == host || host.ends_with(&format!(".{stripped}")) {
                 return Err(err(format!(
-                    "auth.session.cookie_domain={cd:?} overlaps marketing host {base:?}; \
-                     leave cookie_domain empty (host-only) so the apex marketing surface \
-                     is not Vary: Cookie"
+                    "auth.session.cookie_domain={cd:?} covers the site host {host:?}; \
+                     leave cookie_domain empty (host-only)"
                 )));
             }
         }
@@ -299,6 +326,11 @@ impl AppConfig {
                     "billing.provider must be \"none\" or \"paddle\" (got {other:?})"
                 )));
             }
+        }
+        if !self.quotas.enforce_plan_features {
+            return Err(err(
+                "billing.provider = \"paddle\" sells plans, so quotas.enforce_plan_features must be true",
+            ));
         }
         if super::PaddleEnvironment::parse(&b.paddle.environment).is_none() {
             return Err(err(

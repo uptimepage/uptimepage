@@ -29,7 +29,7 @@ struct Rig {
 async fn rig(plan: &str) -> Option<Rig> {
     let pool = pg_pool_from_env().await?;
     let (app, org) = build_test_app_with_pg_store(pool.clone(), |cfg| {
-        cfg.marketing.enabled = true;
+        cfg.quotas.enforce_plan_features = true;
     })
     .await;
     sqlx::query(

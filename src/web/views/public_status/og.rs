@@ -10,7 +10,7 @@ use crate::web::views::page_branding::BrandingView;
 
 /// OG/Twitter card metadata for the public status surface. Empty `url` /
 /// `image` / `site_name` mean "skip that tag" — fine for self-hosted setups
-/// where the marketing origin isn't configured.
+/// where the site origin isn't configured.
 #[derive(Default)]
 pub struct OgMeta {
     pub title: String,
@@ -28,7 +28,7 @@ pub struct OgMeta {
 /// subdomain of `public_status.base_domain`. Without that gate, an attacker
 /// hitting the page with `Host: evil.com` would poison the scraper cache so
 /// social shares of legitimate URLs unfurl with attacker's domain. `og:image`
-/// degrades to empty (template skips the tag) when the marketing origin
+/// degrades to empty (template skips the tag) when the site origin
 /// isn't configured.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_og_meta(
@@ -45,7 +45,7 @@ pub(super) fn build_og_meta(
         .map(|origin| format!("{origin}{path}"))
         .unwrap_or_default();
 
-    let image = og_image(&state.cfg.marketing.canonical_origin);
+    let image = og_image(&state.cfg.site.origin);
 
     OgMeta {
         title,
@@ -59,10 +59,10 @@ pub(super) fn build_og_meta(
 
 /// Never the marketing card: it carries a sign-up CTA, and this page is the
 /// tenant's.
-pub(super) fn og_image(marketing_origin: &str) -> String {
-    if marketing_origin.is_empty() {
+pub(super) fn og_image(site_origin: &str) -> String {
+    if site_origin.is_empty() {
         String::new()
     } else {
-        format!("{marketing_origin}/static/marketing/og-status.png")
+        format!("{site_origin}/static/marketing/og-status.png")
     }
 }

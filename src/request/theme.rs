@@ -13,8 +13,8 @@ use crate::domain::AppTheme;
 pub const COOKIE_NAME: &str = "sm_app_theme";
 pub const PICK_COOKIE_NAME: &str = "sm_theme_pick";
 
-/// With a marketing site the mirror takes the parent domain it shares with the
-/// app, so both surfaces read it; host-only otherwise (self-host).
+/// With a site on the base domain the mirror takes that domain, so both
+/// surfaces read it; host-only otherwise.
 #[derive(Debug, Clone, Copy)]
 pub struct CookieScope<'a> {
     pub secure: bool,
@@ -23,12 +23,10 @@ pub struct CookieScope<'a> {
 
 impl<'a> CookieScope<'a> {
     pub fn from_config(cfg: &'a AppConfig) -> Self {
+        let base = cfg.public_status.base_domain.trim();
         Self {
             secure: cfg.auth.session.cookie_secure,
-            domain: cfg
-                .marketing
-                .enabled
-                .then_some(cfg.public_status.base_domain.trim()),
+            domain: (!base.is_empty() && cfg.site.host().as_deref() == Some(base)).then_some(base),
         }
     }
 }

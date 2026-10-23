@@ -61,7 +61,7 @@ fn gate_sms(
     plan: &crate::domain::Plan,
     already_sms: bool,
 ) -> Result<()> {
-    if state.cfg.marketing.enabled
+    if state.cfg.quotas.enforce_plan_features
         && !already_sms
         && matches!(config, ChannelConfig::Sms(_))
         && !plan.sms_alerts_enabled

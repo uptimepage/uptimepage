@@ -145,18 +145,10 @@ pub async fn resolve_branding(
             false
         }
     };
-    view.show_powered_by = enforce_powered_by(
-        view.show_powered_by,
-        state.cfg.marketing.enabled,
-        white_label,
-    );
-    view.show_source_links =
-        enforce_source_links(state.cfg.marketing.enabled, view.show_powered_by);
-    view.follow_website_link = enforce_follow_link(
-        state.cfg.marketing.enabled,
-        white_label,
-        view.hide_from_search,
-    );
+    let enforced = state.cfg.quotas.enforce_plan_features;
+    view.show_powered_by = enforce_powered_by(view.show_powered_by, enforced, white_label);
+    view.show_source_links = enforce_source_links(enforced, view.show_powered_by);
+    view.follow_website_link = enforce_follow_link(enforced, white_label, view.hide_from_search);
     view
 }
 
@@ -171,28 +163,32 @@ pub(crate) fn status_home(state: &AppState, headers: &HeaderMap) -> &'static str
     }
 }
 
-/// White-label is Pro-only: on SaaS a plan without white-label always shows the
-/// "powered by" badge, whatever the page stored. Self-host (marketing off) and
+/// White-label is Pro-only: where plans are enforced a plan without white-label
+/// always shows the "powered by" badge, whatever the page stored. Self-host and
 /// white-label plans keep the stored preference.
-fn enforce_powered_by(stored: bool, saas: bool, white_label: bool) -> bool {
-    if saas && !white_label { true } else { stored }
+fn enforce_powered_by(stored: bool, enforced: bool, white_label: bool) -> bool {
+    if enforced && !white_label {
+        true
+    } else {
+        stored
+    }
 }
 
-/// The links go with the enforced badge on SaaS. A self-host operator running
-/// modified code owes its network users the source (AGPL-3.0 section 13), so
-/// the toggle never removes them there.
-fn enforce_source_links(saas: bool, show_powered_by: bool) -> bool {
-    !saas || show_powered_by
+/// The links go with the enforced badge. A self-host operator running modified
+/// code owes its network users the source (AGPL-3.0 section 13), so the toggle
+/// never removes them there.
+fn enforce_source_links(enforced: bool, show_powered_by: bool) -> bool {
+    !enforced || show_powered_by
 }
 
 /// Hosted signup is open, so a followed link needs a plan that sells
 /// white-label. Self-host has nobody to police, and a page kept out of search
 /// passes nothing either way.
-fn enforce_follow_link(saas: bool, white_label: bool, hide_from_search: bool) -> bool {
+fn enforce_follow_link(enforced: bool, white_label: bool, hide_from_search: bool) -> bool {
     if hide_from_search {
         return false;
     }
-    !saas || white_label
+    !enforced || white_label
 }
 
 /// Independent, template-side re-validation of the brand colour. Trusts

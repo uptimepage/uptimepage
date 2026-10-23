@@ -1363,7 +1363,7 @@ async fn a_held_private_page_stays_editable() {
     // SaaS, so the plan decides, and set before anything resolves it.
     let app = build_saas_router_with_pg_cfg(pool.clone(), |cfg| {
         cfg.mcp.enabled = true;
-        cfg.marketing.enabled = true;
+        cfg.quotas.enforce_plan_features = true;
     })
     .await;
     let (org, user) = seed_org(&pool, "mcpheld").await;

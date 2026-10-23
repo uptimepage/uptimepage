@@ -155,10 +155,7 @@ pub struct QuotaService {
     /// Account → epoch of its latest invalidation. Same TTL as the plan cache:
     /// past it every entry that could predate the change has expired anyway.
     invalidated: Cache<AccountId, u64>,
-    /// The operator owns the `plans` rows on a self-hosted install, so a
-    /// feature gate read from them would only gate the operator against
-    /// themselves.
-    self_hosted: bool,
+    enforce_features: bool,
 }
 
 /// The account's plan plus its current pooled counts — the totals across
@@ -199,7 +196,7 @@ impl QuotaService {
                 .time_to_live(plan_ttl)
                 .max_capacity(10_000)
                 .build(),
-            self_hosted: !cfg.marketing.enabled,
+            enforce_features: cfg.quotas.enforce_plan_features,
         }
     }
 
@@ -274,7 +271,7 @@ impl QuotaService {
                     .plan_cache
                     .try_get_with(org, async {
                         let mut conn = db.acquire().await?;
-                        load(&mut conn, org, started, self.self_hosted).await
+                        load(&mut conn, org, started, self.enforce_features).await
                     })
                     .await
                     .map_err(|e| lookup_error(&e))?,
@@ -284,7 +281,7 @@ impl QuotaService {
                 Source::Conn(conn) => match self.plan_cache.get(&org).await {
                     Some(hit) => hit,
                     None => {
-                        let loaded = load(conn, org, started, self.self_hosted)
+                        let loaded = load(conn, org, started, self.enforce_features)
                             .await
                             .map_err(|e| lookup_error(&e))?;
                         self.plan_cache.insert(org, loaded.clone()).await;
@@ -750,7 +747,7 @@ async fn load(
     conn: &mut PgConnection,
     org: OrgId,
     started: u64,
-    self_hosted: bool,
+    enforce_features: bool,
 ) -> Result<Resolved, sqlx::Error> {
     let p: PlanRow = sqlx::query_as(
         "SELECT o.account_id, \
@@ -794,7 +791,7 @@ async fn load(
     plan.max_regions = plan.max_regions.max(1);
     // An account always holds the org being resolved.
     plan.max_orgs = plan.max_orgs.max(1);
-    plan.private_pages_enabled |= self_hosted;
+    plan.private_pages_enabled |= !enforce_features;
     Ok(Resolved {
         account,
         plan: Arc::new(plan),

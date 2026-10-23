@@ -17,6 +17,9 @@ pub struct QuotasConfig {
     /// ceilings bound what one tenant costs a shared platform, which nobody pays
     /// for on their own hardware.
     pub default_plan: String,
+    /// Off on self-host: the operator owns the `plans` rows, so a feature gate
+    /// read from them would only gate the operator against themselves.
+    pub enforce_plan_features: bool,
 }
 
 impl Default for QuotasConfig {
@@ -25,6 +28,7 @@ impl Default for QuotasConfig {
             plan_cache_ttl_secs: 300,
             usage_cache_ttl_secs: 10,
             default_plan: "team".to_string(),
+            enforce_plan_features: false,
         }
     }
 }

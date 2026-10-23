@@ -91,6 +91,9 @@ services:
       UPTIMEPAGE_MARKETING__ENABLED: "true"
       UPTIMEPAGE_MARKETING__APP_URL: "https://app.uptimepage.dev"
       UPTIMEPAGE_MARKETING__CANONICAL_ORIGIN: "https://uptimepage.dev"
+      UPTIMEPAGE_SITE__ORIGIN: "http://lvh.me:8080"
+      # Plan gates as on the hosted service, so locked features can be inspected.
+      UPTIMEPAGE_QUOTAS__ENFORCE_PLAN_FEATURES: "true"
       # Tenancy boot guards: ip/ua fingerprint salt is mandatory under SaaS.
       # Fixed dev-only value — never used outside the local stack.
       UPTIMEPAGE_AUTH__FINGERPRINT_SALT: "dev-only-fingerprint-salt-not-for-prod"

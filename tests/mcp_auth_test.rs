@@ -213,7 +213,7 @@ async fn server_card_is_public_and_matches_the_running_server() {
     let app = build_test_app_with_web(|cfg| {
         cfg.mcp.enabled = true;
         cfg.mcp.resource_uri = "https://mcp.example.test/mcp".into();
-        cfg.marketing.canonical_origin = "https://example.test".into();
+        cfg.site.origin = "https://example.test".into();
     });
     let resp = app
         .oneshot(
