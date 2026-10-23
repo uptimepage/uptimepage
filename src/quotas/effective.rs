@@ -143,7 +143,6 @@ mod tests {
     use super::*;
     use crate::domain::{CheckSpec, HeartbeatCheck};
     use crate::quotas::service::unlimited_plan;
-    use crate::scheduler::registry::tests::a_target;
 
     const ORG: OrgId = OrgId(uuid::Uuid::nil());
 
@@ -157,7 +156,7 @@ mod tests {
     fn slowed(interval_secs: u64) -> Target {
         Target {
             slowed_at: Some(Utc::now()),
-            ..a_target(Duration::from_secs(interval_secs))
+            ..Target::sample(Duration::from_secs(interval_secs))
         }
     }
 
@@ -184,7 +183,7 @@ mod tests {
     fn a_monitor_not_slowed_runs_at_its_governed_interval() {
         let got = handed_out(
             Some(plan_with_floor(120)),
-            a_target(Duration::from_secs(60)),
+            Target::sample(Duration::from_secs(60)),
         );
         assert_eq!(got, Duration::from_secs(120));
     }

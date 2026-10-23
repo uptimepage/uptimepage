@@ -1,14 +1,12 @@
 use super::*;
-use std::collections::HashMap;
 use std::time::Duration as StdDuration;
 
 use crate::domain::NotificationStatus;
 use crate::domain::{
-    AlertBinding, ChannelConfig, CheckSpec, EmailConfig, EscalationTargetType, ExpectedStatus,
-    HttpCheck, HttpMethod, IncidentOrigin, IncidentSeverity, IncidentState, IncidentUrgency,
-    IncidentVisibility, NewEscalationPolicy, NewEscalationStep, NewEscalationTarget,
-    NewNotificationChannel, NotificationChannelUpdate, OpsIncident, Target, TargetAlerts,
-    WebhookConfig, WriteSource,
+    AlertBinding, ChannelConfig, EmailConfig, EscalationTargetType, IncidentOrigin,
+    IncidentSeverity, IncidentState, IncidentUrgency, IncidentVisibility, NewEscalationPolicy,
+    NewEscalationStep, NewEscalationTarget, NewNotificationChannel, NotificationChannelUpdate,
+    OpsIncident, Target, TargetAlerts, WebhookConfig, WriteSource,
 };
 use crate::security::redaction::redact_url_paths;
 use crate::storage::{
@@ -60,46 +58,14 @@ pub(super) fn target_with_channel(channel_id: Uuid) -> Target {
 
 pub(super) fn target_with_channel_recovery(channel_id: Uuid, notify_recovery: bool) -> Target {
     Target {
-        id: Uuid::now_v7(),
-        name: "api".into(),
-        check: CheckSpec::Http(HttpCheck {
-            url: url::Url::parse("https://example.com/").unwrap(),
-            method: HttpMethod::Get,
-            timeout: StdDuration::from_secs(5),
-            follow_redirects: false,
-            max_redirects: 0,
-            expected_status: ExpectedStatus::Exact(200),
-            expected_body_contains: None,
-            headers: HashMap::new(),
-            body: None,
-            verify_tls: true,
-            basic_auth: None,
-            bearer_token: None,
-            ip_version: crate::domain::IpVersion::Any,
-        }),
-        interval: StdDuration::from_secs(30),
-        enabled: true,
-        tags: vec![],
         alerts: TargetAlerts(vec![AlertBinding { channel_id }]),
-        alert_confirmations: 1,
         notify_recovery,
-        renotify_interval_secs: 3600,
-        recovery_period_secs: 0,
-        region_policy: Default::default(),
-        group_name: None,
-        owner_user_id: None,
-        write_source: WriteSource::Ui,
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
-        plan_hold_at: None,
-        slowed_at: None,
+        ..Target::sample(StdDuration::from_secs(30))
     }
 }
 
 fn bare_target() -> Target {
-    let mut t = target_with_channel(Uuid::now_v7());
-    t.alerts = TargetAlerts(vec![]);
-    t
+    Target::sample(StdDuration::from_secs(30))
 }
 
 pub(super) fn seed_incident(ops: &InMemoryIncidentOpsStore, target_id: Option<Uuid>) -> Uuid {

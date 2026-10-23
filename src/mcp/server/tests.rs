@@ -648,22 +648,11 @@ fn stored_monitor() -> Target {
         id: Uuid::nil(),
         name: "checkout".into(),
         check: http_check(),
-        interval: std::time::Duration::from_secs(60),
-        enabled: true,
         tags: vec!["prod".into(), "payments".into()],
-        alerts: Default::default(),
         alert_confirmations: 2,
-        notify_recovery: true,
-        renotify_interval_secs: 3600,
-        recovery_period_secs: 0,
         region_policy: RegionIncidentPolicy::Majority,
         group_name: Some("API".into()),
-        owner_user_id: None,
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
-        write_source: WriteSource::Ui,
-        plan_hold_at: None,
-        slowed_at: None,
+        ..Target::sample(std::time::Duration::from_secs(60))
     }
 }
 

@@ -134,8 +134,7 @@ impl TargetRegistry {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
-    use std::collections::HashMap;
+mod tests {
     use std::sync::Mutex;
     use std::time::Duration as StdDuration;
 
@@ -144,9 +143,7 @@ pub(crate) mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::domain::{
-        CheckSpec, ExpectedStatus, HttpCheck, HttpMethod, OrgId, Target, TargetAlerts, WriteSource,
-    };
+    use crate::domain::{CheckSpec, OrgId, Target};
 
     /// Hands out whatever interval the test last set, on an unchanging row.
     struct FixedSource {
@@ -163,51 +160,13 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn a_target(interval: StdDuration) -> Target {
-        Target {
-            id: Uuid::now_v7(),
-            name: "api".into(),
-            check: CheckSpec::Http(HttpCheck {
-                url: url::Url::parse("https://example.com/").expect("url"),
-                method: HttpMethod::Get,
-                timeout: StdDuration::from_secs(5),
-                follow_redirects: false,
-                max_redirects: 0,
-                expected_status: ExpectedStatus::Exact(200),
-                expected_body_contains: None,
-                headers: HashMap::new(),
-                body: None,
-                verify_tls: true,
-                basic_auth: None,
-                bearer_token: None,
-                ip_version: crate::domain::IpVersion::Any,
-            }),
-            interval,
-            enabled: true,
-            tags: vec![],
-            alerts: TargetAlerts(vec![]),
-            alert_confirmations: 1,
-            notify_recovery: true,
-            renotify_interval_secs: 3600,
-            recovery_period_secs: 0,
-            region_policy: Default::default(),
-            group_name: None,
-            owner_user_id: None,
-            write_source: WriteSource::Ui,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            plan_hold_at: None,
-            slowed_at: None,
-        }
-    }
-
     #[tokio::test]
     async fn a_clamped_interval_reaches_a_monitor_already_resident() {
         // The plan floor is applied to the handed-out copy and writes nothing
         // back, so a downgrade moves the interval on a row whose `updated_at`
         // never changes. Keying the diff on `updated_at` alone dropped it and
         // the monitor kept its old rate until the process restarted.
-        let target = a_target(StdDuration::from_secs(30));
+        let target = Target::sample(StdDuration::from_secs(30));
         let id = target.id;
         let source = Arc::new(FixedSource {
             target: Mutex::new(target),
@@ -238,7 +197,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn only_an_edit_to_the_check_counts_as_a_probe_change() {
         let source = Arc::new(FixedSource {
-            target: Mutex::new(a_target(StdDuration::from_secs(30))),
+            target: Mutex::new(Target::sample(StdDuration::from_secs(30))),
         });
         let registry = TargetRegistry::new(source.clone());
         registry.refresh().await.expect("first refresh");
@@ -266,7 +225,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn an_unchanged_monitor_is_not_rescheduled() {
         let source = Arc::new(FixedSource {
-            target: Mutex::new(a_target(StdDuration::from_secs(30))),
+            target: Mutex::new(Target::sample(StdDuration::from_secs(30))),
         });
         let registry = TargetRegistry::new(source);
 

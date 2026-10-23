@@ -11,19 +11,8 @@ use crate::domain::Locale;
 use crate::email::templates::subscriber_maintenance::MaintenanceNotice;
 use crate::email::templates::subscriber_outage::{OutageComponent, OutageMail};
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
+use crate::storage::page_sql::PageRow;
 use crate::storage::subscribers;
-
-/// Where a page lives, as the planner read it.
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct PageRow {
-    pub page_id: Uuid,
-    pub org_id: Uuid,
-    pub page_name: String,
-    pub public_locale: String,
-    pub slug: String,
-    pub custom_domain: Option<String>,
-    pub custom_domain_published: bool,
-}
 
 /// The deploy's addressing, to turn a page into the links its mail carries.
 #[derive(Debug, Clone)]

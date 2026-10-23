@@ -235,8 +235,6 @@ fn headers_render_as_row_inputs() {
     headers.insert("Accept".to_string(), "application/json".to_string());
     headers.insert("X-Request-Id".to_string(), "abc".to_string());
     let t = Target {
-        id: uuid::Uuid::nil(),
-        name: "api".into(),
         check: CheckSpec::Http(HttpCheck {
             url: Url::parse("https://example.com").unwrap(),
             method: HttpMethod::Get,
@@ -252,22 +250,8 @@ fn headers_render_as_row_inputs() {
             bearer_token: None,
             ip_version: crate::domain::IpVersion::Any,
         }),
-        interval: Duration::from_secs(60),
-        enabled: true,
-        tags: vec![],
-        alerts: Default::default(),
-        region_policy: Default::default(),
         alert_confirmations: 2,
-        notify_recovery: true,
-        renotify_interval_secs: 3600,
-        recovery_period_secs: 0,
-        group_name: None,
-        owner_user_id: None,
-        write_source: crate::domain::WriteSource::Ui,
-        created_at: chrono::Utc::now(),
-        updated_at: chrono::Utc::now(),
-        plan_hold_at: None,
-        slowed_at: None,
+        ..Target::sample(Duration::from_secs(60))
     };
     let form = form_from_target(t).unwrap();
     assert_eq!(form.http.headers.len(), 2);
@@ -573,8 +557,6 @@ fn edit_form_renders_target_with_sealed_auth() {
     use url::Url;
 
     let t = Target {
-        id: uuid::Uuid::nil(),
-        name: "api".into(),
         check: CheckSpec::Http(HttpCheck {
             url: Url::parse("https://example.com").unwrap(),
             method: HttpMethod::Get,
@@ -590,22 +572,8 @@ fn edit_form_renders_target_with_sealed_auth() {
             bearer_token: Some(REDACTED.into()),
             ip_version: crate::domain::IpVersion::Any,
         }),
-        interval: Duration::from_secs(60),
-        enabled: true,
-        tags: vec![],
-        alerts: Default::default(),
-        region_policy: Default::default(),
         alert_confirmations: 2,
-        notify_recovery: true,
-        renotify_interval_secs: 3600,
-        recovery_period_secs: 0,
-        group_name: None,
-        owner_user_id: None,
-        write_source: crate::domain::WriteSource::Ui,
-        created_at: chrono::Utc::now(),
-        updated_at: chrono::Utc::now(),
-        plan_hold_at: None,
-        slowed_at: None,
+        ..Target::sample(Duration::from_secs(60))
     };
     let form = form_from_target(t).unwrap();
     assert_eq!(form.submit_method, "PATCH");
@@ -622,7 +590,6 @@ fn edit_form_maps_tcp_target_fields() {
     use crate::domain::TcpCheck;
     use std::time::Duration;
     let t = Target {
-        id: uuid::Uuid::nil(),
         name: "db".into(),
         check: CheckSpec::Tcp(TcpCheck {
             host: "db.example.com".into(),
@@ -630,22 +597,10 @@ fn edit_form_maps_tcp_target_fields() {
             timeout: Duration::from_millis(2_500),
             ip_version: crate::domain::IpVersion::Any,
         }),
-        interval: Duration::from_secs(30),
         enabled: false,
         tags: vec!["prod".into(), "db".into()],
-        alerts: Default::default(),
-        region_policy: Default::default(),
         alert_confirmations: 2,
-        notify_recovery: true,
-        renotify_interval_secs: 3600,
-        recovery_period_secs: 0,
-        group_name: None,
-        owner_user_id: None,
-        write_source: crate::domain::WriteSource::Ui,
-        created_at: chrono::Utc::now(),
-        updated_at: chrono::Utc::now(),
-        plan_hold_at: None,
-        slowed_at: None,
+        ..Target::sample(Duration::from_secs(30))
     };
     let form = form_from_target(t).unwrap();
     assert_eq!(form.check_type, "tcp");
@@ -663,7 +618,6 @@ fn edit_form_maps_tls_cert_target_fields() {
     use crate::domain::TlsCertCheck;
     use std::time::Duration;
     let t = Target {
-        id: uuid::Uuid::nil(),
         name: "tls".into(),
         check: CheckSpec::TlsCert(TlsCertCheck {
             host: "example.com".into(),
@@ -674,22 +628,8 @@ fn edit_form_maps_tls_cert_target_fields() {
             timeout: Duration::from_millis(4_500),
             ip_version: crate::domain::IpVersion::Ipv6,
         }),
-        interval: Duration::from_secs(3_600),
-        enabled: true,
-        tags: vec![],
-        alerts: Default::default(),
-        region_policy: Default::default(),
         alert_confirmations: 2,
-        notify_recovery: true,
-        renotify_interval_secs: 3600,
-        recovery_period_secs: 0,
-        group_name: None,
-        owner_user_id: None,
-        write_source: crate::domain::WriteSource::Ui,
-        created_at: chrono::Utc::now(),
-        updated_at: chrono::Utc::now(),
-        plan_hold_at: None,
-        slowed_at: None,
+        ..Target::sample(Duration::from_secs(3_600))
     };
     let form = form_from_target(t).unwrap();
     assert_eq!(form.check_type, "tls_cert");
@@ -717,7 +657,6 @@ fn edit_form_maps_domain_expiry_target_fields() {
     use crate::domain::DomainExpiryCheck;
     use std::time::Duration;
     let t = Target {
-        id: uuid::Uuid::nil(),
         name: "dom".into(),
         check: CheckSpec::DomainExpiry(DomainExpiryCheck {
             domain: "example.com".into(),
@@ -725,22 +664,8 @@ fn edit_form_maps_domain_expiry_target_fields() {
             critical_days: 14,
             timeout: Duration::from_secs(10),
         }),
-        interval: Duration::from_secs(86_400),
-        enabled: true,
-        tags: vec![],
-        alerts: Default::default(),
-        region_policy: Default::default(),
         alert_confirmations: 2,
-        notify_recovery: true,
-        renotify_interval_secs: 3600,
-        recovery_period_secs: 0,
-        group_name: None,
-        owner_user_id: None,
-        write_source: crate::domain::WriteSource::Ui,
-        created_at: chrono::Utc::now(),
-        updated_at: chrono::Utc::now(),
-        plan_hold_at: None,
-        slowed_at: None,
+        ..Target::sample(Duration::from_secs(86_400))
     };
     let form = form_from_target(t).unwrap();
     assert_eq!(form.check_type, "domain_expiry");
@@ -755,29 +680,14 @@ fn edit_form_maps_heartbeat_target_fields() {
     use crate::domain::HeartbeatCheck;
     use std::time::Duration;
     let t = Target {
-        id: uuid::Uuid::nil(),
         name: "nightly backup".into(),
         check: CheckSpec::Heartbeat(HeartbeatCheck {
             period: Duration::from_secs(300),
             grace: Duration::from_secs(45),
             max_runtime: Some(Duration::from_secs(600)),
         }),
-        interval: Duration::from_secs(60),
-        enabled: true,
-        tags: vec![],
-        alerts: Default::default(),
-        region_policy: Default::default(),
         alert_confirmations: 2,
-        notify_recovery: true,
-        renotify_interval_secs: 3600,
-        recovery_period_secs: 0,
-        group_name: None,
-        owner_user_id: None,
-        write_source: crate::domain::WriteSource::Ui,
-        created_at: chrono::Utc::now(),
-        updated_at: chrono::Utc::now(),
-        plan_hold_at: None,
-        slowed_at: None,
+        ..Target::sample(Duration::from_secs(60))
     };
     let form = form_from_target(t).unwrap();
     assert_eq!(form.check_type, "heartbeat");
@@ -802,25 +712,10 @@ fn edit_form_maps_heartbeat_target_fields() {
 fn dns_target(check: crate::domain::DnsCheck) -> Target {
     use std::time::Duration;
     Target {
-        id: uuid::Uuid::nil(),
         name: "dns".into(),
         check: CheckSpec::Dns(check),
-        interval: Duration::from_secs(60),
-        enabled: true,
-        tags: vec![],
-        alerts: Default::default(),
-        region_policy: Default::default(),
         alert_confirmations: 2,
-        notify_recovery: true,
-        renotify_interval_secs: 3600,
-        recovery_period_secs: 0,
-        group_name: None,
-        owner_user_id: None,
-        write_source: crate::domain::WriteSource::Ui,
-        created_at: chrono::Utc::now(),
-        updated_at: chrono::Utc::now(),
-        plan_hold_at: None,
-        slowed_at: None,
+        ..Target::sample(Duration::from_secs(60))
     }
 }
 

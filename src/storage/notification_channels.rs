@@ -1444,30 +1444,15 @@ mod tests {
 
     fn tagged_target(tags: Vec<String>) -> crate::domain::Target {
         crate::domain::Target {
-            id: Uuid::from_u128(7),
-            name: "api".into(),
             check: crate::domain::CheckSpec::Tcp(crate::domain::check::TcpCheck {
                 host: "db.example.test".into(),
                 port: 5432,
                 timeout: std::time::Duration::from_secs(3),
                 ip_version: crate::domain::IpVersion::Any,
             }),
-            interval: std::time::Duration::from_secs(60),
-            enabled: true,
             tags,
-            alerts: crate::domain::TargetAlerts::default(),
-            alert_confirmations: 1,
-            notify_recovery: true,
             renotify_interval_secs: 0,
-            recovery_period_secs: 0,
-            region_policy: Default::default(),
-            group_name: None,
-            owner_user_id: None,
-            write_source: WriteSource::Ui,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            plan_hold_at: None,
-            slowed_at: None,
+            ..crate::domain::Target::sample(std::time::Duration::from_secs(60))
         }
     }
 

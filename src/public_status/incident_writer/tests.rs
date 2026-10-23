@@ -4,8 +4,7 @@ use std::time::Duration as StdDuration;
 use chrono::TimeZone;
 
 use crate::domain::{
-    CheckDiagnostic, CheckSpec, DiagnosticConfidence, DiagnosticEvidence, EdgeProvider,
-    ExpectedStatus, HttpCheck, HttpMethod, Target, TargetAlerts,
+    CheckDiagnostic, CheckSpec, DiagnosticConfidence, DiagnosticEvidence, EdgeProvider, Target,
 };
 use crate::storage::admin::EnabledTargetStream;
 use crate::storage::{InMemorySink, InMemoryTargetStore, ResultSink};
@@ -1729,39 +1728,9 @@ fn with_every_failing_region_quiet_the_hold_runs_from_the_last_reporter_up() {
 
 fn make_public_target(name: &str) -> Target {
     Target {
-        id: Uuid::now_v7(),
         name: name.into(),
-        check: CheckSpec::Http(HttpCheck {
-            url: url::Url::parse("https://example.com/").unwrap(),
-            method: HttpMethod::Get,
-            timeout: StdDuration::from_secs(5),
-            follow_redirects: false,
-            max_redirects: 0,
-            expected_status: ExpectedStatus::Exact(200),
-            expected_body_contains: None,
-            headers: std::collections::HashMap::new(),
-            body: None,
-            verify_tls: true,
-            basic_auth: None,
-            bearer_token: None,
-            ip_version: crate::domain::IpVersion::Any,
-        }),
-        interval: StdDuration::from_secs(30),
-        enabled: true,
-        tags: vec![],
-        alerts: TargetAlerts::default(),
-        region_policy: Default::default(),
         alert_confirmations: 2,
-        notify_recovery: true,
-        renotify_interval_secs: 3600,
-        recovery_period_secs: 0,
-        group_name: None,
-        owner_user_id: None,
-        write_source: crate::domain::WriteSource::Ui,
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
-        plan_hold_at: None,
-        slowed_at: None,
+        ..Target::sample(StdDuration::from_secs(30))
     }
 }
 

@@ -11,10 +11,9 @@ use uuid::Uuid;
 use crate::domain::{Locale, NewSubscriber, Subscriber, SubscriberChannel};
 use crate::error::Result;
 use crate::i18n::Tr;
-use crate::public_status::subscriber_notice::PageRow;
 use crate::security::sha256_hex;
 use crate::security::token_hash::generate_raw_token;
-use crate::storage::page_sql::{PAGE_PLAN_JOIN, PAGE_SERVED, page_row_columns};
+use crate::storage::page_sql::{PAGE_PLAN_JOIN, PAGE_SERVED, PageRow, page_row_columns};
 
 pub const CONFIRM_TTL_HOURS: i64 = 24;
 /// Confirm mints per subscriber per 24 h — bounds re-subscribe mail spam.

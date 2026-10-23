@@ -1212,7 +1212,7 @@ mod tests {
         let since = chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 10, 18, 10, 2, 0).unwrap();
         let t = Target {
             slowed_at: Some(since),
-            ..crate::scheduler::registry::tests::a_target(std::time::Duration::from_secs(60))
+            ..Target::sample(std::time::Duration::from_secs(60))
         };
         let paused = Target {
             enabled: false,
@@ -1234,12 +1234,7 @@ mod tests {
                 exact_duration(60),
             )
         );
-        assert!(
-            slowed_title(&crate::scheduler::registry::tests::a_target(
-                std::time::Duration::from_secs(60)
-            ))
-            .is_none()
-        );
+        assert!(slowed_title(&Target::sample(std::time::Duration::from_secs(60))).is_none());
     }
 
     #[test]

@@ -8,9 +8,8 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::error::Result;
-use crate::public_status::subscriber_notice::PageRow;
 use crate::storage::admin::not_held_sql;
-use crate::storage::page_sql::{PAGE_PLAN_JOIN, PAGE_SERVED, page_row_columns};
+use crate::storage::page_sql::{PAGE_PLAN_JOIN, PAGE_SERVED, PageRow, page_row_columns};
 use crate::storage::subscribers::FANOUT_LOOKBACK_HOURS;
 
 /// Whether window `mw` shows on page `sp`: through one of the page's

@@ -16,8 +16,9 @@ use uuid::Uuid;
 use crate::domain::Locale;
 use crate::public_status::outages::{self, Candidate, Member, MemberFacts, Outage};
 use crate::public_status::subscriber_notice::{
-    ComponentSnapshot, NoticeBody, NoticePayload, PageLinks, PageRow,
+    ComponentSnapshot, NoticeBody, NoticePayload, PageLinks,
 };
+use crate::storage::page_sql::PageRow;
 use crate::storage::subscriber_maintenance;
 use crate::storage::subscriber_notices::{
     self, EMAIL, INCIDENT_UPDATE, MAINTENANCE, MAINTENANCE_UPDATE, NewNotice, OUTAGE_RESOLVED,

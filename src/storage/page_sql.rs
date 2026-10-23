@@ -1,4 +1,7 @@
-//! SQL fragments for a query that aliases a status page `sp`.
+//! SQL fragments for a query that aliases a status page `sp`, and the
+//! [`PageRow`] they select.
+
+use uuid::Uuid;
 
 /// A literal, so `page_served!` can build on it with `concat!`.
 macro_rules! page_not_held {
@@ -57,8 +60,20 @@ pub(crate) const PAGE_NOT_HELD: &str = page_not_held!();
 /// `sp` and joins [`PAGE_PLAN_JOIN`].
 pub(crate) const PAGE_SERVED: &str = page_served!();
 
-/// The columns of a [`crate::public_status::subscriber_notice::PageRow`], for
-/// a query that aliases the page `sp` and joins [`PAGE_PLAN_JOIN`].
+/// Where a page lives, as `page_row_columns` reads it.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PageRow {
+    pub page_id: Uuid,
+    pub org_id: Uuid,
+    pub page_name: String,
+    pub public_locale: String,
+    pub slug: String,
+    pub custom_domain: Option<String>,
+    pub custom_domain_published: bool,
+}
+
+/// The columns of a [`PageRow`], for a query that aliases the page `sp` and
+/// joins [`PAGE_PLAN_JOIN`].
 pub(crate) fn page_row_columns() -> String {
     format!(
         "sp.id AS page_id, sp.org_id, {PAGE_PUBLIC_NAME} AS page_name, sp.public_locale, \

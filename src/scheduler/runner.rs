@@ -388,7 +388,6 @@ mod tests {
         backoff_delay_secs, first_probe_in, quick_probe_in, stagger_offset, until_slot,
     };
     use crate::domain::Target;
-    use crate::scheduler::registry::tests::a_target;
     use std::cmp::Reverse;
     use std::collections::BinaryHeap;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -502,7 +501,7 @@ mod tests {
 
     /// Target `n` of a fleet on `interval`, last edited `edited` before `NOW`.
     fn fleet_target(n: u128, interval: Duration, edited: Duration) -> Target {
-        let mut target = a_target(interval);
+        let mut target = Target::sample(interval);
         target.id = Uuid::from_u128(n + 0xFEED_0000);
         target.updated_at = (at(NOW) - edited).into();
         target

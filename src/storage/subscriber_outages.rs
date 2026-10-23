@@ -8,8 +8,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::error::Result;
-use crate::public_status::subscriber_notice::PageRow;
-use crate::storage::page_sql::{PAGE_PLAN_JOIN, PAGE_SERVED, page_row_columns};
+use crate::storage::page_sql::{PAGE_PLAN_JOIN, PAGE_SERVED, PageRow, page_row_columns};
 use crate::storage::subscribers::FANOUT_LOOKBACK_HOURS;
 
 /// One member of an open outage, with its outage and what its incident says.

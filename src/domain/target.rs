@@ -232,6 +232,51 @@ impl Target {
     }
 }
 
+#[cfg(test)]
+impl Target {
+    /// An enabled GET of `https://example.com/` expecting 200, checked every
+    /// `interval`.
+    pub(crate) fn sample(interval: Duration) -> Self {
+        use super::check::{ExpectedStatus, HttpCheck, HttpMethod, IpVersion};
+
+        Self {
+            id: Uuid::now_v7(),
+            name: "api".into(),
+            check: CheckSpec::Http(HttpCheck {
+                url: url::Url::parse("https://example.com/").expect("url"),
+                method: HttpMethod::Get,
+                timeout: Duration::from_secs(5),
+                follow_redirects: false,
+                max_redirects: 0,
+                expected_status: ExpectedStatus::Exact(200),
+                expected_body_contains: None,
+                headers: Default::default(),
+                body: None,
+                verify_tls: true,
+                basic_auth: None,
+                bearer_token: None,
+                ip_version: IpVersion::Any,
+            }),
+            interval,
+            enabled: true,
+            tags: vec![],
+            alerts: TargetAlerts(vec![]),
+            alert_confirmations: 1,
+            notify_recovery: true,
+            renotify_interval_secs: 3600,
+            recovery_period_secs: 0,
+            region_policy: Default::default(),
+            group_name: None,
+            owner_user_id: None,
+            write_source: WriteSource::Ui,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            plan_hold_at: None,
+            slowed_at: None,
+        }
+    }
+}
+
 /// A monitor with what is resolved before the write so it all lands in one
 /// transaction: the regions it probes from (empty takes the deployment
 /// default) and, for a duplicate, the escalation policy of its source.
@@ -470,11 +515,10 @@ mod recovery_period_tests {
 #[cfg(test)]
 mod slowed_at_tests {
     use super::*;
-    use crate::scheduler::registry::tests::a_target;
 
     #[test]
     fn the_api_omits_slowed_at_until_it_is_set() {
-        let t = a_target(Duration::from_secs(60));
+        let t = Target::sample(Duration::from_secs(60));
         assert!(serde_json::to_value(&t).unwrap().get("slowed_at").is_none());
         let slowed = Target {
             slowed_at: Some(Utc::now()),
