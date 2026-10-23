@@ -7,13 +7,18 @@ This page covers the hosted service at `uptimepage.dev`. If you run your own ins
 | Region | Location |
 |---|---|
 | `us-west` | San Jose, United States |
+| `us-central` | Dallas, United States |
 | `us-east` | Secaucus, United States (New York metro) |
 | `sa-br` | São Paulo, Brazil |
+| `eu-london` | London, United Kingdom |
 | `eu-frankfurt` | Frankfurt, Germany |
 | `eu-helsinki` | Helsinki, Finland |
+| `af-za` | Johannesburg, South Africa |
 | `apac-sg` | Singapore |
+| `apac-jp` | Tokyo, Japan |
+| `apac-au` | Sydney, Australia |
 
-A new monitor starts in a default set of regions rather than all of them. Today the defaults are New York, Frankfurt and Helsinki; San Jose, Singapore and São Paulo are opt-in, one checkbox away on the monitor form. On Standard and Founding, adding a region past the cap means unticking another.
+A new monitor starts in a default set of regions rather than all of them. Today the defaults are New York, Frankfurt and Helsinki; every other region is opt-in, one checkbox away on the monitor form. On Standard and Founding, adding a region past the cap means unticking another.
 
 More regions are rolling out. Existing monitors pick them up as soon as you assign them, with no migration and no change to your history.
 
@@ -21,7 +26,7 @@ More regions are rolling out. Existing monitors pick them up as soon as you assi
 
 A monitor runs in every region you assign it. Each result is stored with the region that produced it, so the monitor detail page can show per-region latency and you can filter any chart down to one region.
 
-Standard runs a monitor from up to three regions and Founding from up to five, any of them. Pro and Team have no cap, so they pick up new regions as they open.
+Standard runs a monitor from up to three regions and Founding from up to five, any of them. Pro and Team have no cap, so a region that opens can be added to any monitor without unticking another.
 
 ## How a failure is decided
 

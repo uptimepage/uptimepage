@@ -8,7 +8,7 @@ use super::model::{Matrix, MatrixRow};
 /// 30s, a self-hosted install at 10s.
 const OUR_FASTEST_INTERVAL: &str = "60s free · 30s Team · 10s self-hosted";
 const OUR_CHECK_TYPES: &str = "HTTP · TCP · DNS · TLS · domain · ping · heartbeat · flow · manual";
-const OUR_REGIONS: &str = "6 hosted regions";
+const OUR_REGIONS: &str = "11 hosted regions";
 
 /// Decision matrix for `/open-source-uptime-monitoring`, verified July 2026
 /// against each project's repo and docs. Uptime Kuma is the search default,

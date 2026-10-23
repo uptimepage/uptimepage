@@ -382,7 +382,7 @@ pub const DOCS: &[DocPage] = &[
         section: Section::Hosted,
         scope: Scope::Hosted,
         created: "2026-07-22",
-        lastmod: "2026-10-21",
+        lastmod: "2026-10-23",
         source: include_str!("../../docs/hosted/regions.md"),
         dir: "hosted",
     },

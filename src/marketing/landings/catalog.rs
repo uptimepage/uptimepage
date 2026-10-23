@@ -295,7 +295,7 @@ docker compose up -d"#,
     Landing {
         path: "/open-source-uptime-monitoring",
         created: "2026-07-11",
-        lastmod: "2026-10-20",
+        lastmod: "2026-10-23",
         title: "Open-Source Uptime Monitoring, Self-Hosted",
         eyebrow: "open source",
         h1: "An open-source uptime monitor you run yourself",
@@ -1028,7 +1028,7 @@ URL=https://app.uptimepage.dev/ping/your-token
     Landing {
         path: "/vs/uptimerobot",
         created: "2026-06-16",
-        lastmod: "2026-10-20",
+        lastmod: "2026-10-23",
         title: "An UptimeRobot Alternative with Status Pages",
         eyebrow: "switching monitors",
         h1: "Looking for an UptimeRobot alternative?",
@@ -1110,7 +1110,7 @@ URL=https://app.uptimepage.dev/ping/your-token
     Landing {
         path: "/vs/better-stack",
         created: "2026-06-19",
-        lastmod: "2026-10-20",
+        lastmod: "2026-10-23",
         title: "Better Uptime (Better Stack) Alternative",
         eyebrow: "comparing platforms",
         h1: "The Better Uptime (Better Stack) alternative for teams",
@@ -1128,7 +1128,7 @@ URL=https://app.uptimepage.dev/ping/your-token
             },
             Section {
                 heading: "Checks from several regions",
-                body: "The hosted service probes from San Jose, New York, São Paulo, Frankfurt, Helsinki and Singapore, and a majority has to agree before an incident opens. Self-hosted, you run region agents on your own machines; each authenticates with a scoped, org-bound token.",
+                body: "The hosted service probes from San Jose, Dallas, New York, São Paulo, London, Frankfurt, Helsinki, Johannesburg, Singapore, Tokyo and Sydney, and a majority has to agree before an incident opens. Self-hosted, you run region agents on your own machines; each authenticates with a scoped, org-bound token.",
             },
         ],
         code: None,
@@ -1147,7 +1147,7 @@ URL=https://app.uptimepage.dev/ping/your-token
     Landing {
         path: "/vs/oneuptime",
         created: "2026-06-19",
-        lastmod: "2026-10-20",
+        lastmod: "2026-10-23",
         title: "A OneUptime Alternative That’s Quick to Run",
         eyebrow: "comparing open source",
         h1: "A OneUptime alternative that’s quick to run",
@@ -1178,7 +1178,7 @@ URL=https://app.uptimepage.dev/ping/your-token
     Landing {
         path: "/vs/uptime-kuma",
         created: "2026-06-20",
-        lastmod: "2026-10-20",
+        lastmod: "2026-10-23",
         title: "An Uptime Kuma Alternative You Run as Code",
         eyebrow: "comparing open source",
         h1: "An Uptime Kuma alternative you run as code",
@@ -1309,7 +1309,7 @@ URL=https://app.uptimepage.dev/ping/your-token
     Landing {
         path: "/vs/self-hosted-status-pages",
         created: "2026-07-01",
-        lastmod: "2026-10-20",
+        lastmod: "2026-10-23",
         title: "Uptimepage vs Upptime, Cachet & Statping",
         eyebrow: "comparing self-hosted",
         h1: "Uptimepage vs Upptime, Cachet and Statping",
@@ -1366,7 +1366,7 @@ URL=https://app.uptimepage.dev/ping/your-token
     Landing {
         path: "/vs/self-hosted-monitoring",
         created: "2026-07-01",
-        lastmod: "2026-10-20",
+        lastmod: "2026-10-23",
         title: "Uptimepage vs the Self-Hosted Monitoring Tools",
         eyebrow: "comparing self-hosted",
         h1: "Uptimepage vs the self-hosted monitoring tools",
@@ -1431,7 +1431,7 @@ URL=https://app.uptimepage.dev/ping/your-token
     Landing {
         path: "/compare/openstatus-vs-uptime-kuma",
         created: "2026-07-05",
-        lastmod: "2026-10-20",
+        lastmod: "2026-10-23",
         title: "OpenStatus vs Uptime Kuma",
         eyebrow: "comparing self-hosted",
         h1: "OpenStatus vs Uptime Kuma: which fits how you work?",
@@ -1656,7 +1656,7 @@ URL=https://app.uptimepage.dev/ping/your-token
     Landing {
         path: "/compare/openstatus-vs-gatus",
         created: "2026-07-14",
-        lastmod: "2026-10-20",
+        lastmod: "2026-10-23",
         title: "OpenStatus vs Gatus",
         eyebrow: "comparing self-hosted",
         h1: "OpenStatus vs Gatus: hosted probes or your own YAML?",
@@ -1701,7 +1701,7 @@ URL=https://app.uptimepage.dev/ping/your-token
     Landing {
         path: "/compare/blackbox-exporter-vs-uptime-kuma",
         created: "2026-07-14",
-        lastmod: "2026-10-20",
+        lastmod: "2026-10-23",
         title: "Blackbox exporter vs Uptime Kuma",
         eyebrow: "comparing self-hosted",
         h1: "Blackbox exporter vs Uptime Kuma: a part or a product?",
@@ -1746,7 +1746,7 @@ URL=https://app.uptimepage.dev/ping/your-token
     Landing {
         path: "/compare/uptime-kuma-vs-zabbix",
         created: "2026-07-27",
-        lastmod: "2026-10-20",
+        lastmod: "2026-10-23",
         title: "Uptime Kuma vs Zabbix",
         eyebrow: "comparing self-hosted",
         h1: "Uptime Kuma vs Zabbix: from outside, or from inside?",
@@ -1803,7 +1803,7 @@ URL=https://app.uptimepage.dev/ping/your-token
     Landing {
         path: "/compare/uptime-kuma-vs-upptime",
         created: "2026-07-17",
-        lastmod: "2026-10-20",
+        lastmod: "2026-10-23",
         title: "Uptime Kuma vs Upptime",
         eyebrow: "comparing self-hosted",
         h1: "Uptime Kuma vs Upptime: a server, or no server at all?",
@@ -1848,7 +1848,7 @@ URL=https://app.uptimepage.dev/ping/your-token
     Landing {
         path: "/compare/uptime-kuma-vs-oneuptime",
         created: "2026-07-17",
-        lastmod: "2026-10-20",
+        lastmod: "2026-10-23",
         title: "Uptime Kuma vs OneUptime",
         eyebrow: "comparing self-hosted",
         h1: "Uptime Kuma vs OneUptime: one tool, or the whole stack?",

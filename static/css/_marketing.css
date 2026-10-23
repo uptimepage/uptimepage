@@ -3243,13 +3243,24 @@ html:has(.mk-hero),
     z-index: -1;
     pointer-events: none;
     opacity: 0.58;
-    translate: 20% 0;
+    --mk-hero-map-shift: 20%;
+    translate: var(--mk-hero-map-shift) 0;
 }
+
+/* Below desktop the copy spans the whole map, so a legend would print over it. */
+.mk-hero__map .mk-map__legend { display: none; }
 
 @media (min-width: 1024px) {
     .mk-hero__map {
         width: calc(100% + clamp(2rem, 5vw, 5rem));
         margin-left: calc(clamp(2rem, 5vw, 5rem) * -1);
+    }
+    /* Wraps under the map's right side and ends at the container edge (the
+       right margin undoes the shift), clear of the copy and its buttons. */
+    .mk-hero__map .mk-map__legend {
+        display: flex;
+        width: 50%;
+        margin: clamp(1rem, 2vw, 1.5rem) var(--mk-hero-map-shift) 0 auto;
     }
 }
 
@@ -3268,19 +3279,14 @@ html:has(.mk-hero),
     margin-bottom: -15%;
 }
 
-.mk-hero__map .mk-map__legend {
-    margin-top: clamp(1rem, 2vw, 1.5rem);
-}
-
 @media (max-width: 640px) {
-    /* Keep decorative region labels out of the narrow column of hero copy. */
+    /* Fade the map behind the narrow column of hero copy. */
     .mk-home .mk-hero__map {
         min-width: 0;
         overflow: hidden;
         translate: none;
         opacity: 0.3;
     }
-    .mk-home .mk-hero__map .mk-map__legend { display: none; }
 }
 
 /* Architecture hero: a translucent flow-schema backdrop, same layering as the
@@ -3343,11 +3349,16 @@ html:has(.mk-hero),
 /* One 12s loop shared by every flow; negative delays stagger the arrivals and
    leave the map already in motion on first paint. */
 .mk-map__flow { --mk-flow-delay: 0s; }
-.mk-map__flow--2 { --mk-flow-delay: -2s; }
-.mk-map__flow--3 { --mk-flow-delay: -4s; }
-.mk-map__flow--4 { --mk-flow-delay: -6s; }
-.mk-map__flow--5 { --mk-flow-delay: -8s; }
-.mk-map__flow--6 { --mk-flow-delay: -10s; }
+.mk-map__flow--2 { --mk-flow-delay: -1.09s; }
+.mk-map__flow--3 { --mk-flow-delay: -2.18s; }
+.mk-map__flow--4 { --mk-flow-delay: -3.27s; }
+.mk-map__flow--5 { --mk-flow-delay: -4.36s; }
+.mk-map__flow--6 { --mk-flow-delay: -5.45s; }
+.mk-map__flow--7 { --mk-flow-delay: -6.55s; }
+.mk-map__flow--8 { --mk-flow-delay: -7.64s; }
+.mk-map__flow--9 { --mk-flow-delay: -8.73s; }
+.mk-map__flow--10 { --mk-flow-delay: -9.82s; }
+.mk-map__flow--11 { --mk-flow-delay: -10.91s; }
 
 .mk-map__arc {
     fill: none;
