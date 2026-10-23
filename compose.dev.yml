@@ -104,6 +104,7 @@ services:
       UPTIMEPAGE_LEGAL__SECURITY_POLICY_URL: "http://lvh.me:8080/security-policy"
       UPTIMEPAGE_LEGAL__TERMS_VERSION: "v2"
       UPTIMEPAGE_LEGAL__PRIVACY_VERSION: "v2"
+      UPTIMEPAGE_SECURITY__DISCLOSURE__CONTACT: "mailto:security@example.invalid"
       # Tenancy boot guards: ip/ua fingerprint salt is mandatory under SaaS.
       # Fixed dev-only value — never used outside the local stack.
       UPTIMEPAGE_AUTH__FINGERPRINT_SALT: "dev-only-fingerprint-salt-not-for-prod"

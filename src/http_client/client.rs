@@ -275,6 +275,7 @@ pub(crate) fn test_clients(allow_private_targets: bool) -> HttpClients {
             allow_private_targets,
             credentials_kek_base64: secrecy::SecretString::from(String::new()),
             trusted_proxies: vec![],
+            disclosure: Default::default(),
         },
     )
     .expect("build clients")

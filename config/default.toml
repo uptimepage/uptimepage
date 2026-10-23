@@ -47,6 +47,16 @@ credentials_kek_base64 = ""
 # indexes useless, magic-link ip_hint shows the proxy.
 trusted_proxies = []
 
+[security.disclosure]
+# RFC 9116 /.well-known/security.txt, served on every host when contact is
+# set and on none when it is empty. contact takes mailto:, tel: or https://
+# URIs, most preferred first; Expires is filled in, 180 days out, and Policy
+# is legal.security_policy_url when that is https. acknowledgments is an
+# https:// URL; preferred_languages is like "en, de".
+contact = []
+acknowledgments = ""
+preferred_languages = ""
+
 [circuit_breaker]
 failure_threshold = 5
 success_threshold = 2

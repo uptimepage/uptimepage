@@ -214,10 +214,6 @@ pub fn routes(state: AppState) -> Router {
             get(views::auth::settings::api_tokens_partial),
         )
         .route("/licenses", get(views::legal::licenses))
-        .route(
-            crate::security::disclosure::PATH,
-            get(crate::security::disclosure::serve),
-        )
         .route("/settings/escalation", get(views::escalation::index))
         .route("/settings/escalation/new", get(views::escalation::new_form))
         .route(
@@ -250,6 +246,14 @@ pub fn routes(state: AppState) -> Router {
             "/web/partials/settings/on-call/my-calendar",
             get(views::on_call_shifts::feed_partial),
         );
+    r = crate::security::disclosure::mount(
+        r,
+        crate::security::disclosure::Disclosure::from_config(
+            &cfg.security.disclosure,
+            &cfg.legal.security_policy_url,
+        )
+        .as_ref(),
+    );
 
     // Only where an operator staffs an inbox, so no page goes nowhere.
     if cfg.email.support_enabled() {

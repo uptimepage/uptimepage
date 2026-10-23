@@ -43,6 +43,7 @@ fn canary_client() -> uptimepage::http_client::HttpClients {
         allow_private_targets: false,
         credentials_kek_base64: secrecy::SecretString::from(String::new()),
         trusted_proxies: vec![],
+        disclosure: Default::default(),
     };
     let dns_cfg = DnsConfig {
         cache_size: 64,

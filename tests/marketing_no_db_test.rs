@@ -20,6 +20,13 @@ fn router() -> axum::Router {
         mcp_url: Some("https://mcp.uptimepage.dev/mcp".into()),
         checkout_open: false,
         trusted_proxies: Vec::new(),
+        disclosure: uptimepage::security::disclosure::Disclosure::from_config(
+            &uptimepage::config::DisclosureConfig {
+                contact: vec!["mailto:security@uptimepage.dev".into()],
+                ..Default::default()
+            },
+            "",
+        ),
     })
 }
 
@@ -414,7 +421,7 @@ async fn api_catalog_is_served_as_a_linkset() {
 }
 
 #[tokio::test]
-async fn security_txt_answers_on_its_canonical_host() {
+async fn the_apex_serves_the_configured_security_txt() {
     let (status, body, headers) = get("/.well-known/security.txt").await;
     assert_eq!(status, StatusCode::OK);
     let ct = headers
@@ -428,9 +435,10 @@ async fn security_txt_answers_on_its_canonical_host() {
         .unwrap_or("");
     assert!(cache.contains("max-age="), "got {cache:?}");
     assert!(
-        body.contains("Canonical: https://uptimepage.dev/.well-known/security.txt"),
-        "Canonical must name this host: {body}"
+        body.contains("Contact: mailto:security@uptimepage.dev"),
+        "{body}"
     );
+    assert!(!body.contains("Canonical:"), "{body}");
 }
 
 #[tokio::test]

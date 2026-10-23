@@ -298,6 +298,7 @@ fn every_landing_renders() {
         mcp_url: None,
         checkout_open: false,
         trusted_proxies: Vec::new(),
+        disclosure: None,
     };
     for (path, page) in render_all(&cfg) {
         let html = std::str::from_utf8(&page.body).expect("landings render UTF-8");
@@ -370,6 +371,7 @@ fn only_the_author_page_carries_the_person_node() {
         mcp_url: None,
         checkout_open: false,
         trusted_proxies: Vec::new(),
+        disclosure: None,
     };
     let rendered = render_all(&cfg);
     let marker = "\"@id\":\"https://uptimepage.dev/about#author\"";

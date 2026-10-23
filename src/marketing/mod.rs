@@ -82,6 +82,7 @@ pub fn router(cfg: MarketingCfg) -> Router {
             get(site_files::startupranking_verification),
         );
     r = legal::mount(r);
+    r = crate::security::disclosure::mount(r, state.disclosure.as_ref());
     r = landings::mount(r);
     r = tools::mount(r);
     r = docs::mount(r);

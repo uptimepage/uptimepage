@@ -357,6 +357,7 @@ mod tests {
                 allow_private_targets: false,
                 credentials_kek_base64: secrecy::SecretString::from(String::new()),
                 trusted_proxies: vec![],
+                disclosure: Default::default(),
             },
         )
         .expect("clients build");

@@ -98,4 +98,5 @@ pub struct MarketingCfg {
     /// the TCP peer is the client. Read by the tools that open an outbound
     /// socket, to key their per-IP budget on the visitor rather than on Caddy.
     pub trusted_proxies: Vec<ipnet::IpNet>,
+    pub disclosure: Option<crate::security::disclosure::Disclosure>,
 }

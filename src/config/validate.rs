@@ -230,6 +230,56 @@ impl AppConfig {
         Ok(())
     }
 
+    pub fn validate_disclosure(&self) -> Result<()> {
+        fn err(msg: String) -> crate::error::AppError {
+            crate::error::AppError::Other(anyhow::anyhow!(msg))
+        }
+        let d = &self.security.disclosure;
+        // Each value becomes one `Field: value` line; a line break would forge
+        // a field of its own.
+        for (key, value) in [
+            ("acknowledgments", &d.acknowledgments),
+            ("preferred_languages", &d.preferred_languages),
+        ]
+        .into_iter()
+        .chain(d.contact.iter().map(|c| ("contact", c)))
+        {
+            if value.contains(['\r', '\n']) || value.trim() != value.as_str() {
+                return Err(err(format!(
+                    "security.disclosure.{key} must be one trimmed line (got {value:?})"
+                )));
+            }
+        }
+        for contact in &d.contact {
+            let usable = url::Url::parse(contact).is_ok_and(|u| match u.scheme() {
+                "https" => u.host().is_some(),
+                "mailto" | "tel" => !u.path().is_empty(),
+                _ => false,
+            });
+            if !usable {
+                return Err(err(format!(
+                    "security.disclosure.contact entries are mailto:, tel: or https:// URIs \
+                     (got {contact:?})"
+                )));
+            }
+        }
+        let ack = &d.acknowledgments;
+        if !ack.is_empty()
+            && !url::Url::parse(ack).is_ok_and(|u| u.scheme() == "https" && u.host().is_some())
+        {
+            return Err(err(format!(
+                "security.disclosure.acknowledgments must be an https:// URL (got {ack:?})"
+            )));
+        }
+        if d.contact.is_empty() && (!ack.is_empty() || !d.preferred_languages.is_empty()) {
+            return Err(err(
+                "security.disclosure has fields but no contact, so security.txt would not be served"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn validate_legal(&self) -> Result<()> {
         fn err(msg: String) -> crate::error::AppError {
             crate::error::AppError::Other(anyhow::anyhow!(msg))

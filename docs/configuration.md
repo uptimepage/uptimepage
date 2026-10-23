@@ -1,6 +1,6 @@
 # Configuration
 
-Defaults live in `config/default.toml`. Every scalar key can be overridden by an environment variable using the prefix `UPTIMEPAGE_` and `__` as the nested separator; the value is read exactly as written, so an id or secret that looks like a number is never rounded or stripped of leading zeros. Of the list keys, only `dns.servers` and `security.trusted_proxies` can be set from the environment, as one comma-separated value (items are trimmed, blank items dropped); set the others in the config file.
+Defaults live in `config/default.toml`. Every scalar key can be overridden by an environment variable using the prefix `UPTIMEPAGE_` and `__` as the nested separator; the value is read exactly as written, so an id or secret that looks like a number is never rounded or stripped of leading zeros. Of the list keys, only `dns.servers`, `security.trusted_proxies` and `security.disclosure.contact` can be set from the environment, as one comma-separated value (items are trimmed, blank items dropped); set the others in the config file.
 
 Example: `UPTIMEPAGE_SERVER__API_BIND=0.0.0.0:8080`
 
@@ -22,6 +22,7 @@ Override `UPTIMEPAGE_CONFIG_PATH` to point at an alternate base config file.
 | `security` | `allow_private_targets` | SSRF guard: when `false` (default) any target resolving to loopback / private / link-local / reserved IPs is rejected |
 | `security` | `credentials_kek_base64` | 32-byte base64 key encrypting `basic_auth` / `bearer_token` at rest. Empty (default) stores plaintext — dev only |
 | `security` | `trusted_proxies` | CIDR ranges whose `X-Forwarded-For` is honoured for client-IP extraction. Empty means no reverse proxy: the TCP peer is trusted as-is |
+| `security.disclosure` | `contact`, `acknowledgments`, `preferred_languages` | your RFC 9116 `/.well-known/security.txt`, served on every host when `contact` is set and on none when it is empty. `contact` takes `mailto:`, `tel:` or `https://` URIs, most preferred first; `Policy` is `legal.security_policy_url` when that is https; `Expires` is filled in 180 days ahead on each request, so the file never lapses and a restart never waits on a renewal. No `Canonical`, since tenant subdomains cannot all be listed |
 | `flow` | `enabled`, `lightpanda_path`, `max_concurrency`, `mem_limit_mb`, `block_private_networks`, `block_cidrs`, `v8_max_heap_mb`, `max_response_mb`, `user_agent_suffix` | Browser-driven flow monitors (Lightpanda engine). Off by default. See [Browser flow monitors](#browser-flow-monitors) below |
 | `rate_limits` | `per_ip.*`, `janitor.*` | Mirrors of the per-IP numbers the reverse proxy enforces, plus the in-process limiter-map janitor cadence. Per-org/per-user limits come from the plans table |
 | `abuse` | `url_patterns_denied`, `domain_denylist_path`, `reputation_source_path`, `hot_reload_enabled` | Deny-list of attack-recon URL patterns and domains checked at target creation. `hot_reload_enabled` lets SIGHUP swap the rules in without a restart |

@@ -141,6 +141,7 @@ mod tests {
             mcp_url: Some("https://mcp.uptimepage.dev/mcp".into()),
             checkout_open: false,
             trusted_proxies: Vec::new(),
+            disclosure: None,
         }
     }
 

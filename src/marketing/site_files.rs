@@ -528,6 +528,7 @@ mod tests {
             mcp_url: None,
             checkout_open: false,
             trusted_proxies: Vec::new(),
+            disclosure: None,
         };
         let txt = String::from_utf8(build_llms_full(&cfg).to_vec()).expect("llms-full is UTF-8");
         for l in landings::LANDINGS {
@@ -554,6 +555,7 @@ mod tests {
             mcp_url: None,
             checkout_open: false,
             trusted_proxies: Vec::new(),
+            disclosure: None,
         };
         let xml = build_sitemap(&cfg);
         assert!(
@@ -583,6 +585,7 @@ mod tests {
             mcp_url: None,
             checkout_open: false,
             trusted_proxies: Vec::new(),
+            disclosure: None,
         };
         let xml = build_sitemap(&cfg);
         let newest = crate::marketing::docs::index_lastmod().expect("docs are never empty");
@@ -610,6 +613,7 @@ mod tests {
             mcp_url: None,
             checkout_open: false,
             trusted_proxies: Vec::new(),
+            disclosure: None,
         };
         let xml = build_sitemap(&cfg);
         let illustrated: Vec<_> = list_published()

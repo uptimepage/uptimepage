@@ -85,6 +85,7 @@ async fn main() {
         allow_private_targets: true,
         credentials_kek_base64: secrecy::SecretString::from(String::new()),
         trusted_proxies: vec![],
+        disclosure: Default::default(),
     };
     let clients =
         build_clients(&http_cfg, &checker_cfg, &dns_cfg, &security_cfg).expect("build clients");

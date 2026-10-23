@@ -949,6 +949,7 @@ mod tests {
             mcp_url: None,
             checkout_open: false,
             trusted_proxies: Vec::new(),
+            disclosure: None,
         };
         let mut rendered = 0usize;
         for post in all().iter().filter(|p| !p.draft) {

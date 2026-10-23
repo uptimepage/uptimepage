@@ -930,13 +930,14 @@ async fn variables_page_and_partial_render_with_secret_redacted() {
     );
 }
 
-/// RFC 9116: served at the well-known path as `text/plain`, carrying
-/// the mandatory fields. That `Expires` is still in the future is a
-/// property of the file rather than of the transport, so it is checked
-/// in `security::disclosure`'s unit tests, on the `--lib` gate.
+/// RFC 9116: served at the well-known path as `text/plain`, carrying the
+/// operator's contact and an `Expires`.
 #[tokio::test]
 async fn security_txt_served_per_rfc9116() {
-    let resp = app()
+    let app = build_test_app_with_web_and_owner(|cfg| {
+        cfg.security.disclosure.contact = vec!["mailto:security@example.test".into()];
+    });
+    let resp = app
         .oneshot(
             Request::get("/.well-known/security.txt")
                 .body(Body::empty())
@@ -950,19 +951,28 @@ async fn security_txt_served_per_rfc9116() {
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    assert!(
-        ct.starts_with("text/plain"),
-        "security.txt must be text/plain, got {ct}"
-    );
+    assert!(ct.starts_with("text/plain"), "got {ct}");
     let body = body_text(resp).await;
     assert!(
-        body.contains("Contact: mailto:security@uptimepage.dev"),
-        "security.txt needs a Contact field"
+        body.contains("Contact: mailto:security@example.test"),
+        "{body}"
     );
-    assert!(
-        body.contains("Expires: "),
-        "security.txt needs an Expires field"
-    );
+    assert!(body.contains("Expires: "), "{body}");
+}
+
+/// With no contact configured there is nobody to report to, so a deployment
+/// does not claim one, least of all somebody else's.
+#[tokio::test]
+async fn no_security_txt_without_a_contact() {
+    let resp = app()
+        .oneshot(
+            Request::get("/.well-known/security.txt")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

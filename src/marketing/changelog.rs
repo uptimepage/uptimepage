@@ -411,6 +411,7 @@ mod tests {
             mcp_url: None,
             checkout_open: false,
             trusted_proxies: Vec::new(),
+            disclosure: None,
         };
         let feed = build_feed(&cfg);
         assert!(feed.starts_with(

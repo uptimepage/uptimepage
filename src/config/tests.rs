@@ -785,3 +785,40 @@ fn a_billing_provider_requires_terms_to_accept() {
     let refused = cfg.validate_billing().expect_err("no terms");
     assert!(refused.to_string().contains("legal.terms_url"));
 }
+
+#[test]
+fn a_disclosure_field_cannot_forge_another_line() {
+    let mut cfg = AppConfig::load().expect("load");
+    cfg.security.disclosure = DisclosureConfig {
+        contact: vec!["mailto:security@example.test".into()],
+        ..DisclosureConfig::default()
+    };
+    assert!(cfg.validate_disclosure().is_ok());
+    for bad in [
+        "mailto:a@example.test\nCanonical: https://evil.test",
+        "http://example.test/report",
+        "security@example.test",
+        "https://",
+        "mailto:",
+    ] {
+        cfg.security.disclosure.contact = vec![bad.into()];
+        assert!(cfg.validate_disclosure().is_err(), "{bad:?}");
+    }
+    cfg.security.disclosure.contact = vec!["tel:+15550100".into()];
+    assert!(cfg.validate_disclosure().is_ok());
+    cfg.security.disclosure.acknowledgments = "http://example.test/thanks".into();
+    assert!(
+        cfg.validate_disclosure().is_err(),
+        "acknowledgments must be https"
+    );
+}
+
+#[test]
+fn disclosure_fields_without_a_contact_do_not_boot() {
+    let mut cfg = AppConfig::load().expect("load");
+    cfg.security.disclosure = DisclosureConfig {
+        preferred_languages: "en".into(),
+        ..DisclosureConfig::default()
+    };
+    assert!(cfg.validate_disclosure().is_err());
+}

@@ -152,6 +152,7 @@ async fn main() -> Result<()> {
     cfg.validate_marketing()?;
     cfg.validate_site()?;
     cfg.validate_legal()?;
+    cfg.validate_disclosure()?;
     cfg.validate_custom_domain_ask()?;
     // Central Telegram bot: a set bot_token without a username / strong
     // webhook secret / https base is a clean startup error, not a half-up bot.
@@ -1021,6 +1022,10 @@ async fn main() -> Result<()> {
                 .then(|| state.cfg.mcp.resource_uri.clone()),
             checkout_open,
             trusted_proxies: state.cfg.security.trusted_proxies.clone(),
+            disclosure: uptimepage::security::disclosure::Disclosure::from_config(
+                &state.cfg.security.disclosure,
+                &state.cfg.legal.security_policy_url,
+            ),
         };
         // Pre-warm the in-memory post cache so the first /blog hit
         // doesn't pay the parse cost.

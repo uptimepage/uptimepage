@@ -48,8 +48,8 @@ pub use public::{
     LegalConfig, MarketingConfig, PublicStatusConfig, RetentionConfig, SiteConfig, TenancyConfig,
 };
 pub use runtime::{
-    CheckerConfig, CircuitBreakerConfig, DnsConfig, HttpClientConfig, RuntimeConfig,
-    SchedulerConfig, SecurityConfig, ServerConfig,
+    CheckerConfig, CircuitBreakerConfig, DisclosureConfig, DnsConfig, HttpClientConfig,
+    RuntimeConfig, SchedulerConfig, SecurityConfig, ServerConfig,
 };
 pub use storage::{ClickhouseConfig, PostgresConfig, StorageConfig};
 

@@ -90,6 +90,21 @@ pub struct SecurityConfig {
     /// the proxy's address and IP-keyed abuse/audit signals are useless.
     #[serde(default, deserialize_with = "comma_list::deserialize")]
     pub trusted_proxies: Vec<ipnet::IpNet>,
+    #[serde(default)]
+    pub disclosure: DisclosureConfig,
+}
+
+/// `[security.disclosure]`, the RFC 9116 `security.txt`. Not served without a
+/// contact: there would be nobody to report to.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct DisclosureConfig {
+    /// `mailto:`, `tel:` or `https://` URIs, most preferred first. `Policy`
+    /// comes from `legal.security_policy_url`.
+    #[serde(deserialize_with = "comma_list::deserialize")]
+    pub contact: Vec<String>,
+    pub acknowledgments: String,
+    pub preferred_languages: String,
 }
 
 impl SecurityConfig {
