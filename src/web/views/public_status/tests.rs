@@ -859,17 +859,28 @@ fn incident_descriptions_differ_per_incident() {
 }
 
 #[test]
-fn og_image_is_never_the_marketing_card() {
-    let image = og_image("https://uptimepage.dev");
+fn a_page_with_the_badge_shares_the_branded_card_from_the_site() {
     assert_eq!(
-        image,
+        og_image(
+            "https://uptimepage.dev",
+            Some("https://acme.uptimepage.dev"),
+            true
+        ),
         "https://uptimepage.dev/static/marketing/og-status.png"
     );
 }
 
+/// White-label pages and self-hosted ones advertise nobody.
 #[test]
-fn og_image_is_empty_without_marketing_origin() {
-    assert!(og_image("").is_empty());
+fn every_other_page_shares_the_brand_free_card_from_its_own_host() {
+    for (site, branded) in [("https://uptimepage.dev", false), ("", true), ("", false)] {
+        let image = og_image(site, Some("https://status.acme.test"), branded);
+        assert!(
+            image.starts_with("https://status.acme.test/static/img/og-status.png"),
+            "{image}"
+        );
+    }
+    assert!(og_image("", None, false).is_empty());
 }
 
 #[test]

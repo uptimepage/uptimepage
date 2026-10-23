@@ -5,12 +5,12 @@ use axum::http::HeaderMap;
 use crate::app::AppState;
 use crate::domain::StatusPageId;
 use crate::request::host::published_page_origin;
-
+use crate::templates::assets;
 use crate::web::views::page_branding::BrandingView;
 
 /// OG/Twitter card metadata for the public status surface. Empty `url` /
-/// `image` / `site_name` mean "skip that tag" — fine for self-hosted setups
-/// where the site origin isn't configured.
+/// `image` / `site_name` mean "skip that tag", for a request whose host
+/// names no published origin.
 #[derive(Default)]
 pub struct OgMeta {
     pub title: String,
@@ -28,8 +28,7 @@ pub struct OgMeta {
 /// subdomain of `public_status.base_domain`. Without that gate, an attacker
 /// hitting the page with `Host: evil.com` would poison the scraper cache so
 /// social shares of legitimate URLs unfurl with attacker's domain. `og:image`
-/// degrades to empty (template skips the tag) when the site origin
-/// isn't configured.
+/// follows the same origin unless [`og_image`] picks the branded card.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_og_meta(
     state: &AppState,
@@ -41,11 +40,16 @@ pub(super) fn build_og_meta(
     og_type: &'static str,
     branding: &BrandingView,
 ) -> OgMeta {
-    let url = published_page_origin(&state.request_state(), headers, page)
+    let origin = published_page_origin(&state.request_state(), headers, page);
+    let url = origin
+        .as_deref()
         .map(|origin| format!("{origin}{path}"))
         .unwrap_or_default();
-
-    let image = og_image(&state.cfg.site.origin);
+    let image = og_image(
+        &state.cfg.site.origin,
+        origin.as_deref(),
+        branding.show_powered_by,
+    );
 
     OgMeta {
         title,
@@ -57,12 +61,15 @@ pub(super) fn build_og_meta(
     }
 }
 
-/// Never the marketing card: it carries a sign-up CTA, and this page is the
-/// tenant's.
-pub(super) fn og_image(site_origin: &str) -> String {
-    if site_origin.is_empty() {
-        String::new()
-    } else {
-        format!("{site_origin}/static/marketing/og-status.png")
+/// The branded card goes only where the page carries the "powered by" badge
+/// and the site serves it; every other page shares the brand-free card from
+/// its own host. Never the marketing card: it carries a sign-up CTA, and this
+/// page is the tenant's.
+pub(super) fn og_image(site_origin: &str, page_origin: Option<&str>, branded: bool) -> String {
+    if branded && !site_origin.is_empty() {
+        return format!("{site_origin}/static/marketing/og-status.png");
     }
+    page_origin
+        .map(|origin| format!("{origin}{}", assets::url("img/og-status.png")))
+        .unwrap_or_default()
 }

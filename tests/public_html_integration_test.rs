@@ -456,6 +456,35 @@ async fn status_page_returns_200_text_html() {
     assert!(html.contains(PUBLIC_COMPONENT_NAME));
 }
 
+/// A page with the badge shares the hosted card from the site; with no site
+/// to serve it, and no host to root the brand-free one at, it shares none.
+#[tokio::test]
+async fn the_share_card_follows_the_badge_and_the_site() {
+    let render = |site: &'static str| async move {
+        let app = build_test_app_with_web_and_public_source(
+            move |cfg| {
+                cfg.site.origin = site.into();
+                cfg.public_status.default_show_powered_by = true;
+            },
+            Arc::new(PublishedSource),
+        );
+        body_text(
+            app.oneshot(Request::get("/status").body(Body::empty()).unwrap())
+                .await
+                .unwrap(),
+        )
+        .await
+    };
+    let html = render("https://example.test").await;
+    assert!(
+        html.contains(
+            r#"<meta property="og:image" content="https://example.test/static/marketing/og-status.png">"#
+        ),
+        "{html}"
+    );
+    assert!(!render("").await.contains("og:image"));
+}
+
 /// Opted-in component gets a labelled history link; the name never becomes one.
 #[tokio::test]
 async fn status_page_links_component_name_only_when_opted_in() {
