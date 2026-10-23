@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Doc `lastmod` freshness check.
 #
-# `src/marketing/docs.rs` carries a hand-written `lastmod` per page and the
+# `docs/index.toml` carries a hand-written `lastmod` per page and the
 # sitemap serves it verbatim. Crawlers schedule a recrawl off that date, so a
 # rewritten page still claiming last month's date is invisible to search until
 # the next full crawl — silently, because nothing else notices.
@@ -17,7 +17,7 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-DOCS_RS=src/marketing/docs.rs
+MANIFEST=docs/index.toml
 today="$(date -u +%F)"
 fail=0
 
@@ -28,7 +28,17 @@ if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
   exit 0
 fi
 
-# `slug: "x",` … `lastmod: "YYYY-MM-DD",` — one entry per page, in order.
+# Read before the loop: a failure inside the process substitution would leave
+# it nothing to check, and the hook would pass without checking.
+pages="$(python3 -c '
+import sys, tomllib
+for page in tomllib.load(open(sys.argv[1], "rb"))["page"]:
+    print(page["slug"], page["lastmod"])
+' "$MANIFEST")" || {
+  echo "::error::doc lastmod: could not read $MANIFEST (needs python3 3.11+ for tomllib)" >&2
+  exit 1
+}
+
 while read -r slug declared; do
   md="docs/${slug}.md"
   [ -f "$md" ] || continue
@@ -45,10 +55,10 @@ while read -r slug declared; do
   fi
 
   if [ "$declared" != "$expected" ]; then
-    echo "  $md $why → lastmod should be $expected, docs.rs says $declared"
+    echo "  $md $why → lastmod should be $expected, $MANIFEST says $declared"
     fail=1
   fi
-done < <(perl -0777 -ne 'while (/slug: "([^"]+)",.*?lastmod: "(\d{4}-\d{2}-\d{2})"/gs) { print "$1 $2\n" }' "$DOCS_RS")
+done <<<"$pages"
 
 if [ "$fail" -ne 0 ]; then
   echo

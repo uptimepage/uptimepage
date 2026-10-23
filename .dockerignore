@@ -10,8 +10,8 @@ CLAUDE.md
 claude.md
 .claude/
 *.md
-# …but these markdown files are compile-time inputs: legal.rs and docs.rs
-# `include_str!` them into the binary. Re-include them after the blanket
+# …but these markdown files are compile-time inputs: legal.rs and the docs
+# table build.rs generates `include_str!` them into the binary. Re-include them after the blanket
 # *.md exclude.
 !THIRD-PARTY-LICENSES.md
 !docs/**/*.md

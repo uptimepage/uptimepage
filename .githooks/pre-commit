@@ -30,7 +30,7 @@ run "cargo clippy" cargo clippy --all-targets --no-deps -- -D warnings
 # no ast-grep needed; self-skips when pyyaml is absent. Local-only by design.
 run "workflow filters sync" scripts/check_workflow_filters_sync.sh
 
-# The sitemap serves docs.rs's `lastmod` verbatim and crawlers schedule off it,
+# The sitemap serves docs/index.toml's `lastmod` verbatim and crawlers schedule off it,
 # so a rewritten page keeping last month's date goes unnoticed until the next
 # full crawl. Needs per-file git history, which the image build does not have.
 run "doc lastmod" scripts/check_doc_lastmod.sh

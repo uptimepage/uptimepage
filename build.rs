@@ -136,8 +136,94 @@ const TAILWIND_SOURCES: [&str; 8] = [
     "_datetime.css",
 ];
 
+/// The docs table, generated from the public manifest so each page's metadata
+/// sits next to its Markdown. The generated `include_str!` makes every page a
+/// compiler dependency, so an edited page is never served stale.
+fn emit_docs_manifest() {
+    const MANIFEST: &str = "docs/index.toml";
+    const KEYS: [&str; 8] = [
+        "slug",
+        "title",
+        "description",
+        "blurb",
+        "section",
+        "scope",
+        "created",
+        "lastmod",
+    ];
+    println!("cargo::rerun-if-changed={MANIFEST}");
+    let manifest: toml::Table = std::fs::read_to_string(MANIFEST)
+        .expect("read docs/index.toml")
+        .parse()
+        .unwrap_or_else(|e| panic!("{MANIFEST}: {e}"));
+    let root = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+    let mut out = String::from("&[\n");
+    for page in manifest["page"].as_array().expect("[[page]] entries") {
+        let page = page.as_table().expect("[[page]] is a table");
+        let slug = page["slug"].as_str().expect("slug");
+        // The slug becomes an `include_str!` path and a public URL, so it may
+        // only name a file under docs/.
+        let safe = slug.split('/').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        });
+        assert!(
+            safe,
+            "{MANIFEST}: slug {slug:?} must be lowercase words joined by - and /"
+        );
+        if let Some(extra) = page.keys().find(|k| !KEYS.contains(&k.as_str())) {
+            panic!("{MANIFEST}: page {slug:?} has unknown key {extra:?}");
+        }
+        let text = |key: &str| {
+            page.get(key)
+                .and_then(toml::Value::as_str)
+                .unwrap_or_else(|| panic!("{MANIFEST}: page {slug:?} needs {key}"))
+        };
+        let date = |key: &str| {
+            page.get(key)
+                .and_then(toml::Value::as_datetime)
+                .filter(|d| d.date.is_some() && d.time.is_none() && d.offset.is_none())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| {
+                    panic!("{MANIFEST}: page {slug:?} needs {key} as a plain date (2026-10-23)")
+                })
+        };
+        let section = match text("section") {
+            "start" => "Start",
+            "guide" => "Guide",
+            "reference" => "Reference",
+            "hosted" => "Hosted",
+            "self-hosting" => "SelfHosting",
+            other => panic!("{MANIFEST}: page {slug:?} has unknown section {other:?}"),
+        };
+        let scope = match text("scope") {
+            "everyone" => "Everyone",
+            "hosted" => "Hosted",
+            "self-hosting" => "SelfHosting",
+            other => panic!("{MANIFEST}: page {slug:?} has unknown scope {other:?}"),
+        };
+        let source = format!("{root}/docs/{slug}.md");
+        out.push_str(&format!(
+            "    DocPage {{ slug: {slug:?}, title: {:?}, description: {:?}, blurb: {:?}, \
+             section: Section::{section}, scope: Scope::{scope}, created: {:?}, \
+             lastmod: {:?}, source: include_str!({source:?}) }},\n",
+            text("title"),
+            text("description"),
+            text("blurb"),
+            date("created"),
+            date("lastmod"),
+        ));
+    }
+    out.push_str("]\n");
+    let dest = Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("docs_manifest.rs");
+    std::fs::write(dest, out).expect("write docs_manifest.rs");
+}
+
 fn main() {
     emit_source_identity();
+    emit_docs_manifest();
 
     // Tailwind v4 scans `templates/**/*.html`, `src/**/*.rs`, AND
     // `assets/js/**/*.js` for class names (see @source directives in the

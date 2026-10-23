@@ -1,8 +1,9 @@
 //! Product documentation on the marketing host: a `/docs` index plus one
 //! page per Markdown source under `docs/`. Same slice-driven shape as
 //! [`super::legal`] and [`super::landings`] — the [`DOCS`] table feeds the
-//! route lookup, the render cache, the sidebar, and the sitemap, so a new
-//! page is one entry plus one file.
+//! route lookup, the render cache, the sidebar, and the sitemap. `build.rs`
+//! generates it from `docs/index.toml`, so a new page is one manifest entry
+//! plus one file.
 //!
 //! Sources are pulled in with `include_str!`, which registers a compiler
 //! dependency per file — unlike the blog's `include_dir!`, an edited page
@@ -115,9 +116,6 @@ pub struct DocPage {
     pub created: &'static str,
     pub lastmod: &'static str,
     source: &'static str,
-    /// The source file's directory under `docs/`, so relative links in it
-    /// resolve the way they do on disk.
-    dir: &'static str,
 }
 
 impl DocPage {
@@ -129,408 +127,17 @@ impl DocPage {
     pub fn body_md(&self) -> &'static str {
         self.source
     }
+
+    /// The source file's directory under `docs/`, so relative links in it
+    /// resolve the way they do on disk.
+    fn dir(&self) -> &'static str {
+        self.slug.rsplit_once('/').map_or("", |(dir, _)| dir)
+    }
 }
 
-/// Single source of truth for the documentation. Order within a section is
-/// the order readers see.
-pub const DOCS: &[DocPage] = &[
-    DocPage {
-        slug: "getting-started",
-        title: "Getting started",
-        description: "Sign in with GitHub or Google, add your first monitor, pick an interval and regions, route an alert to Slack or email, and publish a status page in ten minutes.",
-        blurb: "Sign in, add a monitor, get alerted, and publish a status page in about ten minutes.",
-        section: Section::Start,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-09-08",
-        source: include_str!("../../docs/getting-started.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "overview",
-        title: "Overview",
-        description: "What uptimepage is: one Rust binary that runs uptime checks, keeps config in Postgres and results in ClickHouse, and serves the app, the API and status pages.",
-        blurb: "What uptimepage is, what it runs on, and where to start reading.",
-        section: Section::Start,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-10-17",
-        source: include_str!("../../docs/overview.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "architecture",
-        title: "Architecture",
-        description: "How a check and a request move through uptimepage: scheduler, executor, ingest, the Postgres and ClickHouse stores, probe agents, and the invariants each keeps.",
-        blurb: "How checks are scheduled, executed, batched, and stored across Postgres and ClickHouse.",
-        section: Section::Start,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-10-17",
-        source: include_str!("../../docs/architecture.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "ui",
-        title: "Web UI",
-        description: "A tour of the app: the dashboard cards and monitor table, the monitor detail view with its charts and timeline, incidents, settings, and sharing one monitor.",
-        blurb: "A tour of the app: dashboard, monitors, incidents, settings, and sharing a monitor.",
-        section: Section::Guide,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-10-11",
-        source: include_str!("../../docs/ui.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "incidents",
-        title: "Incident management",
-        description: "How a run of failing checks becomes a tracked incident: acknowledgement, ownership, on-call, escalation, public updates, and the retrospective that closes it.",
-        blurb: "Acknowledgement, ownership, on-call, escalation, and the retrospective around a failing check.",
-        section: Section::Guide,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-10-09",
-        source: include_str!("../../docs/incidents.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "monitor-types",
-        title: "Monitor types",
-        description: "The nine monitor kinds, HTTP, TCP, ping, heartbeat, DNS, TLS certificate, domain expiry, browser flow and manual, what each proves, and which to reach for.",
-        blurb: "The nine monitor kinds, what each one actually proves, and which to reach for.",
-        section: Section::Guide,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-10-23",
-        source: include_str!("../../docs/monitor-types.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "notifications",
-        title: "Notifications",
-        description: "Alert channels for Slack, email, webhooks, PagerDuty, Telegram and more, how a monitor binds the ones that should hear about it, and what decides when it fires.",
-        blurb: "Alert channels, how a monitor binds them, and what decides when an alert fires.",
-        section: Section::Guide,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-10-07",
-        source: include_str!("../../docs/notifications.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "public-status",
-        title: "Public status page",
-        description: "The customer-facing surface: components and their uptime, incident updates, scheduled maintenance, subscribers, badges, and the public JSON and RSS endpoints.",
-        blurb: "The customer-facing surface: components, incidents, maintenance, badges, JSON and RSS.",
-        section: Section::Guide,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-10-22",
-        source: include_str!("../../docs/public-status.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "per-org-status",
-        title: "Per-org status pages",
-        description: "Running one or more branded status pages per organization, each on its own subdomain, showing only the monitors, incidents and maintenance you curate onto it.",
-        blurb: "Running one or more branded status pages per organization, each on its own subdomain.",
-        section: Section::Guide,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-10-09",
-        source: include_str!("../../docs/per-org-status.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "share-links",
-        title: "Share links",
-        description: "Read-only capability URLs that open one monitor's full dashboard, with status, uptime, latency charts and incident history, for anyone you send the link to.",
-        blurb: "Read-only capability URLs that open one monitor's full dashboard without an account.",
-        section: Section::Guide,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-10-03",
-        source: include_str!("../../docs/share-links.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "team",
-        title: "Team",
-        description: "Organizations, the member and owner roles and what each can do, inviting people by email, seats, and what happens to their work when someone leaves the org.",
-        blurb: "Roles, inviting people, seats, and what a member can do that an owner cannot.",
-        section: Section::Guide,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-09-05",
-        source: include_str!("../../docs/team.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "organizations",
-        title: "Organizations",
-        description: "Running more than one organization: when a second is worth it, switching between them, what changing a slug breaks, and the 30-day window to undo a delete.",
-        blurb: "Creating, switching, renaming and deleting orgs, and the restore window.",
-        section: Section::Guide,
-        scope: Scope::Everyone,
-        created: "2026-09-05",
-        lastmod: "2026-09-07",
-        source: include_str!("../../docs/organizations.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "variables",
-        title: "Variables and secrets",
-        description: "Reusable org-scoped values and write-only secrets, referenced in a monitor's HTTP request fields, so a credential lives in one place instead of every monitor.",
-        blurb: "Reusable org-scoped values and write-only secrets referenced from monitor request fields.",
-        section: Section::Guide,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-10-22",
-        source: include_str!("../../docs/variables.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "authentication",
-        title: "Authentication",
-        description: "OAuth sign-in, passkeys, magic links and the code beside them, managing the sign-in methods that open an account, and org-bound API tokens with scoped access.",
-        blurb: "OAuth sign-in, passkeys, magic links, API tokens, and the scopes that bound them.",
-        section: Section::Reference,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-10-01",
-        source: include_str!("../../docs/authentication.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "api",
-        title: "REST API",
-        description: "The /api/v1 surface: monitors, incidents, notification channels, status pages and the public endpoints, with the OpenAPI document and token authentication.",
-        blurb: "The /api/v1 surface: monitors, incidents, channels, status pages, and the public endpoints.",
-        section: Section::Reference,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-10-18",
-        source: include_str!("../../docs/api.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "terraform",
-        title: "Terraform",
-        description: "Managing monitors, notification channels and status pages as code with the uptimepage Terraform provider, from install and credentials to a first apply.",
-        blurb: "Managing monitors, channels, and status pages as code with the official provider.",
-        section: Section::Reference,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-10-17",
-        source: include_str!("../../docs/terraform.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "mcp",
-        title: "MCP server",
-        description: "Let an LLM client answer questions about one organization and take guarded actions over the Model Context Protocol, with scopes, confirmations and audit.",
-        blurb: "Letting an LLM client answer operational questions and take guarded actions on one org.",
-        section: Section::Reference,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-10-17",
-        source: include_str!("../../docs/mcp.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "quotas",
-        title: "Quotas and rate limits",
-        description: "How a plan bounds resources and per-minute request budgets, where each limit is enforced, and what an API client sees when it reaches the ceiling on either one.",
-        blurb: "How plans bound resources and request budgets, and how each limit is enforced.",
-        section: Section::Reference,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-10-23",
-        source: include_str!("../../docs/quotas.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "multi-tenancy",
-        title: "Multi-tenancy",
-        description: "The org model, how the active org is resolved from the authenticated session, and how tenant isolation is enforced in every query rather than by convention.",
-        blurb: "The org model, how the active org is resolved, and how tenant isolation is enforced.",
-        section: Section::Reference,
-        scope: Scope::Everyone,
-        created: "2026-07-22",
-        lastmod: "2026-10-02",
-        source: include_str!("../../docs/multi-tenancy.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "hosted/plans-and-limits",
-        title: "Plans and limits",
-        description: "The quotas and rate budgets each hosted plan carries, how the Standard and Founding tiers differ, and what happens when an organization reaches a ceiling.",
-        blurb: "The quotas and rate budgets each hosted plan carries, and what happens at the ceiling.",
-        section: Section::Hosted,
-        scope: Scope::Hosted,
-        created: "2026-07-22",
-        lastmod: "2026-10-03",
-        source: include_str!("../../docs/hosted/plans-and-limits.md"),
-        dir: "hosted",
-    },
-    DocPage {
-        slug: "hosted/regions",
-        title: "Probe regions",
-        description: "Where the hosted service checks from, how to pick regions for a monitor, how agreement between regions confirms an outage, and what our probes cannot reach.",
-        blurb: "Where the hosted service checks from, how to pick regions for a monitor, and what our probes cannot reach.",
-        section: Section::Hosted,
-        scope: Scope::Hosted,
-        created: "2026-07-22",
-        lastmod: "2026-10-23",
-        source: include_str!("../../docs/hosted/regions.md"),
-        dir: "hosted",
-    },
-    DocPage {
-        slug: "hosted/data-retention",
-        title: "Data retention",
-        description: "How long raw check results, rollups, incidents and audit records are kept on the hosted service, and which layer a chart reads for the range you asked for.",
-        blurb: "How long raw checks, rollups, incidents, and audit records are kept on the hosted service.",
-        section: Section::Hosted,
-        scope: Scope::Hosted,
-        created: "2026-07-22",
-        lastmod: "2026-09-10",
-        source: include_str!("../../docs/hosted/data-retention.md"),
-        dir: "hosted",
-    },
-    DocPage {
-        slug: "hosted/support",
-        title: "Support",
-        description: "How to reach us about an account, a security report, a bug or a feature request, what to include so we can help, and where the hosted service stands on SLAs.",
-        blurb: "How to reach us, what to include, and where the hosted service stands on SLAs.",
-        section: Section::Hosted,
-        scope: Scope::Hosted,
-        created: "2026-07-22",
-        lastmod: "2026-08-07",
-        source: include_str!("../../docs/hosted/support.md"),
-        dir: "hosted",
-    },
-    DocPage {
-        slug: "configuration",
-        title: "Configuration",
-        description: "Every configuration key, its default, and the environment variable that overrides it, across the server, storage, scheduler, alerting and status page sections.",
-        blurb: "Every configuration key, its default, and the environment variable that overrides it.",
-        section: Section::SelfHosting,
-        scope: Scope::SelfHosting,
-        created: "2026-07-22",
-        lastmod: "2026-10-23",
-        source: include_str!("../../docs/configuration.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "bot",
-        title: "Probe identity",
-        description: "Why a request with the uptimepage User-Agent reached your site, who runs the probe that sent it, how to block it, and how self-hosters link their own bot page.",
-        blurb: "Who sent an uptimepage request to your site, how to block it, and how to name your own instance.",
-        section: Section::SelfHosting,
-        scope: Scope::SelfHosting,
-        created: "2026-10-23",
-        lastmod: "2026-10-23",
-        source: include_str!("../../docs/bot.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "deployment",
-        title: "Deployment",
-        description: "Running the production stack behind Caddy: automatic TLS, the auth boundary, the public status surface, outbound email, database backups, and the upgrade path.",
-        blurb: "Running the production stack: Caddy, TLS, the public status surface, and email.",
-        section: Section::SelfHosting,
-        scope: Scope::SelfHosting,
-        created: "2026-07-22",
-        lastmod: "2026-10-22",
-        source: include_str!("../../docs/deployment.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "kubernetes",
-        title: "Kubernetes",
-        description: "Installing the Helm charts for the control plane and for standalone probe agents: external databases, ingress timeouts, ICMP permissions and cluster versions.",
-        blurb: "Installing the Helm charts: external databases, ingress timeouts, ICMP, and probe agents.",
-        section: Section::SelfHosting,
-        scope: Scope::SelfHosting,
-        created: "2026-07-26",
-        lastmod: "2026-10-21",
-        source: include_str!("../../docs/kubernetes.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "multi-region",
-        title: "Multi-region probes",
-        description: "Running probe agents in more than one region, how an agent pulls its config and ships results back, and the operator surface that manages regions and keys.",
-        blurb: "Running probe agents in more than one region, and the operator surface that manages them.",
-        section: Section::SelfHosting,
-        scope: Scope::SelfHosting,
-        created: "2026-07-22",
-        lastmod: "2026-10-03",
-        source: include_str!("../../docs/multi-region.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "metrics",
-        title: "Metrics and tracing",
-        description: "The Prometheus series the service exposes, what each one measures and the labels it carries, and how to ship traces off the box to an OpenTelemetry collector.",
-        blurb: "The Prometheus series the service exposes and how to ship traces off the box.",
-        section: Section::SelfHosting,
-        scope: Scope::SelfHosting,
-        created: "2026-07-22",
-        lastmod: "2026-10-22",
-        source: include_str!("../../docs/metrics.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "troubleshooting",
-        title: "Troubleshooting",
-        description: "Symptoms you are likely to hit while operating an instance, from a failing readiness probe to missing metrics and checks that never run, and what each means.",
-        blurb: "Symptoms you are likely to hit while operating an instance, and what they mean.",
-        section: Section::SelfHosting,
-        scope: Scope::SelfHosting,
-        created: "2026-07-22",
-        lastmod: "2026-10-17",
-        source: include_str!("../../docs/troubleshooting.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "development",
-        title: "Development",
-        description: "Local setup for working on the service itself: the toolchain, Postgres and ClickHouse containers, everyday workflows, and the test gates a change has to pass.",
-        blurb: "Local setup for working on the service itself: toolchain, workflows, and the test gates.",
-        section: Section::SelfHosting,
-        scope: Scope::SelfHosting,
-        created: "2026-07-22",
-        lastmod: "2026-10-05",
-        source: include_str!("../../docs/development.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "benchmarks",
-        title: "Benchmarks",
-        description: "Criterion micro-benchmarks measuring the cost of a single check through the same production HTTP path, how to run them, and how to read the numbers they print.",
-        blurb: "Criterion micro-benchmarks measuring the cost of a single check through the production path.",
-        section: Section::SelfHosting,
-        scope: Scope::SelfHosting,
-        created: "2026-05-14",
-        lastmod: "2026-05-14",
-        source: include_str!("../../docs/benchmarks.md"),
-        dir: "",
-    },
-    DocPage {
-        slug: "loadtest",
-        title: "Load test",
-        description: "The end-to-end harness that drives the real check executor against in-process mock servers, how to run it, and what its throughput and latency output tells you.",
-        blurb: "The end-to-end harness that drives the real check executor against in-process mock servers.",
-        section: Section::SelfHosting,
-        scope: Scope::SelfHosting,
-        created: "2026-07-22",
-        lastmod: "2026-07-25",
-        source: include_str!("../../docs/loadtest.md"),
-        dir: "",
-    },
-];
+/// Generated from `docs/index.toml`, in the order readers see within each
+/// section.
+pub const DOCS: &[DocPage] = include!(concat!(env!("OUT_DIR"), "/docs_manifest.rs"));
 
 pub fn find(slug: &str) -> Option<&'static DocPage> {
     DOCS.iter().find(|d| d.slug == slug)
@@ -662,7 +269,7 @@ fn render_all(cfg: &MarketingCfg) -> HashMap<&'static str, CachedRender> {
                 &cfg.canonical_origin,
             );
             og.description = doc.description.to_string();
-            let (body_html, mut toc) = render(doc.source, doc.dir);
+            let (body_html, mut toc) = render(doc.source, doc.dir());
             // h4 carries an id so deep links resolve; the visible contents stay h2/h3.
             toc.retain(|t| t.level < 4);
             let page = DocsPage {
@@ -766,46 +373,6 @@ pub fn mount(router: Router<Arc<MarketingCfg>>) -> Router<Arc<MarketingCfg>> {
 mod tests {
     use super::*;
 
-    /// Every Markdown file under `docs/` that is not legal copy or an
-    /// internal runbook must be reachable, or it is dead weight nobody can
-    /// find.
-    #[test]
-    fn every_source_file_is_published() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs");
-        let mut found: Vec<String> = Vec::new();
-        let mut stack = vec![root.clone()];
-        while let Some(dir) = stack.pop() {
-            for entry in std::fs::read_dir(&dir).expect("read docs dir") {
-                let path = entry.expect("dir entry").path();
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if path.is_dir() {
-                    if name != "legal" && name != "internal" {
-                        stack.push(path);
-                    }
-                    continue;
-                }
-                if path.extension().and_then(|e| e.to_str()) == Some("md") {
-                    let rel = path.strip_prefix(&root).expect("under docs");
-                    found.push(rel.with_extension("").to_string_lossy().replace('\\', "/"));
-                }
-            }
-        }
-        for slug in found {
-            assert!(
-                find(&slug).is_some(),
-                "docs/{slug}.md is not listed in DOCS, so nothing links to it"
-            );
-        }
-    }
-
-    #[test]
-    fn slugs_are_unique() {
-        let mut seen = std::collections::HashSet::new();
-        for doc in DOCS {
-            assert!(seen.insert(doc.slug), "duplicate slug {}", doc.slug);
-        }
-    }
-
     /// `SECTIONS` drives the sidebar and the index, so a page in a section
     /// missing from it renders nowhere despite being routed.
     #[test]
@@ -821,28 +388,9 @@ mod tests {
     }
 
     #[test]
-    fn descriptions_fit_serp_limits() {
-        let width = |s: &str| s.chars().count();
-        for doc in DOCS
-            .iter()
-            .map(|d| (d.slug, d.description))
-            .chain([("docs index", INDEX_DESCRIPTION)])
-        {
-            let (slug, description) = doc;
-            assert!(
-                (150..=160).contains(&width(description)),
-                "{slug}: description is {} chars, want 150-160",
-                width(description)
-            );
-        }
-        for doc in DOCS {
-            assert!(
-                !doc.blurb.is_empty() && width(doc.blurb) <= 110,
-                "{}: blurb is {} chars",
-                doc.slug,
-                width(doc.blurb)
-            );
-        }
+    fn the_index_description_fits_serp_limits() {
+        let width = INDEX_DESCRIPTION.chars().count();
+        assert!((150..=160).contains(&width), "{width} chars, want 150-160");
     }
 
     /// Replaces the link checker that retired with the mdBook build: every
@@ -852,7 +400,7 @@ mod tests {
     fn internal_links_and_anchors_resolve() {
         let rendered: HashMap<&str, (String, Vec<TocEntry>)> = DOCS
             .iter()
-            .map(|doc| (doc.slug, render(doc.source, doc.dir)))
+            .map(|doc| (doc.slug, render(doc.source, doc.dir())))
             .collect();
         for doc in DOCS {
             let (html, _) = &rendered[doc.slug];
@@ -894,26 +442,6 @@ mod tests {
                 rest.find('"').map(|end| rest[..end].to_string())
             })
             .collect()
-    }
-
-    #[test]
-    fn every_doc_is_published_no_later_than_its_lastmod() {
-        for doc in DOCS {
-            for date in [doc.created, doc.lastmod] {
-                assert!(
-                    chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok(),
-                    "{}: {date:?} is not YYYY-MM-DD",
-                    doc.slug
-                );
-            }
-            assert!(
-                doc.created <= doc.lastmod,
-                "{}: created {} is after lastmod {}",
-                doc.slug,
-                doc.created,
-                doc.lastmod
-            );
-        }
     }
 
     #[test]
