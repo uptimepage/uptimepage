@@ -385,7 +385,7 @@ deletion, recovery) lives under `/settings/account`.
 ## License
 
 uptimepage is licensed under [AGPL-3.0](LICENSE). See [LICENSING.md](LICENSING.md)
-for what this means in practice.
+for what this means in practice. The name and logo are trademarks; see [TRADEMARKS.md](TRADEMARKS.md) before you run a public service or a fork.
 
 If you'd like to contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
 For security disclosures, see [SECURITY.md](SECURITY.md).

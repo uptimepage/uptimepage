@@ -37,6 +37,10 @@ generated CSS). Their licenses and attributions are reproduced in
 running instance at `/licenses`. All Rust dependencies are constrained 
 to an AGPL-compatible license allow-list enforced in CI.
 
+## Name and logo
+
+AGPL-3.0 does not grant trademark rights (section 7(e)). Running uptimepage for your own organisation, modified or not, keeps the name. A service you run for other people, or a modified version you distribute, needs its own name. See [TRADEMARKS.md](TRADEMARKS.md).
+
 ## Commercial licensing
 
 If AGPL-3.0 doesn't fit your use case — for example, you want to 
