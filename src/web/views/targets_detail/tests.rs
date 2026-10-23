@@ -1639,6 +1639,7 @@ fn domain_incident() -> crate::domain::Incident {
         origin: Default::default(),
         recovering_since: None,
         recovered: Vec::new(),
+        paused: Default::default(),
     }
 }
 

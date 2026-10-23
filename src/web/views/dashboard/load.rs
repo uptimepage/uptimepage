@@ -301,7 +301,7 @@ pub(super) async fn build_snapshot(
                 window_secs,
             );
             // No live probe overrides the stale last status with grey "no data".
-            if silenced.contains(&t.id) {
+            if t.enabled && silenced.contains(&t.id) {
                 row.last_status = "no_data";
             }
             tally_status(&mut status_counts, &row);

@@ -34,9 +34,9 @@ use crate::mcp::schema::{
     LatencyPoint, ListIncidentsArgs, ListMaintenanceArgs, ListMonitorsArgs, ListStatusPagesArgs,
     MaintenanceIdArg, MaintenanceList, MaintenanceWindowView, MetricCount, MonitorDetail,
     MonitorHistory, MonitorList, MonitorListItem, NoisyMonitor, OrgHealth, OrgUsage,
-    PagePasswordUse, PageViewerItem, PageViewerList, Quota, RecoveredStretch, RegionList,
-    StatusPageComponent as McpComponent, StatusPageDetail, StatusPageList, StatusPageSummary,
-    TagItem, TagList, VariableList, VariableSummary, WorstMonitor,
+    PagePasswordUse, PageViewerItem, PageViewerList, PausedStretch, Quota, RecoveredStretch,
+    RegionList, StatusPageComponent as McpComponent, StatusPageDetail, StatusPageList,
+    StatusPageSummary, TagItem, TagList, VariableList, VariableSummary, WorstMonitor,
 };
 
 use super::McpServer;
@@ -534,6 +534,14 @@ impl McpServer {
                     .map(|r| RecoveredStretch {
                         from: r.from.to_rfc3339(),
                         until: r.until.to_rfc3339(),
+                    })
+                    .collect(),
+                paused: inc
+                    .paused
+                    .spans(inc.ended_at)
+                    .map(|(from, until)| PausedStretch {
+                        from: from.to_rfc3339(),
+                        until: until.map(|u| u.to_rfc3339()),
                     })
                     .collect(),
             })

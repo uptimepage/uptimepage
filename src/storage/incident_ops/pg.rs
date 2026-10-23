@@ -984,13 +984,19 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         // `transition` helper always binds it as $3 (ack/resolve do use it), so
         // the predicate references $3 as a deliberate no-op to keep the bound
         // parameter count in step with the statement. An incident running again
-        // no longer owes the notice that it ended.
+        // no longer owes the notice that it ended. One reopened on a monitor
+        // paused since it closed is paused from that close: the checks had
+        // cleared it, then nothing checked it.
         let sql = format!(
             "UPDATE incidents \
              SET state = 'triggered', ended_at = NULL, duration_secs = NULL, resolved_by = NULL, \
                  acknowledged_at = NULL, acknowledged_by = NULL, \
                  escalation_level = 0, escalation_round = 0, renotify_count = 0, \
                  closing_notice_at = NULL, resolved_at = NULL, recovering_since = NULL, \
+                 paused_since = CASE WHEN paused_since IS NULL AND origin = 'monitor' AND EXISTS ( \
+                     SELECT 1 FROM targets t \
+                     WHERE t.id = incidents.target_id AND t.org_id = incidents.org_id AND NOT t.enabled \
+                 ) THEN ended_at ELSE paused_since END, \
                  updated_at = now() \
              WHERE id = $1 AND org_id = $2 AND ($3::uuid IS NULL OR true) RETURNING {OPS_COLS}"
         );

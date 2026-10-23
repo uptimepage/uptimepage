@@ -116,7 +116,7 @@ pub use page_asset::{AssetSlot, SlotPolicy};
 pub use preferences::{DisplayPrefs, TimeFormat};
 pub use public::{
     ComponentHistoryResponse, DayState, Downtime, ImpactSpan, IncidentImpact, IncidentSeverity,
-    IncidentStatusPhase, OverallState, OverallStatus, PublicActionItem, PublicComponent,
+    IncidentStatusPhase, OverallState, OverallStatus, Paused, PublicActionItem, PublicComponent,
     PublicComponentGroup, PublicComponentStatus, PublicIncident, PublicIncidentUpdate,
     PublicMaintenance, PublicMaintenanceList, PublicMaintenanceUpdate, PublicPostmortem,
     PublicStatusPage, Recovered, incident_impact, outage_parts, stored_incident_impact,

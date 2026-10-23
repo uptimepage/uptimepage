@@ -318,6 +318,7 @@ fn active_incident_banner_renders_when_present() {
         }],
         postmortem: None,
         recovered: Vec::new(),
+        paused: Default::default(),
         recovering: false,
     });
     let view = build_view(&p, &[], &Default::default(), all_tab(), Tr::default());
@@ -636,6 +637,7 @@ fn incident_detail_renders() {
         ],
         postmortem: None,
         recovered: Vec::new(),
+        paused: Default::default(),
         recovering: false,
     };
     let detail = IncidentDetailView::from_incident(&inc, Utc::now(), Tr::default());
@@ -1022,6 +1024,7 @@ fn fake_incident(started_at: DateTime<Utc>, id_low: u8, title: &str) -> PublicIn
         updates: Vec::new(),
         postmortem: None,
         recovered: Vec::new(),
+        paused: Default::default(),
         recovering: false,
     }
 }

@@ -501,11 +501,12 @@ fn folded(group: &[&PublicIncident], now: DateTime<Utc>, tr: Tr) -> PastEntry {
 }
 
 /// How long any of them was down, in seconds: overlaps count once, and the
-/// healthy gaps between them and the stretches one was back up in not at all.
+/// healthy gaps between them and the stretches one was back up or paused in
+/// not at all.
 fn downtime(group: &[&PublicIncident], now: DateTime<Utc>) -> i64 {
     let mut parts: Vec<(DateTime<Utc>, DateTime<Utc>)> = group
         .iter()
-        .flat_map(|inc| outage_parts(inc.started_at, inc.ended_at, &inc.recovered))
+        .flat_map(|inc| outage_parts(inc.started_at, inc.ended_at, &inc.recovered, &inc.paused))
         .map(|(from, until)| (from, until.unwrap_or(now)))
         .collect();
     parts.sort_unstable();
@@ -586,6 +587,7 @@ mod tests {
             ],
             postmortem: None,
             recovered: Vec::new(),
+            paused: Default::default(),
             recovering: false,
         }
     }

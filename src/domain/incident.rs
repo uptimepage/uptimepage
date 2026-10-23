@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use super::org::OrgId;
 use super::public::{
-    Downtime, IncidentImpact, IncidentSeverity, IncidentStatusPhase, PublicIncidentUpdate,
+    Downtime, IncidentImpact, IncidentSeverity, IncidentStatusPhase, Paused, PublicIncidentUpdate,
     Recovered, outage_parts, stored_incident_impact,
 };
 use super::result::CheckStatus;
@@ -76,6 +76,9 @@ pub struct Incident {
     /// inside the recovery period. Part of the incident, not downtime.
     #[serde(default)]
     pub recovered: Vec<Recovered>,
+    /// When its monitor was paused; not downtime. Kept off the wire.
+    #[serde(skip)]
+    pub paused: Paused,
 }
 
 impl Incident {
@@ -124,8 +127,8 @@ pub fn elapsed_at(
 
 /// Confirmed downtime in seconds over `[from, to]`, weighted by impact as
 /// [`Downtime::weighted_secs`] weighs it, less the stretches each was back up
-/// in. An ongoing incident runs to `now`, one waiting out its recovery to
-/// where the recovery began.
+/// or paused in. An ongoing incident runs to `now`, one waiting out its
+/// recovery to where the recovery began.
 pub fn confirmed_downtime_secs(
     incidents: &[Incident],
     from: DateTime<Utc>,
@@ -141,6 +144,7 @@ pub fn confirmed_downtime_secs(
                 i.started_at,
                 i.ended_at.or(i.recovering_since),
                 &i.recovered,
+                &i.paused,
             )
             .into_iter()
             .map(move |(from, until)| (from, until.unwrap_or(now), impact))
@@ -289,6 +293,7 @@ fn new_incident(
         origin: IncidentOrigin::Monitor,
         recovering_since: None,
         recovered: Vec::new(),
+        paused: Paused::default(),
     }
 }
 

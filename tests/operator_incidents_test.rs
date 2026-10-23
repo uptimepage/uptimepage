@@ -35,6 +35,7 @@ fn seed_incident() -> Incident {
         origin: Default::default(),
         recovering_since: None,
         recovered: Vec::new(),
+        paused: Default::default(),
     }
 }
 

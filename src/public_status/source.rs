@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::domain::{
     ComponentHistoryResponse, IncidentSeverity, IncidentStatusPhase, Locale, OrgId, PageRef,
-    PublicIncident, PublicIncidentUpdate, PublicMaintenance, PublicMaintenanceList,
+    Paused, PublicIncident, PublicIncidentUpdate, PublicMaintenance, PublicMaintenanceList,
     PublicStatusPage, Recovered,
 };
 use crate::error::public::PublicAppError;
@@ -227,6 +227,7 @@ impl PublicSource for OrgPublicSource {
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
                       i.origin, i.regions_up, i.recovered_from, i.recovered_until,
+                      i.paused_from, i.paused_until, i.paused_since,
                       i.recovering_since,
                       i.public_title, i.public_description, {kept}
                FROM incidents i
@@ -352,6 +353,7 @@ impl OrgPublicSource {
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
                       i.origin, i.regions_up, i.recovered_from, i.recovered_until,
+                      i.paused_from, i.paused_until, i.paused_since,
                       i.recovering_since,
                       i.public_title, i.public_description, {kept}
                FROM incidents i
@@ -475,6 +477,7 @@ impl OrgPublicSource {
                     status_phase: status_phase.shown(recovering),
                     updates: my_updates,
                     recovered: Recovered::paired(r.recovered_from, r.recovered_until),
+                    paused: Paused::stored(r.paused_from, r.paused_until, r.paused_since),
                     recovering,
                     postmortem: None,
                 }
@@ -547,6 +550,9 @@ struct IncidentRow {
     regions_up: Option<Vec<String>>,
     recovered_from: Vec<DateTime<Utc>>,
     recovered_until: Vec<DateTime<Utc>>,
+    paused_from: Vec<DateTime<Utc>>,
+    paused_until: Vec<DateTime<Utc>>,
+    paused_since: Option<DateTime<Utc>>,
     recovering_since: Option<DateTime<Utc>>,
     public_title: Option<String>,
     #[allow(dead_code)]
@@ -757,6 +763,7 @@ mod tests {
             updates,
             postmortem: None,
             recovered: Vec::new(),
+            paused: Default::default(),
             recovering: false,
         }
     }

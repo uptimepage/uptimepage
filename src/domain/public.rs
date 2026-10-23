@@ -68,24 +68,75 @@ impl Recovered {
     }
 }
 
+/// When a monitor-opened incident's monitor was paused. Nobody checked it then,
+/// so none of it is downtime, though the incident stays open across a pause.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Paused {
+    resumed: Vec<(DateTime<Utc>, DateTime<Utc>)>,
+    since: Option<DateTime<Utc>>,
+}
+
+impl Paused {
+    /// As a stored incident keeps it: the pauses it was resumed from as paired
+    /// arrays, and the start of the one still running.
+    pub fn stored(
+        from: Vec<DateTime<Utc>>,
+        until: Vec<DateTime<Utc>>,
+        since: Option<DateTime<Utc>>,
+    ) -> Self {
+        Self {
+            resumed: from.into_iter().zip(until).collect(),
+            since,
+        }
+    }
+
+    /// Each pause inside an incident that ended at `ended`, until its resume or
+    /// that end; `None` for one still running on an open incident.
+    pub fn spans(
+        &self,
+        ended: Option<DateTime<Utc>>,
+    ) -> impl Iterator<Item = (DateTime<Utc>, Option<DateTime<Utc>>)> + '_ {
+        self.resumed
+            .iter()
+            .map(|&(from, until)| (from, Some(until)))
+            .chain(self.since.map(|s| (s, None)))
+            .filter(move |(from, _)| ended.is_none_or(|e| *from < e))
+            .map(move |(from, until)| match (until, ended) {
+                (Some(u), Some(e)) => (from, Some(u.min(e))),
+                (until, ended) => (from, until.or(ended)),
+            })
+    }
+
+    fn stretches(&self) -> impl Iterator<Item = (DateTime<Utc>, DateTime<Utc>)> + '_ {
+        self.spans(None)
+            .map(|(from, until)| (from, until.unwrap_or(DateTime::<Utc>::MAX_UTC)))
+    }
+}
+
 /// The parts of an incident the service was down: from `started` to `ended`
-/// (`None` while open, and so is the last part) less the stretches it was back
-/// up in.
+/// (`None` while open, and so is the last part unless a pause is running) less
+/// the stretches it was back up in or paused in.
 pub fn outage_parts(
     started: DateTime<Utc>,
     ended: Option<DateTime<Utc>>,
     recovered: &[Recovered],
+    paused: &Paused,
 ) -> Vec<(DateTime<Utc>, Option<DateTime<Utc>>)> {
     let end = ended.unwrap_or(DateTime::<Utc>::MAX_UTC);
-    let mut stretches: Vec<&Recovered> = recovered.iter().filter(|r| r.until > r.from).collect();
-    stretches.sort_by_key(|r| r.from);
+    let mut stretches: Vec<(DateTime<Utc>, DateTime<Utc>)> = recovered
+        .iter()
+        .map(|r| (r.from, r.until))
+        .chain(paused.stretches())
+        .filter(|(from, until)| until > from)
+        .collect();
+    stretches.sort_unstable();
     let mut parts = Vec::with_capacity(stretches.len() + 1);
     let mut from = started;
-    for r in stretches {
-        if r.from > from {
-            parts.push((from, Some(r.from.min(end))));
+    for (gap_from, gap_until) in stretches {
+        if gap_from > from {
+            parts.push((from, Some(gap_from.min(end))));
         }
-        from = from.max(r.until);
+        from = from.max(gap_until);
         if from >= end {
             return parts;
         }
@@ -388,6 +439,9 @@ pub struct PublicIncident {
     /// Kept off the wire.
     #[serde(skip)]
     pub recovered: Vec<Recovered>,
+    /// When its monitor was paused; not downtime. Kept off the wire.
+    #[serde(skip)]
+    pub paused: Paused,
     /// Back up and waiting out its recovery period; `status_phase` already
     /// says Monitoring. Kept off the wire.
     #[serde(skip)]
@@ -550,7 +604,7 @@ mod tests {
             },
         ];
         assert_eq!(
-            outage_parts(at(0), Some(at(100)), &recovered),
+            outage_parts(at(0), Some(at(100)), &recovered, &Paused::default()),
             [
                 (at(0), Some(at(20))),
                 (at(30), Some(at(70))),
@@ -558,14 +612,58 @@ mod tests {
             ]
         );
         assert_eq!(
-            outage_parts(at(0), None, &recovered).last(),
+            outage_parts(at(0), None, &recovered, &Paused::default()).last(),
             Some(&(at(80), None)),
             "still down"
         );
         assert_eq!(
-            outage_parts(at(0), Some(at(25)), &recovered),
+            outage_parts(at(0), Some(at(25)), &recovered, &Paused::default()),
             [(at(0), Some(at(20)))],
             "ended while recovered"
+        );
+    }
+
+    #[test]
+    fn a_paused_stretch_is_not_downtime() {
+        let resumed = Paused::stored(vec![at(20)], vec![at(30)], None);
+        assert_eq!(
+            outage_parts(at(0), Some(at(100)), &[], &resumed),
+            [(at(0), Some(at(20))), (at(30), Some(at(100)))]
+        );
+        let running = Paused::stored(vec![at(20)], vec![at(30)], Some(at(60)));
+        assert_eq!(
+            outage_parts(at(0), None, &[], &running),
+            [(at(0), Some(at(20))), (at(30), Some(at(60)))],
+            "an open incident stops at the pause still running"
+        );
+        assert_eq!(
+            outage_parts(at(0), Some(at(90)), &[], &running).last(),
+            Some(&(at(30), Some(at(60)))),
+            "resolved while paused"
+        );
+        let recovered = [Recovered {
+            from: at(10),
+            until: at(25),
+        }];
+        assert_eq!(
+            outage_parts(at(0), None, &recovered, &resumed),
+            [(at(0), Some(at(10))), (at(30), None)],
+            "overlapping stretches leave out their union"
+        );
+    }
+
+    #[test]
+    fn a_pause_is_shown_only_inside_its_incident() {
+        let paused = Paused::stored(vec![at(10), at(50)], vec![at(30), at(70)], Some(at(90)));
+        assert_eq!(
+            paused.spans(Some(at(60))).collect::<Vec<_>>(),
+            [(at(10), Some(at(30))), (at(50), Some(at(60)))],
+            "clipped at the close, and none after it"
+        );
+        assert_eq!(
+            paused.spans(None).last(),
+            Some((at(90), None)),
+            "still running on an open incident"
         );
     }
 

@@ -319,6 +319,38 @@ fn pause_metadata<'a>(flipped: impl Iterator<Item = (&'a Uuid, &'a String)>) -> 
     })
 }
 
+/// Starts or ends the pause on the open incidents of monitors whose `enabled`
+/// just flipped. The writer's insert holds a key-share lock on the `targets`
+/// row through its foreign key, so the flip's `FOR UPDATE` waits it out, and
+/// this runs as its own statement after the flip so it sees that incident.
+/// Dated by the wall clock, not the transaction's start: a bulk flip can wait
+/// on row locks while the same monitor is resumed and paused again.
+///
+/// LOCK ORDER: `targets`, then `incidents`, as a monitor delete takes them.
+async fn mark_incident_pauses(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+    ids: &[Uuid],
+    enabled: bool,
+) -> Result<()> {
+    let sql = if enabled {
+        "UPDATE incidents SET paused_from = array_append(paused_from, paused_since), \
+                paused_until = array_append(paused_until, clock_timestamp()), paused_since = NULL \
+         WHERE org_id = $1 AND target_id = ANY($2) AND paused_since IS NOT NULL"
+    } else {
+        "UPDATE incidents SET paused_since = clock_timestamp() \
+         WHERE org_id = $1 AND target_id = ANY($2) AND origin = 'monitor' \
+           AND ended_at IS NULL AND paused_since IS NULL"
+    };
+    sqlx::query(sql)
+        .bind(org.0)
+        .bind(ids)
+        .execute(&mut **tx)
+        .await
+        .context("mark incident pauses")?;
+    Ok(())
+}
+
 /// Build a `Target` from a row, decrypting `check_spec` if a cipher is
 /// configured. Shared between [`PostgresTargetStore`] (org-scoped reads) and
 /// [`crate::storage::AdminRepo`] (cross-tenant scheduler enumeration).
@@ -887,6 +919,7 @@ impl TargetStore for PostgresTargetStore {
             if let (Some(r), Some(was)) = (row.as_ref(), was_enabled)
                 && r.enabled != was
             {
+                mark_incident_pauses(&mut tx, org, &[r.id], r.enabled).await?;
                 crate::storage::orgs::record_audit_tx(
                     &mut tx,
                     org,
@@ -1301,6 +1334,8 @@ impl TargetStore for PostgresTargetStore {
         let flipped: Vec<&(Uuid, String, bool)> =
             rows.iter().filter(|(_, _, was)| *was != enabled).collect();
         if !flipped.is_empty() {
+            let ids: Vec<Uuid> = flipped.iter().map(|(id, _, _)| *id).collect();
+            mark_incident_pauses(&mut tx, org, &ids, enabled).await?;
             crate::storage::orgs::record_audit_tx(
                 &mut tx,
                 org,

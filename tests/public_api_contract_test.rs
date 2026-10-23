@@ -95,6 +95,7 @@ impl PublicSource for FakePublicSource {
             }],
             postmortem: None,
             recovered: Vec::new(),
+            paused: Default::default(),
             recovering: false,
         };
         let maintenance = PublicMaintenance {
@@ -162,6 +163,7 @@ impl PublicSource for FakePublicSource {
             updates: Vec::new(),
             postmortem: None,
             recovered: Vec::new(),
+            paused: Default::default(),
             recovering: false,
         };
         Ok(CursorPage::new(vec![item], None))
@@ -188,6 +190,7 @@ impl PublicSource for FakePublicSource {
             updates: Vec::new(),
             postmortem: None,
             recovered: Vec::new(),
+            paused: Default::default(),
             recovering: false,
         })
     }

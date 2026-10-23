@@ -82,6 +82,7 @@ impl PublicSource for TwoIncidentSource {
                 }],
                 postmortem: None,
                 recovered: Vec::new(),
+                paused: Default::default(),
                 recovering: false,
             },
             PublicIncident {
@@ -97,6 +98,7 @@ impl PublicSource for TwoIncidentSource {
                 updates: vec![],
                 postmortem: None,
                 recovered: Vec::new(),
+                paused: Default::default(),
                 recovering: false,
             },
         ];

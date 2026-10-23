@@ -161,7 +161,9 @@ impl IncidentStore for PgIncidentStore {
         // statement's snapshot, which can predate that resolution while the
         // insert itself waits on the conflict with the incident being resolved
         // and lands once it commits; the check after the insert sees that
-        // commit, so the transaction is rolled back rather than paging.
+        // commit, so the transaction is rolled back rather than paging. A pause
+        // that committed since the tick read the monitor is caught the same
+        // way: a paused monitor opens nothing.
         // Visibility is derived here, not by the caller: an incident is public
         // only while its monitor is a component of an enabled status page that
         // the plan still covers. A held page shows nobody anything, so an
@@ -218,11 +220,13 @@ impl IncidentStore for PgIncidentStore {
                 .context("incident insert_open: rollback")?;
             return Ok(None);
         };
-        let covered: bool = sqlx::query_scalar(
+        let refused: bool = sqlx::query_scalar(
             "SELECT EXISTS (
                  SELECT 1 FROM incidents c
                  WHERE c.org_id = $1 AND c.target_id = $2 AND c.origin = 'monitor'
                    AND c.id <> $3 AND c.ended_at >= $4
+             ) OR NOT EXISTS (
+                 SELECT 1 FROM targets t WHERE t.org_id = $1 AND t.id = $2 AND t.enabled
              )",
         )
         .bind(org.0)
@@ -232,7 +236,7 @@ impl IncidentStore for PgIncidentStore {
         .fetch_one(&mut *tx)
         .await
         .context("incident insert_open: recheck")?;
-        if covered {
+        if refused {
             tx.rollback()
                 .await
                 .context("incident insert_open: rollback")?;

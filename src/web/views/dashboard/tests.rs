@@ -530,6 +530,37 @@ fn type_filters_mirror_chip_order() {
 }
 
 #[test]
+fn a_paused_row_shows_no_status_however_it_last_checked() {
+    let id = uuid::Uuid::new_v4();
+    let metrics = crate::domain::metrics::DashboardMetrics {
+        target_id: id,
+        samples: 10,
+        up: 0,
+        avg_ms: 0,
+        p50_ms: 0,
+        p95_ms: 0,
+        last_status: "down".into(),
+        last_minute_ts: None,
+    };
+    let build = |enabled| {
+        DashboardRow::build(
+            id,
+            "svc".into(),
+            "HTTP",
+            String::new(),
+            enabled,
+            Some(&metrics),
+            None,
+            Vec::new(),
+            None,
+            86_400,
+        )
+    };
+    assert_eq!(build(true).last_status, "down");
+    assert_eq!(build(false).last_status, "");
+}
+
+#[test]
 fn status_filter_paused_matches_disabled_only() {
     assert!(row_matches_status(&row_with(false, "up"), "paused"));
     assert!(!row_matches_status(&row_with(true, "up"), "paused"));

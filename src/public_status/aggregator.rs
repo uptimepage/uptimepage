@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 use crate::domain::{
     ComponentHistoryResponse, DayState, Downtime, ImpactSpan, IncidentSeverity,
-    IncidentStatusPhase, Locale, OrgId, PublicComponent, PublicComponentGroup,
+    IncidentStatusPhase, Locale, OrgId, Paused, PublicComponent, PublicComponentGroup,
     PublicComponentStatus, PublicIncident, PublicIncidentUpdate, PublicMaintenance,
     PublicStatusPage, Recovered, StatusPageId, outage_parts, page_display_name,
     stored_incident_impact, uptime_pct_from_downtime,
@@ -206,7 +206,7 @@ impl OrgAggregator {
             .collect();
 
         let mut open_worst: HashMap<Uuid, IncidentImpact> = HashMap::new();
-        for w in paint_windows.iter().filter(|w| w.ended_at.is_none()) {
+        for w in paint_windows.iter().filter(|w| w.ongoing) {
             let impact = w.impact();
             open_worst
                 .entry(w.target_id)
@@ -502,6 +502,7 @@ impl OrgAggregator {
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
                       i.origin, i.regions_up, i.recovered_from, i.recovered_until,
+                      i.paused_from, i.paused_until, i.paused_since,
                       i.recovering_since,
                       i.public_title, i.public_description, {kept}
                FROM incidents i
@@ -537,6 +538,7 @@ impl OrgAggregator {
             r#"SELECT i.id, i.target_id,
                       i.started_at, i.ended_at, i.severity, i.status_at_start,
                       i.origin, i.regions_up, i.recovered_from, i.recovered_until,
+                      i.paused_from, i.paused_until, i.paused_since,
                       i.recovering_since,
                       i.public_title, i.public_description, {kept}
                FROM incidents i
@@ -638,7 +640,8 @@ impl OrgAggregator {
     /// or the strip renders green over a real outage; rows are slim (no titles)
     /// and bounded by the span window. An incident waiting out its recovery
     /// ends here where the recovery began: the component is back up. One that
-    /// was back up for a while before failing again is split around it.
+    /// was back up for a while before failing again, or whose monitor was
+    /// paused, is split around it.
     async fn load_paint_windows(
         &self,
         org: OrgId,
@@ -654,7 +657,9 @@ impl OrgAggregator {
             r#"SELECT i.target_id,
                       i.status_at_start, i.severity, i.origin, i.regions_up,
                       i.started_at, COALESCE(i.ended_at, i.recovering_since) AS ended_at,
-                      i.recovered_from, i.recovered_until
+                      i.ended_at IS NULL AND i.recovering_since IS NULL AS ongoing,
+                      i.recovered_from, i.recovered_until,
+                      i.paused_from, i.paused_until, i.paused_since
                FROM incidents i
                WHERE i.org_id = $2
                  AND (i.ended_at IS NULL OR i.ended_at >= $1)
@@ -777,6 +782,7 @@ impl OrgAggregator {
                     status_phase: status_phase.shown(recovering),
                     updates: my_updates,
                     recovered: Recovered::paired(r.recovered_from, r.recovered_until),
+                    paused: Paused::stored(r.paused_from, r.paused_until, r.paused_since),
                     recovering,
                     postmortem: None,
                 }
@@ -1101,6 +1107,9 @@ struct IncidentRow {
     regions_up: Option<Vec<String>>,
     recovered_from: Vec<DateTime<Utc>>,
     recovered_until: Vec<DateTime<Utc>>,
+    paused_from: Vec<DateTime<Utc>>,
+    paused_until: Vec<DateTime<Utc>>,
+    paused_since: Option<DateTime<Utc>>,
     recovering_since: Option<DateTime<Utc>>,
     public_title: Option<String>,
     #[allow(dead_code)]
@@ -1127,8 +1136,14 @@ struct PaintWindowRow {
     regions_up: Option<Vec<String>>,
     started_at: DateTime<Utc>,
     ended_at: Option<DateTime<Utc>>,
+    /// The incident is still down, which sets the component's current state.
+    /// Kept apart from `ended_at`: a pause ends the downtime, not the incident.
+    ongoing: bool,
     recovered_from: Vec<DateTime<Utc>>,
     recovered_until: Vec<DateTime<Utc>>,
+    paused_from: Vec<DateTime<Utc>>,
+    paused_until: Vec<DateTime<Utc>>,
+    paused_since: Option<DateTime<Utc>>,
 }
 
 impl PaintWindowRow {
@@ -1139,7 +1154,12 @@ impl PaintWindowRow {
             std::mem::take(&mut self.recovered_from),
             std::mem::take(&mut self.recovered_until),
         );
-        outage_parts(self.started_at, self.ended_at, &recovered)
+        let paused = Paused::stored(
+            std::mem::take(&mut self.paused_from),
+            std::mem::take(&mut self.paused_until),
+            self.paused_since.take(),
+        );
+        outage_parts(self.started_at, self.ended_at, &recovered, &paused)
             .into_iter()
             .map(|(started_at, ended_at)| Self {
                 started_at,
@@ -1313,8 +1333,12 @@ mod tests {
             regions_up,
             started_at,
             ended_at,
+            ongoing: ended_at.is_none(),
             recovered_from: Vec::new(),
             recovered_until: Vec::new(),
+            paused_from: Vec::new(),
+            paused_until: Vec::new(),
+            paused_since: None,
         }
     }
 

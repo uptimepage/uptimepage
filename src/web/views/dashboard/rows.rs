@@ -289,6 +289,8 @@ impl DashboardRow {
                 }
                 _ => ("—".into(), "—".into(), "—".into(), "—".into(), "", 0),
             };
+        // Nothing probes a paused monitor, so its last check is a claim about the past.
+        let last_status = if enabled { last_status } else { "" };
         let (spark_path, spark_fill, spark_baseline_y) = render_spark_path(&spark);
         Self {
             id: id.to_string(),

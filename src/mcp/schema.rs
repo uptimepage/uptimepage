@@ -463,6 +463,10 @@ pub struct IncidentWindow {
     /// Stretches inside the window the monitor was back up in before the
     /// failure returned. `uptime` does not count them.
     pub recovered: Vec<RecoveredStretch>,
+    /// Stretches inside the window the monitor was paused in, so nothing
+    /// checked it. The incident stays open across them; `uptime` does not
+    /// count them.
+    pub paused: Vec<PausedStretch>,
 }
 
 /// A stretch an incident was back up in.
@@ -472,6 +476,15 @@ pub struct RecoveredStretch {
     pub from: String,
     /// RFC 3339 end, when the failure came back.
     pub until: String,
+}
+
+/// A stretch an incident's monitor was paused in.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct PausedStretch {
+    /// RFC 3339 start.
+    pub from: String,
+    /// RFC 3339 end, when it was resumed, or `null` while still paused.
+    pub until: Option<String>,
 }
 
 /// One region's share of a monitor's window, straight from its own checks.

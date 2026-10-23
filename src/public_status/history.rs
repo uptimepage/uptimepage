@@ -267,6 +267,7 @@ mod tests {
             updates: Vec::new(),
             postmortem: None,
             recovered: Vec::new(),
+            paused: Default::default(),
             recovering: false,
         }
     }

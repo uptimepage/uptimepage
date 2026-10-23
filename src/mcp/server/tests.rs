@@ -1880,6 +1880,7 @@ fn incident_detail_maps_state_severity_and_updates() {
         origin: Default::default(),
         recovering_since: None,
         recovered: Vec::new(),
+        paused: Default::default(),
     };
     let page = Uuid::now_v7();
     let d = incident_detail(&inc, &[page]);
@@ -1920,6 +1921,7 @@ fn incident_detail_names_a_deleted_monitor() {
         origin: Default::default(),
         recovering_since: None,
         recovered: Vec::new(),
+        paused: Default::default(),
     };
     let d = incident_detail(&inc, &[]);
     assert!(d.monitor_deleted);

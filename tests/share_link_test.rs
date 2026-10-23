@@ -266,6 +266,7 @@ async fn share_incidents_rows_do_not_link_to_the_incident_page() {
         origin: Default::default(),
         recovering_since: None,
         recovered: Vec::new(),
+        paused: Default::default(),
     });
 
     let (status, body) = get(&router, &format!("/m/{token}/incidents")).await;

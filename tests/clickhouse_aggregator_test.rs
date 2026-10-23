@@ -544,6 +544,68 @@ async fn a_component_that_recorded_nothing_is_no_data_not_operational() {
     .await;
 }
 
+/// A paused monitor's incident stays open, so its component keeps the outage
+/// even though the pause is not downtime.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL + CLICKHOUSE_URL — run via `docker compose -f compose.dev.yml up -d` then `cargo test -- --ignored`"]
+async fn a_paused_monitors_open_incident_keeps_its_component_down() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        eprintln!("skipped: DATABASE_URL not set");
+        return;
+    };
+    let Some(ch) = common::ch_client_from_env().await else {
+        eprintln!("skipped: CLICKHOUSE_URL not set");
+        return;
+    };
+
+    purge_prefix(&pool, "agg-paused-").await;
+
+    let org_id = seed_org(&pool, "agg-paused").await;
+    let unique = format!("agg-paused-{}", Uuid::now_v7());
+    let store = Arc::new(PostgresTargetStore::from_pool(pool.clone(), None));
+    let target = store
+        .create(
+            org_id,
+            public_target(&unique),
+            WriteSource::Ui,
+            i64::MAX,
+            i64::MAX,
+        )
+        .await
+        .expect("create public target");
+    let target_id = target.id;
+    let pool_for_cleanup = pool.clone();
+
+    with_cleanup(&pool_for_cleanup, target_id, async move {
+        let page_id = seed_page_with_target(&pool, org_id, target_id).await;
+        sqlx::query(
+            "INSERT INTO incidents (org_id, target_id, started_at, status_at_start, visibility) \
+             VALUES ($1, $2, now() - interval '1 hour', 'down', 'public')",
+        )
+        .bind(org_id.0)
+        .bind(target_id)
+        .execute(&pool)
+        .await
+        .expect("open incident");
+        store
+            .set_enabled(org_id, &[target_id], false, None)
+            .await
+            .expect("pause");
+        let agg = OrgAggregator::new(pool, ch, AggregatorConfig::default(), None);
+        let (page, _markers, _names, _hidden) =
+            agg.build(page_id, org_id).await.expect("aggregator build");
+
+        let component = page
+            .groups
+            .iter()
+            .flat_map(|g| &g.components)
+            .find(|c| c.id == target_id)
+            .expect("seeded public component present in page");
+        assert_eq!(component.current_status, PublicComponentStatus::MajorOutage);
+    })
+    .await;
+}
+
 /// `component_history` is a separate code path from `build()`. It hits the
 /// same history-strip query directly — would have caught the DateTime→i64
 /// bug independently of the page-build smoke test.

@@ -732,11 +732,7 @@ fn build_row(
         },
         _ => "",
     };
-    // A held monitor is not being probed, so whatever it last reported is a
-    // claim about the past. It falls back to the same "no status" the code
-    // already models for a monitor with no samples, which keeps a green dot
-    // off a row nothing is watching.
-    let class = status_while_watched(class, t.plan_hold_at.is_some());
+    let class = status_while_watched(class, !t.enabled || t.plan_hold_at.is_some());
     let last_status = class;
     let status_class = class;
 
@@ -802,7 +798,7 @@ fn bucket_by_group(rows: Vec<MonitorRow>) -> Vec<GroupBlock> {
             let rows = buckets.remove(&name).unwrap_or_default();
             let total = rows.len();
             let has_name = name != UNGROUPED_LABEL;
-            let worst_status = rows.iter().map(|r| r.last_status).fold("up", worst_of);
+            let worst_status = rows.iter().map(|r| r.last_status).fold("", worst_of);
             let avg_uptime_label = avg_uptime_label(&rows);
             GroupBlock {
                 name,
@@ -833,12 +829,12 @@ fn avg_uptime_label(rows: &[MonitorRow]) -> String {
     }
 }
 
-/// A held monitor is not being probed, so whatever it last reported is a claim
-/// about the past. It falls back to the same "no status" already modelled for a
-/// monitor with no samples, which is what keeps a green dot off a row nothing is
-/// watching, and out of the up filter that would count it as fine.
-fn status_while_watched(class: &'static str, held: bool) -> &'static str {
-    if held { "" } else { class }
+/// A paused or held monitor is not being probed, so whatever it last reported
+/// is a claim about the past. It falls back to the same "no status" already
+/// modelled for a monitor with no samples, which is what keeps a green or red
+/// dot off a row nothing is watching, and out of its group's worst status.
+fn status_while_watched(class: &'static str, unwatched: bool) -> &'static str {
+    if unwatched { "" } else { class }
 }
 
 fn worst_of(acc: &'static str, next: &'static str) -> &'static str {
@@ -1204,6 +1200,39 @@ mod tests {
         let html = page.render().unwrap();
         assert!(html.contains("flapping-chip"));
         assert!(html.contains(">flapping<"));
+    }
+
+    #[test]
+    fn a_paused_monitor_shows_no_status_however_it_last_checked() {
+        let t = Target {
+            enabled: false,
+            ..Target::sample(std::time::Duration::from_secs(60))
+        };
+        let metrics = DashboardMetrics {
+            target_id: t.id,
+            samples: 10,
+            up: 0,
+            avg_ms: 0,
+            p50_ms: 0,
+            p95_ms: 0,
+            last_status: "down".into(),
+            last_minute_ts: None,
+        };
+        let row = build_row(
+            &t,
+            Some(&metrics),
+            Some(CheckStatus::Down),
+            "0.00%".into(),
+            None,
+            &HashMap::new(),
+            &std::collections::HashSet::new(),
+        );
+        assert_eq!(row.status_class, "");
+        assert_eq!(
+            bucket_by_group(vec![row])[0].worst_status,
+            "",
+            "a group nobody is watching is not green"
+        );
     }
 
     #[test]
