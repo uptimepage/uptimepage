@@ -110,7 +110,6 @@ pub const HTTP_RESPONSES_INFLIGHT: &str = "uptimepage_http_responses_inflight";
 pub const RATELIMIT_DROPS: &str = "uptimepage_ratelimit_drops_total";
 pub const FLOW_RUNS: &str = "uptimepage_flow_runs_total";
 pub const FLOW_STEP_DURATION_MS: &str = "uptimepage_flow_step_duration_ms";
-pub const AI_CRAWLER_REQUESTS: &str = "uptimepage_ai_crawler_requests_total";
 pub const DISPOSABLE_CORPUS_DOMAINS: &str = "uptimepage_disposable_corpus_domains";
 /// Unix seconds of the last refresh that replaced the corpus. Staleness is
 /// `time() - value`; a gauge holding an age would be wrong between the
@@ -125,11 +124,9 @@ pub const CUSTOM_DOMAINS_SERVED: &str = "uptimepage_custom_domains_served";
 /// The snapshot has no maximum age on purpose, so `time() - value` is the only
 /// thing that says a deployment is routing on stale ownership.
 pub const CUSTOM_DOMAINS_UPDATED: &str = "uptimepage_custom_domains_updated_timestamp_seconds";
-/// Requests refused because their `Host` named neither this deployment nor a
-/// served custom domain, at whichever fence saw them first: the dispatch seam
-/// where marketing is enabled, `host_isolation` where it is not. The evidence
-/// that default-deny is live on an instance, and the shape of whatever is
-/// pointing DNS at us.
+/// Requests `host_isolation` refused because their `Host` named neither this
+/// deployment nor a served custom domain. The evidence that default-deny is
+/// live on an instance, and the shape of whatever is pointing DNS at us.
 pub const UNRECOGNISED_HOST_REQUESTS: &str = "uptimepage_unrecognised_host_requests_total";
 /// On-demand TLS authorization answers, labelled `outcome` (allowed | refused).
 /// One per handshake for a certificate Caddy does not already hold, so a rise

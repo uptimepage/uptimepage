@@ -809,13 +809,6 @@ www.{$UPTIMEPAGE_DOMAIN} {
 {$UPTIMEPAGE_DOMAIN} {
 	encode gzip zstd
 
-	# IndexNow ownership proof. Terminal handle, so the key file never
-	# reaches the proxy below. Key is public by protocol.
-	@indexnow path /8d50633e3e290894520514e27caf0587.txt
-	handle @indexnow {
-		respond "8d50633e3e290894520514e27caf0587" 200
-	}
-
 	handle {
 		invoke site_upstream
 	}

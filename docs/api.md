@@ -8,11 +8,11 @@ All responses use `Content-Type: application/json; charset=utf-8`.
 
 ### Discovery
 
-Automated clients that only know the site can find the API without being told its paths. The marketing host publishes an [RFC 9727](https://www.rfc-editor.org/rfc/rfc9727) catalog at `GET /.well-known/api-catalog` (`application/linkset+json`) listing the REST API and, when enabled, the MCP server, each with links to its OpenAPI document and its documentation page. Every marketing page also carries an [RFC 8288](https://www.rfc-editor.org/rfc/rfc8288) `Link` header with `rel="api-catalog"`, `rel="service-desc"` and `rel="service-doc"`, so one `HEAD /` is enough to bootstrap. The catalog reflects the running deployment, so a self-hosted install advertises its own URLs.
+Automated clients that only know the website can find the API without being told its paths. On the hosted service, `https://uptimepage.dev` publishes an [RFC 9727](https://www.rfc-editor.org/rfc/rfc9727) catalog at `GET /.well-known/api-catalog` (`application/linkset+json`) listing the REST API and the MCP server, each with links to its OpenAPI document and its documentation page. Every page there also carries an [RFC 8288](https://www.rfc-editor.org/rfc/rfc8288) `Link` header with `rel="api-catalog"`, `rel="service-desc"` and `rel="service-doc"`, so one `HEAD /` is enough to bootstrap. With `site.origin` set, the app host redirects `/.well-known/api-catalog` to the site's catalog.
 
-When the MCP server is enabled it publishes a Server Card at `GET /.well-known/mcp/server-card.json` on the MCP host, built from the same server info the protocol's `initialize` returns. The marketing host redirects the same path there, so an agent that only knows the domain still finds it.
+When the MCP server is enabled it publishes a Server Card at `GET /.well-known/mcp/server-card.json` on the MCP host, built from the same server info the protocol's `initialize` returns. The website redirects the same path there, so an agent that only knows the domain still finds it.
 
-Documentation pages, blog posts and the homepage also answer `Accept: text/markdown` with their Markdown source instead of HTML, at `text/markdown; charset=utf-8` with a `x-markdown-tokens` size hint. Responses carry `Vary: Accept` and a per-representation `ETag`, so browsers keep the rendered page.
+On the website, documentation pages, blog posts and the homepage also answer `Accept: text/markdown` with their Markdown source instead of HTML, at `text/markdown; charset=utf-8` with a `x-markdown-tokens` size hint. Responses carry `Vary: Accept` and a per-representation `ETag`, so browsers keep the rendered page.
 
 ### Response headers
 

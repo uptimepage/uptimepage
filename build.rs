@@ -117,18 +117,9 @@ fn write_js_manifest(meta_path: &str, manifest_path: &str) {
     .expect("write JS manifest");
 }
 
-/// Tailwind inputs and their outputs: the org app, and the marketing site,
-/// which loads only its own shell plus the partials both share.
-const TAILWIND_BUNDLES: [(&str, &str); 2] = [
-    ("input.css", "app.css"),
-    ("marketing-input.css", "marketing.css"),
-];
-
-/// Every hand-written stylesheet under static/css that a bundle imports.
-const TAILWIND_SOURCES: [&str; 8] = [
+/// Every hand-written stylesheet under static/css that `input.css` imports.
+const TAILWIND_SOURCES: [&str; 6] = [
     "input.css",
-    "marketing-input.css",
-    "_marketing.css",
     "_theme.css",
     "_shell.css",
     "_controls.css",
@@ -136,98 +127,12 @@ const TAILWIND_SOURCES: [&str; 8] = [
     "_datetime.css",
 ];
 
-/// The docs table, generated from the public manifest so each page's metadata
-/// sits next to its Markdown. The generated `include_str!` makes every page a
-/// compiler dependency, so an edited page is never served stale.
-fn emit_docs_manifest() {
-    const MANIFEST: &str = "docs/index.toml";
-    const KEYS: [&str; 8] = [
-        "slug",
-        "title",
-        "description",
-        "blurb",
-        "section",
-        "scope",
-        "created",
-        "lastmod",
-    ];
-    println!("cargo::rerun-if-changed={MANIFEST}");
-    let manifest: toml::Table = std::fs::read_to_string(MANIFEST)
-        .expect("read docs/index.toml")
-        .parse()
-        .unwrap_or_else(|e| panic!("{MANIFEST}: {e}"));
-    let root = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    let mut out = String::from("&[\n");
-    for page in manifest["page"].as_array().expect("[[page]] entries") {
-        let page = page.as_table().expect("[[page]] is a table");
-        let slug = page["slug"].as_str().expect("slug");
-        // The slug becomes an `include_str!` path and a public URL, so it may
-        // only name a file under docs/.
-        let safe = slug.split('/').all(|part| {
-            !part.is_empty()
-                && part
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        });
-        assert!(
-            safe,
-            "{MANIFEST}: slug {slug:?} must be lowercase words joined by - and /"
-        );
-        if let Some(extra) = page.keys().find(|k| !KEYS.contains(&k.as_str())) {
-            panic!("{MANIFEST}: page {slug:?} has unknown key {extra:?}");
-        }
-        let text = |key: &str| {
-            page.get(key)
-                .and_then(toml::Value::as_str)
-                .unwrap_or_else(|| panic!("{MANIFEST}: page {slug:?} needs {key}"))
-        };
-        let date = |key: &str| {
-            page.get(key)
-                .and_then(toml::Value::as_datetime)
-                .filter(|d| d.date.is_some() && d.time.is_none() && d.offset.is_none())
-                .map(ToString::to_string)
-                .unwrap_or_else(|| {
-                    panic!("{MANIFEST}: page {slug:?} needs {key} as a plain date (2026-10-23)")
-                })
-        };
-        let section = match text("section") {
-            "start" => "Start",
-            "guide" => "Guide",
-            "reference" => "Reference",
-            "hosted" => "Hosted",
-            "self-hosting" => "SelfHosting",
-            other => panic!("{MANIFEST}: page {slug:?} has unknown section {other:?}"),
-        };
-        let scope = match text("scope") {
-            "everyone" => "Everyone",
-            "hosted" => "Hosted",
-            "self-hosting" => "SelfHosting",
-            other => panic!("{MANIFEST}: page {slug:?} has unknown scope {other:?}"),
-        };
-        let source = format!("{root}/docs/{slug}.md");
-        out.push_str(&format!(
-            "    DocPage {{ slug: {slug:?}, title: {:?}, description: {:?}, blurb: {:?}, \
-             section: Section::{section}, scope: Scope::{scope}, created: {:?}, \
-             lastmod: {:?}, source: include_str!({source:?}) }},\n",
-            text("title"),
-            text("description"),
-            text("blurb"),
-            date("created"),
-            date("lastmod"),
-        ));
-    }
-    out.push_str("]\n");
-    let dest = Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("docs_manifest.rs");
-    std::fs::write(dest, out).expect("write docs_manifest.rs");
-}
-
 fn main() {
     emit_source_identity();
-    emit_docs_manifest();
 
     // Tailwind v4 scans `templates/**/*.html`, `src/**/*.rs`, AND
-    // `assets/js/**/*.js` for class names (see @source directives in the
-    // two bundle inputs, TAILWIND_BUNDLES), so the CSS must rebuild whenever any of those
+    // `assets/js/**/*.js` for class names (see the @source directives in
+    // `input.css`), so the CSS must rebuild whenever any of those
     // trees changes — including Rust files and JS modals that emit class
     // strings. The ~40ms overhead is the cost of co-locating class names with
     // the code that uses them.
@@ -250,13 +155,6 @@ fn main() {
     ] {
         println!("cargo::rerun-if-changed=static/js/{lib}");
     }
-    // `include_dir!` does NOT emit a watcher of its own. Without these an
-    // added post or changelog entry lands in main, a warm `cargo build` reuses
-    // the cached binary, and the new page 404s on a route that was already
-    // merged. `src` above covers the blog; `changelog/` sits outside it, so its
-    // line is the only one that rebuilds on a new entry.
-    println!("cargo::rerun-if-changed=src/marketing/content");
-    println!("cargo::rerun-if-changed=changelog");
     // `static_loader!` embeds each catalogue through include_str!, which tracks
     // edits to a file but not a locale directory added beside them.
     println!("cargo::rerun-if-changed=locales");
@@ -274,19 +172,17 @@ fn main() {
     let lock = File::create("static/css/.tailwind.lock").expect("create tailwind lock");
     lock.lock().expect("acquire tailwind lock");
 
-    for (input, output) in TAILWIND_BUNDLES {
-        let status = Command::new("./bin/tailwindcss")
-            .args([
-                "--input",
-                &format!("static/css/{input}"),
-                "--output",
-                &format!("static/css/{output}"),
-                "--minify",
-            ])
-            .status()
-            .expect("tailwind build failed — is ./bin/tailwindcss present?");
-        assert!(status.success(), "tailwind exited non-zero for {input}");
-    }
+    let status = Command::new("./bin/tailwindcss")
+        .args([
+            "--input",
+            "static/css/input.css",
+            "--output",
+            "static/css/app.css",
+            "--minify",
+        ])
+        .status()
+        .expect("tailwind build failed — is ./bin/tailwindcss present?");
+    assert!(status.success(), "tailwind exited non-zero");
 
     precompress_assets();
 }
@@ -304,10 +200,16 @@ fn precompress_assets() {
         collect_files(Path::new(dir), &mut files);
     }
     for file in files {
-        if matches!(
-            file.extension().and_then(|e| e.to_str()),
-            Some("css" | "js")
-        ) {
+        let source = file
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| TAILWIND_SOURCES.contains(&n));
+        if !source
+            && matches!(
+                file.extension().and_then(|e| e.to_str()),
+                Some("css" | "js")
+            )
+        {
             write_brotli(&file);
         }
     }

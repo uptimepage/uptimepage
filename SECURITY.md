@@ -20,9 +20,8 @@ vulnerabilities.
 - Initial assessment: within 7 days
 - Fix timeline depends on severity
 
-See the full [Security Policy](docs/legal/security-policy.md) for 
-severity definitions, scope, and coordinated disclosure terms. A 
-running instance also serves it at `/security-policy`.
+For the hosted service, the [Security Policy](https://uptimepage.dev/security-policy) 
+adds severity definitions, scope, and coordinated disclosure terms.
 
 ## Safe harbor
 

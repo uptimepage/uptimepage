@@ -5,11 +5,13 @@ on:
     branches: [main]
     # Denylist: skip CI only when a push touches solely non-code paths. Any
     # unlisted path (source, tests, Cargo, migrations) still runs, so new code
-    # never bypasses CI. docs/ is NOT listed — its Markdown compiles into the
-    # binary. ci.yml/release-image.yml are NOT listed — editing the pipeline
-    # must re-run it. Keep in sync with release-image.yml.
+    # never bypasses CI. docs/ is NOT listed — tests read its manifest and the
+    # pages that quote code. ci.yml/release-image.yml are NOT listed — editing
+    # the pipeline must re-run it. Keep in sync with release-image.yml.
     paths-ignore: &paths_ignore
       - "*.md"
+      # Read only by the site, which checks it when it bumps its pin.
+      - "changelog/**"
       # Helm charts compile into nothing; charts.yml lints and validates them.
       - "charts/**"
       - ".github/workflows/charts.yml"

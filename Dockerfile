@@ -56,15 +56,12 @@ COPY assets ./assets
 COPY templates ./templates
 COPY locales ./locales
 # build.rs runs scripts/fetch-tailwind.sh then bakes static/css/app.css.
-# build.rs reads docs/index.toml; legal.rs and the docs table it generates
-# `include_str!` the markdown under docs/ and THIRD-PARTY-LICENSES.md, the
-# changelog embeds changelog/, and i18n.rs the catalogues under locales/, all
-# at compile time, so those files must be in the build context here (the
-# planner/cook stage stays deps-only — it never compiles the local crate).
+# legal.rs `include_str!`s THIRD-PARTY-LICENSES.md and i18n.rs the catalogues
+# under locales/, both at compile time, so those files must be in the build
+# context here (the planner/cook stage stays deps-only — it never compiles the
+# local crate).
 COPY build.rs ./
 COPY scripts ./scripts
-COPY docs ./docs
-COPY changelog ./changelog
 COPY THIRD-PARTY-LICENSES.md ./
 # AGPL-3.0 §13: bake the exact source identity so the running binary's
 # footer offers the Corresponding Source. CI passes the commit/repo; an

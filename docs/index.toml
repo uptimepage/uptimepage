@@ -39,7 +39,7 @@ blurb = "How checks are scheduled, executed, batched, and stored across Postgres
 section = "start"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-17
+lastmod = 2026-10-24
 
 [[page]]
 slug = "ui"
@@ -159,7 +159,7 @@ blurb = "The /api/v1 surface: monitors, incidents, channels, status pages, and t
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-18
+lastmod = 2026-10-24
 
 [[page]]
 slug = "terraform"
@@ -169,7 +169,7 @@ blurb = "Managing monitors, channels, and status pages as code with the official
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-17
+lastmod = 2026-10-24
 
 [[page]]
 slug = "mcp"
@@ -249,7 +249,7 @@ blurb = "Every configuration key, its default, and the environment variable that
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-07-22
-lastmod = 2026-10-23
+lastmod = 2026-10-24
 
 [[page]]
 slug = "bot"
@@ -299,7 +299,7 @@ blurb = "The Prometheus series the service exposes and how to ship traces off th
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-07-22
-lastmod = 2026-10-22
+lastmod = 2026-10-24
 
 [[page]]
 slug = "troubleshooting"
@@ -319,7 +319,7 @@ blurb = "Local setup for working on the service itself: toolchain, workflows, an
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-07-22
-lastmod = 2026-10-05
+lastmod = 2026-10-24
 
 [[page]]
 slug = "benchmarks"

@@ -1,45 +1,6 @@
-//! What the public sees: marketing, tenancy, status pages and how long history is kept.
+//! What the public sees: tenancy, status pages and how long history is kept.
 
 use serde::{Deserialize, Serialize};
-
-/// `[marketing]`. Optional apex/`www` marketing site + blog served from
-/// the same binary. Hard-isolated module — see `src/marketing/`. Disabled
-/// by default; when enabled, the dispatch seam routes the apex and `www`
-/// hosts to the marketing router and leaves every other host on the app
-/// router unchanged. Boot invariants live in `AppConfig::validate_marketing`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
-pub struct MarketingConfig {
-    pub enabled: bool,
-    /// CTA + login link target on every marketing page. The marketing
-    /// module never imports app code — this is the only handle it has on
-    /// the app surface, so the extracted service points anywhere with one
-    /// config change.
-    pub app_url: String,
-    /// Fully-qualified canonical origin (scheme + host, no trailing
-    /// slash). Used for `<link rel="canonical">`, OG / JSON-LD absolute
-    /// URLs, and the sitemap.
-    pub canonical_origin: String,
-    /// Belt-and-braces guard for subdomain labels that must never alias a
-    /// tenant slug (`www`, `app`). The dispatch seam already routes
-    /// apex/`www`/`app` explicitly; this list is asserted to be a subset
-    /// of `domain::reserved_slugs::RESERVED` at boot so the two lists
-    /// can't drift.
-    pub reserved_subdomains: Vec<String>,
-    pub blog_enabled: bool,
-}
-
-impl Default for MarketingConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            app_url: String::new(),
-            canonical_origin: String::new(),
-            reserved_subdomains: vec!["www".into(), "app".into()],
-            blog_enabled: true,
-        }
-    }
-}
 
 /// `[site]`. The website that serves this deployment's marketing pages.
 /// Empty when there is none.
@@ -58,6 +19,37 @@ impl SiteConfig {
         let bare = matches!(url.scheme(), "http" | "https")
             && url.origin().ascii_serialization() == self.origin;
         url.host_str().filter(|_| bare).map(str::to_owned)
+    }
+
+    /// True when a `Host` value names the site or its `www` alias, which the
+    /// site serves and the app never does. A `Host` without a port means the
+    /// site scheme's default one.
+    pub fn covers(&self, authority: &str) -> bool {
+        let Ok(site) = url::Url::parse(&self.origin) else {
+            return false;
+        };
+        let Some(site_host) = site.host_str() else {
+            return false;
+        };
+        let (host, port) = match authority.rsplit_once(':') {
+            Some((host, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => {
+                match port.parse::<u16>() {
+                    Ok(port) => (host, Some(port)),
+                    Err(_) => return false,
+                }
+            }
+            _ => (authority, None),
+        };
+        if port != site.port() && port != site.port_or_known_default() {
+            return false;
+        }
+        let host = host.strip_suffix('.').unwrap_or(host);
+        let www_alias = host
+            .get(..4)
+            .filter(|prefix| prefix.eq_ignore_ascii_case("www."))
+            .and_then(|_| host.get(4..))
+            .is_some_and(|rest| rest.eq_ignore_ascii_case(site_host));
+        host.eq_ignore_ascii_case(site_host) || www_alias
     }
 }
 

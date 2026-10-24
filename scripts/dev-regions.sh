@@ -23,8 +23,8 @@
 #   BASE            control-plane URL the SCRIPT calls (default: http://app.lvh.me:8080)
 #   OPERATOR_TOKEN  operator secret                    (default: dev-operator-token)
 #   AGENT_CONTROL_PLANE_URL  URL the AGENT CONTAINERS use to reach the control
-#                   plane. Defaults to http://app.lvh.me:8080 (the app host the
-#                   marketing router accepts), resolved to the host's :8080 by
+#                   plane. Defaults to http://app.lvh.me:8080 (the app host
+#                   host isolation accepts), resolved to the host's :8080 by
 #                   the extra_hosts host-gateway mapping. Set to override.
 set -euo pipefail
 
@@ -69,8 +69,8 @@ token_origin() {
 }
 
 # URL the AGENT CONTAINERS use to reach the control plane. Agents dial the app
-# host (`app.lvh.me`), not the compose service name, because the marketing
-# host-router 404s any Host it can't classify as the operator surface. The
+# host (`app.lvh.me`), not the compose service name, because host isolation
+# 404s any Host it can't classify as the operator surface. The
 # `extra_hosts: app.lvh.me:host-gateway` mapping points it at the host's :8080.
 # AGENT_CONTROL_PLANE_URL overrides.
 resolve_agent_cp_url() {

@@ -380,7 +380,6 @@ async fn saas_page_links() -> PageLinks {
         cfg.tenancy.subdomain_public_routes = true;
         cfg.public_status.base_domain = "example.com".into();
         cfg.auth.public_base_url = format!("https://{APP_HOST}");
-        cfg.marketing.enabled = false;
     });
     let (page, target, page_link) = page_with_link(&state, "acme").await;
     let (other_page, _, other_page_link) = page_with_link(&state, "other").await;

@@ -1,10 +1,9 @@
 @layer base {
-    /* Shared faint-horizontal-scanline atmosphere across the three shells.
+    /* Shared faint-horizontal-scanline atmosphere across both shells.
        Dark themes lift the opacity + blend-mode further down; .theme-classic
        and .theme-corporate kill it via `content: none`. */
     .app-shell::before,
-    .public-shell::before,
-    .marketing-shell::before {
+    .public-shell::before {
         content: "";
         position: fixed;
         inset: 0;
@@ -24,8 +23,7 @@
        open off screen on a scrolled page and focus scrolls the page up.
        :where keeps the old specificity. */
     .app-shell > :where(:not(dialog, [popover])),
-    .public-shell > :where(:not(dialog, [popover])),
-    .marketing-shell > :where(:not(dialog, [popover])) { position: relative; z-index: 1; }
+    .public-shell > :where(:not(dialog, [popover])) { position: relative; z-index: 1; }
 
     /* Visible focus ring on every interactive element. Must be a real
        `outline`, not Tailwind `ring` (a box-shadow): the cartoon controls

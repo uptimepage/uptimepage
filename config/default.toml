@@ -435,39 +435,11 @@ min_domains = 5000
 max_domains = 500000
 max_shrink_pct = 20
 
-[marketing]
-# When true, mounts the apex/`www` marketing site + blog. The dispatch
-# seam (request/host.rs + marketing/dispatch.rs) routes those hosts to the
-# marketing router; every other host stays on the app router. Leave
-# false for self-host: the apex is rarely served on a single-box deploy
-# and the boot-time invariants will refuse a half-set config.
-enabled = false
-
-# CTA + login link target on every marketing page. The marketing module
-# never imports app code — this is the only handle it has on the app
-# surface, so the extracted service points anywhere with one config
-# change. Must be a fully-qualified https URL with no trailing slash.
-app_url = ""
-
-# Fully-qualified canonical origin (scheme + host, no trailing slash)
-# used for <link rel="canonical">, OG/JSON-LD absolute URLs, and the
-# generated sitemap.
-canonical_origin = ""
-
-# Subdomain labels that must never alias a tenant slug. Asserted at boot
-# to be a subset of `domain::reserved_slugs::RESERVED_SLUGS`. The
-# dispatcher already routes apex/`www`/`app` explicitly; this list is a
-# belt-and-braces drift guard.
-reserved_subdomains = ["www", "app"]
-
-# Mount the /blog routes. The post sources live in
-# `src/marketing/content/blog/` and are compiled into the binary.
-blog_enabled = true
-
 [site]
 # The origin that serves this deployment's marketing pages, such as
-# https://example.com. Status page cards take their image from it and the app
-# host redirects /.well-known/api-catalog there. Empty when there is none.
+# https://example.com. The app answers 404 on its host and www, status page
+# cards take their image from it and the app host redirects
+# /.well-known/api-catalog there. Empty when there is none.
 origin = ""
 
 [legal]

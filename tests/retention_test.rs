@@ -1,6 +1,6 @@
 //! Live-PG (+CH for the no-op org cascade) tests for the daily retention
-//! job, plus a pure test that the configured windows equal what the Privacy
-//! Policy and the ClickHouse migration promise.
+//! job, plus a pure test that the configured windows equal what
+//! `config/default.toml` and the ClickHouse migrations promise.
 //! DB tests skipped by default; run under `--run-ignored` with `DATABASE_URL`
 //! and `CLICKHOUSE_URL` set. Each runs on its own database: the purge is
 //! global, so on a shared one it deletes rows other tests seeded.
@@ -262,64 +262,17 @@ async fn purges_past_window_and_keeps_fresh_rows() {
     common::drop_test_db(&db_name).await;
 }
 
-/// Pure: the code windows, the Privacy Policy table and the ClickHouse TTL
-/// must agree. If a window changes without the policy/migration being
-/// updated, this fails — one source of truth.
+/// Pure: the code windows, `config/default.toml` and the ClickHouse TTLs must
+/// agree. The site holds its published retention table to the same numbers
+/// through `site-contract.json`.
 #[test]
-fn windows_match_privacy_policy_and_clickhouse_ttl() {
+fn windows_match_the_shipped_config_and_clickhouse_ttl() {
     let r = RetentionConfig::default();
     let s = SessionConfig::default();
     let grace = TenancyConfig::default().deletion_grace_period_days;
 
-    let policy = include_str!("../docs/legal/privacy.md");
-    let want = [
-        format!("| Check results (raw per-check detail) | {CHECK_RESULTS_RAW_DAYS} days"),
-        format!(
-            "| Check result history (aggregated, hourly) | {CHECK_RESULTS_HISTORY_MONTHS} months"
-        ),
-        format!(
-            "| Browser flow runs (which steps ran, and how long each took) | {CHECK_RESULTS_RAW_DAYS} days"
-        ),
-        format!(
-            "| Browser flow failure evidence (page URL, title, visible text, browser console) | {FLOW_EVIDENCE_DAYS} days"
-        ),
-        format!(
-            "| Heartbeat pings (when each signal arrived, its exit status, how long the run took) | {CHECK_RESULTS_RAW_DAYS} days"
-        ),
-        format!("| Output posted with a heartbeat ping | {FLOW_EVIDENCE_DAYS} days"),
-        format!("| Login attempts | {} days", r.login_attempts_days),
-        format!("| Quota events | {} days", r.quota_events_days),
-        format!("| Sessions | {} days maximum", s.absolute_timeout_days),
-        // The daily tick keeps a code up to a day past the cooldown.
-        format!(
-            "| One-time codes for linking an account, and Pushover, Slack and Discord link offers | {} days |",
-            PUSHOVER_OFFER_COOLDOWN.num_days() + 1
-        ),
-        format!("recoverable for {grace} days"),
-    ];
-    for w in &want {
-        assert!(
-            policy.contains(w.as_str()),
-            "Privacy Policy is missing/!= the configured retention: expected to find {w:?}"
-        );
-    }
-    // 730 days is written as "2 years" in the policy — assert both the prose
-    // and the exact number so neither can drift silently.
-    assert_eq!(r.audit_log_days, 730, "audit window changed");
-    assert!(
-        policy.contains("| Audit log | 2 years |"),
-        "Privacy Policy audit-log retention line changed"
-    );
-    assert_eq!(r.mcp_audit_days, 730, "MCP audit window changed");
-    assert!(
-        policy.contains(
-            "| MCP write actions (tool, what it acted on, outcome, and the person and token behind it) | 2 years |"
-        ),
-        "Privacy Policy MCP audit retention line changed"
-    );
-
-    // Production loads default.toml, not the Rust `Default`, so pinning the
-    // policy to only one of them leaves the other free to drift.
+    // Production loads default.toml, not the Rust `Default`, so the published
+    // numbers must hold for both.
     let shipped = include_str!("../config/default.toml");
     for (key, days) in [
         ("login_attempts_days", r.login_attempts_days),

@@ -8,6 +8,9 @@ use crate::app::AppState;
 use crate::templates::assets;
 use crate::web::{error, views};
 
+/// RFC 9727 well-known path of the API catalog.
+const API_CATALOG_PATH: &str = "/.well-known/api-catalog";
+
 /// Builds the UI router with state applied. The public-status pages
 /// (`/status`, `/status/incidents/{id}`) are mounted only when
 /// [`TenancyConfig::public_routes_active`] is true; the org they render is resolved
@@ -388,13 +391,9 @@ pub fn routes(state: AppState) -> Router {
     // This host serves the API the catalog describes, so an agent handed an
     // API URL looks for it here. The document itself lives on the site.
     if !cfg.site.origin.is_empty() {
-        let catalog = format!(
-            "{}{}",
-            cfg.site.origin,
-            crate::marketing::discovery::CATALOG_PATH
-        );
+        let catalog = format!("{}{API_CATALOG_PATH}", cfg.site.origin);
         r = r.route(
-            crate::marketing::discovery::CATALOG_PATH,
+            API_CATALOG_PATH,
             get(move || {
                 let catalog = catalog.clone();
                 async move { Redirect::temporary(&catalog) }

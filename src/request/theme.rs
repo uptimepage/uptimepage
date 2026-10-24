@@ -1,7 +1,7 @@
 //! Theme cookies. `sm_app_theme` mirrors `users.theme` for the scripts that
-//! paint before the stylesheet loads (`templates/base.html`, the marketing
-//! `theme.js`). `sm_theme_pick` is a light/dark choice from the marketing
-//! toggle that a new account starts on; it never touches an existing one.
+//! paint before the stylesheet loads (`templates/base.html`, the site's
+//! `theme.js`). `sm_theme_pick` is a light/dark choice from the site's toggle
+//! that a new account starts on; it never touches an existing one.
 
 use tower_cookies::cookie::SameSite;
 use tower_cookies::cookie::time::Duration;
@@ -76,27 +76,13 @@ pub(crate) fn dark_app_themes() -> Vec<String> {
 mod tests {
     use crate::domain::AppTheme;
 
-    fn quoted(list: &str) -> Vec<String> {
-        list.split('"')
-            .skip(1)
-            .step_by(2)
-            .map(str::to_owned)
-            .collect()
-    }
-
     #[test]
-    fn the_marketing_site_knows_every_dark_app_theme() {
-        let in_css = super::dark_app_themes();
-        let js = include_str!("../../assets/js/marketing/theme.js");
-        let list = js
-            .split("DARK_APP_THEMES = [")
-            .nth(1)
-            .and_then(|rest| rest.split(']').next())
-            .expect("DARK_APP_THEMES in theme.js");
-        let mut in_js = quoted(list);
-        in_js.sort();
-        assert!(!in_css.is_empty());
-        assert_eq!(in_css, in_js);
-        assert!(in_js.iter().all(|t| AppTheme::ALL.contains(&t.as_str())));
+    fn every_theme_the_stylesheet_paints_dark_is_an_app_theme() {
+        let dark = super::dark_app_themes();
+        assert!(!dark.is_empty());
+        assert!(
+            dark.iter().all(|t| AppTheme::ALL.contains(&t.as_str())),
+            "{dark:?}"
+        );
     }
 }

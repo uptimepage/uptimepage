@@ -1,7 +1,0 @@
-{# Cookieless analytics — prod marketing host only; dev/self-host canonicals
-   don't match. Origin or a path under it, never a domain that merely starts
-   with ours. #}
-{% if canonical_url == "https://uptimepage.dev" || canonical_url.starts_with("https://uptimepage.dev/") %}
-<script defer src="{{ "js/marketing/referral_source.js"|asset }}"></script>
-<script defer src="https://analytics.uptimepage.dev/script.js" data-website-id="2ef8ae40-ba4a-40a4-90bf-6d6b2b1eae2e" data-domains="uptimepage.dev" data-tag="{{ crate::marketing::config::ANALYTICS_TAG }}" data-performance="true" data-before-send="tagReferralSource"></script>
-{% endif %}

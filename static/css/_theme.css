@@ -1,43 +1,7 @@
-/* Self-hosted IBM Plex, latin subset. Plex is not a variable font, so each
-   weight is its own woff2 — 7 files total (~140 KB). Served from
-   /static/fonts/ with the asset pipeline's 5-minute revalidating cache
-   (immutable would need template-side hashing, which @font-face's url()
-   can't take). */
-@font-face {
-    font-family: "IBM Plex Sans";
-    src: url("/static/fonts/plex-sans-400.woff2") format("woff2");
-    font-weight: 400;
-    font-style: normal;
-    font-display: swap;
-}
-@font-face {
-    font-family: "IBM Plex Sans";
-    src: url("/static/fonts/plex-sans-500.woff2") format("woff2");
-    font-weight: 500;
-    font-style: normal;
-    font-display: swap;
-}
-@font-face {
-    font-family: "IBM Plex Sans";
-    src: url("/static/fonts/plex-sans-600.woff2") format("woff2");
-    font-weight: 600;
-    font-style: normal;
-    font-display: swap;
-}
-@font-face {
-    font-family: "IBM Plex Serif";
-    src: url("/static/fonts/plex-serif-500.woff2") format("woff2");
-    font-weight: 500;
-    font-style: normal;
-    font-display: swap;
-}
-@font-face {
-    font-family: "IBM Plex Serif";
-    src: url("/static/fonts/plex-serif-700.woff2") format("woff2");
-    font-weight: 700;
-    font-style: normal;
-    font-display: swap;
-}
+/* Self-hosted IBM Plex Mono, latin subset. Plex is not a variable font, so
+   each weight is its own woff2. Served from /static/fonts/ with the asset
+   pipeline's 5-minute revalidating cache (immutable would need
+   template-side hashing, which @font-face's url() can't take). */
 @font-face {
     font-family: "IBM Plex Mono";
     src: url("/static/fonts/plex-mono-400.woff2") format("woff2");
@@ -73,10 +37,7 @@
 
     /* IBM Plex Mono is the type backbone for the org-app shell — every
        label/heading/CTA renders mono. Display + body share the same stack
-       so a heading and its body copy never desynchronise. Plex Sans is
-       still loaded by the @font-face block below (used by long-form prose
-       inside the marketing-shell article scope, kept here for cross-surface
-       parity). */
+       so a heading and its body copy never desynchronise. */
     --font-display: "IBM Plex Mono", ui-monospace, "Cascadia Code", "Fira Code", Menlo, Consolas, monospace;
     --font-body:    "IBM Plex Mono", ui-monospace, "Cascadia Code", "Fira Code", Menlo, Consolas, monospace;
     --font-mono:    "IBM Plex Mono", ui-monospace, monospace;
@@ -85,8 +46,7 @@
        Semantic surface/text/accent tokens for the org-app shell. CLI/
        terminal register — light cool neutrals, status-green as the only
        chromatic accent, flat surfaces with hairline borders (no sticker
-       hard-shadow). Mirrors the marketing-shell --mk-* palette 1:1 so the
-       two surfaces feel like the same product. */
+       hard-shadow). */
     --theme-surface:       oklch(0.985 0.003 240);      /* page bg */
     --theme-surface-elev:  oklch(0.995 0.001 240);      /* card / surface */
     --theme-surface-sunk:  oklch(0.96 0.005 240);       /* header / table head wash */

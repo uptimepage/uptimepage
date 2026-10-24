@@ -108,7 +108,7 @@ async fn dashboard_renders_with_kpi_cards_and_chart_anchors() {
     assert!(html.contains(r#"href="/targets/new""#));
 }
 
-/// Docs live on the marketing host, which an app-only deployment does not
+/// Docs live on the site, which an app-only deployment does not
 /// run, so the app must link out absolutely rather than to its own `/docs`
 /// (that path is the Swagger UI here).
 #[tokio::test]

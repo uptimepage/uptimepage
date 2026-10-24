@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::Router;
 use axum::extract::Request;
 use axum::middleware::{self, Next};
 use axum::response::Response;
@@ -24,13 +23,13 @@ use uptimepage::{
         periodic::{run_purge_loop, run_purge_loop_from_boot},
         retention,
     },
-    marketing, observability,
+    observability,
     pipeline::{BatcherConfig, ResultBatcher},
     public_status::{
         AggregatorConfig, IncidentWriter, IncidentWriterConfig, OrgAggregator, OrgPublicSource,
         PageCache, PgIncidentStore, PublicSource,
     },
-    quotas, request,
+    quotas,
     request::is_health_path,
     scheduler::{self, Scheduler, TargetRegistry},
     storage::{
@@ -147,9 +146,6 @@ async fn main() -> Result<()> {
     // Same for the email-admission knobs: an unrecognised signup_policy
     // would otherwise degrade to "let everything through" in silence.
     cfg.validate_email_policy()?;
-    // Marketing host/URL invariants. Skipped wholesale when
-    // marketing.enabled = false (the default).
-    cfg.validate_marketing()?;
     cfg.validate_site()?;
     cfg.validate_legal()?;
     cfg.validate_disclosure()?;
@@ -997,61 +993,7 @@ async fn main() -> Result<()> {
     // `{slug}.{base}`. No-op when SaaS subdomain mode is off.
     let app_router = uptimepage::build_app_router(state.clone(), root.clone());
 
-    // The single dispatch seam. When marketing is enabled, requests are
-    // routed to the marketing or app router by classified `Host`.
-    // Otherwise the app router serves everything as before.
-    let combined: Router = if state.cfg.marketing.enabled {
-        let scheme = uptimepage::request::host::HostScheme::from_base_domain(
-            &state.cfg.public_status.base_domain,
-        )
-        .map_err(|e| AppError::Other(anyhow::anyhow!("HostScheme: {e}")))?;
-        // A provider with an empty catalog would send pricing-page visitors to
-        // a billing page with nothing to buy.
-        let checkout_open = match (&state.billing, &state.db) {
-            (Some(billing), Some(pool)) => {
-                !storage::subscriptions::priced_plans(pool, billing.provider.name())
-                    .await?
-                    .is_empty()
-            }
-            _ => false,
-        };
-        let marketing_cfg = marketing::MarketingCfg {
-            app_url: state.cfg.marketing.app_url.clone(),
-            canonical_origin: state.cfg.marketing.canonical_origin.clone(),
-            blog_enabled: state.cfg.marketing.blog_enabled,
-            mcp_url: (state.cfg.mcp.enabled && !state.cfg.mcp.resource_uri.is_empty())
-                .then(|| state.cfg.mcp.resource_uri.clone()),
-            checkout_open,
-            trusted_proxies: state.cfg.security.trusted_proxies.clone(),
-            disclosure: uptimepage::security::disclosure::Disclosure::from_config(
-                &state.cfg.security.disclosure,
-                &state.cfg.legal.security_policy_url,
-            ),
-        };
-        // Pre-warm the in-memory post cache so the first /blog hit
-        // doesn't pay the parse cost.
-        let _ = marketing::blog::init();
-        // Layered here, not inside marketing::router, to keep the marketing
-        // module free of `crate::observability` imports — its hard-isolation
-        // contract (see marketing/mod.rs) limits which crate paths it may
-        // depend on, and a future service extraction stays a clean cut.
-        // Assistant crawlers only ever fetch this surface, and they run no
-        // JavaScript, so the browser tracker cannot see them.
-        let marketing_router = marketing::router(marketing_cfg)
-            .layer(middleware::from_fn(observability::ai_traffic::middleware))
-            .layer(middleware::from_fn(request::http_metrics::middleware));
-        let dispatch = marketing::RouteByHost {
-            scheme,
-            custom_domains: state.custom_domains.clone(),
-            marketing: marketing_router,
-            app: app_router,
-        };
-        Router::new().fallback_service(dispatch)
-    } else {
-        app_router
-    };
-
-    let router = combined.layer(middleware::from_fn(access_log)).layer(
+    let router = app_router.layer(middleware::from_fn(access_log)).layer(
         TraceLayer::new_for_http()
             .make_span_with(|req: &axum::extract::Request| {
                 let path = req.uri().path();

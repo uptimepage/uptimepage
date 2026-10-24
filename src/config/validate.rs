@@ -124,10 +124,6 @@ impl AppConfig {
         Ok(())
     }
 
-    /// Marketing-site boot invariants. Cheap startup errors, never
-    /// panics in router construction. Skipped wholesale when
-    /// `marketing.enabled = false` so self-host deployments need not set
-    /// any of these.
     /// The snapshot only loads on the subdomain surface, so without it the ask
     /// endpoint would refuse every certificate and fail each handshake silently.
     pub fn validate_custom_domain_ask(&self) -> Result<()> {
@@ -143,63 +139,12 @@ impl AppConfig {
         )))
     }
 
-    pub fn validate_marketing(&self) -> Result<()> {
-        fn err(msg: String) -> crate::error::AppError {
-            crate::error::AppError::Other(anyhow::anyhow!(msg))
-        }
-        let m = &self.marketing;
-        if !m.enabled {
-            return Ok(());
-        }
-        let base = self.public_status.base_domain.trim();
-        if base.is_empty() || !base.contains('.') {
-            return Err(err(format!(
-                "marketing.enabled = true requires public_status.base_domain to be a non-empty FQDN (got {base:?})"
-            )));
-        }
-        for (field, value) in [
-            ("marketing.canonical_origin", m.canonical_origin.as_str()),
-            ("marketing.app_url", m.app_url.as_str()),
-        ] {
-            let v = value.trim();
-            if v.is_empty() {
-                return Err(err(format!(
-                    "{field} is required when marketing.enabled = true"
-                )));
-            }
-            if !v.starts_with("https://") {
-                return Err(err(format!("{field} must start with https:// (got {v:?})")));
-            }
-            if v.ends_with('/') {
-                return Err(err(format!(
-                    "{field} must not end with a trailing slash (got {v:?})"
-                )));
-            }
-        }
-        for sub in &m.reserved_subdomains {
-            let lower = sub.to_ascii_lowercase();
-            if !crate::domain::reserved_slugs::is_reserved(&lower) {
-                return Err(err(format!(
-                    "marketing.reserved_subdomains entry {sub:?} is not in \
-                     domain::reserved_slugs::RESERVED_SLUGS — keep the two lists aligned"
-                )));
-            }
-        }
-        Ok(())
-    }
-
     pub fn validate_site(&self) -> Result<()> {
         fn err(msg: String) -> crate::error::AppError {
             crate::error::AppError::Other(anyhow::anyhow!(msg))
         }
         let origin = self.site.origin.as_str();
         if origin.is_empty() {
-            if self.marketing.enabled {
-                return Err(err(
-                    "marketing.enabled = true requires site.origin, the origin it is served on"
-                        .into(),
-                ));
-            }
             return Ok(());
         }
         let Some(host) = self.site.host() else {
@@ -208,11 +153,30 @@ impl AppConfig {
                  with no path, trailing slash, credentials or default port (got {origin:?})"
             )));
         };
-        let base = self.public_status.base_domain.trim();
-        if self.marketing.enabled && host != base {
+        // The app answers 404 on whatever the site covers, so a site named
+        // after the app's own host would refuse everything but health probes.
+        let Some(app) = url::Url::parse(&self.auth.public_base_url)
+            .ok()
+            .and_then(|u| match (u.host_str()?, u.port()) {
+                (host, Some(port)) => Some(format!("{host}:{port}")),
+                (host, None) => Some(host.to_owned()),
+            })
+        else {
             return Err(err(format!(
-                "marketing is served on public_status.base_domain {base:?}, so site.origin \
-                 must name that host (got {origin:?})"
+                "site.origin is set, so auth.public_base_url must name the app's own origin \
+                 to tell the two apart (got {:?})",
+                self.auth.public_base_url
+            )));
+        };
+        let base = self.public_status.base_domain.trim().to_ascii_lowercase();
+        let operator = (!base.is_empty()).then(|| format!("app.{base}"));
+        if let Some(app) = std::iter::once(app)
+            .chain(operator)
+            .find(|host| self.site.covers(host))
+        {
+            return Err(err(format!(
+                "site.origin {origin:?} covers the app's own host {app:?}, which would then \
+                 answer 404 to every request; point site.origin at the separate website"
             )));
         }
         // A session cookie scoped to a zone the site inherits rides along to

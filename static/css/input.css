@@ -1,8 +1,5 @@
 @import "tailwindcss";
 
-/* The marketing shell (--mk-*, .mk-*) builds into its own bundle from
-   marketing-input.css. The partials imported below are shared by both. */
-
 @source "../../templates/**/*.html";
 @source "../../src/**/*.rs";
 /* Some UI is built in JS string templates (modals, toasts) — scan those too so
@@ -80,7 +77,7 @@
 
 @layer base {
     /* App-shell scope: opted in by `<body class="app-shell …">` in base.html.
-       Marketing/public pages stay on their own type/colour story — this
+       Public pages stay on their own type/colour story — this
        block is the *only* place the org app's surface + body type are set,
        so a theme swap edits the --theme-* tokens above plus this rule. */
     .app-shell {
@@ -2018,10 +2015,10 @@
         box-shadow: inset 2px 0 0 var(--theme-accent);
     }
 
-    /* Big single-number KPI value (Monitors, Uptime, …). Plex Serif 500
-       with tabular + lining figures — editorial weight, columns stay
-       aligned. tnum locks digit width, lnum forces baseline numerals
-       (Plex defaults to lining anyway, so lnum is a belt-and-braces). */
+    /* Big single-number KPI value (Monitors, Uptime, …). Plex Mono 500
+       with tabular + lining figures, so columns stay aligned. tnum locks
+       digit width, lnum forces baseline numerals (Plex defaults to lining
+       anyway, so lnum is a belt-and-braces). */
     .kpi-value {
         @apply mt-2 text-4xl tabular-nums;
         color: var(--theme-text);

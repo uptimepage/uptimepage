@@ -1,8 +1,8 @@
 # Abuse Triage
 
 > **Operator document, not rendered on the docs site.** Workflow for handling reports that arrive
-> at the abuse mailbox. The public-facing rules live in
-> `docs/legal/abuse-policy.md`; this is how you action them.
+> at the abuse mailbox. The public-facing rules live in the
+> [Abuse Policy](https://uptimepage.dev/abuse-policy); this is how you action them.
 
 ## Intake
 
@@ -31,7 +31,7 @@ For every report, open a private note with:
 
 ## Acting on an org
 
-1. Confirm the violation against `docs/legal/abuse-policy.md` — cite the
+1. Confirm the violation against the Abuse Policy — cite the
    specific clause in your note.
 2. Choose the **minimum** effective action: warn → restrict feature →
    suspend org → terminate. Suspension is reversible; termination after

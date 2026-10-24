@@ -32,9 +32,9 @@ x-dev-agent: &dev-agent
   # Distroless has no writable /tmp; Lightpanda needs scratch space.
   tmpfs:
     - /tmp
-  # Agents dial the control plane by its app host so the marketing host-router
-  # classifies them as the operator surface (a bare service name resolves to
-  # HostShape::Other → marketing 404). The CP listens on the host's :8080 in
+  # Agents dial the control plane by its app host so host isolation classifies
+  # them as the operator surface (a bare service name resolves to
+  # HostShape::Other → 404). The CP listens on the host's :8080 in
   # both the containerized and native runs, so host-gateway reaches it either way.
   extra_hosts:
     - "app.lvh.me:host-gateway"
@@ -48,8 +48,8 @@ services:
       UPTIMEPAGE_AGENT__ENABLED: "true"
       # Reach the dev control plane by its app host (`app.lvh.me`), routed to the
       # host's :8080 by the extra_hosts host-gateway mapping above. Using the app
-      # host is required: the marketing host-router serves a 404 to any Host it
-      # can't classify as the operator surface (a bare service name → 404).
+      # host is required: host isolation serves a 404 to any Host it can't
+      # classify as the operator surface (a bare service name → 404).
       # It's a private address, so the agent's control-plane client needs the
       # allow_private_targets opt-in below (default-strict in prod).
       UPTIMEPAGE_AGENT__CONTROL_PLANE_URL: ${AGENT_CONTROL_PLANE_URL:-http://app.lvh.me:8080}

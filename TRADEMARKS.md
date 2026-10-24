@@ -7,7 +7,7 @@ Uptimepage is licensed under AGPL-3.0, which covers copyright. As section 7(e) a
 ## The marks
 
 - the name "Uptimepage", in any capitalisation, and names close enough to be confused with it (for example "Uptime Page", "uptimepage.dev" or "uptimepagedev"), including in domain names and account handles
-- the logo and icons in `static/img/`
+- the logo and icons in `static/img/` and `docs/images/`
 
 ## Use without asking
 

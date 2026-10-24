@@ -1,23 +1,19 @@
 //! Reads a TLS leaf certificate and reports what it says.
 //!
-//! Deliberately standalone: it takes addresses that a caller has already
-//! resolved and passed through [`SsrfGuard`](super::SsrfGuard), so it carries
-//! no resolver, no metrics and no application state. That is what lets both
-//! the monitor worker and the public marketing tool share one parser, and what
-//! keeps the marketing side extractable to its own service.
+//! Deliberately standalone: it reads from a stream the caller opened to an
+//! address it already passed through [`SsrfGuard`](super::SsrfGuard), so it
+//! carries no resolver, no metrics and no application state.
 
 use std::io;
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use chrono::{DateTime, TimeZone, Utc};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
 use thiserror::Error;
-use tokio::net::TcpStream;
-use tokio::time::timeout;
 use tokio_rustls::TlsConnector;
 use x509_parser::asn1_rs::{Any, Tag};
 use x509_parser::prelude::*;
@@ -26,8 +22,6 @@ use x509_parser::prelude::*;
 pub enum CertProbeError {
     #[error("invalid server name '{0}'")]
     ServerName(String),
-    #[error("connect failed")]
-    Connect(#[source] io::Error),
     #[error("tls handshake failed")]
     Handshake(#[source] io::Error),
     #[error("server returned no certificate chain")]
@@ -36,8 +30,6 @@ pub enum CertProbeError {
     Parse(String),
     #[error("certificate validity is out of representable range")]
     Validity,
-    #[error("timeout")]
-    Timeout,
 }
 
 /// What a leaf certificate says, flattened into the fields a monitor grades on
@@ -59,47 +51,6 @@ pub struct CertFacts {
     pub chain_len: usize,
     pub handshake_ms: u32,
     pub peer: IpAddr,
-}
-
-/// Opens a TCP connection to the first address that accepts one, then reads the
-/// certificate. `addrs` must already be guard-filtered by the caller.
-pub async fn connect_and_read(
-    addrs: &[IpAddr],
-    port: u16,
-    server_name: &str,
-    connect_timeout: Duration,
-) -> Result<CertFacts, CertProbeError> {
-    let mut last: Option<CertProbeError> = None;
-    for ip in addrs {
-        let attempt = timeout(
-            connect_timeout,
-            TcpStream::connect(SocketAddr::new(*ip, port)),
-        )
-        .await;
-        match attempt {
-            // A handshake that fails on one address is not the host's verdict:
-            // a dual-stack name whose v6 endpoint accepts SYN and then goes
-            // quiet still answers over v4, and reporting the first failure
-            // would call a working host broken.
-            Ok(Ok(stream)) => match read_cert(stream, server_name, *ip).await {
-                Ok(facts) => return Ok(facts),
-                // Except a name no handshake can carry, which fails the same
-                // way everywhere and would only spend the caller's deadline.
-                Err(e @ CertProbeError::ServerName(_)) => return Err(e),
-                Err(e) => last = Some(e),
-            },
-            Ok(Err(e)) => last = Some(CertProbeError::Connect(e)),
-            // Distinct from a refusal: a dropped SYN and a closed port are
-            // different things to whoever has to fix it.
-            Err(_) => last = Some(CertProbeError::Timeout),
-        }
-    }
-    Err(last.unwrap_or_else(|| {
-        CertProbeError::Connect(io::Error::new(
-            io::ErrorKind::AddrNotAvailable,
-            "no addresses to try",
-        ))
-    }))
 }
 
 /// Completes a TLS handshake over an already-open stream and parses the leaf.

@@ -83,25 +83,19 @@ services:
       UPTIMEPAGE_TENANCY__PATH_BASED_PUBLIC_ROUTES: "false"
       UPTIMEPAGE_TENANCY__SUBDOMAIN_PUBLIC_ROUTES: "true"
       UPTIMEPAGE_PUBLIC_STATUS__BASE_DOMAIN: "lvh.me"
-      # Marketing site on apex (lvh.me) + www.lvh.me. Disabled in prod
-      # default; enabled here so visual changes can be inspected at
-      # http://lvh.me:8080. Canonical/app URLs point at the prod hosts
-      # because the validator requires https — the page renders fine,
-      # only the canonical/OG meta tags reference the prod URLs.
-      UPTIMEPAGE_MARKETING__ENABLED: "true"
-      UPTIMEPAGE_MARKETING__APP_URL: "https://app.uptimepage.dev"
-      UPTIMEPAGE_MARKETING__CANONICAL_ORIGIN: "https://uptimepage.dev"
+      # The apex belongs to the site, as on the hosted service, so the app
+      # answers 404 on lvh.me and www.lvh.me.
       UPTIMEPAGE_SITE__ORIGIN: "http://lvh.me:8080"
       # Plan gates as on the hosted service, so locked features can be inspected.
       UPTIMEPAGE_QUOTAS__ENFORCE_PLAN_FEATURES: "true"
-      # The policies the marketing site serves, as on the hosted service.
-      UPTIMEPAGE_LEGAL__TERMS_URL: "http://lvh.me:8080/terms"
-      UPTIMEPAGE_LEGAL__PRIVACY_URL: "http://lvh.me:8080/privacy"
-      UPTIMEPAGE_LEGAL__COOKIES_URL: "http://lvh.me:8080/cookies"
-      UPTIMEPAGE_LEGAL__REFUND_URL: "http://lvh.me:8080/refund-policy"
-      UPTIMEPAGE_LEGAL__IMPRESSUM_URL: "http://lvh.me:8080/impressum"
-      UPTIMEPAGE_LEGAL__ABUSE_URL: "http://lvh.me:8080/abuse-policy"
-      UPTIMEPAGE_LEGAL__SECURITY_POLICY_URL: "http://lvh.me:8080/security-policy"
+      # The hosted service's policies, so the links and the agreement line render.
+      UPTIMEPAGE_LEGAL__TERMS_URL: "https://uptimepage.dev/terms"
+      UPTIMEPAGE_LEGAL__PRIVACY_URL: "https://uptimepage.dev/privacy"
+      UPTIMEPAGE_LEGAL__COOKIES_URL: "https://uptimepage.dev/cookies"
+      UPTIMEPAGE_LEGAL__REFUND_URL: "https://uptimepage.dev/refund-policy"
+      UPTIMEPAGE_LEGAL__IMPRESSUM_URL: "https://uptimepage.dev/impressum"
+      UPTIMEPAGE_LEGAL__ABUSE_URL: "https://uptimepage.dev/abuse-policy"
+      UPTIMEPAGE_LEGAL__SECURITY_POLICY_URL: "https://uptimepage.dev/security-policy"
       UPTIMEPAGE_LEGAL__TERMS_VERSION: "v2"
       UPTIMEPAGE_LEGAL__PRIVACY_VERSION: "v2"
       UPTIMEPAGE_SECURITY__DISCLOSURE__CONTACT: "mailto:security@example.invalid"

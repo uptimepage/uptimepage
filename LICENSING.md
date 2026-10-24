@@ -43,13 +43,13 @@ AGPL-3.0 does not grant trademark rights (section 7(e)). Running uptimepage for 
 
 ## Blog posts
 
-The blog posts in `src/marketing/content/blog/` were written by Artem Senenko. As additional terms under sections 7(b) and 7(c) of the AGPL-3.0, anyone who copies, publishes or adapts a post, in whole or in part, must:
+The blog posts once published in this repository, under `src/marketing/content/blog/`, were written by Artem Senenko and stay under the AGPL-3.0 as published. As additional terms under sections 7(b) and 7(c) of the AGPL-3.0, anyone who copies, publishes or adapts one of them, in whole or in part, must:
 
 - name Artem Senenko as its author, visibly, next to the text
 - not misrepresent who wrote the original text; crediting your own additions is fine
 - mark an adapted post clearly as changed from the original
 
-Each post repeats this in a comment at the top of its file.
+Each of those posts repeats this in a comment at the top of its file. The blog has since left this repository; posts published after that are not part of this project and are not covered by its license.
 
 ## Commercial licensing
 

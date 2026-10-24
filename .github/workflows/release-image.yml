@@ -30,12 +30,13 @@ on:
     branches: [main]
     tags: ["v*"]
     # Denylist, mirrors ci.yml: the image is unaffected by the
-    # deploy/dco/issue-template workflows. docs/ is not listed — its Markdown
-    # is compiled into the image, so a docs edit must rebuild it. Any unlisted
-    # path still builds, so new source never skips the image. Keep in sync with
-    # ci.yml (GHA can't share a YAML anchor across files).
+    # deploy/dco/issue-template workflows. docs/ is not listed because ci.yml
+    # tests it and the two lists must match. Any unlisted path still builds,
+    # so new source never skips the image. Keep in sync with ci.yml (GHA can't
+    # share a YAML anchor across files).
     paths-ignore:
       - "*.md"
+      - "changelog/**"
       - "charts/**"
       - ".github/workflows/charts.yml"
       # canary.yml only runs on a schedule and gates nothing.

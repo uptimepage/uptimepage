@@ -64,7 +64,6 @@ clickhouse = { version = "0.15", features = ["rustls-tls", "uuid", "chrono"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "1.1"
 
 # Observability
 tracing = "0.1"
@@ -95,7 +94,7 @@ askama = { version = "0.16", features = ["serde_json"] }
 askama_web = { version = "0.16", features = ["axum-0.8"] }
 
 # Embed static assets into the release binary
-rust-embed = { version = "8.11", features = ["axum"] }
+rust-embed = { version = "8.11", features = ["axum", "include-exclude"] }
 mime_guess = "2"
 
 # Public-page `public_about`: parse markdown, then sanitise the HTML. The
@@ -103,13 +102,6 @@ mime_guess = "2"
 # allowlist before it reaches a template.
 pulldown-cmark = { version = "0.13.3", default-features = false, features = ["html"] }
 ammonia = "4.2.4"
-# Code-fence highlighting, emitted as CSS classes rather than inline styles:
-# the marketing CSP is `style-src 'self'`. fancy-regex keeps the build pure
-# Rust; two-face carries the syntaxes syntect ships without (TOML, Terraform).
-syntect = { version = "5.3", default-features = false, features = ["parsing", "html", "regex-fancy", "dump-load"] }
-two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
-# Marketing blog content compiled into the binary at build time.
-include_dir = "0.7"
 
 # Utilities
 uuid = { version = "1.23", features = ["v7", "serde"] }
@@ -202,8 +194,6 @@ fluent-templates = { version = "0.15.1", default-features = false, features = ["
 [build-dependencies]
 # build.rs parses esbuild's metafile to emit the asset manifest.
 serde_json = "1.0"
-# build.rs turns docs/index.toml into the docs table.
-toml = "1.1"
 brotli = "8"
 
 [dev-dependencies]
@@ -215,6 +205,8 @@ rcgen = "0.14"
 rustls-pemfile = "2"
 tokio-rustls = "0.26"
 time = "0.3.47"
+# Reads docs/index.toml and config/default.toml in the manifest and config tests.
+toml = "1.1"
 # Strict XML parser for the RSS 2.0 well-formedness check.
 quick-xml = "0.41"
 # Fixture-based parameterization for self-host vs SaaS test matrices.

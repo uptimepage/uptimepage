@@ -88,7 +88,10 @@ mod tests {
         assert_eq!(entry["version"], json!(env!("CARGO_PKG_VERSION")));
         assert_eq!(
             entry["remotes"][0]["url"],
-            json!(crate::marketing::config::MCP_URL),
+            json!(format!(
+                "https://mcp.uptimepage.dev{}",
+                crate::request::MCP_PATH
+            )),
             "the registry would hand every client an endpoint we no longer serve"
         );
         assert!(

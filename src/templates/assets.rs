@@ -27,8 +27,14 @@ use rust_embed::Embed;
 
 /// Static assets embedded into the release binary. In debug builds
 /// rust-embed reads from the filesystem so edits show up without rebuilding.
+/// Every embedded file is served on every host, so build inputs (the Tailwind
+/// sources) and dotfiles (build bookkeeping, OS litter) stay out.
 #[derive(Embed)]
 #[folder = "static/"]
+#[exclude = ".*"]
+#[exclude = "*/.*"]
+#[exclude = "css/input.css*"]
+#[exclude = "css/_*"]
 struct StaticAssets;
 
 /// Cache-bust fingerprint for non-JS assets (and JS when there's no manifest).
@@ -183,11 +189,7 @@ fn accepts_brotli(headers: &HeaderMap) -> bool {
         })
 }
 
-/// Mount the fingerprinted static-asset route on the given router. Two
-/// callers need an identical declaration — the operator app router and
-/// the marketing router — and they must agree on the path and handler so
-/// `{{ "css/app.css"|asset }}` resolves on both hosts. Funnel both
-/// through here so the path can never drift.
+/// Mount the fingerprinted static-asset route on the given router.
 pub fn mount_static<S>(router: axum::Router<S>) -> axum::Router<S>
 where
     S: Clone + Send + Sync + 'static,
@@ -430,6 +432,63 @@ mod tests {
             offenders.is_empty(),
             "templates must reference assets via the `asset` filter, not a \
              raw /static/ path. Offenders: {offenders:?}"
+        );
+    }
+
+    /// Every embedded file is public on every host, routes or not, so one the
+    /// app never links is published all the same. The site's own files (its
+    /// pages' assets, the author portrait, its `.well-known` documents) must
+    /// never come back. A text scan of the binary cannot see an image; this
+    /// can.
+    #[test]
+    fn every_embedded_asset_is_one_the_app_links() {
+        // `.well-known/` is excluded from the embed already; listed so dropping
+        // that exclude cannot bring a static security.txt back unnoticed.
+        const SITE_ONLY: [&str; 3] = ["marketing/", "img/authors/", ".well-known/"];
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut linking = String::new();
+        let mut stack: Vec<_> = ["templates", "src", "static/css"]
+            .iter()
+            .map(|dir| root.join(dir))
+            .collect();
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).expect("read source dir") {
+                let path = entry.expect("dir entry").path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if matches!(
+                    path.extension().and_then(|e| e.to_str()),
+                    Some("html" | "rs" | "css")
+                ) {
+                    linking.push_str(&std::fs::read_to_string(&path).expect("read source"));
+                }
+            }
+        }
+        let path_like = regex::Regex::new(r"[\w./-]*/[\w./-]+").unwrap();
+        let linked: HashSet<&str> = path_like.find_iter(&linking).map(|m| m.as_str()).collect();
+        let is_linked = |logical: &str| {
+            linked.iter().any(|token| {
+                token
+                    .strip_suffix(logical)
+                    .is_some_and(|head| head.is_empty() || head.ends_with('/'))
+            })
+        };
+        let logical_of: HashMap<&str, &str> = MANIFEST
+            .iter()
+            .map(|(logical, hashed)| (hashed.as_str(), logical.as_str()))
+            .collect();
+        let stray: Vec<String> = StaticAssets::iter()
+            .filter(|path| {
+                let served = path.strip_suffix(".br").unwrap_or(path);
+                let served = served.strip_suffix(".map").unwrap_or(served);
+                let logical = logical_of.get(served).copied().unwrap_or(served);
+                SITE_ONLY.iter().any(|p| path.starts_with(p)) || !is_linked(logical)
+            })
+            .map(|path| path.into_owned())
+            .collect();
+        assert!(
+            stray.is_empty(),
+            "embedded but never linked by an app template, handler or stylesheet: {stray:?}"
         );
     }
 }

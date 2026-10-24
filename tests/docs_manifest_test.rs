@@ -7,6 +7,16 @@ use std::path::Path;
 
 const SECTIONS: [&str; 5] = ["start", "guide", "reference", "hosted", "self-hosting"];
 const SCOPES: [&str; 3] = ["everyone", "hosted", "self-hosting"];
+const KEYS: [&str; 8] = [
+    "slug",
+    "title",
+    "description",
+    "blurb",
+    "section",
+    "scope",
+    "created",
+    "lastmod",
+];
 
 fn docs_dir() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/docs"))
@@ -31,8 +41,7 @@ fn text<'a>(page: &'a toml::Table, key: &str) -> &'a str {
         .unwrap_or_else(|| panic!("{page:?} needs {key}"))
 }
 
-/// Markdown under `docs/` other than the hosted service's legal copy and the
-/// operations runbooks.
+/// Markdown under `docs/` other than the operations runbooks.
 fn markdown_slugs() -> HashSet<String> {
     let mut found = HashSet::new();
     let mut stack = vec![docs_dir().to_path_buf()];
@@ -41,7 +50,7 @@ fn markdown_slugs() -> HashSet<String> {
             let path = entry.expect("dir entry").path();
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if path.is_dir() {
-                if name != "legal" && name != "internal" {
+                if name != "internal" {
                     stack.push(path);
                 }
             } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
@@ -93,6 +102,29 @@ fn descriptions_and_blurbs_fit_where_they_are_shown() {
             "{slug}: blurb is {} chars, want 1-110",
             width(blurb)
         );
+    }
+}
+
+/// The site turns each slug into a file path and a public URL, and reads
+/// exactly these keys.
+#[test]
+fn every_entry_has_a_safe_slug_and_only_known_keys() {
+    for page in pages() {
+        let slug = text(&page, "slug");
+        assert!(
+            slug.split('/').all(|part| {
+                !part.is_empty()
+                    && part
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            }),
+            "{slug:?}: lowercase words joined by - and /"
+        );
+        let unknown: Vec<_> = page
+            .keys()
+            .filter(|k| !KEYS.contains(&k.as_str()))
+            .collect();
+        assert!(unknown.is_empty(), "{slug}: unknown keys {unknown:?}");
     }
 }
 

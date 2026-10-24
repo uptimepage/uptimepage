@@ -226,14 +226,8 @@ services:
       UPTIMEPAGE_AUTH__GITLAB__REDIRECT_URL: ${UPTIMEPAGE_AUTH_GITLAB_REDIRECT_URL:-}
       UPTIMEPAGE_AUTH__GITLAB__BASE_URL: ${UPTIMEPAGE_AUTH_GITLAB_BASE_URL:-https://gitlab.com}
       UPTIMEPAGE_AUTH__PUBLIC_BASE_URL: ${UPTIMEPAGE_AUTH_PUBLIC_BASE_URL:-}
-      # Marketing site (apex + www). Disabled by default — the binary
-      # serves only the operator + tenant surfaces unless this is true.
-      # RouteByHost dispatches `Marketing` hosts only when enabled here.
-      UPTIMEPAGE_MARKETING__ENABLED: ${UPTIMEPAGE_MARKETING__ENABLED:-false}
-      UPTIMEPAGE_MARKETING__APP_URL: ${UPTIMEPAGE_MARKETING__APP_URL:-}
-      UPTIMEPAGE_MARKETING__CANONICAL_ORIGIN: ${UPTIMEPAGE_MARKETING__CANONICAL_ORIGIN:-}
-      UPTIMEPAGE_MARKETING__BLOG_ENABLED: ${UPTIMEPAGE_MARKETING__BLOG_ENABLED:-false}
-      # The public website on the parent domain; empty on self-host.
+      # The public website on the parent domain; empty on self-host. The app
+      # answers 404 on its host and www.
       UPTIMEPAGE_SITE__ORIGIN: ${UPTIMEPAGE_SITE__ORIGIN:-}
       # Plans gate features only where someone sells them; the self-host
       # operator owns the plans rows.

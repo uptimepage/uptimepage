@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Seed a photogenic operator tenant — 16 monitors across 3 groups, 90d of
-# mostly-up ClickHouse history, two resolved incidents — for shooting the
-# static/marketing/shot-*.webp gallery on the landing page.
+# mostly-up ClickHouse history, two resolved incidents — for shooting product
+# screenshots (the README, the site's landing gallery).
 #
 # Distinct from seed-fixtures.sh, which exists to stress every render path and
 # so is deliberately hostile: major outages, NoData gaps, adversarial titles,

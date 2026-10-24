@@ -25,23 +25,15 @@ fn a_partial_quotas_table_keeps_the_other_defaults() {
     assert_eq!(partial.plan_cache_ttl_secs, 300);
 }
 
-/// Both bot pages spell the version out by hand, so a stale sample teaches
+/// The bot page spells the version out by hand, so a stale sample teaches
 /// site owners to allowlist a string our probes no longer send.
 #[test]
-fn each_bot_page_quotes_the_user_agent_that_links_it() {
-    for (page, bot_url) in [
-        (
-            include_str!("../../docs/legal/bot.md"),
-            "https://uptimepage.dev/bot",
-        ),
-        (include_str!("../../docs/bot.md"), PROJECT_BOT_URL),
-    ] {
-        let sent = user_agent_linking(bot_url);
-        assert!(
-            page.contains(&sent),
-            "the page linked as {bot_url} does not quote {sent:?}"
-        );
-    }
+fn the_bot_page_quotes_the_user_agent_that_links_it() {
+    let sent = user_agent_linking(PROJECT_BOT_URL);
+    assert!(
+        include_str!("../../docs/bot.md").contains(&sent),
+        "docs/bot.md does not quote {sent:?}"
+    );
 }
 
 #[test]
@@ -675,7 +667,6 @@ fn a_discord_public_key_must_be_one() {
 #[test]
 fn the_site_origin_is_a_bare_origin() {
     let mut cfg = AppConfig::load().expect("load");
-    cfg.marketing.enabled = false;
     cfg.auth.session.cookie_domain = String::new();
     for (origin, ok) in [
         ("", true),
@@ -712,23 +703,73 @@ fn a_session_cookie_covering_the_site_does_not_boot() {
     }
 }
 
-/// The marketing router serves the base domain, so the cookie guard and
-/// everything else keyed on the site origin must name it.
+/// The app answers 404 on the site's host and its `www` alias, so a site named
+/// after the app's own host would lock out everything but the health probes.
 #[test]
-fn marketing_needs_a_site_origin() {
+fn a_site_on_the_apps_own_host_does_not_boot() {
     let mut cfg = AppConfig::load().expect("load");
     cfg.auth.session.cookie_domain = String::new();
-    cfg.marketing.enabled = true;
-    cfg.public_status.base_domain = "example.test".into();
-    cfg.site.origin = String::new();
-    assert!(cfg.validate_site().is_err());
-    cfg.site.origin = "https://example.org".into();
+    cfg.public_status.base_domain = "example.org".into();
+    cfg.auth.public_base_url = "https://status.example.test".into();
+    for (origin, ok) in [
+        ("https://status.example.test", false),
+        ("https://app.example.org", false),
+        ("https://example.test", true),
+        ("https://example.org", true),
+        ("https://www.status.example.test", true),
+    ] {
+        cfg.site.origin = origin.into();
+        assert_eq!(cfg.validate_site().is_ok(), ok, "{origin:?}");
+    }
+    cfg.auth.public_base_url = "https://www.example.test".into();
+    cfg.site.origin = "https://example.test".into();
     assert!(
         cfg.validate_site().is_err(),
-        "marketing serves the base domain"
+        "the www alias is the site's too"
     );
-    cfg.site.origin = "https://example.test".into();
+
+    // Another port on the same host is another origin, so neither covers the
+    // other.
+    cfg.auth.public_base_url = "http://localhost:8080".into();
+    cfg.site.origin = "http://localhost:3000".into();
     assert!(cfg.validate_site().is_ok());
+    cfg.site.origin = "http://localhost:8080".into();
+    assert!(cfg.validate_site().is_err());
+
+    // Without the app's own origin there is nothing to tell the site from.
+    cfg.auth.public_base_url = String::new();
+    cfg.site.origin = "https://example.test".into();
+    assert!(cfg.validate_site().is_err());
+}
+
+#[test]
+fn the_site_covers_its_host_and_www_on_its_own_port() {
+    let site = |origin: &str| crate::config::SiteConfig {
+        origin: origin.into(),
+    };
+    let apex = site("https://example.test");
+    for (host, covered) in [
+        ("example.test", true),
+        ("EXAMPLE.test", true),
+        ("example.test.", true),
+        ("example.test:443", true),
+        ("www.example.test", true),
+        ("WWW.example.test:443", true),
+        ("example.test:8443", false),
+        ("app.example.test", false),
+        ("wwwexample.test", false),
+        ("www.www.example.test", false),
+        ("example.test:99999", false),
+        ("", false),
+    ] {
+        assert_eq!(apex.covers(host), covered, "{host:?}");
+    }
+    let dev = site("http://lvh.me:8080");
+    assert!(dev.covers("lvh.me:8080"));
+    assert!(dev.covers("www.lvh.me:8080"));
+    assert!(!dev.covers("lvh.me"));
+    assert!(!dev.covers("app.lvh.me:8080"));
+    assert!(!site("").covers("example.test"));
 }
 
 /// Selling plans whose features nothing enforces would hand every buyer's

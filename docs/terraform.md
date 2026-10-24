@@ -56,8 +56,8 @@ resource "uptimepage_target" "api" {
   Find your slug from `GET /api/v1/orgs` or your dashboard URL. A token bound to
   an org requires `org` to match it (else `403 ORG_HEADER_MISMATCH`).
 - **Endpoint** — defaults to the hosted API at `https://app.uptimepage.dev`. For
-  a self-hosted instance, set `endpoint` to your host (the apex marketing domain
-  does not serve `/api/v1`).
+  a self-hosted instance, set `endpoint` to your host (the website at
+  `https://uptimepage.dev` does not serve `/api/v1`).
 
 ## Resources & data sources
 

@@ -296,11 +296,10 @@ server-rendered HTML UI at `/`. Stack:
 - **HTMX 2.0.9 + json-enc** — bundled under `static/js/`.
   Powers partial swaps (filter, paginate, delete) and JSON form submission.
   No SPA framework.
-- **Tailwind CSS 4** — CSS-first config in two bundle inputs:
-  `static/css/input.css` builds the app's `app.css`, and
-  `static/css/marketing-input.css` builds the marketing site's
-  `marketing.css`. Both import the shared `_*.css` partials (`@theme`,
-  shell, form controls, combobox). No `tailwind.config.js`.
+- **Tailwind CSS 4** — CSS-first config: `static/css/input.css` builds
+  `app.css` and imports the `_*.css` partials (`@theme`, shell, form
+  controls, combobox). No `tailwind.config.js`. The sources are build
+  inputs, not served assets.
 - **ECharts 6** — lazy-loaded from page-level `<script>` tags, only where
   charts exist (dashboard, target detail).
 
@@ -436,7 +435,7 @@ cargo test --test it web_e2e_test::  # e2e
 |---|---|
 | `503 STATUS_DATA_UNAVAILABLE` | Aggregator's first compute failed. Check `uptimepage::public_status::cache` ERROR log for the actual SQL/CH error. |
 | `failed to spawn ./bin/tailwindcss` during `cargo build` | First-build fetch failed. Run `bash scripts/fetch-tailwind.sh` and confirm `bin/tailwindcss` is executable. |
-| Page renders unstyled HTML | `static/css/app.css` (or `marketing.css` on the marketing site) empty or stale. Touch its input (`input.css` or `marketing-input.css`) and rebuild. |
+| Page renders unstyled HTML | `static/css/app.css` empty or stale. Touch `static/css/input.css` and rebuild. |
 | Charts render blank | A fetch to `/api/v1/dashboard/summary` or `/api/v1/targets/{id}/results` failed; the chart module logs `chart load failed` with the URL and status. |
 | Dashboard never refreshes | `<script defer src="/static/js/htmx.min.js">` missing from the page source. It is loaded from `base.html`. |
 | Edit form submitted credentials despite the toggle being off | Console error from `auth_field.js`. The submit handler reads `data-mode` off the credential `<fieldset>`; without those data attributes it falls back to "include". |

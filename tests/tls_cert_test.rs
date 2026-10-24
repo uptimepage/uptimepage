@@ -6,6 +6,7 @@ use axum::routing::get;
 use rcgen::{CertificateParams, DnType, KeyPair, SanType};
 use time::OffsetDateTime;
 use uptimepage::domain::{CheckStatus, TlsCertCheck};
+use uptimepage::security::CertFacts;
 use uptimepage::worker::tls_cert::execute_tls_cert_check;
 use uuid::Uuid;
 
@@ -58,20 +59,19 @@ fn make_check(addr: SocketAddr, warn: u32, critical: u32) -> TlsCertCheck {
     }
 }
 
-/// The shared probe read by both the monitor and the public SSL tool. Asserted
-/// directly because the monitor only ever surfaces four of its fields, and the
-/// tool renders the rest.
+async fn read_cert_from(addr: SocketAddr, server_name: &str) -> CertFacts {
+    let stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    uptimepage::security::cert_probe::read_cert(stream, server_name, addr.ip())
+        .await
+        .expect("probe reads the certificate")
+}
+
+/// Asserted directly because the monitor only ever surfaces four of the
+/// probe's fields.
 #[tokio::test]
 async fn cert_probe_reads_the_leaf_a_server_presents() {
     let addr = spawn_tls_server_with_validity(45).await;
-    let facts = uptimepage::security::cert_probe::connect_and_read(
-        &[addr.ip()],
-        addr.port(),
-        "localhost",
-        Duration::from_secs(5),
-    )
-    .await
-    .expect("probe reads the certificate");
+    let facts = read_cert_from(addr, "localhost").await;
 
     assert_eq!(facts.san_dns_names, vec!["localhost".to_string()]);
     assert!(facts.name_matches, "the SAN covers the name we asked for");
@@ -91,14 +91,7 @@ async fn cert_probe_reads_the_leaf_a_server_presents() {
 #[tokio::test]
 async fn cert_probe_reports_a_name_the_certificate_does_not_cover() {
     let addr = spawn_tls_server_with_validity(30).await;
-    let facts = uptimepage::security::cert_probe::connect_and_read(
-        &[addr.ip()],
-        addr.port(),
-        "not-the-name.example",
-        Duration::from_secs(5),
-    )
-    .await
-    .expect("probe still reads the certificate");
+    let facts = read_cert_from(addr, "not-the-name.example").await;
 
     assert!(!facts.name_matches);
     assert_eq!(facts.san_dns_names, vec!["localhost".to_string()]);

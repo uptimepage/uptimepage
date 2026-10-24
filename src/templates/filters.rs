@@ -50,9 +50,8 @@ mod static_refs {
     }
 
     /// Product documentation. Absolute and upstream on purpose: docs are
-    /// served by the marketing router on the apex host, which an app-only
-    /// deployment does not run, so a relative `/docs` would land on the
-    /// app's Swagger UI or 404. The input is appended, so `{{ ""|docs_url }}`
+    /// served by the site, which an app-only deployment does not run, so a
+    /// relative `/docs` would land on the app's Swagger UI or 404. The input is appended, so `{{ ""|docs_url }}`
     /// is the index and `{{ "/hosted/regions"|docs_url }}` is one page.
     #[askama::filter_fn]
     pub fn docs_url(path: &str, _: &dyn askama::Values) -> askama::Result<String> {
@@ -70,15 +69,6 @@ mod static_refs {
     #[askama::filter_fn]
     pub fn version(_: &str, _: &dyn askama::Values) -> askama::Result<&'static str> {
         Ok(env!("CARGO_PKG_VERSION"))
-    }
-
-    /// Evaluated once per process; a prod process crossing Jan 1 picks up
-    /// the new year on the next deploy.
-    #[askama::filter_fn]
-    pub fn current_year(_: &str, _: &dyn askama::Values) -> askama::Result<i32> {
-        use chrono::Datelike;
-        static YEAR: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
-        Ok(*YEAR.get_or_init(|| chrono::Utc::now().year()))
     }
 
     static SUPPORT_UI: std::sync::OnceLock<bool> = std::sync::OnceLock::new();

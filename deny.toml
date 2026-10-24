@@ -49,12 +49,6 @@ ignore = [
     # Dev-dep-only (test cert helpers); harmless. Revisit when test deps
     # migrate.
     "RUSTSEC-2025-0134",
-    # `bincode` — upstream ceased development permanently; no vulnerability,
-    # the crate is feature-complete. Transitive via syntect's `dump-load`,
-    # which two-face hard-requires and which pins bincode 1.x, so no upgrade
-    # path exists. Only decodes our own embedded syntax dumps, never user
-    # input. Revisit when syntect drops the bincode dump format.
-    "RUSTSEC-2025-0141",
     # `rsa` — timing sidechannel leaking an RSA private key. Transitive via
     # webauthn-rs-core; a relying party only verifies, so we hold no RSA
     # private key for it to leak. No upgrade exists. Revisit on webauthn-rs

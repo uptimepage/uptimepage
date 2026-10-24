@@ -188,7 +188,6 @@ fn no_request_path_module_reaches_the_cross_tenant_sweep() {
         "api",
         "mcp",
         "public_status",
-        "marketing",
         "request",
         "targets",
         "channels",

@@ -1,9 +1,0 @@
-{#- Sibling strip, driven by tools::TOOLS so a new tool needs no template edit.
-    Every including page provides `tools` and `self_path`. -#}
-<p class="mk-mono mk-quiet text-xs mk-ls-08">
-    more free tools:
-    {%- for t in tools %}{% if t.path != self_path %}
-    <a href="{{ t.path }}" class="mk-footer-link mk-footer-link--inline">{{ t.label }}</a> ·
-    {%- endif %}{%- endfor %}
-    <a href="/tools" class="mk-footer-link mk-footer-link--inline">the whole set</a>
-</p>

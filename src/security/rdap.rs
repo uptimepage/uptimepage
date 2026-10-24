@@ -1,14 +1,10 @@
-//! Pure RDAP field parsing shared by the public checker and scheduled monitor.
+//! Pure RDAP field parsing for the scheduled domain-expiry monitor.
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct DomainResponse {
-    #[serde(rename = "objectClassName")]
-    pub object_class: Option<String>,
-    #[serde(rename = "ldhName")]
-    pub name: Option<String>,
     #[serde(default)]
     events: Vec<Event>,
     #[serde(default)]

@@ -393,10 +393,6 @@ fn register_descriptions() {
         "Link callbacks whose state named one account while the live session was another, labelled by `reason`. `no_session` is routine — the session lapsed while the user was on the provider's consent screen. `other_user` should sit at zero: the state alone is not allowed to authorise attaching a credential, so an increment there is a leaked state being replayed or a bug in the guard. `identity_taken` means a completed dance offered a provider account that already opens somebody else's account — a handful is someone confusing two logins, a rate of them is someone hunting"
     );
     describe_counter!(
-        "uptimepage_ai_crawler_requests_total",
-        "Assistant crawler fetches of the marketing surface, labelled by `bot`, `section`, and `kind`. `kind=user-fetch` is an agent dispatched because a person asked a question seconds earlier, so it tracks live citation; `kind=crawler` is corpus building for answers weeks away. The browser tracker sees assistant referrals but never these fetches, because crawlers run no JavaScript"
-    );
-    describe_counter!(
         "uptimepage_orgs_emptied_total",
         "Deletes that took an organisation from having monitors to having none. The shape a customer walking out leaves behind when they clear the account by hand instead of deleting it"
     );
@@ -410,7 +406,7 @@ fn register_descriptions() {
     );
     describe_counter!(
         "uptimepage_unrecognised_host_requests_total",
-        "Requests refused because their `Host` named neither this deployment nor a custom domain it serves, counted at whichever default-deny fence saw them first: the dispatch seam where the marketing site is enabled, the host-isolation middleware where it is not. Zero is the steady state on a deployment nobody points DNS at; it is also the series that shows default-deny is actually live on an instance"
+        "Requests refused because their `Host` named neither this deployment nor a custom domain it serves, counted by the host-isolation middleware. Zero is the steady state on a deployment nobody points DNS at; it is also the series that shows default-deny is actually live on an instance"
     );
     describe_counter!(
         "uptimepage_custom_domain_ask_total",

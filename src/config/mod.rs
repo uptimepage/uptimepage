@@ -46,7 +46,7 @@ pub use observability::{GrafanaConfig, HeartbeatConfig, LogFormat, Observability
 pub use ops::{AgentConfig, EscalationConfig, FlowConfig, McpConfig, OperatorConfig};
 pub use public::{
     CHECK_RESULTS_HISTORY_MONTHS, CHECK_RESULTS_RAW_DAYS, FLOW_EVIDENCE_DAYS, LegalConfig,
-    MarketingConfig, PublicStatusConfig, RetentionConfig, SiteConfig, TenancyConfig,
+    PublicStatusConfig, RetentionConfig, SiteConfig, TenancyConfig,
 };
 pub use runtime::{
     CheckerConfig, CircuitBreakerConfig, DisclosureConfig, DnsConfig, HttpClientConfig,
@@ -187,8 +187,6 @@ pub struct AppConfig {
     pub abuse: AbuseConfig,
     #[serde(default)]
     pub email_policy: EmailPolicyConfig,
-    #[serde(default)]
-    pub marketing: MarketingConfig,
     #[serde(default)]
     pub site: SiteConfig,
     #[serde(default)]

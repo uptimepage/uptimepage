@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="static/marketing/blog-maintenance-day.webp" alt="A status page component with 90 days of uptime and the tooltip for one day." width="760">
+<img src="docs/images/blog-maintenance-day.webp" alt="A status page component with 90 days of uptime and the tooltip for one day." width="760">
 
 # uptimepage
 
@@ -20,7 +20,7 @@ API, or Terraform. Self-host the single binary or use the hosted service.
 
 [**Try it free →**](https://uptimepage.dev)&nbsp;&nbsp;·&nbsp;&nbsp;[Docs](https://uptimepage.dev/docs)&nbsp;&nbsp;·&nbsp;&nbsp;[Self-host](#self-host)&nbsp;&nbsp;·&nbsp;&nbsp;[Terraform](#terraform)&nbsp;&nbsp;·&nbsp;&nbsp;[MCP](#mcp-server)
 
-<img src="static/marketing/uptime-monitoring-dashboard.webp" alt="uptimepage dashboard — uptime, response time, and per-monitor status" width="900">
+<img src="docs/images/uptime-monitoring-dashboard.webp" alt="uptimepage dashboard — uptime, response time, and per-monitor status" width="900">
 
 </div>
 
@@ -86,7 +86,7 @@ Embed your own with the snippet in **Settings → Pages → your page → Badge*
 
 <div align="center">
 
-<img src="static/marketing/uptime-monitors-list.webp" alt="The monitors list: checks grouped by environment, each with live status, type, tags, last check time, and 30-day uptime." width="900">
+<img src="docs/images/uptime-monitors-list.webp" alt="The monitors list: checks grouped by environment, each with live status, type, tags, last check time, and 30-day uptime." width="900">
 <br><sub>Monitors — grouped by environment, filterable by type, tag, or owner</sub>
 
 </div>
@@ -113,7 +113,7 @@ A customer-facing `/status` page (HTML + JSON + RSS 2.0) is built into the binar
 
 <div align="center">
 
-<img src="static/marketing/public-status-page.webp" alt="A public status page reading All Systems Operational, with 90-day uptime history per component." width="900">
+<img src="docs/images/public-status-page.webp" alt="A public status page reading All Systems Operational, with 90-day uptime history per component." width="900">
 <br><sub>Public status page — 90 days of history per component</sub>
 
 </div>
@@ -126,7 +126,7 @@ Transport secrets are sealed at rest and never echoed back.
 
 <div align="center">
 
-<img src="static/marketing/notification-channels-slack-pagerduty-sms.webp" alt="The notification channels list: Slack, PagerDuty, SMS, email, webhook, Discord, Teams, Pushover, ntfy, and Telegram, all enabled." width="900">
+<img src="docs/images/notification-channels-slack-pagerduty-sms.webp" alt="The notification channels list: Slack, PagerDuty, SMS, email, webhook, Discord, Teams, Pushover, ntfy, and Telegram, all enabled." width="900">
 <br><sub>Alerting — Slack, PagerDuty, SMS, webhook, and six more</sub>
 
 </div>
@@ -146,7 +146,7 @@ full contract.
 
 <div align="center">
 
-<img src="static/marketing/add-notification-channel.webp" alt="The new notification-channel form: choose a channel type such as Slack, Discord, email, Telegram, PagerDuty, SMS, or webhook." width="900">
+<img src="docs/images/add-notification-channel.webp" alt="The new notification-channel form: choose a channel type such as Slack, Discord, email, Telegram, PagerDuty, SMS, or webhook." width="900">
 <br><sub>Adding a channel — pick a transport, paste one credential</sub>
 
 </div>
@@ -160,7 +160,7 @@ Bring your own agent anywhere — a single binary with an org-scoped token. See
 
 <div align="center">
 
-<img src="static/marketing/monitor-latency-by-region.webp" alt="One monitor in detail: uptime and check counts for the last 24 hours, plus median latency charted per region." width="900">
+<img src="docs/images/monitor-latency-by-region.webp" alt="One monitor in detail: uptime and check counts for the last 24 hours, plus median latency charted per region." width="900">
 <br><sub>Monitor detail — latency broken down by region</sub>
 
 </div>

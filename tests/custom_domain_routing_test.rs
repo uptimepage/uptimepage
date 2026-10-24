@@ -28,7 +28,6 @@ fn saas_state() -> AppState {
         cfg.tenancy.subdomain_public_routes = true;
         cfg.public_status.base_domain = "example.com".into();
         cfg.auth.public_base_url = "https://app.example.com".into();
-        cfg.marketing.enabled = false;
     })
 }
 
@@ -187,6 +186,94 @@ async fn a_path_based_self_host_deploy_keeps_serving_every_host() {
     });
     let app = uptimepage::build_app_router(state, tokio_util::sync::CancellationToken::new());
     for host in ["status.internal", "192.168.1.10:8080", "localhost:8080"] {
+        assert_ne!(
+            status_for(&app, host, "/login").await,
+            StatusCode::NOT_FOUND,
+            "{host}"
+        );
+    }
+}
+
+fn app_with_site(origin: &str) -> axum::Router {
+    let state = build_test_app_state(|cfg| {
+        cfg.tenancy.path_based_public_routes = false;
+        cfg.tenancy.subdomain_public_routes = true;
+        cfg.public_status.base_domain = "example.com".into();
+        cfg.auth.public_base_url = "https://app.example.com".into();
+        cfg.site.origin = origin.into();
+    });
+    uptimepage::build_app_router(state, tokio_util::sync::CancellationToken::new())
+}
+
+/// The site serves its host and `www` from its own containers. A proxy that
+/// misroutes either here must find neither the login nor anything else.
+#[tokio::test]
+async fn the_sites_hosts_reach_nothing_on_the_app() {
+    let app = app_with_site("https://example.com");
+    for host in [
+        "example.com",
+        "www.example.com",
+        "WWW.Example.COM:443",
+        "example.com.",
+    ] {
+        for path in [
+            "/",
+            "/login",
+            "/status",
+            "/api/v1/targets",
+            "/static/css/app.css",
+            "/.well-known/security.txt",
+        ] {
+            assert_eq!(
+                status_for(&app, host, path).await,
+                StatusCode::NOT_FOUND,
+                "{host}{path}"
+            );
+        }
+        assert_eq!(
+            status_for(&app, host, "/healthz").await,
+            StatusCode::OK,
+            "{host}"
+        );
+    }
+    assert_ne!(
+        status_for(&app, "app.example.com", "/login").await,
+        StatusCode::NOT_FOUND
+    );
+    assert_ne!(
+        status_for(&app, "acme.example.com", "/").await,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn without_a_site_the_apex_stays_the_operator() {
+    let app = app_with_site("");
+    assert_ne!(
+        status_for(&app, "example.com", "/login").await,
+        StatusCode::NOT_FOUND
+    );
+}
+
+/// A path-based self-host answers on whatever host reaches it, except its
+/// site's.
+#[tokio::test]
+async fn a_self_host_keeps_off_its_sites_hosts() {
+    let state = build_test_app_state(|cfg| {
+        cfg.tenancy.path_based_public_routes = true;
+        cfg.tenancy.subdomain_public_routes = false;
+        cfg.public_status.base_domain = String::new();
+        cfg.site.origin = "https://example.org".into();
+    });
+    let app = uptimepage::build_app_router(state, tokio_util::sync::CancellationToken::new());
+    for host in ["example.org", "www.example.org"] {
+        assert_eq!(
+            status_for(&app, host, "/login").await,
+            StatusCode::NOT_FOUND,
+            "{host}"
+        );
+    }
+    for host in ["status.internal", "status.example.org", "localhost:8080"] {
         assert_ne!(
             status_for(&app, host, "/login").await,
             StatusCode::NOT_FOUND,

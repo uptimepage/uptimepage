@@ -1,7 +1,6 @@
 //! The RFC 9116 vulnerability-disclosure file, from `[security.disclosure]`.
-//! Every host the operator answers on serves the same document (the
-//! marketing apex, the app, each tenant subdomain, the MCP host), or none
-//! does. No `Canonical`: the tenant hosts cannot all be listed, and a file
+//! Every host the operator answers on serves the same document (the app,
+//! each tenant subdomain, the MCP host), or none does. No `Canonical`: the tenant hosts cannot all be listed, and a file
 //! fetched from a host it does not name is not to be trusted.
 
 use std::fmt::Write;

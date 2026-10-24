@@ -17,7 +17,7 @@ For an interactive companion to this page, open the [flow map](/architecture): p
 
 The same binary runs in one of three modes; the mode is chosen at startup, before any subsystem is built.
 
-- **Control plane** (default). Owns Postgres and ClickHouse, the REST API, the web UI, the MCP server, the marketing host, the scheduler for its own region, the incident writer, the escalation engine, public status pages, and the periodic jobs. Its own region is a normal `regions` row, not a sentinel.
+- **Control plane** (default). Owns Postgres and ClickHouse, the REST API, the web UI, the MCP server, the scheduler for its own region, the incident writer, the escalation engine, public status pages, and the periodic jobs. Its own region is a normal `regions` row, not a sentinel.
 - **Agent** (`[agent] enabled = true`). A stateless probe: scheduler, registry, worker pool, batcher, sampler, and dispatch long-poller, and nothing else. No database, no web or API, no alerting. It pulls its region's decrypted monitor config from the control plane over an authenticated Bearer token and POSTs results back; region and agent identity are derived from the token server-side, never from the payload. See [Multi-region probes](multi-region.md).
 - **Bootstrap CLI** (`uptimepage bootstrap-owner --email <addr>`). Seeds the first user, org, and owner membership, mints a full-access API token, and exits. Runs against Postgres only. Installs with no terminal use `[bootstrap] email` instead, which seeds the same owner during control-plane startup and logs a sign-in link rather than a token. See [First-run owner](configuration.md#first-run-owner).
 
@@ -98,7 +98,6 @@ src/
 │                     API and MCP
 ├── maintenance_ops.rs  maintenance window rules shared by the API and MCP
 ├── analytics.rs      sign-in funnel events for Umami
-├── marketing/        apex/www/blog/docs/landing pages; no storage or tenancy imports
 └── bin/              the loadtest binary
 
 templates/            askama HTML compiled into the binary
@@ -110,16 +109,16 @@ migrations/           postgres/NNN_name.{up,down}.sql + clickhouse/*.sql
 
 Imports point downward through the groups above and never back up. A leaf imports other leaves only. A service or store imports leaves and other services, never a surface module. A handler module imports anything below it, never a sibling surface's handlers (logic two surfaces both need lives in `target_ops`, `maintenance_ops`, `channels`, `request` or a service), and the only thing above it is `app`, whose `AppState` every handler receives. That last edge is the deliberate exception: handlers take `&AppState`, so `app` is the one module every handler surface (`api`, `web`, `mcp`, `oauth`, `channels`) imports upward. `app` imports no surface back: the caches that hold a surface's own view models are built by that surface and reach its handlers as an `Extension`. Splitting `AppState` into per-surface sub-states would touch most handler files for no behavioural gain, so those upward arrows stay and are the known ones. `request` is the one slice worth the cost: its extractors and middleware sit under every surface, so they take `RequestState`, the fields they read, which `app` builds, and `request` never imports `app`.
 
-The rule is what keeps `marketing` extractable and the agent mode small. `tests/marketing_coupling_test.rs` scans the marketing tree and fails on any `crate::` path outside `templates`, `security`, `request`, `custom_domains`, `http_outbound` and `net`; the agent entry point reaches the probe pipeline, the store traits it needs and the leaves, and nothing from the HTTP surfaces. How the crate got to this shape, and the tool that found the cycles it replaced, is in [Uncle Bob's uml-viewer on Rust: 35 dependency cycles down to 3](https://uptimepage.dev/blog/uml-viewer-rust-dependency-cycles).
+The rule is what keeps the agent mode small: the agent entry point reaches the probe pipeline, the store traits it needs and the leaves, and nothing from the HTTP surfaces. How the crate got to this shape, and the tool that found the cycles it replaced, is in [Uncle Bob's uml-viewer on Rust: 35 dependency cycles down to 3](https://uptimepage.dev/blog/uml-viewer-rust-dependency-cycles).
 
 ## Request path
 
-One `RouteByHost` service (in `src/marketing/dispatch.rs`) inspects the Host header through the single host parser in `src/request/host.rs` and routes by class before any handler runs:
+The `host_isolation` middleware reads the Host header through the single host parser in `src/request/host.rs` and narrows each request to the part of the application router its host may reach, before any handler runs:
 
-- **Marketing** (apex and `www`): the marketing router, which touches no database.
-- **App** (the operator labels, `app` and `mcp`): the full application router. The MCP host is then narrowed to `/mcp` and `/.well-known/*` by the isolation middleware below.
-- **Tenant public** (any other subdomain, and any host the verified-custom-domain snapshot serves): the application router behind a default-deny fence that allows only the public status, subscribe, public API, and static paths. Everything else 404s, so login and operator routes can never appear on a tenant host.
-- **Unknown** (anything else): a bare 404. Serving the marketing site here would put our pages and their canonical tags on a host somebody else controls.
+- **Operator** (`app.{base}`, the apex when no site claims it, and every host on a path-based self-host): the full application router.
+- **MCP** (the `mcp` label, or the host of `mcp.resource_uri` when that is not the app host): `/mcp` and `/.well-known/*` only.
+- **Tenant public** (any other subdomain, and any host the verified-custom-domain snapshot serves): only the public status, subscribe, public API, and static paths. Everything else 404s, so login and operator routes can never appear on a tenant host.
+- **Unknown** (the host of `site.origin` and its `www` alias, and on the subdomain surface any host that is none of the above): a bare 404. The website runs as its own service, so a proxy that misroutes its host never shows the login there.
 
 Inside the application router the middleware order is load-bearing and documented at the top of `src/router.rs`: `http_metrics` outermost, then `host_isolation`, then CSRF. Metrics must observe requests the later guards reject, and a tenant or MCP host must 404 an operator route before CSRF's constant-time compare runs. The `/api/v1` stack adds a body limit, API-token auth, and per-org-then-per-user rate limiting. Reordering these changes request semantics, not just style.
 

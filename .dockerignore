@@ -10,11 +10,9 @@ CLAUDE.md
 claude.md
 .claude/
 *.md
-# …but these markdown files are compile-time inputs: legal.rs and the docs
-# table build.rs generates `include_str!` them into the binary. Re-include them after the blanket
-# *.md exclude.
+# …but legal.rs `include_str!`s this one into the binary. Re-include it after
+# the blanket *.md exclude.
 !THIRD-PARTY-LICENSES.md
-!docs/**/*.md
 tests/
 # Deploy credentials: keep them out of the build context, not just the image.
 .env*
