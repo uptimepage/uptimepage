@@ -546,10 +546,11 @@ async fn unknown_web_path_returns_404_html() {
 }
 
 /// Cache-control is only `immutable` when the URL is version-pinned (`?v=`,
-/// the only form the `asset` filter emits). A bare URL — hand-typed or an
-/// old bookmark — gets a short revalidating cache so a content change can't
-/// be hidden for a year. This is the e2e mirror of the `templates::assets` unit
-/// tests; the two must not disagree.
+/// the only form the `asset` filter emits) to these bytes. A bare URL
+/// (hand-typed or an old bookmark) gets a short revalidating cache so a
+/// content change can't be hidden for a year, and a `v` naming other bytes is
+/// never stored. This is the e2e mirror of the `templates::assets` unit tests;
+/// the two must not disagree.
 #[tokio::test]
 async fn static_assets_cache_control_is_honest() {
     let cache_control = |resp: &axum::http::Response<Body>| {
@@ -577,7 +578,7 @@ async fn static_assets_cache_control_is_honest() {
 
     let versioned = app()
         .oneshot(
-            Request::get("/static/css/app.css?v=deadbeef")
+            Request::get(uptimepage::templates::assets::url("css/app.css"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -588,6 +589,21 @@ async fn static_assets_cache_control_is_honest() {
         cache_control(&versioned),
         "public, max-age=31536000, immutable",
         "version-pinned asset URL must be immutable",
+    );
+
+    let stale = app()
+        .oneshot(
+            Request::get("/static/css/app.css?v=deadbeef")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::OK);
+    assert_eq!(
+        cache_control(&stale),
+        "no-store",
+        "a v naming other bytes must never be cached",
     );
 }
 
