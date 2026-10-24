@@ -10,7 +10,7 @@ autotests = false
 
 [dependencies]
 # Async runtime
-tokio = { version = "1.52", features = ["full"] }
+tokio = { version = "1.54.1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 futures = "0.3"
 
@@ -208,7 +208,7 @@ brotli = "8"
 
 [dev-dependencies]
 # test-util unlocks tokio::time pause for the send-budget timing tests.
-tokio = { version = "1.52", features = ["full", "test-util"] }
+tokio = { version = "1.54.1", features = ["full", "test-util"] }
 criterion = { version = "0.8", features = ["async_tokio"] }
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 rcgen = "0.14"
