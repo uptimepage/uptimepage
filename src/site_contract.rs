@@ -9,6 +9,7 @@ use crate::config::{
     CHECK_RESULTS_HISTORY_MONTHS, CHECK_RESULTS_RAW_DAYS, FLOW_EVIDENCE_DAYS, HttpClientConfig,
     RetentionConfig, SessionConfig, TenancyConfig,
 };
+use crate::domain::CheckSpec;
 use crate::request::theme;
 use crate::security::app_link::PUSHOVER_OFFER_COOLDOWN;
 
@@ -16,8 +17,7 @@ const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/site-contract.json");
 
 fn contract() -> Value {
     let retention = RetentionConfig::default();
-    let mut mcp_tools = crate::mcp::tool_names();
-    mcp_tools.sort();
+    let (mcp_read, mcp_write) = crate::mcp::tool_names();
     let user_agent = HttpClientConfig {
         tcp_keepalive_secs: 0,
         bot_url: "https://bot.invalid".into(),
@@ -33,7 +33,11 @@ fn contract() -> Value {
             "app": theme::COOKIE_NAME,
             "pick": theme::PICK_COOKIE_NAME,
         },
-        "mcp_tools": mcp_tools,
+        "check_kinds": CheckSpec::ALL_KINDS,
+        "mcp_tools": {
+            "read": mcp_read,
+            "write": mcp_write,
+        },
         "retention_days": {
             "check_results_raw": CHECK_RESULTS_RAW_DAYS,
             "flow_evidence": FLOW_EVIDENCE_DAYS,

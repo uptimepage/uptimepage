@@ -325,14 +325,7 @@ fn the_landing_page_names_every_tool_this_server_serves() {
         );
     }
 
-    let reads = tools
-        .iter()
-        .filter(|t| {
-            t.annotations
-                .as_ref()
-                .is_some_and(|a| a.read_only_hint == Some(true))
-        })
-        .count();
+    let reads = tools.iter().filter(|t| is_read_only(t)).count();
     let claimed = page
         .features
         .iter()
@@ -354,14 +347,7 @@ fn the_landing_page_names_every_tool_this_server_serves() {
 #[test]
 fn the_mcp_pages_count_and_name_only_the_tools_this_server_serves() {
     let tools = McpServer::tool_router().list_all();
-    let reads = tools
-        .iter()
-        .filter(|t| {
-            t.annotations
-                .as_ref()
-                .is_some_and(|a| a.read_only_hint == Some(true))
-        })
-        .count();
+    let reads = tools.iter().filter(|t| is_read_only(t)).count();
     let writes = tools.len() - reads;
     let names: std::collections::HashSet<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     let live = [tools.len(), reads, writes];

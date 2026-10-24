@@ -119,7 +119,7 @@ impl ServerHandler for McpServer {
 /// The `readOnlyHint` annotation is the single source of truth for "does this
 /// mutate", so adding a write tool needs no second list to maintain.
 #[cfg(test)]
-fn is_read_only(tool: &rmcp::model::Tool) -> bool {
+pub(super) fn is_read_only(tool: &rmcp::model::Tool) -> bool {
     tool.annotations
         .as_ref()
         .and_then(|a| a.read_only_hint)

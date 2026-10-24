@@ -26,14 +26,23 @@ mod error;
 mod schema;
 mod server;
 
-/// The tools this server serves, by name, in order.
+/// The tools this server serves, sorted by name: those that only read, then
+/// the rest.
 #[cfg(test)]
-pub(crate) fn tool_names() -> Vec<String> {
-    server::McpServer::tool_router()
+pub(crate) fn tool_names() -> (Vec<String>, Vec<String>) {
+    let (read, write): (Vec<_>, Vec<_>) = server::McpServer::tool_router()
         .list_all()
         .into_iter()
-        .map(|tool| tool.name.to_string())
-        .collect()
+        .partition(server::is_read_only);
+    let names = |tools: Vec<rmcp::model::Tool>| {
+        let mut names: Vec<String> = tools
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        names.sort();
+        names
+    };
+    (names(read), names(write))
 }
 
 use std::sync::Arc;
