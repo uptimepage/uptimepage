@@ -60,6 +60,13 @@ ignore = [
     # private key for it to leak. No upgrade exists. Revisit on webauthn-rs
     # 0.6 stable.
     "RUSTSEC-2023-0071",
+    # `crypto-bigint` 0.5: secret-dependent branches in arithmetic meant to be
+    # constant-time. Transitive via webauthn-rs-core's elliptic-curve 0.13,
+    # which only verifies passkey signatures against public keys, so no secret
+    # passes through it. Only 0.7.6 is patched, and webauthn-rs reaches it
+    # through crypto-glue 0.2, unreleased. Revisit on the next webauthn-rs
+    # publish.
+    "RUSTSEC-2026-0387",
     # `zip` 3 — symlink targets and SUID bits on `extract()`. Build-only, via
     # utoipa-swagger-ui's build script, which never calls `extract()`: it
     # writes the regular files of the pinned Swagger UI release archive into
