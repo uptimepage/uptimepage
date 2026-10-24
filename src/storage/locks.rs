@@ -35,8 +35,6 @@
 //! - [`job_lock_key`] — one named background job. Used by [`try_job`] so two
 //!   ticks of the same periodic worker cannot run concurrently when the
 //!   previous tick is slow (network blip, CH mutation queue, etc).
-//! - [`subscriber_claim_lock_key`] — one subscriber delivery channel, so
-//!   concurrent senders never split one notice between them.
 
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
@@ -109,11 +107,6 @@ where
 /// user-flow critical sections.
 pub fn job_lock_key(job: &'static str) -> String {
     format!("job:{job}")
-}
-
-/// Lock key for claiming subscriber deliveries on one channel. Own namespace.
-pub fn subscriber_claim_lock_key(channel: &str) -> String {
-    format!("subscriber_claim:{channel}")
 }
 
 /// Lock key for one app account's link offers, so two acknowledgements landing
