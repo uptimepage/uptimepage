@@ -1,6 +1,9 @@
 # Caddyfile — Production reverse proxy for uptimepage (SaaS layout)
 #
 # Subdomain layout (UPTIMEPAGE_DOMAIN is the BASE domain, e.g. example.com):
+#   {domain}, www.{domain}    → The marketing site, served by its own
+#                               containers (hosted deployment only); www
+#                               redirects to the apex
 #   app.{domain}              → Operator UI + API (the app gates its own
 #                               routes; no edge credential), plus the
 #                               single-org /status page in self-host mode
@@ -100,8 +103,8 @@
 		# briefly unreachable, which would eject every upstream and 502 the
 		# whole edge on a transient blip. The deploy gates the cutover on
 		# /readyz separately, before stopping the old color. Caddy preserves
-		# the inbound Host + X-Forwarded-* by default, so the public status +
-		# marketing surfaces still see the original Host for routing.
+		# the inbound Host + X-Forwarded-* by default, so the public status
+		# surfaces still see the original Host for routing.
 		health_uri /healthz
 		health_interval 5s
 		health_timeout 3s
@@ -118,6 +121,26 @@
 			response_header_timeout 150s
 			read_buffer 64KB
 			write_buffer 64KB
+		}
+	}
+}
+
+# The marketing site's blue/green pair: its own compose project
+# (/opt/uptimepage-site) on this edge network. Same health reasoning as the
+# app's: /healthz answers once the listener is up, and the site's deploy gates
+# on /readyz before it stops the old color.
+&(site_upstream) {
+	reverse_proxy site_blue:8080 site_green:8080 {
+		lb_policy round_robin
+		lb_try_duration 5s
+		header_up X-Real-IP {remote_host}
+		health_uri /healthz
+		health_interval 5s
+		health_timeout 3s
+		transport http {
+			dial_timeout 5s
+			# The free tools' probes give up after 30s.
+			response_header_timeout 60s
 		}
 	}
 }
@@ -770,12 +793,11 @@ mcp.{$UPTIMEPAGE_DOMAIN} {
 # ═══════════════════════════════════════════════════════════════════════
 # Marketing site (apex) — www 301-redirects here for one canonical host.
 # ═══════════════════════════════════════════════════════════════════════
-# The bare {domain} is served by the uptimepage container; the Rust
-# dispatcher (request/host.rs::classify_host + the RouteByHost service) hands
-# marketing requests off inside the binary. Apex and www each carry their
-# own per-host HTTP-01 cert, kept off the *.{domain} wildcard so a
-# wildcard-key leak still doesn't touch the marketing surface or the
-# operator host.
+# The bare {domain} is served by the site's own containers (site_upstream),
+# which only the hosted deployment runs; a self-host deployment points no DNS
+# at the apex. Apex and www each carry their own per-host HTTP-01 cert, kept
+# off the *.{domain} wildcard so a wildcard-key leak still doesn't touch the
+# marketing surface or the operator host.
 
 # www serves only a redirect, but still needs its own cert to complete the
 # TLS handshake first; {uri} preserves the path and query to apex.
@@ -794,11 +816,8 @@ www.{$UPTIMEPAGE_DOMAIN} {
 		respond "8d50633e3e290894520514e27caf0587" 200
 	}
 
-	# Send the canonical-host signal to the dispatcher. Marketing reads
-	# the Host header to decide between landing and a tenant fall-through;
-	# Caddy forwards Host + X-Forwarded-* upstream by default.
 	handle {
-		invoke app_upstream
+		invoke site_upstream
 	}
 
 	# Marketing surfaces are public, cacheable, JS-free; no edge auth.
