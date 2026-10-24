@@ -29,6 +29,20 @@ prometheus.scrape "uptimepage" {
   scrape_interval = "15s"
 }
 
+// The marketing site's colors, from its own compose project on this network;
+// only the hosted deployment runs them, so elsewhere these two targets scrape
+// down. It emits the same metric names as the app; the job label tells them
+// apart. No control-plane role, so UptimepageControlPlaneDown never counts it.
+prometheus.scrape "uptimepage_site" {
+  targets = [
+    { __address__ = "site_blue:9090",  color = "blue",  role = "site" },
+    { __address__ = "site_green:9090", color = "green", role = "site" },
+  ]
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+  job_name        = "uptimepage_site"
+  scrape_interval = "15s"
+}
+
 // Co-located home-region probe agent (present only under the `agent` compose
 // profile). It emits the probe-side latency/throughput the brain can't see;
 // an absent agent simply scrapes down, which doubles as a liveness signal.
@@ -91,10 +105,10 @@ prometheus.remote_write "grafana_cloud" {
 // ---------------------------------------------------------------------
 // Logs → Grafana Cloud Loki (opt-in; INERT until the LOKI_* env is set).
 //
-// Tails the application container's stdout/stderr through the Docker
+// Tails the app's and the site's stdout/stderr through the Docker
 // API and ships it to Grafana Cloud Loki. Container discovery needs the
 // Docker socket, mounted read-only into this sidecar in
-// docker-compose.yml. Only the uptimepage container is shipped — a
+// docker-compose.yml. Only those containers are shipped — a
 // discovery.relabel `keep` drops postgres / clickhouse / caddy / alloy
 // so Loki ingest stays scoped and cheap.
 //
@@ -116,28 +130,29 @@ discovery.docker "containers" {
   refresh_interval = "5m"
 }
 
-// Keep ONLY the app container (compose service label is exact and
-// survives a project/container rename); tidy the noisy docker meta
+// Keep ONLY the app's and the site's colors (compose service label is
+// exact and survives a container rename); tidy the noisy docker meta
 // labels down to stable {container,job} before the logs are shipped.
 discovery.relabel "uptimepage_only" {
   targets = discovery.docker.containers.targets
 
   rule {
     source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
-    regex         = "uptimepage_(blue|green)"
+    regex         = "uptimepage_(blue|green)|site_(blue|green)"
     action        = "keep"
   }
 
-  // Collapse both colors under one container label so blue/green don't split
-  // the Loki stream — they are the same logical app.
+  // Label each stream by its compose project (`uptimepage` or
+  // `uptimepage-site`, both pinned by `name:`), so a service's two colors
+  // share one stream and the app and the site never do.
   rule {
-    target_label = "container"
-    replacement  = "uptimepage"
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "container"
   }
 
   rule {
-    target_label = "job"
-    replacement  = "uptimepage"
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "job"
   }
 }
 
