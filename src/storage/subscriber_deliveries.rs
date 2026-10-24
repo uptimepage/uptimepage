@@ -15,6 +15,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::error::Result;
+use crate::storage::locks;
 use crate::storage::page_sql::PAGE_PLAN_JOIN;
 use crate::storage::subscriber_notices::{EMAIL, WEBHOOK, deliverable_sql};
 
@@ -102,6 +103,9 @@ async fn claim_stored(pool: &PgPool, token: Uuid, lease: Duration) -> Result<boo
     Ok(res.rows_affected() > 0)
 }
 
+/// Claims run one at a time per channel. Two at once could each take part of
+/// one notice, since a row the other is still locking gets skipped, and send
+/// it as two smaller batches.
 async fn claim_due(
     pool: &PgPool,
     channel: &str,
@@ -109,6 +113,13 @@ async fn claim_due(
     token: Uuid,
     lease: Duration,
 ) -> Result<bool> {
+    let mut tx = pool
+        .begin()
+        .await
+        .context("subscriber_deliveries::claim_due begin")?;
+    locks::advisory_xact_lock(&mut *tx, &locks::subscriber_claim_lock_key(channel))
+        .await
+        .context("subscriber_deliveries::claim_due lock")?;
     let res = sqlx::query(
         "WITH head AS (
              SELECT notice_id FROM status_page_subscriber_deliveries
@@ -134,9 +145,12 @@ async fn claim_due(
     .bind(max)
     .bind(token)
     .bind(lease.as_secs_f64())
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .context("subscriber_deliveries::claim_due")?;
+    tx.commit()
+        .await
+        .context("subscriber_deliveries::claim_due commit")?;
     Ok(res.rows_affected() > 0)
 }
 

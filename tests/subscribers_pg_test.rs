@@ -1395,6 +1395,58 @@ async fn a_stopped_workers_rows_go_to_another_and_its_late_write_changes_nothing
     done(pool, &name).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn concurrent_claims_never_split_one_notice() {
+    let Some((pool, name)) = isolated("subsplit").await else {
+        return;
+    };
+    let org = seed_org(&pool).await;
+    let target = seed_target(&pool, org, "mon").await;
+    let page = seed_page(&pool, org).await;
+    add_component(&pool, org, page, target).await;
+    subscribers_for(&pool, org, page, 20).await;
+    let incident = seed_incident(&pool, org, target, "public").await;
+    add_update(&pool, org, incident, 0).await;
+    dispatcher(pool.clone(), Arc::new(InMemoryEmailSender::new()))
+        .plan_once()
+        .await
+        .unwrap();
+    for _ in 0..50 {
+        sqlx::query(
+            "UPDATE status_page_subscriber_deliveries
+             SET status = 'queued', claim_token = NULL, lease_until = NULL",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let claims: Vec<_> = (0..4)
+            .map(|_| {
+                let pool = pool.clone();
+                tokio::spawn(async move {
+                    subscriber_deliveries::claim(
+                        &pool,
+                        "email",
+                        100,
+                        Uuid::now_v7(),
+                        Duration::from_secs(60),
+                    )
+                    .await
+                    .unwrap()
+                })
+            })
+            .collect();
+        let mut sizes = Vec::new();
+        for claim in claims {
+            if let Some(unit) = claim.await.unwrap() {
+                sizes.push(unit.deliveries.len());
+            }
+        }
+        assert_eq!(sizes, [20], "one sender takes the whole notice");
+    }
+    done(pool, &name).await;
+}
+
 /// Holds every batch back as pacing would.
 struct Paced(InMemoryEmailSender);
 
