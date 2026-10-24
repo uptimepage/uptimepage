@@ -117,15 +117,19 @@ pub async fn serve(
 
     let mime = mime_guess::from_path(&path).first_or_octet_stream();
 
-    // `immutable` is only honest for a content-addressed name (`?v=` query or a
-    // hashed bundle); a bare URL gets a short cache so a change can't hide.
-    let versioned = query
+    // `immutable` is only honest when the name pins these bytes: a hashed
+    // bundle, or a `?v=` equal to this build's fingerprint. Any other `v` names
+    // bytes this build lacks (mid-deploy, the other colour's), so nothing may
+    // cache them under it. A bare URL gets a short cache so a change can't hide.
+    let version = query
         .as_deref()
-        .is_some_and(|q| q.split('&').any(|kv| kv == "v" || kv.starts_with("v=")));
-    let cache_control = if versioned || HASHED_PATHS.contains(&path) {
-        "public, max-age=31536000, immutable"
-    } else {
-        "public, max-age=300"
+        .and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("v=")));
+    let pinned = HASHED_PATHS.contains(&path)
+        || version.is_some_and(|v| fingerprint_cached(&path).as_deref() == Some(v));
+    let cache_control = match (pinned, version) {
+        (true, _) => "public, max-age=31536000, immutable",
+        (false, Some(_)) => "no-store",
+        (false, None) => "public, max-age=300",
     };
 
     let headers_out = [
@@ -285,13 +289,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn versioned_request_is_immutable() {
+    async fn stale_version_is_never_cached() {
         let resp = serve(
             Path("css/app.css".into()),
             RawQuery(Some("v=deadbeef".into())),
             HeaderMap::new(),
         )
         .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
+    }
+
+    #[tokio::test]
+    async fn versioned_request_is_immutable() {
+        let (path, query) = split_served(&url("css/app.css"));
+        let resp = serve(Path(path), RawQuery(query), HeaderMap::new()).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
             resp.headers().get(header::CONTENT_TYPE).unwrap(),
