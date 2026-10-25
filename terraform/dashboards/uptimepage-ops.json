@@ -2459,7 +2459,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (status) (rate(uptimepage_http_requests_total[$__rate_interval]))",
+          "expr": "sum by (status) (rate(uptimepage_http_requests_total{role=\"control-plane\"}[$__rate_interval]))",
           "legendFormat": "{{status}}",
           "range": true,
           "refId": "A"
@@ -2542,7 +2542,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "topk(8, uptimepage_http_request_duration_ms{quantile=\"0.99\", route!=\"/api/agent/dispatch\"})",
+          "expr": "topk(8, uptimepage_http_request_duration_ms{role=\"control-plane\", quantile=\"0.99\", route!=\"/api/agent/dispatch\"})",
           "legendFormat": "{{method}} {{route}}",
           "range": true,
           "refId": "A"
@@ -2612,7 +2612,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "uptimepage_http_responses_inflight",
+          "expr": "uptimepage_http_responses_inflight{role=\"control-plane\"}",
           "legendFormat": "in-flight",
           "instant": true,
           "range": false,

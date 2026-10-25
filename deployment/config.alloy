@@ -18,7 +18,8 @@
 // yields up=0, harmless); during a deploy's brief overlap both are up — the
 // `color` label keeps their series distinct so they don't collide.
 // The `role = "control-plane"` value is matched by the UptimepageControlPlaneDown
-// alert (absent(uptimepage_build_info{role="control-plane"})); keep them in sync.
+// alert (absent(uptimepage_build_info{role="control-plane"})), the HTTP latency
+// alert and the ops dashboard's HTTP panels; keep them in sync.
 prometheus.scrape "uptimepage" {
   targets = [
     { __address__ = "uptimepage_blue:9090",  color = "blue",  role = "control-plane" },

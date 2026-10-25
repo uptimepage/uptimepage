@@ -349,7 +349,8 @@ resource "grafana_rule_group" "pipeline" {
   # we want to advertise. Critical — server-side errors are the most
   # direct signal that customers see broken pages. The `> 0.1` volume
   # gate stops a single 5xx in a near-idle minute from tripping the
-  # ratio; tune the floor as steady-state traffic grows.
+  # ratio; tune the floor as steady-state traffic grows. Per `role`, so
+  # the app and the website (same metric names) each answer for their own.
   rule {
     name           = "UptimepageHttp5xxRateHigh"
     condition      = "C"
@@ -362,7 +363,7 @@ resource "grafana_rule_group" "pipeline" {
     }
     annotations = {
       summary     = "uptimepage: HTTP 5xx error rate above 1%"
-      description = "server-side errors are above 1% of total request volume for 10m — customers are hitting broken responses. Inspect `http_requests_total{status=\"5xx\"}` by route in the dashboard to localise. Runbook: runbooks/grafana-cloud.md."
+      description = "server-side errors are above 1% of one role's request volume for 10m (the alert's `role` label: control-plane is the app, site the website) — customers are hitting broken responses. Inspect `uptimepage_http_requests_total{role=\"<role>\", status=\"5xx\"}` by route to localise. Runbook: runbooks/grafana-cloud.md."
     }
     data {
       ref_id         = "A"
@@ -374,7 +375,7 @@ resource "grafana_rule_group" "pipeline" {
       model = jsonencode({
         refId   = "A"
         instant = true
-        expr    = "(sum(rate(uptimepage_http_requests_total{status=\"5xx\"}[5m])) / sum(rate(uptimepage_http_requests_total[5m]))) > 0.01 and sum(rate(uptimepage_http_requests_total[5m])) > 0.1"
+        expr    = "(sum by (role) (rate(uptimepage_http_requests_total{status=\"5xx\"}[5m])) / sum by (role) (rate(uptimepage_http_requests_total[5m]))) > 0.01 and sum by (role) (rate(uptimepage_http_requests_total[5m])) > 0.1"
       })
     }
     data {
@@ -394,6 +395,7 @@ resource "grafana_rule_group" "pipeline" {
   # the warning floor; tighten as steady-state baselines settle in.
   # The agent claim route is a long-poll held for its full window when
   # nothing is queued, so its p99 is the hold, not a slow handler.
+  # Control plane only: the website's tools wait on remote hosts by design.
   rule {
     name           = "UptimepageHttpLatencyHigh"
     condition      = "C"
@@ -418,7 +420,7 @@ resource "grafana_rule_group" "pipeline" {
       model = jsonencode({
         refId   = "A"
         instant = true
-        expr    = "max(uptimepage_http_request_duration_ms{quantile=\"0.99\", route!=\"/api/agent/dispatch\"}) > 1000"
+        expr    = "max(uptimepage_http_request_duration_ms{role=\"control-plane\", quantile=\"0.99\", route!=\"/api/agent/dispatch\"}) > 1000"
       })
     }
     data {
