@@ -1,0 +1,45 @@
+name: site-dispatch
+
+# uptimepage.dev builds its docs, changelog and contract tests from a pinned
+# commit of this repo. A push touching any of those inputs asks the site's
+# repository to move the pin, test and deploy. An expired or missing secret
+# fails this run, so a stale site shows up here.
+on:
+  push:
+    branches: [main]
+    # What the site reads; product_version reaches it through the contract.
+    paths:
+      - "docs/index.toml"
+      - "docs/**/*.md"
+      - "!docs/internal/**"
+      - "changelog/**"
+      - "site-contract.json"
+      - "deployment/Caddyfile"
+      - ".github/workflows/site-dispatch.yml"
+
+concurrency:
+  group: site-dispatch
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  dispatch:
+    if: github.repository == 'uptimepage/uptimepage'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # SITE_DISPATCH_REPO is owner/name; the token is a fine-grained PAT
+      # scoped to that repository alone, Contents read and write.
+      - name: Ask the site to pin this commit
+        env:
+          GH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+          SITE_REPO: ${{ secrets.SITE_DISPATCH_REPO }}
+        run: |
+          set -euo pipefail
+          [ -n "$GH_TOKEN" ] || { echo "::error::repo secret SITE_DISPATCH_TOKEN is not set"; exit 1; }
+          # Masked in the log, so a malformed value has to be named here.
+          [[ $SITE_REPO =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+            echo "::error::repo secret SITE_DISPATCH_REPO is not set or not owner/name"; exit 1; }
+          gh api "repos/${SITE_REPO}/dispatches" \
+            -f event_type=product-updated -f "client_payload[sha]=${GITHUB_SHA}"
