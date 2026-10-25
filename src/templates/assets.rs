@@ -212,6 +212,7 @@ where
 mod tests {
     use super::*;
     use axum::body::to_bytes;
+    use std::collections::BTreeSet;
 
     #[test]
     fn url_is_version_pinned_for_known_assets() {
@@ -473,16 +474,9 @@ mod tests {
                     .is_some_and(|head| head.is_empty() || head.ends_with('/'))
             })
         };
-        let logical_of: HashMap<&str, &str> = MANIFEST
-            .iter()
-            .map(|(logical, hashed)| (hashed.as_str(), logical.as_str()))
-            .collect();
         let stray: Vec<String> = StaticAssets::iter()
             .filter(|path| {
-                let served = path.strip_suffix(".br").unwrap_or(path);
-                let served = served.strip_suffix(".map").unwrap_or(served);
-                let logical = logical_of.get(served).copied().unwrap_or(served);
-                SITE_ONLY.iter().any(|p| path.starts_with(p)) || !is_linked(logical)
+                SITE_ONLY.iter().any(|p| path.starts_with(p)) || !is_linked(&logical_path(path))
             })
             .map(|path| path.into_owned())
             .collect();
@@ -490,5 +484,43 @@ mod tests {
             stray.is_empty(),
             "embedded but never linked by an app template, handler or stylesheet: {stray:?}"
         );
+    }
+
+    /// The binary redistributes every vendored file it embeds, so each one is
+    /// owed a row in the `/licenses` table. Only `img/` and what the build
+    /// makes from `assets/` are the project's own.
+    #[test]
+    fn every_vendored_asset_is_attributed() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let rows: Vec<&str> = include_str!("../../THIRD-PARTY-LICENSES.md")
+            .lines()
+            .filter(|line| line.starts_with('|'))
+            .collect();
+        let unattributed: BTreeSet<String> = StaticAssets::iter()
+            .map(|path| logical_path(&path))
+            .filter(|logical| {
+                let named = format!("`static/{logical}`");
+                !logical.starts_with("img/")
+                    && logical != "js/manifest.json"
+                    && !root.join("assets").join(logical).exists()
+                    && !rows.iter().any(|row| row.contains(&named))
+            })
+            .collect();
+        assert!(
+            unattributed.is_empty(),
+            "embedded but not attributed in THIRD-PARTY-LICENSES.md: {unattributed:?}"
+        );
+    }
+
+    /// The file an embedded path stands for: a `.br` or `.map` sibling maps to
+    /// its source, a hashed bundle to its manifest key.
+    fn logical_path(path: &str) -> String {
+        let served = path.strip_suffix(".br").unwrap_or(path);
+        let served = served.strip_suffix(".map").unwrap_or(served);
+        MANIFEST
+            .iter()
+            .find(|(_, hashed)| hashed.as_str() == served)
+            .map_or(served, |(logical, _)| logical.as_str())
+            .to_owned()
     }
 }
