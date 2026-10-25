@@ -512,6 +512,44 @@ mod tests {
         );
     }
 
+    /// A stylesheet's url() bypasses the `asset` filter, so the static file it
+    /// names carries its fingerprint by hand. Bare, it expires every five
+    /// minutes and is fetched again in full; stale, it is never cached at all.
+    #[test]
+    fn every_stylesheet_static_url_pins_its_fingerprint() {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/static/css"));
+        let static_url =
+            regex::Regex::new(r#"url\(\s*["']?/static/([^"'?)\s]+)(?:\?([^"')\s]*))?"#).unwrap();
+        let mut drift = Vec::new();
+        for entry in std::fs::read_dir(dir).expect("read static/css") {
+            let path = entry.expect("dir entry").path();
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            if !name.ends_with(".css") || name == "app.css" {
+                continue;
+            }
+            let css = std::fs::read_to_string(&path).expect("read stylesheet");
+            for caps in static_url.captures_iter(&css) {
+                let pinned = caps
+                    .get(2)
+                    .and_then(|q| q.as_str().split('&').find_map(|kv| kv.strip_prefix("v=")));
+                let current = fingerprint(&caps[1]);
+                if pinned != current.as_deref() {
+                    drift.push(format!(
+                        "{name}: {} pins {pinned:?}, file is {current:?}",
+                        &caps[1]
+                    ));
+                }
+            }
+        }
+        assert!(
+            drift.is_empty(),
+            "stylesheet url()s out of step with their files: {drift:?}"
+        );
+    }
+
     /// The file an embedded path stands for: a `.br` or `.map` sibling maps to
     /// its source, a hashed bundle to its manifest key.
     fn logical_path(path: &str) -> String {

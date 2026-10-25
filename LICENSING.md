@@ -31,11 +31,7 @@ NOT apply to internal-only deployments inside your organization.
 
 ## Third-party components
 
-The binary embeds a few third-party assets (charting/JS libraries, 
-generated CSS). Their licenses and attributions are reproduced in 
-[THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) and served by a 
-running instance at `/licenses`. All Rust dependencies are constrained 
-to an AGPL-compatible license allow-list enforced in CI.
+The binary embeds a few third-party assets (charting/JS libraries, the IBM Plex Mono fonts, generated CSS), and its templates draw some third-party icons and brand marks. Their licenses and attributions are reproduced in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) and served by a running instance at `/licenses`. All Rust dependencies are constrained to an AGPL-compatible license allow-list enforced in CI.
 
 ## Name and logo
 

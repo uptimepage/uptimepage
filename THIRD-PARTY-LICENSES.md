@@ -1,29 +1,34 @@
 # Third-Party Licenses
 
-uptimepage itself is licensed under AGPL-3.0 (see [LICENSE](https://github.com/uptimepage/uptimepage/blob/main/LICENSE)).
-The release binary additionally **embeds** the third-party assets listed
-below (vendored JavaScript under `static/js/`, the IBM Plex Mono web fonts
-under `static/fonts/`, and the Tailwind-generated `static/css/app.css`), all
-baked in via `rust-embed`. Their licenses and attributions are reproduced
-here to satisfy the redistribution terms of those licenses. This document is
-also served by a running instance at `/licenses`.
+uptimepage itself is licensed under AGPL-3.0 (see [LICENSE](https://github.com/uptimepage/uptimepage/blob/main/LICENSE)). The release binary also contains third-party work: the vendored JavaScript under `static/js/`, the IBM Plex Mono web fonts under `static/fonts/` and the Tailwind-generated `static/css/app.css`, all embedded via `rust-embed`, plus icons and brand marks drawn inline in the templates it compiles in. Their licenses and attributions are reproduced here to satisfy the redistribution terms of those licenses. This document is also served by a running instance at `/licenses`.
 
 ## Embedded assets
 
 | Component | File(s) | Version | License | Copyright | Upstream |
 |---|---|---|---|---|---|
-| Apache ECharts | `static/js/echarts.min.js` | 6 | Apache-2.0 | The Apache Software Foundation | <https://github.com/apache/echarts> |
+| Apache ECharts | `static/js/echarts.min.js` | 6.0.0 | Apache-2.0 | © 2017-2025 The Apache Software Foundation | <https://github.com/apache/echarts> |
+| ZRender, inside ECharts | `static/js/echarts.min.js` | 6.0.0 | BSD-3-Clause | © 2013, 2017 Baidu Inc. | <https://github.com/ecomfe/zrender> |
+| d3.js parts, inside ECharts | `static/js/echarts.min.js` | | BSD-3-Clause | © 2010-2016 Mike Bostock | <https://github.com/d3/d3> |
+| tslib, inside ECharts | `static/js/echarts.min.js` | 2.3.0 | 0BSD | © Microsoft Corporation | <https://github.com/microsoft/tslib> |
 | htmx | `static/js/htmx.min.js` | 2.0.9 | 0BSD | Big Sky Software | <https://github.com/bigskysoftware/htmx> |
 | htmx `json-enc` extension | `static/js/json-enc.js` | 2.x | 0BSD | © 2023 Alexander Petros | <https://github.com/bigskysoftware/htmx-extensions> |
-| IBM Plex Mono | `static/fonts/plex-mono-400.woff2`, `static/fonts/plex-mono-500.woff2` | 2.3 | OFL-1.1 | © 2017 IBM Corp. | <https://github.com/IBM/plex> |
+| IBM Plex Mono | `static/fonts/plex-mono-400.woff2`, `static/fonts/plex-mono-500.woff2` | 2.5.0 | OFL-1.1 | © 2017 IBM Corp. | <https://github.com/IBM/plex> |
 | qrcode-generator | `static/js/qrcode.min.js` | 1.5.0 | MIT | © 2009 Kazuhiko Arase | <https://github.com/kazuhikoarase/qrcode-generator> |
 | Tailwind CSS | `static/css/app.css` (generated) | 4 | MIT | © Tailwind Labs, Inc. | <https://github.com/tailwindlabs/tailwindcss> |
 
-Everything else is first-party and licensed under AGPL-3.0 like the rest of
-the project: the JavaScript bundles under `static/js/` (`charts/`, `public/`,
-`ui/`), built from `assets/js/`, every file under `templates/`, and the images
-in `static/img/`, whose logo and icons are also trademarks (see
-[TRADEMARKS.md](https://github.com/uptimepage/uptimepage/blob/main/TRADEMARKS.md)).
+Everything else is first-party and licensed under AGPL-3.0 like the rest of the project: the JavaScript bundles under `static/js/` (`charts/`, `public/`, `ui/`), built from `assets/js/`, the templates apart from the third-party icons and brand marks named below, and the images in `static/img/`, whose logo and icons are also trademarks (see [TRADEMARKS.md](https://github.com/uptimepage/uptimepage/blob/main/TRADEMARKS.md)).
+
+## Icons and marks in templates
+
+| Component | Where | License | Copyright | Upstream |
+|---|---|---|---|---|
+| Tabler Icons | `templates/nav/_icon_sprite.html` | MIT | © 2020-2026 Paweł Kuna | <https://github.com/tabler/tabler-icons> |
+| Simple Icons | the brand marks in `templates/settings/_channel_icons.html` and `templates/settings/_calendar_icons.html`, and the Google mark in `templates/auth/login.html` | CC0-1.0 | dedicated to the public domain | <https://github.com/simple-icons/simple-icons> |
+| Gotify notification icon | `templates/settings/_channel_icons.html` | CC BY 4.0 | drawn by Choi Wong, optimised by Pander Musubi, owned by the Gotify organisation; based on the Go gopher by Renee French | <https://github.com/gotify/logo> |
+
+The Gotify icon is adapted: it is redrawn as one single-colour path on a 24-unit grid. It is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); Simple Icons publishes its data under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
+
+The names and marks of GitHub, Google, Microsoft, GitLab, Slack, Discord, Telegram, Microsoft Teams, Google Chat, Google Calendar, Microsoft Outlook, PagerDuty, ntfy, WhatsApp, Mattermost and Gotify belong to their owners. They appear only to name the service a button or setting connects to, imply no affiliation or endorsement, and are neither the project's own work nor covered by its license.
 
 ## Compiled Rust dependencies
 
@@ -51,8 +56,7 @@ inventory for a given build is reproducible from the committed
 
 ## MIT License
 
-Applies to: Tailwind CSS and qrcode-generator, each under its own copyright
-notice.
+Applies to: Tailwind CSS, qrcode-generator and Tabler Icons, each under its own copyright notice.
 
 ### Tailwind CSS
 
@@ -106,9 +110,107 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### Tabler Icons
+
+```text
+MIT License
+
+Copyright (c) 2020-2026 Paweł Kuna
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## BSD 3-Clause License
+
+Applies to: ZRender and the d3.js parts inside Apache ECharts, each under its own notice.
+
+### ZRender
+
+The banner inside `echarts.min.js` reads "Copyright (c) 2013, Baidu Inc."; ZRender's LICENSE file reads:
+
+```text
+BSD 3-Clause License
+
+Copyright (c) 2017, Baidu Inc.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the copyright holder nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+### d3.js
+
+```text
+Copyright 2010-2016 Mike Bostock
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the author nor the names of contributors may be used to
+  endorse or promote products derived from this software without specific prior
+  written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 ## BSD Zero Clause License (0BSD)
 
-Applies to: htmx, htmx `json-enc` extension (© 2023 Alexander Petros).
+Applies to: htmx, the htmx `json-enc` extension (© 2023 Alexander Petros) and tslib inside Apache ECharts (© Microsoft Corporation).
 
 ```text
 Permission to use, copy, modify, and/or distribute this software for any
@@ -125,9 +227,17 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ## Apache License 2.0
 
-Applies to: Apache ECharts. ECharts is developed by the Apache Software
-Foundation; the bundled `echarts.min.js` retains its upstream Apache-2.0
-header. Full license text:
+Applies to: Apache ECharts. The bundled `echarts.min.js` keeps its upstream Apache-2.0 header. Its NOTICE file reads:
+
+```text
+Apache ECharts
+Copyright 2017-2025 The Apache Software Foundation
+
+This product includes software developed at
+The Apache Software Foundation (https://www.apache.org/).
+```
+
+Full license text:
 
 ```text
 
@@ -336,9 +446,7 @@ header. Full license text:
 
 ## SIL Open Font License 1.1
 
-Applies to: IBM Plex Mono. The two `.woff2` files are the latin subsets
-published by Fontsource (`@fontsource/ibm-plex-mono` 5.2.7), shipped
-unmodified. Full license text, as IBM publishes it:
+Applies to: IBM Plex Mono. The two `.woff2` files are IBM's own Regular and Medium web fonts from `@ibm/plex-mono` 2.5.0, unmodified. Full license text, as IBM publishes it:
 
 ```text
 Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"
