@@ -9,8 +9,8 @@ use sqlx::{PgExecutor, PgPool};
 use uuid::Uuid;
 
 use crate::domain::{
-    AccessEventKind, AccessEventMethod, OrgId, PageAccess, PageRef, PageSessionMethod,
-    StatusPageId, UserId, normalize_email,
+    AccessEventKind, AccessEventMethod, OrgId, PageAccess, PagePasswordView, PageRef,
+    PageSessionMethod, StatusPageId, UserId, normalize_email,
 };
 use crate::error::Result;
 use crate::storage::locks::advisory_xact_lock;
@@ -251,22 +251,6 @@ pub async fn end_sessions(
     Ok(ended)
 }
 
-/// The password's line in the owner's viewers panel.
-#[derive(Debug, Clone, Default)]
-pub struct PasswordSummary {
-    pub enabled: bool,
-    pub set_at: Option<DateTime<Utc>>,
-    /// The member who set it, while they have an account.
-    pub set_by: Option<String>,
-    /// Devices signed in with it now.
-    pub sessions: i64,
-    pub last_sign_in_at: Option<DateTime<Utc>>,
-    pub failed_last_24h: i64,
-    /// Subscriptions made with it that the email list does not cover: what a
-    /// new password or turning it off would end.
-    pub subscriptions: i64,
-}
-
 #[derive(Default, sqlx::FromRow)]
 struct SummaryRow {
     set_by: Option<String>,
@@ -276,7 +260,11 @@ struct SummaryRow {
 }
 
 /// The line for a page whose access is `access`, as just loaded.
-pub async fn summary(pool: &PgPool, page: PageRef, access: &PageAccess) -> Result<PasswordSummary> {
+pub async fn summary(
+    pool: &PgPool,
+    page: PageRef,
+    access: &PageAccess,
+) -> Result<PagePasswordView> {
     let row: SummaryRow = sqlx::query_as(
         "SELECT u.email::text AS set_by, \
                 (SELECT count(*) FROM status_page_sessions s \
@@ -326,7 +314,7 @@ pub async fn summary(pool: &PgPool, page: PageRef, access: &PageAccess) -> Resul
         }
         None => 0,
     };
-    Ok(PasswordSummary {
+    Ok(PagePasswordView {
         enabled: access.settings.password_enabled,
         set_at: access.password_set_at,
         set_by: row.set_by,

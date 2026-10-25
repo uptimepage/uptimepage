@@ -381,3 +381,66 @@ fn body_name(schema: &Value) -> Option<&str> {
         .or_else(|| named(&schema["items"]))
         .or_else(|| schema["oneOf"].as_array()?.iter().find_map(named))
 }
+
+/// The doc states the batch limits in prose and in `maxItems`, which cannot
+/// name the constants, so a changed limit must change them too.
+#[test]
+fn the_doc_states_the_batch_limits_the_handlers_enforce() {
+    use uptimepage::domain::target::{BULK_MAX, DUPLICATE_MAX};
+
+    let grouped = |n: usize| {
+        let digits = n.to_string();
+        let mut out = String::new();
+        for (i, c) in digits.chars().enumerate() {
+            if i > 0 && (digits.len() - i).is_multiple_of(3) {
+                out.push(' ');
+            }
+            out.push(c);
+        }
+        out
+    };
+    let doc = serde_json::to_value(uptimepage::api::docs::openapi()).unwrap();
+    let paths = &doc["paths"];
+    let schemas = &doc["components"]["schemas"];
+    let bulk = grouped(BULK_MAX);
+    let duplicate = DUPLICATE_MAX.to_string();
+    for (at, text, limit) in [
+        (
+            "bulk create summary",
+            &paths["/api/v1/targets/bulk"]["post"]["summary"],
+            &bulk,
+        ),
+        (
+            "bulk create 413",
+            &paths["/api/v1/targets/bulk"]["post"]["responses"]["413"]["description"],
+            &bulk,
+        ),
+        (
+            "bulk action description",
+            &paths["/api/v1/targets/bulk-action"]["post"]["description"],
+            &bulk,
+        ),
+        (
+            "BulkActionRequest.ids",
+            &schemas["BulkActionRequest"]["properties"]["ids"]["description"],
+            &bulk,
+        ),
+        (
+            "duplicate 413",
+            &paths["/api/v1/targets/{id}/duplicate"]["post"]["responses"]["413"]["description"],
+            &duplicate,
+        ),
+    ] {
+        let text = text.as_str().unwrap_or_else(|| panic!("{at}: no text"));
+        let digit_before = |i: usize| text[..i].ends_with(|c: char| c.is_ascii_digit());
+        let digit_after = |i: usize| text[i..].starts_with(|c: char| c.is_ascii_digit());
+        let states = text
+            .match_indices(limit.as_str())
+            .any(|(i, _)| !digit_before(i) && !digit_after(i + limit.len()));
+        assert!(states, "{at} should say {limit}: {text}");
+    }
+    assert_eq!(
+        schemas["DuplicateRequest"]["properties"]["copies"]["maxItems"], DUPLICATE_MAX,
+        "DuplicateRequest.copies maxItems"
+    );
+}

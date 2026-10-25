@@ -109,8 +109,8 @@ pub use org::{
 pub use page_access::{
     AccessError, AccessEventKind, AccessEventMethod, AccessRule, AccessRuleKind, AccessSpec,
     AccessWrite, EmailAccessSpec, MAX_ACCESS_RULES, MAX_PAGE_PASSWORD_CHARS, PageAccess,
-    PageAccessSettings, PagePassword, PageSessionMethod, PasswordAccessSpec, RECHECK_DAY_CHOICES,
-    RuleError, SESSION_DAY_CHOICES, ValidAccess, normalize_email,
+    PageAccessSettings, PagePassword, PagePasswordView, PageSessionMethod, PasswordAccessSpec,
+    RECHECK_DAY_CHOICES, RuleError, SESSION_DAY_CHOICES, ValidAccess, normalize_email,
 };
 pub use page_asset::{AssetSlot, SlotPolicy};
 pub use preferences::{DisplayPrefs, TimeFormat};

@@ -15,6 +15,13 @@ use super::user::UserId;
 pub const MAX_TAGS_PER_TARGET: usize = 50;
 pub const MAX_TAG_LEN: usize = 50;
 
+/// Copies of one monitor in a single duplicate: a list pasted by hand. A
+/// migration belongs in a bulk create.
+pub const DUPLICATE_MAX: usize = 100;
+
+/// Monitors one bulk create or bulk action takes.
+pub const BULK_MAX: usize = 10_000;
+
 /// Longest hold before a recovered monitor's incident closes. The incident
 /// writer reads back over the hold to date the recovery, so it is bounded.
 pub const MAX_RECOVERY_PERIOD_SECS: u32 = 1800;

@@ -335,10 +335,8 @@ pub async fn page_editor(
     let visibility = visibility(page.enabled, access.is_private());
     let access_json = serde_json::to_string(&crate::domain::AccessSpec::from(&access))
         .map_err(|e| AppError::Other(anyhow::anyhow!("encode page access: {e}")))?;
-    let password_json = serde_json::to_string(
-        &crate::api::handlers::status_page::PagePasswordView::from(password),
-    )
-    .map_err(|e| AppError::Other(anyhow::anyhow!("encode page password: {e}")))?;
+    let password_json = serde_json::to_string(&password)
+        .map_err(|e| AppError::Other(anyhow::anyhow!("encode page password: {e}")))?;
 
     // On-page components (curated, in order) + every other org monitor.
     let curated = state

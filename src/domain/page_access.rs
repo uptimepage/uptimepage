@@ -300,6 +300,28 @@ pub struct PasswordAccessSpec {
     pub value: Option<PagePassword>,
 }
 
+/// The page password as the owner sees it. Never the password itself, which
+/// is stored as a hash and can only be replaced.
+#[derive(Debug, Clone, Default, Serialize, ToSchema)]
+pub struct PagePasswordView {
+    pub enabled: bool,
+    /// When the stored password was set, or `null` while there is none.
+    #[schema(nullable = true)]
+    pub set_at: Option<DateTime<Utc>>,
+    /// Who set it, while they have an account.
+    #[schema(nullable = true)]
+    pub set_by: Option<String>,
+    /// Devices signed in with it now.
+    pub sessions: i64,
+    #[schema(nullable = true)]
+    pub last_sign_in_at: Option<DateTime<Utc>>,
+    /// Wrong tries in the last 24 hours.
+    pub failed_last_24h: i64,
+    /// Subscriptions made with it that the email list does not cover: what a
+    /// new password or turning it off ends.
+    pub subscriptions: i64,
+}
+
 /// A page password as the owner typed it. Prints as redacted, so no `Debug`
 /// or log line carries it.
 #[derive(Clone, Deserialize)]

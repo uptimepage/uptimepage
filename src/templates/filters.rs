@@ -202,20 +202,4 @@ mod display {
             format!("{b} bytes")
         })
     }
-
-    /// `{{ n|thousands }}` → `"1,000"`. Comma-groups digits so a templated
-    /// count reads the same as the prose copy beside it.
-    #[askama::filter_fn]
-    pub fn thousands(value: &u32, _: &dyn askama::Values) -> askama::Result<String> {
-        let digits = value.to_string();
-        let len = digits.len();
-        let mut out = String::with_capacity(len + len / 3);
-        for (i, ch) in digits.char_indices() {
-            if i > 0 && (len - i).is_multiple_of(3) {
-                out.push(',');
-            }
-            out.push(ch);
-        }
-        Ok(out)
-    }
 }

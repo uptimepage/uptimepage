@@ -11,19 +11,17 @@ use uuid::Uuid;
 
 use crate::api::redaction::Redacted;
 use crate::app::AppState;
-use crate::auth::scope::Scope;
-use crate::domain::quota::Plan;
+use crate::domain::target::DUPLICATE_MAX;
 use crate::domain::{CheckSpec, NewTarget, OrgId, PlacedTarget, Target, UserId};
 use crate::error::{ApiError, AppError, Result, codes};
 use crate::request::json::Json;
-use crate::request::{Authorized, CurrentUser, RequestSource, TargetsWrite, TokenScopes};
+use crate::request::{
+    Authorized, CurrentUser, LadderBinding, RequestSource, TargetsWrite, TokenScopes,
+    ladder_binding,
+};
 use crate::security::SsrfGuard;
-use crate::storage::{MembershipStatus, membership_status};
 use crate::target_ops::TargetOps;
 use crate::targets::validate::{canonicalize_check, gate_flow, validate_check};
-
-/// A list pasted by hand; a migration belongs on `/targets/bulk`.
-pub const DUPLICATE_MAX: usize = 100;
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -113,7 +111,12 @@ pub async fn duplicate(
             .ensure_flow_covered(&source.check, &regions)?;
     }
     let escalation_policy_id = match state.escalation_policy_store.target_policy(org, id).await? {
-        Some(policy) if may_bind_policy(&state, org, user, &scopes, &plan).await? => Some(policy),
+        Some(policy)
+            if ladder_binding(&state.cfg, state.db.as_ref(), org, user, &scopes, &plan).await?
+                == LadderBinding::Allowed =>
+        {
+            Some(policy)
+        }
         _ => None,
     };
     let guard = ops.ssrf_guard();
@@ -146,24 +149,6 @@ pub async fn duplicate(
         .await?;
     ops.settle_created(org, &created, &regions).await;
     Ok((StatusCode::CREATED, Redacted::new(created)))
-}
-
-/// Putting a new monitor on a ladder is new paging coverage, so a copy keeps
-/// its source's policy only when the caller could bind it by hand: on-call in
-/// the plan, the org's owner, and a token allowed to write on-call. Otherwise
-/// the copies alert their channels.
-pub(crate) async fn may_bind_policy(
-    state: &AppState,
-    org: OrgId,
-    user: UserId,
-    scopes: &TokenScopes,
-    plan: &Plan,
-) -> Result<bool> {
-    if !state.cfg.on_call_available(plan) || scopes.require(Scope::OnCallWrite).is_err() {
-        return Ok(false);
-    }
-    let status = membership_status(state.require_db()?, user, org).await?;
-    Ok(matches!(status, MembershipStatus::Owner))
 }
 
 /// The rest was valid when the source was saved and is copied as it stands,

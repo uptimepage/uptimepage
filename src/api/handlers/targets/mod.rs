@@ -15,6 +15,7 @@ use crate::api::types::{
 use crate::app::AppState;
 use crate::auth::scope::Scope;
 use crate::domain::agent_wire::DispatchKind;
+use crate::domain::target::BULK_MAX;
 use crate::domain::{
     CheckResult, CheckSpec, NewTarget, NotificationReason, OrgId, PlacedTarget, Target,
     TargetUpdate, min_interval_secs_for_kind,
@@ -37,10 +38,8 @@ use crate::targets::{HeartbeatInfo, heartbeat_info, heartbeat_info_from};
 
 mod duplicate;
 
-pub(crate) use duplicate::may_bind_policy;
-pub use duplicate::{__path_duplicate, DUPLICATE_MAX, DuplicateCopy, DuplicateRequest, duplicate};
+pub use duplicate::{__path_duplicate, DuplicateCopy, DuplicateRequest, duplicate};
 
-const BULK_MAX: usize = 10_000;
 const LIST_LIMIT_DEFAULT: usize = 50;
 const LIST_LIMIT_MAX: usize = 10_000;
 

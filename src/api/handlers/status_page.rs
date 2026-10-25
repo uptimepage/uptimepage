@@ -19,8 +19,9 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::{
     AccessError, AccessSpec, AccessWrite, AssetSlot, Locale, NewStatusPage, NewStatusPageComponent,
-    OrgId, PageAccess, PageRef, PublicOrgBranding, PublicStyle, StatusPage, StatusPageComponent,
-    StatusPageComponentUpdate, StatusPageId, StatusPageUpdate, UserId, validate_slug,
+    OrgId, PageAccess, PagePasswordView, PageRef, PublicOrgBranding, PublicStyle, StatusPage,
+    StatusPageComponent, StatusPageComponentUpdate, StatusPageId, StatusPageUpdate, UserId,
+    validate_slug,
 };
 use crate::error::ApiError;
 use crate::error::codes;
@@ -753,28 +754,6 @@ pub async fn viewer_history(
     }))
 }
 
-/// The page password as the owner sees it. Never the password itself, which
-/// is stored as a hash and can only be replaced.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct PagePasswordView {
-    pub enabled: bool,
-    /// When the stored password was set, or `null` while there is none.
-    #[schema(nullable = true)]
-    pub set_at: Option<chrono::DateTime<chrono::Utc>>,
-    /// Who set it, while they have an account.
-    #[schema(nullable = true)]
-    pub set_by: Option<String>,
-    /// Devices signed in with it now.
-    pub sessions: i64,
-    #[schema(nullable = true)]
-    pub last_sign_in_at: Option<chrono::DateTime<chrono::Utc>>,
-    /// Wrong tries in the last 24 hours.
-    pub failed_last_24h: i64,
-    /// Subscriptions made with it that the email list does not cover: what a
-    /// new password or turning it off ends.
-    pub subscriptions: i64,
-}
-
 #[utoipa::path(
     get, path = "/api/v1/status-pages/{id}/access/password", tag = "status-pages",
     summary = "The page password's use: devices signed in, last sign-in, wrong tries",
@@ -795,21 +774,7 @@ pub async fn page_password(
         }
         None => Default::default(),
     };
-    Ok(Json(line.into()))
-}
-
-impl From<crate::storage::page_access::password::PasswordSummary> for PagePasswordView {
-    fn from(s: crate::storage::page_access::password::PasswordSummary) -> Self {
-        Self {
-            enabled: s.enabled,
-            set_at: s.set_at,
-            set_by: s.set_by,
-            sessions: s.sessions,
-            last_sign_in_at: s.last_sign_in_at,
-            failed_last_24h: s.failed_last_24h,
-            subscriptions: s.subscriptions,
-        }
-    }
+    Ok(Json(line))
 }
 
 #[utoipa::path(

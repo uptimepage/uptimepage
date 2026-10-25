@@ -394,7 +394,7 @@ use crate::storage::UptimeStats;
             handlers::status_page::ViewerView,
             handlers::status_page::ViewerEventView,
             handlers::status_page::ViewerHistory,
-            handlers::status_page::PagePasswordView,
+            crate::domain::PagePasswordView,
             crate::domain::AccessSpec,
             crate::domain::EmailAccessSpec,
             crate::domain::PasswordAccessSpec,

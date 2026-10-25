@@ -11,12 +11,15 @@ use std::marker::PhantomData;
 
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
+use sqlx::PgPool;
 
 use crate::auth::scope::{Scope, ScopeSet};
-use crate::domain::{OrgId, WriteSource};
+use crate::config::AppConfig;
+use crate::domain::{OrgId, Plan, UserId, WriteSource};
 use crate::error::codes;
 use crate::error::{AppError, Result};
 use crate::request::RequestState;
+use crate::request::state::require_pool;
 use crate::storage::{MembershipStatus, membership_status};
 
 use super::{AuthContext, CurrentOrg, CurrentUser};
@@ -159,6 +162,39 @@ where
             _ => None,
         }))
     }
+}
+
+/// Whether the caller may put a monitor on an escalation ladder by hand. A
+/// monitor on a ladder is new paging coverage, so it takes on-call in the
+/// plan, a token allowed to write on-call, and the org's owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LadderBinding {
+    Allowed,
+    NoOnCall,
+    /// Not the owner, or a token without `oncall:write`.
+    Denied,
+}
+
+pub async fn ladder_binding(
+    cfg: &AppConfig,
+    db: Option<&PgPool>,
+    org: OrgId,
+    user: UserId,
+    scopes: &TokenScopes,
+    plan: &Plan,
+) -> Result<LadderBinding> {
+    if !cfg.on_call_available(plan) {
+        return Ok(LadderBinding::NoOnCall);
+    }
+    if scopes.require(Scope::OnCallWrite).is_err() {
+        return Ok(LadderBinding::Denied);
+    }
+    Ok(
+        match membership_status(require_pool(db)?, user, org).await? {
+            MembershipStatus::Owner => LadderBinding::Allowed,
+            MembershipStatus::Member | MembershipStatus::None => LadderBinding::Denied,
+        },
+    )
 }
 
 /// The provider sets this token in its User-Agent so a Terraform-driven write

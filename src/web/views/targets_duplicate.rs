@@ -7,12 +7,14 @@ use askama_web::WebTemplate;
 use axum::extract::{Path, State};
 use uuid::Uuid;
 
-use crate::api::handlers::targets::{DUPLICATE_MAX, may_bind_policy};
 use crate::app::AppState;
+use crate::domain::target::DUPLICATE_MAX;
 use crate::domain::{CheckSpec, IpVersion, OrgId, Plan, RegionIncidentPolicy, Target, UserId};
 use crate::duration::exact_duration;
 use crate::error::AppError;
-use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser, TokenScopes};
+use crate::request::{
+    AuthedBrowser, CurrentOrg, CurrentUser, LadderBinding, TokenScopes, ladder_binding,
+};
 use crate::templates::filters;
 use crate::web::error::WebResult;
 use crate::web::views::region_display::labeled_regions;
@@ -173,17 +175,21 @@ async fn carried(
         None => "",
     };
     let escalation = match policies.target_policy(org, t.id).await? {
-        Some(_) if !state.cfg.on_call_available(plan) => {
-            format!("not copied: escalation comes with the Team plan{fallback}")
+        Some(own) => {
+            match ladder_binding(&state.cfg, state.db.as_ref(), org, user, scopes, plan).await? {
+                LadderBinding::NoOnCall => {
+                    format!("not copied: escalation comes with the Team plan{fallback}")
+                }
+                LadderBinding::Denied => {
+                    format!("not copied: only the org owner can put monitors on a ladder{fallback}")
+                }
+                LadderBinding::Allowed => policies
+                    .get(org, own)
+                    .await?
+                    .map(|p| p.name)
+                    .unwrap_or_default(),
+            }
         }
-        Some(_) if !may_bind_policy(state, org, user, scopes, plan).await? => {
-            format!("not copied: only the org owner can put monitors on a ladder{fallback}")
-        }
-        Some(own) => policies
-            .get(org, own)
-            .await?
-            .map(|p| p.name)
-            .unwrap_or_default(),
         None if !fallback.is_empty() => "org default".to_owned(),
         None => String::new(),
     };
