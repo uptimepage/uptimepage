@@ -11,6 +11,8 @@ Self-hosted uptime monitoring, incidents, and status pages on Kubernetes.
 
 Neither database is bundled. Point the chart at whatever you already run, or install CloudNativePG and the Altinity ClickHouse operator first.
 
+When using your own ClickHouse, apply the [ClickHouse system-log settings](../../docs/deployment.md#clickhouse-system-logs) from the deployment guide.
+
 ## Install
 
 Create the secrets first, then point the chart at them:
