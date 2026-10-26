@@ -521,6 +521,8 @@ user_agent_suffix = ""                 # appended to the browser UA for attribut
 | `max_response_mb` | Refuses any single response larger than this, so one large asset cannot blow the memory ceiling on its own |
 | `user_agent_suffix` | Appended to the browser's User-Agent, so a site owner reading their logs can tell what the traffic is |
 
+The engine is started with its usage reporting to the vendor switched off (`LIGHTPANDA_DISABLE_TELEMETRY=true`). A binary set through `lightpanda_path` that ignores that switch is not covered.
+
 Two switches have to line up before anyone can create one, and they are independent on purpose:
 
 - **`flow.enabled`** decides which nodes *can run* a flow. Set it on the control plane, on selected agents, or on nothing.

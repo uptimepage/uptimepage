@@ -33,6 +33,9 @@ pub const INTERACTIVE_QUEUE_LIMIT: Duration = Duration::from_secs(10);
 const BUSY: &str = "every browser slot stayed busy with other flows";
 /// Lightpanda's default `--http-max-concurrent`.
 const MAX_OPEN_REQUESTS: u32 = 40;
+/// Lightpanda sends usage reports to its vendor by default; a probe talks
+/// only to the sites it checks.
+const TELEMETRY_OFF: (&str, &str) = ("LIGHTPANDA_DISABLE_TELEMETRY", "true");
 const PROXY_ENV: [&str; 8] = [
     "http_proxy",
     "HTTP_PROXY",
@@ -260,6 +263,7 @@ impl CdpEngine {
         for var in PROXY_ENV {
             cmd.env_remove(var);
         }
+        cmd.env(TELEMETRY_OFF.0, TELEMETRY_OFF.1);
         // The engine's own filter stays as a second layer for any request
         // path that skips the proxy. The proxy itself is all it sees
         // otherwise, so the proxy's address is exempted.
@@ -473,6 +477,28 @@ mod tests {
                 "{var} must not reach the browser"
             );
         }
+    }
+
+    #[test]
+    fn the_engine_is_told_not_to_report_usage() {
+        let engine = CdpEngine::new(FlowEngineConfig {
+            binary: "lightpanda".into(),
+            max_concurrency: 1,
+            mem_limit_bytes: 0,
+            block_private_networks: false,
+            block_cidrs: String::new(),
+            v8_max_heap_mb: 0,
+            max_response_bytes: 0,
+            user_agent_suffix: String::new(),
+        })
+        .unwrap();
+        let cmd = engine.command(9222, true, "http://127.0.0.1:41000");
+        let set = cmd
+            .as_std()
+            .get_envs()
+            .find(|(k, _)| *k == TELEMETRY_OFF.0)
+            .and_then(|(_, v)| v);
+        assert_eq!(set, Some(std::ffi::OsStr::new(TELEMETRY_OFF.1)));
     }
 
     #[tokio::test(start_paused = true)]
