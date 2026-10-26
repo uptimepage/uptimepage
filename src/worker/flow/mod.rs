@@ -3,6 +3,7 @@
 //! login *session* rather than a single request. Runs on any flow-capable node
 //! (the control plane or a flow-capable agent).
 
+mod egress;
 pub mod engine;
 mod evidence;
 mod executor;
@@ -197,7 +198,8 @@ mod tests {
             v8_max_heap_mb: 0,
             max_response_bytes: 0,
             user_agent_suffix: String::new(),
-        });
+        })
+        .unwrap();
         let flow = FlowCheck {
             start_url: url::Url::parse("https://the-internet.herokuapp.com/login").unwrap(),
             steps: vec![
@@ -395,6 +397,7 @@ mod tests {
             max_response_bytes: 0,
             user_agent_suffix: String::new(),
         })
+        .unwrap()
     }
 
     async fn run_loopback_flow(engine: &CdpEngine, url: &str) -> CheckResult {
@@ -532,5 +535,63 @@ mod tests {
         );
 
         server.abort();
+    }
+
+    // The engine's own filters see neither a redirect hop nor the port, so a
+    // page could otherwise push a POST body at a mail server.
+    #[tokio::test]
+    #[ignore]
+    async fn a_page_cannot_reach_a_mail_port_by_redirect_or_fetch() {
+        use tokio::io::AsyncWriteExt;
+
+        let Ok(bin) = std::env::var("FLOW_LIGHTPANDA_BIN") else {
+            eprintln!("FLOW_LIGHTPANDA_BIN unset; skipping");
+            return;
+        };
+        let mail = tokio::net::TcpListener::bind("127.0.0.1:2525")
+            .await
+            .expect("127.0.0.1:2525 must be free: only a mail port exercises the rule");
+        let reached = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = reached.clone();
+        let mail_task = tokio::spawn(async move {
+            while mail.accept().await.is_ok() {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+
+        let page = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = page.local_addr().unwrap();
+        let page_task = tokio::spawn(async move {
+            const BODY: &str = "<html><body><script>Promise.allSettled([\
+                fetch('/redir', {method: 'POST', body: 'HELO x'}),\
+                fetch('http://127.0.0.1:2525/', {method: 'POST', body: 'HELO y'}),\
+                ]).then(() => document.body.insertAdjacentHTML('beforeend', '<p>flowmarker</p>'));\
+                </script></body></html>";
+            while let Ok((mut sock, _)) = page.accept().await {
+                let mut buf = [0u8; 2048];
+                let _ = sock.readable().await;
+                let n = sock.try_read(&mut buf).unwrap_or(0);
+                let resp = if buf[..n].starts_with(b"POST /redir") {
+                    "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:2525/x\r\n\
+                     Content-Length: 0\r\nConnection: close\r\n\r\n"
+                        .to_string()
+                } else {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\n\
+                         Connection: close\r\n\r\n{BODY}",
+                        BODY.len()
+                    )
+                };
+                let _ = sock.write_all(resp.as_bytes()).await;
+            }
+        });
+
+        let result =
+            run_loopback_flow(&sandbox_engine(&bin, false), &format!("http://{addr}/")).await;
+        assert_eq!(result.status, CheckStatus::Up, "error={:?}", result.error);
+        assert_eq!(reached.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        page_task.abort();
+        mail_task.abort();
     }
 }

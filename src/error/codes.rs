@@ -9,6 +9,8 @@ pub const INVALID_URL_FORMAT: &str = "INVALID_URL_FORMAT";
 /// A duplicate's address does not fit its monitor's kind.
 pub const INVALID_ADDRESS: &str = "INVALID_ADDRESS";
 pub const SSRF_BLOCKED: &str = "SSRF_BLOCKED";
+/// HTTP aimed at an SMTP port; mail servers are watched by TCP or TLS checks.
+pub const MAIL_PORT_NOT_ALLOWED: &str = "MAIL_PORT_NOT_ALLOWED";
 pub const INVALID_INTERVAL: &str = "INVALID_INTERVAL";
 pub const INVALID_TIMEOUT: &str = "INVALID_TIMEOUT";
 pub const INVALID_TCP_PORT: &str = "INVALID_TCP_PORT";

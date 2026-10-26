@@ -6,7 +6,7 @@ use url::Host;
 
 use crate::config::AppConfig;
 use crate::domain::REDACTED;
-use crate::domain::check::MANUAL_EVALUATION_SECS;
+use crate::domain::check::{MANUAL_EVALUATION_SECS, is_mail_port};
 use crate::domain::{
     CheckSpec, IpVersion, NewTarget, RegionIncidentPolicy, TargetAlerts, min_interval_secs_for_kind,
 };
@@ -897,6 +897,13 @@ pub(crate) fn validate_check(check: &crate::domain::CheckSpec, guard: &SsrfGuard
                 // target; reuse the SSRF guard so users can't aim the
                 // probe at an internal DNS server.
                 check_ip(sock.ip(), guard, "check.resolver")?;
+                if is_mail_port(sock.port()) {
+                    return Err(AppError::bad_request_field(
+                        codes::MAIL_PORT_NOT_ALLOWED,
+                        format!("port {} is a mail port, not a DNS resolver", sock.port()),
+                        "check.resolver",
+                    ));
+                }
             }
         }
         CheckSpec::Flow(flow) => {
@@ -1004,6 +1011,15 @@ pub(crate) fn validate_target_url(
         return Err(AppError::bad_request_field(
             codes::INVALID_URL_FORMAT,
             "url port must be > 0",
+            field,
+        ));
+    }
+    if let Some(port) = url.port().filter(|p| is_mail_port(*p)) {
+        return Err(AppError::bad_request_field(
+            codes::MAIL_PORT_NOT_ALLOWED,
+            format!(
+                "port {port} is a mail port; watch a mail server with a TCP or TLS certificate monitor"
+            ),
             field,
         ));
     }

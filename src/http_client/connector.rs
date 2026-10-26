@@ -87,6 +87,8 @@ pub(crate) struct TimedConnection {
 /// failure can still report its DNS + TCP timings.
 #[derive(Debug)]
 pub(crate) enum ConnectError {
+    /// Refused before any lookup: HTTP never speaks to a mail server.
+    MailPort(u16),
     Dns(anyhow::Error),
     NoAddrs {
         dns_ms: u16,
@@ -114,6 +116,7 @@ pub(crate) enum ConnectError {
 impl std::fmt::Display for ConnectError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ConnectError::MailPort(port) => write!(f, "refusing mail port {port}"),
             ConnectError::Dns(e) => write!(f, "dns resolution failed: {e}"),
             ConnectError::NoAddrs { .. } => write!(f, "no allowed addresses for host"),
             ConnectError::Connect { err, .. } => write!(f, "tcp connect failed: {err}"),
@@ -133,6 +136,7 @@ impl ConnectError {
     /// refused vs unreachable, expired vs untrusted vs hostname-mismatch).
     pub(crate) fn reason(&self) -> &'static str {
         match self {
+            ConnectError::MailPort(_) => crate::domain::check::MAIL_PORT_REFUSED,
             ConnectError::Dns(e) => dns_reason(e),
             ConnectError::NoAddrs { .. } => "address not allowed",
             ConnectError::Connect { err, .. } => tcp_reason(err),
@@ -146,7 +150,7 @@ impl ConnectError {
     /// DNS failures have neither; a TLS failure has both.
     pub(crate) fn partial_timings(&self) -> (Option<u16>, Option<u16>) {
         match self {
-            ConnectError::Dns(_) => (None, None),
+            ConnectError::MailPort(_) | ConnectError::Dns(_) => (None, None),
             ConnectError::NoAddrs { dns_ms } | ConnectError::Connect { dns_ms, .. } => {
                 (Some(*dns_ms), None)
             }
@@ -282,6 +286,9 @@ pub(crate) async fn timed_connect(
     is_https: bool,
     deadline: tokio::time::Instant,
 ) -> Result<TimedConnection, ConnectError> {
+    if crate::domain::check::is_mail_port(port) {
+        return Err(ConnectError::MailPort(port));
+    }
     // `Uri::host()` keeps an IPv6 literal's brackets, which the resolver
     // would look up as a name and `ServerName` rejects.
     let host = crate::domain::check::unbracket(host);

@@ -515,8 +515,8 @@ user_agent_suffix = ""                 # appended to the browser UA for attribut
 | `lightpanda_path` | Where the engine binary is. The shipped images put it at `/usr/local/bin/lightpanda` |
 | `max_concurrency` | How many browser processes may run at once here. Each run spawns a fresh process and tears it down after, so this is the real memory lever |
 | `mem_limit_mb` | Per-run resident memory ceiling. A run that crosses it is killed and recorded as `Error`, not `Down`: the page did not fail, this node refused to keep paying for it. `0` disables the watchdog |
-| `block_private_networks` | Blocks the browser's own outbound requests to private and internal addresses, after DNS resolves. The save-time URL check cannot cover this, because redirects, `fetch` calls and DNS rebinding all resolve later |
-| `block_cidrs` | Extra ranges to block, comma-separated. The default list covers cloud metadata, loopback, CGNAT, and IPv6 unique-local and link-local. A `-` prefix exempts a range |
+| `block_private_networks` | Blocks the browser's own outbound requests to private and internal addresses, after DNS resolves. The save-time URL check cannot cover this, because redirects, `fetch` calls and DNS rebinding all resolve later. Every browser request goes through a proxy inside the process, which resolves the name and applies this rule and `block_cidrs`. The proxy also refuses the mail ports (25, 465, 587 and 2525) whatever these are set to |
+| `block_cidrs` | Extra ranges to block, comma-separated. The default list covers cloud metadata, loopback, CGNAT, and IPv6 unique-local and link-local. A `-` prefix exempts a range, from this list and from `block_private_networks` alike. An entry that is not a range stops the process at startup |
 | `v8_max_heap_mb` | JS heap cap inside the engine. Set it below `mem_limit_mb` so a runaway script trips the cheap limit before the process-level one |
 | `max_response_mb` | Refuses any single response larger than this, so one large asset cannot blow the memory ceiling on its own |
 | `user_agent_suffix` | Appended to the browser's User-Agent, so a site owner reading their logs can tell what the traffic is |

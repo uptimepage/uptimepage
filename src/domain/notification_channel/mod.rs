@@ -56,6 +56,7 @@ pub use sms::SmsConfig;
 pub use telegram::TelegramConfig;
 pub use telegram_app::TelegramAppConfig;
 pub use transport::TransportConfig;
+pub(crate) use transport::require_https;
 pub use webhook::WebhookConfig;
 pub use whatsapp::WhatsAppConfig;
 pub use whatsapp_app::WhatsAppAppConfig;
@@ -860,6 +861,28 @@ mod tests {
             .validate()
             .is_err()
         );
+    }
+
+    #[test]
+    fn validate_refuses_mail_ports_on_every_url_rule() {
+        let webhook = |url: &str| {
+            ChannelConfig::Webhook(WebhookConfig {
+                url: url.into(),
+                headers: BTreeMap::new(),
+                secret: None,
+            })
+            .validate()
+        };
+        for port in crate::domain::check::MAIL_PORTS {
+            let err = webhook(&format!("https://mx.example.com:{port}/hook")).unwrap_err();
+            assert!(err.contains("mail port"), "{port}: {err}");
+        }
+        assert!(webhook("https://hooks.example.com:8443/hook").is_ok());
+        let slack = ChannelConfig::Slack(SlackConfig {
+            webhook_url: "https://hooks.slack.com:25/services/x".into(),
+            mention: None,
+        });
+        assert!(slack.validate().unwrap_err().contains("mail port"));
     }
 
     #[test]

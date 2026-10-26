@@ -5,6 +5,7 @@
 
 use super::ChannelKind;
 use crate::domain::REDACTED;
+use crate::domain::check::is_mail_port;
 
 pub const MASK: &str = REDACTED;
 
@@ -86,13 +87,24 @@ pub(super) fn trim_in_place(s: &mut String) {
     }
 }
 
-/// `https://`-only URL rule shared by the URL-bearing transports.
-pub(super) fn require_https(u: &str, field: &str) -> Result<(), String> {
+/// `https://`-only URL rule shared by the URL-bearing transports and the
+/// status page's webhook subscriptions.
+pub(crate) fn require_https(u: &str, field: &str) -> Result<url::Url, String> {
     let parsed = url::Url::parse(u).map_err(|_| format!("{field} is not a valid URL"))?;
     if parsed.scheme() != "https" {
         return Err(format!("{field} must be an https:// URL"));
     }
-    Ok(())
+    refuse_mail_port(&parsed, field)?;
+    Ok(parsed)
+}
+
+fn refuse_mail_port(parsed: &url::Url, field: &str) -> Result<(), String> {
+    match parsed.port() {
+        Some(port) if is_mail_port(port) => Err(format!(
+            "{field} uses mail port {port}, which a webhook cannot be sent to"
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// Host-pinned https rule for provider-branded webhook kinds: exact host or
@@ -113,6 +125,7 @@ pub(super) fn require_provider_webhook(
     if parsed.scheme() != "https" {
         return Err("webhook_url must be an https:// URL".into());
     }
+    refuse_mail_port(&parsed, "webhook_url")?;
     let host = parsed
         .host_str()
         .unwrap_or("")

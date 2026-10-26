@@ -69,7 +69,7 @@ blurb = "The nine monitor kinds, what each one actually proves, and which to rea
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-23
+lastmod = 2026-10-26
 
 [[page]]
 slug = "notifications"
@@ -79,7 +79,7 @@ blurb = "Alert channels, how a monitor binds them, and what decides when an aler
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-07
+lastmod = 2026-10-26
 
 [[page]]
 slug = "public-status"
@@ -159,7 +159,7 @@ blurb = "The /api/v1 surface: monitors, incidents, channels, status pages, and t
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-24
+lastmod = 2026-10-26
 
 [[page]]
 slug = "terraform"
@@ -249,7 +249,7 @@ blurb = "Every configuration key, its default, and the environment variable that
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-07-22
-lastmod = 2026-10-24
+lastmod = 2026-10-26
 
 [[page]]
 slug = "bot"

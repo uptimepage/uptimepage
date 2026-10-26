@@ -733,6 +733,18 @@ pub fn unbracket(host: &str) -> &str {
         .unwrap_or(host)
 }
 
+/// SMTP relay and submission ports. Only the raw TCP and TLS probes dial them:
+/// an HTTP client there writes request lines a mail server reads as commands,
+/// and mail operators report the sending address for it.
+pub const MAIL_PORTS: [u16; 4] = [25, 465, 587, 2525];
+
+/// The reason a probe reports when a redirect or script request aims at one.
+pub const MAIL_PORT_REFUSED: &str = "mail port not allowed";
+
+pub fn is_mail_port(port: u16) -> bool {
+    MAIL_PORTS.contains(&port)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -51,6 +51,8 @@ Opens a connection to a host and port and reports whether it was accepted. No pr
 
 Right for databases, message brokers, SMTP, SSH, and anything else that speaks a protocol you cannot easily assert on. Wrong as a substitute for HTTP: a listening port proves the process is alive, not that it is serving correct responses.
 
+A mail server is watched with TCP, or with a TLS certificate monitor on an implicit-TLS port such as 465. The mail ports (25, 465, 587 and 2525) are open only to these two kinds. An HTTP check, a flow, a webhook or a DNS resolver aimed at one is refused at save, and an HTTP check redirected to one fails with `mail port not allowed`, because a mail server reads HTTP request lines as commands.
+
 ## Ping
 
 One ICMP echo, timed. Answers reachability and round-trip latency only.
@@ -200,6 +202,7 @@ The step list is deliberately short, and every step finds its element with `docu
 - **No key presses.** There is no step for pressing Enter. If your form submits that way, click the submit control instead. A recording that used Enter is flagged on import for exactly this reason.
 - **No file uploads, no drag, no hover, no scrolling.** A recording that includes them drops those steps.
 - **One page at a time.** A link that opens a new tab leads somewhere the flow cannot follow.
+- **No plain `ws://` sockets.** Every browser request goes through a proxy on the probe that applies the address and port rules, and the engine cannot open an unencrypted WebSocket through it. A `wss://` socket works.
 - **No screenshot, and no capture of failed network requests.** The engine has no graphical renderer, and its network events are not in a shape the client can read. See [When a step fails](#when-a-step-fails) for what you get instead.
 
 A `fill` sets the field's value and then fires `input` and `change` events, which is what an ordinary form listens for. A framework that tracks its own value setter can ignore a value assigned this way, in which case the fill reports success and the form behaves as though nothing was typed. The assertion at the end is what catches it, which is the other reason a flow without one is refused.

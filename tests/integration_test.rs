@@ -934,6 +934,27 @@ async fn http_check_follows_redirect_to_up() {
 }
 
 #[tokio::test]
+async fn a_redirect_to_a_mail_port_is_refused_before_connecting() {
+    let app = Router::new().route(
+        "/",
+        get(|| async { moved(StatusCode::TEMPORARY_REDIRECT, "http://127.0.0.1:25/") }),
+    );
+    let addr = spawn_router(app).await;
+
+    let url = Url::parse(&format!("http://{addr}/")).unwrap();
+    let mut check = default_http_check(url, ExpectedStatus::Exact(200));
+    check.follow_redirects = true;
+    check.max_redirects = 5;
+
+    let result =
+        execute_http_check(Uuid::now_v7(), uuid::Uuid::nil(), &check, &test_client()).await;
+
+    assert_eq!(result.status, CheckStatus::Error);
+    assert_eq!(result.error.as_deref(), Some("mail port not allowed"));
+    assert_eq!(result.connect_ms, None);
+}
+
+#[tokio::test]
 async fn http_check_redirect_not_followed_is_down() {
     let app = Router::new().route(
         "/",

@@ -308,11 +308,16 @@ async fn only_a_published_page_takes_subscriptions() {
 
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
-async fn a_webhook_must_be_https() {
+async fn a_webhook_must_be_https_and_off_the_mail_ports() {
     let Some(rig) = rig().await else {
         return;
     };
-    for url in ["http://hooks.example.com/status", "not a url", ""] {
+    for url in [
+        "http://hooks.example.com/status",
+        "https://mx.example.com:587/status",
+        "not a url",
+        "",
+    ] {
         let (status, html) = rig
             .subscribe_on(&rig.host, &[("channel", "webhook"), ("url", url)])
             .await;

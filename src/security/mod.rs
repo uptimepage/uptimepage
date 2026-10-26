@@ -22,6 +22,6 @@ pub use crypto::{
     Cipher, CryptoError, ENC_KEY, envelope_str, is_envelope, open_str, seal_str, wrap_envelope,
 };
 pub use email_policy::{Admission, EmailPolicy, EmailRisk};
-pub use outbound_connector::SsrfHttpConnector;
+pub use outbound_connector::{DialError, SsrfHttpConnector, dial_guarded};
 pub use ssrf::{SsrfError, SsrfGuard, is_blocked_ip};
 pub use token_hash::sha256_hex;

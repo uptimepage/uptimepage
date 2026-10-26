@@ -17,7 +17,7 @@
 
 use std::future::Future;
 use std::io;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -30,7 +30,7 @@ use tokio::net::TcpStream;
 use tower::Service;
 
 use crate::net::happy_eyeballs;
-use crate::security::{SsrfError, SsrfGuard};
+use crate::security::SsrfGuard;
 
 /// Overall budget for the connect race. Bounds the happy-eyeballs sweep
 /// across every resolved address — without it, a webhook pointing at a
@@ -118,39 +118,74 @@ impl Service<Uri> for SsrfHttpConnector {
                 .port_u16()
                 .unwrap_or(if scheme == "https" { 443 } else { 80 });
 
-            // tokio's libc-backed lookup_host honours /etc/hosts, IDNA, and
-            // AAAA records. We feed the resolved IPs through the shared
-            // `SsrfGuard::filter` so the connector's policy outcome stays in
-            // lock-step with the check-path's filter on the same set of
-            // blocked ranges (loopback / RFC1918 / link-local / ULA /
-            // metadata / 6to4 / NAT64 with embedded private v4).
-            let resolved: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), port))
-                .await?
-                .collect();
-            let ips: Vec<std::net::IpAddr> = resolved.iter().map(|sa| sa.ip()).collect();
-            let allowed = guard.filter(&host, ips).map_err(|e| match e {
-                SsrfError::AllBlocked { .. } => io::Error::other(format!(
-                    "refusing to connect to '{host}': every resolved address is in a \
-                     blocked range (loopback / private / link-local / metadata). \
-                     Set security.allow_private_targets=true to permit private \
-                     destinations in development."
-                )),
-                SsrfError::BlockedAddress(ip) => {
-                    io::Error::other(format!("address {ip} is in a blocked range"))
-                }
-            })?;
-            let addrs: Vec<SocketAddr> = resolved
-                .into_iter()
-                .filter(|sa| allowed.contains(&sa.ip()))
-                .collect();
-
-            // Happy-Eyeballs v2 race (RFC 8305): try v6 and v4 in parallel
-            // with a 250 ms stagger so a single broken AAAA on a long-tail
-            // webhook target doesn't cost the full `CONNECT_TIMEOUT`.
-            let stream = happy_eyeballs::connect(addrs, CONNECT_TIMEOUT).await?;
+            let stream = dial_guarded(&host, port, |ip| guard.allow(ip))
+                .await
+                .map_err(|e| match e {
+                    DialError::MailPort => io::Error::other(format!(
+                        "refusing to connect to '{host}': port {port} is a mail port"
+                    )),
+                    DialError::Blocked => io::Error::other(format!(
+                        "refusing to connect to '{host}': every resolved address is in a \
+                         blocked range (loopback / private / link-local / metadata). \
+                         Set security.allow_private_targets=true to permit private \
+                         destinations in development."
+                    )),
+                    DialError::Resolve(err) | DialError::Connect(err) => err,
+                })?;
             Ok(TokioIo::new(SsrfStream { inner: stream }))
         })
     }
+}
+
+/// Why a guarded dial ended before a connection existed.
+#[derive(Debug)]
+pub enum DialError {
+    MailPort,
+    Resolve(io::Error),
+    /// Every resolved address failed the caller's filter.
+    Blocked,
+    Connect(io::Error),
+}
+
+/// The one door for HTTP to a destination a customer chose: mail ports are
+/// refused before the lookup, then only the resolved addresses `allow` passes
+/// are dialled. Filtering what is dialled, not the name, keeps it safe from
+/// DNS rebinding.
+pub async fn dial_guarded(
+    host: &str,
+    port: u16,
+    allow: impl Fn(IpAddr) -> bool,
+) -> Result<TcpStream, DialError> {
+    if crate::domain::check::is_mail_port(port) {
+        return Err(DialError::MailPort);
+    }
+    // tokio's libc-backed lookup_host honours /etc/hosts, IDNA, and AAAA
+    // records. The lookup and the connect race share one budget, since a
+    // stalled resolver would otherwise hold the caller for as long as libc
+    // keeps retrying.
+    let deadline = tokio::time::Instant::now() + CONNECT_TIMEOUT;
+    let lookup = tokio::net::lookup_host((crate::domain::check::unbracket(host), port));
+    let resolved: Vec<SocketAddr> = tokio::time::timeout_at(deadline, lookup)
+        .await
+        .map_err(|_| DialError::Resolve(io::ErrorKind::TimedOut.into()))?
+        .map_err(DialError::Resolve)?
+        .collect();
+    if resolved.is_empty() {
+        return Err(DialError::Resolve(io::Error::other(format!(
+            "'{host}' resolved to no address"
+        ))));
+    }
+    let allowed: Vec<SocketAddr> = resolved.into_iter().filter(|sa| allow(sa.ip())).collect();
+    if allowed.is_empty() {
+        return Err(DialError::Blocked);
+    }
+    // Happy-Eyeballs v2 race (RFC 8305): try v6 and v4 in parallel with a
+    // 250 ms stagger so a single broken AAAA on a long-tail target doesn't
+    // cost the full `CONNECT_TIMEOUT`.
+    let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+    happy_eyeballs::connect(allowed, left)
+        .await
+        .map_err(DialError::Connect)
 }
 
 #[cfg(test)]
@@ -188,6 +223,16 @@ mod tests {
         let dst: Uri = "http://[fc00::1]/".parse().unwrap();
         let err = svc.call(dst).await.expect_err("ULA must be blocked");
         assert!(err.to_string().contains("blocked"));
+    }
+
+    #[tokio::test]
+    async fn rejects_mail_ports_before_resolving() {
+        let mut svc = SsrfHttpConnector::new(SsrfGuard::relaxed_for_tests());
+        for port in crate::domain::check::MAIL_PORTS {
+            let dst: Uri = format!("https://mail.invalid:{port}/").parse().unwrap();
+            let err = svc.call(dst).await.expect_err("mail port must be refused");
+            assert!(err.to_string().contains("mail port"), "{port}: {err}");
+        }
     }
 
     #[tokio::test]

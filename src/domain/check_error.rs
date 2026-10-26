@@ -354,6 +354,7 @@ pub fn classify_check_error(raw: &str) -> ErrorClass {
         "host unreachable" => return ErrorClass::HostUnreachable,
         "network unreachable" => return ErrorClass::NetworkUnreachable,
         "address not allowed" => return ErrorClass::AddressNotAllowed,
+        crate::domain::check::MAIL_PORT_REFUSED => return ErrorClass::AddressNotAllowed,
         // Mirrors `tls_reason` in the same module.
         "certificate expired" => return ErrorClass::CertExpired,
         "certificate not yet valid" => return ErrorClass::CertNotYetValid,
@@ -696,6 +697,10 @@ mod tests {
         ("host unreachable", ErrorClass::HostUnreachable),
         ("network unreachable", ErrorClass::NetworkUnreachable),
         ("address not allowed", ErrorClass::AddressNotAllowed),
+        (
+            crate::domain::check::MAIL_PORT_REFUSED,
+            ErrorClass::AddressNotAllowed,
+        ),
         ("certificate expired", ErrorClass::CertExpired),
         ("certificate not yet valid", ErrorClass::CertNotYetValid),
         ("certificate revoked", ErrorClass::CertRevoked),

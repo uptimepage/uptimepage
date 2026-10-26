@@ -208,6 +208,55 @@ fn validate_check_accepts_head_without_body_match() {
         .expect("HEAD without body match must pass");
 }
 
+#[test]
+fn every_url_the_probe_fetches_refuses_a_mail_port() {
+    use crate::domain::{DnsRecordType, FlowStep};
+    use crate::security::ssrf::SsrfGuard;
+    let guard = SsrfGuard::strict();
+    let refused = |spec: CheckSpec, field: &str| {
+        let err = validate_check(&spec, &guard).expect_err("mail port must reject");
+        match err {
+            AppError::BadRequest {
+                code, field: got, ..
+            } => {
+                assert_eq!(code, codes::MAIL_PORT_NOT_ALLOWED);
+                assert_eq!(got.as_deref(), Some(field));
+            }
+            other => panic!("expected a bad request, got {other:?}"),
+        }
+    };
+    for port in crate::domain::check::MAIL_PORTS {
+        let mut http = head_spec(None);
+        if let CheckSpec::Http(h) = &mut http {
+            h.url = format!("https://mx.example.com:{port}/").parse().unwrap();
+        }
+        refused(http, "check.url");
+
+        let mut flow = flow_of(1);
+        if let CheckSpec::Flow(f) = &mut flow {
+            f.start_url = format!("http://mx.example.com:{port}/").parse().unwrap();
+        }
+        refused(flow, "check.start_url");
+
+        let mut goto = flow_of(1);
+        if let CheckSpec::Flow(f) = &mut goto {
+            f.steps.insert(
+                0,
+                FlowStep::Goto {
+                    url: format!("https://mx.example.com:{port}/").parse().unwrap(),
+                },
+            );
+        }
+        refused(goto, "check.steps");
+
+        let mut dns = dns_spec("example.com", DnsRecordType::A);
+        if let CheckSpec::Dns(d) = &mut dns {
+            d.resolver = Some(format!("1.1.1.1:{port}"));
+        }
+        refused(dns, "check.resolver");
+    }
+}
+
 // An import leaves a row blank when the recording had no usable selector,
 // so authors meet this. Without a row number they hunt through thirty steps.
 #[test]

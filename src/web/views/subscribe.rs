@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::auth::url::token_link;
 use crate::domain::email_norm;
+use crate::domain::notification_channel::require_https;
 use crate::domain::{NewSubscriber, PageRef, SubscriberChannel};
 use crate::email::{EmailAddress, EmailTemplate, SendClass, TransactionalEmail};
 use crate::http_outbound::post_bytes_with_headers;
@@ -420,12 +421,9 @@ async fn subscribe_webhook(
             "notice-invalid-url",
         )
     };
-    let Ok(parsed) = url::Url::parse(url) else {
+    let Ok(parsed) = require_https(url, "url") else {
         return Ok(bad_url());
     };
-    if parsed.scheme() != "https" {
-        return Ok(bad_url());
-    }
     // Per-subscriber signing secret: the receiver verifies our
     // X-Uptimepage-Signature with it. Shown once on success.
     let secret = crate::security::token_hash::generate_raw_token();

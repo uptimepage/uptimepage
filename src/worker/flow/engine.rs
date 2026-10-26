@@ -4,6 +4,7 @@
 //! down. A fresh process is a clean cookie jar, which is the isolation a shared
 //! browser context would otherwise provide.
 
+use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -16,6 +17,7 @@ use futures::StreamExt;
 use tokio::process::{Child, Command};
 use tokio::sync::Semaphore;
 
+use super::egress::{EgressPolicy, EgressProxy};
 use super::evidence::EvidenceCollector;
 use super::executor::{RunResult, run_steps};
 use crate::domain::FlowCheck;
@@ -29,6 +31,18 @@ pub const BACKSTOP_GRACE: Duration = Duration::from_secs(5);
 /// engine busy, so a test never burns its wait queued behind scheduled flows.
 pub const INTERACTIVE_QUEUE_LIMIT: Duration = Duration::from_secs(10);
 const BUSY: &str = "every browser slot stayed busy with other flows";
+/// Lightpanda's default `--http-max-concurrent`.
+const MAX_OPEN_REQUESTS: u32 = 40;
+const PROXY_ENV: [&str; 8] = [
+    "http_proxy",
+    "HTTP_PROXY",
+    "https_proxy",
+    "HTTPS_PROXY",
+    "all_proxy",
+    "ALL_PROXY",
+    "no_proxy",
+    "NO_PROXY",
+];
 
 /// A run the engine turned away for want of a free slot: the target was never
 /// contacted.
@@ -53,7 +67,7 @@ pub struct FlowEngineConfig {
     /// Block the browser's outbound requests to private/internal IPs after DNS
     /// resolution (runtime SSRF guard).
     pub block_private_networks: bool,
-    /// Extra CIDRs to block, comma-separated (Lightpanda `--block-cidrs` form);
+    /// Extra CIDRs to block, comma-separated, a `-` prefix exempting one;
     /// empty to add none.
     pub block_cidrs: String,
     /// V8 heap cap per browser (MB); 0 = engine default.
@@ -64,12 +78,28 @@ pub struct FlowEngineConfig {
     pub user_agent_suffix: String,
 }
 
+impl From<&crate::config::FlowConfig> for FlowEngineConfig {
+    fn from(cfg: &crate::config::FlowConfig) -> Self {
+        Self {
+            binary: cfg.lightpanda_path.clone().into(),
+            max_concurrency: cfg.max_concurrency,
+            mem_limit_bytes: cfg.mem_limit_mb.saturating_mul(1024 * 1024),
+            block_private_networks: cfg.block_private_networks,
+            block_cidrs: cfg.block_cidrs.clone(),
+            v8_max_heap_mb: cfg.v8_max_heap_mb,
+            max_response_bytes: cfg.max_response_mb.saturating_mul(1024 * 1024),
+            user_agent_suffix: cfg.user_agent_suffix.clone(),
+        }
+    }
+}
+
 /// Spawns and drives Lightpanda processes. Concurrency is bounded so a burst of
 /// flow checks can't fork an unbounded number of browser processes.
 pub struct CdpEngine {
     binary: PathBuf,
     sem: Arc<Semaphore>,
     mem_limit_bytes: u64,
+    egress: Arc<EgressPolicy>,
     block_private_networks: bool,
     block_cidrs: String,
     v8_max_heap_mb: u64,
@@ -78,17 +108,22 @@ pub struct CdpEngine {
 }
 
 impl CdpEngine {
-    pub fn new(cfg: FlowEngineConfig) -> Self {
-        Self {
+    /// Fails on a `block_cidrs` entry that is not a range, so a typo stops
+    /// boot instead of leaving the range open.
+    pub fn new(cfg: FlowEngineConfig) -> crate::error::Result<Self> {
+        let egress = EgressPolicy::new(cfg.block_private_networks, &cfg.block_cidrs)
+            .map_err(|e| crate::error::AppError::Other(anyhow::anyhow!(e)))?;
+        Ok(Self {
             binary: cfg.binary,
             sem: Arc::new(Semaphore::new(cfg.max_concurrency.max(1))),
             mem_limit_bytes: cfg.mem_limit_bytes,
+            egress: Arc::new(egress),
             block_private_networks: cfg.block_private_networks,
             block_cidrs: cfg.block_cidrs,
             v8_max_heap_mb: cfg.v8_max_heap_mb,
             max_response_bytes: cfg.max_response_bytes,
             user_agent_suffix: cfg.user_agent_suffix,
-        }
+        })
     }
 
     /// Elapsed excludes queue wait. Steps must already be variable-resolved.
@@ -155,13 +190,17 @@ impl CdpEngine {
     /// startup — a freed ephemeral port can be taken before Lightpanda binds it.
     /// Retries share the run's deadline, so a slow start is charged to the run.
     async fn run_once(&self, flow: &FlowCheck, deadline: Instant) -> Attempt {
+        let proxy = match EgressProxy::start(self.egress.clone()).await {
+            Ok(p) => p,
+            Err(e) => return engine_error(format!("egress proxy: {e}")),
+        };
         let mut last = String::new();
         for _ in 0..3 {
             let port = match free_port() {
                 Ok(p) => p,
                 Err(e) => return engine_error(format!("no free port: {e}")),
             };
-            let mut child = match self.spawn(port, flow.verify_tls) {
+            let mut child = match self.spawn(port, flow.verify_tls, &proxy.url()) {
                 Ok(c) => c,
                 Err(e) => return engine_error(format!("spawn lightpanda: {e}")),
             };
@@ -190,7 +229,15 @@ impl CdpEngine {
         engine_error(format!("engine did not start after retries: {last}"))
     }
 
-    fn spawn(&self, port: u16, verify_tls: bool) -> std::io::Result<Child> {
+    fn spawn(&self, port: u16, verify_tls: bool, proxy: &str) -> std::io::Result<Child> {
+        self.command(port, verify_tls, proxy)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+    }
+
+    fn command(&self, port: u16, verify_tls: bool, proxy: &str) -> Command {
         let mut cmd = Command::new(&self.binary);
         cmd.arg("serve")
             .arg("--host")
@@ -200,15 +247,34 @@ impl CdpEngine {
         if !verify_tls {
             cmd.arg("--insecure-disable-tls-host-verification");
         }
-        // Runtime egress sandbox: the engine re-checks every request's resolved
-        // IP, so a redirect or JS fetch to an internal address is blocked even
-        // though the save-time URL check only saw the public start URL.
+        // Runtime egress sandbox: every request, redirects and script fetches
+        // included, resolves and connects through the proxy's policy, which
+        // the save-time URL check cannot see past the start URL. The engine
+        // honours `NO_PROXY` even with a proxy set, so the inherited proxy
+        // variables go. Every origin now shares the proxy's host:port, so
+        // the per-host connection cap is lifted to the engine's overall one.
+        cmd.arg("--http-proxy")
+            .arg(proxy)
+            .arg("--http-max-host-open")
+            .arg(MAX_OPEN_REQUESTS.to_string());
+        for var in PROXY_ENV {
+            cmd.env_remove(var);
+        }
+        // The engine's own filter stays as a second layer for any request
+        // path that skips the proxy. The proxy itself is all it sees
+        // otherwise, so the proxy's address is exempted.
         if self.block_private_networks {
             cmd.arg("--block-private-networks");
         }
         let cidrs = self.block_cidrs.trim();
-        if !cidrs.is_empty() {
-            cmd.arg("--block-cidrs").arg(cidrs);
+        if self.block_private_networks || !cidrs.is_empty() {
+            let exempt = format!("-{}/32", Ipv4Addr::LOCALHOST);
+            let list = if cidrs.is_empty() {
+                exempt
+            } else {
+                format!("{cidrs},{exempt}")
+            };
+            cmd.arg("--block-cidrs").arg(list);
         }
         // Optional resource + attribution belts (default off).
         if self.v8_max_heap_mb > 0 {
@@ -223,10 +289,7 @@ impl CdpEngine {
         if !ua.is_empty() {
             cmd.arg("--user-agent-suffix").arg(ua);
         }
-        cmd.stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
+        cmd
     }
 }
 
@@ -366,6 +429,52 @@ async fn connect_with_retry(
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_browser_reaches_nothing_except_through_the_proxy() {
+        let engine = CdpEngine::new(FlowEngineConfig {
+            binary: "lightpanda".into(),
+            max_concurrency: 1,
+            mem_limit_bytes: 0,
+            block_private_networks: true,
+            block_cidrs: String::new(),
+            v8_max_heap_mb: 0,
+            max_response_bytes: 0,
+            user_agent_suffix: String::new(),
+        })
+        .unwrap();
+        let cmd = engine.command(9222, true, "http://127.0.0.1:41000");
+        let cmd = cmd.as_std();
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let proxy = args
+            .iter()
+            .position(|a| a == "--http-proxy")
+            .expect("proxied");
+        assert_eq!(args[proxy + 1], "http://127.0.0.1:41000");
+        assert!(
+            args.iter().any(|a| a == "--block-private-networks"),
+            "{args:?}"
+        );
+        let cidrs = args
+            .iter()
+            .position(|a| a == "--block-cidrs")
+            .expect("cidrs");
+        assert!(args[cidrs + 1].ends_with("-127.0.0.1/32"), "{args:?}");
+        let removed: Vec<_> = cmd
+            .get_envs()
+            .filter(|(_, v)| v.is_none())
+            .map(|(k, _)| k.to_string_lossy().into_owned())
+            .collect();
+        for var in PROXY_ENV {
+            assert!(
+                removed.iter().any(|k| k == var),
+                "{var} must not reach the browser"
+            );
+        }
+    }
+
     #[tokio::test(start_paused = true)]
     async fn an_interactive_run_reports_busy_when_no_slot_frees() {
         let engine = CdpEngine::new(FlowEngineConfig {
@@ -377,7 +486,8 @@ mod tests {
             v8_max_heap_mb: 0,
             max_response_bytes: 0,
             user_agent_suffix: String::new(),
-        });
+        })
+        .unwrap();
         let _scheduled = engine.sem.acquire().await.unwrap();
         let flow = FlowCheck {
             start_url: url::Url::parse("https://example.com/").unwrap(),
