@@ -8,21 +8,22 @@ use crate::domain::{
     OpsIncident, OrgId, Target, next_step, wait_after,
 };
 use crate::error::Result;
-use crate::storage::{Arming, ClosingNotice, DueIncident, FanOut, FanOutKind};
+use crate::storage::{Arming, ClosingNotice, DueIncident, FanOutKind, OwedPage};
 
 use super::rules::{
     DAMPED_TRANSPORT, Damper, FlapState, MAINTENANCE_TRANSPORT, RELEASED_TRANSPORT,
-    UNREACHABLE_TRANSPORT, channel_targets, flap_state, marker_row, open_episode_active,
+    UNREACHABLE_TRANSPORT, channel_targets, flap_state, open_episode_active, opening_reason,
     resolvable_channels,
 };
 use super::sweep::{Planned, empty_rung_event};
 use super::{SWEEP_CONCURRENCY, Worker};
 
 impl Worker {
-    /// Reconcile dropped open and closing signals, then walk due escalations
-    /// and retry failed pages. Runs on a detached task off the rx loop.
+    /// Page what a dropped signal left owed, open and closing, then walk due
+    /// escalations and retry failed pages. Runs on a detached task off the rx
+    /// loop.
     pub(super) async fn sweep(&self) {
-        self.reconcile().await;
+        self.page_owed().await;
         self.reconcile_closed().await;
         self.release_held().await;
         self.release_maintenance().await;
@@ -32,48 +33,53 @@ impl Worker {
         self.poll_acks().await;
     }
 
-    /// Catch incidents whose `Opened` signal was lost (e.g. the bounded signal
-    /// channel saturated during a correlated mass outage): a `triggered`
-    /// incident, older than the grace window, that was never paged and never
-    /// armed. Re-running `page(Opened)` is idempotent — `open_episode` no-ops if
-    /// the episode is already active. The DB is the source of truth, not the
-    /// in-memory channel. Bounded on both sides: a monitor with no channel
-    /// bound records nothing, so it would otherwise match this scan forever.
-    pub(super) async fn reconcile(&self) {
+    /// Page every episode still owing its first page a tick after it began,
+    /// whatever its age: the signal for it was dropped (a restart, or the
+    /// bounded signal channel full under a mass outage), or its monitor was
+    /// paused or held when it came and is watched again. The database says
+    /// what is owed, not the in-memory channel, and recording the page settles
+    /// it, so a late signal for the same episode finds nothing to do.
+    pub(super) async fn page_owed(&self) {
         let limit = self.cfg.max_pages_per_tick.max(1) as usize;
-        let now = Utc::now();
         let grace = chrono::Duration::seconds(self.cfg.tick_interval_secs.max(1) as i64);
-        let window = chrono::Duration::seconds(self.cfg.reconcile_window_secs.max(1) as i64);
-        let due = match self
-            .ops
-            .due_for_reconcile((now - window, now - grace), limit)
-            .await
-        {
+        let due = match self.ops.due_for_owed_page(Utc::now() - grace, limit).await {
             Ok(d) => d,
             Err(err) => {
-                tracing::warn!(error = %err, "escalation reconcile scan failed");
+                tracing::warn!(error = %err, "owed page scan failed");
                 return;
             }
         };
         if !due.is_empty() {
             tracing::warn!(
                 count = due.len(),
-                "reconciling incidents that were never paged"
+                "paging incidents whose first page never went out"
             );
         }
         let budget = self.sweep_budget();
         let start = Instant::now();
         let mut it = due.into_iter();
         let mut futs = FuturesUnordered::new();
-        for d in it.by_ref().take(SWEEP_CONCURRENCY) {
-            futs.push(self.reconcile_one_logged(d));
+        for o in it.by_ref().take(SWEEP_CONCURRENCY) {
+            futs.push(self.page_owed_one(o));
         }
         while futs.next().await.is_some() {
             if start.elapsed() < budget
-                && let Some(d) = it.next()
+                && let Some(o) = it.next()
             {
-                futs.push(self.reconcile_one_logged(d));
+                futs.push(self.page_owed_one(o));
             }
+        }
+    }
+
+    /// Each one tried moves behind the rest, whatever came of it, so one that
+    /// keeps failing never holds up the pages behind it.
+    async fn page_owed_one(&self, o: OwedPage) {
+        // Named opened or reopened by the episode it lands in.
+        if let Err(err) = self.page(o.org, o.id, NotificationReason::Opened).await {
+            tracing::warn!(incident_id = %o.id, error = %err, "owed page failed");
+        }
+        if let Err(err) = self.ops.requeue_owed_page(o.org, o.id, o.owed_at).await {
+            tracing::warn!(incident_id = %o.id, error = %err, "owed page not requeued");
         }
     }
 
@@ -218,32 +224,9 @@ impl Worker {
     /// hold" stops matching. A monitor paused or held since the scan pages
     /// nothing and records nothing: the hold waits for it to come back.
     async fn release_one(&self, d: &DueIncident) -> Result<()> {
-        let reason = self.held_reason(d.org, d.id).await;
-        self.page_with(d.org, d.id, reason, Damper::Skip).await
-    }
-
-    /// The reason the held row recorded, so a released hold pages as the
-    /// reopen it was rather than as a fresh outage.
-    async fn held_reason(&self, org: OrgId, incident_id: Uuid) -> NotificationReason {
-        self.ops
-            .notifications_for(org, incident_id)
+        // Named opened or reopened by the episode it lands in.
+        self.page_with(d.org, d.id, NotificationReason::Opened, Damper::Skip)
             .await
-            .ok()
-            .and_then(|rows| {
-                rows.iter()
-                    .filter(|n| {
-                        n.transport == DAMPED_TRANSPORT || n.transport == MAINTENANCE_TRANSPORT
-                    })
-                    .max_by_key(|n| n.created_at)
-                    .map(|n| n.reason)
-            })
-            .unwrap_or(NotificationReason::Opened)
-    }
-
-    async fn reconcile_one_logged(&self, d: DueIncident) {
-        if let Err(err) = self.page(d.org, d.id, NotificationReason::Opened).await {
-            tracing::warn!(incident_id = %d.id, error = %err, "incident reconcile page failed");
-        }
     }
 
     /// Handle a lifecycle signal. Opened/Reopened start the escalation episode
@@ -269,10 +252,10 @@ impl Worker {
         reason: NotificationReason,
         damper: Damper,
     ) -> Result<()> {
-        // Serialise all paging for this incident: the dedup in open_episode /
-        // notify_closed is read-then-act, so without this a concurrent
-        // signal task + sweep (reconcile) task could both open the same episode
-        // and double-page. Held for the whole resolve+page+record sequence.
+        // Serialise all paging for this incident in this process, so a signal
+        // and a sweep never interleave their reads and sends; which page
+        // records is the store's call, under the incident's lock. Held for the
+        // whole resolve+page+record sequence.
         let _guard = self.page_lock(incident_id).lock().await;
         // Sent only while the close still owes it: not twice, not after a
         // reopen withdrew it, and not while the sweep holds it.
@@ -306,12 +289,7 @@ impl Worker {
             // that ended would stay on the customer's timeline forever.
             _ if !target.enabled || target.plan_hold_at.is_some() => Ok(()),
             NotificationReason::Opened | NotificationReason::Reopened => {
-                // Retire the last episode's pages before the new one starts.
-                if reason == NotificationReason::Reopened {
-                    self.cancel_emergency(org, incident.id).await;
-                }
-                self.open_episode(org, &incident, &target, reason, damper)
-                    .await
+                self.open_episode(org, &incident, &target, damper).await
             }
             // Claimed above, before the incident is read.
             NotificationReason::Resolved | NotificationReason::MonitorDeleted => Ok(()),
@@ -332,7 +310,6 @@ impl Worker {
         org: OrgId,
         incident: &OpsIncident,
         target: &Target,
-        reason: NotificationReason,
         damper: Damper,
     ) -> Result<()> {
         // Read before anything goes out, so every row this page writes stays
@@ -340,15 +317,38 @@ impl Worker {
         let Some(episode) = self.ops.generation(org, incident.id).await? else {
             return Ok(());
         };
+        // Named by the episode read here, not by whoever asked for the page:
+        // a reopen can land between the ask and this read.
+        let reason = opening_reason(episode);
+        // Retire the last episode's pages before the new one starts, and only
+        // those: a second signal for this episode must not stop its own.
+        if reason == NotificationReason::Reopened {
+            self.cancel_emergency(org, incident.id, Some(episode)).await;
+        }
         let releasing = damper == Damper::Skip;
-        let already = self.ops.notifications_for(org, incident.id).await?;
-        if open_episode_active(&already, episode) {
-            // A release still ends its hold, or its scan would find it again
-            // every tick.
+        // The first page an episode owes records once, which the store decides;
+        // a release owes nothing and checks here.
+        let kind = |arm| {
             if releasing {
-                self.record_marker(org, incident.id, episode, RELEASED_TRANSPORT, reason, None)
-                    .await?;
+                FanOutKind::Release(arm)
+            } else {
+                FanOutKind::Opening(arm)
             }
+        };
+        if releasing
+            && open_episode_active(
+                &self.ops.notifications_for(org, incident.id).await?,
+                episode,
+            )
+        {
+            // It still ends its hold, or its scan would find it again every
+            // tick.
+            self.record_marker(
+                Planned::marker(org, incident.id, episode, RELEASED_TRANSPORT, reason),
+                None,
+                kind(None),
+            )
+            .await?;
             return Ok(());
         }
         // The scan read `triggered` a sweep ago and a flapping monitor
@@ -370,16 +370,13 @@ impl Worker {
             // a drop.
             let held = self
                 .record_marker(
-                    org,
-                    incident.id,
-                    episode,
-                    MAINTENANCE_TRANSPORT,
-                    reason,
+                    Planned::marker(org, incident.id, episode, MAINTENANCE_TRANSPORT, reason),
                     Some(
                         "alert held: the monitor is in a maintenance window. It pages \
                          when the window ends if this incident is still open"
                             .to_string(),
                     ),
+                    kind(None),
                 )
                 .await?;
             if held {
@@ -400,16 +397,13 @@ impl Worker {
                     // incident outlasts the hold.
                     let held = self
                         .record_marker(
-                            org,
-                            incident.id,
-                            episode,
-                            DAMPED_TRANSPORT,
-                            reason,
+                            Planned::marker(org, incident.id, episode, DAMPED_TRANSPORT, reason),
                             Some(format!(
                                 "alert held: the monitor is flapping. It pages anyway if this \
                                  incident is still open in {} minutes",
                                 self.cfg.flap_hold_secs.div_ceil(60)
                             )),
+                            kind(None),
                         )
                         .await?;
                     if held {
@@ -492,7 +486,7 @@ impl Worker {
             planned.push_marker(RELEASED_TRANSPORT, reason);
         }
         let Some(delivered) = self
-            .send_fan_out(planned, events, FanOutKind::Opening(arm), &notice)
+            .send_fan_out(planned, events, kind(arm), &notice)
             .await?
         else {
             return Ok(());
@@ -504,28 +498,16 @@ impl Worker {
     /// timeline line. False when the store refused it.
     async fn record_marker(
         &self,
-        org: OrgId,
-        incident_id: Uuid,
-        episode: i64,
-        transport: &str,
-        reason: NotificationReason,
+        marker: Planned,
         note: Option<String>,
+        kind: FanOutKind,
     ) -> Result<bool> {
-        let recorded = self
-            .ops
-            .record_fan_out(FanOut {
-                org,
-                incident_id,
-                episode,
-                rows: vec![marker_row(org, incident_id, transport, reason, episode)],
-                events: note
-                    .map(|n| (IncidentEventKind::Note, n))
-                    .into_iter()
-                    .collect(),
-                kind: FanOutKind::Opening(None),
-            })
-            .await?;
-        Ok(recorded.is_some())
+        let events = note
+            .map(|n| (IncidentEventKind::Note, n))
+            .into_iter()
+            .collect();
+        let (fan_out, _) = marker.into_fan_out(events, kind);
+        Ok(self.ops.record_fan_out(fan_out).await?.is_some())
     }
 
     /// A lookup failure degrades to [`FlapState::Steady`]: failing to read the
@@ -635,7 +617,7 @@ impl Worker {
         send: bool,
         claim: &mut chrono::DateTime<Utc>,
     ) -> Result<()> {
-        self.cancel_emergency(org, incident.id).await;
+        self.cancel_emergency(org, incident.id, None).await;
         if !send {
             return Ok(());
         }

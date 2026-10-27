@@ -169,7 +169,9 @@ impl IncidentStore for PgIncidentStore {
         // the plan still covers. A held page shows nobody anything, so an
         // incident opened behind one starts internal and is not fanned out.
         // A public one also gets its opening update here: subscriber fan-out
-        // sends per update, and `close` only ever writes the closing one.
+        // sends per update, and `close` only ever writes the closing one. The
+        // first page is owed from this statement, so a signal lost after the
+        // commit is still paged.
         let mut tx = self
             .pool
             .begin()
@@ -177,14 +179,15 @@ impl IncidentStore for PgIncidentStore {
             .context("incident insert_open: begin")?;
         let row: Option<(Uuid,)> = sqlx::query_as(
             r#"WITH opened AS (
-                   INSERT INTO incidents (org_id, target_id, started_at, status_at_start, check_count, error_sample, region, regions_down, regions_up, origin, visibility)
+                   INSERT INTO incidents (org_id, target_id, started_at, status_at_start, check_count, error_sample, region, regions_down, regions_up, origin, visibility, page_owed_at)
                    SELECT $6, $1, $2, $3, $4, $5, $7, $8, $9, 'monitor',
                           CASE WHEN EXISTS (
                               SELECT 1 FROM status_page_components spc
                               JOIN status_pages sp ON sp.id = spc.status_page_id
                               WHERE spc.target_id = $1 AND spc.org_id = $6 AND sp.enabled = true
                                 AND sp.plan_hold_at IS NULL
-                          ) THEN 'public' ELSE 'internal' END
+                          ) THEN 'public' ELSE 'internal' END,
+                          now()
                    WHERE NOT EXISTS (
                        SELECT 1 FROM incidents c
                        WHERE c.org_id = $6 AND c.target_id = $1 AND c.origin = 'monitor'

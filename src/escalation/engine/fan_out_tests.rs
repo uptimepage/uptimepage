@@ -228,6 +228,7 @@ async fn a_reminder_records_every_row_before_it_sends_any() {
         .await
         .unwrap();
     }
+    ops.settle_owed_page(id);
     let eng = engine(
         ops.clone(),
         Arc::new(InMemoryEscalationPolicyStore::new()),

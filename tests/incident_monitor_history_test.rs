@@ -542,6 +542,11 @@ async fn a_declared_incident_stays_open_when_its_monitor_is_deleted() {
     };
     let monitor = f.monitor("payments").await;
     let declared = f.declared_incident(monitor).await;
+    sqlx::query("UPDATE incidents SET page_owed_at = now() WHERE id = $1")
+        .bind(declared)
+        .execute(&f.pool)
+        .await
+        .unwrap();
     let queued = f.notification(declared, "queued").await;
     f.targets
         .delete(f.org, monitor, Some(f.user))
@@ -558,6 +563,13 @@ async fn a_declared_incident_stays_open_when_its_monitor_is_deleted() {
     assert!(!inc.closed_by_monitor_delete);
     assert!(!inc.paging_enabled, "nothing left to page through");
     assert!(inc.next_escalation_at.is_none());
+    let owed: bool =
+        sqlx::query_scalar("SELECT page_owed_at IS NOT NULL FROM incidents WHERE id = $1")
+            .bind(declared)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert!(!owed, "and nothing left owed");
     assert_eq!(inc.target_name.as_deref(), Some("payments"));
     assert_eq!(f.monitor_deleted_events(declared).await, 1);
     assert_eq!(

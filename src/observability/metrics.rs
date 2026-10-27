@@ -262,7 +262,7 @@ fn register_descriptions() {
     );
     describe_counter!(
         "uptimepage_alerts_dropped_total",
-        "Incident paging signals dropped before reaching the escalation engine, labelled by reason. The incident row stays in Postgres for the reconcile sweep to retry"
+        "Incident paging signals dropped before reaching the escalation engine, labelled by reason. The incident row records the page it owes, and the sweep sends it a tick later"
     );
     describe_gauge!(
         "uptimepage_monitors_unmonitored",

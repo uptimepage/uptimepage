@@ -468,7 +468,8 @@ async fn close_incidents_of_deleted_targets(
                -- A declared incident stays open but can no longer page: its
                -- pages went out through the monitor.
                UPDATE incidents
-               SET paging_enabled = false, next_escalation_at = NULL, updated_at = now()
+               SET paging_enabled = false, next_escalation_at = NULL, page_owed_at = NULL,
+                   updated_at = now()
                WHERE org_id = $2 AND ended_at IS NULL
                  AND id IN (SELECT id FROM owned WHERE origin = 'manual')
            ), logged AS (

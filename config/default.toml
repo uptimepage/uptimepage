@@ -504,11 +504,6 @@ max_attempts = 5
 # and back on. Set 0 to never flag.
 channel_failure_limit = 3
 
-# How far back to look for an incident whose open signal was dropped. A lost
-# signal shows up within a tick or two, so anything older is not a dropped
-# signal — it is an incident nobody can be paged about.
-reconcile_window_secs = 3600
-
 # How long after an incident ends its closing notice still goes out when the
 # signal for it was lost (a restart between the close and the page, or a full
 # signal queue). The sweep waits one tick for the signal first. Older notices

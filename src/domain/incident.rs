@@ -727,8 +727,8 @@ pub struct OpsIncident {
     pub origin: IncidentOrigin,
     pub visibility: IncidentVisibility,
     /// Whether this incident may page at all. Honoured by every open-side
-    /// path, not just the first signal: the reconcile sweep pages anything
-    /// triggered that reached no channel.
+    /// path, not just the first signal: the sweep that sends a first page a
+    /// lost signal left owed included.
     #[serde(default = "default_true")]
     pub paging_enabled: bool,
     #[serde(default = "default_true")]

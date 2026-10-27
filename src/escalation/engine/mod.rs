@@ -16,9 +16,9 @@ const SIGNAL_CONCURRENCY: usize = 16;
 /// cannot serialise the whole tick.
 const SWEEP_CONCURRENCY: usize = 8;
 /// Fixed pool of per-incident locks (sharded by incident id) that serialise all
-/// paging for one incident across the concurrent signal + sweep tasks, so a
-/// reconcile and an inbound signal cannot both open the same episode and
-/// double-page. Two distinct incidents may share a shard (harmless contention).
+/// paging for one incident across the concurrent signal + sweep tasks, so the
+/// owed-page sweep and an inbound signal never run one episode's opening at
+/// once. Two distinct incidents may share a shard (harmless contention).
 const PAGE_LOCK_SHARDS: usize = 256;
 /// On-call roster cache lifetime. Short enough that an edit or a handoff is
 /// reflected within seconds; long enough to collapse a sweep's repeated
@@ -46,6 +46,8 @@ mod deliver;
 mod episode;
 #[cfg(test)]
 mod fan_out_tests;
+#[cfg(test)]
+mod owed_page_tests;
 mod receipts;
 pub mod rules;
 mod sweep;
@@ -227,7 +229,7 @@ impl EscalationEngine {
                             // Reset the flag on completion AND on unwind, so a
                             // panic in a sweep never wedges the engine into
                             // "always sweeping" (which would silently kill all
-                            // future escalation/retry/reconcile).
+                            // future escalation, retries and owed pages).
                             struct ResetOnDrop(Arc<Worker>);
                             impl Drop for ResetOnDrop {
                                 fn drop(&mut self) {
@@ -288,8 +290,8 @@ impl EscalationEngine {
             .await
     }
     #[cfg(test)]
-    async fn reconcile(&self) {
-        self.w.reconcile().await
+    async fn page_owed(&self) {
+        self.w.page_owed().await
     }
     #[cfg(test)]
     async fn reconcile_closed(&self) {

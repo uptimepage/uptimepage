@@ -260,10 +260,16 @@ pub struct FanOut {
 
 #[derive(Debug, Clone, Copy)]
 pub enum FanOutKind {
-    /// An episode's first page, or a held one let go, arming the ladder when
-    /// a policy applies. Its rows record while the incident is open, taken or
-    /// not; the ladder arms only while triggered.
+    /// The first page an episode owes, arming the ladder when a policy
+    /// applies, or what stands in for it (a hold, nobody to page). Records
+    /// once: only while the page is still owed and nothing of the episode is
+    /// recorded yet, and it settles what is owed. Its rows record while the
+    /// incident is open, taken or not; the ladder arms only while triggered.
     Opening(Option<Arming>),
+    /// A held first page let go, as [`Self::Opening`] arms and records but
+    /// owing nothing: the hold settled that. Refused while a page is owed: a
+    /// hold that meets one is a past episode's.
+    Release(Option<Arming>),
     /// The rung claimed at `claim`, recorded only while that claim holds and
     /// the monitor is not back up.
     Rung {
@@ -272,9 +278,19 @@ pub enum FanOutKind {
         round: i32,
         next_at: Option<DateTime<Utc>>,
     },
-    /// An outage reminder, recorded only while the incident is triggered and
-    /// its monitor is not back up.
+    /// An outage reminder, recorded only while the incident is triggered, its
+    /// monitor is not back up, and its episode's first page is recorded.
     Reminder,
+}
+
+/// An open incident whose episode still owes its first page.
+#[derive(Debug, Clone)]
+pub struct OwedPage {
+    pub id: Uuid,
+    pub org: OrgId,
+    /// Since when, as read; what [`IncidentOpsStore::requeue_owed_page`]
+    /// matches on.
+    pub owed_at: DateTime<Utc>,
 }
 
 /// The first rung of a policy, as an opening arms it.
@@ -591,16 +607,16 @@ pub trait IncidentOpsStore: Send + Sync {
         limit: usize,
         lease_secs: i64,
     ) -> Result<Vec<ClaimedEscalation>>;
-    /// Cross-org `triggered` incidents that were opened but never paged and
-    /// never armed — no paging-log row, no bound policy, no timer — started
-    /// inside `window`, given as `(floor, cutoff)`. These are incidents whose open signal was lost
-    /// (e.g. the signal channel saturated); the engine reconciles them by
-    /// re-running the open-episode paging. Oldest first.
-    async fn due_for_reconcile(
-        &self,
-        window: (DateTime<Utc>, DateTime<Utc>),
-        limit: usize,
-    ) -> Result<Vec<DueIncident>>;
+    /// Cross-org open incidents whose episode has owed its first page since
+    /// `cutoff` or earlier, whatever their age, on a monitor that is watched
+    /// (not paused, not held by its plan) and with paging on. Longest owed
+    /// first.
+    async fn due_for_owed_page(&self, cutoff: DateTime<Utc>, limit: usize)
+    -> Result<Vec<OwedPage>>;
+    /// Move a page still owed since `seen` to the back of the queue, so one
+    /// that keeps failing never holds up the ones behind it. A page recorded
+    /// since, or owed again by a reopen, is left alone.
+    async fn requeue_owed_page(&self, org: OrgId, id: Uuid, seen: DateTime<Utc>) -> Result<()>;
     /// Every close records, in the statement that ends the incident, that the
     /// responders it paged are owed the notice that it ended; a reopen
     /// withdraws it. This takes that notice for `lease_secs`. `None` when

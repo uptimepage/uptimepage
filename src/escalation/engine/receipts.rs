@@ -39,13 +39,22 @@ impl Worker {
         })
     }
 
-    /// Stop every emergency page still repeating for an incident. A receipt is
-    /// retired only once its cancel lands, or a failure would leave the page
-    /// sounding with nothing left to retry it; Pushover's `expire` bounds one
-    /// that never lands.
-    pub(super) async fn cancel_emergency(&self, org: OrgId, incident_id: Uuid) {
+    /// Stop every emergency page still repeating for an incident, or with
+    /// `before` only those of episodes before it. A receipt is retired only
+    /// once its cancel lands, or a failure would leave the page sounding with
+    /// nothing left to retry it; Pushover's `expire` bounds one that never
+    /// lands.
+    pub(super) async fn cancel_emergency(
+        &self,
+        org: OrgId,
+        incident_id: Uuid,
+        before: Option<i64>,
+    ) {
         let acks = match self.ops.emergency_acks_for_incident(org, incident_id).await {
-            Ok(a) => a,
+            Ok(a) => a
+                .into_iter()
+                .filter(|ack| before.is_none_or(|episode| ack.generation < episode))
+                .collect::<Vec<_>>(),
             Err(err) => {
                 tracing::warn!(error = %err, "emergency ack lookup failed");
                 return;
@@ -265,7 +274,7 @@ impl Worker {
                 }) => {
                     // Marked first, so the sweep below skips this row.
                     self.mark_acked(&ack).await;
-                    self.cancel_emergency(ack.org, ack.incident_id).await;
+                    self.cancel_emergency(ack.org, ack.incident_id, None).await;
                     if offers_pushover_link(listed, linked)
                         && let (Some(key), Some(sender)) = (state.acknowledged_by, sender)
                     {

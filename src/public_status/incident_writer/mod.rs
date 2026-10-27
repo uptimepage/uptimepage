@@ -217,7 +217,8 @@ impl IncidentWriter {
         if let Some(tx) = &self.signal_tx {
             // Non-blocking: incident detection must never stall behind paging
             // throughput. A full channel under a mass outage drops the nudge
-            // (logged); the row is still in the DB for a later reconcile.
+            // (logged); the row records the page it owes, which the
+            // engine's sweep sends a tick later.
             if let Err(err) = tx.try_send(IncidentSignal {
                 org,
                 incident_id,

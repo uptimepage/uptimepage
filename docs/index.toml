@@ -249,7 +249,7 @@ blurb = "Every configuration key, its default, and the environment variable that
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-07-22
-lastmod = 2026-10-26
+lastmod = 2026-10-27
 
 [[page]]
 slug = "bot"
@@ -299,7 +299,7 @@ blurb = "The Prometheus series the service exposes and how to ship traces off th
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-07-22
-lastmod = 2026-10-24
+lastmod = 2026-10-27
 
 [[page]]
 slug = "troubleshooting"

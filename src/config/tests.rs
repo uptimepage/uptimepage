@@ -103,16 +103,6 @@ fn every_purge_window_the_nightly_job_binds_rejects_zero() {
 }
 
 #[test]
-fn reconcile_window_must_outlast_a_tick_or_the_scan_never_matches() {
-    let mut cfg = AppConfig::load().expect("load");
-    cfg.escalation.tick_interval_secs = 15;
-    cfg.escalation.reconcile_window_secs = 15;
-    assert!(cfg.validate_quotas_and_limits().is_err());
-    cfg.escalation.reconcile_window_secs = 16;
-    assert!(cfg.validate_quotas_and_limits().is_ok());
-}
-
-#[test]
 fn closing_window_must_outlast_a_tick_or_every_lost_notice_expires() {
     let mut cfg = AppConfig::load().expect("load");
     cfg.escalation.tick_interval_secs = 15;

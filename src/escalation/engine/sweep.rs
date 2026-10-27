@@ -152,6 +152,19 @@ impl Planned {
         }
     }
 
+    /// The one bookkeeping row that stands in for a page.
+    pub(super) fn marker(
+        org: OrgId,
+        incident_id: Uuid,
+        episode: i64,
+        transport: &str,
+        reason: NotificationReason,
+    ) -> Self {
+        let mut planned = Self::new(org, incident_id, episode);
+        planned.push_marker(transport, reason);
+        planned
+    }
+
     pub(super) fn push_marker(&mut self, transport: &str, reason: NotificationReason) {
         let row = marker_row(self.org, self.incident_id, transport, reason, self.episode);
         self.items.push((row, None));
@@ -163,6 +176,24 @@ impl Planned {
 
     pub(super) fn into_items(self) -> Vec<(NewIncidentNotification, Option<NotificationChannel>)> {
         self.items
+    }
+
+    /// The fan-out that records these rows, and the channel each row goes to.
+    pub(super) fn into_fan_out(
+        self,
+        events: Vec<(IncidentEventKind, String)>,
+        kind: FanOutKind,
+    ) -> (FanOut, Vec<Option<NotificationChannel>>) {
+        let (rows, channels) = self.items.into_iter().unzip();
+        let fan_out = FanOut {
+            org: self.org,
+            incident_id: self.incident_id,
+            episode: self.episode,
+            rows,
+            events,
+            kind,
+        };
+        (fan_out, channels)
     }
 }
 
@@ -476,21 +507,8 @@ impl Worker {
         kind: FanOutKind,
         notice: &IncidentNotice,
     ) -> Result<Option<u32>> {
-        let Planned {
-            org,
-            incident_id,
-            episode,
-            items,
-        } = planned;
-        let (rows, channels): (Vec<_>, Vec<_>) = items.into_iter().unzip();
-        let fan_out = FanOut {
-            org,
-            incident_id,
-            episode,
-            rows,
-            events,
-            kind,
-        };
+        let org = planned.org;
+        let (fan_out, channels) = planned.into_fan_out(events, kind);
         let Some(ids) = self.ops.record_fan_out(fan_out).await? else {
             return Ok(None);
         };

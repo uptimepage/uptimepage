@@ -971,6 +971,7 @@ async fn a_rung_records_only_under_the_claim_it_was_taken_with() {
 async fn a_reminder_records_only_while_triggered_and_still_down() {
     let store = InMemoryIncidentOpsStore::new();
     let id = seed_triggered(&store);
+    store.settle_owed_page(id);
     store.edit(id, |i| i.recovering_since = Some(Utc::now()));
     let recovering = store
         .record_fan_out(fan_out(id, 0, FanOutKind::Reminder))
@@ -990,6 +991,19 @@ async fn a_reminder_records_only_while_triggered_and_still_down() {
     assert_eq!(store.renotify_count(id), 0);
 
     let down = seed_triggered(&store);
+    let first_page_owed = store
+        .record_fan_out(fan_out(down, 0, FanOutKind::Reminder))
+        .await
+        .unwrap();
+    assert_eq!(
+        first_page_owed, None,
+        "a reminder comes after the first page"
+    );
+    store
+        .record_fan_out(fan_out(down, 0, FanOutKind::Opening(None)))
+        .await
+        .unwrap()
+        .expect("the first page");
     assert!(
         store
             .record_fan_out(fan_out(down, 0, FanOutKind::Reminder))
@@ -1036,5 +1050,71 @@ async fn a_late_outcome_never_overwrites_a_later_attempts_and_a_delivery_is_fina
     assert_eq!(
         mark(NotificationStatus::Failed, 3).await,
         (NotificationStatus::Sent, 2)
+    );
+}
+
+#[tokio::test]
+async fn only_an_episode_that_may_page_owes_its_first_page() {
+    let store = InMemoryIncidentOpsStore::new();
+    let declare = async |notify, target_id| {
+        store
+            .declare(
+                org(),
+                crate::domain::NewManualIncident {
+                    notify,
+                    target_id,
+                    ..Default::default()
+                },
+                Actor::User(user()),
+            )
+            .await
+            .unwrap()
+            .id
+    };
+    let loud = declare(true, Some(Uuid::now_v7())).await;
+    let quiet = declare(false, Some(Uuid::now_v7())).await;
+    let nowhere = declare(true, None).await;
+    assert!(store.owes_page(loud));
+    assert!(!store.owes_page(quiet), "asked for no alerts");
+    assert!(!store.owes_page(nowhere), "no monitor to page through");
+}
+
+#[tokio::test]
+async fn a_page_decided_before_a_reopen_leaves_the_reopen_owed() {
+    let store = InMemoryIncidentOpsStore::new();
+    let id = seed_triggered(&store);
+    store.settle_owed_page(id);
+    store.resolve(org(), id, Actor::System, None).await.unwrap();
+    store
+        .reopen(org(), id, Actor::User(user()), None)
+        .await
+        .unwrap();
+    let stale = store
+        .record_fan_out(fan_out(id, 0, FanOutKind::Opening(None)))
+        .await
+        .unwrap();
+    assert_eq!(stale, None);
+    assert!(store.owes_page(id), "the reopen's page is still owed");
+}
+
+#[tokio::test]
+async fn a_release_is_refused_while_a_page_is_owed() {
+    let store = InMemoryIncidentOpsStore::new();
+    let id = seed_triggered(&store);
+    let early = store
+        .record_fan_out(fan_out(id, 0, FanOutKind::Release(None)))
+        .await
+        .unwrap();
+    assert_eq!(
+        early, None,
+        "a hold met by an owed page is a past episode's"
+    );
+    store.settle_owed_page(id);
+    assert!(
+        store
+            .record_fan_out(fan_out(id, 0, FanOutKind::Release(None)))
+            .await
+            .unwrap()
+            .is_some()
     );
 }

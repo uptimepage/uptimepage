@@ -21,8 +21,8 @@ use crate::error::Result;
 use super::{
     Acknowledged, Actor, ClaimedEscalation, ClosingNotice, DueClosingNotices, DueIncident,
     EmergencyAck, FanOut, FanOutKind, INCIDENT_DETAIL_ROW_CAP, IncidentOpsFilter, IncidentOpsStore,
-    IncidentSort, IncidentStateCounts, LifecycleOutcome, PendingNotification, QUEUED_TAKEOVER_SECS,
-    pages_with_monitor, status_page_required,
+    IncidentSort, IncidentStateCounts, LifecycleOutcome, OwedPage, PendingNotification,
+    QUEUED_TAKEOVER_SECS, pages_with_monitor, status_page_required,
 };
 
 #[derive(Default)]
@@ -43,6 +43,13 @@ struct MemState {
     status_pages: std::collections::HashMap<Uuid, Vec<Uuid>>,
     /// Owed closing notices by incident, as `incidents.closing_notice_at`.
     closing_notices: HashMap<Uuid, DateTime<Utc>>,
+    /// Owed first pages by incident, as `incidents.page_owed_at`.
+    owed_pages: HashMap<Uuid, DateTime<Utc>>,
+}
+
+/// Whether a new episode of `incident` owes its first page: it may page.
+fn may_page(incident: &OpsIncident) -> bool {
+    incident.paging_enabled && incident.target_id.is_some()
 }
 
 /// Episode number off the timeline, matching the Postgres store.
@@ -131,8 +138,43 @@ impl InMemoryIncidentOpsStore {
         }
     }
 
+    /// An open incident that may page is seeded owing its first page, as one
+    /// the writer has just opened.
     pub fn seed(&self, incident: OpsIncident) {
-        self.inner.lock().incidents.push(incident);
+        let mut g = self.inner.lock();
+        if incident.ended_at.is_none() && may_page(&incident) {
+            g.owed_pages.insert(incident.id, incident.started_at);
+        }
+        g.incidents.push(incident);
+    }
+
+    /// Test helper: whether the incident's episode still owes its first page.
+    #[cfg(test)]
+    pub fn owes_page(&self, id: Uuid) -> bool {
+        self.inner.lock().owed_pages.contains_key(&id)
+    }
+
+    /// Test helper: backdate every owed first page, simulating time passing.
+    #[cfg(test)]
+    pub fn age_owed_pages(&self, by: chrono::Duration) {
+        for at in self.inner.lock().owed_pages.values_mut() {
+            *at -= by;
+        }
+    }
+
+    /// Test helper: backdate one owed first page.
+    #[cfg(test)]
+    pub fn age_owed_page(&self, id: Uuid, by: chrono::Duration) {
+        if let Some(at) = self.inner.lock().owed_pages.get_mut(&id) {
+            *at -= by;
+        }
+    }
+
+    /// Test helper: settle the owed first page, as one an earlier build
+    /// recorded without doing so would leave it.
+    #[cfg(test)]
+    pub fn settle_owed_page(&self, id: Uuid) {
+        self.inner.lock().owed_pages.remove(&id);
     }
 
     /// Test helper: edit a seeded incident in place, for fields no lifecycle
@@ -565,6 +607,9 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             updated_at: now,
         };
         let mut g = self.inner.lock();
+        if may_page(&inc) {
+            g.owed_pages.insert(inc.id, now);
+        }
         g.incidents.push(inc.clone());
         g.status_pages.insert(inc.id, new.status_page_ids);
         Self::push_event(&mut g, inc.id, IncidentEventKind::Triggered, actor, None);
@@ -664,7 +709,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         if ended_with_monitor {
             return Err(super::monitor_deleted());
         }
-        Ok(self
+        let outcome = self
             .apply(
                 id,
                 IncidentTransition::Reopen,
@@ -682,7 +727,15 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
                     i.escalation_round = 0;
                 },
             )
-            .outcome)
+            .outcome;
+        if let LifecycleOutcome::Updated(inc) = &outcome {
+            let mut g = self.inner.lock();
+            match may_page(inc) {
+                true => g.owed_pages.insert(inc.id, Utc::now()),
+                false => g.owed_pages.remove(&inc.id),
+            };
+        }
+        Ok(outcome)
     }
 
     async fn assign(
@@ -884,17 +937,39 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         if reopen_count(&g, f.incident_id) != f.episode {
             return Ok(None);
         }
+        let owed = g.owed_pages.contains_key(&f.incident_id);
+        let arm = match f.kind {
+            FanOutKind::Opening(arm) => {
+                if g.owed_pages.remove(&f.incident_id).is_none() {
+                    return Ok(None);
+                }
+                let recorded = g
+                    .notifications
+                    .iter()
+                    .any(|(_, n)| n.incident_id == f.incident_id && n.episode == f.episode);
+                if recorded {
+                    return Ok(None);
+                }
+                arm
+            }
+            FanOutKind::Release(arm) => {
+                if owed {
+                    return Ok(None);
+                }
+                arm
+            }
+            _ => None,
+        };
         let inc = &mut g.incidents[idx];
         let triggered = inc.state == IncidentState::Triggered;
+        if let Some(arm) = arm.filter(|_| triggered) {
+            inc.escalation_policy_id = Some(arm.policy_id);
+            inc.escalation_level = arm.level;
+            inc.escalation_round = 0;
+            inc.next_escalation_at = arm.next_at;
+        }
         match f.kind {
-            FanOutKind::Opening(arm) => {
-                if let Some(arm) = arm.filter(|_| triggered) {
-                    inc.escalation_policy_id = Some(arm.policy_id);
-                    inc.escalation_level = arm.level;
-                    inc.escalation_round = 0;
-                    inc.next_escalation_at = arm.next_at;
-                }
-            }
+            FanOutKind::Opening(_) | FanOutKind::Release(_) => {}
             FanOutKind::Rung {
                 claim,
                 level,
@@ -912,7 +987,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
                 inc.next_escalation_at = next_at;
             }
             FanOutKind::Reminder => {
-                if !triggered || inc.recovering_since.is_some() {
+                if !triggered || inc.recovering_since.is_some() || owed {
                     return Ok(None);
                 }
                 *g.renotify_counts.entry(f.incident_id).or_default() += 1;
@@ -1125,35 +1200,43 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         Ok(out)
     }
 
-    async fn due_for_reconcile(
+    /// Whether the monitor is watched is a join this double has no tables for;
+    /// the engine's own guard re-checks it before paging.
+    async fn due_for_owed_page(
         &self,
-        window: (DateTime<Utc>, DateTime<Utc>),
+        cutoff: DateTime<Utc>,
         limit: usize,
-    ) -> Result<Vec<DueIncident>> {
-        let (since, cutoff) = window;
+    ) -> Result<Vec<OwedPage>> {
         let g = self.inner.lock();
-        Ok(g.incidents
+        let mut due: Vec<OwedPage> = g
+            .owed_pages
             .iter()
-            .filter(|i| {
-                i.state == IncidentState::Triggered
-                    && !i.monitor_deleted()
-                    && i.recovering_since.is_none()
-                    && i.started_at <= cutoff
-                    && i.started_at >= since
-                    && i.escalation_policy_id.is_none()
-                    && i.next_escalation_at.is_none()
-                    && !g.notifications.iter().any(|(_, n)| n.incident_id == i.id)
+            .filter(|(_, at)| **at <= cutoff)
+            .filter_map(|(id, at)| {
+                let i = g.incidents.iter().find(|i| i.id == *id)?;
+                (i.ended_at.is_none() && may_page(i)).then(|| OwedPage {
+                    id: *id,
+                    org: OrgId(Uuid::nil()),
+                    owed_at: *at,
+                })
             })
-            .take(limit)
-            .map(|i| DueIncident {
-                id: i.id,
-                org: OrgId(Uuid::nil()),
-                target_id: i.target_id,
-                escalation_policy_id: i.escalation_policy_id,
-                escalation_level: i.escalation_level,
-                escalation_round: i.escalation_round,
-            })
-            .collect())
+            .collect();
+        due.sort_by_key(|o| o.owed_at);
+        due.truncate(limit);
+        Ok(due)
+    }
+
+    async fn requeue_owed_page(&self, _org: OrgId, id: Uuid, seen: DateTime<Utc>) -> Result<()> {
+        if let Some(at) = self
+            .inner
+            .lock()
+            .owed_pages
+            .get_mut(&id)
+            .filter(|at| **at == seen)
+        {
+            *at = Utc::now();
+        }
+        Ok(())
     }
 
     async fn claim_closing_notice(

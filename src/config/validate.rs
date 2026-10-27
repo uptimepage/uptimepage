@@ -51,14 +51,6 @@ impl AppConfig {
                 "checker.rdap_max_inflight must be >= 1"
             )));
         }
-        if self.escalation.reconcile_window_secs <= self.escalation.tick_interval_secs {
-            return Err(crate::error::AppError::Other(anyhow::anyhow!(
-                "escalation.reconcile_window_secs ({}) must exceed tick_interval_secs ({}) \
-                 or the reconcile scan never matches",
-                self.escalation.reconcile_window_secs,
-                self.escalation.tick_interval_secs
-            )));
-        }
         if self.escalation.closing_window_secs <= self.escalation.tick_interval_secs {
             return Err(crate::error::AppError::Other(anyhow::anyhow!(
                 "escalation.closing_window_secs ({}) must exceed tick_interval_secs ({}) \

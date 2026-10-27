@@ -1242,7 +1242,7 @@ async fn schedule_target_pages_the_on_call_responders_contact_channel() {
 }
 
 #[tokio::test]
-async fn reconcile_pages_an_incident_whose_open_signal_was_dropped() {
+async fn the_owed_page_sweep_pages_an_incident_whose_open_signal_was_dropped() {
     let channels = Arc::new(InMemoryNotificationChannelStore::new());
     let cid = failing_channel(&channels).await;
     let target = target_with_channel(cid);
@@ -1290,19 +1290,19 @@ async fn reconcile_pages_an_incident_whose_open_signal_was_dropped() {
 
     let eng = engine(ops.clone(), policies, targets, channels);
     assert!(ops.notifications_for(org(), id).await.unwrap().is_empty());
-    eng.reconcile().await;
+    eng.page_owed().await;
     assert_eq!(
         ops.notifications_for(org(), id).await.unwrap().len(),
         1,
-        "reconcile re-pages the never-paged incident"
+        "the sweep pages the never-paged incident"
     );
-    // Now that it has been paged, reconcile no longer picks it up.
-    eng.reconcile().await;
+    assert!(!ops.owes_page(id), "and recording the page settled it");
+    eng.page_owed().await;
     assert_eq!(ops.notifications_for(org(), id).await.unwrap().len(), 1);
 }
 
 #[tokio::test]
-async fn reconcile_leaves_an_incident_older_than_its_window_alone() {
+async fn an_incident_whose_first_page_was_lost_weeks_ago_is_still_paged() {
     let channels = Arc::new(InMemoryNotificationChannelStore::new());
     let target = target_with_channel(Uuid::now_v7());
     let tid = target.id;
@@ -1347,10 +1347,11 @@ async fn reconcile_leaves_an_incident_older_than_its_window_alone() {
     let policies = Arc::new(InMemoryEscalationPolicyStore::new());
 
     let eng = engine(ops.clone(), policies, targets, channels);
-    eng.reconcile().await;
-    assert!(
-        ops.notifications_for(org(), id).await.unwrap().is_empty(),
-        "an incident past the reconcile window is not re-attempted"
+    eng.page_owed().await;
+    assert_eq!(
+        ops.notifications_for(org(), id).await.unwrap().len(),
+        1,
+        "what is owed has no age limit"
     );
 }
 

@@ -215,7 +215,7 @@ pub trait NotificationChannelStore: Send + Sync {
 ///
 /// Who, not what to do when the lookup fails — that is the caller's, because
 /// their second chances differ. A page that errors here writes no notification
-/// row at all, so the reconcile scan picks the episode up and retries it whole;
+/// row at all, so the episode still owes its first page and the sweep retries it whole;
 /// a silence notice has no such scan behind it and falls back to the bound
 /// channels rather than saying nothing.
 pub async fn paging_channel_ids(

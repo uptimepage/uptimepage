@@ -76,8 +76,8 @@ pub use heartbeats::{
 pub use incident_ops::{
     Acknowledged, Actor, AppPress, Arming, ClaimedEscalation, ClosingNotice, DueClosingNotices,
     DueIncident, EmergencyAck, FanOut, FanOutKind, InMemoryIncidentOpsStore, IncidentOpsFilter,
-    IncidentOpsStore, IncidentSort, LifecycleOutcome, PendingNotification, PgIncidentOpsStore,
-    QUEUED_TAKEOVER_SECS,
+    IncidentOpsStore, IncidentSort, LifecycleOutcome, OwedPage, PendingNotification,
+    PgIncidentOpsStore, QUEUED_TAKEOVER_SECS,
 };
 pub use incidents::{
     InMemoryIncidentNarrationStore, IncidentBrief, IncidentBriefFilter, IncidentNarrationStore,

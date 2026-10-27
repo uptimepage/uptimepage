@@ -109,8 +109,9 @@ impl Default for AgentConfig {
 }
 
 /// `[escalation]`. Tuning for the incident paging engine: retries, backoff,
-/// the reconcile sweep, and flap damping. Whether an org may build escalation
-/// policies and on-call schedules is a plan question, not a deployment one.
+/// the sweeps that send what a dropped signal left owed, and flap damping.
+/// Whether an org may build escalation policies and on-call schedules is a
+/// plan question, not a deployment one.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct EscalationConfig {
@@ -129,9 +130,6 @@ pub struct EscalationConfig {
     pub retry_backoff_base_secs: u64,
     /// Ceiling on a single retry's backoff delay.
     pub retry_backoff_cap_secs: u64,
-    /// Floor on the reconcile scan: without it an incident nobody can be paged
-    /// about is re-attempted every tick, forever.
-    pub reconcile_window_secs: u64,
     /// How long after an incident ends its closing notice may still go out
     /// when the signal for it was lost. Older ones are withdrawn unsent.
     pub closing_window_secs: u64,
@@ -157,7 +155,6 @@ impl Default for EscalationConfig {
             channel_failure_limit: 3,
             retry_backoff_base_secs: 30,
             retry_backoff_cap_secs: 3600,
-            reconcile_window_secs: 3600,
             closing_window_secs: 86_400,
             flap_window_secs: 3600,
             flap_max_opens: 5,

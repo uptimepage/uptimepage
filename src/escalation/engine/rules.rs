@@ -98,6 +98,14 @@ pub fn is_damper_marker(transport: &str) -> bool {
     )
 }
 
+/// The first page of `episode`: the incident opening, or a reopen.
+pub(super) fn opening_reason(episode: i64) -> NotificationReason {
+    match episode {
+        0 => NotificationReason::Opened,
+        _ => NotificationReason::Reopened,
+    }
+}
+
 /// A bookkeeping row recording what became of a page no channel was sent.
 pub(super) fn marker_row(
     org: OrgId,
@@ -157,8 +165,8 @@ pub(super) fn flap_state(opens: u32, max: u32) -> FlapState {
 }
 
 /// Is `episode` already being paged? True when an open-side page
-/// (opened/reopened/escalated) was sent for it. Absorbs duplicate open
-/// signals. The episode is the incident's own, not inferred from a closing
+/// (opened/reopened/escalated) was sent for it, which a release then has no
+/// need to repeat. The episode is the incident's own, not inferred from a closing
 /// notice or from when a page was recorded: a close that told nobody (a
 /// recovery opt-out, a late resolve the reopen withdrew) must not silence the
 /// reopen after it, and neither may the last episode's pages still going out.

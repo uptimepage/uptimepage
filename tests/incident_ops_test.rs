@@ -225,53 +225,70 @@ async fn an_incident_can_be_amended_after_it_is_declared_pg() {
     );
 }
 
-/// The reconcile sweep pages any triggered incident that reached no channel,
-/// which would undo the declare path's silence a minute later.
+/// Only an episode that may page owes one: a declare that asked for no alerts
+/// stays quiet, and one with no monitor has nothing to page through.
 #[tokio::test]
 #[ignore]
-async fn a_quietly_declared_incident_is_never_reconciled_into_a_page_pg() {
+async fn only_a_declare_that_may_page_owes_a_page_pg() {
     let Some(pool) = common::pg_pool_from_env().await else {
         return;
     };
-    let (org, user, _) = seed(&pool, "incquiet").await;
+    let (org, user, monitor_incident) = seed(&pool, "incquiet").await;
     let store = PgIncidentOpsStore::new(pool.clone());
-
-    let quiet = store
-        .declare(org, NewManualIncident::default(), Actor::User(user))
-        .await
-        .expect("declare quiet");
-    let loud = store
-        .declare(
-            org,
-            NewManualIncident {
-                notify: true,
-                ..Default::default()
-            },
-            Actor::User(user),
-        )
-        .await
-        .expect("declare with alerts");
-    assert!(!quiet.paging_enabled);
-    assert!(loud.paging_enabled);
-
-    sqlx::query("UPDATE incidents SET started_at = now() - interval '1 hour' WHERE org_id = $1")
-        .bind(org.0)
-        .execute(&pool)
+    let target: Uuid = sqlx::query_scalar("SELECT target_id FROM incidents WHERE id = $1")
+        .bind(monitor_incident)
+        .fetch_one(&pool)
         .await
         .unwrap();
-    let window = (
-        chrono::Utc::now() - chrono::Duration::hours(6),
-        chrono::Utc::now() - chrono::Duration::seconds(60),
-    );
-    let due = store.due_for_reconcile(window, 100).await.unwrap();
+    let declare = async |notify, target_id| {
+        store
+            .declare(
+                org,
+                NewManualIncident {
+                    notify,
+                    target_id,
+                    ..Default::default()
+                },
+                Actor::User(user),
+            )
+            .await
+            .expect("declare")
+            .id
+    };
+    let quiet = declare(false, Some(target)).await;
+    store
+        .resolve(org, quiet, Actor::System, None)
+        .await
+        .unwrap();
+    let loud = declare(true, Some(target)).await;
+    let nowhere = declare(true, None).await;
+
+    assert!(!owes_page(&pool, quiet).await, "asked for no alerts");
     assert!(
-        !due.iter().any(|d| d.id == quiet.id),
-        "a declare that asked for no alerts must stay unpaged"
+        owes_page(&pool, loud).await,
+        "asked for alerts on a monitor"
     );
     assert!(
-        due.iter().any(|d| d.id == loud.id),
-        "a declare that asked for alerts keeps the dropped-signal safety net"
+        !owes_page(&pool, nowhere).await,
+        "no monitor to page through"
     );
+    store.resolve(org, loud, Actor::System, None).await.unwrap();
+    store
+        .reopen(org, quiet, Actor::User(user), None)
+        .await
+        .unwrap();
+    assert!(
+        !owes_page(&pool, quiet).await,
+        "quiet stays quiet on reopen"
+    );
+}
+
+async fn owes_page(pool: &PgPool, id: Uuid) -> bool {
+    sqlx::query_scalar("SELECT page_owed_at IS NOT NULL FROM incidents WHERE id = $1")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
 }
 
 /// The audit log is the org's one trail of who did what, so operator incident
@@ -552,7 +569,7 @@ async fn notification_log_record_retry_and_scope_pg() {
     // The retry scan picks it up (attempt 1 < cap, no backoff scheduled) with
     // the owning org.
     let now = chrono::Utc::now();
-    let pending = store.pending_notifications(now, 50, 5).await.unwrap();
+    let pending = store.pending_notifications(now, 1000, 5).await.unwrap();
     let mine = pending.iter().find(|p| p.id == notif_id).expect("pending");
     assert_eq!(mine.org, org);
     assert_eq!(mine.reason, NotificationReason::Opened);
@@ -575,7 +592,7 @@ async fn notification_log_record_retry_and_scope_pg() {
         .unwrap();
     assert!(
         store
-            .pending_notifications(now, 50, 5)
+            .pending_notifications(now, 1000, 5)
             .await
             .unwrap()
             .iter()
@@ -584,7 +601,7 @@ async fn notification_log_record_retry_and_scope_pg() {
     );
     assert!(
         store
-            .pending_notifications(now + chrono::Duration::hours(2), 50, 5)
+            .pending_notifications(now + chrono::Duration::hours(2), 1000, 5)
             .await
             .unwrap()
             .iter()
@@ -614,7 +631,7 @@ async fn notification_log_record_retry_and_scope_pg() {
     assert!(rows[0].sent_at.is_some());
     assert!(
         store
-            .pending_notifications(chrono::Utc::now(), 50, 5)
+            .pending_notifications(chrono::Utc::now(), 1000, 5)
             .await
             .unwrap()
             .iter()
@@ -644,7 +661,7 @@ async fn notification_log_record_retry_and_scope_pg() {
     let now = chrono::Utc::now();
     assert!(
         store
-            .pending_notifications(now, 50, 5)
+            .pending_notifications(now, 1000, 5)
             .await
             .unwrap()
             .iter()
@@ -898,65 +915,243 @@ async fn postmortem_publish_events_persist_with_actor_pg() {
     );
 }
 
+/// The scan has no age limit, waits a grace for the signal, and skips what
+/// cannot page now: a paused or held monitor, paging off, an ended incident.
 #[tokio::test]
 #[ignore]
-async fn due_for_reconcile_finds_only_unpaged_triggered_pg() {
+async fn the_owed_page_scan_lists_every_open_watched_incident_still_owed_pg() {
     let Some(pool) = common::pg_pool_from_env().await else {
         return;
     };
-    let (org, user, never_paged) = seed(&pool, "increc").await;
     let store = PgIncidentOpsStore::new(pool.clone());
+    let (_, _, owed) = seed(&pool, "incowed").await;
+    let set = async |sql: &str, id: Uuid| {
+        sqlx::query(sql).bind(id).execute(&pool).await.unwrap();
+    };
+    let due = async |cutoff: chrono::DateTime<chrono::Utc>| -> Vec<Uuid> {
+        store
+            .due_for_owed_page(cutoff, 1000)
+            .await
+            .unwrap()
+            .iter()
+            .map(|o| o.id)
+            .collect()
+    };
+    let now = chrono::Utc::now();
+    let tick_ago = now - chrono::Duration::seconds(15);
 
-    // Old enough to be past any grace window.
-    sqlx::query("UPDATE incidents SET started_at = now() - interval '1 hour' WHERE id = $1")
-        .bind(never_paged)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let window = (
-        chrono::Utc::now() - chrono::Duration::hours(6),
-        chrono::Utc::now() - chrono::Duration::seconds(60),
-    );
-    let due = store.due_for_reconcile(window, 100).await.unwrap();
+    set(
+        "UPDATE incidents SET page_owed_at = now() - interval '30 days' WHERE id = $1",
+        owed,
+    )
+    .await;
+    assert!(due(tick_ago).await.contains(&owed), "no age limit");
+    set(
+        "UPDATE incidents SET page_owed_at = now() WHERE id = $1",
+        owed,
+    )
+    .await;
     assert!(
-        due.iter().any(|d| d.id == never_paged),
-        "an old, never-paged, unarmed triggered incident is reconcilable"
+        !due(tick_ago).await.contains(&owed),
+        "the signal gets a tick first"
     );
+    set(
+        "UPDATE incidents SET page_owed_at = now() - interval '1 hour' WHERE id = $1",
+        owed,
+    )
+    .await;
 
-    // Once it has a paging-log row, it drops out of the reconcile set.
+    for (pause, resume) in [
+        (
+            "UPDATE targets SET enabled = false WHERE id = (SELECT target_id FROM incidents WHERE id = $1)",
+            "UPDATE targets SET enabled = true WHERE id = (SELECT target_id FROM incidents WHERE id = $1)",
+        ),
+        (
+            "UPDATE targets SET plan_hold_at = now() WHERE id = (SELECT target_id FROM incidents WHERE id = $1)",
+            "UPDATE targets SET plan_hold_at = NULL WHERE id = (SELECT target_id FROM incidents WHERE id = $1)",
+        ),
+        (
+            "UPDATE incidents SET paging_enabled = false WHERE id = $1",
+            "UPDATE incidents SET paging_enabled = true WHERE id = $1",
+        ),
+    ] {
+        set(pause, owed).await;
+        assert!(!due(tick_ago).await.contains(&owed), "{pause}");
+        set(resume, owed).await;
+        assert!(due(tick_ago).await.contains(&owed), "{resume}");
+    }
+    set(
+        "UPDATE incidents SET state = 'acknowledged' WHERE id = $1",
+        owed,
+    )
+    .await;
+    assert!(due(tick_ago).await.contains(&owed), "taken, but still owed");
+
+    // Longest owed first.
+    let (_, _, older) = seed(&pool, "incowed2").await;
+    set(
+        "UPDATE incidents SET page_owed_at = now() - interval '2 hours' WHERE id = $1",
+        older,
+    )
+    .await;
+    let order: Vec<Uuid> = due(tick_ago)
+        .await
+        .into_iter()
+        .filter(|id| *id == owed || *id == older)
+        .collect();
+    assert_eq!(order, vec![older, owed]);
+
+    // A try moves it behind the rest, unless what is owed changed meanwhile.
+    let seen = store
+        .due_for_owed_page(tick_ago, 1000)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|o| o.id == owed)
+        .unwrap();
+    let org: OrgId = OrgId(
+        sqlx::query_scalar("SELECT org_id FROM incidents WHERE id = $1")
+            .bind(owed)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+    );
     store
-        .record_notification(NewIncidentNotification {
-            org,
-            incident_id: never_paged,
-            escalation_level: Some(0),
-            target_user_id: None,
-            channel_id: None,
-            transport: "webhook".into(),
-            reason: NotificationReason::Opened,
-            status: NotificationStatus::Sent,
-            attempt: 1,
-            error: None,
-            sent_at: Some(chrono::Utc::now()),
-            episode: 0,
-        })
+        .requeue_owed_page(org, owed, seen.owed_at - chrono::Duration::seconds(1))
         .await
         .unwrap();
-    let due = store.due_for_reconcile(window, 100).await.unwrap();
     assert!(
-        !due.iter().any(|d| d.id == never_paged),
-        "a paged incident is no longer reconcilable"
+        due(tick_ago).await.contains(&owed),
+        "a stale read moves nothing"
+    );
+    store
+        .requeue_owed_page(org, owed, seen.owed_at)
+        .await
+        .unwrap();
+    assert!(
+        !due(tick_ago).await.contains(&owed),
+        "requeued behind the rest"
     );
 
-    // An acknowledged incident is never reconciled either.
-    let (_o2, _u2, acked) = (org, user, seed(&pool, "increc2").await.2);
-    sqlx::query("UPDATE incidents SET started_at = now() - interval '1 hour', state = 'acknowledged' WHERE id = $1")
-        .bind(acked)
+    set("UPDATE incidents SET page_owed_at = now() - interval '1 hour', ended_at = now(), state = 'resolved' WHERE id = $1", owed).await;
+    assert!(!due(tick_ago).await.contains(&owed), "ended");
+}
+
+/// Every statement that starts an episode that may page records that it owes
+/// one, and only recording that page settles it.
+#[tokio::test]
+#[ignore]
+async fn an_episode_owes_its_first_page_until_the_page_records_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, user, seeded) = seed(&pool, "incowe").await;
+    let store = PgIncidentOpsStore::new(pool.clone());
+    let writer = uptimepage::public_status::incident_writer::PgIncidentStore::new(pool.clone());
+    let target: Uuid = sqlx::query_scalar("SELECT target_id FROM incidents WHERE id = $1")
+        .bind(seeded)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM incidents WHERE id = $1")
+        .bind(seeded)
         .execute(&pool)
         .await
         .unwrap();
-    let due = store.due_for_reconcile(window, 100).await.unwrap();
-    assert!(!due.iter().any(|d| d.id == acked));
+    use uptimepage::public_status::incident_writer::IncidentStore;
+    let id = writer
+        .insert_open(
+            org,
+            uptimepage::public_status::incident_writer::NewOpenIncident {
+                target_id: target,
+                started_at: chrono::Utc::now(),
+                status_at_start: uptimepage::domain::CheckStatus::Down,
+                check_count: 2,
+                error_sample: None,
+                region: None,
+                regions_down: Vec::new(),
+                regions_up: Vec::new(),
+            },
+        )
+        .await
+        .unwrap()
+        .expect("opened");
+    assert!(owes_page(&pool, id).await, "an open owes its first page");
+
+    let channel = webhook_channel_pg(&pool, org).await;
+    let opening = |episode, rows| FanOut {
+        org,
+        incident_id: id,
+        episode,
+        rows,
+        events: Vec::new(),
+        kind: FanOutKind::Opening(None),
+    };
+    let reminder = FanOut {
+        kind: FanOutKind::Reminder,
+        ..opening(0, Vec::new())
+    };
+    assert_eq!(
+        store.record_fan_out(reminder.clone()).await.unwrap(),
+        None,
+        "no reminder before the first page"
+    );
+    store
+        .record_fan_out(opening(0, vec![queued_pg(org, id, channel, 0)]))
+        .await
+        .unwrap()
+        .expect("the first page");
+    assert!(
+        !owes_page(&pool, id).await,
+        "recording it settled what was owed"
+    );
+    assert_eq!(
+        store
+            .record_fan_out(opening(0, vec![queued_pg(org, id, channel, 0)]))
+            .await
+            .unwrap(),
+        None,
+        "it records once"
+    );
+    assert!(store.record_fan_out(reminder).await.unwrap().is_some());
+
+    store.resolve(org, id, Actor::System, None).await.unwrap();
+    store
+        .reopen(org, id, Actor::User(user), None)
+        .await
+        .unwrap();
+    assert!(owes_page(&pool, id).await, "a reopen owes a page anew");
+    // A row of the episode already there: the page went out without settling
+    // what was owed, so the next try settles it and records nothing.
+    store
+        .record_notification(queued_pg(org, id, channel, 1))
+        .await
+        .unwrap();
+    let before = store.notifications_for(org, id).await.unwrap().len();
+    assert_eq!(
+        store
+            .record_fan_out(opening(1, vec![queued_pg(org, id, channel, 1)]))
+            .await
+            .unwrap(),
+        None
+    );
+    assert!(!owes_page(&pool, id).await);
+    assert_eq!(
+        store.notifications_for(org, id).await.unwrap().len(),
+        before
+    );
+
+    // A release owes nothing.
+    assert!(
+        store
+            .record_fan_out(FanOut {
+                kind: FanOutKind::Release(None),
+                ..opening(1, Vec::new())
+            })
+            .await
+            .unwrap()
+            .is_some()
+    );
 }
 
 /// Resolving by hand while the recovery is held ends the incident where the
@@ -1172,8 +1367,24 @@ async fn renotify_backoff_widens_with_each_reminder_pg() {
         .unwrap();
     paged_ago(&pool, id, 3_700).await;
     assert!(
+        !is_due(&store, id).await,
+        "a reopen owes its own first page before any reminder"
+    );
+    store
+        .record_fan_out(FanOut {
+            org,
+            incident_id: id,
+            episode: 1,
+            rows: Vec::new(),
+            events: Vec::new(),
+            kind: FanOutKind::Opening(None),
+        })
+        .await
+        .unwrap()
+        .expect("the reopen's first page");
+    assert!(
         is_due(&store, id).await,
-        "a reopened incident pages at the base interval again"
+        "then it is reminded at the base interval again"
     );
 
     // A window that silences paging takes the incident out of the scan entirely,
@@ -2993,6 +3204,11 @@ async fn a_fan_out_records_whole_or_not_at_all_pg() {
         level: 1,
         next_at: Some(next_at),
     };
+    sqlx::query("UPDATE incidents SET page_owed_at = now() WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
     let ids = store
         .record_fan_out(fan(0, FanOutKind::Opening(Some(arm))))
         .await
