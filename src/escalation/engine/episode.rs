@@ -4,16 +4,18 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::domain::{
-    EscalationDecision, IncidentEventKind, IncidentState, NotificationReason, OpsIncident, OrgId,
-    Target, next_step, wait_after,
+    EscalationDecision, IncidentEventKind, IncidentState, NotificationReason, NotificationStatus,
+    OpsIncident, OrgId, Target, next_step, wait_after,
 };
 use crate::error::Result;
-use crate::storage::{Actor, ClosingNotice, DueIncident};
+use crate::storage::{Arming, ClosingNotice, DueIncident, FanOut, FanOutKind};
 
 use super::rules::{
     DAMPED_TRANSPORT, Damper, FlapState, MAINTENANCE_TRANSPORT, RELEASED_TRANSPORT,
-    UNREACHABLE_TRANSPORT, channel_targets, flap_state, open_episode_active, resolvable_channels,
+    UNREACHABLE_TRANSPORT, channel_targets, flap_state, marker_row, open_episode_active,
+    resolvable_channels,
 };
+use super::sweep::{Planned, empty_rung_event};
 use super::{SWEEP_CONCURRENCY, Worker};
 
 impl Worker {
@@ -211,51 +213,13 @@ impl Worker {
         }
     }
 
-    /// A release that reaches no channel records nothing, and the scan keys
-    /// off "nothing newer than the hold", so it would re-release every tick
-    /// forever. The marker closes that. Written after the attempt, so a crash
-    /// retries rather than swallowing the page.
+    /// A release that reaches no channel ends its hold with the `released`
+    /// marker, inside its own page, so the scan's "nothing newer than the
+    /// hold" stops matching. A monitor paused or held since the scan pages
+    /// nothing and records nothing: the hold waits for it to come back.
     async fn release_one(&self, d: &DueIncident) -> Result<()> {
-        let before: Vec<Uuid> = self
-            .ops
-            .notifications_for(d.org, d.id)
-            .await?
-            .iter()
-            .map(|n| n.id)
-            .collect();
         let reason = self.held_reason(d.org, d.id).await;
-        self.page_with(d.org, d.id, reason, Damper::Skip).await?;
-        // By row id, not timestamp: `created_at` is the database's clock and
-        // ours is this process's, so skew would misreport a delivered release.
-        let paged = self
-            .ops
-            .notifications_for(d.org, d.id)
-            .await?
-            .iter()
-            .any(|n| !before.contains(&n.id));
-        if paged {
-            return Ok(());
-        }
-        let Some(episode) = self.ops.generation(d.org, d.id).await? else {
-            return Ok(());
-        };
-        self.ops
-            .record_notification(crate::domain::NewIncidentNotification {
-                org: d.org,
-                incident_id: d.id,
-                escalation_level: None,
-                target_user_id: None,
-                channel_id: None,
-                transport: RELEASED_TRANSPORT.to_string(),
-                reason,
-                status: crate::domain::NotificationStatus::Suppressed,
-                attempt: 0,
-                error: None,
-                sent_at: None,
-                episode,
-            })
-            .await?;
-        Ok(())
+        self.page_with(d.org, d.id, reason, Damper::Skip).await
     }
 
     /// The reason the held row recorded, so a released hold pages as the
@@ -359,10 +323,10 @@ impl Worker {
         }
     }
 
-    /// Page the first rung and arm escalation. A duplicate Opened signal while
-    /// the episode is already paged is a no-op; a monitor with no policy falls
-    /// back to its bound channels (the pre-policy behaviour) with no laddered
-    /// re-paging.
+    /// Page the first rung and arm escalation, recorded as one fan-out before
+    /// anything is sent. A duplicate Opened signal while the episode is already
+    /// paged is a no-op; a monitor with no policy falls back to its bound
+    /// channels (the pre-policy behaviour) with no laddered re-paging.
     async fn open_episode(
         &self,
         org: OrgId,
@@ -376,42 +340,87 @@ impl Worker {
         let Some(episode) = self.ops.generation(org, incident.id).await? else {
             return Ok(());
         };
+        let releasing = damper == Damper::Skip;
         let already = self.ops.notifications_for(org, incident.id).await?;
         if open_episode_active(&already, episode) {
+            // A release still ends its hold, or its scan would find it again
+            // every tick.
+            if releasing {
+                self.record_marker(org, incident.id, episode, RELEASED_TRANSPORT, reason, None)
+                    .await?;
+            }
             return Ok(());
         }
         // The scan read `triggered` a sweep ago and a flapping monitor
         // recovers inside that gap. Its all-clear already ran and reached
         // nobody, so paging now announces an outage no recovery would follow.
         // Here because `page` holds the per-incident lock.
-        if damper == Damper::Skip && incident.state != crate::domain::IncidentState::Triggered {
+        if releasing && incident.state != IncidentState::Triggered {
             return Ok(());
         }
         let mut note = None;
+        let mut events = Vec::new();
         // A hand-declared incident is the operator's own signal: the count
         // already excludes them, and holding one would silence a real outage
         // someone declared deliberately. A maintenance window is the same
         // bargain, so it exempts them too.
         let operator_declared = incident.origin == crate::domain::IncidentOrigin::Manual;
         if !operator_declared && self.alerts_suppressed(org, target.id).await {
-            return self
-                .hold_for_maintenance(org, incident.id, reason, episode)
-                .await;
+            // The marker is what the release scan keys off, so a hold is never
+            // a drop.
+            let held = self
+                .record_marker(
+                    org,
+                    incident.id,
+                    episode,
+                    MAINTENANCE_TRANSPORT,
+                    reason,
+                    Some(
+                        "alert held: the monitor is in a maintenance window. It pages \
+                         when the window ends if this incident is still open"
+                            .to_string(),
+                    ),
+                )
+                .await?;
+            if held {
+                metrics::counter!(crate::metric_names::ALERTS_HELD_MAINTENANCE).increment(1);
+            }
+            return Ok(());
         }
         if damper == Damper::Apply && !operator_declared {
             match self.flap_state(org, target).await? {
                 FlapState::Steady => {}
                 FlapState::Crossing => {
-                    self.note_flap_engaged(org, incident.id, target).await?;
+                    // Without this the operator just sees alerts stop.
+                    events.push((IncidentEventKind::Notified, self.flap_engaged_note(target)));
                     note = Some(self.flap_notice());
                 }
                 FlapState::Damped => {
-                    return self.hold(org, incident.id, reason, episode).await;
+                    // Recorded, not delivered: the release scan pages it if the
+                    // incident outlasts the hold.
+                    let held = self
+                        .record_marker(
+                            org,
+                            incident.id,
+                            episode,
+                            DAMPED_TRANSPORT,
+                            reason,
+                            Some(format!(
+                                "alert held: the monitor is flapping. It pages anyway if this \
+                                 incident is still open in {} minutes",
+                                self.cfg.flap_hold_secs.div_ceil(60)
+                            )),
+                        )
+                        .await?;
+                    if held {
+                        metrics::counter!(crate::metric_names::ALERTS_DAMPED).increment(1);
+                    }
+                    return Ok(());
                 }
             }
         }
         let notice = self.notice(incident, Some(target.name.clone()), reason, note);
-        match self.policies.resolve_for_target(org, target.id).await? {
+        let (mut planned, arm) = match self.policies.resolve_for_target(org, target.id).await? {
             Some(policy_id) => {
                 let Some(policy) = self.policies.get(org, policy_id).await? else {
                     return Ok(());
@@ -423,45 +432,42 @@ impl Worker {
                         let targets = self
                             .resolve_targets(org, &policy, level, Utc::now())
                             .await?;
-                        if targets.is_empty() {
-                            self.note_empty_rung(org, incident.id, level).await?;
-                        }
-                        let paged = self
-                            .page_channels(
-                                org,
-                                incident.id,
-                                &notice,
-                                reason,
-                                level,
-                                &targets,
-                                episode,
-                                None,
-                            )
+                        let planned = self
+                            .plan_channels(org, incident.id, reason, level, &targets, episode)
                             .await?;
+                        if planned.is_empty() {
+                            events.push(empty_rung_event(level));
+                        }
                         let wait =
                             wait_after(&policy.steps, policy.repeat_count, level, 0, delay_secs);
                         let next_at = Some(Utc::now() + chrono::Duration::seconds(wait.into()));
-                        self.ops
-                            .begin_escalation(org, incident.id, policy_id, level, next_at)
-                            .await?;
-                        self.log_paged(org, incident.id, reason, paged.delivered)
-                            .await?;
+                        (
+                            planned,
+                            Some(Arming {
+                                policy_id,
+                                level,
+                                next_at,
+                            }),
+                        )
                     }
-                    EscalationDecision::Exhausted => {
-                        // Policy with no steps: record the binding so the
-                        // console shows it, but page no one.
-                        self.ops
-                            .begin_escalation(org, incident.id, policy_id, 0, None)
-                            .await?;
-                    }
+                    // Policy with no steps: record the binding so the console
+                    // shows it, but page no one.
+                    EscalationDecision::Exhausted => (
+                        Planned::new(org, incident.id, episode),
+                        Some(Arming {
+                            policy_id,
+                            level: 0,
+                            next_at: None,
+                        }),
+                    ),
                 }
             }
             None => {
-                // Propagated on purpose: nothing is written, so the reconcile
-                // scan retries this episode whole. Falling back to the bound
-                // channels would record rows, and a recorded episode is one
-                // that scan never revisits — the rule's channels would then
-                // miss the outage entirely rather than be paged a tick late.
+                // Propagated on purpose: nothing is written, so the whole
+                // episode is tried again. Falling back to the bound channels
+                // would record rows, and a recorded episode is one that is
+                // never revisited — the rule's channels would then miss the
+                // outage entirely rather than be paged a tick late.
                 let targets = channel_targets(
                     crate::storage::notification_channels::paging_channel_ids(
                         self.channels.as_ref(),
@@ -470,30 +476,56 @@ impl Worker {
                     )
                     .await?,
                 );
-                let paged = self
-                    .page_channels(
-                        org,
-                        incident.id,
-                        &notice,
-                        reason,
-                        0,
-                        &targets,
-                        episode,
-                        None,
-                    )
+                let mut planned = self
+                    .plan_channels(org, incident.id, reason, 0, &targets, episode)
                     .await?;
-                self.log_paged(org, incident.id, reason, paged.delivered)
-                    .await?;
-                if paged.recorded == 0 {
+                if planned.is_empty() {
                     // Nothing bound, or every bound channel gone: without a row
-                    // the reconcile scan re-runs this episode every tick for the
-                    // whole window, re-appending its timeline note each time.
-                    self.record_unreachable(org, incident.id, reason, episode)
-                        .await?;
+                    // this episode would be re-run every tick, re-appending its
+                    // timeline lines each time.
+                    planned.push_marker(UNREACHABLE_TRANSPORT, reason);
                 }
+                (planned, None)
             }
+        };
+        if releasing && planned.is_empty() {
+            planned.push_marker(RELEASED_TRANSPORT, reason);
         }
-        Ok(())
+        let Some(delivered) = self
+            .send_fan_out(planned, events, FanOutKind::Opening(arm), &notice)
+            .await?
+        else {
+            return Ok(());
+        };
+        self.log_paged(org, incident.id, reason, delivered).await
+    }
+
+    /// Record the one bookkeeping row that stands in for a page, with its
+    /// timeline line. False when the store refused it.
+    async fn record_marker(
+        &self,
+        org: OrgId,
+        incident_id: Uuid,
+        episode: i64,
+        transport: &str,
+        reason: NotificationReason,
+        note: Option<String>,
+    ) -> Result<bool> {
+        let recorded = self
+            .ops
+            .record_fan_out(FanOut {
+                org,
+                incident_id,
+                episode,
+                rows: vec![marker_row(org, incident_id, transport, reason, episode)],
+                events: note
+                    .map(|n| (IncidentEventKind::Note, n))
+                    .into_iter()
+                    .collect(),
+                kind: FanOutKind::Opening(None),
+            })
+            .await?;
+        Ok(recorded.is_some())
     }
 
     /// A lookup failure degrades to [`FlapState::Steady`]: failing to read the
@@ -525,98 +557,14 @@ impl Worker {
         )
     }
 
-    /// Without this the operator just sees alerts stop.
-    async fn note_flap_engaged(
-        &self,
-        org: OrgId,
-        incident_id: Uuid,
-        target: &Target,
-    ) -> Result<()> {
-        self.ops
-            .append_event(
-                org,
-                incident_id,
-                IncidentEventKind::Notified,
-                Actor::System,
-                Some(format!(
-                    "\"{}\" has opened {} incidents within {} minutes — alerts for further \
-                     opens are held until it settles",
-                    target.name,
-                    self.cfg.flap_max_opens,
-                    self.cfg.flap_window_secs.div_ceil(60)
-                )),
-            )
-            .await
-    }
-
-    /// Mark that an episode reached no channel, so the scans that key off
-    /// "has this been paged" stop re-running it.
-    async fn record_unreachable(
-        &self,
-        org: OrgId,
-        incident_id: Uuid,
-        reason: NotificationReason,
-        episode: i64,
-    ) -> Result<()> {
-        self.ops
-            .record_notification(crate::domain::NewIncidentNotification {
-                org,
-                incident_id,
-                escalation_level: None,
-                target_user_id: None,
-                channel_id: None,
-                transport: UNREACHABLE_TRANSPORT.to_string(),
-                reason,
-                status: crate::domain::NotificationStatus::Suppressed,
-                attempt: 0,
-                error: None,
-                sent_at: None,
-                episode,
-            })
-            .await
-            .map(|_| ())
-    }
-
-    /// Hold this open rather than deliver it. The row is what the release scan
-    /// keys off, so a hold is never a drop, and it also keeps the reconcile
-    /// scan from re-running the episode every tick.
-    async fn hold(
-        &self,
-        org: OrgId,
-        incident_id: Uuid,
-        reason: NotificationReason,
-        episode: i64,
-    ) -> Result<()> {
-        metrics::counter!(crate::metric_names::ALERTS_DAMPED).increment(1);
-        self.ops
-            .record_notification(crate::domain::NewIncidentNotification {
-                org,
-                incident_id,
-                escalation_level: None,
-                target_user_id: None,
-                channel_id: None,
-                transport: DAMPED_TRANSPORT.to_string(),
-                reason,
-                status: crate::domain::NotificationStatus::Suppressed,
-                attempt: 0,
-                error: None,
-                sent_at: None,
-                episode,
-            })
-            .await?;
-        self.ops
-            .append_event(
-                org,
-                incident_id,
-                IncidentEventKind::Note,
-                Actor::System,
-                Some(format!(
-                    "alert held: the monitor is flapping. It pages anyway if this \
-                     incident is still open in {} minutes",
-                    self.cfg.flap_hold_secs.div_ceil(60)
-                )),
-            )
-            .await
+    fn flap_engaged_note(&self, target: &Target) -> String {
+        format!(
+            "\"{}\" has opened {} incidents within {} minutes — alerts for further \
+             opens are held until it settles",
+            target.name,
+            self.cfg.flap_max_opens,
+            self.cfg.flap_window_secs.div_ceil(60)
+        )
     }
 
     /// Send the closing notice taken under `claim`, then settle it, under the
@@ -700,20 +648,38 @@ impl Worker {
             return Ok(());
         };
         let notice = self.notice(incident, monitor_name, reason, None);
-        let paged = self
-            .page_channels(
+        let planned = self
+            .plan_channels(
                 org,
                 incident.id,
-                &notice,
                 reason,
                 incident.escalation_level,
                 &channel_targets(channels),
                 episode,
-                Some(claim),
             )
             .await?;
-        self.log_paged(org, incident.id, reason, paged.delivered)
-            .await
+        // One row at a time, each recorded only while the claim holds and
+        // renewing it, so the fan-out stops once the claim is lost. A send can
+        // outlast the lease, and another instance taking the notice over then
+        // tells only the channels that have no row yet.
+        let mut delivered = 0;
+        for (row, channel) in planned.into_items() {
+            let Some(channel) = channel else {
+                continue;
+            };
+            let Some((id, renewed)) = self
+                .ops
+                .record_closing_notification(row, *claim, self.claim_lease_secs())
+                .await?
+            else {
+                break;
+            };
+            *claim = renewed;
+            if self.first_attempt(org, &channel, &notice, id).await? == NotificationStatus::Sent {
+                delivered += 1;
+            }
+        }
+        self.log_paged(org, incident.id, reason, delivered).await
     }
 
     /// A lookup failure reads as no maintenance, so an error never silences a page.
@@ -722,47 +688,5 @@ impl Worker {
             self.maintenance.alerts_suppressed(org, target_id).await,
             Ok(true)
         )
-    }
-
-    /// The marker row is what the release scan keys off, so a hold is never a
-    /// drop, and it stops the reconcile scan re-running the episode every tick.
-    async fn hold_for_maintenance(
-        &self,
-        org: OrgId,
-        incident_id: Uuid,
-        reason: NotificationReason,
-        episode: i64,
-    ) -> Result<()> {
-        self.ops
-            .record_notification(crate::domain::NewIncidentNotification {
-                org,
-                incident_id,
-                escalation_level: None,
-                target_user_id: None,
-                channel_id: None,
-                transport: MAINTENANCE_TRANSPORT.to_string(),
-                reason,
-                status: crate::domain::NotificationStatus::Suppressed,
-                attempt: 0,
-                error: None,
-                sent_at: None,
-                episode,
-            })
-            .await?;
-        self.ops
-            .append_event(
-                org,
-                incident_id,
-                IncidentEventKind::Note,
-                Actor::System,
-                Some(
-                    "alert held: the monitor is in a maintenance window. It pages \
-                     when the window ends if this incident is still open"
-                        .to_string(),
-                ),
-            )
-            .await?;
-        metrics::counter!(crate::metric_names::ALERTS_HELD_MAINTENANCE).increment(1);
-        Ok(())
     }
 }

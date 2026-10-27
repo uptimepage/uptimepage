@@ -16,8 +16,8 @@ use uptimepage::domain::{
     NewManualIncident, NotificationOutcome, NotificationReason, NotificationStatus, OrgId,
 };
 use uptimepage::storage::{
-    Actor, AppPress, InMemoryIncidentOpsStore, IncidentOpsStore, LifecycleOutcome,
-    PgIncidentOpsStore, QUEUED_TAKEOVER_SECS, create_org_with_owner,
+    Actor, AppPress, FanOut, FanOutKind, InMemoryIncidentOpsStore, IncidentOpsStore,
+    LifecycleOutcome, PgIncidentOpsStore, QUEUED_TAKEOVER_SECS, create_org_with_owner,
 };
 use uuid::Uuid;
 
@@ -1140,7 +1140,18 @@ async fn renotify_backoff_widens_with_each_reminder_pg() {
 
     // Past reminder 5 the doubling hits the day cap and stays there.
     for reminders in 1..=6u32 {
-        store.bump_renotify_count(org, id).await.unwrap();
+        store
+            .record_fan_out(FanOut {
+                org,
+                incident_id: id,
+                episode: 0,
+                rows: Vec::new(),
+                events: Vec::new(),
+                kind: FanOutKind::Reminder,
+            })
+            .await
+            .unwrap()
+            .expect("a triggered incident takes a reminder");
         let gap = (3600 * 2_i64.pow(reminders)).min(86_400);
         paged_ago(&pool, id, gap - 600).await;
         assert!(
@@ -2907,4 +2918,389 @@ async fn every_close_stamps_resolved_at_at_its_closing_update_pg() {
         close_marks(&pool, reopened).await.0.is_none(),
         "an incident running again is not closed"
     );
+}
+
+async fn webhook_channel_pg(pool: &PgPool, org: OrgId) -> Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO notification_channels (org_id, name, kind, config) \
+         VALUES ($1, $2, 'webhook', '{}'::jsonb) RETURNING id",
+    )
+    .bind(org.0)
+    .bind(format!("ops-{}", Uuid::now_v7()))
+    .fetch_one(pool)
+    .await
+    .expect("insert channel")
+}
+
+fn queued_pg(
+    org: OrgId,
+    incident_id: Uuid,
+    channel: Uuid,
+    episode: i64,
+) -> NewIncidentNotification {
+    NewIncidentNotification {
+        org,
+        incident_id,
+        escalation_level: Some(1),
+        target_user_id: None,
+        channel_id: Some(channel),
+        transport: "webhook".into(),
+        reason: NotificationReason::Opened,
+        status: NotificationStatus::Queued,
+        attempt: 1,
+        error: None,
+        sent_at: None,
+        episode,
+    }
+}
+
+/// One page, one transaction: its rows, its timeline line and its bookkeeping
+/// commit together, and nothing is written once the page no longer applies.
+#[tokio::test]
+#[ignore]
+async fn a_fan_out_records_whole_or_not_at_all_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, user, id) = seed(&pool, "incfan").await;
+    let store = PgIncidentOpsStore::new(pool.clone());
+    let (a, b) = (
+        webhook_channel_pg(&pool, org).await,
+        webhook_channel_pg(&pool, org).await,
+    );
+    let policy: Uuid = sqlx::query_scalar(
+        "INSERT INTO escalation_policies (org_id, name) VALUES ($1, 'p') RETURNING id",
+    )
+    .bind(org.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let fan = |episode, kind| FanOut {
+        org,
+        incident_id: id,
+        episode,
+        rows: vec![
+            queued_pg(org, id, a, episode),
+            queued_pg(org, id, b, episode),
+        ],
+        events: vec![(IncidentEventKind::Notified, "paged two".into())],
+        kind,
+    };
+
+    let next_at = chrono::Utc::now() + chrono::Duration::minutes(5);
+    let arm = uptimepage::storage::Arming {
+        policy_id: policy,
+        level: 1,
+        next_at: Some(next_at),
+    };
+    let ids = store
+        .record_fan_out(fan(0, FanOutKind::Opening(Some(arm))))
+        .await
+        .unwrap()
+        .expect("recorded");
+    let rows = store.notifications_for(org, id).await.unwrap();
+    let mut recorded: Vec<Uuid> = rows.iter().map(|n| n.id).collect();
+    recorded.sort();
+    let mut returned = ids.clone();
+    returned.sort();
+    assert_eq!(recorded, returned);
+    assert_eq!(
+        rows.iter().find(|n| n.id == ids[0]).unwrap().channel_id,
+        Some(a),
+        "ids come back in the order given"
+    );
+    let inc = store.get(org, id).await.unwrap().unwrap();
+    assert_eq!(inc.escalation_policy_id, Some(policy));
+    assert_eq!(inc.escalation_level, 1);
+    let claim = inc.next_escalation_at.expect("armed");
+    assert!(
+        store
+            .timeline(org, id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|e| e.message.as_deref() == Some("paged two"))
+    );
+
+    // A rung records only under the claim the timer holds.
+    let rung = |claim| FanOutKind::Rung {
+        claim,
+        level: 2,
+        round: 0,
+        next_at: None,
+    };
+    let wrong = store
+        .record_fan_out(fan(0, rung(claim + chrono::Duration::seconds(1))))
+        .await
+        .unwrap();
+    assert_eq!(wrong, None);
+    sqlx::query("UPDATE incidents SET recovering_since = now() WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let back_up = store.record_fan_out(fan(0, rung(claim))).await.unwrap();
+    assert_eq!(back_up, None, "no rung while the monitor is back up");
+    sqlx::query("UPDATE incidents SET recovering_since = NULL WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(store.notifications_for(org, id).await.unwrap().len(), 2);
+    store
+        .record_fan_out(fan(0, rung(claim)))
+        .await
+        .unwrap()
+        .expect("held claim");
+    let inc = store.get(org, id).await.unwrap().unwrap();
+    assert_eq!(inc.escalation_level, 2);
+    assert_eq!(inc.next_escalation_at, None);
+
+    // A reminder records only while the monitor is still down.
+    sqlx::query("UPDATE incidents SET recovering_since = now() WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let recovering = store
+        .record_fan_out(fan(0, FanOutKind::Reminder))
+        .await
+        .unwrap();
+    assert_eq!(recovering, None);
+    sqlx::query("UPDATE incidents SET recovering_since = NULL WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    store
+        .record_fan_out(fan(0, FanOutKind::Reminder))
+        .await
+        .unwrap()
+        .expect("reminded");
+    let count: i32 = sqlx::query_scalar("SELECT renotify_count FROM incidents WHERE id = $1")
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+
+    // A page decided before a reopen records nothing.
+    store.resolve(org, id, Actor::System, None).await.unwrap();
+    store
+        .reopen(org, id, Actor::User(user), None)
+        .await
+        .unwrap();
+    let before = store.notifications_for(org, id).await.unwrap().len();
+    let stale = store
+        .record_fan_out(fan(0, FanOutKind::Opening(None)))
+        .await
+        .unwrap();
+    assert_eq!(stale, None);
+    assert_eq!(
+        store.notifications_for(org, id).await.unwrap().len(),
+        before
+    );
+    store
+        .record_fan_out(fan(1, FanOutKind::Opening(None)))
+        .await
+        .unwrap()
+        .expect("the current episode's page");
+
+    // Once resolved, no page records: the outage it would announce is over.
+    store.resolve(org, id, Actor::System, None).await.unwrap();
+    let over = store
+        .record_fan_out(fan(1, FanOutKind::Opening(None)))
+        .await
+        .unwrap();
+    assert_eq!(over, None);
+    store
+        .reopen(org, id, Actor::User(user), None)
+        .await
+        .unwrap();
+
+    // A channel deleted meanwhile fails the page whole (episode 2 since the
+    // second reopen).
+    sqlx::query("DELETE FROM notification_channels WHERE id = $1")
+        .bind(b)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let before = store.notifications_for(org, id).await.unwrap().len();
+    assert!(
+        store
+            .record_fan_out(fan(2, FanOutKind::Opening(None)))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store.notifications_for(org, id).await.unwrap().len(),
+        before,
+        "the row for the surviving channel rolled back with it"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn a_late_outcome_never_overwrites_a_later_attempts_and_a_delivery_is_final_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, _user, id) = seed(&pool, "inclate").await;
+    let store = PgIncidentOpsStore::new(pool.clone());
+    let channel = webhook_channel_pg(&pool, org).await;
+    let row = store
+        .record_notification(queued_pg(org, id, channel, 0))
+        .await
+        .unwrap();
+    let outcome = |status, attempt| NotificationOutcome {
+        status,
+        attempt,
+        error: None,
+        sent_at: None,
+        next_attempt_at: None,
+        provider_receipt: None,
+    };
+    let mark = async |status, attempt| {
+        store
+            .mark_notification(org, row, outcome(status, attempt))
+            .await
+            .unwrap();
+        let rows = store.notifications_for(org, id).await.unwrap();
+        (rows[0].status, rows[0].attempt)
+    };
+    use NotificationStatus::{Failed, Sent};
+    assert_eq!(mark(Failed, 2).await, (Failed, 2), "the takeover failed");
+    assert_eq!(
+        mark(Failed, 1).await,
+        (Failed, 2),
+        "an older failure is dropped"
+    );
+    assert_eq!(
+        mark(Sent, 1).await,
+        (Sent, 2),
+        "a late delivery settles the row"
+    );
+    assert_eq!(mark(Failed, 3).await, (Sent, 2), "and stays settled");
+}
+
+/// The attempt cap counts attempts that ended; a queued row's never did.
+#[tokio::test]
+#[ignore]
+async fn a_queued_row_is_taken_over_whatever_the_attempt_cap_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, _user, id) = seed(&pool, "inccap").await;
+    let store = PgIncidentOpsStore::new(pool.clone());
+    let channel = webhook_channel_pg(&pool, org).await;
+    let queued = store
+        .record_notification(queued_pg(org, id, channel, 0))
+        .await
+        .unwrap();
+    let failed = store
+        .record_notification(NewIncidentNotification {
+            status: NotificationStatus::Failed,
+            ..queued_pg(org, id, channel, 0)
+        })
+        .await
+        .unwrap();
+    let later = chrono::Utc::now() + chrono::Duration::seconds(QUEUED_TAKEOVER_SECS + 1);
+    let pending: Vec<Uuid> = store
+        .pending_notifications(later, 1000, 1)
+        .await
+        .unwrap()
+        .iter()
+        .map(|p| p.id)
+        .collect();
+    assert!(pending.contains(&queued));
+    assert!(
+        !pending.contains(&failed),
+        "a failed attempt at the cap is done"
+    );
+}
+
+#[tokio::test]
+async fn a_queued_row_is_taken_over_whatever_the_attempt_cap_in_memory() {
+    let store = InMemoryIncidentOpsStore::new();
+    let org = OrgId(Uuid::from_u128(1));
+    let row = |status| NewIncidentNotification {
+        status,
+        ..queued_pg(org, Uuid::from_u128(2), Uuid::from_u128(3), 0)
+    };
+    let queued = store
+        .record_notification(row(NotificationStatus::Queued))
+        .await
+        .unwrap();
+    store
+        .record_notification(row(NotificationStatus::Failed))
+        .await
+        .unwrap();
+    let later = chrono::Utc::now() + chrono::Duration::seconds(QUEUED_TAKEOVER_SECS + 1);
+    let pending = store.pending_notifications(later, 50, 1).await.unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, queued);
+}
+
+/// A hold on a paused or plan-held monitor waits for it to come back, rather
+/// than being let go into a page that cannot go out.
+#[tokio::test]
+#[ignore]
+async fn the_release_scans_wait_for_a_paused_or_held_monitor_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let store = PgIncidentOpsStore::new(pool.clone());
+    for transport in ["damped", "maintenance"] {
+        let (org, _user, id) = seed(&pool, "increl").await;
+        store
+            .record_notification(NewIncidentNotification {
+                org,
+                incident_id: id,
+                escalation_level: None,
+                target_user_id: None,
+                channel_id: None,
+                transport: transport.into(),
+                reason: NotificationReason::Opened,
+                status: NotificationStatus::Suppressed,
+                attempt: 0,
+                error: None,
+                sent_at: None,
+                episode: 0,
+            })
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE incident_notifications SET created_at = now() - interval '1 hour' \
+             WHERE incident_id = $1",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let due = async || {
+            let scan = match transport {
+                "damped" => {
+                    store
+                        .due_for_flap_release(
+                            chrono::Utc::now(),
+                            chrono::Duration::minutes(10),
+                            1000,
+                        )
+                        .await
+                }
+                _ => store.due_for_maintenance_release(1000).await,
+            };
+            scan.unwrap().iter().any(|d| d.id == id)
+        };
+        let set = async |sql: &str| {
+            sqlx::query(sql).bind(id).execute(&pool).await.unwrap();
+        };
+        assert!(due().await, "{transport}: due while watched");
+        set("UPDATE targets SET enabled = false WHERE id = (SELECT target_id FROM incidents WHERE id = $1)").await;
+        assert!(!due().await, "{transport}: waits while paused");
+        set("UPDATE targets SET enabled = true, plan_hold_at = now() WHERE id = (SELECT target_id FROM incidents WHERE id = $1)").await;
+        assert!(!due().await, "{transport}: waits while held");
+        set("UPDATE targets SET plan_hold_at = NULL WHERE id = (SELECT target_id FROM incidents WHERE id = $1)").await;
+        assert!(due().await, "{transport}: due again once back");
+    }
 }

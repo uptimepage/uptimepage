@@ -64,7 +64,7 @@ pub(super) fn target_with_channel_recovery(channel_id: Uuid, notify_recovery: bo
     }
 }
 
-fn bare_target() -> Target {
+pub(super) fn bare_target() -> Target {
     Target::sample(StdDuration::from_secs(30))
 }
 
@@ -137,7 +137,7 @@ pub(super) fn engine(
 }
 
 /// Same as [`engine`], with the escalation config under test.
-fn engine_cfg(
+pub(super) fn engine_cfg(
     ops: Arc<dyn IncidentOpsStore>,
     policies: Arc<dyn EscalationPolicyStore>,
     targets: Arc<dyn TargetStore>,

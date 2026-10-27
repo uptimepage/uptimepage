@@ -13,11 +13,12 @@ use crate::domain::{
 use crate::error::Result;
 use crate::notifier::event::IncidentNotice;
 use crate::storage::{
-    Actor, ClaimedEscalation, DueIncident, PendingNotification, QUEUED_TAKEOVER_SECS,
+    Actor, ClaimedEscalation, DueIncident, FanOut, FanOutKind, PendingNotification,
+    QUEUED_TAKEOVER_SECS,
 };
 
-use super::deliver::Rebuilt;
-use super::rules::{PageTarget, Paged, channel_targets, reason_is_stale, resolvable_channels};
+use super::deliver::{Attempt, Rebuilt};
+use super::rules::{PageTarget, channel_targets, marker_row, reason_is_stale, resolvable_channels};
 use super::{SWEEP_CONCURRENCY, Worker};
 
 /// Cap on the transport response quoted into the mail: a broken endpoint
@@ -132,6 +133,39 @@ impl FailingChannelMail {
 /// at it again.
 const SUPPRESSED_ESCALATION_RETRY_SECS: i64 = 60;
 
+/// A page's rows before they are recorded, for one incident's episode, each
+/// with the channel it goes to, or none for a bookkeeping row.
+pub(super) struct Planned {
+    org: OrgId,
+    incident_id: Uuid,
+    episode: i64,
+    items: Vec<(NewIncidentNotification, Option<NotificationChannel>)>,
+}
+
+impl Planned {
+    pub(super) fn new(org: OrgId, incident_id: Uuid, episode: i64) -> Self {
+        Self {
+            org,
+            incident_id,
+            episode,
+            items: Vec::new(),
+        }
+    }
+
+    pub(super) fn push_marker(&mut self, transport: &str, reason: NotificationReason) {
+        let row = marker_row(self.org, self.incident_id, transport, reason, self.episode);
+        self.items.push((row, None));
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    pub(super) fn into_items(self) -> Vec<(NewIncidentNotification, Option<NotificationChannel>)> {
+        self.items
+    }
+}
+
 impl Worker {
     /// Walk the next rung of every due incident's policy, bounded-concurrent so
     /// one slow channel never serialises the tick, and budget-capped so the
@@ -243,30 +277,34 @@ impl Worker {
             NotificationReason::Reminder,
             None,
         );
-        let paged = self
-            .page_channels(
+        let planned = self
+            .plan_channels(
                 d.org,
                 d.id,
-                &notice,
                 NotificationReason::Reminder,
                 incident.escalation_level,
                 &channel_targets(channels),
                 episode,
-                None,
             )
             .await?;
-        if paged.recorded > 0 {
-            self.ops.bump_renotify_count(d.org, d.id).await?;
+        if planned.is_empty() {
+            return Ok(());
         }
-        self.log_paged(d.org, d.id, NotificationReason::Reminder, paged.delivered)
+        let Some(delivered) = self
+            .send_fan_out(planned, Vec::new(), FanOutKind::Reminder, &notice)
+            .await?
+        else {
+            return Ok(());
+        };
+        self.log_paged(d.org, d.id, NotificationReason::Reminder, delivered)
             .await
     }
 
     /// Take the step `c` claimed, unless the incident has moved on since: an
     /// ack or a resolve cleared the timer, a reopen's first page set its own,
     /// or another instance retook the step once the lease ran out. Under the
-    /// page lock, so a step and an opening page never interleave. Its pages
-    /// are the claim's episode, so a reopen while it is under way still pages.
+    /// page lock, so a step and an opening page never interleave. The step
+    /// records only while the claim still holds it.
     pub(super) async fn escalate_one(&self, c: &ClaimedEscalation) -> Result<()> {
         let d = &c.due;
         let _guard = self.page_lock(d.id).lock().await;
@@ -337,27 +375,33 @@ impl Worker {
                 let targets = self
                     .resolve_targets(d.org, &policy, level, Utc::now())
                     .await?;
-                if targets.is_empty() {
-                    self.note_empty_rung(d.org, d.id, level).await?;
-                }
-                let paged = self
-                    .page_channels(
+                let planned = self
+                    .plan_channels(
                         d.org,
                         d.id,
-                        &notice,
                         NotificationReason::Escalated,
                         level,
                         &targets,
                         c.episode,
-                        None,
                     )
                     .await?;
+                let events = if planned.is_empty() {
+                    vec![empty_rung_event(level)]
+                } else {
+                    Vec::new()
+                };
                 let wait = wait_after(&policy.steps, policy.repeat_count, level, round, delay_secs);
-                let next_at = Some(Utc::now() + chrono::Duration::seconds(wait.into()));
-                self.ops
-                    .record_escalation(d.org, d.id, level, round, next_at)
-                    .await?;
-                self.log_paged(d.org, d.id, NotificationReason::Escalated, paged.delivered)
+                let rung = FanOutKind::Rung {
+                    claim: c.claim,
+                    level,
+                    round,
+                    next_at: Some(Utc::now() + chrono::Duration::seconds(wait.into())),
+                };
+                let Some(delivered) = self.send_fan_out(planned, events, rung, &notice).await?
+                else {
+                    return Ok(());
+                };
+                self.log_paged(d.org, d.id, NotificationReason::Escalated, delivered)
                     .await?;
             }
             EscalationDecision::Exhausted => {
@@ -378,32 +422,22 @@ impl Worker {
         Ok(())
     }
 
-    /// Deliver `reason` to each channel id, recording a `queued` row before the
-    /// send so a crash never leaves a delivered page with no audit row. The
-    /// caller pre-filters the channel set (dedup, recovery opt-out), so this
-    /// pages every id it is handed. Returns how many delivered.
-    ///
-    /// Every row is stamped with `episode`, the one the page was decided for.
-    /// A closing notice goes out under its `claim`: each row is recorded only
-    /// while the claim holds, renewing it, and the fan-out stops once it is
-    /// lost. A send can outlast the lease, and another instance taking the
-    /// notice over then tells only the channels that have no row yet.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) async fn page_channels(
+    /// A `queued` row for every enabled channel among `targets`, stamped with
+    /// `episode`, the one the page was decided for. The caller pre-filters the
+    /// set (dedup, recovery opt-out). A channel that cannot be read fails the
+    /// whole page, which then records nothing and is tried again whole.
+    pub(super) async fn plan_channels(
         &self,
         org: OrgId,
         incident_id: Uuid,
-        notice: &IncidentNotice,
         reason: NotificationReason,
         level: i32,
         targets: &[PageTarget],
         episode: i64,
-        mut claim: Option<&mut DateTime<Utc>>,
-    ) -> Result<Paged> {
-        let mut paged = Paged::default();
+    ) -> Result<Planned> {
+        let mut planned = Planned::new(org, incident_id, episode);
         for t in targets {
-            let cid = t.channel_id;
-            let Some(channel) = self.channels.get(org, cid).await? else {
+            let Some(channel) = self.channels.get(org, t.channel_id).await? else {
                 continue;
             };
             if !channel.enabled {
@@ -414,7 +448,7 @@ impl Worker {
                 incident_id,
                 escalation_level: Some(level),
                 target_user_id: t.user_id,
-                channel_id: Some(cid),
+                channel_id: Some(channel.id),
                 transport: channel.kind.as_db_str().to_string(),
                 reason,
                 status: NotificationStatus::Queued,
@@ -423,86 +457,136 @@ impl Worker {
                 sent_at: None,
                 episode,
             };
-            let id = match claim.as_deref_mut() {
-                None => self.ops.record_notification(row).await?,
-                Some(held) => {
-                    let lease = self.claim_lease_secs();
-                    match self
-                        .ops
-                        .record_closing_notification(row, *held, lease)
-                        .await?
-                    {
-                        Some((id, renewed)) => {
-                            *held = renewed;
-                            id
-                        }
-                        None => break,
-                    }
+            planned.items.push((row, Some(channel)));
+        }
+        Ok(planned)
+    }
+
+    /// Record `planned` whole, with its timeline lines and `kind`'s
+    /// bookkeeping, then make the first attempt on every channel row at once.
+    /// Concurrent, so every first attempt ends inside its budget of the commit,
+    /// before the retry sweep may take a `queued` row over. `None` when the
+    /// store refused the page; otherwise how many delivered. A row that cannot
+    /// be settled is the retry sweep's once it is past the takeover; the rest
+    /// still count.
+    pub(super) async fn send_fan_out(
+        &self,
+        planned: Planned,
+        events: Vec<(IncidentEventKind, String)>,
+        kind: FanOutKind,
+        notice: &IncidentNotice,
+    ) -> Result<Option<u32>> {
+        let Planned {
+            org,
+            incident_id,
+            episode,
+            items,
+        } = planned;
+        let (rows, channels): (Vec<_>, Vec<_>) = items.into_iter().unzip();
+        let fan_out = FanOut {
+            org,
+            incident_id,
+            episode,
+            rows,
+            events,
+            kind,
+        };
+        let Some(ids) = self.ops.record_fan_out(fan_out).await? else {
+            return Ok(None);
+        };
+        let attempts = ids
+            .into_iter()
+            .zip(channels)
+            .filter_map(|(id, channel)| channel.map(|channel| (id, channel)))
+            .map(|(id, channel)| async move {
+                (id, self.first_attempt(org, &channel, notice, id).await)
+            });
+        let mut delivered = 0;
+        for (id, status) in futures::future::join_all(attempts).await {
+            match status {
+                Ok(NotificationStatus::Sent) => delivered += 1,
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::warn!(notification_id = %id, error = %err, "first attempt not settled");
                 }
-            };
-            // Unverified email: no send is attempted, but the row records a
-            // failure so the gap is visible on the incident, not silent.
-            let (status, error, receipt) = if channel.awaiting_verification() {
+            }
+        }
+        Ok(Some(delivered))
+    }
+
+    /// Send recorded row `id` for the first time, within
+    /// [`FIRST_ATTEMPT_BUDGET`], and settle it.
+    pub(super) async fn first_attempt(
+        &self,
+        org: OrgId,
+        channel: &NotificationChannel,
+        notice: &IncidentNotice,
+        id: Uuid,
+    ) -> Result<NotificationStatus> {
+        let attempt = match tokio::time::timeout(
+            FIRST_ATTEMPT_BUDGET,
+            self.deliver(org, channel, notice, id, 1),
+        )
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                tracing::warn!(
+                    org_id = %org.0,
+                    incident_id = %notice.incident_id,
+                    channel_id = %channel.id,
+                    notification_id = %id,
+                    transport = channel.kind.as_db_str(),
+                    "incident notification first attempt exceeded its budget"
+                );
                 (
                     NotificationStatus::Failed,
-                    Some("email address not verified".to_string()),
+                    Some(format!("no outcome within {FIRST_ATTEMPT_BUDGET:?}")),
                     None,
                 )
-            } else {
-                match tokio::time::timeout(
-                    FIRST_ATTEMPT_BUDGET,
-                    self.deliver(org, &channel, notice, id, 1),
-                )
-                .await
-                {
-                    Ok(outcome) => outcome,
-                    Err(_) => {
-                        tracing::warn!(
-                            org_id = %org.0,
-                            incident_id = %notice.incident_id,
-                            channel_id = %channel.id,
-                            notification_id = %id,
-                            transport = channel.kind.as_db_str(),
-                            "incident notification first attempt exceeded its budget"
-                        );
-                        (
-                            NotificationStatus::Failed,
-                            Some(format!("no outcome within {FIRST_ATTEMPT_BUDGET:?}")),
-                            None,
-                        )
-                    }
-                }
-            };
-            paged.recorded += 1;
-            if status == NotificationStatus::Sent {
-                paged.delivered += 1;
             }
-            // A first-attempt failure schedules the backoff so the retry sweep
-            // waits instead of re-firing next tick.
-            let next_attempt_at = (status == NotificationStatus::Failed)
-                .then(|| self.retry_backoff_hinted(1, error.as_deref()))
-                .flatten();
-            if status == NotificationStatus::Failed {
-                self.note_dead_letter(channel.kind.as_db_str(), next_attempt_at);
-            }
-            self.record_channel_health(org, &channel, status, next_attempt_at, error.as_deref())
-                .await;
-            self.ops
-                .mark_notification(
-                    org,
-                    id,
-                    NotificationOutcome {
-                        status,
-                        attempt: 1,
-                        error,
-                        sent_at: (status == NotificationStatus::Sent).then(Utc::now),
-                        next_attempt_at,
-                        provider_receipt: receipt,
-                    },
-                )
-                .await?;
+        };
+        let status = attempt.0;
+        self.settle_attempt(org, channel, id, 1, attempt).await?;
+        Ok(status)
+    }
+
+    /// Store what attempt `attempt` on row `id` came to, then fold it into the
+    /// channel's failure run. The row goes first: until it lands the retry
+    /// sweep may take the row over and send it again, while a lost health
+    /// update costs only one outcome in the run. A failure schedules the
+    /// backoff so the retry sweep waits instead of re-firing next tick.
+    async fn settle_attempt(
+        &self,
+        org: OrgId,
+        channel: &NotificationChannel,
+        id: Uuid,
+        attempt: i32,
+        (status, error, receipt): Attempt,
+    ) -> Result<()> {
+        let next_attempt_at = (status == NotificationStatus::Failed)
+            .then(|| self.retry_backoff_hinted(attempt, error.as_deref()))
+            .flatten();
+        if status == NotificationStatus::Failed {
+            self.note_dead_letter(channel.kind.as_db_str(), next_attempt_at);
         }
-        Ok(paged)
+        self.ops
+            .mark_notification(
+                org,
+                id,
+                NotificationOutcome {
+                    status,
+                    attempt,
+                    error: error.clone(),
+                    sent_at: (status == NotificationStatus::Sent).then(Utc::now),
+                    next_attempt_at,
+                    provider_receipt: receipt,
+                },
+            )
+            .await?;
+        self.record_channel_health(org, channel, status, next_attempt_at, error.as_deref())
+            .await;
+        Ok(())
     }
 
     /// Fold a finished delivery into the channel's failure run. Only one that
@@ -593,28 +677,6 @@ impl Worker {
                 kind,
                 Actor::System,
                 Some(format!("paged {paged} channel(s): {}", reason.as_db_str())),
-            )
-            .await
-    }
-
-    /// Record on the timeline that a policy rung paged no one (empty schedule, a
-    /// responder with no contacts, a deleted-and-cascaded channel) so the
-    /// incident does not silently escalate past an unreachable rung.
-    pub(super) async fn note_empty_rung(
-        &self,
-        org: OrgId,
-        incident_id: Uuid,
-        level: i32,
-    ) -> Result<()> {
-        self.ops
-            .append_event(
-                org,
-                incident_id,
-                IncidentEventKind::Escalated,
-                Actor::System,
-                Some(format!(
-                    "escalation level {level} reached no channel — check the policy's targets"
-                )),
             )
             .await
     }
@@ -750,38 +812,20 @@ impl Worker {
                 .await?;
             return Ok(());
         }
-        let (status, error, receipt) = if channel.awaiting_verification() {
-            (
-                NotificationStatus::Failed,
-                Some("email address not verified".to_string()),
-                None,
-            )
-        } else {
-            self.deliver(p.org, &channel, &notice, p.id, next_attempt)
-                .await
-        };
-        let next_attempt_at = (status == NotificationStatus::Failed)
-            .then(|| self.retry_backoff_hinted(next_attempt, error.as_deref()))
-            .flatten();
-        if status == NotificationStatus::Failed {
-            self.note_dead_letter(&p.transport, next_attempt_at);
-        }
-        self.record_channel_health(p.org, &channel, status, next_attempt_at, error.as_deref())
+        let attempt = self
+            .deliver(p.org, &channel, &notice, p.id, next_attempt)
             .await;
-        self.ops
-            .mark_notification(
-                p.org,
-                p.id,
-                NotificationOutcome {
-                    status,
-                    attempt: next_attempt,
-                    error,
-                    sent_at: (status == NotificationStatus::Sent).then(Utc::now),
-                    next_attempt_at,
-                    provider_receipt: receipt,
-                },
-            )
-            .await?;
-        Ok(())
+        self.settle_attempt(p.org, &channel, p.id, next_attempt, attempt)
+            .await
     }
+}
+
+/// The timeline line for a policy rung that paged no one (empty schedule, a
+/// responder with no contacts, every channel deleted or turned off), so the
+/// incident does not silently escalate past an unreachable rung.
+pub(super) fn empty_rung_event(level: i32) -> (IncidentEventKind, String) {
+    (
+        IncidentEventKind::Escalated,
+        format!("escalation level {level} reached no channel — check the policy's targets"),
+    )
 }

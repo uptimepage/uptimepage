@@ -20,8 +20,8 @@ use crate::error::Result;
 
 use super::{
     Acknowledged, Actor, ClaimedEscalation, ClosingNotice, DueClosingNotices, DueIncident,
-    EmergencyAck, INCIDENT_DETAIL_ROW_CAP, IncidentOpsFilter, IncidentOpsStore, IncidentSort,
-    IncidentStateCounts, LifecycleOutcome, PendingNotification, QUEUED_TAKEOVER_SECS,
+    EmergencyAck, FanOut, FanOutKind, INCIDENT_DETAIL_ROW_CAP, IncidentOpsFilter, IncidentOpsStore,
+    IncidentSort, IncidentStateCounts, LifecycleOutcome, PendingNotification, QUEUED_TAKEOVER_SECS,
     pages_with_monitor, status_page_required,
 };
 
@@ -162,6 +162,15 @@ impl InMemoryIncidentOpsStore {
             if n.channel_id.is_none() {
                 n.created_at -= by;
             }
+        }
+    }
+
+    /// Test helper: backdate every notification, simulating time passing
+    /// since each was recorded.
+    #[cfg(test)]
+    pub fn age_notifications(&self, by: chrono::Duration) {
+        for (_, n) in self.inner.lock().notifications.iter_mut() {
+            n.created_at -= by;
         }
     }
 
@@ -862,6 +871,64 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         Ok(push_notification(&mut self.inner.lock(), n))
     }
 
+    async fn record_fan_out(&self, f: FanOut) -> Result<Option<Vec<Uuid>>> {
+        let mut g = self.inner.lock();
+        let Some(idx) = g.incidents.iter().position(|i| {
+            i.id == f.incident_id
+                && i.target_id.is_some()
+                && i.paging_enabled
+                && i.state != IncidentState::Resolved
+        }) else {
+            return Ok(None);
+        };
+        if reopen_count(&g, f.incident_id) != f.episode {
+            return Ok(None);
+        }
+        let inc = &mut g.incidents[idx];
+        let triggered = inc.state == IncidentState::Triggered;
+        match f.kind {
+            FanOutKind::Opening(arm) => {
+                if let Some(arm) = arm.filter(|_| triggered) {
+                    inc.escalation_policy_id = Some(arm.policy_id);
+                    inc.escalation_level = arm.level;
+                    inc.escalation_round = 0;
+                    inc.next_escalation_at = arm.next_at;
+                }
+            }
+            FanOutKind::Rung {
+                claim,
+                level,
+                round,
+                next_at,
+            } => {
+                if !triggered
+                    || inc.recovering_since.is_some()
+                    || inc.next_escalation_at != Some(claim)
+                {
+                    return Ok(None);
+                }
+                inc.escalation_level = level;
+                inc.escalation_round = round;
+                inc.next_escalation_at = next_at;
+            }
+            FanOutKind::Reminder => {
+                if !triggered || inc.recovering_since.is_some() {
+                    return Ok(None);
+                }
+                *g.renotify_counts.entry(f.incident_id).or_default() += 1;
+            }
+        }
+        let ids = f
+            .rows
+            .into_iter()
+            .map(|n| push_notification(&mut g, n))
+            .collect();
+        for (kind, message) in f.events {
+            Self::push_event(&mut g, f.incident_id, kind, Actor::System, Some(message));
+        }
+        Ok(Some(ids))
+    }
+
     async fn pending_notifications(
         &self,
         now: DateTime<Utc>,
@@ -876,11 +943,11 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             .iter()
             .filter(|(_, n)| {
                 let due = match n.status {
-                    NotificationStatus::Failed => true,
+                    NotificationStatus::Failed => n.attempt < max_attempts,
                     NotificationStatus::Queued => n.created_at < queued_before,
                     _ => false,
                 };
-                due && n.attempt < max_attempts && n.next_attempt_at.is_none_or(|t| t <= now)
+                due && n.next_attempt_at.is_none_or(|t| t <= now)
             })
             .take(limit)
             .map(|(org, n)| PendingNotification {
@@ -902,13 +969,14 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         outcome: NotificationOutcome,
     ) -> Result<()> {
         let mut g = self.inner.lock();
-        if let Some((_, n)) = g
-            .notifications
-            .iter_mut()
-            .find(|(o, n)| *o == org && n.id == id)
-        {
+        if let Some((_, n)) = g.notifications.iter_mut().find(|(o, n)| {
+            *o == org
+                && n.id == id
+                && (outcome.status == NotificationStatus::Sent
+                    || (n.status != NotificationStatus::Sent && n.attempt <= outcome.attempt))
+        }) {
             n.status = outcome.status;
-            n.attempt = outcome.attempt;
+            n.attempt = n.attempt.max(outcome.attempt);
             n.error = outcome.error;
             n.sent_at = outcome.sent_at;
             n.next_attempt_at = outcome.next_attempt_at;
@@ -990,29 +1058,6 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             n.provider_receipt = None;
         }
         Ok(())
-    }
-
-    async fn begin_escalation(
-        &self,
-        _org: OrgId,
-        id: Uuid,
-        policy_id: Uuid,
-        level: i32,
-        next_at: Option<DateTime<Utc>>,
-    ) -> Result<bool> {
-        let mut g = self.inner.lock();
-        if let Some(inc) = g
-            .incidents
-            .iter_mut()
-            .find(|i| i.id == id && i.state == IncidentState::Triggered)
-        {
-            inc.escalation_policy_id = Some(policy_id);
-            inc.escalation_level = level;
-            inc.escalation_round = 0;
-            inc.next_escalation_at = next_at;
-            return Ok(true);
-        }
-        Ok(false)
     }
 
     async fn record_escalation(
@@ -1212,11 +1257,6 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         _limit: usize,
     ) -> Result<Vec<DueIncident>> {
         Ok(Vec::new())
-    }
-
-    async fn bump_renotify_count(&self, _org: OrgId, id: Uuid) -> Result<()> {
-        *self.inner.lock().renotify_counts.entry(id).or_default() += 1;
-        Ok(())
     }
 
     /// Whether a window still covers the target is a join this double has no

@@ -81,6 +81,10 @@ pub(super) enum Rebuilt {
     Gone,
 }
 
+/// What one delivery attempt came to: its status, the error, and any provider
+/// receipt.
+pub(super) type Attempt = (NotificationStatus, Option<String>, Option<String>);
+
 impl Worker {
     /// Re-resolve the incident + monitor + channel for a retry.
     pub(super) async fn rebuild_notice(
@@ -133,7 +137,16 @@ impl Worker {
         notice: &IncidentNotice,
         notification_id: Uuid,
         attempt: i32,
-    ) -> (NotificationStatus, Option<String>, Option<String>) {
+    ) -> Attempt {
+        // Unverified email: no send is attempted, but the row records a
+        // failure so the gap is visible on the incident, not silent.
+        if channel.awaiting_verification() {
+            return (
+                NotificationStatus::Failed,
+                Some("email address not verified".to_string()),
+                None,
+            );
+        }
         let central = self.central_bot.as_ref().map(|c| c.as_central());
         let email_alert = self.email_alert(org, channel).await;
         let controls = self.alert_controls(org, channel, notice).await;

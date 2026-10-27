@@ -9,7 +9,8 @@ use crate::domain::{
 
 use super::pg::resolved_public_message;
 use super::{
-    Actor, InMemoryIncidentOpsStore, IncidentOpsFilter, IncidentOpsStore, LifecycleOutcome,
+    Actor, Arming, FanOut, FanOutKind, InMemoryIncidentOpsStore, IncidentOpsFilter,
+    IncidentOpsStore, LifecycleOutcome,
 };
 
 #[test]
@@ -784,4 +785,256 @@ async fn a_closing_row_is_recorded_only_under_the_claim_that_holds_the_notice() 
         None
     );
     assert_eq!(store.notifications_for(org(), id).await.unwrap().len(), 2);
+}
+
+fn queued_row(incident_id: Uuid, episode: i64) -> NewIncidentNotification {
+    NewIncidentNotification {
+        org: org(),
+        incident_id,
+        escalation_level: Some(0),
+        target_user_id: None,
+        channel_id: Some(Uuid::now_v7()),
+        transport: "webhook".into(),
+        reason: NotificationReason::Opened,
+        status: NotificationStatus::Queued,
+        attempt: 1,
+        error: None,
+        sent_at: None,
+        episode,
+    }
+}
+
+fn fan_out(incident_id: Uuid, episode: i64, kind: FanOutKind) -> FanOut {
+    FanOut {
+        org: org(),
+        incident_id,
+        episode,
+        rows: vec![
+            queued_row(incident_id, episode),
+            queued_row(incident_id, episode),
+        ],
+        events: vec![(IncidentEventKind::Notified, "paged".into())],
+        kind,
+    }
+}
+
+#[tokio::test]
+async fn a_fan_out_records_its_rows_in_order_with_its_timeline_lines() {
+    let store = InMemoryIncidentOpsStore::new();
+    let id = seed_triggered(&store);
+    let ids = store
+        .record_fan_out(fan_out(id, 0, FanOutKind::Opening(None)))
+        .await
+        .unwrap()
+        .expect("recorded");
+    let rows = store.notifications_for(org(), id).await.unwrap();
+    assert_eq!(ids, rows.iter().map(|n| n.id).collect::<Vec<_>>());
+    let timeline = store.timeline(org(), id).await.unwrap();
+    assert!(
+        timeline
+            .iter()
+            .any(|e| e.message.as_deref() == Some("paged"))
+    );
+}
+
+#[tokio::test]
+async fn a_fan_out_decided_before_a_reopen_records_nothing() {
+    let store = InMemoryIncidentOpsStore::new();
+    let id = seed_triggered(&store);
+    store.resolve(org(), id, Actor::System, None).await.unwrap();
+    store
+        .reopen(org(), id, Actor::User(user()), None)
+        .await
+        .unwrap();
+    let stale = store
+        .record_fan_out(fan_out(id, 0, FanOutKind::Opening(None)))
+        .await
+        .unwrap();
+    assert_eq!(stale, None);
+    assert!(store.notifications_for(org(), id).await.unwrap().is_empty());
+    assert!(
+        store
+            .record_fan_out(fan_out(id, 1, FanOutKind::Opening(None)))
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn a_fan_out_needs_an_open_incident_with_a_monitor_and_paging() {
+    let store = InMemoryIncidentOpsStore::new();
+    let gone = seed_triggered(&store);
+    store.edit(gone, |i| i.target_id = None);
+    let quiet = seed_triggered(&store);
+    store.edit(quiet, |i| i.paging_enabled = false);
+    let over = seed_triggered(&store);
+    store
+        .resolve(org(), over, Actor::System, None)
+        .await
+        .unwrap();
+    for id in [gone, quiet, over] {
+        let none = store
+            .record_fan_out(fan_out(id, 0, FanOutKind::Opening(None)))
+            .await
+            .unwrap();
+        assert_eq!(none, None);
+    }
+}
+
+#[tokio::test]
+async fn an_opening_records_its_rows_on_an_acknowledged_incident_but_arms_nothing() {
+    let store = InMemoryIncidentOpsStore::new();
+    let id = seed_triggered(&store);
+    store
+        .acknowledge(org(), id, Actor::System, None, None)
+        .await
+        .unwrap();
+    let arm = Arming {
+        policy_id: Uuid::now_v7(),
+        level: 1,
+        next_at: Some(Utc::now()),
+    };
+    assert!(
+        store
+            .record_fan_out(fan_out(id, 0, FanOutKind::Opening(Some(arm))))
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let inc = store.get(org(), id).await.unwrap().unwrap();
+    assert_eq!(inc.escalation_policy_id, None);
+    assert_eq!(inc.next_escalation_at, None);
+    assert_eq!(store.notifications_for(org(), id).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_rung_records_only_under_the_claim_it_was_taken_with() {
+    let store = InMemoryIncidentOpsStore::new();
+    let id = seed_triggered(&store);
+    let claim = Utc::now();
+    store.edit(id, |i| i.next_escalation_at = Some(claim));
+    let rung = |claim| FanOutKind::Rung {
+        claim,
+        level: 2,
+        round: 0,
+        next_at: None,
+    };
+    let retaken = store
+        .record_fan_out(fan_out(id, 0, rung(claim + chrono::Duration::seconds(1))))
+        .await
+        .unwrap();
+    assert_eq!(retaken, None, "another holder's claim");
+    assert!(
+        store
+            .record_fan_out(fan_out(id, 0, rung(claim)))
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let inc = store.get(org(), id).await.unwrap().unwrap();
+    assert_eq!(inc.escalation_level, 2);
+    assert_eq!(inc.next_escalation_at, None);
+
+    let recovering = seed_triggered(&store);
+    store.edit(recovering, |i| {
+        i.next_escalation_at = Some(claim);
+        i.recovering_since = Some(Utc::now());
+    });
+    let back_up = store
+        .record_fan_out(fan_out(recovering, 0, rung(claim)))
+        .await
+        .unwrap();
+    assert_eq!(back_up, None, "the monitor is back up");
+
+    let acked = seed_triggered(&store);
+    store.edit(acked, |i| i.next_escalation_at = Some(claim));
+    store
+        .acknowledge(org(), acked, Actor::System, None, None)
+        .await
+        .unwrap();
+    let after_ack = store
+        .record_fan_out(fan_out(acked, 0, rung(claim)))
+        .await
+        .unwrap();
+    assert_eq!(after_ack, None, "an ack cleared the timer");
+    assert!(
+        store
+            .notifications_for(org(), acked)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_reminder_records_only_while_triggered_and_still_down() {
+    let store = InMemoryIncidentOpsStore::new();
+    let id = seed_triggered(&store);
+    store.edit(id, |i| i.recovering_since = Some(Utc::now()));
+    let recovering = store
+        .record_fan_out(fan_out(id, 0, FanOutKind::Reminder))
+        .await
+        .unwrap();
+    assert_eq!(recovering, None);
+    store.edit(id, |i| i.recovering_since = None);
+    store
+        .acknowledge(org(), id, Actor::System, None, None)
+        .await
+        .unwrap();
+    let acked = store
+        .record_fan_out(fan_out(id, 0, FanOutKind::Reminder))
+        .await
+        .unwrap();
+    assert_eq!(acked, None);
+    assert_eq!(store.renotify_count(id), 0);
+
+    let down = seed_triggered(&store);
+    assert!(
+        store
+            .record_fan_out(fan_out(down, 0, FanOutKind::Reminder))
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(store.renotify_count(down), 1);
+}
+
+#[tokio::test]
+async fn a_late_outcome_never_overwrites_a_later_attempts_and_a_delivery_is_final() {
+    let store = InMemoryIncidentOpsStore::new();
+    let id = seed_triggered(&store);
+    let row = store.record_notification(queued_row(id, 0)).await.unwrap();
+    let mark = async |status, attempt| {
+        let outcome = crate::domain::NotificationOutcome {
+            status,
+            attempt,
+            error: None,
+            sent_at: None,
+            next_attempt_at: None,
+            provider_receipt: None,
+        };
+        store.mark_notification(org(), row, outcome).await.unwrap();
+        let rows = store.notifications_for(org(), id).await.unwrap();
+        (rows[0].status, rows[0].attempt)
+    };
+    // The takeover failed; the stalled first attempt's failure is older.
+    assert_eq!(
+        mark(NotificationStatus::Failed, 2).await,
+        (NotificationStatus::Failed, 2)
+    );
+    assert_eq!(
+        mark(NotificationStatus::Failed, 1).await,
+        (NotificationStatus::Failed, 2)
+    );
+    // The stalled first attempt did deliver: that settles the row.
+    assert_eq!(
+        mark(NotificationStatus::Sent, 1).await,
+        (NotificationStatus::Sent, 2)
+    );
+    // And nothing a takeover reports afterwards undoes it.
+    assert_eq!(
+        mark(NotificationStatus::Failed, 3).await,
+        (NotificationStatus::Sent, 2)
+    );
 }

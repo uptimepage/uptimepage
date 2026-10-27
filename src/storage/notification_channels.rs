@@ -1001,11 +1001,20 @@ struct MemEntry {
 pub struct InMemoryNotificationChannelStore {
     inner: Mutex<Vec<MemEntry>>,
     targets: Option<Arc<InMemoryTargetStore>>,
+    /// Holds every delivery outcome back this long before recording it.
+    #[cfg(test)]
+    outcome_delay: Mutex<Option<std::time::Duration>>,
 }
 
 impl InMemoryNotificationChannelStore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Test helper: make the channel health update slow, as a busy database would.
+    #[cfg(test)]
+    pub fn delay_delivery_outcomes(&self, by: std::time::Duration) {
+        *self.outcome_delay.lock() = Some(by);
     }
 
     /// A delete also unbinds the channel from `targets`, as the Postgres store does.
@@ -1321,6 +1330,13 @@ impl NotificationChannelStore for InMemoryNotificationChannelStore {
         id: Uuid,
         delivered: bool,
     ) -> Result<ChannelHealth> {
+        #[cfg(test)]
+        {
+            let delay = *self.outcome_delay.lock();
+            if let Some(by) = delay {
+                tokio::time::sleep(by).await;
+            }
+        }
         let mut g = self.inner.lock();
         let Some(entry) = g.iter_mut().find(|e| e.org == org && e.ch.id == id) else {
             return Ok(ChannelHealth::default());

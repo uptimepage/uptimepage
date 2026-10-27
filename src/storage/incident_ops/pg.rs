@@ -22,10 +22,10 @@ use crate::storage::locks::{advisory_xact_lock, incident_lock_key};
 
 use super::{
     AUTO_RESOLVED_MESSAGE, Acknowledged, Actor, ClaimedEscalation, ClosingNotice,
-    DueClosingNotices, DueIncident, EmergencyAck, INCIDENT_DETAIL_ROW_CAP, IncidentOpsFilter,
-    IncidentOpsStore, IncidentStateCounts, LifecycleOutcome, PendingNotification,
-    QUEUED_TAKEOVER_SECS, UpdateText, opening_update_message, pages_with_monitor,
-    status_page_required, unnamed_sender,
+    DueClosingNotices, DueIncident, EmergencyAck, FanOut, FanOutKind, INCIDENT_DETAIL_ROW_CAP,
+    IncidentOpsFilter, IncidentOpsStore, IncidentStateCounts, LifecycleOutcome,
+    PendingNotification, QUEUED_TAKEOVER_SECS, UpdateText, opening_update_message,
+    pages_with_monitor, status_page_required, unnamed_sender,
 };
 
 pub struct PgIncidentOpsStore {
@@ -302,6 +302,35 @@ async fn insert_event_tx(
     .await
     .map_err(|e| anyhow::anyhow!("insert incident_event: {e}"))?;
     Ok(())
+}
+
+async fn insert_notification<'e, E: sqlx::PgExecutor<'e>>(
+    executor: E,
+    n: NewIncidentNotification,
+) -> Result<Uuid> {
+    let row: (Uuid,) = sqlx::query_as(
+        r#"INSERT INTO incident_notifications
+             (org_id, incident_id, escalation_level, target_user_id, channel_id,
+              transport, reason, status, attempt, error, sent_at, episode)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+           RETURNING id"#,
+    )
+    .bind(n.org.0)
+    .bind(n.incident_id)
+    .bind(n.escalation_level)
+    .bind(n.target_user_id)
+    .bind(n.channel_id)
+    .bind(n.transport)
+    .bind(n.reason.as_db_str())
+    .bind(n.status.as_db_str())
+    .bind(n.attempt)
+    .bind(n.error)
+    .bind(n.sent_at)
+    .bind(n.episode)
+    .fetch_one(executor)
+    .await
+    .map_err(|e| anyhow::anyhow!("record_notification: {e}"))?;
+    Ok(row.0)
 }
 
 /// Mirror an operator's incident action into `org_audit_log`, the org's one
@@ -1402,29 +1431,117 @@ impl IncidentOpsStore for PgIncidentOpsStore {
     }
 
     async fn record_notification(&self, n: NewIncidentNotification) -> Result<Uuid> {
-        let row: (Uuid,) = sqlx::query_as(
-            r#"INSERT INTO incident_notifications
-                 (org_id, incident_id, escalation_level, target_user_id, channel_id,
-                  transport, reason, status, attempt, error, sent_at, episode)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-               RETURNING id"#,
+        insert_notification(&self.pool, n).await
+    }
+
+    async fn record_fan_out(&self, f: FanOut) -> Result<Option<Vec<Uuid>>> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| anyhow::anyhow!("begin: {e}"))?;
+        // The lifecycle transitions' lock and order, so a reopen and a page
+        // serialise and each reads what the other committed.
+        advisory_xact_lock(&mut *tx, &incident_lock_key(f.incident_id))
+            .await
+            .map_err(|e| anyhow::anyhow!("incident lock: {e}"))?;
+        let pageable: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM incidents \
+             WHERE id = $1 AND org_id = $2 AND target_id IS NOT NULL AND paging_enabled \
+                 AND state <> 'resolved' \
+             FOR UPDATE",
         )
-        .bind(n.org.0)
-        .bind(n.incident_id)
-        .bind(n.escalation_level)
-        .bind(n.target_user_id)
-        .bind(n.channel_id)
-        .bind(n.transport)
-        .bind(n.reason.as_db_str())
-        .bind(n.status.as_db_str())
-        .bind(n.attempt)
-        .bind(n.error)
-        .bind(n.sent_at)
-        .bind(n.episode)
-        .fetch_one(&self.pool)
+        .bind(f.incident_id)
+        .bind(f.org.0)
+        .fetch_optional(&mut *tx)
         .await
-        .map_err(|e| anyhow::anyhow!("record_notification: {e}"))?;
-        Ok(row.0)
+        .map_err(|e| anyhow::anyhow!("lock incident for fan-out: {e}"))?;
+        if pageable.is_none() || reopen_count_tx(&mut tx, f.org, f.incident_id).await? != f.episode
+        {
+            return Ok(None);
+        }
+        let settled = match f.kind {
+            FanOutKind::Opening(arm) => {
+                if let Some(arm) = arm {
+                    sqlx::query(
+                        "UPDATE incidents \
+                         SET escalation_policy_id = $3, escalation_level = $4, escalation_round = 0, \
+                             next_escalation_at = $5, updated_at = now() \
+                         WHERE id = $1 AND org_id = $2 AND state = 'triggered'",
+                    )
+                    .bind(f.incident_id)
+                    .bind(f.org.0)
+                    .bind(arm.policy_id)
+                    .bind(arm.level)
+                    .bind(arm.next_at)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("arm escalation: {e}"))?;
+                }
+                true
+            }
+            FanOutKind::Rung {
+                claim,
+                level,
+                round,
+                next_at,
+            } => {
+                sqlx::query(
+                    "UPDATE incidents \
+                 SET escalation_level = $3, escalation_round = $4, \
+                     next_escalation_at = $5, updated_at = now() \
+                 WHERE id = $1 AND org_id = $2 AND state = 'triggered' \
+                     AND recovering_since IS NULL AND next_escalation_at = $6",
+                )
+                .bind(f.incident_id)
+                .bind(f.org.0)
+                .bind(level)
+                .bind(round)
+                .bind(next_at)
+                .bind(claim)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| anyhow::anyhow!("advance escalation: {e}"))?
+                .rows_affected()
+                    > 0
+            }
+            FanOutKind::Reminder => {
+                sqlx::query(
+                    "UPDATE incidents SET renotify_count = renotify_count + 1, updated_at = now() \
+                 WHERE id = $1 AND org_id = $2 AND state = 'triggered' \
+                     AND recovering_since IS NULL",
+                )
+                .bind(f.incident_id)
+                .bind(f.org.0)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| anyhow::anyhow!("count reminder: {e}"))?
+                .rows_affected()
+                    > 0
+            }
+        };
+        if !settled {
+            return Ok(None);
+        }
+        let mut ids = Vec::with_capacity(f.rows.len());
+        for n in f.rows {
+            ids.push(insert_notification(&mut *tx, n).await?);
+        }
+        for (kind, message) in &f.events {
+            insert_event_tx(
+                &mut tx,
+                f.org,
+                f.incident_id,
+                *kind,
+                Actor::System,
+                Some(message),
+            )
+            .await?;
+        }
+        tx.commit()
+            .await
+            .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
+        Ok(Some(ids))
     }
 
     async fn pending_notifications(
@@ -1448,8 +1565,8 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         let rows: Vec<Row> = sqlx::query_as(
             r#"SELECT id, org_id, incident_id, channel_id, transport, reason, attempt
                FROM incident_notifications
-               WHERE (status = 'failed' OR (status = 'queued' AND created_at < $4))
-                 AND attempt < $1
+               WHERE ((status = 'failed' AND attempt < $1)
+                      OR (status = 'queued' AND created_at < $4))
                  AND (next_attempt_at IS NULL OR next_attempt_at <= $3)
                ORDER BY next_attempt_at ASC NULLS FIRST LIMIT $2"#,
         )
@@ -1482,9 +1599,10 @@ impl IncidentOpsStore for PgIncidentOpsStore {
     ) -> Result<()> {
         sqlx::query(
             r#"UPDATE incident_notifications
-               SET status = $3, attempt = $4, error = $5, sent_at = $6, next_attempt_at = $7,
-                   provider_receipt = COALESCE($8, provider_receipt)
-               WHERE id = $1 AND org_id = $2"#,
+               SET status = $3, attempt = GREATEST(attempt, $4), error = $5, sent_at = $6,
+                   next_attempt_at = $7, provider_receipt = COALESCE($8, provider_receipt)
+               WHERE id = $1 AND org_id = $2
+                 AND ($3 = 'sent' OR (status <> 'sent' AND attempt <= $4))"#,
         )
         .bind(id)
         .bind(org.0)
@@ -1610,31 +1728,6 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         Ok(())
     }
 
-    async fn begin_escalation(
-        &self,
-        org: OrgId,
-        id: Uuid,
-        policy_id: Uuid,
-        level: i32,
-        next_at: Option<DateTime<Utc>>,
-    ) -> Result<bool> {
-        let res = sqlx::query(
-            "UPDATE incidents \
-             SET escalation_policy_id = $3, escalation_level = $4, escalation_round = 0, \
-                 next_escalation_at = $5, updated_at = now() \
-             WHERE id = $1 AND org_id = $2 AND state = 'triggered'",
-        )
-        .bind(id)
-        .bind(org.0)
-        .bind(policy_id)
-        .bind(level)
-        .bind(next_at)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("begin_escalation: {e}"))?;
-        Ok(res.rows_affected() > 0)
-    }
-
     async fn record_escalation(
         &self,
         org: OrgId,
@@ -1663,7 +1756,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
     // `target_id IS NOT NULL OR target_name IS NULL` leaves out an incident whose
     // monitor was deleted. The delete closes those; this keeps one left open by
     // any other path from being picked up every tick with nothing to page.
-    // Reconcile and flap release carry the same guard.
+    // Reconcile carries the same guard; the release scans join the monitor.
     async fn due_for_escalation(
         &self,
         now: DateTime<Utc>,
@@ -1974,19 +2067,6 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             .collect())
     }
 
-    async fn bump_renotify_count(&self, org: OrgId, id: Uuid) -> Result<()> {
-        sqlx::query(
-            "UPDATE incidents SET renotify_count = renotify_count + 1, updated_at = now() \
-             WHERE id = $1 AND org_id = $2 AND state = 'triggered'",
-        )
-        .bind(id)
-        .bind(org.0)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("bump_renotify_count: {e}"))?;
-        Ok(())
-    }
-
     async fn due_for_maintenance_release(&self, limit: usize) -> Result<Vec<DueIncident>> {
         let cap = (limit as i64).clamp(1, 1000);
         #[derive(sqlx::FromRow)]
@@ -2001,11 +2081,13 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         // Same "nothing newer than the hold" shape as the flap release: it is
         // what makes this fire once even when the release reaches no channel.
         // The marker EXISTS runs first so a fleet holding nothing pays neither
-        // the LATERAL nor the window join.
+        // the LATERAL nor the window join. A paused or held monitor's hold
+        // waits for it to come back rather than being let go into nothing.
         let sql = format!(
             "SELECT i.id, i.org_id, i.target_id, i.escalation_policy_id, i.escalation_level, \
                     i.escalation_round \
              FROM incidents i \
+             JOIN targets t ON t.id = i.target_id AND t.org_id = i.org_id \
              JOIN LATERAL ( \
                  SELECT max(created_at) AS held_at FROM incident_notifications h \
                  WHERE h.incident_id = i.id AND h.org_id = i.org_id \
@@ -2018,7 +2100,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                ) \
                AND i.state = 'triggered' AND i.ended_at IS NULL \
                AND i.recovering_since IS NULL \
-               AND i.target_id IS NOT NULL \
+               AND t.enabled AND {not_held} \
                AND held.held_at IS NOT NULL \
                AND NOT EXISTS ( \
                    SELECT 1 FROM incident_notifications n \
@@ -2026,9 +2108,8 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                      AND n.created_at > held.held_at \
                ) \
                AND NOT {window} \
-               AND {not_held} \
              ORDER BY held.held_at ASC LIMIT $1",
-            not_held = crate::storage::admin::not_held_sql("i.target_id"),
+            not_held = crate::storage::admin::NOT_HELD_PREDICATE,
             window = crate::storage::suppressing_window_sql("i.target_id", "i.org_id"),
         );
         let rows: Vec<Row> = sqlx::query_as(&sql)
@@ -2067,18 +2148,20 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         }
         // "Nothing newer than the hold" is what makes this fire once even when
         // the release reaches no channel, and what lets a reopened incident be
-        // held and released again on its own merits.
-        let rows: Vec<Row> = sqlx::query_as(
+        // held and released again on its own merits. A paused or held monitor's
+        // hold waits for it to come back rather than being let go into nothing.
+        let sql = format!(
             "SELECT i.id, i.org_id, i.target_id, i.escalation_policy_id, i.escalation_level, \
                     i.escalation_round \
              FROM incidents i \
+             JOIN targets t ON t.id = i.target_id AND t.org_id = i.org_id \
              JOIN LATERAL ( \
                  SELECT max(created_at) AS held_at FROM incident_notifications h \
                  WHERE h.incident_id = i.id AND h.org_id = i.org_id \
                    AND h.channel_id IS NULL AND h.transport = 'damped' \
              ) held ON TRUE \
              WHERE i.state = 'triggered' AND i.recovering_since IS NULL \
-               AND (i.target_id IS NOT NULL OR i.target_name IS NULL) \
+               AND t.enabled AND {not_held} \
                AND held.held_at IS NOT NULL \
                AND held.held_at <= $1 \
                AND NOT EXISTS ( \
@@ -2087,12 +2170,14 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                      AND n.created_at > held.held_at \
                ) \
              ORDER BY held.held_at ASC LIMIT $2",
-        )
-        .bind(now - hold)
-        .bind(cap)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("due_for_flap_release: {e}"))?;
+            not_held = crate::storage::admin::NOT_HELD_PREDICATE,
+        );
+        let rows: Vec<Row> = sqlx::query_as(&sql)
+            .bind(now - hold)
+            .bind(cap)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("due_for_flap_release: {e}"))?;
         Ok(rows
             .into_iter()
             .map(|r| DueIncident {

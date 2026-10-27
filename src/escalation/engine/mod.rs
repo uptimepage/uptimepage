@@ -44,6 +44,8 @@ mod alert_controls_tests;
 mod closing_notice_tests;
 mod deliver;
 mod episode;
+#[cfg(test)]
+mod fan_out_tests;
 mod receipts;
 pub mod rules;
 mod sweep;

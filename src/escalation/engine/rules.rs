@@ -1,6 +1,9 @@
 use uuid::Uuid;
 
-use crate::domain::{ExternalId, IncidentState, Linked, LinkedApp, NotificationReason, UserId};
+use crate::domain::{
+    ExternalId, IncidentState, Linked, LinkedApp, NewIncidentNotification, NotificationReason,
+    NotificationStatus, OrgId, UserId,
+};
 use crate::storage::{Actor, AppPress};
 
 /// One resolved paging destination: a concrete channel plus, when the rung
@@ -87,21 +90,36 @@ pub(super) fn push_target(out: &mut Vec<PageTarget>, channel_id: Uuid, user_id: 
     });
 }
 
-/// What one round of paging produced. `recorded` counts rows written, which a
-/// failed delivery also produces and the retry sweep owns; `delivered` counts
-/// the ones that actually reached a channel.
-#[derive(Debug, Clone, Copy, Default)]
-pub(super) struct Paged {
-    pub(super) recorded: u32,
-    pub(super) delivered: u32,
-}
-
 /// Bookkeeping rows the engine writes to itself. None is a delivery.
 pub fn is_damper_marker(transport: &str) -> bool {
     matches!(
         transport,
         DAMPED_TRANSPORT | RELEASED_TRANSPORT | UNREACHABLE_TRANSPORT | MAINTENANCE_TRANSPORT
     )
+}
+
+/// A bookkeeping row recording what became of a page no channel was sent.
+pub(super) fn marker_row(
+    org: OrgId,
+    incident_id: Uuid,
+    transport: &str,
+    reason: NotificationReason,
+    episode: i64,
+) -> NewIncidentNotification {
+    NewIncidentNotification {
+        org,
+        incident_id,
+        escalation_level: None,
+        target_user_id: None,
+        channel_id: None,
+        transport: transport.to_string(),
+        reason,
+        status: NotificationStatus::Suppressed,
+        attempt: 0,
+        error: None,
+        sent_at: None,
+        episode,
+    }
 }
 
 pub const DAMPED_TRANSPORT: &str = "damped";

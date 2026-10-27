@@ -242,6 +242,49 @@ pub struct ClaimedEscalation {
     pub episode: i64,
 }
 
+/// One page's rows, recorded together before any of them is sent, with the
+/// bookkeeping the page settles. A crash after the commit leaves every row
+/// `queued` for the retry sweep to send; one before it leaves nothing.
+#[derive(Debug, Clone)]
+pub struct FanOut {
+    pub org: OrgId,
+    pub incident_id: Uuid,
+    /// The episode the page was decided for. Nothing is recorded once the
+    /// incident has reopened past it.
+    pub episode: i64,
+    pub rows: Vec<NewIncidentNotification>,
+    /// Timeline entries written with the rows, as the system.
+    pub events: Vec<(IncidentEventKind, String)>,
+    pub kind: FanOutKind,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FanOutKind {
+    /// An episode's first page, or a held one let go, arming the ladder when
+    /// a policy applies. Its rows record while the incident is open, taken or
+    /// not; the ladder arms only while triggered.
+    Opening(Option<Arming>),
+    /// The rung claimed at `claim`, recorded only while that claim holds and
+    /// the monitor is not back up.
+    Rung {
+        claim: DateTime<Utc>,
+        level: i32,
+        round: i32,
+        next_at: Option<DateTime<Utc>>,
+    },
+    /// An outage reminder, recorded only while the incident is triggered and
+    /// its monitor is not back up.
+    Reminder,
+}
+
+/// The first rung of a policy, as an opening arms it.
+#[derive(Debug, Clone, Copy)]
+pub struct Arming {
+    pub policy_id: Uuid,
+    pub level: i32,
+    pub next_at: Option<DateTime<Utc>>,
+}
+
 /// An ended incident whose closing notice this caller has taken. `claim` is
 /// the lease it holds, and settling with it clears only that lease.
 #[derive(Debug, Clone)]
@@ -480,10 +523,16 @@ pub trait IncidentOpsStore: Send + Sync {
     async fn notifications_for(&self, org: OrgId, id: Uuid) -> Result<Vec<IncidentNotification>>;
     /// Persist one paging attempt. Returns the new row id.
     async fn record_notification(&self, n: NewIncidentNotification) -> Result<Uuid>;
+    /// Record `f` whole, under the incident's lock: its rows, its timeline
+    /// entries and its bookkeeping. `None`, with nothing written, once the page
+    /// no longer applies: the incident is gone or resolved, has no monitor or
+    /// no paging, has reopened past `f.episode`, or the kind's own guard fails.
+    /// Row ids come back in the order given.
+    async fn record_fan_out(&self, f: FanOut) -> Result<Option<Vec<Uuid>>>;
     /// Cross-org failed pages still under the attempt cap whose backoff has
     /// elapsed (`next_attempt_at` null or `<= now`), soonest-due first — the
-    /// engine's retry sweep. A `queued` row counts only after
-    /// [`QUEUED_TAKEOVER_SECS`].
+    /// engine's retry sweep. A `queued` row counts once older than
+    /// [`QUEUED_TAKEOVER_SECS`], whatever the cap: its attempt never ended.
     async fn pending_notifications(
         &self,
         now: DateTime<Utc>,
@@ -492,6 +541,10 @@ pub trait IncidentOpsStore: Send + Sync {
     ) -> Result<Vec<PendingNotification>>;
     /// Update a paging row after a delivery attempt. `next_attempt_at` schedules
     /// the next retry (backoff) or clears it once sent/suppressed/exhausted.
+    /// A delivery always lands and nothing lands on one: a page that reached
+    /// its channel is done, whatever a takeover running beside it reports.
+    /// Otherwise an outcome lands only if no later attempt has written one, so
+    /// a first attempt stalled past the takeover never overwrites the retry's.
     /// `org`-scoped to keep the tenant-isolation invariant even though ids today
     /// come from the engine.
     async fn mark_notification(
@@ -514,21 +567,10 @@ pub trait IncidentOpsStore: Send + Sync {
     async fn mark_acked(&self, org: OrgId, id: Uuid, acked_at: DateTime<Utc>) -> Result<()>;
     /// Drop the receipt so the row leaves the poll set (cancelled or expired).
     async fn clear_receipt(&self, org: OrgId, id: Uuid) -> Result<()>;
-    /// Start escalation on a freshly-opened incident: stamp the resolved
-    /// policy, set the first level + round 0, and arm `next_escalation_at`.
-    /// Guarded on `state = 'triggered'` so a concurrent ack/resolve (which
-    /// clears the timer) is never overwritten. Returns whether a row changed.
-    async fn begin_escalation(
-        &self,
-        org: OrgId,
-        id: Uuid,
-        policy_id: Uuid,
-        level: i32,
-        next_at: Option<DateTime<Utc>>,
-    ) -> Result<bool>;
-    /// Advance escalation bookkeeping during the sweep. Same `triggered` guard
-    /// as [`Self::begin_escalation`]; `next_at = None` stops further escalation
-    /// (exhausted). Returns whether a row changed.
+    /// Advance escalation bookkeeping during the sweep when no page goes out,
+    /// guarded on `state = 'triggered'` so a concurrent ack/resolve (which
+    /// clears the timer) is never overwritten; `next_at = None` stops further
+    /// escalation (exhausted). Returns whether a row changed.
     async fn record_escalation(
         &self,
         org: OrgId,
@@ -606,9 +648,6 @@ pub trait IncidentOpsStore: Send + Sync {
     /// The engine re-pages the channels already notified this episode. Oldest
     /// last-page first.
     async fn due_for_renotify(&self, now: DateTime<Utc>, limit: usize) -> Result<Vec<DueIncident>>;
-
-    /// Widens the incident's next reminder gap. Reset by `reopen`.
-    async fn bump_renotify_count(&self, org: OrgId, id: Uuid) -> Result<()>;
 
     /// Open incidents holding a maintenance marker whose window has since
     /// ended (or stopped suppressing) and that no page has reached. Oldest
