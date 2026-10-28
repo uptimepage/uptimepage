@@ -5,7 +5,7 @@
 A request to your site carried a `User-Agent` like this one:
 
 ```
-Mozilla/5.0 (compatible; uptimepage/1.5.0; +https://github.com/uptimepage/uptimepage/blob/main/docs/bot.md)
+Mozilla/5.0 (compatible; uptimepage/1.6.0; +https://github.com/uptimepage/uptimepage/blob/main/docs/bot.md)
 ```
 
 uptimepage is open-source uptime monitoring. Anyone can run their own copy, and that is where this request came from: someone running uptimepage on their own servers asked it to check a URL on your site. A copy left on its default settings links this page, because its operator has not published one of their own.

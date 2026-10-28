@@ -242,7 +242,7 @@ To stop: `docker compose down`, or `docker compose down -v` to delete the data t
 
 #### Options
 
-**Pin a version.** Set `UPTIMEPAGE_IMAGE=ghcr.io/uptimepage/uptimepage:1.5.0` to stay on a release instead of `latest`. Release tags carry no `v` prefix, though the git tag they are built from does.
+**Pin a version.** Set `UPTIMEPAGE_IMAGE=ghcr.io/uptimepage/uptimepage:1.6.0` to stay on a release instead of `latest`. Release tags carry no `v` prefix, though the git tag they are built from does.
 
 **On an ARM host?** Release tags are `linux/amd64` and `linux/arm64`. `latest`, which tracks the newest commit on `main`, is amd64 only, so pin a release on ARM.
 

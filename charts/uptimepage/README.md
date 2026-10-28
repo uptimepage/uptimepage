@@ -44,7 +44,7 @@ You can pass everything through `--set` instead, and the chart will build the Se
 Releases are signed with cosign keyless signing, so there is no public key to distribute:
 
 ```bash
-cosign verify ghcr.io/uptimepage/charts/uptimepage:0.8.0 \
+cosign verify ghcr.io/uptimepage/charts/uptimepage:0.9.0 \
   --certificate-identity-regexp '^https://github.com/uptimepage/uptimepage/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

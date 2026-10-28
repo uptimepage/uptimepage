@@ -259,7 +259,7 @@ blurb = "Who sent an uptimepage request to your site, how to block it, and how t
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-10-23
-lastmod = 2026-10-23
+lastmod = 2026-10-28
 
 [[page]]
 slug = "deployment"
@@ -279,7 +279,7 @@ blurb = "Installing the Helm charts: external databases, ingress timeouts, ICMP,
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-07-26
-lastmod = 2026-10-21
+lastmod = 2026-10-28
 
 [[page]]
 slug = "multi-region"
