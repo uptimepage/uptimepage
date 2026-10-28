@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::domain::IncidentVisibility;
 use crate::domain::REDACTED;
 use crate::domain::TargetAlerts;
-use crate::domain::incident::Incident;
+use crate::domain::incident::{Incident, IncidentGroupLink, IncidentGroupRef, OpsIncident};
 use crate::domain::metrics::DashboardMetrics;
 use crate::domain::notification_channel::NotificationChannel;
 use crate::domain::result::{CheckResult, CheckStatus};
@@ -19,9 +19,9 @@ use crate::mcp::schema::{
     CheckConfig, CheckDiagnosticView, CheckTiming, DnsAnswerView, DnsCheckConfig,
     DomainExpiryCheckConfig, FlowCheckConfig, FlowRunEvidence, FlowRunItem, FlowStepConfig,
     FlowStepRun, FlowStepTrendItem, HeartbeatCheckConfig, HttpCheckConfig, IncidentDetail,
-    IncidentSummary, IncidentUpdateItem, IncidentVisibilityResult, ManualCheckConfig,
-    NetworkPathView, PingCheckConfig, RegionHealth, RegionItem, RegionPolicyArg, RegionPolicyMode,
-    TcpCheckConfig, TlsCertCheckConfig,
+    IncidentGroup, IncidentMember, IncidentSummary, IncidentUpdateItem, IncidentVisibilityResult,
+    ManualCheckConfig, NetworkPathView, PingCheckConfig, RegionHealth, RegionItem, RegionPolicyArg,
+    RegionPolicyMode, TcpCheckConfig, TlsCertCheckConfig,
 };
 
 pub(super) fn network_path(result: &CheckResult) -> Option<NetworkPathView> {
@@ -335,7 +335,32 @@ pub(super) fn check_timing(r: &CheckResult) -> CheckTiming {
     }
 }
 
-pub(super) fn incident_summary(i: &IncidentBrief) -> IncidentSummary {
+pub(super) fn incident_group(g: &IncidentGroupRef) -> IncidentGroup {
+    IncidentGroup {
+        id: g.id.map(|id| id.to_string()),
+        name: sanitize_data(&g.name),
+    }
+}
+
+pub(super) fn incident_members(members: &[OpsIncident]) -> Vec<IncidentMember> {
+    members
+        .iter()
+        .map(|m| IncidentMember {
+            id: m.id.to_string(),
+            monitor_id: m.target_id.map(|t| t.to_string()).unwrap_or_default(),
+            monitor_name: m
+                .target_name
+                .as_deref()
+                .map(sanitize_data)
+                .unwrap_or_default(),
+            opened_at: m.started_at.to_rfc3339(),
+            resolved_at: m.ended_at.map(|t| t.to_rfc3339()),
+        })
+        .collect()
+}
+
+/// `members` are the brief's own when it is a group incident.
+pub(super) fn incident_summary(i: &IncidentBrief, members: &[OpsIncident]) -> IncidentSummary {
     IncidentSummary {
         id: i.id.to_string(),
         monitor_id: i.target_id.map(|t| t.to_string()).unwrap_or_default(),
@@ -349,11 +374,20 @@ pub(super) fn incident_summary(i: &IncidentBrief) -> IncidentSummary {
             .as_ref()
             .map(|u| u.phase.as_db_str().to_string()),
         latest_update_at: i.latest_update.as_ref().map(|u| u.posted_at.to_rfc3339()),
+        group: i.group.as_ref().map(incident_group),
+        group_incident_id: i.group_incident_id.map(|g| g.to_string()),
+        members: incident_members(members),
     }
 }
 
 /// Callers pass the raw incident; error text is humanized and scrubbed here.
-pub(super) fn incident_detail(i: &Incident, status_page_ids: &[Uuid]) -> IncidentDetail {
+/// `group` is its place in a group, `members` a group incident's members.
+pub(super) fn incident_detail(
+    i: &Incident,
+    status_page_ids: &[Uuid],
+    group: &IncidentGroupLink,
+    members: &[OpsIncident],
+) -> IncidentDetail {
     IncidentDetail {
         id: i.id.to_string(),
         monitor_id: i.target_id.map(|t| t.to_string()).unwrap_or_default(),
@@ -376,6 +410,9 @@ pub(super) fn incident_detail(i: &Incident, status_page_ids: &[Uuid]) -> Inciden
             })
             .collect(),
         status_page_ids: status_page_ids.iter().map(Uuid::to_string).collect(),
+        group: group.group.as_ref().map(incident_group),
+        group_incident_id: group.group_incident_id.map(|g| g.to_string()),
+        members: incident_members(members),
     }
 }
 

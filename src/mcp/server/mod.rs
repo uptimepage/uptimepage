@@ -13,6 +13,7 @@ use crate::app::AppState;
 use crate::error::validation::MAX_MESSAGE;
 
 mod args;
+mod groups;
 mod incidents;
 mod maintenance;
 mod monitors;

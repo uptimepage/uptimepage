@@ -223,6 +223,9 @@ pub struct IncidentDetail {
     /// whole list, so send this back with your change. Empty for a monitor's
     /// incident, which shows on the pages carrying that monitor.
     pub status_page_ids: Vec<Uuid>,
+    /// A group incident's member incidents, in the order they joined. Empty
+    /// for any other incident.
+    pub members: Vec<OpsIncident>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -356,10 +359,21 @@ pub async fn get_incident(
         .ok_or_else(|| AppError::not_found(codes::INCIDENT_NOT_FOUND, "incident not found"))?;
     let timeline = state.incident_ops_store.timeline(org, id).await?;
     let status_page_ids = state.incident_ops_store.status_pages(org, id).await?;
+    let members = match incident.origin {
+        IncidentOrigin::Group => {
+            let cap = crate::storage::incident_ops::INCIDENT_DETAIL_ROW_CAP as usize;
+            state
+                .incident_ops_store
+                .group_members(org, &[id], cap)
+                .await?
+        }
+        _ => Vec::new(),
+    };
     Ok(Json(IncidentDetail {
         incident,
         timeline,
         status_page_ids,
+        members,
     }))
 }
 

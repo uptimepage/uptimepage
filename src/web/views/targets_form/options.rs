@@ -11,7 +11,7 @@ use crate::web::views::channel_kind_label;
 
 /// The org's channels with `alerts` prefilled as the selected bindings.
 /// Unbound channels default to a sensible new-binding policy.
-pub(super) async fn channel_choices(
+pub(crate) async fn channel_choices(
     state: &AppState,
     org: OrgId,
     alerts: &TargetAlerts,

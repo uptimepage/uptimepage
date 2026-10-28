@@ -2,6 +2,7 @@
 //! a manual monitor's state must do the same way. The REST handlers and the MCP
 //! tools both call it, so a guard added here is on every front door at once.
 
+mod groups;
 mod guards;
 mod manual;
 mod probe;
@@ -13,7 +14,7 @@ use uuid::Uuid;
 use crate::ad_hoc_dispatch::AdHocDispatch;
 use crate::config::AppConfig;
 use crate::domain::quota::Plan;
-use crate::domain::{CheckSpec, NewTarget, OrgId, Target, WriteSource};
+use crate::domain::{CheckSpec, NewTarget, OrgId, Target, UserId, WriteSource};
 use crate::error::{AppError, Result};
 use crate::quotas::QuotaService;
 use crate::security::AbuseGuard;
@@ -51,7 +52,9 @@ impl TargetOps<'_> {
         validate_region_policy(new.region_policy, available.len())?;
         self.check_abuse(org, &new.check)?;
         self.validate_variable_refs(org, &new.check).await?;
-        self.quotas.check_can_create_targets(org, None, 1).await
+        self.quotas.check_can_create_targets(org, None, 1).await?;
+        let by_name = new.group_name.as_deref().filter(|_| new.group_id.is_none());
+        self.check_group_room(org, None, by_name).await
     }
 
     /// Split from `create_target` so a caller that confirms with a human can name the
@@ -89,6 +92,7 @@ impl TargetOps<'_> {
         org: OrgId,
         new: NewTarget,
         source: WriteSource,
+        actor: Option<UserId>,
         plan: &Plan,
         regions: Vec<String>,
     ) -> Result<Target> {
@@ -98,6 +102,7 @@ impl TargetOps<'_> {
                 org,
                 new,
                 source,
+                actor,
                 i64::from(plan.max_targets),
                 i64::from(plan.max_flow_checks),
             )

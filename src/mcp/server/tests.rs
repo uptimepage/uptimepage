@@ -106,6 +106,8 @@ fn active_incident(latest: Option<PublicIncidentUpdate>) -> IncidentBrief {
         public_title: None,
         latest_update: latest,
         recovering_since: None,
+        group: None,
+        group_incident_id: None,
     }
 }
 
@@ -133,9 +135,10 @@ fn check_timing_copies_phase_fields() {
 
 #[test]
 fn incident_summary_maps_severity_and_latest_update() {
-    let s = incident_summary(&active_incident(Some(update(
-        IncidentStatusPhase::Identified,
-    ))));
+    let s = incident_summary(
+        &active_incident(Some(update(IncidentStatusPhase::Identified))),
+        &[],
+    );
     assert_eq!(s.monitor_name, "api");
     assert_eq!(s.severity, "critical");
     assert_eq!(s.latest_phase.as_deref(), Some("identified"));
@@ -145,9 +148,9 @@ fn incident_summary_maps_severity_and_latest_update() {
 #[test]
 fn incident_summary_reports_resolved_at_once_ended() {
     let mut brief = active_incident(None);
-    assert!(incident_summary(&brief).resolved_at.is_none());
+    assert!(incident_summary(&brief, &[]).resolved_at.is_none());
     brief.ended_at = Some(Utc::now());
-    assert!(incident_summary(&brief).resolved_at.is_some());
+    assert!(incident_summary(&brief, &[]).resolved_at.is_some());
 }
 
 #[test]
@@ -889,6 +892,7 @@ fn a_creation_prompt_states_every_setting_it_would_apply() {
         renotify_interval_secs: 0,
         recovery_period_secs: Some(600),
         group_name: Some("API".into()),
+        group_id: None,
         owner_user_id: None,
         regions: None,
     };
@@ -1675,7 +1679,7 @@ fn the_region_cap_is_reported_only_where_it_bites() {
 
 #[test]
 fn incident_summary_no_update_yields_null_phase() {
-    let s = incident_summary(&active_incident(None));
+    let s = incident_summary(&active_incident(None), &[]);
     assert!(s.latest_phase.is_none());
     assert!(s.latest_update_at.is_none());
 }
@@ -1707,7 +1711,7 @@ fn incident_detail_maps_state_severity_and_updates() {
         paused: Default::default(),
     };
     let page = Uuid::now_v7();
-    let d = incident_detail(&inc, &[page]);
+    let d = incident_detail(&inc, &[page], &Default::default(), &[]);
     assert_eq!(d.state, "down");
     assert_eq!(d.severity, "major");
     assert_eq!(d.monitor_name.as_deref(), Some("api"));
@@ -1747,7 +1751,7 @@ fn incident_detail_names_a_deleted_monitor() {
         recovered: Vec::new(),
         paused: Default::default(),
     };
-    let d = incident_detail(&inc, &[]);
+    let d = incident_detail(&inc, &[], &Default::default(), &[]);
     assert!(d.monitor_deleted);
     assert_eq!(d.monitor_id, "");
     assert_eq!(d.monitor_name.as_deref(), Some("api"));

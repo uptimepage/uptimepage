@@ -49,10 +49,12 @@ async fn mint_and_revoke_share_write_audit_rows() {
                 renotify_interval_secs: 3600,
                 recovery_period_secs: None,
                 group_name: None,
+                group_id: None,
                 owner_user_id: None,
                 regions: None,
             },
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )

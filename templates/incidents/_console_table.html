@@ -33,12 +33,24 @@
             {% if row.monitor_deleted %}
             <span class="dashboard-chip dashboard-chip--flat" title="The monitor was deleted. The incident keeps its history.">monitor deleted</span>
             {% endif %}
+
             {% if row.urgency == "high" %}
             <span class="dashboard-chip dashboard-chip--flat" title="high urgency — pages on-call">page</span>
             {% else %}
             <span class="dashboard-chip dashboard-chip--flat" title="low urgency — notify only">notify</span>
             {% endif %}
           </div>
+          {% if !row.members.is_empty() %}
+          <ul class="mt-1.5 space-y-0.5 border-l pl-2 text-xs" style="border-color:var(--theme-line)">
+            {% for m in row.members %}
+            <li class="flex items-center gap-1.5">
+              <span class="monitors-dot{% if m.ongoing %} monitors-dot--down{% else %} monitors-dot--up{% endif %}" aria-hidden="true"></span>
+              <a href="/incidents/{{ m.id }}" class="text-muted hover:text-body hover:underline">{{ m.label }}</a>
+              <span class="text-quiet">{% if m.ongoing %}down{% else %}recovered{% endif %}</span>
+            </li>
+            {% endfor %}
+          </ul>
+          {% endif %}
         </td>
         <td class="px-3 py-2 align-top">
           {% match row.kind %}{% when Some with (k) %}

@@ -50,10 +50,12 @@ async fn make_target(pool: &sqlx::PgPool, org: OrgId, check: CheckSpec, enabled:
                 renotify_interval_secs: 3600,
                 recovery_period_secs: None,
                 group_name: None,
+                group_id: None,
                 owner_user_id: None,
                 regions: None,
             },
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )

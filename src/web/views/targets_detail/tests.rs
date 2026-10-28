@@ -1697,6 +1697,7 @@ fn ongoing_row() -> IncidentRow {
         ongoing: true,
         recovering: false,
         uptime_note: "",
+        part_of: None,
     }
 }
 
@@ -1714,6 +1715,7 @@ fn resolved_row() -> IncidentRow {
         ongoing: false,
         recovering: false,
         uptime_note: "",
+        part_of: None,
     }
 }
 

@@ -106,6 +106,7 @@ fn http_target(name: &str) -> NewTarget {
         renotify_interval_secs: 3600,
         recovery_period_secs: None,
         group_name: None,
+        group_id: None,
         owner_user_id: None,
         regions: None,
     }
@@ -198,6 +199,7 @@ async fn build_fixture() -> Option<Fixture> {
                     org.id,
                     http_target(&format!("ttfb-{i}-{j}")),
                     WriteSource::Ui,
+                    None,
                     i64::MAX,
                     i64::MAX,
                 )

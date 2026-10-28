@@ -16,6 +16,7 @@
   <span class="monitors-row__monitor">
     <span class="monitors-row__nameline">
       <a href="/targets/{{ row.id }}" class="monitors-row__name">{{ row.name }}</a>
+      {% if row.via_group %}<span class="cli-brackets font-mono text-xs text-quiet" title="Its alerts go through its group">via group</span>{% endif %}
       {% if let Some(m) = row.managed_by %}<span class="managed-chip" title="Managed by {{ m }} — changes made here may be overwritten on the next apply">{{ m }}</span>{% endif %}
       {% if row.flapping %}<span class="flapping-chip" title="This monitor keeps failing and recovering. Repeat alerts for it are held until it settles.">flapping</span>{% endif %}
       {% if let Some(title) = row.slowed_title %}<span class="slowed-chip" title="{{ title }}">slowed</span>{% endif %}

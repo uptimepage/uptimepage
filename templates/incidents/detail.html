@@ -37,7 +37,16 @@
       <span class="font-mono text-quiet" title="The monitor was deleted. The incident keeps its history.">{{ n }} (deleted)</span>
       {% endif %}
       {% when None %}
+      {% if let Some((gid, gname)) = group %}
+      {% if let Some(g) = gid %}
+      <a href="/groups/{{ g }}?from=incident:{{ id }}" class="font-mono text-body underline decoration-dotted underline-offset-2 hover:text-body">{{ gname }}</a>
+      {% else %}
+      <span class="font-mono text-quiet" title="The group was deleted. The incident keeps its history.">{{ gname }} (deleted)</span>
+      {% endif %}
+      <span class="cli-brackets ml-2">group alert</span>
+      {% else %}
       <span class="font-mono text-quiet">no monitor</span>
+      {% endif %}
       {% endmatch %}
       <span class="cli-brackets ml-2">urgency:{{ urgency }}</span>
       <span class="cli-brackets">{{ visibility }}</span>
@@ -50,12 +59,35 @@
   <div data-incident-error role="alert" aria-live="polite"
        class="hidden alert-card alert-card--error"></div>
 
+  {% if let Some((gi, gname)) = part_of %}
+  <div class="alert-card alert-card--muted text-sm" role="status">
+    Part of the <a href="/incidents/{{ gi }}" class="font-mono underline decoration-dotted hover:text-body">{{ gname }}</a> incident: it pages nobody on its own. Acknowledge and resolve the group incident.
+  </div>
+  {% endif %}
+
+  {% if !members.is_empty() %}
+  <section class="sticker-card overflow-hidden" aria-labelledby="members-heading">
+    <header class="card-band"><h2 id="members-heading" class="panel-label">members</h2></header>
+    <ul>
+      {% for m in members %}
+      <li class="flex items-center gap-2 border-t px-4 py-2 text-sm first:border-t-0" style="border-color:var(--theme-line)">
+        <span class="monitors-dot{% if m.ongoing %} monitors-dot--down{% else %} monitors-dot--up{% endif %}" aria-hidden="true"></span>
+        <a href="/incidents/{{ m.id }}" class="text-body hover:underline">{{ m.label }}</a>
+        <span class="text-xs text-quiet">{% if m.ongoing %}down{% else %}recovered{% endif %}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
   {% match monitor_recovered_at %}{% when Some with (ts) %}
   <div class="alert-card alert-card--muted flex flex-wrap items-center gap-3 text-sm" role="status">
     <span>every region's latest check passed, the oldest of them at
       <time datetime="{{ ts|iso_ts }}" data-tz="exact">{{ ts|human_ts }}</time>, and this incident is still open</span>
+    {% if part_of.is_none() %}
     <button type="button" data-incident-action="resolve" data-incident-id="{{ id }}"
             class="sticker-btn ml-auto min-h-9 px-3 py-1.5 text-sm">resolve</button>
+    {% endif %}
   </div>
   {% when None %}{% endmatch %}
 
@@ -265,13 +297,13 @@
 
   <aside class="action-rail xl:sticky xl:top-6" data-incident-id="{{ id }}">
     <div class="flex flex-wrap items-center gap-3 xl:flex-col xl:items-stretch">
-      {% if ongoing && !acks.mine %}
+      {% if ongoing && !acks.mine && part_of.is_none() %}
       <button type="button" data-incident-action="acknowledge" data-incident-id="{{ id }}"
               class="sticker-btn sticker-btn--primary min-h-10 px-4 py-2 text-sm font-medium motion-safe:hover:-translate-y-0.5">
         acknowledge
       </button>
       {% endif %}
-      {% if ongoing %}
+      {% if ongoing && part_of.is_none() %}
       <button type="button" data-incident-action="resolve" data-incident-id="{{ id }}"
               class="sticker-btn sticker-btn--accent min-h-10 px-4 py-2 text-sm font-medium inline-flex items-center justify-center gap-1.5">
         <span aria-hidden="true">✓</span> resolve
@@ -282,7 +314,8 @@
       {% endif %}
       <button type="button" data-incident-note data-incident-id="{{ id }}"
               class="sticker-btn min-h-10 px-4 py-2 text-sm font-medium">add note</button>
-      {% if visibility == "public" %}
+      {% if group.is_some() %}
+      {% else if visibility == "public" %}
       <button type="button" data-incident-unpublish data-incident-id="{{ id }}"
               class="sticker-btn min-h-10 px-4 py-2 text-sm font-medium">unpublish</button>
       {% else %}

@@ -19,7 +19,7 @@ use crate::domain::{
 use crate::error::ApiError;
 use crate::error::codes;
 use crate::error::{AppError, Result};
-use crate::request::{Authorized, OnCallRead, OnCallWrite, OwnerAuthorized};
+use crate::request::{Authorized, CurrentUser, OnCallRead, OnCallWrite, OwnerAuthorized};
 
 /// Pointing something at a policy it is not already on is new paging coverage
 /// and needs the plan to sell it. Clearing a binding, or sending the one already
@@ -498,4 +498,62 @@ mod tests {
         };
         assert!(validate(&policy(vec![empty])).is_err());
     }
+}
+
+#[utoipa::path(
+    get, path = "/api/v1/groups/{id}/escalation-policy", tag = "escalation",
+    summary = "Get a monitor group's escalation policy binding",
+    params(("id" = Uuid, Path)),
+    responses((status = 200, body = PolicyBinding), (status = 404, body = ApiError)),
+)]
+pub async fn get_group_policy(
+    State(state): State<AppState>,
+    Authorized(org, _): Authorized<OnCallRead>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<PolicyBinding>> {
+    let group = state
+        .monitor_group_store
+        .get(org, id)
+        .await?
+        .ok_or_else(crate::api::handlers::groups::not_found)?;
+    Ok(Json(PolicyBinding {
+        policy_id: group.escalation_policy_id,
+    }))
+}
+
+#[utoipa::path(
+    put, path = "/api/v1/groups/{id}/escalation-policy", tag = "escalation",
+    summary = "Bind or clear a monitor group's escalation policy",
+    description = "Pages the group incident of a group that alerts as one; members' own policies stay muted while it does.",
+    params(("id" = Uuid, Path)), request_body = PolicyBinding,
+    responses(
+        (status = 200, body = PolicyBinding),
+        (status = 403, body = ApiError, description = "ON_CALL_DISABLED off a plan with on-call"),
+        (status = 404, body = ApiError),
+    ),
+)]
+pub async fn set_group_policy(
+    State(state): State<AppState>,
+    OwnerAuthorized(org, _): OwnerAuthorized<OnCallWrite>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(b): Json<PolicyBinding>,
+) -> Result<Json<PolicyBinding>> {
+    let current = async {
+        Ok(state
+            .monitor_group_store
+            .get(org, id)
+            .await?
+            .and_then(|g| g.escalation_policy_id))
+    };
+    gate_binding(&state, org, &b, current).await?;
+    validate_binding(&state, org, &b).await?;
+    if !state
+        .escalation_policy_store
+        .set_group_policy(org, id, b.policy_id, Some(user))
+        .await?
+    {
+        return Err(crate::api::handlers::groups::not_found());
+    }
+    Ok(Json(b))
 }

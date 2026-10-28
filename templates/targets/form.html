@@ -594,6 +594,13 @@
     <fieldset>
       <legend class="float-left mb-3 w-full"><span class="form-legend">notifications</span></legend>
       <div class="clear-both">
+      {% if let Some(g) = form.group_alert %}
+      <p class="alert-card alert-card--muted mb-3 text-sm">
+        Alerts for this monitor go through its group <span class="font-mono">{{ g.name }}</span>, which alerts as one. Its own channels, escalation policy and tags below are kept and come back when it leaves the group or the group stops alerting as one.
+        <a href="/groups/{{ g.id }}?from=monitor:{{ form.id }}" class="underline decoration-dotted hover:text-body">group settings</a>
+      </p>
+      {% endif %}
+      <div{% if form.group_alert.is_some() %} class="pointer-events-none opacity-50" aria-disabled="true"{% endif %}>
       {% if form.channels.is_empty() %}
       <p class="font-mono text-xs text-quiet">
         # no channels configured —
@@ -613,6 +620,7 @@
       <span class="mt-1 block text-xs text-muted">Notified when this monitor opens or resolves an incident. A channel marked <span class="cli-brackets">by tag</span> already covers this monitor through its own tag rule, ticked or not.</span>
       {% endif %}
       </div>
+      </div>
     </fieldset>
 
     <fieldset>
@@ -621,6 +629,13 @@
         <div class="grid gap-3 sm:grid-cols-2">
           <div>
             <span class="mb-1.5 block text-xs text-muted">Tags</span>
+            {% if let Some(g) = form.group_alert %}
+            <div class="flex flex-wrap items-center gap-1.5 opacity-50" aria-label="The group's tags">
+              {% for t in g.tags %}<span class="scope-token">{{ t }}</span>{% endfor %}
+              {% if g.tags.is_empty() %}<span class="font-mono text-xs text-quiet">none</span>{% endif %}
+            </div>
+            <p class="mt-1 text-xs text-muted">The group's tags, while it alerts as one. This monitor's own tags are kept:</p>
+            {% endif %}
             <div class="flex flex-wrap items-center gap-1.5" data-tag-chips="monitor" role="group" aria-label="Tags">
               {% for t in form.tag_options %}
               <label class="scope-token">
@@ -806,10 +821,11 @@
           <p class="text-xs text-muted">Your plan no longer includes escalation: the ladder this monitor is on keeps paging, and choosing a new one needs the Team plan.</p>
           {% endif %}
           {% if form.mode == "edit" %}
-          <div class="flex flex-wrap items-center gap-3 pt-1">
+          {% if form.group_alert.is_some() %}<p class="text-xs text-muted">Muted while the group alerts as one: the group's own policy pages its incidents.</p>{% endif %}
+          <div class="flex flex-wrap items-center gap-3 pt-1{% if form.group_alert.is_some() %} pointer-events-none opacity-50{% endif %}">
             <div class="field-outline w-64">
               <span class="field-outline__label">Policy</span>
-              <select data-monitor-policy-select data-target-id="{{ form.id }}" data-sm-combobox
+              <select data-monitor-policy-select data-policy-url="/api/v1/targets/{{ form.id }}/escalation-policy" data-sm-combobox
                       aria-label="Escalation policy" class="w-full field">
                 <option value="">inherit org default</option>
                 {% for c in form.escalation_choices %}

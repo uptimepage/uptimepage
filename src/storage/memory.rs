@@ -750,6 +750,7 @@ impl InMemoryTargetStore {
             check: new.check,
             interval: new.interval,
             enabled: new.enabled,
+            effective_tags: new.tags.clone(),
             tags: new.tags,
             alerts: new.alerts,
             alert_confirmations: new.alert_confirmations.max(1),
@@ -762,7 +763,7 @@ impl InMemoryTargetStore {
                 .as_deref()
                 .and_then(normalize_group_name)
                 .map(str::to_owned),
-            group_id: None,
+            group_id: new.group_id,
             owner_user_id: new.owner_user_id.flatten(),
             write_source: source,
             created_at: now,
@@ -939,6 +940,7 @@ impl TargetStore for InMemoryTargetStore {
         _org: OrgId,
         new: NewTarget,
         source: WriteSource,
+        _actor: Option<UserId>,
         max_targets: i64,
         max_flow_checks: i64,
     ) -> Result<Target> {
@@ -1004,6 +1006,7 @@ impl TargetStore for InMemoryTargetStore {
             t.enabled = e;
         }
         if let Some(tags) = update.tags {
+            t.effective_tags = tags.clone();
             t.tags = tags;
         }
         if let Some(alerts) = update.alerts {
@@ -1030,6 +1033,9 @@ impl TargetStore for InMemoryTargetStore {
                 .and_then(normalize_group_name)
                 .map(str::to_owned);
         }
+        if let Some(v) = update.group_id {
+            t.group_id = v;
+        }
         if let Some(v) = update.owner_user_id {
             t.owner_user_id = v;
         }
@@ -1052,6 +1058,7 @@ impl TargetStore for InMemoryTargetStore {
         _org: OrgId,
         items: Vec<PlacedTarget>,
         source: WriteSource,
+        _actor: Option<UserId>,
         max_targets: i64,
         max_flow_checks: i64,
     ) -> Result<Vec<Target>> {
@@ -1192,6 +1199,7 @@ impl TargetStore for InMemoryTargetStore {
                 outcome.over_cap.push(t.id);
                 continue;
             }
+            t.effective_tags = merged.clone();
             t.tags = merged;
             t.updated_at = now;
             outcome.updated.push(t.id);
@@ -1206,6 +1214,7 @@ impl TargetStore for InMemoryTargetStore {
         for t in guard.iter_mut() {
             if ids.contains(&t.id) {
                 t.tags.retain(|x| !tags.contains(x));
+                t.effective_tags = t.tags.clone();
                 t.updated_at = now;
                 hit.push(t.id);
             }
@@ -1420,10 +1429,12 @@ mod tests {
                     renotify_interval_secs: 3600,
                     recovery_period_secs: None,
                     group_name: None,
+                    group_id: None,
                     owner_user_id: None,
                     regions: None,
                 },
                 WriteSource::Ui,
+                None,
                 i64::MAX,
                 i64::MAX,
             )
@@ -1498,13 +1509,14 @@ mod tests {
             renotify_interval_secs: 3600,
             recovery_period_secs: None,
             group_name: None,
+            group_id: None,
             owner_user_id: None,
             regions: None,
         };
 
         let full: Vec<String> = (0..MAX_TAGS_PER_TARGET).map(|i| format!("t{i}")).collect();
         let crowded = store
-            .create(org, seed(full), WriteSource::Ui, i64::MAX, i64::MAX)
+            .create(org, seed(full), WriteSource::Ui, None, i64::MAX, i64::MAX)
             .await
             .unwrap()
             .id;
@@ -1513,6 +1525,7 @@ mod tests {
                 org,
                 seed(vec!["prod".into()]),
                 WriteSource::Ui,
+                None,
                 i64::MAX,
                 i64::MAX,
             )

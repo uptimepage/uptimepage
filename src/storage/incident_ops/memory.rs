@@ -11,8 +11,8 @@ use uuid::Uuid;
 
 use crate::domain::{
     ExternalId, IncidentAcknowledgement, IncidentEvent, IncidentEventKind, IncidentGroupLink,
-    IncidentMetrics, IncidentNotification, IncidentOrigin, IncidentSeverity, IncidentState,
-    IncidentTransition, IncidentVisibility, MetricBucket, MonitorIncidentCount,
+    IncidentGroupRef, IncidentMetrics, IncidentNotification, IncidentOrigin, IncidentSeverity,
+    IncidentState, IncidentTransition, IncidentVisibility, MetricBucket, MonitorIncidentCount,
     NewIncidentNotification, NewManualIncident, NotificationOutcome, NotificationStatus,
     OpsIncident, OrgId, UserId, next_state,
 };
@@ -435,6 +435,10 @@ fn in_mem_matches_query(inc: &OpsIncident, needle: Option<&str>) -> bool {
     })
 }
 
+fn in_mem_listed(filter: &IncidentOpsFilter, inc: &OpsIncident) -> bool {
+    !filter.top_level || inc.group.group_incident_id.is_none()
+}
+
 #[async_trait]
 impl IncidentOpsStore for InMemoryIncidentOpsStore {
     async fn get(&self, _org: OrgId, id: Uuid) -> Result<Option<OpsIncident>> {
@@ -445,6 +449,25 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             .iter()
             .find(|i| i.id == id)
             .cloned())
+    }
+
+    async fn group_members(
+        &self,
+        _org: OrgId,
+        group_incidents: &[Uuid],
+        each: usize,
+    ) -> Result<Vec<OpsIncident>> {
+        let g = self.inner.lock();
+        Ok(group_incidents
+            .iter()
+            .flat_map(|gi| {
+                g.incidents
+                    .iter()
+                    .filter(move |i| i.group.group_incident_id == Some(*gi))
+                    .take(each)
+                    .cloned()
+            })
+            .collect())
     }
 
     async fn list(&self, _org: OrgId, filter: IncidentOpsFilter) -> Result<Vec<OpsIncident>> {
@@ -462,6 +485,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             .filter(|i| filter.severity.is_none_or(|s| i.severity == s))
             .filter(|i| filter.assignee.is_none_or(|u| i.assigned_to == Some(u)))
             .filter(|i| in_mem_matches_query(i, needle.as_deref()))
+            .filter(|i| in_mem_listed(&filter, i))
             .cloned()
             .collect();
         match filter.sort {
@@ -492,6 +516,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             .filter(|i| filter.severity.is_none_or(|s| i.severity == s))
             .filter(|i| filter.assignee.is_none_or(|u| i.assigned_to == Some(u)))
             .filter(|i| in_mem_matches_query(i, needle.as_deref()))
+            .filter(|i| in_mem_listed(filter, i))
             .count())
     }
 
@@ -511,6 +536,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             filter.severity.is_none_or(|s| i.severity == s)
                 && filter.assignee.is_none_or(|u| i.assigned_to == Some(u))
                 && in_mem_matches_query(i, needle.as_deref())
+                && in_mem_listed(filter, i)
         }) {
             match i.state {
                 IncidentState::Triggered => c.triggered += 1,
@@ -765,7 +791,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             .lock()
             .incidents
             .iter()
-            .any(|i| i.id == id && !i.reopenable());
+            .any(|i| i.id == id && i.ended_with_monitor());
         if ended_with_monitor {
             return Err(super::monitor_deleted());
         }
@@ -1109,7 +1135,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         let (started_at, target_name) = (m.started_at, m.target_name.clone());
         let open = g.incidents.iter().find(|i| {
             i.origin == IncidentOrigin::Group
-                && i.group.group_id == Some(group)
+                && i.group.group_id() == Some(group)
                 && i.ended_at.is_none()
         });
         let (group_incident, opened) = match open {
@@ -1125,7 +1151,10 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
                     target_kind: None,
                     closed_by_monitor_delete: false,
                     group: IncidentGroupLink {
-                        group_id: Some(group),
+                        group: Some(IncidentGroupRef {
+                            id: Some(group),
+                            name: String::new(),
+                        }),
                         ..Default::default()
                     },
                     title: None,

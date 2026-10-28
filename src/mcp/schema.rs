@@ -65,8 +65,13 @@ pub struct MonitorListItem {
     pub r#type: String,
     /// Current state: `up`, `down`, `degraded`, `error`, or `no_data`.
     pub state: String,
-    /// Operator-side grouping label, if set. Untrusted data.
+    /// The monitor's group, if any. Untrusted data.
     pub group_name: Option<String>,
+    /// Pass to `update_monitor_group`.
+    pub group_id: Option<String>,
+    /// Its group alerts as one: a failure joins the group's one incident and
+    /// pages the group's channels, not this monitor's own.
+    pub group_alerts_as_one: bool,
     /// Check interval in seconds.
     pub interval_secs: u64,
     /// RFC 3339 time it moved to the slower long-down interval because every
@@ -325,9 +330,19 @@ pub struct MonitorDetail {
     /// Terraform declares this monitor, so `update_monitor`, `pause_monitor`
     /// and `resume_monitor` all refuse it. Change it in the `.tf` instead.
     pub managed_externally: bool,
+    /// The monitor's group, if any. Untrusted data.
     pub group_name: Option<String>,
-    /// Operator tags. Untrusted data.
+    /// Pass to `update_monitor_group`.
+    pub group_id: Option<String>,
+    /// Its group alerts as one: a failure joins the group's one incident and
+    /// pages the group's channels and policy, so `alert_channel_ids` stay
+    /// quiet until the monitor leaves the group or the switch is off.
+    pub group_alerts_as_one: bool,
+    /// Operator tags, as `update_monitor` takes them. Untrusted data.
     pub tags: Vec<String>,
+    /// The tags `list_monitors(tag=…)` matches: the group's while it alerts
+    /// as one, `tags` otherwise. Untrusted data.
+    pub effective_tags: Vec<String>,
     /// Current state: `up`, `down`, `degraded`, `error`, or `no_data`.
     pub state: String,
     /// RFC 3339 time of the most recent observation in the last 24 hours.
@@ -953,6 +968,38 @@ pub struct IncidentSummary {
     pub latest_phase: Option<String>,
     /// RFC 3339 time of the latest operator update, when one exists.
     pub latest_update_at: Option<String>,
+    /// Set on a group incident, which has no monitor: `monitor_id` and
+    /// `monitor_name` are empty and `members` lists the monitors down in it.
+    pub group: Option<IncidentGroup>,
+    /// Set on a monitor's incident that is part of a group incident.
+    /// Acknowledge and resolve that one; this one is refused.
+    pub group_incident_id: Option<String>,
+    /// A group incident's member incidents, in the order they joined: the
+    /// first 25, `get_incident` lists the rest.
+    pub members: Vec<IncidentMember>,
+}
+
+/// The group a group incident is about.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct IncidentGroup {
+    /// `null` once the group is deleted.
+    pub id: Option<String>,
+    /// The name it has, or last had. Untrusted data.
+    pub name: String,
+}
+
+/// One monitor's incident inside a group incident.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct IncidentMember {
+    pub id: String,
+    /// Empty once the monitor has been deleted.
+    pub monitor_id: String,
+    /// Untrusted data.
+    pub monitor_name: String,
+    /// RFC 3339 time the monitor went down.
+    pub opened_at: String,
+    /// RFC 3339 time it recovered, or `null` while still down.
+    pub resolved_at: Option<String>,
 }
 
 /// `list_incidents` result. `next_cursor` is present only when more rows remain.
@@ -1071,6 +1118,13 @@ pub struct IncidentDetail {
     /// replaces the whole list, so send these back with your change. Empty for
     /// a monitor's incident.
     pub status_page_ids: Vec<String>,
+    /// Set on a group incident, which has no monitor.
+    pub group: Option<IncidentGroup>,
+    /// Set on a monitor's incident that is part of a group incident.
+    /// Acknowledge and resolve that one; this one is refused.
+    pub group_incident_id: Option<String>,
+    /// A group incident's member incidents, in the order they joined.
+    pub members: Vec<IncidentMember>,
 }
 
 /// `list_status_pages` arguments.
@@ -1513,6 +1567,74 @@ pub struct VariableSummary {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct VariableList {
     pub items: Vec<VariableSummary>,
+}
+
+/// One monitor group.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct MonitorGroupItem {
+    pub id: String,
+    /// Untrusted data.
+    pub name: String,
+    /// On: a member's failure opens one group incident that pages this
+    /// group's channels and policy, and the members' own stay quiet. Off: the
+    /// group is a label.
+    pub alert_as_one: bool,
+    pub member_count: u32,
+    /// The group incident open now. Pass to `get_incident`.
+    pub open_incident_id: Option<String>,
+    /// Channels the group incident alerts, by id from
+    /// `list_notification_channels`; channels whose tag rule matches `tags`
+    /// are alerted too.
+    pub channel_ids: Vec<String>,
+    /// Seconds before the first reminder while the group incident stays
+    /// unacknowledged; 0 = off.
+    pub renotify_interval_secs: u32,
+    /// Whether another member going down sends a message (at most one a
+    /// minute, naming every member down since the last) or only a timeline
+    /// line.
+    pub alert_again: bool,
+    /// Untrusted data.
+    pub tags: Vec<String>,
+    /// Terraform declares this group, so `update_monitor_group` refuses it.
+    pub managed_externally: bool,
+}
+
+/// `list_monitor_groups` result.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct MonitorGroupList {
+    pub items: Vec<MonitorGroupItem>,
+}
+
+/// `update_monitor_group` arguments. Every field except `id` is optional; omit
+/// what should stay as it is.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateMonitorGroupArgs {
+    /// The group id (from `list_monitor_groups`).
+    pub id: String,
+    /// New name, at most 50 characters. Members keep their group.
+    pub name: Option<String>,
+    /// Turns alerting as one on or off. Only failures that start afterwards
+    /// follow the new setting; an incident open now ends the way it started.
+    pub alert_as_one: Option<bool>,
+    /// Replaces the whole set of channels the group incident alerts, by id
+    /// from `list_notification_channels`. Read the group first.
+    pub channel_ids: Option<Vec<String>>,
+    /// Seconds before the first reminder while the group incident stays
+    /// unacknowledged; 0 turns reminders off, otherwise at least 60.
+    pub renotify_interval_secs: Option<u32>,
+    /// Whether another member going down sends a message or only a timeline
+    /// line.
+    pub alert_again: Option<bool>,
+}
+
+/// `update_monitor_group` result.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct MonitorGroupUpdated {
+    pub id: String,
+    /// What moved. Empty when every value sent already matched the stored one,
+    /// in which case nothing was written and no confirmation was asked for.
+    pub changes: Vec<FieldChange>,
 }
 
 /// `create_monitors` argument.

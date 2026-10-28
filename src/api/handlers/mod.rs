@@ -5,6 +5,7 @@ pub mod auth;
 pub mod billing;
 pub mod dashboard;
 pub mod escalation_policies;
+pub mod groups;
 pub mod health;
 pub mod holds;
 pub mod identities;

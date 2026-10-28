@@ -143,6 +143,7 @@ pub async fn duplicate(
             org,
             placed,
             write_source,
+            Some(user),
             i64::from(plan.max_targets),
             i64::from(plan.max_flow_checks),
         )

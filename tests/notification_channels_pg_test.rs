@@ -399,11 +399,12 @@ async fn target_alert_binding_channel_lookup_is_org_scoped_live_pg() {
         renotify_interval_secs: 3600,
         recovery_period_secs: None,
         group_name: None,
+        group_id: None,
         owner_user_id: None,
         regions: None,
     };
     let created = targets
-        .create(org_a, new_target, WriteSource::Ui, i64::MAX, i64::MAX)
+        .create(org_a, new_target, WriteSource::Ui, None, i64::MAX, i64::MAX)
         .await
         .expect("A creates a target bound to its own channel");
 
@@ -452,6 +453,7 @@ fn bound_target(name: &str, channels: &[Uuid]) -> NewTarget {
         renotify_interval_secs: 3600,
         recovery_period_secs: None,
         group_name: None,
+        group_id: None,
         owner_user_id: None,
         regions: None,
     }
@@ -620,7 +622,7 @@ async fn a_channel_delete_removes_only_its_own_bindings_live_pg() {
     let ch_a = new_channel(org_a, "a").await.unwrap();
     let ch_b = new_channel(org_a, "b").await.unwrap();
     let theirs = new_channel(org_b, "theirs").await.unwrap();
-    let create = |org, new| targets.create(org, new, WriteSource::Ui, i64::MAX, i64::MAX);
+    let create = |org, new| targets.create(org, new, WriteSource::Ui, None, i64::MAX, i64::MAX);
     let both = create(org_a, bound_target("both", &[ch_a.id, ch_b.id]))
         .await
         .unwrap();
@@ -663,6 +665,7 @@ async fn a_binding_across_orgs_is_refused_live_pg() {
             org_b,
             bound_target("b", &[]),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -722,6 +725,7 @@ async fn a_save_keeps_the_order_it_names_live_pg() {
             org,
             bound_target("t", &[c, d, e]),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -764,6 +768,7 @@ async fn delete_waits_for_a_binding_write_in_flight_then_removes_it_live_pg() {
             org,
             bound_target("t", &[]),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -820,6 +825,7 @@ async fn a_binding_write_behind_the_delete_is_refused_live_pg() {
             org,
             bound_target(name, chs),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -886,6 +892,7 @@ async fn a_save_dropping_the_channel_being_deleted_does_not_deadlock_live_pg() {
             org,
             bound_target("t", &[c.id, d.id]),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -944,6 +951,7 @@ async fn two_saves_of_one_monitor_take_turns_live_pg() {
             org,
             bound_target("t", &[]),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -1015,6 +1023,7 @@ async fn a_bulk_edit_takes_its_channels_before_any_monitor_live_pg() {
             org,
             bound_target(name, chs),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -1095,6 +1104,7 @@ async fn deleting_a_monitor_and_its_channel_together_does_not_deadlock_live_pg()
             org,
             bound_target("t", &[kept, gone]),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -1145,6 +1155,7 @@ async fn a_closing_notice_and_both_deletes_do_not_deadlock_live_pg() {
             org,
             bound_target("t", &[ch.id]),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -1223,6 +1234,7 @@ async fn two_pages_shared_by_both_deletes_are_taken_in_one_order_live_pg() {
             org,
             bound_target("t", &[ch.id]),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -1293,6 +1305,7 @@ async fn due_for_renotify_selects_overdue_open_unacked_live_pg() {
             renotify_interval_secs: renotify,
             recovery_period_secs: None,
             group_name: None,
+            group_id: None,
             owner_user_id: None,
             regions: None,
         }
@@ -1353,6 +1366,7 @@ async fn due_for_renotify_selects_overdue_open_unacked_live_pg() {
             org,
             mk_target("overdue", 3600),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -1363,6 +1377,7 @@ async fn due_for_renotify_selects_overdue_open_unacked_live_pg() {
             org,
             mk_target("recent", 3600),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -1373,6 +1388,7 @@ async fn due_for_renotify_selects_overdue_open_unacked_live_pg() {
             org,
             mk_target("off", 0),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -2633,6 +2649,7 @@ async fn two_monitors_on_one_channel(
                 org,
                 bound_target(name, &[ch]),
                 WriteSource::Ui,
+                None,
                 i64::MAX,
                 i64::MAX,
             )

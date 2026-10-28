@@ -18,7 +18,7 @@ impl Worker {
         incident: &OpsIncident,
     ) -> Result<Option<Subject>> {
         if incident.origin == IncidentOrigin::Group {
-            let Some(group_id) = incident.group.group_id else {
+            let Some(group_id) = incident.group.group_id() else {
                 return Ok(None);
             };
             return Ok(self.groups.get(org, group_id).await?.map(Subject::Group));
@@ -116,7 +116,7 @@ impl Worker {
             .await?;
         let notice = self.notice(
             &incident,
-            incident.group.group_name.clone(),
+            incident.group.group_name(),
             NotificationReason::MemberDown,
             None,
         );

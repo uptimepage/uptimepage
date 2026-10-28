@@ -115,6 +115,7 @@ fn public_target(name: &str) -> NewTarget {
         renotify_interval_secs: 3600,
         recovery_period_secs: None,
         group_name: None,
+        group_id: None,
         owner_user_id: None,
         regions: None,
     }
@@ -193,6 +194,7 @@ async fn rendered_groups_follow_the_stored_order() {
                 org_id,
                 public_target(&unique),
                 WriteSource::Ui,
+                None,
                 i64::MAX,
                 i64::MAX,
             )
@@ -278,6 +280,7 @@ async fn a_deleted_monitors_incident_stays_on_its_page() {
             org_id,
             public_target(&format!("agg-gone-{}", Uuid::now_v7())),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -341,6 +344,7 @@ async fn build_round_trips_seeded_data() {
             org_id,
             public_target(&unique),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -400,6 +404,7 @@ async fn detail_link_renders_only_for_a_live_share() {
             org_id,
             public_target("dl"),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -508,6 +513,7 @@ async fn a_component_that_recorded_nothing_is_no_data_not_operational() {
             org_id,
             public_target(&unique),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -568,6 +574,7 @@ async fn a_paused_monitors_open_incident_keeps_its_component_down() {
             org_id,
             public_target(&unique),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -631,6 +638,7 @@ async fn component_history_returns_strip_for_public_target() {
             org_id,
             public_target(&unique),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -689,6 +697,7 @@ async fn build_excludes_internal_incidents() {
             org_id,
             mk_target("pub"),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -699,6 +708,7 @@ async fn build_excludes_internal_incidents() {
             org_id,
             mk_target("int"),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -803,6 +813,7 @@ async fn build_component_state_follows_confirmed_incidents() {
             org_id,
             mk_target("partial"),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -813,6 +824,7 @@ async fn build_component_state_follows_confirmed_incidents() {
             org_id,
             mk_target("major"),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -998,6 +1010,7 @@ async fn internal_auto_incident_paints_strip_manual_stays_hidden() {
             org_id,
             mk_target("auto"),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -1008,6 +1021,7 @@ async fn internal_auto_incident_paints_strip_manual_stays_hidden() {
             org_id,
             mk_target("manual"),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -1136,6 +1150,7 @@ async fn a_published_declaration_paints_only_when_it_counts() {
             org_id,
             mk_target("notice"),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -1146,6 +1161,7 @@ async fn a_published_declaration_paints_only_when_it_counts() {
             org_id,
             mk_target("outage"),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -1273,6 +1289,7 @@ async fn published_postmortem_surfaces_on_public_incident() {
             org_id,
             public_target(&unique),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -1349,6 +1366,7 @@ async fn a_page_incident_shows_only_on_the_pages_it_names() {
             org_id,
             public_target(&format!("agg-pgi-{}", Uuid::now_v7())),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -1481,6 +1499,7 @@ async fn a_page_is_named_by_its_display_name_else_its_org() {
             org_id,
             public_target(&format!("agg-name-{}", Uuid::now_v7())),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )

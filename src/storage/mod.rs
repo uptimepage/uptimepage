@@ -95,7 +95,8 @@ pub use maintenance::{
 pub use manual::{InMemoryManualStore, ManualChange, ManualStore, PgManualStore};
 pub use memory::{InMemorySink, InMemoryTargetStore};
 pub use monitor_groups::{
-    DeletedGroup, InMemoryMonitorGroupStore, MonitorGroupStore, PgMonitorGroupStore,
+    DeletedGroup, GroupUsage, InMemoryMonitorGroupStore, MonitorGroupStore, OpenGroupIncident,
+    PgMonitorGroupStore,
 };
 pub use monitor_shares::{
     CreateShareOutcome, InMemoryMonitorShareStore, MonitorShareStore, PgMonitorShareStore,

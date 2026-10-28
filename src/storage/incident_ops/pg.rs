@@ -12,10 +12,10 @@ use uuid::Uuid;
 
 use crate::domain::{
     ActorType, IncidentAcknowledgement, IncidentEvent, IncidentEventKind, IncidentGroupLink,
-    IncidentMetrics, IncidentNotification, IncidentOrigin, IncidentSeverity, IncidentState,
-    IncidentTransition, IncidentUrgency, IncidentVisibility, MetricBucket, MonitorIncidentCount,
-    NewIncidentNotification, NewManualIncident, NotificationOutcome, NotificationReason,
-    NotificationStatus, OpsIncident, OrgId, UserId, next_state,
+    IncidentGroupRef, IncidentMetrics, IncidentNotification, IncidentOrigin, IncidentSeverity,
+    IncidentState, IncidentTransition, IncidentUrgency, IncidentVisibility, MetricBucket,
+    MonitorIncidentCount, NewIncidentNotification, NewManualIncident, NotificationOutcome,
+    NotificationReason, NotificationStatus, OpsIncident, OrgId, UserId, next_state,
 };
 use crate::error::Result;
 use crate::storage::admin::NOT_HELD_PREDICATE;
@@ -180,6 +180,15 @@ struct OpsIncidentRow {
     closed_by_group_delete: bool,
 }
 
+/// A group incident one of whose members' monitor name matches `param`, so a
+/// search finds the outage whose member rows the list leaves out.
+fn member_named(param: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM incidents m WHERE m.org_id = incidents.org_id \
+         AND m.group_incident_id = incidents.id AND m.target_name ILIKE {param})"
+    )
+}
+
 fn row_to_ops(r: OpsIncidentRow) -> OpsIncident {
     OpsIncident {
         id: r.id,
@@ -214,8 +223,10 @@ fn row_to_ops(r: OpsIncidentRow) -> OpsIncident {
         created_at: r.created_at,
         updated_at: r.updated_at,
         group: IncidentGroupLink {
-            group_id: r.group_id,
-            group_name: r.group_name,
+            group: r.group_name.map(|name| IncidentGroupRef {
+                id: r.group_id,
+                name,
+            }),
             routed_group_id: r.routed_group_id,
             group_incident_id: r.group_incident_id,
             closed_by_group_delete: r.closed_by_group_delete,
@@ -877,6 +888,29 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         Ok(row.map(row_to_ops))
     }
 
+    async fn group_members(
+        &self,
+        org: OrgId,
+        group_incidents: &[Uuid],
+        each: usize,
+    ) -> Result<Vec<OpsIncident>> {
+        let sql = format!(
+            "SELECT {OPS_COLS} FROM ( \
+                 SELECT *, row_number() OVER ( \
+                     PARTITION BY group_incident_id ORDER BY group_member_seq) AS nth \
+                 FROM incidents WHERE org_id = $1 AND group_incident_id = ANY($2) \
+             ) m WHERE nth <= $3 ORDER BY group_incident_id, group_member_seq"
+        );
+        let rows: Vec<OpsIncidentRow> = sqlx::query_as(&sql)
+            .bind(org.0)
+            .bind(group_incidents)
+            .bind(i64::try_from(each).unwrap_or(i64::MAX))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("group members: {e}"))?;
+        Ok(rows.into_iter().map(row_to_ops).collect())
+    }
+
     async fn list(&self, org: OrgId, filter: IncidentOpsFilter) -> Result<Vec<OpsIncident>> {
         let cap = filter.limit.unwrap_or(100).clamp(1, 1000) as i64;
         let off = filter.offset as i64;
@@ -893,9 +927,12 @@ impl IncidentOpsStore for PgIncidentOpsStore {
              WHERE org_id = $1 AND ($2::text IS NULL OR state = $2) \
                  AND ($3::text IS NULL OR severity = $3) \
                  AND ($4::uuid IS NULL OR assigned_to = $4) \
-                 AND ($7::text IS NULL OR title ILIKE $7 OR target_name ILIKE $7) \
+                 AND ($7::text IS NULL OR title ILIKE $7 OR target_name ILIKE $7 \
+                      OR group_name ILIKE $7 OR {named_7}) \
+                 AND (NOT $8 OR group_incident_id IS NULL) \
              ORDER BY {} LIMIT $5 OFFSET $6",
-            filter.sort.order_sql()
+            filter.sort.order_sql(),
+            named_7 = member_named("$7"),
         );
         let rows: Vec<OpsIncidentRow> = sqlx::query_as(&sql)
             .bind(org.0)
@@ -905,6 +942,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             .bind(cap)
             .bind(off)
             .bind(query)
+            .bind(filter.top_level)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| anyhow::anyhow!("list ops incidents: {e}"))?;
@@ -920,18 +958,22 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             .as_deref()
             .filter(|s| !s.is_empty())
             .map(like_contains);
-        let n: i64 = sqlx::query_scalar(
+        let n: i64 = sqlx::query_scalar(&format!(
             "SELECT count(*) FROM incidents \
              WHERE org_id = $1 AND ($2::text IS NULL OR state = $2) \
                  AND ($3::text IS NULL OR severity = $3) \
                  AND ($4::uuid IS NULL OR assigned_to = $4) \
-                 AND ($5::text IS NULL OR title ILIKE $5 OR target_name ILIKE $5)",
-        )
+                 AND ($5::text IS NULL OR title ILIKE $5 OR target_name ILIKE $5 \
+                      OR group_name ILIKE $5 OR {named_5}) \
+                 AND (NOT $6 OR group_incident_id IS NULL)",
+            named_5 = member_named("$5"),
+        ))
         .bind(org.0)
         .bind(state)
         .bind(severity)
         .bind(assignee)
         .bind(query)
+        .bind(filter.top_level)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| anyhow::anyhow!("count ops incidents: {e}"))?;
@@ -950,17 +992,21 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             .as_deref()
             .filter(|s| !s.is_empty())
             .map(like_contains);
-        let rows: Vec<(String, i64)> = sqlx::query_as(
+        let rows: Vec<(String, i64)> = sqlx::query_as(&format!(
             "SELECT state, count(*) FROM incidents \
              WHERE org_id = $1 AND ($2::text IS NULL OR severity = $2) \
                  AND ($3::uuid IS NULL OR assigned_to = $3) \
-                 AND ($4::text IS NULL OR title ILIKE $4 OR target_name ILIKE $4) \
+                 AND ($4::text IS NULL OR title ILIKE $4 OR target_name ILIKE $4 \
+                      OR group_name ILIKE $4 OR {named_4}) \
+                 AND (NOT $5 OR group_incident_id IS NULL) \
              GROUP BY state",
-        )
+            named_4 = member_named("$4"),
+        ))
         .bind(org.0)
         .bind(severity)
         .bind(assignee)
         .bind(query)
+        .bind(filter.top_level)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| anyhow::anyhow!("counts_by_state: {e}"))?;

@@ -151,8 +151,11 @@ pub struct IncidentOpsFilter {
     pub severity: Option<IncidentSeverity>,
     /// Restrict to incidents owned by this user (the "assigned to me" view).
     pub assignee: Option<UserId>,
-    /// Free-text match over incident title and monitor name (case-insensitive).
+    /// Free-text match over incident title and monitor or group name
+    /// (case-insensitive).
     pub query: Option<String>,
+    /// Leave out member incidents of a group; they are listed under it.
+    pub top_level: bool,
     pub sort: IncidentSort,
     pub limit: Option<usize>,
     pub offset: usize,
@@ -491,6 +494,14 @@ pub const INCIDENT_DETAIL_ROW_CAP: i64 = 500;
 #[async_trait]
 pub trait IncidentOpsStore: Send + Sync {
     async fn get(&self, org: OrgId, id: Uuid) -> Result<Option<OpsIncident>>;
+    /// The member incidents of each group incident in `group_incidents`, in
+    /// the order they joined, at most `each` per group incident.
+    async fn group_members(
+        &self,
+        org: OrgId,
+        group_incidents: &[Uuid],
+        each: usize,
+    ) -> Result<Vec<OpsIncident>>;
     async fn list(&self, org: OrgId, filter: IncidentOpsFilter) -> Result<Vec<OpsIncident>>;
     /// Total incidents in `org` matching the filter — for pager "page N of M".
     /// Honours state/severity/assignee (offset/limit ignored).

@@ -77,11 +77,12 @@ impl Fixture {
             renotify_interval_secs: 3600,
             recovery_period_secs: None,
             group_name: None,
+            group_id: None,
             owner_user_id: None,
             regions: None,
         };
         self.targets
-            .create(self.org, new, WriteSource::Ui, i64::MAX, i64::MAX)
+            .create(self.org, new, WriteSource::Ui, None, i64::MAX, i64::MAX)
             .await
             .unwrap()
             .id

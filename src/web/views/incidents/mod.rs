@@ -49,6 +49,15 @@ fn member_avatar(u: UserId, members: &HashMap<UserId, String>) -> Option<OwnerAv
     })
 }
 
+/// A group incident's name: its group's, marked once the group is deleted.
+fn group_label(inc: &crate::domain::OpsIncident) -> Option<String> {
+    let g = inc.group.group.as_ref()?;
+    Some(match g.id {
+        Some(_) => g.name.clone(),
+        None => format!("{} (deleted)", g.name),
+    })
+}
+
 /// Title, else the monitor it is about.
 fn incident_label(title: Option<String>, monitor_name: Option<String>) -> String {
     title

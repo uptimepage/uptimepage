@@ -64,11 +64,12 @@ async fn seed_target(pool: &PgPool, org: OrgId, name: &str) -> Uuid {
         renotify_interval_secs: 3600,
         recovery_period_secs: None,
         group_name: None,
+        group_id: None,
         owner_user_id: None,
         regions: None,
     };
     store
-        .create(org, target, WriteSource::Ui, i64::MAX, i64::MAX)
+        .create(org, target, WriteSource::Ui, None, i64::MAX, i64::MAX)
         .await
         .expect("create target")
         .id

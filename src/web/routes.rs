@@ -42,6 +42,7 @@ pub fn routes(state: AppState) -> Router {
             "/targets/{id}/duplicate",
             get(views::targets_duplicate::page),
         )
+        .route("/groups/{id}", get(views::groups::settings))
         .route("/incidents", get(views::incidents::list))
         .route(
             "/web/partials/incidents",

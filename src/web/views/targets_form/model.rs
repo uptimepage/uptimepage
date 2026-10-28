@@ -46,6 +46,9 @@ pub struct FormModel {
     pub group_name: String,
     /// Existing org group names, offered in the group dropdown.
     pub group_options: Vec<String>,
+    /// Set while the monitor's group alerts as one: its own channels, policy
+    /// and tags are kept but muted.
+    pub group_alert: Option<GroupAlertNote>,
     /// Existing org tag names, rendered as selectable chips.
     pub tag_options: Vec<String>,
     /// Selected owner user-id (or empty string for "unowned"); the form
@@ -158,12 +161,41 @@ pub(super) fn region_threshold_choices(
     out
 }
 
+/// The group a monitor's alerts go through while it alerts as one.
+pub struct GroupAlertNote {
+    pub id: String,
+    pub name: String,
+    pub tags: Vec<String>,
+}
+
 /// One preset in a seconds rail (reminder cadence, recovery hold). `secs` is
 /// submitted verbatim.
 pub struct SecondsChoice {
     pub secs: u32,
     pub label: String,
     pub selected: bool,
+}
+
+/// Reminder-cadence presets with `current` selected; an off-preset stored
+/// value is preserved as its own option.
+pub fn renotify_choices(current: u32) -> Vec<SecondsChoice> {
+    let mut values: Vec<u32> = vec![0, 900, 1_800, 3_600, 7_200, 21_600];
+    if !values.contains(&current) {
+        values.push(current);
+        values.sort_unstable();
+    }
+    values
+        .into_iter()
+        .map(|secs| SecondsChoice {
+            secs,
+            label: if secs == 0 {
+                "off".to_string()
+            } else {
+                exact_duration(u64::from(secs))
+            },
+            selected: secs == current,
+        })
+        .collect()
 }
 
 pub struct ConfirmationChoice {
@@ -319,26 +351,9 @@ impl FormModel {
             .collect()
     }
 
-    /// Reminder-cadence presets with the monitor's current interval selected;
-    /// an off-preset stored value is preserved as its own option.
+    /// Reminder-cadence presets with the monitor's current interval selected.
     pub fn renotify_options(&self) -> Vec<SecondsChoice> {
-        let mut values: Vec<u32> = vec![0, 900, 1_800, 3_600, 7_200, 21_600];
-        if !values.contains(&self.renotify_interval_secs) {
-            values.push(self.renotify_interval_secs);
-            values.sort_unstable();
-        }
-        values
-            .into_iter()
-            .map(|secs| SecondsChoice {
-                secs,
-                label: if secs == 0 {
-                    "off".to_string()
-                } else {
-                    exact_duration(u64::from(secs))
-                },
-                selected: secs == self.renotify_interval_secs,
-            })
-            .collect()
+        renotify_choices(self.renotify_interval_secs)
     }
 
     /// Recovery-hold presets with the monitor's current hold selected; an

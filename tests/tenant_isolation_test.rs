@@ -43,6 +43,7 @@ fn target_named(name: &str) -> NewTarget {
         renotify_interval_secs: 3600,
         recovery_period_secs: None,
         group_name: None,
+        group_id: None,
         owner_user_id: None,
         regions: None,
     }
@@ -160,6 +161,7 @@ async fn two_tenants_never_see_each_others_data() {
             a.org,
             target_named(&format!("a-target-{}", Uuid::now_v7())),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -170,6 +172,7 @@ async fn two_tenants_never_see_each_others_data() {
             b.org,
             target_named(&format!("b-target-{}", Uuid::now_v7())),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )

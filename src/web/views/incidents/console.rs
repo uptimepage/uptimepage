@@ -18,7 +18,9 @@ use crate::web::error::WebResult;
 use crate::web::views::{PageSizeLink, PagerLink};
 
 use super::actors::{AckList, ack_list};
-use super::{OwnerAvatar, OwnerOption, incident_label, member_avatar, members_map, state_label};
+use super::{
+    OwnerAvatar, OwnerOption, group_label, incident_label, member_avatar, members_map, state_label,
+};
 
 pub(super) const STATE_FILTERS: &[&str] = &["all", "triggered", "acknowledged", "resolved"];
 const SEVERITIES: &[&str] = &["minor", "major", "critical"];
@@ -91,7 +93,20 @@ pub struct ConsoleRow {
     /// beside its state, which still takes an ack or a resolve.
     pub recovering: bool,
     pub ongoing: bool,
+    /// A group incident's members, nested under it in the list.
+    pub members: Vec<MemberLine>,
+    /// Attached to a group incident, whose actions it takes.
+    pub group_incident_id: Option<String>,
 }
+
+pub struct MemberLine {
+    pub id: String,
+    pub label: String,
+    pub ongoing: bool,
+}
+
+/// Members shown under a group incident in the list; its page lists them all.
+const MEMBERS_LISTED: usize = 10;
 
 /// Row + pager state shared by the full console page and its live-polled table
 /// fragment.
@@ -184,6 +199,8 @@ pub(super) fn row_from(
         age,
         recovering: ongoing && inc.recovering_since.is_some(),
         ongoing,
+        members: Vec::new(),
+        group_incident_id: inc.group.group_incident_id.map(|g| g.to_string()),
     }
 }
 
@@ -337,6 +354,7 @@ async fn console_data(
         assignee: assignee_filter(&r, uid),
         query: r.query.clone(),
         sort: IncidentSort::from_key(r.sort),
+        top_level: true,
         ..Default::default()
     };
     let total = state.incident_ops_store.count(org, &base).await?;
@@ -362,13 +380,35 @@ async fn console_data(
         .await?;
     let ids: Vec<Uuid> = incidents.iter().map(|i| i.id).collect();
     let mut acks = state.incident_ops_store.acknowledgements(org, &ids).await?;
+    let group_ids: Vec<Uuid> = incidents
+        .iter()
+        .filter(|i| i.group.group.is_some())
+        .map(|i| i.id)
+        .collect();
+    let mut nested: HashMap<Uuid, Vec<MemberLine>> = HashMap::new();
+    if !group_ids.is_empty() {
+        for m in state
+            .incident_ops_store
+            .group_members(org, &group_ids, MEMBERS_LISTED)
+            .await?
+        {
+            if let Some(g) = m.group.group_incident_id {
+                nested.entry(g).or_default().push(MemberLine {
+                    id: m.id.to_string(),
+                    label: m.target_name.clone().unwrap_or_default(),
+                    ongoing: m.ended_at.is_none(),
+                });
+            }
+        }
+    }
     let rows: Vec<ConsoleRow> = incidents
         .into_iter()
         .map(|i| {
             let avatar_of = |u: UserId| member_avatar(u, members);
-            // The incident carries its monitor's name and kind, so a deleted
-            // monitor's incident still reads as it did.
-            let name = i.target_name.clone();
+            // The incident carries its monitor's or group's name and kind, so
+            // a deleted one's incident still reads as it did.
+            let name = i.target_name.clone().or_else(|| group_label(&i));
+            let lines = nested.remove(&i.id).unwrap_or_default();
             let kind = i.target_kind.as_deref().map(kind_label);
             let incident_acks = acks.remove(&i.id).unwrap_or_default();
             let resolved = i.resolved_by.and_then(avatar_of);
@@ -377,6 +417,7 @@ async fn console_data(
             let acks = ack_list(&incident_acks, uid, members);
             let mut row = row_from(i, name, acks, resolved, assignee, mine_row);
             row.kind = kind;
+            row.members = lines;
             row
         })
         .collect();
@@ -445,6 +486,7 @@ pub async fn list(
         severity: r.severity,
         assignee: assignee_filter(&r, uid),
         query: r.query.clone(),
+        top_level: true,
         ..Default::default()
     };
     let counts = state

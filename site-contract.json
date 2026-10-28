@@ -32,6 +32,7 @@
       "get_status_page",
       "list_incidents",
       "list_maintenance",
+      "list_monitor_groups",
       "list_monitors",
       "list_notification_channels",
       "list_regions",
@@ -59,6 +60,7 @@
       "unpublish_incident",
       "update_maintenance",
       "update_monitor",
+      "update_monitor_group",
       "update_status_page",
       "update_status_page_component"
     ]

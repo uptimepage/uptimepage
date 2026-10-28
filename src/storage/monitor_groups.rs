@@ -15,9 +15,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::domain::{
-    ActorType, IncidentEventKind, MAX_GROUP_NAME_LEN, MonitorGroup, MonitorGroupUpdate,
-    NewMonitorGroup, OrgId, TargetAlerts, UserId, WriteSource, group_deleted_message,
-    normalize_group_name,
+    ActorType, GroupChoice, IncidentEventKind, MAX_GROUP_NAME_LEN, MonitorGroup,
+    MonitorGroupUpdate, NewMonitorGroup, OrgId, TargetAlerts, UserId, WriteSource,
+    group_deleted_message, normalize_group_name,
 };
 use crate::error::{AppError, Result, codes, validation};
 use crate::storage::accounts;
@@ -86,16 +86,34 @@ pub struct DeletedGroup {
     pub detached: Vec<Uuid>,
 }
 
+/// What a group holds now.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GroupUsage {
+    pub member_count: u32,
+    pub open_incident: Option<OpenGroupIncident>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpenGroupIncident {
+    pub id: Uuid,
+    pub started_at: DateTime<Utc>,
+    pub acknowledged: bool,
+}
+
 #[async_trait]
 pub trait MonitorGroupStore: Send + Sync {
     async fn list(&self, org: OrgId) -> Result<Vec<MonitorGroup>>;
     async fn get(&self, org: OrgId, id: Uuid) -> Result<Option<MonitorGroup>>;
+    /// Usage of each of `ids` the org has; others are left out.
+    async fn usage(&self, org: OrgId, ids: &[Uuid]) -> Result<HashMap<Uuid, GroupUsage>>;
+    /// Refused past `cap` groups across the account's orgs.
     async fn create(
         &self,
         org: OrgId,
         new: NewMonitorGroup,
         source: WriteSource,
         actor: Option<UserId>,
+        cap: i64,
     ) -> Result<MonitorGroup>;
     async fn update(
         &self,
@@ -140,7 +158,7 @@ fn name_taken_error() -> AppError {
 }
 
 /// The stored form of a group's own name, which must name something.
-fn required_name(raw: &str) -> Result<String> {
+pub(crate) fn required_name(raw: &str) -> Result<String> {
     let name = normalize_group_name(raw).ok_or_else(|| {
         AppError::bad_request_field(codes::INVALID_GROUP_NAME, "name must not be blank", "name")
     })?;
@@ -173,18 +191,80 @@ pub(crate) async fn lock_group(
     Ok(found.is_some())
 }
 
-/// The group a monitor write names by `name`, created as a label group when
-/// none has it, and held against a rename, delete or attach until the write
-/// commits. `None` for no name or a blank one.
+/// The group a monitor write joins, held against a rename, delete or attach
+/// until the write commits. A name no group has creates a label group, refused
+/// past `cap` when the caller holds the account lock and passes one. `None`
+/// for no choice or a blank name.
 pub(crate) async fn resolve_group(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: OrgId,
-    name: Option<&str>,
+    choice: Option<GroupChoice<'_>>,
     source: WriteSource,
     actor: Option<UserId>,
+    cap: Option<i64>,
 ) -> Result<Option<Uuid>> {
-    let Some(name) = name.and_then(normalize_group_name) else {
+    match choice {
+        None => Ok(None),
+        Some(GroupChoice::Id(id)) => join_by_id(tx, org, id).await.map(Some),
+        Some(GroupChoice::Name(name)) => resolve_named(tx, org, name, source, actor, cap).await,
+    }
+}
+
+/// Refuses one more group past `cap`, counted across the account's orgs. The
+/// caller holds the account lock, so the count cannot move under it.
+async fn refuse_past_cap(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+    cap: i64,
+) -> Result<()> {
+    let account = accounts::account_for_org(&mut **tx, org).await?;
+    let current: i64 = sqlx::query_scalar(&crate::storage::count_sql::groups())
+        .bind(account.0)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db("count groups"))?;
+    if current + 1 > cap {
+        return Err(AppError::quota_exceeded(
+            crate::domain::quota::usage_keys::GROUPS,
+            current,
+            cap,
+            "current",
+        ));
+    }
+    Ok(())
+}
+
+async fn join_by_id(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+    id: Uuid,
+) -> Result<Uuid> {
+    match lock_group(tx, org, id).await? {
+        true => Ok(id),
+        false => Err(AppError::bad_request_field(
+            codes::GROUP_NOT_FOUND,
+            format!("group {id} does not exist"),
+            "group_id",
+        )),
+    }
+}
+
+async fn resolve_named(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+    name: &str,
+    source: WriteSource,
+    actor: Option<UserId>,
+    cap: Option<i64>,
+) -> Result<Option<Uuid>> {
+    let Some(name) = normalize_group_name(name) else {
         return Ok(None);
+    };
+    // A group a monitor names into being is declared by no `.tf`, so marking
+    // it Terraform's would refuse every edit made outside it.
+    let source = match source {
+        WriteSource::Terraform => WriteSource::Api,
+        other => other,
     };
     validation::check_length(
         name,
@@ -192,9 +272,23 @@ pub(crate) async fn resolve_group(
         MAX_GROUP_NAME_LEN,
         codes::GROUP_TOO_LONG,
     )?;
-    // A delete or rename committing between the two statements leaves nothing
-    // under the name to lock, and the next insert can take it.
+    // A group created, renamed or deleted between the lookup and the insert is
+    // found, or its name freed, on the next pass.
     for _ in 0..3 {
+        let found: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM monitor_groups WHERE org_id = $1 AND name = $2 FOR NO KEY UPDATE",
+        )
+        .bind(org.0)
+        .bind(name)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(db("find group"))?;
+        if found.is_some() {
+            return Ok(found);
+        }
+        if let Some(cap) = cap {
+            refuse_past_cap(tx, org, cap).await?;
+        }
         let created: Option<Uuid> = sqlx::query_scalar(
             "INSERT INTO monitor_groups (org_id, name, write_source, created_by, updated_by) \
              VALUES ($1, $2, $3, $4, $4) ON CONFLICT (org_id, name) DO NOTHING RETURNING id",
@@ -217,17 +311,6 @@ pub(crate) async fn resolve_group(
             .await?;
             return Ok(Some(id));
         }
-        let found: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM monitor_groups WHERE org_id = $1 AND name = $2 FOR NO KEY UPDATE",
-        )
-        .bind(org.0)
-        .bind(name)
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(db("find group"))?;
-        if found.is_some() {
-            return Ok(found);
-        }
     }
     Err(AppError::conflict(
         codes::GROUP_CHANGE_CONFLICT,
@@ -235,30 +318,44 @@ pub(crate) async fn resolve_group(
     ))
 }
 
-/// [`resolve_group`] for every name of a batch, taken in name order.
+/// [`resolve_group`] for every choice of a batch: names in name order, then
+/// ids in id order.
 pub(crate) async fn resolve_groups(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: OrgId,
-    names: &[Option<String>],
+    choices: &[Option<GroupChoice<'_>>],
     source: WriteSource,
     actor: Option<UserId>,
+    cap: Option<i64>,
 ) -> Result<Vec<Option<Uuid>>> {
-    let wanted: BTreeSet<&str> = names
-        .iter()
-        .filter_map(|n| n.as_deref().and_then(normalize_group_name))
-        .collect();
-    let mut ids: HashMap<&str, Uuid> = HashMap::with_capacity(wanted.len());
-    for name in wanted {
-        if let Some(id) = resolve_group(tx, org, Some(name), source, actor).await? {
-            ids.insert(name, id);
+    fn named<'a>(c: &Option<GroupChoice<'a>>) -> Option<&'a str> {
+        match *c {
+            Some(GroupChoice::Name(n)) => normalize_group_name(n),
+            _ => None,
         }
     }
-    Ok(names
+    let names: BTreeSet<&str> = choices.iter().filter_map(named).collect();
+    let mut by_name: HashMap<&str, Uuid> = HashMap::with_capacity(names.len());
+    for name in names {
+        if let Some(id) = resolve_named(tx, org, name, source, actor, cap).await? {
+            by_name.insert(name, id);
+        }
+    }
+    let ids: BTreeSet<Uuid> = choices
         .iter()
-        .map(|n| {
-            n.as_deref()
-                .and_then(normalize_group_name)
-                .and_then(|n| ids.get(n).copied())
+        .filter_map(|c| match *c {
+            Some(GroupChoice::Id(id)) => Some(id),
+            _ => None,
+        })
+        .collect();
+    for id in ids {
+        join_by_id(tx, org, id).await?;
+    }
+    Ok(choices
+        .iter()
+        .map(|c| match *c {
+            Some(GroupChoice::Id(id)) => Some(id),
+            _ => named(c).and_then(|n| by_name.get(n).copied()),
         })
         .collect())
 }
@@ -288,16 +385,57 @@ impl MonitorGroupStore for PgMonitorGroupStore {
         row.map(GroupRow::decode).transpose()
     }
 
+    async fn usage(&self, org: OrgId, ids: &[Uuid]) -> Result<HashMap<Uuid, GroupUsage>> {
+        type Row = (Uuid, i64, Option<Uuid>, Option<DateTime<Utc>>, Option<bool>);
+        // At most one open group incident per group (its partial unique index).
+        let rows: Vec<Row> = sqlx::query_as(
+            "SELECT g.id, \
+                 (SELECT count(*) FROM targets t WHERE t.org_id = g.org_id AND t.group_id = g.id), \
+                 i.id, i.started_at, i.acknowledged_at IS NOT NULL \
+             FROM monitor_groups g \
+             LEFT JOIN incidents i ON i.org_id = g.org_id AND i.group_id = g.id \
+                 AND i.origin = 'group' AND i.ended_at IS NULL \
+             WHERE g.org_id = $1 AND g.id = ANY($2)",
+        )
+        .bind(org.0)
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db("group usage"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, members, open, started_at, acked)| {
+                let usage = GroupUsage {
+                    member_count: u32::try_from(members).unwrap_or(u32::MAX),
+                    open_incident: open
+                        .zip(started_at)
+                        .map(|(id, started_at)| OpenGroupIncident {
+                            id,
+                            started_at,
+                            acknowledged: acked.unwrap_or_default(),
+                        }),
+                };
+                (id, usage)
+            })
+            .collect())
+    }
+
     async fn create(
         &self,
         org: OrgId,
         new: NewMonitorGroup,
         source: WriteSource,
         actor: Option<UserId>,
+        cap: i64,
     ) -> Result<MonitorGroup> {
         let name = required_name(&new.name)?;
         let channels: Vec<Uuid> = new.alerts.iter().map(|b| b.channel_id).collect();
         let mut tx = self.pool.begin().await.map_err(db("create group: begin"))?;
+        let account = accounts::account_for_org(&mut *tx, org).await?;
+        advisory_xact_lock(&mut *tx, &account_lock_key(account))
+            .await
+            .map_err(db("create group: account lock"))?;
+        refuse_past_cap(&mut tx, org, cap).await?;
         lock_bound_channels(&mut tx, org, &channels, ALERT_CHANNEL_FIELD).await?;
         let row: Option<GroupRow> = sqlx::query_as(&format!(
             "INSERT INTO monitor_groups AS g \
@@ -504,18 +642,7 @@ async fn close_group_incident(
     let Some(incident) = open else {
         return Ok((None, Vec::new()));
     };
-    advisory_xact_lock(&mut **tx, &incident_lock_key(incident))
-        .await
-        .map_err(db("group incident lock"))?;
-    let still_open: Option<bool> = sqlx::query_scalar(
-        "SELECT ended_at IS NULL FROM incidents WHERE id = $1 AND org_id = $2 FOR UPDATE",
-    )
-    .bind(incident)
-    .bind(org.0)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(db("lock group incident"))?;
-    if still_open != Some(true) {
+    if !crate::storage::group_incidents::lock_incident(tx, org, incident).await? {
         return Ok((None, Vec::new()));
     }
 
@@ -659,17 +786,36 @@ impl MonitorGroupStore for InMemoryMonitorGroupStore {
         Ok(self.groups.lock().iter().find(|g| g.id == id).cloned())
     }
 
+    async fn usage(&self, _org: OrgId, ids: &[Uuid]) -> Result<HashMap<Uuid, GroupUsage>> {
+        Ok(self
+            .groups
+            .lock()
+            .iter()
+            .filter(|g| ids.contains(&g.id))
+            .map(|g| (g.id, GroupUsage::default()))
+            .collect())
+    }
+
     async fn create(
         &self,
         _org: OrgId,
         new: NewMonitorGroup,
         source: WriteSource,
         actor: Option<UserId>,
+        cap: i64,
     ) -> Result<MonitorGroup> {
         let name = required_name(&new.name)?;
         let mut groups = self.groups.lock();
         if groups.iter().any(|g| g.name == name) {
             return Err(name_taken_error());
+        }
+        if groups.len() as i64 >= cap {
+            return Err(AppError::quota_exceeded(
+                crate::domain::quota::usage_keys::GROUPS,
+                groups.len() as i64,
+                cap,
+                "current",
+            ));
         }
         let now = Utc::now();
         let group = MonitorGroup {

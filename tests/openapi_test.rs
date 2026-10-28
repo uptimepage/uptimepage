@@ -67,6 +67,9 @@ async fn openapi_doc_lists_every_documented_path() {
         "/api/v1/targets/{id}/uptime",
         "/api/v1/targets/{id}/incidents",
         "/api/v1/tags",
+        "/api/v1/groups",
+        "/api/v1/groups/{id}",
+        "/api/v1/groups/{id}/escalation-policy",
         "/api/v1/dashboard/summary",
         "/api/v1/maintenance",
         "/api/v1/maintenance/{id}",
@@ -268,11 +271,11 @@ fn every_request_body_resolves_its_refs_without_the_doc() {
     };
     use uptimepage::api::types::{BulkActionRequest, TestRequest};
     use uptimepage::domain::{
-        IncidentNarrationUpdate, MaintenanceWindowUpdate, NewEscalationPolicy, NewIncidentUpdate,
-        NewMaintenanceUpdate, NewMaintenanceWindow, NewManualIncident, NewMonitorShare,
-        NewNotificationChannel, NewOnCallOverride, NewOnCallSchedule, NewStatusPageComponent,
-        NewTarget, NewVariable, NotificationChannelUpdate, PostmortemUpsert,
-        StatusPageComponentUpdate, TargetUpdate,
+        IncidentNarrationUpdate, MaintenanceWindowUpdate, MonitorGroupUpdate, NewEscalationPolicy,
+        NewIncidentUpdate, NewMaintenanceUpdate, NewMaintenanceWindow, NewManualIncident,
+        NewMonitorGroup, NewMonitorShare, NewNotificationChannel, NewOnCallOverride,
+        NewOnCallSchedule, NewStatusPageComponent, NewTarget, NewVariable,
+        NotificationChannelUpdate, PostmortemUpsert, StatusPageComponentUpdate, TargetUpdate,
     };
     use uptimepage::target_ops::SetManualState;
 
@@ -288,6 +291,8 @@ fn every_request_body_resolves_its_refs_without_the_doc() {
         body::<NewMaintenanceWindow>(),
         body::<MaintenanceWindowUpdate>(),
         body::<NewMaintenanceUpdate>(),
+        body::<NewMonitorGroup>(),
+        body::<MonitorGroupUpdate>(),
         body::<NewVariable>(),
         body::<variables::VariableValueUpdate>(),
         body::<NewNotificationChannel>(),

@@ -14,8 +14,8 @@ use crate::config::PostgresConfig;
 use crate::domain::metrics::{TagCount, TargetsSummary};
 use crate::domain::target::MAX_TAGS_PER_TARGET;
 use crate::domain::{
-    CheckSpec, MONITOR_DELETED_MESSAGE, NewTarget, OrgId, PlacedTarget, RegionIncidentPolicy,
-    Target, TargetAlerts, TargetUpdate, UserId, WriteSource,
+    CheckSpec, GroupChoice, MONITOR_DELETED_MESSAGE, NewTarget, OrgId, PlacedTarget,
+    RegionIncidentPolicy, Target, TargetAlerts, TargetUpdate, UserId, WriteSource,
 };
 use crate::error::{AppError, Result};
 use crate::security::Cipher;
@@ -42,6 +42,21 @@ pub static MIGRATOR: LazyLock<sqlx::migrate::Migrator> = LazyLock::new(|| {
     migrator
 });
 
+/// The tags a monitor is listed and filtered by: its group's while the group
+/// alerts as one, its own otherwise.
+macro_rules! effective_tags {
+    ($t:literal) => {
+        concat!(
+            "COALESCE((SELECT mg.tags FROM monitor_groups mg WHERE mg.id = ",
+            $t,
+            ".group_id AND mg.alert_as_one), ",
+            $t,
+            ".tags)"
+        )
+    };
+}
+pub(crate) use effective_tags;
+
 /// What every query that decodes a [`TargetRow`] selects or returns, for the
 /// targets row the query names `$t`.
 macro_rules! target_columns {
@@ -65,6 +80,8 @@ macro_rules! target_columns {
             $t,
             ".tags",
             ", ",
+            $crate::storage::postgres::effective_tags!($t),
+            " AS effective_tags, ",
             $crate::storage::channel_bindings::target_alerts_column!($t),
             ", ",
             $t,
@@ -112,6 +129,7 @@ macro_rules! target_columns {
 pub(crate) use target_columns;
 
 const TARGET_COLUMNS: &str = target_columns!("targets");
+const EFFECTIVE_TAGS: &str = effective_tags!("targets");
 
 /// Org-scoped Postgres-backed target store. Every query binds the `org`
 /// passed by the caller (resolved from the request's `CurrentOrg`) so reads,
@@ -281,6 +299,7 @@ pub(crate) struct TargetRow {
     pub(crate) interval_secs: i32,
     pub(crate) enabled: bool,
     pub(crate) tags: Vec<String>,
+    pub(crate) effective_tags: Vec<String>,
     pub(crate) alerts: serde_json::Value,
     pub(crate) region_policy: serde_json::Value,
     pub(crate) alert_confirmations: i32,
@@ -405,6 +424,7 @@ pub(crate) fn decode_target_row(row: TargetRow, cipher: Option<&Cipher>) -> Resu
         interval: Duration::from_secs(row.interval_secs.max(0) as u64),
         enabled: row.enabled,
         tags: row.tags,
+        effective_tags: row.effective_tags,
         alerts,
         alert_confirmations: row.alert_confirmations.max(1) as u32,
         notify_recovery: row.notify_recovery,
@@ -637,7 +657,7 @@ impl TargetStore for PostgresTargetStore {
                FROM targets
                WHERE org_id = $1
                  AND ($2::bool IS NULL OR enabled = $2)
-                 AND ($3::text IS NULL OR $3 = ANY(tags))
+                 AND ($3::text IS NULL OR $3 = ANY({EFFECTIVE_TAGS}))
                  AND ($4::text IS NULL OR name ILIKE $4)
                  AND ($5::text IS NULL OR group_id = (
                      SELECT mg.id FROM monitor_groups mg WHERE mg.org_id = $1 AND mg.name = $5))
@@ -693,18 +713,18 @@ impl TargetStore for PostgresTargetStore {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_owned);
-        let rows: Vec<(Option<String>, i64)> = sqlx::query_as(
+        let rows: Vec<(Option<String>, i64)> = sqlx::query_as(&format!(
             r#"SELECT kind, count(*)
                FROM targets
                WHERE org_id = $1
                  AND ($2::bool IS NULL OR enabled = $2)
-                 AND ($3::text IS NULL OR $3 = ANY(tags))
+                 AND ($3::text IS NULL OR $3 = ANY({EFFECTIVE_TAGS}))
                  AND ($4::text IS NULL OR name ILIKE $4)
                  AND ($5::text IS NULL OR group_id = (
                      SELECT mg.id FROM monitor_groups mg WHERE mg.org_id = $1 AND mg.name = $5))
                  AND ($6::uuid IS NULL OR owner_user_id = $6)
                GROUP BY kind"#,
-        )
+        ))
         .bind(org.0)
         .bind(filter.enabled)
         .bind(filter.tag)
@@ -784,6 +804,7 @@ impl TargetStore for PostgresTargetStore {
         org: OrgId,
         new: NewTarget,
         source: WriteSource,
+        actor: Option<UserId>,
         max_targets: i64,
         max_flow_checks: i64,
     ) -> Result<Target> {
@@ -835,7 +856,15 @@ impl TargetStore for PostgresTargetStore {
         }
         let channel_ids: Vec<Uuid> = new.alerts.iter().map(|b| b.channel_id).collect();
         lock_bound_channels(&mut tx, org, &channel_ids, ALERT_CHANNEL_FIELD).await?;
-        let group_id = resolve_group(&mut tx, org, new.group_name.as_deref(), source, None).await?;
+        let group_id = resolve_group(
+            &mut tx,
+            org,
+            new.group_choice(),
+            source,
+            actor,
+            Some(max_targets),
+        )
+        .await?;
         let row: TargetRow = sqlx::query_as::<_, TargetRow>(&format!(
             r#"INSERT INTO targets (org_id, name, check_spec, interval_secs, enabled, tags,
                                     group_id, owner_user_id, write_source, region_policy,
@@ -925,7 +954,8 @@ impl TargetStore for PostgresTargetStore {
         // single statement it was, which matters for the per-target writes a
         // bulk create fans out.
         let mut tx =
-            if update.enabled.is_some() || channel_ids.is_some() || update.group_name.is_some() {
+            if update.enabled.is_some() || channel_ids.is_some() || update.group_choice().is_some()
+            {
                 Some(self.pool.begin().await.context("update target: begin")?)
             } else {
                 None
@@ -935,10 +965,10 @@ impl TargetStore for PostgresTargetStore {
         if let (Some(tx), Some(ids)) = (tx.as_mut(), &channel_ids) {
             lock_bound_channels(tx, org, ids, ALERT_CHANNEL_FIELD).await?;
         }
-        let group_id = match (tx.as_mut(), &update.group_name) {
-            (Some(tx), Some(name)) => Some(
-                resolve_group(tx, org, name.as_deref(), source.unwrap_or_default(), actor).await?,
-            ),
+        let group_id = match (tx.as_mut(), update.group_choice()) {
+            (Some(tx), Some(choice)) => {
+                Some(resolve_group(tx, org, choice, source.unwrap_or_default(), actor, None).await?)
+            }
             _ => None,
         };
         // Read under a row lock, so a concurrent flip can't land between the
@@ -1096,6 +1126,7 @@ impl TargetStore for PostgresTargetStore {
         org: OrgId,
         items: Vec<PlacedTarget>,
         source: WriteSource,
+        actor: Option<UserId>,
         max_targets: i64,
         max_flow_checks: i64,
     ) -> Result<Vec<Target>> {
@@ -1208,8 +1239,10 @@ impl TargetStore for PostgresTargetStore {
             }
         }
         lock_bound_channels(&mut tx, org, &bound_channels, ALERT_CHANNEL_FIELD).await?;
-        let group_names: Vec<Option<String>> = items.iter().map(|t| t.group_name.clone()).collect();
-        let group_ids = resolve_groups(&mut tx, org, &group_names, source, None).await?;
+        let choices: Vec<Option<GroupChoice<'_>>> =
+            items.iter().map(|t| t.group_choice()).collect();
+        let group_ids =
+            resolve_groups(&mut tx, org, &choices, source, actor, Some(max_targets)).await?;
         let alerts: Vec<TargetAlerts> = items.iter().map(|t| t.alerts.clone()).collect();
 
         let rows: Vec<TargetRow> = if let Some(cipher) = &self.cipher {
@@ -1358,15 +1391,15 @@ impl TargetStore for PostgresTargetStore {
         limit: usize,
     ) -> Result<Vec<TagCount>> {
         let prefix_pat = prefix.as_deref().map(|p| format!("{p}%"));
-        let rows: Vec<(String, i64)> = sqlx::query_as(
+        let rows: Vec<(String, i64)> = sqlx::query_as(&format!(
             r#"SELECT tag, count(*) AS c
-               FROM targets, unnest(tags) AS tag
+               FROM targets, unnest({EFFECTIVE_TAGS}) AS tag
                WHERE org_id = $1
                  AND ($2::text IS NULL OR tag LIKE $2)
                GROUP BY tag
                ORDER BY c DESC, tag ASC
                LIMIT $3"#,
-        )
+        ))
         .bind(org.0)
         .bind(prefix_pat)
         .bind(limit as i64)
@@ -1598,7 +1631,15 @@ impl TargetStore for PostgresTargetStore {
             return Ok(Vec::new());
         }
         let mut tx = self.pool.begin().await.context("bulk set_group: begin")?;
-        let group_id = resolve_group(&mut tx, org, group, WriteSource::Ui, actor).await?;
+        let group_id = resolve_group(
+            &mut tx,
+            org,
+            group.map(GroupChoice::Name),
+            WriteSource::Ui,
+            actor,
+            None,
+        )
+        .await?;
         let rows: Vec<(Uuid, String, Option<Uuid>)> = sqlx::query_as(
             r#"WITH locked AS (
                    SELECT id, group_id FROM targets

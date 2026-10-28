@@ -441,6 +441,7 @@ fn http_target(name: &str, owner: Option<UserId>) -> NewTarget {
         renotify_interval_secs: 3600,
         recovery_period_secs: None,
         group_name: None,
+        group_id: None,
         owner_user_id: Some(owner.map(|u| u.0)),
         regions: None,
     }
@@ -472,6 +473,7 @@ async fn removing_a_member_clears_the_monitors_they_owned() {
             org.id,
             http_target("theirs", Some(member)),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -483,6 +485,7 @@ async fn removing_a_member_clears_the_monitors_they_owned() {
             org.id,
             http_target("the owner's", Some(owner)),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -538,6 +541,7 @@ async fn a_monitor_cannot_name_an_owner_from_outside_the_org() {
             org.id,
             http_target("mine", Some(owner)),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -986,11 +990,12 @@ async fn update_org_slug_keeps_resources_reachable_by_id() {
         renotify_interval_secs: 3600,
         recovery_period_secs: None,
         group_name: None,
+        group_id: None,
         owner_user_id: None,
         regions: None,
     };
     let target = store
-        .create(org.id, new, WriteSource::Ui, i64::MAX, i64::MAX)
+        .create(org.id, new, WriteSource::Ui, None, i64::MAX, i64::MAX)
         .await
         .unwrap();
 

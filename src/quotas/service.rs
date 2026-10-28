@@ -357,6 +357,28 @@ impl QuotaService {
         Ok(())
     }
 
+    /// Friendly pre-check for `n` new groups, held to the plan's monitor
+    /// limit. Group creates and monitor creates enforce it atomically.
+    pub async fn check_can_create_groups(
+        &self,
+        org: OrgId,
+        user: Option<UserId>,
+        n: i64,
+    ) -> Result<()> {
+        if n == 0 {
+            return Ok(());
+        }
+        self.check_pooled(
+            org,
+            user,
+            usage_keys::GROUPS,
+            |p| p.max_targets,
+            count_sql::groups(),
+            n,
+        )
+        .await
+    }
+
     /// Friendly pre-check for `n` new targets, counted across the account's
     /// orgs. The atomic guarantee is the `WHERE (count) + n <= limit` inside
     /// `TargetStore::create`/`bulk_create`, which pools the same way and is

@@ -92,8 +92,11 @@ pub struct MonitorRow {
     pub kind: &'static str,
     pub address: String,
     pub enabled: bool,
+    /// What the list goes by: the group's tags while it alerts as one.
     pub tags: Vec<String>,
     pub group_name: Option<String>,
+    /// Its alerts go through its group, which alerts as one.
+    pub via_group: bool,
     pub last_status: &'static str,
     pub status_class: &'static str,
     /// `None` when no samples.
@@ -128,6 +131,23 @@ pub struct GroupBlock {
     pub total: usize,
     pub worst_status: &'static str,
     pub avg_uptime_label: String,
+    /// The group record behind a named block.
+    pub group: Option<GroupHead>,
+}
+
+pub struct GroupHead {
+    pub id: Uuid,
+    pub alert_as_one: bool,
+    /// Turning alert as one on without one would mute the members and page
+    /// nobody, so the menu sends such a group to its settings instead.
+    pub has_channels: bool,
+    pub incident: Option<GroupIncidentBadge>,
+}
+
+pub struct GroupIncidentBadge {
+    pub id: Uuid,
+    pub since: DateTime<Utc>,
+    pub acked: bool,
 }
 
 pub struct TypeChip {
@@ -519,7 +539,15 @@ async fn build_page(state: &AppState, org: OrgId, params: &ListParams) -> WebRes
         rows.push(row);
     }
     let shown = rows.len();
-    let groups = bucket_by_group(rows);
+    let mut groups = bucket_by_group(rows);
+    // An empty group has no row to bring it in, so it closes the last page of
+    // an unfiltered list.
+    let unfiltered = q.is_empty()
+        && tag.is_empty()
+        && kind.is_empty()
+        && params.owner.is_none()
+        && params.enabled.is_none();
+    attach_group_heads(state, org, &mut groups, unfiltered && !has_more, &group).await?;
 
     let chip_query =
         |chip_kind: &str| build_query_suffix(&q, &tag, &group, chip_kind, params, sort_key(sort));
@@ -751,8 +779,9 @@ fn build_row(
         kind,
         address,
         enabled: t.enabled,
-        tags: t.tags.clone(),
+        tags: t.effective_tags.clone(),
         group_name: t.group_name.clone(),
+        via_group: false,
         last_status,
         status_class,
         last_check,
@@ -807,9 +836,69 @@ fn bucket_by_group(rows: Vec<MonitorRow>) -> Vec<GroupBlock> {
                 total,
                 worst_status,
                 avg_uptime_label,
+                group: None,
             }
         })
         .collect()
+}
+
+/// Gives each named block its group record and open incident, marks the rows
+/// whose alerts go through it, and with `with_empty` appends the groups no row
+/// brought in (the one `only` names, when set).
+async fn attach_group_heads(
+    state: &AppState,
+    org: OrgId,
+    blocks: &mut Vec<GroupBlock>,
+    with_empty: bool,
+    only: &str,
+) -> WebResult<()> {
+    let groups = state.monitor_group_store.list(org).await?;
+    if groups.is_empty() {
+        return Ok(());
+    }
+    let ids: Vec<Uuid> = groups.iter().map(|g| g.id).collect();
+    let usage = state.monitor_group_store.usage(org, &ids).await?;
+    let head = |g: &crate::domain::MonitorGroup| GroupHead {
+        id: g.id,
+        alert_as_one: g.alert_as_one,
+        has_channels: !g.alerts.is_empty(),
+        incident: usage
+            .get(&g.id)
+            .and_then(|u| u.open_incident)
+            .map(|i| GroupIncidentBadge {
+                id: i.id,
+                since: i.started_at,
+                acked: i.acknowledged,
+            }),
+    };
+    let mut shown = std::collections::HashSet::new();
+    for block in blocks.iter_mut().filter(|b| b.has_name) {
+        if let Some(g) = groups.iter().find(|g| g.name == block.name) {
+            shown.insert(g.id);
+            for row in &mut block.rows {
+                row.via_group = g.alert_as_one;
+            }
+            block.group = Some(head(g));
+        }
+    }
+    if with_empty {
+        for g in groups
+            .iter()
+            .filter(|g| !shown.contains(&g.id) && (only.is_empty() || g.name == only))
+            .filter(|g| usage.get(&g.id).is_none_or(|u| u.member_count == 0))
+        {
+            blocks.push(GroupBlock {
+                name: g.name.clone(),
+                has_name: true,
+                rows: Vec::new(),
+                total: 0,
+                worst_status: "",
+                avg_uptime_label: "—".into(),
+                group: Some(head(g)),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn avg_uptime_label(rows: &[MonitorRow]) -> String {
@@ -941,6 +1030,7 @@ mod tests {
             enabled,
             tags: vec![],
             group_name: group.map(str::to_owned),
+            via_group: false,
             last_status: status,
             status_class: status_class_for(status),
             last_check: None,
@@ -1057,6 +1147,7 @@ mod tests {
         let g = GroupBlock {
             name: "API & Web".into(),
             has_name: true,
+            group: None,
             total: 1,
             worst_status: "up",
             avg_uptime_label: "99.99%".into(),
@@ -1112,6 +1203,7 @@ mod tests {
         let g = GroupBlock {
             name: "API".into(),
             has_name: true,
+            group: None,
             total: 1,
             worst_status: "up",
             avg_uptime_label: "99.99%".into(),
@@ -1166,6 +1258,7 @@ mod tests {
         let g = GroupBlock {
             name: "API & Web".into(),
             has_name: true,
+            group: None,
             total: 1,
             worst_status: "up",
             avg_uptime_label: "99.99%".into(),
@@ -1277,6 +1370,7 @@ mod tests {
         let g = GroupBlock {
             name: "API & Web".into(),
             has_name: true,
+            group: None,
             total: 1,
             worst_status: "up",
             avg_uptime_label: "99.99%".into(),

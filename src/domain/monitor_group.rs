@@ -54,6 +54,13 @@ pub fn group_deleted_message(still_down: &[String]) -> String {
     }
 }
 
+/// The group a monitor write joins: by name, created when new, or by id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupChoice<'a> {
+    Name(&'a str),
+    Id(Uuid),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MonitorGroup {
     pub id: Uuid,

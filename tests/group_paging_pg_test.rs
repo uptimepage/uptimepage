@@ -103,7 +103,7 @@ impl Fixture {
             channel_id: channel,
         }]);
         self.groups
-            .create(self.org, new, WriteSource::Ui, None)
+            .create(self.org, new, WriteSource::Ui, None, i64::MAX)
             .await
             .unwrap()
             .id
@@ -130,11 +130,12 @@ impl Fixture {
             renotify_interval_secs: 3600,
             recovery_period_secs: None,
             group_name: Some(group.into()),
+            group_id: None,
             owner_user_id: None,
             regions: None,
         };
         self.targets
-            .create(self.org, new, WriteSource::Ui, i64::MAX, i64::MAX)
+            .create(self.org, new, WriteSource::Ui, None, i64::MAX, i64::MAX)
             .await
             .unwrap()
             .id
@@ -142,13 +143,17 @@ impl Fixture {
 
     /// Opens the monitor's incident as the writer does.
     async fn down(&self, target: Uuid) -> Uuid {
+        self.open(target, CheckStatus::Down).await
+    }
+
+    async fn open(&self, target: Uuid, status: CheckStatus) -> Uuid {
         self.writer
             .insert_open(
                 self.org,
                 NewOpenIncident {
                     target_id: target,
                     started_at: Utc::now() - chrono::Duration::minutes(2),
-                    status_at_start: CheckStatus::Down,
+                    status_at_start: status,
                     check_count: 2,
                     error_sample: Some("connection refused".into()),
                     region: None,
@@ -591,7 +596,8 @@ async fn a_group_policy_pages_its_levels_instead_of_the_channels() {
             &policies,
             f.org,
             group,
-            Some(policy.id)
+            Some(policy.id),
+            None
         )
         .await
         .unwrap()
@@ -1002,7 +1008,7 @@ async fn after_an_empty_first_rung_the_first_page_that_reaches_anyone_names_the_
         .await
         .unwrap();
     policies
-        .set_group_policy(f.org, group, Some(policy.id))
+        .set_group_policy(f.org, group, Some(policy.id), None)
         .await
         .unwrap();
     let ns = f.monitor("ns", "DNS", None).await;
@@ -1065,5 +1071,194 @@ async fn a_digest_waits_while_every_member_down_is_paused() {
         .unwrap();
     f.engine.sweep_once().await;
     assert_eq!(f.digests(incident).await.len(), 1);
+    f.done().await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn deleting_a_groups_policy_falls_back_to_the_org_default() {
+    use uptimepage::domain::{
+        EscalationTargetType, NewEscalationPolicy, NewEscalationStep, NewEscalationTarget,
+    };
+    use uptimepage::storage::EscalationPolicyStore;
+    let Some(f) = Fixture::new("gp_poldel").await else {
+        return;
+    };
+    let ops = f.channel("ops").await;
+    let group = f.group("DNS", true, ops).await;
+    let policies = PgEscalationPolicyStore::new(f.pool.clone());
+    let policy = |name: &str| NewEscalationPolicy {
+        name: name.into(),
+        description: None,
+        repeat_count: 0,
+        steps: vec![NewEscalationStep {
+            level: 1,
+            delay_secs: 60,
+            targets: vec![NewEscalationTarget {
+                target_type: EscalationTargetType::Channel,
+                user_id: None,
+                schedule_id: None,
+                channel_id: Some(ops),
+            }],
+        }],
+    };
+    let bound = policies
+        .create(f.org, policy("bound"), i64::MAX)
+        .await
+        .unwrap();
+    let default = policies
+        .create(f.org, policy("default"), i64::MAX)
+        .await
+        .unwrap();
+    policies
+        .set_org_default(f.org, Some(default.id))
+        .await
+        .unwrap();
+    policies
+        .set_group_policy(f.org, group, Some(bound.id), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        policies.resolve_for_group(f.org, group).await.unwrap(),
+        Some(bound.id)
+    );
+
+    assert!(policies.delete(f.org, bound.id).await.unwrap());
+    assert_eq!(
+        policies.resolve_for_group(f.org, group).await.unwrap(),
+        Some(default.id)
+    );
+
+    // A binding that committed behind the delete's clear still falls through.
+    sqlx::query("UPDATE monitor_groups SET escalation_policy_id = $1 WHERE id = $2")
+        .bind(bound.id)
+        .bind(group)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        policies.resolve_for_group(f.org, group).await.unwrap(),
+        Some(default.id)
+    );
+    f.done().await;
+}
+
+/// A group delete locks the group and then its members. An incident opening
+/// for a member must take the group first too, or the two deadlock.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn an_opening_waits_on_a_group_delete_without_deadlocking() {
+    let Some(f) = Fixture::new("gp_dlock").await else {
+        return;
+    };
+    let ops = f.channel("ops").await;
+    let group = f.group("DNS", true, ops).await;
+    let ns = f.monitor("ns", "DNS", None).await;
+
+    let mut delete = f.pool.begin().await.unwrap();
+    let delete_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *delete)
+        .await
+        .unwrap();
+    sqlx::query("SELECT 1 FROM monitor_groups WHERE id = $1 FOR UPDATE")
+        .bind(group)
+        .execute(&mut *delete)
+        .await
+        .unwrap();
+    let writer = PgIncidentStore::new(f.pool.clone());
+    let org = f.org;
+    let opening = tokio::spawn(async move {
+        writer
+            .insert_open(
+                org,
+                NewOpenIncident {
+                    target_id: ns,
+                    started_at: Utc::now() - chrono::Duration::minutes(2),
+                    status_at_start: CheckStatus::Down,
+                    check_count: 2,
+                    error_sample: None,
+                    region: None,
+                    regions_down: Vec::new(),
+                    regions_up: Vec::new(),
+                },
+            )
+            .await
+    });
+    let waiting = "SELECT count(*) FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))";
+    let mut blocked = false;
+    for _ in 0..250 {
+        if sqlx::query_scalar::<_, i64>(waiting)
+            .bind(delete_pid)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap()
+            > 0
+        {
+            blocked = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(blocked, "the opening never queued behind the delete");
+    sqlx::query("SET LOCAL lock_timeout = '3s'")
+        .execute(&mut *delete)
+        .await
+        .unwrap();
+    sqlx::query("SELECT 1 FROM targets WHERE id = $1 FOR UPDATE")
+        .bind(ns)
+        .execute(&mut *delete)
+        .await
+        .expect("the delete takes the member while the opening waits on the group");
+    delete.rollback().await.unwrap();
+    assert!(opening.await.unwrap().unwrap().is_some());
+    f.done().await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_group_incident_a_degraded_member_opened_turns_down_with_its_members() {
+    let Some(f) = Fixture::new("gp_raise").await else {
+        return;
+    };
+    let ops = f.channel("ops").await;
+    let group = f.group("DNS", true, ops).await;
+    let a = f.monitor("a", "DNS", None).await;
+
+    let a_inc = f.open(a, CheckStatus::Degraded).await;
+    f.signal(a_inc, NotificationReason::Opened).await;
+    let incident = f.open_group_incident(group).await.expect("group incident");
+    assert_eq!(
+        f.column::<String>(incident, "status_at_start").await,
+        "degraded"
+    );
+
+    f.writer.escalate(f.org, a_inc, None).await.unwrap();
+    assert_eq!(
+        f.column::<String>(incident, "status_at_start").await,
+        "down"
+    );
+    f.done().await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_member_joining_down_raises_a_degraded_group_incident() {
+    let Some(f) = Fixture::new("gp_join").await else {
+        return;
+    };
+    let ops = f.channel("ops").await;
+    let group = f.group("DNS", true, ops).await;
+    let a = f.monitor("a", "DNS", None).await;
+    let b = f.monitor("b", "DNS", None).await;
+
+    let a_inc = f.open(a, CheckStatus::Degraded).await;
+    f.signal(a_inc, NotificationReason::Opened).await;
+    let incident = f.open_group_incident(group).await.expect("group incident");
+    let b_inc = f.down(b).await;
+    f.signal(b_inc, NotificationReason::Opened).await;
+    assert_eq!(
+        f.column::<String>(incident, "status_at_start").await,
+        "down"
+    );
     f.done().await;
 }

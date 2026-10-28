@@ -213,6 +213,7 @@ pub(crate) fn validate_new_target(
     validate_alert_confirmations(Some(new.alert_confirmations))?;
     validate_renotify_interval(Some(new.renotify_interval_secs))?;
     validate_recovery_period(new.recovery_period_secs)?;
+    validate_group_choice(new.group_name.is_some(), new.group_id.is_some())?;
     validate_group_name(new.group_name.as_deref())
 }
 
@@ -344,6 +345,18 @@ pub(crate) fn normalize_tags(tags: &[String]) -> Result<Vec<String>> {
         ));
     }
     Ok(out)
+}
+
+/// A monitor joins a group by `group_id` or by `group_name`, never both.
+pub(crate) fn validate_group_choice(name_sent: bool, id_sent: bool) -> Result<()> {
+    if name_sent && id_sent {
+        return Err(AppError::bad_request_field(
+            codes::GROUP_ID_AND_NAME,
+            "send group_id or group_name, not both",
+            "group_id",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_group_name(group: Option<&str>) -> Result<()> {

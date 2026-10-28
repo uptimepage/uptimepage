@@ -134,6 +134,7 @@ fn secret_monitor() -> NewTarget {
         renotify_interval_secs: 3600,
         recovery_period_secs: None,
         group_name: None,
+        group_id: None,
         owner_user_id: None,
         regions: None,
     }
@@ -153,7 +154,14 @@ async fn seed_monitor_with_incident(pool: &PgPool, org: OrgId) -> (Uuid, Uuid) {
     // Through the store, so the row carries a `check_spec` the read path can
     // actually decode.
     let target_id = PostgresTargetStore::from_pool(pool.clone(), None)
-        .create(org, secret_monitor(), WriteSource::Api, i64::MAX, i64::MAX)
+        .create(
+            org,
+            secret_monitor(),
+            WriteSource::Api,
+            None,
+            i64::MAX,
+            i64::MAX,
+        )
         .await
         .expect("insert target")
         .id;
@@ -176,7 +184,7 @@ async fn seed_tagged_monitor(pool: &PgPool, org: OrgId, tag: &str) {
     target.name = format!("tagged-{tag}");
     target.tags = vec![tag.to_string()];
     PostgresTargetStore::from_pool(pool.clone(), None)
-        .create(org, target, WriteSource::Api, i64::MAX, i64::MAX)
+        .create(org, target, WriteSource::Api, None, i64::MAX, i64::MAX)
         .await
         .expect("insert tagged target");
 }
@@ -438,6 +446,7 @@ async fn no_write_touches_a_terraform_managed_monitor() {
             org_a,
             secret_monitor(),
             WriteSource::Terraform,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -461,7 +470,14 @@ async fn no_write_touches_a_terraform_managed_monitor() {
     }
 
     let editable = store
-        .create(org_a, secret_monitor(), WriteSource::Ui, i64::MAX, i64::MAX)
+        .create(
+            org_a,
+            secret_monitor(),
+            WriteSource::Ui,
+            None,
+            i64::MAX,
+            i64::MAX,
+        )
         .await
         .expect("insert ui target")
         .id;
@@ -503,7 +519,14 @@ async fn an_uneditable_field_is_refused_rather_than_ignored() {
     };
     let (mcp, org_a, _) = connect(&pool).await;
     let id = PostgresTargetStore::from_pool(pool.clone(), None)
-        .create(org_a, secret_monitor(), WriteSource::Ui, i64::MAX, i64::MAX)
+        .create(
+            org_a,
+            secret_monitor(),
+            WriteSource::Ui,
+            None,
+            i64::MAX,
+            i64::MAX,
+        )
         .await
         .expect("insert target")
         .id;
@@ -610,7 +633,14 @@ async fn a_channel_from_another_org_cannot_be_bound() {
     let (mcp, org_a, org_b) = connect(&pool).await;
     let store = PostgresTargetStore::from_pool(pool.clone(), None);
     let id = store
-        .create(org_a, secret_monitor(), WriteSource::Ui, i64::MAX, i64::MAX)
+        .create(
+            org_a,
+            secret_monitor(),
+            WriteSource::Ui,
+            None,
+            i64::MAX,
+            i64::MAX,
+        )
         .await
         .expect("insert target")
         .id;
@@ -662,7 +692,14 @@ async fn a_tag_the_shared_validator_rejects_never_reaches_the_prompt() {
     let (mcp, org_a, _) = connect(&pool).await;
     let store = PostgresTargetStore::from_pool(pool.clone(), None);
     let id = store
-        .create(org_a, secret_monitor(), WriteSource::Ui, i64::MAX, i64::MAX)
+        .create(
+            org_a,
+            secret_monitor(),
+            WriteSource::Ui,
+            None,
+            i64::MAX,
+            i64::MAX,
+        )
         .await
         .expect("insert target")
         .id;
@@ -690,7 +727,14 @@ async fn a_tag_the_shared_validator_rejects_never_reaches_the_prompt() {
 
 async fn seed_monitor(pool: &PgPool, org: OrgId) -> Uuid {
     PostgresTargetStore::from_pool(pool.clone(), None)
-        .create(org, secret_monitor(), WriteSource::Ui, i64::MAX, i64::MAX)
+        .create(
+            org,
+            secret_monitor(),
+            WriteSource::Ui,
+            None,
+            i64::MAX,
+            i64::MAX,
+        )
         .await
         .expect("insert target")
         .id
@@ -1595,4 +1639,175 @@ async fn the_page_password_is_switched_here_but_never_passed() {
     assert_eq!(line["enabled"], true);
     assert_eq!(line["sessions"], 0);
     assert_eq!(line["wrong_tries_24h"], 0);
+}
+
+#[tokio::test]
+#[ignore]
+async fn groups_are_listed_retuned_and_shown_on_monitors_and_incidents() {
+    use uptimepage::domain::NewMonitorGroup;
+    use uptimepage::public_status::{IncidentStore, NewOpenIncident, PgIncidentStore};
+    use uptimepage::storage::{IncidentOpsStore, MonitorGroupStore, PgIncidentOpsStore};
+
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (mcp, org_a, org_b) = connect(&pool).await;
+    let groups = uptimepage::storage::PgMonitorGroupStore::new(pool.clone());
+    let dns = groups
+        .create(
+            org_a,
+            NewMonitorGroup::named("DNS"),
+            WriteSource::Ui,
+            None,
+            i64::MAX,
+        )
+        .await
+        .unwrap()
+        .id;
+    let declared = groups
+        .create(
+            org_a,
+            NewMonitorGroup::named("TF"),
+            WriteSource::Terraform,
+            None,
+            i64::MAX,
+        )
+        .await
+        .unwrap()
+        .id;
+    let foreign = groups
+        .create(
+            org_b,
+            NewMonitorGroup::named("DNS"),
+            WriteSource::Ui,
+            None,
+            i64::MAX,
+        )
+        .await
+        .unwrap()
+        .id;
+    let mut member = secret_monitor();
+    member.group_id = Some(dns);
+    let member = PostgresTargetStore::from_pool(pool.clone(), None)
+        .create(org_a, member, WriteSource::Api, None, i64::MAX, i64::MAX)
+        .await
+        .unwrap()
+        .id;
+
+    let listed = mcp.call("list_monitor_groups", json!({})).await;
+    let items = listed["result"]["structuredContent"]["items"]
+        .as_array()
+        .expect("items")
+        .clone();
+    let names: Vec<(&str, u64)> = items
+        .iter()
+        .map(|g| {
+            (
+                g["name"].as_str().unwrap(),
+                g["member_count"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(names, [("DNS", 1), ("TF", 0)], "only org A's groups");
+
+    let updated = mcp
+        .call(
+            "update_monitor_group",
+            json!({ "id": dns, "alert_as_one": true, "alert_again": true }),
+        )
+        .await;
+    assert_eq!(error_code(&updated), None, "{updated}");
+    let changes = &updated["result"]["structuredContent"]["changes"];
+    assert_eq!(changes.as_array().unwrap().len(), 1, "{changes}");
+    assert_eq!(changes[0]["field"], "alert_as_one");
+    assert_eq!(
+        error_code(
+            &mcp.call(
+                "update_monitor_group",
+                json!({ "id": declared, "alert_as_one": true })
+            )
+            .await
+        )
+        .as_deref(),
+        Some("managed_externally")
+    );
+    assert_eq!(
+        error_code(
+            &mcp.call(
+                "update_monitor_group",
+                json!({ "id": foreign, "alert_as_one": true })
+            )
+            .await
+        )
+        .as_deref(),
+        Some("not_found")
+    );
+
+    let monitors = mcp.call("list_monitors", json!({})).await;
+    let row = monitors["result"]["structuredContent"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == member.to_string())
+        .expect("member listed")
+        .clone();
+    assert_eq!(row["group_id"], dns.to_string());
+    assert_eq!(row["group_alerts_as_one"], true);
+    let detail = mcp.call("get_monitor", json!({ "id": member })).await;
+    assert_eq!(
+        detail["result"]["structuredContent"]["group_alerts_as_one"],
+        true
+    );
+
+    let opened = PgIncidentStore::new(pool.clone())
+        .insert_open(
+            org_a,
+            NewOpenIncident {
+                target_id: member,
+                started_at: chrono::Utc::now() - chrono::Duration::minutes(2),
+                status_at_start: uptimepage::domain::CheckStatus::Down,
+                check_count: 2,
+                error_sample: None,
+                region: None,
+                regions_down: Vec::new(),
+                regions_up: Vec::new(),
+            },
+        )
+        .await
+        .unwrap()
+        .expect("opened");
+    PgIncidentOpsStore::new(pool.clone())
+        .attach_member(org_a, opened)
+        .await
+        .unwrap();
+
+    let incidents = mcp.call("list_incidents", json!({})).await;
+    let items = incidents["result"]["structuredContent"]["items"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(items.len(), 1, "the member sits under its group: {items:?}");
+    let group_incident = items[0]["id"].as_str().unwrap().to_string();
+    assert_eq!(items[0]["group"]["name"], "DNS");
+    assert_eq!(items[0]["monitor_deleted"], false);
+    assert_eq!(items[0]["members"][0]["id"], opened.to_string());
+
+    let narrowed = mcp
+        .call("list_incidents", json!({ "monitor_id": member }))
+        .await;
+    let only = &narrowed["result"]["structuredContent"]["items"][0];
+    assert_eq!(only["id"], opened.to_string());
+    assert_eq!(only["group_incident_id"], group_incident);
+
+    let read = mcp
+        .call("get_incident", json!({ "id": group_incident }))
+        .await;
+    let read = &read["result"]["structuredContent"];
+    assert_eq!(read["group"]["id"], dns.to_string());
+    assert_eq!(read["members"].as_array().unwrap().len(), 1);
+    let read = mcp.call("get_incident", json!({ "id": opened })).await;
+    assert_eq!(
+        read["result"]["structuredContent"]["group_incident_id"],
+        group_incident
+    );
 }

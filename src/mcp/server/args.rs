@@ -705,7 +705,7 @@ pub(super) fn parse_kind(s: &str) -> Result<&'static str, McpToolError> {
         })
 }
 
-fn bound_ids(alerts: &TargetAlerts) -> std::collections::BTreeSet<Uuid> {
+pub(super) fn bound_ids(alerts: &TargetAlerts) -> std::collections::BTreeSet<Uuid> {
     alerts.iter().map(|b| b.channel_id).collect()
 }
 

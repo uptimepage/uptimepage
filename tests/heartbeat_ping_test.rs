@@ -556,10 +556,12 @@ async fn rotating_a_healed_row_mints_without_parking_a_phantom_overlap() {
                 renotify_interval_secs: 3600,
                 recovery_period_secs: None,
                 group_name: None,
+                group_id: None,
                 owner_user_id: None,
                 regions: None,
             },
             WriteSource::Api,
+            None,
             i64::MAX,
             i64::MAX,
         )

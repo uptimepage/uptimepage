@@ -69,11 +69,12 @@ impl Fixture {
             renotify_interval_secs: 3600,
             recovery_period_secs: None,
             group_name: group.map(str::to_owned),
+            group_id: None,
             owner_user_id: None,
             regions: None,
         };
         self.targets
-            .create(self.org, new, WriteSource::Ui, i64::MAX, i64::MAX)
+            .create(self.org, new, WriteSource::Ui, None, i64::MAX, i64::MAX)
             .await
             .unwrap()
     }
@@ -117,7 +118,7 @@ impl Fixture {
         let mut new = NewMonitorGroup::named(name);
         new.alert_as_one = true;
         self.groups
-            .create(self.org, new, WriteSource::Ui, None)
+            .create(self.org, new, WriteSource::Ui, None, i64::MAX)
             .await
             .unwrap()
             .id
@@ -362,7 +363,7 @@ async fn a_group_keeps_its_own_settings_and_channels() {
     new.alerts = TargetAlerts(vec![uptimepage::domain::AlertBinding { channel_id: ops }]);
     let group = f
         .groups
-        .create(f.org, new, WriteSource::Terraform, None)
+        .create(f.org, new, WriteSource::Terraform, None, i64::MAX)
         .await
         .unwrap();
     assert_eq!(group.name, "example.com DNS");
@@ -375,6 +376,7 @@ async fn a_group_keeps_its_own_settings_and_channels() {
             NewMonitorGroup::named("example.com DNS"),
             WriteSource::Ui,
             None,
+            i64::MAX,
         )
         .await;
     assert!(
@@ -387,6 +389,7 @@ async fn a_group_keeps_its_own_settings_and_channels() {
             NewMonitorGroup::named("\u{2003}"),
             WriteSource::Ui,
             None,
+            i64::MAX,
         )
         .await;
     assert!(
@@ -681,7 +684,13 @@ async fn group_links_stay_inside_the_org_and_point_at_group_incidents() {
     };
     let other = org(&f.pool, "grpb").await;
     let theirs = PgMonitorGroupStore::new(f.pool.clone())
-        .create(other, NewMonitorGroup::named("DNS"), WriteSource::Ui, None)
+        .create(
+            other,
+            NewMonitorGroup::named("DNS"),
+            WriteSource::Ui,
+            None,
+            i64::MAX,
+        )
         .await
         .unwrap()
         .id;
@@ -752,7 +761,7 @@ async fn a_group_silence_holds_its_members_until_every_one_is_back() {
     new.alert_as_one = true;
     new.alerts = TargetAlerts(vec![uptimepage::domain::AlertBinding { channel_id: ops }]);
     f.groups
-        .create(f.org, new, WriteSource::Ui, None)
+        .create(f.org, new, WriteSource::Ui, None, i64::MAX)
         .await
         .unwrap();
     let ns = f.monitor("ns", Some("DNS")).await.id;
@@ -849,7 +858,7 @@ async fn a_group_silence_holds_its_members_until_every_one_is_back() {
     let mut mail = NewMonitorGroup::named("Mail");
     mail.alert_as_one = true;
     f.groups
-        .create(f.org, mail, WriteSource::Ui, None)
+        .create(f.org, mail, WriteSource::Ui, None, i64::MAX)
         .await
         .unwrap();
     let z = f.monitor("z", Some("Mail")).await.id;

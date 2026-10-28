@@ -810,7 +810,9 @@ fn escalation_selector_is_edit_only() {
     .render()
     .unwrap();
     assert!(html.contains("data-monitor-policy-select"));
-    assert!(html.contains(r#"data-target-id="00000000-0000-0000-0000-000000000001""#));
+    assert!(html.contains(
+        r#"data-policy-url="/api/v1/targets/00000000-0000-0000-0000-000000000001/escalation-policy""#
+    ));
     assert!(html.contains("inherit org default"));
     assert!(html.contains(r#"value="p1" selected"#));
 }

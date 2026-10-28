@@ -30,6 +30,7 @@ fn http_target(name: &str) -> NewTarget {
         renotify_interval_secs: 3600,
         recovery_period_secs: None,
         group_name: None,
+        group_id: None,
         owner_user_id: None,
         regions: None,
     }
@@ -37,7 +38,14 @@ fn http_target(name: &str) -> NewTarget {
 
 async fn seed(store: &PostgresTargetStore, org: OrgId, name: &str) -> Uuid {
     store
-        .create(org, http_target(name), WriteSource::Ui, i64::MAX, i64::MAX)
+        .create(
+            org,
+            http_target(name),
+            WriteSource::Ui,
+            None,
+            i64::MAX,
+            i64::MAX,
+        )
         .await
         .unwrap()
         .id

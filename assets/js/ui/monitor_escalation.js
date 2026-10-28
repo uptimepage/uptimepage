@@ -1,7 +1,7 @@
-// Per-monitor escalation-policy binding on the monitor edit form. Saves to
-// PUT /api/v1/targets/{id}/escalation-policy on change. value "" clears the
-// binding (the monitor falls back to the org default). Owner-only on the API;
-// a non-owner sees the 403 message in the result span. A refused save puts the
+// Escalation-policy binding on the monitor edit form and the group settings
+// page. Saves to the select's data-policy-url (PUT .../escalation-policy) on
+// change. value "" clears the binding (it falls back to the org default).
+// Owner-only on the API; a non-owner sees the 403 message in the result span. A refused save puts the
 // saved choice back, so the select never shows a binding the server turned
 // down.
 (function () {
@@ -28,11 +28,10 @@
     };
     sel.addEventListener("change", async () => {
         if (reverting) return;
-        const targetId = sel.dataset.targetId;
         const policyId = sel.value || null;
         sel.disabled = true;
         try {
-            const res = await fetch(`/api/v1/targets/${targetId}/escalation-policy`, {
+            const res = await fetch(sel.dataset.policyUrl, {
                 method: "PUT",
                 headers: {
                     "Content-Type": "application/json",

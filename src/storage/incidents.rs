@@ -12,9 +12,10 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::domain::{
-    CheckStatus, Downtime, ImpactSpan, Incident, IncidentImpact, IncidentNarrationUpdate,
-    IncidentOrigin, IncidentSeverity, IncidentStatusPhase, NewIncidentUpdate, OrgId, Paused,
-    PublicIncidentUpdate, Recovered, outage_parts, stored_incident_impact,
+    CheckStatus, Downtime, ImpactSpan, Incident, IncidentGroupRef, IncidentImpact,
+    IncidentNarrationUpdate, IncidentOrigin, IncidentSeverity, IncidentStatusPhase,
+    NewIncidentUpdate, OrgId, Paused, PublicIncidentUpdate, Recovered, outage_parts,
+    stored_incident_impact,
 };
 use std::collections::HashMap;
 
@@ -36,12 +37,17 @@ pub struct IncidentBrief {
     pub recovering_since: Option<DateTime<Utc>>,
     pub public_title: Option<String>,
     pub latest_update: Option<PublicIncidentUpdate>,
+    /// Set on a group incident, which has no monitor.
+    pub group: Option<IncidentGroupRef>,
+    /// The group incident a member incident is part of.
+    pub group_incident_id: Option<Uuid>,
 }
 
 impl IncidentBrief {
-    /// A brief always has a monitor, so a missing id means it was deleted.
+    /// A brief has a monitor or a group, so a missing monitor id on a
+    /// monitor's incident means it was deleted.
     pub fn monitor_deleted(&self) -> bool {
-        self.target_id.is_none()
+        self.target_id.is_none() && self.group.is_none()
     }
 }
 
@@ -132,6 +138,9 @@ pub struct IncidentBriefFilter {
     pub range: Option<TimeRange>,
     pub target_id: Option<Uuid>,
     pub open_only: bool,
+    /// Group incidents too, with their members left out: they are listed
+    /// under them.
+    pub with_groups: bool,
     pub oldest_first: bool,
     pub limit: usize,
     pub offset: usize,
@@ -143,6 +152,7 @@ impl Default for IncidentBriefFilter {
             range: None,
             target_id: None,
             open_only: true,
+            with_groups: false,
             oldest_first: false,
             limit: 50,
             offset: 0,
@@ -202,6 +212,9 @@ pub trait IncidentNarrationStore: Send + Sync {
     /// Operator-set titles for `ids`; an incident with none is absent. Internal,
     /// so they stay off the public [`Incident`] projection and out of shared views.
     async fn titles(&self, org: OrgId, ids: &[Uuid]) -> Result<HashMap<Uuid, String>>;
+    /// For each of `ids` part of a group incident: that incident and its group
+    /// name. Internal, like [`Self::titles`].
+    async fn group_parts(&self, org: OrgId, ids: &[Uuid]) -> Result<HashMap<Uuid, (Uuid, String)>>;
     /// Confirmed downtime per target over `range`, weighted as
     /// [`Downtime::weighted_secs`] weighs it; targets with none absent.
     /// `targets` narrows it to those monitors.
@@ -494,8 +507,14 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
         } else {
             ""
         };
+        let subject_clause = if filter.with_groups {
+            "AND (i.target_name IS NOT NULL OR i.origin = 'group') AND i.group_incident_id IS NULL"
+        } else {
+            "AND i.target_name IS NOT NULL"
+        };
         let sql = format!(
-            r#"SELECT i.id, i.target_id, i.target_name,
+            r#"SELECT i.id, i.target_id, COALESCE(i.target_name, '') AS target_name,
+                      i.group_id, i.group_name, i.group_incident_id,
                       i.severity, i.started_at, i.ended_at, i.recovering_since, i.public_title,
                       u.posted_at AS update_posted_at,
                       u.phase     AS update_phase,
@@ -510,7 +529,7 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
                    LIMIT 1
                ) u ON true
                WHERE i.org_id = $1
-                 AND i.target_name IS NOT NULL
+                 {subject_clause}
                  AND ($2::uuid IS NULL OR i.target_id = $2)
                  {open_clause}
                  AND ($3::timestamptz IS NULL OR i.started_at < $4)
@@ -613,6 +632,23 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
         Ok(rows.into_iter().collect())
     }
 
+    async fn group_parts(&self, org: OrgId, ids: &[Uuid]) -> Result<HashMap<Uuid, (Uuid, String)>> {
+        let rows: Vec<(Uuid, Uuid, String)> = sqlx::query_as(
+            "SELECT m.id, g.id, g.group_name FROM incidents m \
+             JOIN incidents g ON g.id = m.group_incident_id AND g.org_id = m.org_id \
+             WHERE m.org_id = $1 AND m.id = ANY($2) AND g.group_name IS NOT NULL",
+        )
+        .bind(org.0)
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("incident group parts: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(member, group_incident, name)| (member, (group_incident, name)))
+            .collect())
+    }
+
     async fn count_overlapping(&self, org: OrgId, range: TimeRange) -> Result<u64> {
         let n: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM incidents \
@@ -693,6 +729,9 @@ struct IncidentBriefRow {
     id: Uuid,
     target_id: Option<Uuid>,
     target_name: String,
+    group_id: Option<Uuid>,
+    group_name: Option<String>,
+    group_incident_id: Option<Uuid>,
     severity: String,
     started_at: DateTime<Utc>,
     ended_at: Option<DateTime<Utc>>,
@@ -724,6 +763,11 @@ fn row_to_brief(r: IncidentBriefRow) -> IncidentBrief {
         recovering_since: r.recovering_since,
         public_title: r.public_title,
         latest_update,
+        group: r.group_name.map(|name| IncidentGroupRef {
+            id: r.group_id,
+            name,
+        }),
+        group_incident_id: r.group_incident_id,
     }
 }
 
@@ -851,6 +895,8 @@ impl IncidentNarrationStore for InMemoryIncidentNarrationStore {
                 recovering_since: i.recovering_since,
                 public_title: i.public_title.clone(),
                 latest_update: i.updates.last().cloned(),
+                group: None,
+                group_incident_id: None,
             })
             .collect();
         out.sort_by_key(|a| (a.started_at, a.id));
@@ -896,6 +942,14 @@ impl IncidentNarrationStore for InMemoryIncidentNarrationStore {
             .collect();
         out.sort_by_key(|i| (std::cmp::Reverse(i.started_at), std::cmp::Reverse(i.id)));
         Ok(out.into_iter().skip(offset).take(limit).collect())
+    }
+
+    async fn group_parts(
+        &self,
+        _org: OrgId,
+        _ids: &[Uuid],
+    ) -> Result<HashMap<Uuid, (Uuid, String)>> {
+        Ok(HashMap::new())
     }
 
     async fn titles(&self, _org: OrgId, _ids: &[Uuid]) -> Result<HashMap<Uuid, String>> {

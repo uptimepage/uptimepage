@@ -225,6 +225,8 @@ pub mod usage_keys {
     pub const ON_CALL_SCHEDULES: &str = "max_on_call_schedules";
     pub const FLOW_CHECKS: &str = "max_flow_checks";
     pub const ORGS: &str = "max_orgs";
+    /// Not a `plans` column: an account holds as many groups as monitors.
+    pub const GROUPS: &str = "max_groups";
 }
 
 /// Every org's resolved plan, absent where resolution failed.

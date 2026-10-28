@@ -43,7 +43,7 @@ fn db(context: &'static str) -> impl FnOnce(sqlx::Error) -> AppError {
     move |e| AppError::Other(anyhow!("{context}: {e}"))
 }
 
-async fn lock_incident(
+pub(crate) async fn lock_incident(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: OrgId,
     id: Uuid,

@@ -8,6 +8,7 @@ use uuid::Uuid;
 use super::WriteSource;
 use super::alert::TargetAlerts;
 use super::check::CheckSpec;
+use super::monitor_group::GroupChoice;
 use super::result::CheckStatus;
 use super::user::UserId;
 
@@ -97,7 +98,14 @@ pub struct Target {
     #[schema(value_type = u64, example = 60, minimum = 10)]
     pub interval: Duration,
     pub enabled: bool,
+    /// The monitor's own tags. Its group's tags never show here.
     pub tags: Vec<String>,
+    /// What the list and the `tag` filter go by: the group's tags while the
+    /// monitor's group alerts as one, `tags` otherwise. Alerting never reads
+    /// it.
+    #[serde(default)]
+    #[schema(read_only)]
+    pub effective_tags: Vec<String>,
     #[serde(default)]
     pub alerts: TargetAlerts,
     /// Consecutive failing checks before this monitor alerts. Min 1.
@@ -187,9 +195,15 @@ pub struct NewTarget {
     /// the monitor lands in more than one region, any-down for a single region.
     #[serde(default)]
     pub region_policy: Option<RegionIncidentPolicy>,
+    /// The group to join, created when no group has the name. Blank joins
+    /// none.
     #[serde(default)]
     #[schema(nullable = true, max_length = 50)]
     pub group_name: Option<String>,
+    /// The group to join by id. Send this or `group_name`, not both.
+    #[serde(default)]
+    #[schema(nullable = true)]
+    pub group_id: Option<Uuid>,
     /// Owning member. Omit to own it yourself, null to leave it unowned.
     #[serde(default, deserialize_with = "double_option")]
     #[schema(nullable = true, value_type = Option<Uuid>)]
@@ -216,6 +230,14 @@ impl NewTarget {
     pub fn owner(&self) -> Option<Uuid> {
         self.owner_user_id.flatten()
     }
+
+    pub fn group_choice(&self) -> Option<GroupChoice<'_>> {
+        match (self.group_id, &self.group_name) {
+            (Some(id), _) => Some(GroupChoice::Id(id)),
+            (None, Some(name)) => Some(GroupChoice::Name(name)),
+            (None, None) => None,
+        }
+    }
 }
 
 impl Target {
@@ -235,7 +257,8 @@ impl Target {
             renotify_interval_secs: self.renotify_interval_secs,
             recovery_period_secs: Some(self.recovery_period_secs),
             region_policy: Some(self.region_policy),
-            group_name: self.group_name.clone(),
+            group_name: None,
+            group_id: self.group_id,
             owner_user_id: Some(Some(owner.0)),
             regions: None,
         }
@@ -270,6 +293,7 @@ impl Target {
             interval,
             enabled: true,
             tags: vec![],
+            effective_tags: vec![],
             alerts: TargetAlerts(vec![]),
             alert_confirmations: 1,
             notify_recovery: true,
@@ -320,12 +344,29 @@ pub struct TargetUpdate {
     #[serde(default, deserialize_with = "TargetAlerts::deserialize_strict_opt")]
     #[schema(value_type = Option<Vec<crate::domain::alert::AlertBindingInput>>)]
     pub alerts: Option<TargetAlerts>,
+    /// Null or blank takes the monitor out of its group.
     #[serde(default, deserialize_with = "double_option")]
     #[schema(nullable = true, value_type = Option<String>)]
     pub group_name: Option<Option<String>>,
+    /// The group to join by id, null for none. Send this or `group_name`, not
+    /// both.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(nullable = true, value_type = Option<Uuid>)]
+    pub group_id: Option<Option<Uuid>>,
     #[serde(default, deserialize_with = "double_option")]
     #[schema(nullable = true, value_type = Option<Uuid>)]
     pub owner_user_id: Option<Option<Uuid>>,
+}
+
+impl TargetUpdate {
+    /// `None` leaves the group as it is; `Some(None)` leaves the group.
+    pub fn group_choice(&self) -> Option<Option<GroupChoice<'_>>> {
+        match (self.group_id, &self.group_name) {
+            (Some(id), _) => Some(id.map(GroupChoice::Id)),
+            (None, Some(name)) => Some(name.as_deref().map(GroupChoice::Name)),
+            (None, None) => None,
+        }
+    }
 }
 
 /// Lifts the inner `Option<T>` into `Some(Option<T>)` so a missing field

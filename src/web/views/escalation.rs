@@ -358,20 +358,30 @@ pub async fn monitor_binding(
     org: OrgId,
     target_id: Uuid,
 ) -> WebResult<MonitorBinding> {
-    const SIMPLE_MODE: &str =
-        "No escalation policy: pages this monitor's channels, without a ladder.";
-    let policies = state.escalation_policy_store.list(org).await?;
-    if policies.is_empty() {
-        return Ok(MonitorBinding {
-            choices: Vec::new(),
-            hint: SIMPLE_MODE.into(),
-            escalating: false,
-        });
-    }
     let own = state
         .escalation_policy_store
         .target_policy(org, target_id)
         .await?;
+    policy_binding(state, org, own, "monitor").await
+}
+
+/// [`monitor_binding`] for whatever is bound to `own`: a monitor or a group.
+pub async fn policy_binding(
+    state: &AppState,
+    org: OrgId,
+    own: Option<Uuid>,
+    subject: &str,
+) -> WebResult<MonitorBinding> {
+    let simple_mode =
+        format!("No escalation policy: pages this {subject}'s channels, without a ladder.");
+    let policies = state.escalation_policy_store.list(org).await?;
+    if policies.is_empty() {
+        return Ok(MonitorBinding {
+            choices: Vec::new(),
+            hint: simple_mode,
+            escalating: false,
+        });
+    }
     let choices = policies
         .iter()
         .map(|p| Choice {
@@ -395,7 +405,7 @@ pub async fn monitor_binding(
     Ok(MonitorBinding {
         choices,
         hint: inherited.map_or_else(
-            || SIMPLE_MODE.into(),
+            || simple_mode,
             |p| format!("Inheriting the org default: {}", p.name),
         ),
         escalating: inherited.is_some(),

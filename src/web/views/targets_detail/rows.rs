@@ -152,6 +152,9 @@ pub struct IncidentRow {
     pub recovering: bool,
     /// How much of it reaches the monitor's uptime, when that is not all of it.
     pub uptime_note: &'static str,
+    /// The group incident it is part of, and the group's name. Operator view
+    /// only, like `title`.
+    pub part_of: Option<(Uuid, String)>,
 }
 
 /// What a heartbeat's own clock says. `Some` for every heartbeat, so the live
@@ -587,6 +590,7 @@ impl From<Incident> for IncidentRow {
             ongoing,
             recovering: ongoing && inc.recovering_since.is_some(),
             uptime_note: uptime_note(&inc),
+            part_of: None,
         }
     }
 }

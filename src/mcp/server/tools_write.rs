@@ -18,10 +18,10 @@ use crate::mcp::schema::{
     CreateMonitorArgs, CreateMonitorsArgs, CreateStatusPageArgs, IncidentActionArgs,
     IncidentActionResult, IncidentIdArg, IncidentUpdatePosted, IncidentVisibilityResult,
     MaintenanceIdArg, MaintenanceUpdateResult, MaintenanceWindowView, ManualStateSet,
-    MonitorCreated, MonitorIdArg, MonitorStateResult, MonitorUpdateResult, MonitorsCreated,
-    PostIncidentUpdateArgs, PostMaintenanceUpdateArgs, PublishIncidentArgs, SetMonitorStateArgs,
-    StatusPageWritten, UpdateComponentArgs, UpdateMaintenanceArgs, UpdateMonitorArgs,
-    UpdateStatusPageArgs,
+    MonitorCreated, MonitorGroupUpdated, MonitorIdArg, MonitorStateResult, MonitorUpdateResult,
+    MonitorsCreated, PostIncidentUpdateArgs, PostMaintenanceUpdateArgs, PublishIncidentArgs,
+    SetMonitorStateArgs, StatusPageWritten, UpdateComponentArgs, UpdateMaintenanceArgs,
+    UpdateMonitorArgs, UpdateMonitorGroupArgs, UpdateStatusPageArgs,
 };
 
 use super::McpServer;
@@ -157,6 +157,31 @@ impl McpServer {
             Err(_) => json!({ "id": args.id, "requested": requested_fields(&args) }),
         };
         self.finish(pool, &auth, "update_monitor", args_json, result)
+            .await
+    }
+
+    #[tool(
+        description = "Change a monitor group: its name, whether it alerts as one (a member's failure opens one group incident that pages the group's channels, and the members' own stay quiet), which notification channels the group incident alerts (channel_ids replaces the whole set, and needs the channels:read scope), the reminder interval, and whether another member going down sends a message. Turning alert as one on or off changes only failures that start afterwards. A group managed by Terraform is refused outright. Shows the old and new value of every field before it runs, where the client can show a prompt; otherwise runs on the token's scope. Not read-only.",
+        title = "Change monitor group",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true
+        )
+    )]
+    async fn update_monitor_group(
+        &self,
+        Parameters(args): Parameters<UpdateMonitorGroupArgs>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<Json<MonitorGroupUpdated>, McpToolError> {
+        let auth = McpAuth::from_ctx(&ctx)?;
+        let pool = self.require_pool()?;
+        let result = self.update_monitor_group_inner(&ctx, &auth, &args).await;
+        let args_json = match &result {
+            Ok(Json(applied)) => json!({ "id": args.id, "changes": applied.changes }),
+            Err(_) => json!({ "id": args.id }),
+        };
+        self.finish(pool, &auth, "update_monitor_group", args_json, result)
             .await
     }
 

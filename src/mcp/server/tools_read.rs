@@ -19,8 +19,9 @@ use crate::auth::scope::Scope;
 use crate::domain::long_down::LONG_DOWN;
 use crate::domain::metrics::DashboardMetrics;
 use crate::domain::target::Target;
-use crate::domain::{AlertAction, WriteSource};
+use crate::domain::{AlertAction, OpsIncident, WriteSource};
 use crate::domain::{confirmed_downtime_secs, uptime_pct_from_downtime};
+use crate::storage::incident_ops::INCIDENT_DETAIL_ROW_CAP;
 use crate::storage::incidents::IncidentBriefFilter;
 use crate::storage::{TargetFilter, TimeRange};
 
@@ -33,10 +34,11 @@ use crate::mcp::schema::{
     IncidentDetail, IncidentIdArg, IncidentList, IncidentMetricsResult, IncidentWindow,
     LatencyPoint, ListIncidentsArgs, ListMaintenanceArgs, ListMonitorsArgs, ListStatusPagesArgs,
     MaintenanceIdArg, MaintenanceList, MaintenanceWindowView, MetricCount, MonitorDetail,
-    MonitorHistory, MonitorList, MonitorListItem, NoisyMonitor, OrgHealth, OrgUsage,
-    PagePasswordUse, PageViewerItem, PageViewerList, PausedStretch, Quota, RecoveredStretch,
-    RegionList, StatusPageComponent as McpComponent, StatusPageDetail, StatusPageList,
-    StatusPageSummary, TagItem, TagList, VariableList, VariableSummary, WorstMonitor,
+    MonitorGroupList, MonitorHistory, MonitorList, MonitorListItem, NoisyMonitor, OrgHealth,
+    OrgUsage, PagePasswordUse, PageViewerItem, PageViewerList, PausedStretch, Quota,
+    RecoveredStretch, RegionList, StatusPageComponent as McpComponent, StatusPageDetail,
+    StatusPageList, StatusPageSummary, TagItem, TagList, VariableList, VariableSummary,
+    WorstMonitor,
 };
 
 use super::McpServer;
@@ -73,6 +75,9 @@ const UPTIME_INCIDENT_CAP: usize = 2_000;
 /// the answer holds up to twice this. Each run carries its whole step trace, so
 /// a deeper page costs the model more context than it buys.
 const FLOW_RUN_CAP: usize = 25;
+/// Members shown under each group incident `list_incidents` returns;
+/// `get_incident` has the rest.
+const LISTED_MEMBERS_CAP: usize = 25;
 /// Tags returned by `list_tags`. Far above a usable tag vocabulary, and the
 /// response flags the truncation rather than passing a partial list off as whole.
 const TAG_CAP: usize = 200;
@@ -239,13 +244,19 @@ impl McpServer {
             from: now - Duration::try_hours(HEALTH_WINDOW_HOURS).unwrap_or_default(),
             to: now,
         };
-        let (targets, rollup) = tokio::try_join!(
+        let (targets, rollup, groups) = tokio::try_join!(
             self.state
                 .target_store
                 .list(org, all_monitors_filter(args.tag.clone())),
             self.state.results_store.dashboard_rollup(org, range, None),
+            self.state.monitor_group_store.list(org),
         )
         .map_err(|e| McpToolError::internal(format!("list monitors query: {e}")))?;
+        let alerting_groups: std::collections::HashSet<Uuid> = groups
+            .iter()
+            .filter(|g| g.alert_as_one)
+            .map(|g| g.id)
+            .collect();
 
         let metrics = index_by_target(rollup);
         let folded = crate::targets::folded_status(
@@ -268,6 +279,8 @@ impl McpServer {
                     r#type: t.check.kind().to_string(),
                     state: current_state(m, folded.get(&t.id).copied()).to_string(),
                     group_name: t.group_name.as_deref().map(sanitize_data),
+                    group_id: t.group_id.map(|g| g.to_string()),
+                    group_alerts_as_one: t.group_id.is_some_and(|g| alerting_groups.contains(&g)),
                     interval_secs: t.interval.as_secs(),
                     slowed_at: t.slowed_at.map(|at| at.to_rfc3339()),
                     checked_every_secs: checked_every(&t).as_secs(),
@@ -314,7 +327,13 @@ impl McpServer {
             self.clamped_raw_window(org, Duration::try_hours(24).unwrap_or_default()),
             self.clamped_raw_window(org, Duration::try_days(30).unwrap_or_default()),
         )?;
-        let (latest, mut up24, mut up30, incidents, regions) = tokio::try_join!(
+        let group = async {
+            match target.group_id {
+                Some(g) => self.state.monitor_group_store.get(org, g).await,
+                None => Ok(None),
+            }
+        };
+        let (latest, mut up24, mut up30, incidents, regions, group) = tokio::try_join!(
             self.state
                 .results_store
                 .list_results(org, id, r24, 1, 0, None),
@@ -329,6 +348,7 @@ impl McpServer {
                 false
             ),
             self.state.target_store.regions_for_target(org, id),
+            group,
         )
         .map_err(|e| McpToolError::internal(format!("monitor history: {e}")))?;
 
@@ -393,7 +413,14 @@ impl McpServer {
                 .then(|| region_policy_view(target.region_policy)),
             managed_externally: target.write_source == WriteSource::Terraform,
             group_name: target.group_name.as_deref().map(sanitize_data),
+            group_id: target.group_id.map(|g| g.to_string()),
+            group_alerts_as_one: group.is_some_and(|g| g.alert_as_one),
             tags: target.tags.iter().map(|t| sanitize_data(t)).collect(),
+            effective_tags: target
+                .effective_tags
+                .iter()
+                .map(|t| sanitize_data(t))
+                .collect(),
             state: match (last, folded) {
                 (Some(_), Some(f)) => f.as_str(),
                 (Some(r), None) => r.status.as_str(),
@@ -958,6 +985,8 @@ impl McpServer {
                     range: Some(range),
                     target_id,
                     open_only,
+                    // Narrowed to one monitor, its incidents stand alone.
+                    with_groups: target_id.is_none(),
                     oldest_first: false,
                     limit: PAGE_SIZE + 1,
                     offset,
@@ -978,8 +1007,31 @@ impl McpServer {
             .flatten();
         incidents.truncate(PAGE_SIZE);
 
+        let group_ids: Vec<Uuid> = incidents
+            .iter()
+            .filter(|i| i.group.is_some())
+            .map(|i| i.id)
+            .collect();
+        let mut members: HashMap<Uuid, Vec<OpsIncident>> = HashMap::new();
+        if !group_ids.is_empty() {
+            for m in self
+                .state
+                .incident_ops_store
+                .group_members(org, &group_ids, LISTED_MEMBERS_CAP)
+                .await
+                .map_err(|e| McpToolError::internal(format!("group members: {e}")))?
+            {
+                if let Some(g) = m.group.group_incident_id {
+                    members.entry(g).or_default().push(m);
+                }
+            }
+        }
+
         Ok(Json(IncidentList {
-            items: incidents.iter().map(incident_summary).collect(),
+            items: incidents
+                .iter()
+                .map(|i| incident_summary(i, members.get(&i.id).map_or(&[], Vec::as_slice)))
+                .collect(),
             from: range.from.to_rfc3339(),
             to: range.to.to_rfc3339(),
             next_cursor,
@@ -1040,14 +1092,25 @@ impl McpServer {
             .map_err(|e| McpToolError::internal(format!("get incident: {e}")))?
             .ok_or_else(|| McpToolError::not_found("incident not found"))?;
 
-        let pages = self
-            .state
-            .incident_ops_store
-            .status_pages(org, id)
-            .await
-            .map_err(|e| McpToolError::internal(format!("incident pages: {e}")))?;
+        let ops = &self.state.incident_ops_store;
+        let to_err = |e| McpToolError::internal(format!("incident detail: {e}"));
+        let (pages, place) =
+            tokio::try_join!(ops.status_pages(org, id), ops.get(org, id)).map_err(to_err)?;
+        let place = place.ok_or_else(|| McpToolError::not_found("incident not found"))?;
+        let members = match place.group.group {
+            Some(_) => ops
+                .group_members(org, &[id], INCIDENT_DETAIL_ROW_CAP as usize)
+                .await
+                .map_err(to_err)?,
+            None => Vec::new(),
+        };
 
-        Ok(Json(incident_detail(&incident, &pages)))
+        Ok(Json(incident_detail(
+            &incident,
+            &pages,
+            &place.group,
+            &members,
+        )))
     }
 
     /// Incident reporting over a trailing window: MTTA/MTTR, counts by
@@ -1101,6 +1164,19 @@ impl McpServer {
                 })
                 .collect(),
         }))
+    }
+
+    #[tool(
+        description = "The org's monitor groups, empty ones included: name, whether the group alerts as one (a member's failure opens one group incident that pages the group's channels, and the members' own stay quiet), member count, the group incident open now, its channels, reminder interval, whether another member going down sends a message, and tags. Read-only.",
+        title = "List monitor groups",
+        annotations(read_only_hint = true)
+    )]
+    async fn list_monitor_groups(
+        &self,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<Json<MonitorGroupList>, McpToolError> {
+        let auth = McpAuth::from_ctx(&ctx)?;
+        self.list_monitor_groups_inner(&auth).await
     }
 
     /// The org's variable keys, so a check can reference one rather than carry

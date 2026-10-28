@@ -809,22 +809,48 @@ pub struct OpsIncident {
     pub regions_up: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    #[serde(skip)]
+    #[serde(flatten)]
     pub group: IncidentGroupLink,
 }
 
 /// An incident's place in a group that alerts as one.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct IncidentGroupLink {
-    /// A group incident's group, until the group is deleted.
-    pub group_id: Option<Uuid>,
-    /// A group incident's group name, kept after the group is deleted.
-    pub group_name: Option<String>,
+    /// A group incident's group. Set only on `origin: "group"`.
+    #[serde(default)]
+    #[schema(nullable = true)]
+    pub group: Option<IncidentGroupRef>,
     /// The group a member incident opened routed to; cleared by a group delete.
+    #[serde(skip)]
     pub routed_group_id: Option<Uuid>,
-    /// The group incident a member incident is part of.
+    /// The group incident a member incident is part of. Acknowledge and
+    /// resolve that one instead.
+    #[serde(default)]
+    #[schema(nullable = true)]
     pub group_incident_id: Option<Uuid>,
+    /// Set when deleting the group closed the incident. Nothing was resolved,
+    /// so it counts toward neither MTTR nor who resolved what.
+    #[serde(default)]
     pub closed_by_group_delete: bool,
+}
+
+/// The group a group incident is about, as it last was once deleted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct IncidentGroupRef {
+    /// Null once the group is deleted.
+    #[schema(nullable = true)]
+    pub id: Option<Uuid>,
+    pub name: String,
+}
+
+impl IncidentGroupLink {
+    pub fn group_id(&self) -> Option<Uuid> {
+        self.group.as_ref().and_then(|g| g.id)
+    }
+
+    pub fn group_name(&self) -> Option<String> {
+        self.group.as_ref().map(|g| g.name.clone())
+    }
 }
 
 impl OpsIncident {
@@ -841,9 +867,12 @@ impl OpsIncident {
     }
 
     /// Reopened, an incident that ended with its monitor would have nothing to
-    /// watch or close it.
+    /// watch or close it, and a group incident or one of its members would
+    /// leave the group's members out of step.
     pub fn reopenable(&self) -> bool {
         !self.ended_with_monitor()
+            && self.origin != IncidentOrigin::Group
+            && self.group.group_incident_id.is_none()
     }
 
     /// What an ended incident tells the responders it paged: a delete that
@@ -863,7 +892,7 @@ impl OpsIncident {
     pub fn may_page(&self) -> bool {
         self.paging_enabled
             && (self.target_id.is_some()
-                || (self.origin == IncidentOrigin::Group && self.group.group_id.is_some()))
+                || (self.origin == IncidentOrigin::Group && self.group.group_id().is_some()))
     }
 }
 

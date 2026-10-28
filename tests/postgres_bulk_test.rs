@@ -65,6 +65,7 @@ fn make(name: &str, tags: Vec<String>) -> NewTarget {
         renotify_interval_secs: 3600,
         recovery_period_secs: None,
         group_name: None,
+        group_id: None,
         owner_user_id: None,
         regions: None,
     }
@@ -93,6 +94,7 @@ fn make_flow(name: &str) -> NewTarget {
         renotify_interval_secs: 3600,
         recovery_period_secs: None,
         group_name: None,
+        group_id: None,
         owner_user_id: None,
         regions: None,
     }
@@ -105,11 +107,11 @@ async fn flow_sub_cap_enforced_atomically(pool: PgPool) {
     // Generous overall cap, flow sub-cap of 1: the first flow lands, the second
     // is rejected by the in-INSERT guard even though max_targets has room.
     store
-        .create(org, make_flow("f1"), WriteSource::Ui, 100, 1)
+        .create(org, make_flow("f1"), WriteSource::Ui, None, 100, 1)
         .await
         .expect("first flow within sub-cap");
     let err = store
-        .create(org, make_flow("f2"), WriteSource::Ui, 100, 1)
+        .create(org, make_flow("f2"), WriteSource::Ui, None, 100, 1)
         .await
         .expect_err("second flow over sub-cap");
     match err {
@@ -120,7 +122,7 @@ async fn flow_sub_cap_enforced_atomically(pool: PgPool) {
     }
     // A non-flow target is unaffected by the flow sub-cap.
     store
-        .create(org, make("http-ok", vec![]), WriteSource::Ui, 100, 1)
+        .create(org, make("http-ok", vec![]), WriteSource::Ui, None, 100, 1)
         .await
         .expect("http target unaffected by flow cap");
 }
@@ -136,7 +138,14 @@ async fn bulk_create_with_ragged_tags(pool: PgPool) {
     ];
 
     let created = store
-        .bulk_create(org, unplaced(items), WriteSource::Ui, i64::MAX, i64::MAX)
+        .bulk_create(
+            org,
+            unplaced(items),
+            WriteSource::Ui,
+            None,
+            i64::MAX,
+            i64::MAX,
+        )
         .await
         .expect("bulk_create succeeds");
 
@@ -178,7 +187,7 @@ async fn bulk_create_places_each_row_in_one_write(pool: PgPool) {
     ];
 
     let created = store
-        .bulk_create(org, items, WriteSource::Ui, i64::MAX, i64::MAX)
+        .bulk_create(org, items, WriteSource::Ui, None, i64::MAX, i64::MAX)
         .await
         .expect("bulk_create succeeds");
 
@@ -199,7 +208,7 @@ async fn bulk_create_places_each_row_in_one_write(pool: PgPool) {
 async fn bulk_create_empty_is_noop(pool: PgPool) {
     let (store, org) = store_with_default_org(pool, None).await;
     let result = store
-        .bulk_create(org, vec![], WriteSource::Ui, i64::MAX, i64::MAX)
+        .bulk_create(org, vec![], WriteSource::Ui, None, i64::MAX, i64::MAX)
         .await
         .expect("empty bulk ok");
     assert!(result.is_empty());
@@ -226,12 +235,13 @@ async fn credentials_stored_as_ciphertext_envelope(pool: PgPool) {
         renotify_interval_secs: 3600,
         recovery_period_secs: None,
         group_name: None,
+        group_id: None,
         owner_user_id: None,
         regions: None,
     };
 
     let created = store
-        .create(org, new, WriteSource::Ui, i64::MAX, i64::MAX)
+        .create(org, new, WriteSource::Ui, None, i64::MAX, i64::MAX)
         .await
         .expect("create");
 
@@ -274,7 +284,7 @@ async fn no_credentials_no_envelope(pool: PgPool) {
     let (store, org) = store_with_default_org(pool.clone(), Some(test_cipher())).await;
     let new = make("plain", vec![]);
     let created = store
-        .create(org, new, WriteSource::Ui, i64::MAX, i64::MAX)
+        .create(org, new, WriteSource::Ui, None, i64::MAX, i64::MAX)
         .await
         .expect("create");
 

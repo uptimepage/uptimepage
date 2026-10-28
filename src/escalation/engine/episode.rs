@@ -735,7 +735,7 @@ impl Worker {
     ) -> Result<()> {
         let reason = incident.closing_reason();
         if incident.origin == IncidentOrigin::Group {
-            let name = incident.group.group_name.clone();
+            let name = incident.group.group_name();
             return self
                 .notify_closed(org, incident, name, reason, true, claim)
                 .await;

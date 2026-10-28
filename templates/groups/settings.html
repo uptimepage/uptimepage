@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} · group · Uptimepage{% endblock %}
+{% block content %}
+<form id="group-form" class="sticker-card mx-auto w-full max-w-2xl p-6" novalidate
+      data-group-id="{{ id }}"
+      data-back="{{ back.href }}"
+      data-alert-as-one="{{ alert_as_one }}"
+      data-member-count="{{ member_count }}"
+      {% if let Some(inc) = open_incident %}data-open-incident="{{ inc.id }}"{% endif %}>
+  <div class="form-grid space-y-6">
+    <header class="space-y-1">
+      <a href="{{ back.href }}" class="inline-block text-sm text-muted hover:text-body">← {{ back.label }}</a>
+      <div class="flex flex-wrap items-center gap-2">
+        <h1 class="page-title"><span class="page-title__prefix" aria-hidden="true">$</span>group</h1>
+        {% if let Some(m) = managed_by %}<span class="managed-chip" title="Managed by {{ m }} — changes made here may be overwritten on the next apply">{{ m }}</span>{% endif %}
+      </div>
+      <p class="font-mono text-xs text-quiet">
+        created <time datetime="{{ created.at|iso_ts }}" data-tz>{{ created.at|iso_ts }}</time>{% if let Some(by) = created.by %} by {{ by }}{% endif %}
+        · changed <time datetime="{{ changed.at|iso_ts }}" data-tz>{{ changed.at|iso_ts }}</time>{% if let Some(by) = changed.by %} by {{ by }}{% endif %} in {{ changed_in }}
+      </p>
+      {% if let Some(inc) = open_incident %}
+      <p class="text-sm">
+        <a href="/incidents/{{ inc.id }}" class="underline decoration-dotted hover:text-body">incident since <time datetime="{{ inc.since|iso_ts }}" data-tz="at">{{ inc.since|iso_ts }}</time>{% if inc.acked %} · acked{% endif %}</a>
+      </p>
+      {% endif %}
+    </header>
+
+    <div id="group-form-errors" role="alert" aria-live="polite" class="hidden alert-card alert-card--error"></div>
+
+    <fieldset>
+      <legend class="float-left mb-3 w-full"><span class="form-legend">name</span></legend>
+      <div class="clear-both">
+        <input type="text" name="name" class="w-full field" value="{{ name }}" maxlength="50" aria-label="Group name" required>
+        <p class="mt-1 text-xs text-muted">Renames the group on its {{ member_count }} monitor{% if member_count != 1 %}s{% endif %}.</p>
+      </div>
+    </fieldset>
+
+    <fieldset class="border-t pt-6" style="border-color:var(--theme-line)">
+      <legend class="float-left mb-3 w-full"><span class="form-legend">alerts</span></legend>
+      <div class="clear-both">
+        <div class="check-type-cards access-ways" role="radiogroup" aria-label="How the group alerts">
+          <label class="check-type-card">
+            <input type="radio" name="alert_as_one" value="false" class="sr-only"{% if !alert_as_one %} checked{% endif %}>
+            <span class="check-type-card__name">label only</span>
+            <span class="check-type-card__desc">each monitor opens its own incident and sends its own alerts</span>
+          </label>
+          <label class="check-type-card">
+            <input type="radio" name="alert_as_one" value="true" class="sr-only"{% if alert_as_one %} checked{% endif %}>
+            <span class="check-type-card__name">alert as one</span>
+            <span class="check-type-card__desc">the group opens one incident and sends one alert; members stay quiet</span>
+          </label>
+        </div>
+        <p class="mt-1 text-xs text-muted">Switching changes only failures that start after it: an incident open now ends the way it started.</p>
+      </div>
+    </fieldset>
+
+    <div data-group-only class="space-y-6"{% if !alert_as_one %} hidden{% endif %}>
+      <fieldset>
+        <legend class="float-left mb-3 w-full"><span class="form-legend">state</span></legend>
+        <div class="clear-both">
+          <p class="font-mono text-xs text-body">down&nbsp;&nbsp;&nbsp;&nbsp; when any member is down<br>degraded when a member is degraded and none is down<br>up&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; when every member is up</p>
+          <p class="mt-1 text-xs text-muted">Each member still confirms its own failure first, with its own fails and regions, so a blip on one monitor does not reach the group.</p>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend class="float-left mb-3 w-full"><span class="form-legend">labels</span></legend>
+        <div class="clear-both">
+          <span class="mb-1.5 block text-xs text-muted">Tags</span>
+          <div class="flex flex-wrap items-center gap-1.5" data-tag-chips="group" role="group" aria-label="Group tags">
+            {% for t in tag_options %}
+            <label class="scope-token">
+              <input type="checkbox" data-tag-pick value="{{ t }}" class="sr-only"{% if tags.contains(t) %} checked{% endif %}>
+              {{ t }}
+            </label>
+            {% endfor %}
+            <input type="text" data-tag-new aria-label="New tag" spellcheck="false" autocomplete="off"
+                   maxlength="{{ self.max_tag_len() }}" data-tag-max="{{ self.max_tags() }}"
+                   data-tag-cap-label="A group takes at most"
+                   placeholder="new tag…" class="hidden chip-new-input">
+            <button type="button" class="scope-token" data-tag-add aria-label="Add tag">+</button>
+          </div>
+          <p class="mt-1 text-xs text-muted">Members carry these tags while the group alerts as one: tag rules, the list's tag filter and the API read them. Each member's own tags are kept for later.</p>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend class="float-left mb-3 w-full"><span class="form-legend">notifications</span></legend>
+        <div class="clear-both">
+          {% if channels.is_empty() %}
+          <p class="font-mono text-xs text-quiet">
+            # no channels configured —
+            <a href="/settings/notifications/new" class="underline decoration-dotted hover:text-body">add one</a>
+            to get the group's alerts.
+          </p>
+          {% else %}
+          <span class="mb-1.5 block text-xs text-muted">Channels to notify</span>
+          <div class="flex flex-wrap gap-1.5">
+            {% for c in channels %}
+            <label data-channel-row data-rule-tags="{{ c.rule_tags }}" class="scope-token">
+              <input type="checkbox" data-channel-select value="{{ c.id }}" class="sr-only"{% if c.selected %} checked{% endif %}>
+              {{ c.kind }}:{{ c.name }}<span data-rule-chip hidden class="cli-brackets ml-1 font-normal">by tag</span>
+            </label>
+            {% endfor %}
+          </div>
+          <span class="mt-1 block text-xs text-muted">Notified when the group incident opens or resolves. A channel marked <span class="cli-brackets">by tag</span> already covers the group through its own tag rule, ticked or not.</span>
+          {% endif %}
+          <p class="mt-1 text-xs text-state-warn" data-nobody-warning hidden>No channel picked: the group alerts nobody, and its members stay quiet too.</p>
+          <span class="mt-4 mb-1.5 block text-xs text-muted">Remind while down</span>
+          <div class="sm-rail sm-rail--wide" role="radiogroup" aria-label="Remind while down">
+            {% for o in renotify %}
+            <label class="sm-rail__seg">
+              <input type="radio" name="renotify_secs" value="{{ o.secs }}" class="sr-only"{% if o.selected %} checked{% endif %}>
+              {{ o.label }}
+            </label>
+            {% endfor %}
+          </div>
+          <span class="mt-1 block text-xs text-muted">Repeats the group's alert while it stays down and unacknowledged. Members' own reminders are muted with their alerts.</span>
+          <span class="mt-4 mb-1.5 block text-xs text-muted">Another member goes down</span>
+          <div class="sm-rail sm-rail--wide" role="radiogroup" aria-label="Another member goes down">
+            <label class="sm-rail__seg"><input type="radio" name="alert_again" value="true" class="sr-only"{% if alert_again %} checked{% endif %}>alert again</label>
+            <label class="sm-rail__seg"><input type="radio" name="alert_again" value="false" class="sr-only"{% if !alert_again %} checked{% endif %}>stay quiet</label>
+          </div>
+          <span class="mt-1 block text-xs text-muted">While the group is already down: at most one message a minute, listing every member that went down since the last one. Either way it is a line on the incident page, and an ack stays: nobody has to ack twice.</span>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend class="float-left mb-3 w-full"><span class="form-legend">escalation</span></legend>
+        <div class="clear-both">
+          {% if let Some(choices) = policies %}
+          <p class="text-xs text-muted">A multi-level paging ladder for this group's incidents. Manage policies under <a href="/settings/escalation" class="underline">escalation</a>.</p>
+          <div class="flex flex-wrap items-center gap-3 pt-3">
+            <div class="field-outline w-64">
+              <span class="field-outline__label">Policy</span>
+              <select data-monitor-policy-select data-policy-url="/api/v1/groups/{{ id }}/escalation-policy" data-sm-combobox
+                      aria-label="Escalation policy" class="w-full field">
+                <option value="">inherit org default</option>
+                {% for c in choices %}
+                <option value="{{ c.id }}"{% if c.selected %} selected{% endif %}>{{ c.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <span data-monitor-policy-result role="status" aria-live="polite" class="flash-text text-xs"></span>
+          </div>
+          {% if !policy_hint.is_empty() %}<p class="mt-1 text-xs text-muted">{{ policy_hint }}</p>{% endif %}
+          <p class="mt-1 text-xs text-muted">An ack stops the ladder. Another member going down does not start it again. Members' own policies are muted with their channels and come back when the group stops alerting as one.</p>
+          {% else %}
+          <p class="text-xs text-muted">A multi-level paging ladder for this group's incidents comes with the Team plan. See <a href="/settings/escalation" class="underline">escalation</a>.</p>
+          {% endif %}
+        </div>
+      </fieldset>
+    </div>
+
+    <fieldset>
+      <legend class="float-left mb-3 w-full"><span class="form-legend">members</span></legend>
+      <div class="clear-both">
+        {% if members.is_empty() %}
+        <p class="font-mono text-xs text-quiet"># no monitors in this group yet</p>
+        {% else %}
+        <div class="sticker-card overflow-hidden">
+          {% for m in members %}
+          <div class="flex flex-wrap items-center gap-2.5 border-t px-3 py-2 text-sm first:border-t-0" style="border-color:var(--theme-line)">
+            <a href="/targets/{{ m.id }}" class="font-medium text-body hover:underline">{{ m.name }}</a>
+            {% if !m.enabled %}<span class="dashboard-chip dashboard-chip--flat">paused</span>{% endif %}
+            <span class="ml-auto flex flex-wrap items-center gap-1.5 text-xs text-muted" data-member-own{% if alert_as_one %} data-muted{% endif %}>
+              {% for c in m.channels %}<span class="scope-token">{{ c }}</span>{% endfor %}
+              {% if let Some(p) = m.policy %}<span class="scope-token">policy: {{ p }}</span>{% endif %}
+              {% if alert_as_one && (!m.channels.is_empty() || m.policy.is_some()) %}<span class="cli-brackets">muted</span>{% endif %}
+            </span>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+        <p class="mt-1 text-xs text-muted">Add or remove a member from its own form, or select monitors in the list and use Move to group.</p>
+      </div>
+    </fieldset>
+
+    <div class="flex flex-wrap items-center gap-3 border-t pt-6" style="border-color:var(--theme-line)">
+      <button type="submit" class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium" data-group-save>save</button>
+      <a href="{{ back.href }}" class="btn-ghost px-3 py-1.5 text-sm font-medium">cancel</a>
+      <button type="button" class="btn-ghost ml-auto px-3 py-1.5 text-sm font-medium text-state-bad" data-group-delete>delete group</button>
+    </div>
+  </div>
+</form>
+
+<script defer src="{{ "js/ui/api_form.js"|asset }}"></script>
+<script defer src="{{ "js/ui/tag_chip_input.js"|asset }}"></script>
+<script defer src="{{ "js/ui/monitor_escalation.js"|asset }}"></script>
+<script defer src="{{ "js/ui/group_settings.js"|asset }}"></script>
+{% endblock %}

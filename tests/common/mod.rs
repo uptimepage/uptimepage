@@ -1353,6 +1353,7 @@ pub fn http_target(addr: SocketAddr, path: &str, interval_ms: u64) -> Target {
         interval: Duration::from_millis(interval_ms),
         enabled: true,
         tags: vec![],
+        effective_tags: vec![],
         alerts: uptimepage::domain::TargetAlerts::default(),
         region_policy: Default::default(),
         alert_confirmations: 2,

@@ -41,16 +41,21 @@ pub(crate) async fn ongoing_for_target(state: &AppState, org: OrgId, target_id: 
         .unwrap_or(0) as usize
 }
 
-/// Names the rows with the titles operators gave them. Only the operator page
-/// calls this: a title is internal and never reaches a shared view. A failed
-/// lookup leaves the rows unnamed rather than failing the page.
+/// Names the rows with the titles operators gave them and the group incidents
+/// they are part of. Only the operator page calls this: both are internal and
+/// never reach a shared view. A failed lookup leaves the rows without them
+/// rather than failing the page.
 pub(super) async fn attach_titles(state: &AppState, org: OrgId, rows: &mut [IncidentRow]) {
     if rows.is_empty() {
         return;
     }
     let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
-    let mut titles = match state.incident_narration_store.titles(org, &ids).await {
-        Ok(titles) => titles,
+    let store = &state.incident_narration_store;
+    let (mut titles, mut parts) = match tokio::try_join!(
+        store.titles(org, &ids),
+        store.group_parts(org, &ids)
+    ) {
+        Ok(found) => found,
         Err(err) => {
             tracing::warn!(error = %err, "incident titles unavailable, listing rows without them");
             return;
@@ -58,6 +63,7 @@ pub(super) async fn attach_titles(state: &AppState, org: OrgId, rows: &mut [Inci
     };
     for row in rows {
         row.title = titles.remove(&row.id).unwrap_or_default();
+        row.part_of = parts.remove(&row.id);
     }
 }
 

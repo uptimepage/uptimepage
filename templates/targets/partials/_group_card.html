@@ -3,6 +3,10 @@
     <span class="monitors-group__chevron" aria-hidden="true">›</span>
     <span class="monitors-dot{% if gb.worst_status != "" %} monitors-dot--{{ gb.worst_status }}{% endif %}{% if gb.worst_status == "down" || gb.worst_status == "error" %} monitors-dot--pulse{% endif %}" aria-hidden="true"></span>
     <span class="monitors-group__title">{{ gb.name }}</span>
+    {% if let Some(g) = gb.group %}
+    {% if g.alert_as_one %}<span class="cli-brackets font-mono text-xs text-muted" title="One incident and one alert for the whole group">group alert</span>{% endif %}
+    {% if let Some(inc) = g.incident %}<a href="/incidents/{{ inc.id }}" class="status-badge status-badge--down">incident since <time datetime="{{ inc.since|iso_ts }}" data-tz="at">{{ inc.since|iso_ts }}</time>{% if inc.acked %} · acked{% endif %}</a>{% endif %}
+    {% endif %}
     <span class="monitors-group__meta">
       {{ gb.total }} monitor{% if gb.total != 1 %}s{% endif %}
       ·<span class="monitors-group__meta-mono">{{ gb.avg_uptime_label }}</span> avg uptime
@@ -12,7 +16,27 @@
       <span class="monitors-group__pip{% if r.status_class != "" %} monitors-group__pip--{{ r.status_class }}{% endif %}{% if !r.enabled %} monitors-group__pip--paused{% endif %}" title="{{ r.name }}"></span>
       {% endfor %}
     </span>
+    {% if let Some(g) = gb.group %}
+    <span class="monitors-menu" data-menu-root>
+      <button type="button" class="monitors-menu__btn" data-menu-toggle aria-haspopup="menu" aria-expanded="false" aria-label="Actions for group {{ gb.name }}">⋯</button>
+      <span class="monitors-popover" role="menu" hidden data-menu-panel>
+        <a href="/groups/{{ g.id }}" class="monitors-popover__item" role="menuitem">group settings</a>
+        {% if let Some(inc) = g.incident %}<a href="/incidents/{{ inc.id }}" class="monitors-popover__item" role="menuitem">open incident</a>{% endif %}
+        <span class="monitors-popover__sep" aria-hidden="true"></span>
+        {% if g.alert_as_one || g.has_channels %}
+        <button type="button" class="monitors-popover__item" role="menuitem"
+                data-group-action data-group-id="{{ g.id }}" data-alert-as-one="{{ !g.alert_as_one }}"
+                data-group-total="{{ gb.total }}">{% if g.alert_as_one %}turn group alert off{% else %}alert as one…{% endif %}</button>
+        {% else %}
+        <a href="/groups/{{ g.id }}" class="monitors-popover__item" role="menuitem" title="Pick the group's channels first">alert as one…</a>
+        {% endif %}
+      </span>
+    </span>
+    {% endif %}
   </summary>
+  {% if gb.rows.is_empty() %}
+  <p class="monitors-empty">No monitors in this group yet. Add one from its form, or select monitors and use Move to group.</p>
+  {% else %}
   <div class="monitors-table" role="table" aria-label="{{ gb.name }} monitors">
     <div class="monitors-head" role="row">
       <span><input type="checkbox" data-group-select aria-label="Select all in {{ gb.name }}"></span>
@@ -29,4 +53,5 @@
     {% include "targets/partials/_row.html" %}
     {% endfor %}
   </div>
+  {% endif %}
 </details>

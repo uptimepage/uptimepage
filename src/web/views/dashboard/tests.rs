@@ -1278,6 +1278,8 @@ fn brief(now: DateTime<Utc>) -> IncidentBrief {
         public_title: None,
         latest_update: None,
         recovering_since: None,
+        group: None,
+        group_incident_id: None,
     }
 }
 

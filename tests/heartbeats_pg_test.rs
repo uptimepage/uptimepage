@@ -60,6 +60,7 @@ fn heartbeat_target(name: &str, enabled: bool) -> NewTarget {
         renotify_interval_secs: 3600,
         recovery_period_secs: None,
         group_name: None,
+        group_id: None,
         owner_user_id: None,
         regions: None,
     }
@@ -72,6 +73,7 @@ async fn make_heartbeat_target(pool: &sqlx::PgPool, org: OrgId, name: &str, enab
             org,
             heartbeat_target(name, enabled),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -1535,7 +1537,7 @@ async fn a_coarse_stored_interval_is_evaluated_at_the_windows_cadence_live_pg() 
     let mut coarse = heartbeat_target("coarse", true);
     coarse.interval = Duration::from_secs(60_000);
     let coarse = targets
-        .create(org_a, coarse, WriteSource::Ui, i64::MAX, i64::MAX)
+        .create(org_a, coarse, WriteSource::Ui, None, i64::MAX, i64::MAX)
         .await
         .expect("create target")
         .id;

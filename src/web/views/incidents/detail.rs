@@ -137,6 +137,12 @@ pub struct IncidentDetailPage {
     pub pages: Vec<PageChoice>,
     /// Addresses that answered the failing checks.
     pub servers: Vec<ServerRow>,
+    /// A group incident's group: `None` id once deleted.
+    pub group: Option<(Option<String>, String)>,
+    /// The group incident a member incident is part of, and its name.
+    pub part_of: Option<(String, String)>,
+    /// A group incident's members, in the order they joined.
+    pub members: Vec<super::console::MemberLine>,
 }
 
 /// One paging-delivery row for the incident's notifications section.
@@ -232,6 +238,36 @@ pub async fn detail(
         .await?
         .ok_or_else(|| AppError::not_found(codes::INCIDENT_NOT_FOUND, "incident not found"))?;
     let monitor_name = inc.target_name.clone();
+    let group = inc
+        .group
+        .group
+        .as_ref()
+        .map(|g| (g.id.map(|i| i.to_string()), g.name.clone()));
+    let lines = match &group {
+        Some(_) => state
+            .incident_ops_store
+            .group_members(
+                org,
+                &[id],
+                crate::storage::incident_ops::INCIDENT_DETAIL_ROW_CAP as usize,
+            )
+            .await?
+            .into_iter()
+            .map(|m| super::console::MemberLine {
+                id: m.id.to_string(),
+                label: m.target_name.clone().unwrap_or_default(),
+                ongoing: m.ended_at.is_none(),
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    let part_of = match inc.group.group_incident_id {
+        Some(g) => state.incident_ops_store.get(org, g).await?.map(|gi| {
+            let label = super::group_label(&gi).unwrap_or_default();
+            (g.to_string(), label)
+        }),
+        None => None,
+    };
     let (members, mut acks, events) = tokio::try_join!(
         members_map(&state, org),
         async {
@@ -310,7 +346,10 @@ pub async fn detail(
     } else {
         Vec::new()
     };
-    let label = incident_label(inc.title.clone(), monitor_name.clone());
+    let label = incident_label(
+        inc.title.clone(),
+        monitor_name.clone().or_else(|| super::group_label(&inc)),
+    );
     let mut page = make_detail_page(
         inc,
         monitor_name,
@@ -326,6 +365,9 @@ pub async fn detail(
     page.monitor_recovered_at = recovered_at;
     page.pages = pages;
     page.servers = servers;
+    page.group = group;
+    page.part_of = part_of;
+    page.members = lines;
     Ok(page)
 }
 
@@ -376,6 +418,9 @@ pub(super) fn make_detail_page(
         check_count,
         pages: Vec::new(),
         servers: Vec::new(),
+        group: None,
+        part_of: None,
+        members: Vec::new(),
     }
 }
 

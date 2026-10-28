@@ -49,13 +49,21 @@ pub trait EscalationPolicyStore: Send + Sync {
     /// Soft-delete. Returns `false` when nothing live matched.
     async fn delete(&self, org: OrgId, id: Uuid) -> Result<bool>;
     /// The live policy that governs a monitor: its own binding, else the org
-    /// default, else `None`. A soft-deleted policy resolves to `None`. This is
-    /// the effective policy the engine pages through.
+    /// default, else `None`. A soft-deleted binding falls through to the
+    /// default, so one a delete raced past still pages someone. This is the
+    /// effective policy the engine pages through.
     async fn resolve_for_target(&self, org: OrgId, target_id: Uuid) -> Result<Option<Uuid>>;
     /// A monitor's *own* explicit binding (ignoring the org default), or `None`
     /// when it inherits. Drives the "inherit vs override" form, distinct from
     /// [`Self::resolve_for_target`].
     async fn target_policy(&self, org: OrgId, target_id: Uuid) -> Result<Option<Uuid>>;
+    /// [`Self::target_policy`] for each of `targets`; one without a live
+    /// binding is left out.
+    async fn target_policies(
+        &self,
+        org: OrgId,
+        targets: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Uuid>>;
     /// Bind (or clear) a monitor's policy. Caller validates the policy exists
     /// in the org. Returns `false` when the target does not exist in the org.
     async fn set_target_policy(
@@ -66,12 +74,14 @@ pub trait EscalationPolicyStore: Send + Sync {
     ) -> Result<bool>;
     /// [`Self::resolve_for_target`] for a group that alerts as one.
     async fn resolve_for_group(&self, org: OrgId, group_id: Uuid) -> Result<Option<Uuid>>;
-    /// [`Self::set_target_policy`] for a group.
+    /// [`Self::set_target_policy`] for a group, audited as
+    /// `group.escalation_policy_set` when it changes the binding.
     async fn set_group_policy(
         &self,
         org: OrgId,
         group_id: Uuid,
         policy_id: Option<Uuid>,
+        actor: Option<UserId>,
     ) -> Result<bool>;
     /// The org's default policy id, if set and live.
     async fn org_default(&self, org: OrgId) -> Result<Option<Uuid>>;
@@ -502,8 +512,18 @@ impl EscalationPolicyStore for PgEscalationPolicyStore {
         if result.rows_affected() == 0 {
             return Ok(false);
         }
-        // Clear dangling bindings so affected monitors fall back to the org
-        // default (a soft-delete leaves the FK unenforced, unlike a hard one).
+        // Clear dangling bindings so affected monitors and groups fall back to
+        // the org default (a soft-delete leaves the FK unenforced, unlike a
+        // hard one). Groups before monitors, the order every group path takes.
+        sqlx::query(
+            "UPDATE monitor_groups SET escalation_policy_id = NULL \
+             WHERE org_id = $2 AND escalation_policy_id = $1",
+        )
+        .bind(id)
+        .bind(org.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::Other(anyhow::anyhow!("clear group bindings: {e}")))?;
         sqlx::query(
             "UPDATE targets SET escalation_policy_id = NULL \
              WHERE org_id = $2 AND escalation_policy_id = $1",
@@ -531,11 +551,12 @@ impl EscalationPolicyStore for PgEscalationPolicyStore {
 
     async fn resolve_for_target(&self, org: OrgId, target_id: Uuid) -> Result<Option<Uuid>> {
         let id: Option<Uuid> = sqlx::query_scalar(
-            "SELECT p.id FROM targets t \
+            "SELECT COALESCE(b.id, d.id) FROM targets t \
              JOIN organizations o ON o.id = t.org_id \
-             LEFT JOIN escalation_policies p \
-                 ON p.id = COALESCE(t.escalation_policy_id, o.default_escalation_policy_id) \
-                 AND p.deleted_at IS NULL \
+             LEFT JOIN escalation_policies b ON b.id = t.escalation_policy_id \
+                 AND b.org_id = t.org_id AND b.deleted_at IS NULL \
+             LEFT JOIN escalation_policies d ON d.id = o.default_escalation_policy_id \
+                 AND d.org_id = o.id AND d.deleted_at IS NULL \
              WHERE t.id = $1 AND t.org_id = $2",
         )
         .bind(target_id)
@@ -561,6 +582,25 @@ impl EscalationPolicyStore for PgEscalationPolicyStore {
         .map_err(|e| AppError::Other(anyhow::anyhow!("target_policy: {e}")))?
         .flatten();
         Ok(id)
+    }
+
+    async fn target_policies(
+        &self,
+        org: OrgId,
+        targets: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Uuid>> {
+        let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
+            "SELECT t.id, p.id FROM targets t \
+             JOIN escalation_policies p \
+                 ON p.id = t.escalation_policy_id AND p.deleted_at IS NULL \
+             WHERE t.org_id = $1 AND t.id = ANY($2)",
+        )
+        .bind(org.0)
+        .bind(targets)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Other(anyhow::anyhow!("target_policies: {e}")))?;
+        Ok(rows.into_iter().collect())
     }
 
     async fn set_target_policy(
@@ -592,11 +632,12 @@ impl EscalationPolicyStore for PgEscalationPolicyStore {
 
     async fn resolve_for_group(&self, org: OrgId, group_id: Uuid) -> Result<Option<Uuid>> {
         let id: Option<Uuid> = sqlx::query_scalar(
-            "SELECT p.id FROM monitor_groups g \
+            "SELECT COALESCE(b.id, d.id) FROM monitor_groups g \
              JOIN organizations o ON o.id = g.org_id \
-             LEFT JOIN escalation_policies p \
-                 ON p.id = COALESCE(g.escalation_policy_id, o.default_escalation_policy_id) \
-                 AND p.deleted_at IS NULL \
+             LEFT JOIN escalation_policies b ON b.id = g.escalation_policy_id \
+                 AND b.org_id = g.org_id AND b.deleted_at IS NULL \
+             LEFT JOIN escalation_policies d ON d.id = o.default_escalation_policy_id \
+                 AND d.org_id = o.id AND d.deleted_at IS NULL \
              WHERE g.id = $1 AND g.org_id = $2",
         )
         .bind(group_id)
@@ -613,9 +654,25 @@ impl EscalationPolicyStore for PgEscalationPolicyStore {
         org: OrgId,
         group_id: Uuid,
         policy_id: Option<Uuid>,
+        actor: Option<UserId>,
     ) -> Result<bool> {
+        let db = |e: sqlx::Error| AppError::Other(anyhow::anyhow!("set_group_policy: {e}"));
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let from: Option<Option<Uuid>> = sqlx::query_scalar(
+            "SELECT escalation_policy_id FROM monitor_groups \
+             WHERE id = $1 AND org_id = $2 FOR NO KEY UPDATE",
+        )
+        .bind(group_id)
+        .bind(org.0)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db)?;
+        let Some(from) = from else {
+            return Ok(false);
+        };
         let result = sqlx::query(
-            "UPDATE monitor_groups SET escalation_policy_id = $3, updated_at = now() \
+            "UPDATE monitor_groups SET escalation_policy_id = $3, updated_by = $4, \
+                 updated_at = now() \
              WHERE id = $1 AND org_id = $2 \
                  AND ($3::uuid IS NULL OR EXISTS ( \
                      SELECT 1 FROM escalation_policies p \
@@ -625,10 +682,25 @@ impl EscalationPolicyStore for PgEscalationPolicyStore {
         .bind(group_id)
         .bind(org.0)
         .bind(policy_id)
-        .execute(&self.pool)
+        .bind(actor.map(|u| u.0))
+        .execute(&mut *tx)
         .await
-        .map_err(|e| AppError::Other(anyhow::anyhow!("set_group_policy: {e}")))?;
-        Ok(result.rows_affected() > 0)
+        .map_err(db)?;
+        if result.rows_affected() == 0 {
+            return Ok(false);
+        }
+        if from != policy_id {
+            crate::storage::orgs::record_audit_tx(
+                &mut tx,
+                org,
+                actor,
+                "group.escalation_policy_set",
+                serde_json::json!({ "group_id": group_id, "from": from, "to": policy_id }),
+            )
+            .await?;
+        }
+        tx.commit().await.map_err(db)?;
+        Ok(true)
     }
 
     async fn org_default(&self, org: OrgId) -> Result<Option<Uuid>> {
@@ -704,13 +776,14 @@ impl MemState {
             .iter()
             .find(|(o, t, _)| *o == org && *t == id)
             .map(|(_, _, p)| *p)
+            .filter(|p| self.live(org, *p))
             .or_else(|| {
                 self.org_default
                     .iter()
                     .find(|(o, _)| *o == org)
                     .map(|(_, p)| *p)
+                    .filter(|p| self.live(org, *p))
             })
-            .filter(|p| self.live(org, *p))
     }
 }
 
@@ -880,6 +953,7 @@ impl EscalationPolicyStore for InMemoryEscalationPolicyStore {
         org: OrgId,
         group_id: Uuid,
         policy_id: Option<Uuid>,
+        _actor: Option<UserId>,
     ) -> Result<bool> {
         let mut g = self.inner.lock();
         g.group_policy
@@ -888,6 +962,20 @@ impl EscalationPolicyStore for InMemoryEscalationPolicyStore {
             g.group_policy.push((org, group_id, pid));
         }
         Ok(true)
+    }
+
+    async fn target_policies(
+        &self,
+        org: OrgId,
+        targets: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Uuid>> {
+        let mut out = std::collections::HashMap::new();
+        for t in targets {
+            if let Some(p) = self.target_policy(org, *t).await? {
+                out.insert(*t, p);
+            }
+        }
+        Ok(out)
     }
 
     async fn target_policy(&self, org: OrgId, target_id: Uuid) -> Result<Option<Uuid>> {

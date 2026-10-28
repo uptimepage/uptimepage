@@ -46,8 +46,8 @@ const LIST_LIMIT_MAX: usize = 10_000;
 use crate::targets::validate::{
     canonicalize_check, carry_credentials, carry_flags, carry_flow_secrets, gate_flow,
     gate_flow_steps, normalize_tags, reject_passive_probe, take_cleared_credentials,
-    validate_alert_confirmations, validate_alerts, validate_check, validate_group_name,
-    validate_new_target, validate_recovery_period, validate_region_policy,
+    validate_alert_confirmations, validate_alerts, validate_check, validate_group_choice,
+    validate_group_name, validate_new_target, validate_recovery_period, validate_region_policy,
     validate_renotify_interval,
 };
 
@@ -217,7 +217,9 @@ pub async fn create(
     let regions = ops
         .resolve_create_regions(org, &new, &plan, &snapshot)
         .await?;
-    let t = ops.create_target(org, new, source, &plan, regions).await?;
+    let t = ops
+        .create_target(org, new, source, Some(user), &plan, regions)
+        .await?;
     // UUID hex is always ASCII-safe → infallible.
     let location = HeaderValue::from_str(&format!("/api/v1/targets/{}", t.id))
         .expect("uuid produces ascii-only path");
@@ -314,8 +316,11 @@ pub async fn update(
         let available = state.target_store.available_regions().await?;
         validate_region_policy(update.region_policy, available.len())?;
     }
+    validate_group_choice(update.group_name.is_some(), update.group_id.is_some())?;
     if let Some(Some(g)) = update.group_name.as_ref() {
         validate_group_name(Some(g.as_str()))?;
+        ops.check_group_room(org, Some(user), Some(g.as_str()))
+            .await?;
     }
     if let Some(Some(uid)) = update.owner_user_id {
         ops.validate_owner_is_member(org, Some(uid)).await?;
@@ -845,6 +850,7 @@ pub async fn bulk_create(
             org,
             placed,
             source,
+            Some(user),
             i64::from(plan.max_targets),
             i64::from(plan.max_flow_checks),
         )
@@ -972,6 +978,10 @@ pub async fn bulk_action(
             state.target_store.remove_tags(org, &req.ids, tags).await?
         }
         BulkAction::SetGroup { group } => {
+            state
+                .target_ops()
+                .check_group_room(org, Some(user), group.as_deref())
+                .await?;
             state
                 .target_store
                 .set_group(org, &req.ids, group.as_deref(), Some(user))

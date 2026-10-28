@@ -102,7 +102,7 @@ impl Worker {
         if incident.origin == crate::domain::IncidentOrigin::Group {
             // A deleted group's incident is closed: only its closing notice is
             // still worth sending.
-            if incident.group.group_id.is_none() && !reason.closes_incident() {
+            if incident.group.group_id().is_none() && !reason.closes_incident() {
                 return Ok(Rebuilt::MonitorDeleted);
             }
             let Some(channel) = self.channels.get(org, channel_id).await? else {
@@ -111,7 +111,7 @@ impl Worker {
             let members = self.ops.notice_members(org, notification_id).await?;
             let notice = self.notice(
                 &incident,
-                incident.group.group_name.clone(),
+                incident.group.group_name(),
                 reason,
                 crate::domain::members_note(reason, &members),
             );

@@ -62,11 +62,12 @@ async fn seed(
         renotify_interval_secs: 3600,
         recovery_period_secs: None,
         group_name: group.map(str::to_owned),
+        group_id: None,
         owner_user_id: None,
         regions: None,
     };
     store
-        .create(org, nt, WriteSource::Ui, i64::MAX, i64::MAX)
+        .create(org, nt, WriteSource::Ui, None, i64::MAX, i64::MAX)
         .await
         .unwrap()
         .id
@@ -311,11 +312,19 @@ async fn an_update_can_decline_to_claim_authorship() {
         renotify_interval_secs: 3600,
         recovery_period_secs: None,
         group_name: None,
+        group_id: None,
         owner_user_id: None,
         regions: None,
     };
     let id = store
-        .create(org.id, declared, WriteSource::Terraform, i64::MAX, i64::MAX)
+        .create(
+            org.id,
+            declared,
+            WriteSource::Terraform,
+            None,
+            i64::MAX,
+            i64::MAX,
+        )
         .await
         .unwrap()
         .id;
@@ -398,6 +407,7 @@ async fn the_recovery_period_round_trips_through_every_write() {
         renotify_interval_secs: 3600,
         recovery_period_secs: Some(secs),
         group_name: None,
+        group_id: None,
         owner_user_id: None,
         regions: None,
     };
@@ -407,6 +417,7 @@ async fn the_recovery_period_round_trips_through_every_write() {
             org.id,
             held("single", 600),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -429,6 +440,7 @@ async fn the_recovery_period_round_trips_through_every_write() {
                 },
             ],
             WriteSource::Api,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -530,6 +542,7 @@ async fn a_bulk_tag_add_stops_at_the_cap_and_says_which_monitor_was_full() {
         renotify_interval_secs: 3600,
         recovery_period_secs: None,
         group_name: None,
+        group_id: None,
         owner_user_id: None,
         regions: None,
     };
@@ -540,6 +553,7 @@ async fn a_bulk_tag_add_stops_at_the_cap_and_says_which_monitor_was_full() {
             org.id,
             make(full, "crowded"),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )
@@ -551,6 +565,7 @@ async fn a_bulk_tag_add_stops_at_the_cap_and_says_which_monitor_was_full() {
             org.id,
             make(vec!["prod".into()], "roomy"),
             WriteSource::Ui,
+            None,
             i64::MAX,
             i64::MAX,
         )

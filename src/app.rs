@@ -161,6 +161,7 @@ pub struct AppState {
     /// `db` like [`Self::incident_ops_store`] so the constructor signature is
     /// unchanged.
     pub escalation_policy_store: Arc<dyn crate::storage::EscalationPolicyStore>,
+    pub monitor_group_store: Arc<dyn crate::storage::MonitorGroupStore>,
     /// On-call schedule config (owner CRUD + the who-is-on-call resolver).
     pub on_call_store: Arc<dyn crate::storage::OnCallStore>,
     /// Per-member contact channels paged when a user/schedule target resolves.
@@ -448,6 +449,10 @@ impl AppState {
                 Some(pool) => Arc::new(crate::storage::PgEscalationPolicyStore::new(pool)),
                 None => Arc::new(crate::storage::InMemoryEscalationPolicyStore::new()),
             };
+        let monitor_group_store: Arc<dyn crate::storage::MonitorGroupStore> = match db.clone() {
+            Some(pool) => Arc::new(crate::storage::PgMonitorGroupStore::new(pool)),
+            None => Arc::new(crate::storage::InMemoryMonitorGroupStore::new()),
+        };
         let on_call_store: Arc<dyn crate::storage::OnCallStore> = match db.clone() {
             Some(pool) => Arc::new(crate::storage::PgOnCallStore::new(pool)),
             None => Arc::new(crate::storage::InMemoryOnCallStore::new()),
@@ -507,6 +512,7 @@ impl AppState {
             incident_narration_store,
             incident_ops_store,
             escalation_policy_store,
+            monitor_group_store,
             on_call_store,
             contact_store,
             linked_app_store,

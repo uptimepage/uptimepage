@@ -170,6 +170,16 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
         )
         .route("/tags", get(handlers::tags::list_tags))
         .route(
+            "/groups",
+            get(handlers::groups::list).post(handlers::groups::create),
+        )
+        .route(
+            "/groups/{id}",
+            get(handlers::groups::get)
+                .patch(handlers::groups::update)
+                .delete(handlers::groups::delete),
+        )
+        .route(
             "/dashboard/summary",
             get(handlers::dashboard::dashboard_summary)
                 .layer(Extension(handlers::dashboard::summary_cache())),
@@ -333,6 +343,11 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
             "/targets/{id}/escalation-policy",
             get(handlers::escalation_policies::get_target_policy)
                 .put(handlers::escalation_policies::set_target_policy),
+        )
+        .route(
+            "/groups/{id}/escalation-policy",
+            get(handlers::escalation_policies::get_group_policy)
+                .put(handlers::escalation_policies::set_group_policy),
         )
         .route(
             "/on-call/schedules",

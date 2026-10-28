@@ -379,6 +379,7 @@ impl McpServer {
                     Some(g.to_string())
                 }
             }),
+            group_id: None,
             owner_user_id: None,
             regions: args.regions.clone(),
         };
@@ -435,7 +436,14 @@ impl McpServer {
         let created = self
             .state
             .target_ops()
-            .create_target(auth.org, new, WriteSource::Api, &plan, regions.clone())
+            .create_target(
+                auth.org,
+                new,
+                WriteSource::Api,
+                Some(auth.user_id),
+                &plan,
+                regions.clone(),
+            )
             .await
             .map_err(config_error)?;
 
@@ -577,7 +585,7 @@ impl McpServer {
 
     /// The org's channel inventory, read once so every diff and prompt names
     /// the same rows. Empty when the caller is not touching bindings.
-    async fn channels_for_binding(
+    pub(super) async fn channels_for_binding(
         &self,
         auth: &McpAuth,
         binding: bool,
@@ -679,6 +687,11 @@ impl McpServer {
         validate_recovery_period(update.recovery_period_secs).map_err(config_error)?;
         if let Some(Some(group)) = update.group_name.as_ref() {
             validate_group_name(Some(group.as_str())).map_err(config_error)?;
+            self.state
+                .target_ops()
+                .check_group_room(auth.org, Some(auth.user_id), Some(group.as_str()))
+                .await
+                .map_err(config_error)?;
         }
         if update.region_policy.is_some() {
             let available = self

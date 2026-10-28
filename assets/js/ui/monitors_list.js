@@ -264,6 +264,12 @@
         runRowAction(action);
         return;
       }
+      const groupAction = e.target.closest("[data-group-action]");
+      if (groupAction && openMenu && openMenu.contains(groupAction)) {
+        e.preventDefault();
+        runGroupAction(groupAction);
+        return;
+      }
       if (openMenu && !openMenu.contains(e.target)) closeOpenMenu();
     });
     ROOT.addEventListener("keydown", e => {
@@ -309,6 +315,45 @@
       const refresh = bar && bar.dataset.refreshUrl;
       const rows = ROOT.getElementById("target-rows");
       if (window.htmx && refresh && rows) {
+        window.htmx.ajax("GET", refresh, { target: "#target-rows", swap: "outerHTML" });
+      } else {
+        window.location.reload();
+      }
+    } catch (err) {
+      window.smToast({ message: "Network error: " + err.message });
+    }
+  }
+
+  // Turns alerting as one on or off from the group header, after a confirm.
+  async function runGroupAction(btn) {
+    const on = btn.dataset.alertAsOne === "true";
+    const n = Number(btn.dataset.groupTotal) || 0;
+    const ok = await window.smConfirm({
+      title: on ? "Alert as one?" : "Stop alerting as one?",
+      body: on
+        ? `From the next failure, the ${n} monitor(s) in this group open one incident and page the group's channels; their own channels and policy stay quiet. Pick the group's channels in its settings. An incident open now ends the way it started.`
+        : "From the next failure, each monitor in this group alerts on its own channels again. An incident open now ends the way it started.",
+      confirmLabel: on ? "Alert as one" : "Turn off",
+    });
+    if (!ok) return;
+    closeOpenMenu();
+    try {
+      const r = await fetch(`/api/v1/groups/${btn.dataset.groupId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "X-Requested-With": "uptimepage",
+        },
+        body: JSON.stringify({ alert_as_one: on }),
+      });
+      if (!r.ok) {
+        window.smToast({ message: "Action failed: " + r.status });
+        return;
+      }
+      const bar = ROOT.getElementById("monitors-bulk");
+      const refresh = bar && bar.dataset.refreshUrl;
+      if (window.htmx && refresh) {
         window.htmx.ajax("GET", refresh, { target: "#target-rows", swap: "outerHTML" });
       } else {
         window.location.reload();

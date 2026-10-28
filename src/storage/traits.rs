@@ -180,6 +180,7 @@ pub trait TargetStore: Send + Sync {
         org: OrgId,
         new: NewTarget,
         source: WriteSource,
+        actor: Option<UserId>,
         max_targets: i64,
         max_flow_checks: i64,
     ) -> Result<Target>;
@@ -207,6 +208,7 @@ pub trait TargetStore: Send + Sync {
         org: OrgId,
         items: Vec<PlacedTarget>,
         source: WriteSource,
+        actor: Option<UserId>,
         max_targets: i64,
         max_flow_checks: i64,
     ) -> Result<Vec<Target>>;

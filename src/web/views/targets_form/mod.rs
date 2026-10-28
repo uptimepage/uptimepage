@@ -26,9 +26,10 @@ pub use fields::{
 };
 pub(crate) use model::KIND_CARDS;
 pub use model::{
-    ChannelChoice, ConfirmationChoice, FormModel, IntervalChoice, KindCard, OwnerChoice,
-    RegionChoice, RegionGroup, SecondsChoice, ThresholdChoice,
+    ChannelChoice, ConfirmationChoice, FormModel, GroupAlertNote, IntervalChoice, KindCard,
+    OwnerChoice, RegionChoice, RegionGroup, SecondsChoice, ThresholdChoice, renotify_choices,
 };
+pub(crate) use options::channel_choices;
 pub use prefill::NewParams;
 
 pub(crate) use from_target::http_fields_from;
@@ -155,7 +156,21 @@ pub async fn edit_form(
         .ok_or_else(|| AppError::not_found("TARGET_NOT_FOUND", "monitor not found"))?;
     let alerts = target.alerts.clone();
     let region_policy = target.region_policy;
+    let group_alert = match target.group_id {
+        Some(g) => state
+            .monitor_group_store
+            .get(org, g)
+            .await?
+            .filter(|g| g.alert_as_one)
+            .map(|g| GroupAlertNote {
+                id: g.id.to_string(),
+                name: g.name,
+                tags: g.tags,
+            }),
+        None => None,
+    };
     let mut form = form_from_target(target)?;
+    form.group_alert = group_alert;
     let owner_id = form.owner_user_id.clone();
     let (channels, owner_options, group_options, tag_options, plan, available) =
         form_options(&state, org, &alerts, &owner_id).await?;
