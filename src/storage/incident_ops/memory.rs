@@ -10,16 +10,16 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::domain::{
-    ExternalId, IncidentAcknowledgement, IncidentEvent, IncidentEventKind, IncidentMetrics,
-    IncidentNotification, IncidentOrigin, IncidentSeverity, IncidentState, IncidentTransition,
-    IncidentVisibility, MetricBucket, MonitorIncidentCount, NewIncidentNotification,
-    NewManualIncident, NotificationOutcome, NotificationStatus, OpsIncident, OrgId, UserId,
-    next_state,
+    ExternalId, IncidentAcknowledgement, IncidentEvent, IncidentEventKind, IncidentGroupLink,
+    IncidentMetrics, IncidentNotification, IncidentOrigin, IncidentSeverity, IncidentState,
+    IncidentTransition, IncidentVisibility, MetricBucket, MonitorIncidentCount,
+    NewIncidentNotification, NewManualIncident, NotificationOutcome, NotificationStatus,
+    OpsIncident, OrgId, UserId, next_state,
 };
 use crate::error::Result;
 
 use super::{
-    Acknowledged, Actor, ClaimedEscalation, ClosingNotice, DueClosingNotices, DueIncident,
+    Acknowledged, Actor, Attach, ClaimedEscalation, ClosingNotice, DueClosingNotices, DueIncident,
     EmergencyAck, FanOut, FanOutKind, INCIDENT_DETAIL_ROW_CAP, IncidentOpsFilter, IncidentOpsStore,
     IncidentSort, IncidentStateCounts, LifecycleOutcome, OwedPage, PendingNotification,
     QUEUED_TAKEOVER_SECS, pages_with_monitor, status_page_required,
@@ -45,6 +45,18 @@ struct MemState {
     closing_notices: HashMap<Uuid, DateTime<Utc>>,
     /// Owed first pages by incident, as `incidents.page_owed_at`.
     owed_pages: HashMap<Uuid, DateTime<Utc>>,
+    /// Members a group page's row names, by row, as
+    /// `incident_notifications.member_incident_ids`.
+    covered: HashMap<Uuid, Vec<Uuid>>,
+}
+
+fn open_member_ids(state: &MemState, group_incident: Uuid) -> Vec<Uuid> {
+    state
+        .incidents
+        .iter()
+        .filter(|i| i.group.group_incident_id == Some(group_incident) && i.ended_at.is_none())
+        .map(|i| i.id)
+        .collect()
 }
 
 /// Whether a new episode of `incident` owes its first page: it may page.
@@ -335,6 +347,41 @@ impl InMemoryIncidentOpsStore {
         }
     }
 
+    fn refuse(&self, id: Uuid, transition: IncidentTransition) -> Result<()> {
+        let g = self.inner.lock();
+        match g
+            .incidents
+            .iter()
+            .find(|i| i.id == id)
+            .and_then(|i| super::group_refusal(i, transition))
+        {
+            Some(refused) => Err(refused),
+            None => Ok(()),
+        }
+    }
+
+    /// As the Postgres store: a group incident resolved takes its members
+    /// still open with it, owing no notice of their own.
+    fn resolve_members(&self, group_incident: Uuid, actor: Actor) {
+        let mut g = self.inner.lock();
+        let now = Utc::now();
+        let mut resolved = Vec::new();
+        for i in g
+            .incidents
+            .iter_mut()
+            .filter(|i| i.group.group_incident_id == Some(group_incident) && i.ended_at.is_none())
+        {
+            i.state = IncidentState::Resolved;
+            i.ended_at = Some(i.recovering_since.take().unwrap_or(now));
+            i.resolved_by = actor.user_id();
+            i.next_escalation_at = None;
+            resolved.push(i.id);
+        }
+        for id in resolved {
+            Self::push_event(&mut g, id, IncidentEventKind::Resolved, actor, None);
+        }
+    }
+
     fn resolve_by(
         &self,
         id: Uuid,
@@ -342,24 +389,33 @@ impl InMemoryIncidentOpsStore {
         actor: Actor,
         note: Option<String>,
         expect_generation: Option<i64>,
-    ) -> LifecycleOutcome {
-        self.apply(
-            id,
-            transition,
-            IncidentEventKind::Resolved,
-            actor,
-            note,
-            expect_generation,
-            |i| {
-                i.state = IncidentState::Resolved;
-                let recovered = i.recovering_since.take();
-                i.ended_at
-                    .get_or_insert_with(|| recovered.unwrap_or_else(Utc::now));
-                i.resolved_by = actor.user_id();
-                i.next_escalation_at = None;
-            },
-        )
-        .outcome
+    ) -> Result<LifecycleOutcome> {
+        self.refuse(id, transition)?;
+        let outcome = self
+            .apply(
+                id,
+                transition,
+                IncidentEventKind::Resolved,
+                actor,
+                note,
+                expect_generation,
+                |i| {
+                    i.state = IncidentState::Resolved;
+                    let recovered = i.recovering_since.take();
+                    i.ended_at
+                        .get_or_insert_with(|| recovered.unwrap_or_else(Utc::now));
+                    i.resolved_by = actor.user_id();
+                    i.next_escalation_at = None;
+                },
+            )
+            .outcome;
+        if let LifecycleOutcome::Updated(inc) = &outcome
+            && inc.origin == IncidentOrigin::Group
+            && inc.state == IncidentState::Resolved
+        {
+            self.resolve_members(id, actor);
+        }
+        Ok(outcome)
     }
 }
 
@@ -477,22 +533,29 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         let mean = |vals: &[f64]| -> Option<f64> {
             (!vals.is_empty()).then(|| vals.iter().sum::<f64>() / vals.len() as f64)
         };
-        let mtta: Vec<f64> = in_window
+        let counted: Vec<&OpsIncident> = in_window
+            .iter()
+            .copied()
+            .filter(|i| i.group.group_incident_id.is_none())
+            .collect();
+        let deleted_with =
+            |i: &OpsIncident| i.closed_by_monitor_delete || i.group.closed_by_group_delete;
+        let mtta: Vec<f64> = counted
             .iter()
             .filter_map(|i| {
                 i.acknowledged_at
                     .map(|a| (a - i.started_at).num_seconds() as f64)
             })
             .collect();
-        let mttr: Vec<f64> = in_window
+        let mttr: Vec<f64> = counted
             .iter()
-            .filter(|i| !i.closed_by_monitor_delete)
+            .filter(|i| !deleted_with(i))
             .filter_map(|i| i.ended_at.map(|e| (e - i.started_at).num_seconds() as f64))
             .collect();
 
         let tally = |key_of: &dyn Fn(&OpsIncident) -> String| {
             let mut counts: std::collections::HashMap<String, u64> = Default::default();
-            for i in &in_window {
+            for i in &counted {
                 *counts.entry(key_of(i)).or_default() += 1;
             }
             let mut v: Vec<MetricBucket> = counts
@@ -526,31 +589,28 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
 
         Ok(IncidentMetrics {
             window_days,
-            total: in_window.len() as u64,
+            total: counted.len() as u64,
             mtta_secs: mean(&mtta),
             mttr_secs: mean(&mttr),
             by_severity: tally(&|i| i.severity.as_db_str().to_string()),
             by_state: tally(&|i| i.state.as_db_str().to_string()),
-            auto_resolved: in_window
+            auto_resolved: counted
                 .iter()
                 .filter(|i| {
                     i.state == IncidentState::Resolved
                         && i.resolved_by.is_none()
-                        && !i.closed_by_monitor_delete
+                        && !deleted_with(i)
                 })
                 .count() as u64,
-            human_resolved: in_window
+            human_resolved: counted
                 .iter()
                 .filter(|i| {
                     i.state == IncidentState::Resolved
                         && i.resolved_by.is_some()
-                        && !i.closed_by_monitor_delete
+                        && !deleted_with(i)
                 })
                 .count() as u64,
-            closed_with_monitor: in_window
-                .iter()
-                .filter(|i| i.closed_by_monitor_delete)
-                .count() as u64,
+            closed_with_monitor: counted.iter().filter(|i| deleted_with(i)).count() as u64,
             top_monitors,
         })
     }
@@ -621,6 +681,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         note: Option<String>,
         expect_generation: Option<i64>,
     ) -> Result<Acknowledged> {
+        self.refuse(id, IncidentTransition::Acknowledge)?;
         Ok(self.apply(
             id,
             IncidentTransition::Acknowledge,
@@ -646,7 +707,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         actor: Actor,
         note: Option<String>,
     ) -> Result<LifecycleOutcome> {
-        Ok(self.resolve_by(id, IncidentTransition::Resolve, actor, note, None))
+        self.resolve_by(id, IncidentTransition::Resolve, actor, note, None)
     }
 
     async fn resolve_episode(
@@ -656,13 +717,13 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         actor: Actor,
         episode: i64,
     ) -> Result<LifecycleOutcome> {
-        Ok(self.resolve_by(
+        self.resolve_by(
             id,
             IncidentTransition::ResolveOpen,
             actor,
             None,
             Some(episode),
-        ))
+        )
     }
 
     async fn generation(&self, _org: OrgId, id: Uuid) -> Result<Option<i64>> {
@@ -670,6 +731,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
     }
 
     async fn auto_resolve(&self, _org: OrgId, id: Uuid) -> Result<LifecycleOutcome> {
+        self.refuse(id, IncidentTransition::AutoResolve)?;
         Ok(self
             .apply(
                 id,
@@ -697,6 +759,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         actor: Actor,
         note: Option<String>,
     ) -> Result<LifecycleOutcome> {
+        self.refuse(id, IncidentTransition::Reopen)?;
         let ended_with_monitor = self
             .inner
             .lock()
@@ -771,6 +834,9 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         let Some(idx) = g.incidents.iter().position(|i| i.id == id) else {
             return Ok(None);
         };
+        if g.incidents[idx].origin == IncidentOrigin::Group {
+            return Err(super::group_incident_internal());
+        }
         if g.incidents[idx].target_id.is_none() {
             let ended_with_monitor = g.incidents[idx].ended_with_monitor();
             let shown = g.status_pages.get(&id).cloned().unwrap_or_default();
@@ -821,16 +887,18 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
     }
 
     async fn closed_with_monitors(&self, _org: OrgId, monitors: &[Uuid]) -> Result<Vec<Uuid>> {
-        Ok(self
-            .inner
-            .lock()
+        let g = self.inner.lock();
+        let deleted = |i: &OpsIncident| i.target_ref.is_some_and(|r| monitors.contains(&r));
+        let groups: Vec<Uuid> = g
             .incidents
             .iter()
-            .filter(|i| {
-                i.closed_by_monitor_delete
-                    && i.target_id.is_none()
-                    && i.target_ref.is_some_and(|r| monitors.contains(&r))
-            })
+            .filter(|i| deleted(i))
+            .filter_map(|i| i.group.group_incident_id)
+            .collect();
+        Ok(g.incidents
+            .iter()
+            .filter(|i| i.closed_by_monitor_delete)
+            .filter(|i| (i.target_id.is_none() && deleted(i)) || groups.contains(&i.id))
             .map(|i| i.id)
             .collect())
     }
@@ -924,13 +992,11 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
     async fn record_fan_out(&self, f: FanOut) -> Result<Option<Vec<Uuid>>> {
         let mut g = self.inner.lock();
         let Some(idx) = g.incidents.iter().position(|i| {
-            i.id == f.incident_id
-                && i.target_id.is_some()
-                && i.paging_enabled
-                && i.state != IncidentState::Resolved
+            i.id == f.incident_id && may_page(i) && i.state != IncidentState::Resolved
         }) else {
             return Ok(None);
         };
+        let group = g.incidents[idx].origin == IncidentOrigin::Group;
         if reopen_count(&g, f.incident_id) != f.episode {
             return Ok(None);
         }
@@ -989,16 +1055,144 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
                 }
                 *g.renotify_counts.entry(f.incident_id).or_default() += 1;
             }
+            // Members are not numbered here, so a digest names everyone down.
+            FanOutKind::MemberDigest => {
+                if !group {
+                    return Ok(None);
+                }
+            }
         }
-        let ids = f
+        let ids: Vec<Uuid> = f
             .rows
             .into_iter()
             .map(|n| push_notification(&mut g, n))
             .collect();
+        if group {
+            let members = open_member_ids(&g, f.incident_id);
+            for id in &ids {
+                g.covered.insert(*id, members.clone());
+            }
+        }
         for (kind, message) in f.events {
             Self::push_event(&mut g, f.incident_id, kind, Actor::System, Some(message));
         }
         Ok(Some(ids))
+    }
+
+    async fn notice_members(&self, _org: OrgId, notification_id: Uuid) -> Result<Vec<String>> {
+        let g = self.inner.lock();
+        let Some(members) = g.covered.get(&notification_id) else {
+            return Ok(Vec::new());
+        };
+        Ok(members
+            .iter()
+            .filter_map(|m| g.incidents.iter().find(|i| i.id == *m))
+            .filter_map(|i| i.target_name.clone())
+            .collect())
+    }
+
+    async fn attach_member(&self, _org: OrgId, member: Uuid) -> Result<Attach> {
+        let mut g = self.inner.lock();
+        let Some(m) = g
+            .incidents
+            .iter()
+            .find(|i| i.id == member && i.origin == IncidentOrigin::Monitor)
+        else {
+            return Ok(Attach::Settled);
+        };
+        if m.ended_at.is_some() || m.group.group_incident_id.is_some() {
+            return Ok(Attach::Settled);
+        }
+        let Some(group) = m.group.routed_group_id else {
+            return Ok(Attach::Standalone);
+        };
+        let (started_at, target_name) = (m.started_at, m.target_name.clone());
+        let open = g.incidents.iter().find(|i| {
+            i.origin == IncidentOrigin::Group
+                && i.group.group_id == Some(group)
+                && i.ended_at.is_none()
+        });
+        let (group_incident, opened) = match open {
+            Some(i) => (i.id, false),
+            None => {
+                let now = Utc::now();
+                let id = Uuid::now_v7();
+                g.incidents.push(OpsIncident {
+                    id,
+                    target_id: None,
+                    target_ref: None,
+                    target_name: None,
+                    target_kind: None,
+                    closed_by_monitor_delete: false,
+                    group: IncidentGroupLink {
+                        group_id: Some(group),
+                        ..Default::default()
+                    },
+                    title: None,
+                    state: IncidentState::Triggered,
+                    severity: Default::default(),
+                    urgency: Default::default(),
+                    origin: IncidentOrigin::Group,
+                    visibility: IncidentVisibility::Internal,
+                    paging_enabled: true,
+                    counts_as_downtime: true,
+                    started_at,
+                    ended_at: None,
+                    acknowledged_at: None,
+                    acknowledged_by: None,
+                    assigned_to: None,
+                    resolved_by: None,
+                    escalation_policy_id: None,
+                    escalation_level: 0,
+                    escalation_round: 0,
+                    next_escalation_at: None,
+                    recovering_since: None,
+                    check_count: 0,
+                    error_sample: None,
+                    regions_down: Vec::new(),
+                    regions_up: Vec::new(),
+                    created_at: now,
+                    updated_at: now,
+                });
+                g.owed_pages.insert(id, now);
+                (id, true)
+            }
+        };
+        let seq = g
+            .incidents
+            .iter()
+            .filter(|i| i.group.group_incident_id == Some(group_incident))
+            .count() as i32
+            + 1;
+        if let Some(m) = g.incidents.iter_mut().find(|i| i.id == member) {
+            m.group.group_incident_id = Some(group_incident);
+        }
+        g.owed_pages.remove(&member);
+        Self::push_event(
+            &mut g,
+            group_incident,
+            IncidentEventKind::MemberDown,
+            Actor::System,
+            target_name,
+        );
+        Ok(Attach::Joined {
+            group_incident,
+            seq,
+            opened,
+        })
+    }
+
+    async fn due_member_digests(&self, _limit: usize) -> Result<Vec<super::DueDigest>> {
+        Ok(Vec::new())
+    }
+
+    async fn member_digest_due(&self, _org: OrgId, _group_incident: Uuid) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// Members' monitors are not held here, so any member down is watched.
+    async fn group_watched(&self, _org: OrgId, group_incident: Uuid) -> Result<bool> {
+        Ok(!open_member_ids(&self.inner.lock(), group_incident).is_empty())
     }
 
     async fn pending_notifications(

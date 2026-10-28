@@ -32,7 +32,7 @@ use crate::domain::{NotificationReason, OrgId, UserId};
 use crate::http_outbound::OutboundHttpClient;
 use crate::storage::orgs::OrgDirectory;
 use crate::storage::{
-    ContactStore, EscalationPolicyStore, IncidentOpsStore, LinkedAppStore,
+    ContactStore, EscalationPolicyStore, IncidentOpsStore, LinkedAppStore, MonitorGroupStore,
     NotificationChannelStore, OnCallStore, TargetStore,
 };
 
@@ -46,6 +46,7 @@ mod deliver;
 mod episode;
 #[cfg(test)]
 mod fan_out_tests;
+mod group;
 #[cfg(test)]
 mod owed_page_tests;
 mod receipts;
@@ -82,6 +83,7 @@ pub struct EngineDeps {
     pub contacts: Arc<dyn ContactStore>,
     pub linked_apps: Arc<dyn LinkedAppStore>,
     pub targets: Arc<dyn TargetStore>,
+    pub groups: Arc<dyn MonitorGroupStore>,
     pub channels: Arc<dyn NotificationChannelStore>,
     pub maintenance: Arc<dyn crate::storage::MaintenanceStore>,
     pub orgs: Arc<dyn OrgDirectory>,
@@ -114,6 +116,7 @@ struct Worker {
     contacts: Arc<dyn ContactStore>,
     linked_apps: Arc<dyn LinkedAppStore>,
     targets: Arc<dyn TargetStore>,
+    groups: Arc<dyn MonitorGroupStore>,
     channels: Arc<dyn NotificationChannelStore>,
     maintenance: Arc<dyn crate::storage::MaintenanceStore>,
     orgs: Arc<dyn OrgDirectory>,
@@ -151,6 +154,7 @@ impl EscalationEngine {
             contacts,
             linked_apps,
             targets,
+            groups,
             channels,
             maintenance,
             orgs,
@@ -174,6 +178,7 @@ impl EscalationEngine {
                 contacts,
                 linked_apps,
                 targets,
+                groups,
                 channels,
                 maintenance,
                 orgs,
@@ -243,6 +248,17 @@ impl EscalationEngine {
                 }
             }
         }
+    }
+
+    /// Pages one signal as the run loop would, for driving the engine against
+    /// a real store from outside it.
+    pub async fn handle(&self, sig: IncidentSignal) -> crate::error::Result<()> {
+        self.w.page(sig.org, sig.incident_id, sig.reason).await
+    }
+
+    /// One sweep, as a tick runs it.
+    pub async fn sweep_once(&self) {
+        self.w.sweep().await
     }
 
     // Test entry points — production drives these through `run` + the sweep.

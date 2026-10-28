@@ -8,9 +8,9 @@ use uuid::Uuid;
 
 use crate::domain::{ActorType, CheckStatus, IncidentEventKind, OrgId, Recovered};
 use crate::error::Result;
-use crate::storage::group_incidents::{self, MemberClose};
+use crate::storage::group_incidents::{self, MemberClose, MemberLeft};
 
-use super::{IncidentStore, NewOpenIncident, OpenIncident};
+use super::{Closed, IncidentStore, NewOpenIncident, OpenIncident};
 
 /// The timeline entry an escalation leaves, so the incident shows when it got worse.
 const ESCALATED_NOTE: &str = "raised to down: the monitor is confirmed down";
@@ -31,7 +31,7 @@ impl PgIncidentStore {
         org: OrgId,
         incident_id: Uuid,
         ended_at: DateTime<Utc>,
-    ) -> Result<bool> {
+    ) -> Result<Option<Closed>> {
         let route: Option<Option<Uuid>> = sqlx::query_scalar(
             "SELECT routed_group_id FROM incidents \
              WHERE id = $1 AND org_id = $2 AND ended_at IS NULL",
@@ -42,7 +42,7 @@ impl PgIncidentStore {
         .await
         .context("incident close: read route")?;
         let Some(route) = route else {
-            return Ok(false);
+            return Ok(None);
         };
         let mut tx = self.pool.begin().await.context("incident close: begin")?;
         // A group delete since the plain close cleared the route, so the
@@ -52,7 +52,7 @@ impl PgIncidentStore {
                 match group_incidents::lock_for_member_close(&mut tx, org, incident_id, group)
                     .await?
                 {
-                    MemberClose::Gone => return Ok(false),
+                    MemberClose::Gone => return Ok(None),
                     MemberClose::Unrouted => false,
                     MemberClose::Routed => true,
                 }
@@ -69,13 +69,23 @@ impl PgIncidentStore {
             .await
             .context("incident close: routed")?;
         let Some((_, group_incident)) = closed else {
-            return Ok(false);
+            return Ok(None);
         };
-        if let Some(group_incident) = group_incident {
-            group_incidents::member_closed(&mut tx, org, group_incident, incident_id).await?;
+        let mut closed = Closed::default();
+        if let Some(group_incident) = group_incident
+            && group_incidents::member_closed(
+                &mut tx,
+                org,
+                group_incident,
+                incident_id,
+                MemberLeft::Recovered,
+            )
+            .await?
+        {
+            closed.group_incident = Some(group_incident);
         }
         tx.commit().await.context("incident close: commit")?;
-        Ok(true)
+        Ok(Some(closed))
     }
 }
 
@@ -256,15 +266,30 @@ impl IncidentStore for PgIncidentStore {
         // A public one also gets its opening update here: subscriber fan-out
         // sends per update, and `close` only ever writes the closing one. The
         // first page is owed from this statement, so a signal lost after the
-        // commit is still paged.
+        // commit is still paged. The route is fixed here: a monitor in a group
+        // that alerts as one at this moment pages through the group, however
+        // the switch moves before the incident ends.
         let mut tx = self
             .pool
             .begin()
             .await
             .context("incident insert_open: begin")?;
+        // The route, with its group row locked before the insert's foreign
+        // keys share-lock the monitor: a group delete takes the group first.
+        let routed: Option<Uuid> = sqlx::query_scalar(
+            "SELECT g.id FROM monitor_groups g \
+             JOIN targets t ON t.group_id = g.id AND t.org_id = g.org_id \
+             WHERE t.id = $1 AND t.org_id = $2 AND g.alert_as_one \
+             FOR KEY SHARE OF g",
+        )
+        .bind(new.target_id)
+        .bind(org.0)
+        .fetch_optional(&mut *tx)
+        .await
+        .context("incident insert_open: lock group")?;
         let row: Option<(Uuid,)> = sqlx::query_as(
             r#"WITH opened AS (
-                   INSERT INTO incidents (org_id, target_id, started_at, status_at_start, check_count, error_sample, region, regions_down, regions_up, origin, visibility, page_owed_at)
+                   INSERT INTO incidents (org_id, target_id, started_at, status_at_start, check_count, error_sample, region, regions_down, regions_up, origin, visibility, page_owed_at, routed_group_id)
                    SELECT $6, $1, $2, $3, $4, $5, $7, $8, $9, 'monitor',
                           CASE WHEN EXISTS (
                               SELECT 1 FROM status_page_components spc
@@ -272,7 +297,7 @@ impl IncidentStore for PgIncidentStore {
                               WHERE spc.target_id = $1 AND spc.org_id = $6 AND sp.enabled = true
                                 AND sp.plan_hold_at IS NULL
                           ) THEN 'public' ELSE 'internal' END,
-                          now()
+                          now(), $11
                    WHERE NOT EXISTS (
                        SELECT 1 FROM incidents c
                        WHERE c.org_id = $6 AND c.target_id = $1 AND c.origin = 'monitor'
@@ -299,6 +324,7 @@ impl IncidentStore for PgIncidentStore {
         .bind(&new.regions_down)
         .bind(&new.regions_up)
         .bind(crate::storage::incident_ops::AUTO_OPENED_MESSAGE)
+        .bind(routed)
         .fetch_optional(&mut *tx)
         .await
         .context("incident insert_open")?;
@@ -334,7 +360,12 @@ impl IncidentStore for PgIncidentStore {
         Ok(Some(id))
     }
 
-    async fn close(&self, org: OrgId, incident_id: Uuid, ended_at: DateTime<Utc>) -> Result<bool> {
+    async fn close(
+        &self,
+        org: OrgId,
+        incident_id: Uuid,
+        ended_at: DateTime<Utc>,
+    ) -> Result<Option<Closed>> {
         let closed: Option<(Uuid, Option<Uuid>)> = sqlx::query_as(CLOSE_SQL)
             .bind(incident_id)
             .bind(ended_at)
@@ -345,7 +376,7 @@ impl IncidentStore for PgIncidentStore {
             .await
             .context("incident close")?;
         if closed.is_some() {
-            return Ok(true);
+            return Ok(Some(Closed::default()));
         }
         self.close_routed(org, incident_id, ended_at).await
     }
@@ -419,6 +450,14 @@ impl IncidentStore for PgIncidentStore {
         incident_id: Uuid,
         error_sample: Option<String>,
     ) -> Result<()> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .context("incident escalate: begin")?;
+        // The group incident before its member, the order an attach takes
+        // them, and in one transaction so the group cannot stay degraded.
+        raise_group(&mut *tx, org, incident_id).await?;
         sqlx::query(
             "WITH raised AS ( \
                  UPDATE incidents SET status_at_start = 'down', \
@@ -435,11 +474,41 @@ impl IncidentStore for PgIncidentStore {
         .bind(IncidentEventKind::Note.as_db_str())
         .bind(ActorType::System.as_db_str())
         .bind(ESCALATED_NOTE)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .context("incident escalate")?;
-        Ok(())
+        tx.commit().await.context("incident escalate: commit")?;
+        // An attach that held the member while it waited read it degraded and
+        // has committed by now; this sees that join.
+        raise_group(&self.pool, org, incident_id).await
     }
+}
+
+/// Raises the group incident `member` belongs to, if it is still below down.
+async fn raise_group<'e, E>(db: E, org: OrgId, member: Uuid) -> Result<()>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query(
+        "WITH raised AS ( \
+             UPDATE incidents g SET status_at_start = 'down', updated_at = now() \
+             FROM incidents m \
+             WHERE m.id = $1 AND m.org_id = $2 AND m.ended_at IS NULL \
+               AND g.id = m.group_incident_id AND g.org_id = m.org_id \
+               AND g.ended_at IS NULL AND g.status_at_start <> 'down' \
+             RETURNING g.id, g.org_id) \
+         INSERT INTO incident_events (org_id, incident_id, kind, actor_type, message) \
+         SELECT org_id, id, $3, $4, $5 FROM raised",
+    )
+    .bind(member)
+    .bind(org.0)
+    .bind(IncidentEventKind::Note.as_db_str())
+    .bind(ActorType::System.as_db_str())
+    .bind(crate::storage::group_incidents::GROUP_RAISED_NOTE)
+    .execute(db)
+    .await
+    .context("incident escalate group")?;
+    Ok(())
 }
 
 fn status_to_db(s: CheckStatus) -> Option<&'static str> {

@@ -20,8 +20,10 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::domain::OrgId;
+use std::collections::HashMap;
+
 use crate::domain::quota::RegionCaps;
+use crate::domain::{OrgId, TargetAlerts};
 use crate::error::Result;
 use crate::storage::admin::{
     NOT_HELD_PREDICATE, PROBED_KIND_PREDICATE, REGION_CAP_JOIN, REGION_CAP_PREDICATE,
@@ -33,6 +35,55 @@ pub struct OpenSilence {
     pub org: OrgId,
     pub target_id: Uuid,
     pub notified: bool,
+    pub silent_since: DateTime<Utc>,
+}
+
+/// What resolving a silence did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resolved {
+    /// Already resolved, by another instance or an earlier tick.
+    Already,
+    /// Resolved; its own resumed notice is owed when it was told it stopped.
+    Alone,
+    /// Resolved inside a group silence, which says it once for every member.
+    InGroup,
+}
+
+/// The group a silent monitor's notices go through: its own, while that group
+/// alerts as one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SilenceGroup {
+    pub id: Uuid,
+    pub name: String,
+    pub alerts: TargetAlerts,
+    pub tags: Vec<String>,
+}
+
+/// A group silence episode whose notice is owed: the opening one, or with
+/// every member back (`finished`) the resumed one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupSilence {
+    pub id: Uuid,
+    pub org: OrgId,
+    pub group_name: String,
+    /// Where its opening notice went, resolved once when it opened.
+    pub channel_ids: Vec<Uuid>,
+    /// Every member it has held, once each, in the order they went silent.
+    pub members: Vec<String>,
+    pub notified: bool,
+    pub finished: bool,
+    /// A member came back, as opposed to every one of them being deleted.
+    pub resumed: bool,
+}
+
+fn first_seen(names: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(names.len());
+    for name in names {
+        if !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    out
 }
 
 #[async_trait]
@@ -66,9 +117,43 @@ pub trait SilenceStore: Send + Sync {
     async fn enter(&self, org: OrgId, target_id: Uuid, at: DateTime<Utc>) -> Result<()>;
     /// Stamp the customer-notified time on an open silence. Idempotent.
     async fn mark_notified(&self, org: OrgId, target_id: Uuid, at: DateTime<Utc>) -> Result<()>;
-    /// Mark an open silence resolved (monitoring resumed). Returns whether this
-    /// call flipped it — so only the winner of a 2-instance race notifies.
-    async fn resolve(&self, org: OrgId, target_id: Uuid, at: DateTime<Utc>) -> Result<bool>;
+    /// Mark an open silence resolved (monitoring resumed), and its open group
+    /// silence membership with it, in one statement. Says whether this call
+    /// flipped it, so only the winner of a 2-instance race notifies.
+    async fn resolve(&self, org: OrgId, target_id: Uuid, at: DateTime<Utc>) -> Result<Resolved>;
+    /// For each of these monitors in a group that alerts as one, that group.
+    async fn alerting_groups(
+        &self,
+        monitors: &[(OrgId, Uuid)],
+    ) -> Result<HashMap<(OrgId, Uuid), SilenceGroup>>;
+    /// Puts these silent members into the group's open silence episode,
+    /// opening one that notifies `channel_ids` when there is none. A monitor
+    /// already in an open episode stays where it is.
+    async fn join_group_silence(
+        &self,
+        org: OrgId,
+        group: &SilenceGroup,
+        channel_ids: &[Uuid],
+        members: &[(Uuid, DateTime<Utc>)],
+    ) -> Result<Uuid>;
+    /// Open episodes owing a notice. A member whose monitor was deleted counts
+    /// as back.
+    async fn group_silences_due(&self) -> Result<Vec<GroupSilence>>;
+    async fn mark_group_silence_notified(
+        &self,
+        org: OrgId,
+        id: Uuid,
+        at: DateTime<Utc>,
+    ) -> Result<()>;
+    /// Ends an episode with every member back; `told` when its resumed notice
+    /// went out.
+    async fn end_group_silence(
+        &self,
+        org: OrgId,
+        id: Uuid,
+        at: DateTime<Utc>,
+        told: bool,
+    ) -> Result<()>;
 }
 
 // ── PostgreSQL implementation ────────────────────────────────────────────────
@@ -76,6 +161,12 @@ pub trait SilenceStore: Send + Sync {
 pub struct PgSilenceStore {
     pool: PgPool,
 }
+
+/// A member of episode `e` still silent: not back, and its monitor not
+/// deleted, which counts as back.
+const STILL_SILENT: &str = "EXISTS (SELECT 1 FROM group_silence_members m \
+     WHERE m.episode_id = e.id AND m.org_id = e.org_id \
+       AND m.resumed_at IS NULL AND m.target_id IS NOT NULL)";
 
 impl PgSilenceStore {
     pub fn new(pool: PgPool) -> Self {
@@ -136,8 +227,8 @@ impl SilenceStore for PgSilenceStore {
     }
 
     async fn list_open(&self) -> Result<Vec<OpenSilence>> {
-        let rows: Vec<(Uuid, Uuid, bool)> = sqlx::query_as(
-            "SELECT org_id, target_id, notified_at IS NOT NULL \
+        let rows: Vec<(Uuid, Uuid, bool, DateTime<Utc>)> = sqlx::query_as(
+            "SELECT org_id, target_id, notified_at IS NOT NULL, silent_since \
              FROM monitor_silence_state WHERE resolved_at IS NULL",
         )
         .fetch_all(&self.pool)
@@ -145,10 +236,11 @@ impl SilenceStore for PgSilenceStore {
         .map_err(|e| anyhow::anyhow!("silence list_open: {e}"))?;
         Ok(rows
             .into_iter()
-            .map(|(o, t, notified)| OpenSilence {
+            .map(|(o, t, notified, silent_since)| OpenSilence {
                 org: OrgId(o),
                 target_id: t,
                 notified,
+                silent_since,
             })
             .collect())
     }
@@ -228,19 +320,262 @@ impl SilenceStore for PgSilenceStore {
         Ok(())
     }
 
-    async fn resolve(&self, org: OrgId, target_id: Uuid, at: DateTime<Utc>) -> Result<bool> {
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "UPDATE monitor_silence_state SET resolved_at = $3 \
-             WHERE target_id = $1 AND org_id = $2 AND resolved_at IS NULL \
-             RETURNING target_id",
+    async fn resolve(&self, org: OrgId, target_id: Uuid, at: DateTime<Utc>) -> Result<Resolved> {
+        let (flipped, grouped): (bool, bool) = sqlx::query_as(
+            "WITH resolved AS ( \
+                 UPDATE monitor_silence_state SET resolved_at = $3 \
+                 WHERE target_id = $1 AND org_id = $2 AND resolved_at IS NULL \
+                 RETURNING target_id \
+             ), resumed AS ( \
+                 UPDATE group_silence_members SET resumed_at = $3 \
+                 WHERE org_id = $2 AND resumed_at IS NULL \
+                   AND target_id IN (SELECT target_id FROM resolved) \
+                 RETURNING id \
+             ) \
+             SELECT EXISTS (SELECT 1 FROM resolved), EXISTS (SELECT 1 FROM resumed)",
         )
         .bind(target_id)
         .bind(org.0)
         .bind(at)
-        .fetch_optional(&self.pool)
+        .fetch_one(&self.pool)
         .await
         .map_err(|e| anyhow::anyhow!("silence resolve: {e}"))?;
-        Ok(row.is_some())
+        Ok(match (flipped, grouped) {
+            (false, _) => Resolved::Already,
+            (true, false) => Resolved::Alone,
+            (true, true) => Resolved::InGroup,
+        })
+    }
+
+    async fn alerting_groups(
+        &self,
+        monitors: &[(OrgId, Uuid)],
+    ) -> Result<HashMap<(OrgId, Uuid), SilenceGroup>> {
+        let (orgs, targets): (Vec<Uuid>, Vec<Uuid>) =
+            monitors.iter().map(|(o, t)| (o.0, *t)).unzip();
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            org_id: Uuid,
+            target_id: Uuid,
+            id: Uuid,
+            name: String,
+            alerts: serde_json::Value,
+            tags: Vec<String>,
+        }
+        let rows: Vec<Row> = sqlx::query_as(concat!(
+            "SELECT t.org_id, t.id AS target_id, g.id, g.name, g.tags, ",
+            crate::storage::channel_bindings::group_alerts_column!("g"),
+            " FROM unnest($1::uuid[], $2::uuid[]) AS m(org_id, target_id) \
+             JOIN targets t ON t.id = m.target_id AND t.org_id = m.org_id \
+             JOIN monitor_groups g ON g.id = t.group_id AND g.org_id = t.org_id \
+             WHERE g.alert_as_one"
+        ))
+        .bind(&orgs)
+        .bind(&targets)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("silence alerting groups: {e}"))?;
+        rows.into_iter()
+            .map(|r| {
+                let alerts = serde_json::from_value(r.alerts)
+                    .map_err(|e| anyhow::anyhow!("silence group alerts: {e}"))?;
+                Ok((
+                    (OrgId(r.org_id), r.target_id),
+                    SilenceGroup {
+                        id: r.id,
+                        name: r.name,
+                        alerts,
+                        tags: r.tags,
+                    },
+                ))
+            })
+            .collect()
+    }
+
+    async fn join_group_silence(
+        &self,
+        org: OrgId,
+        group: &SilenceGroup,
+        channel_ids: &[Uuid],
+        members: &[(Uuid, DateTime<Utc>)],
+    ) -> Result<Uuid> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| anyhow::anyhow!("join group silence: {e}"))?;
+        let mut episode = None;
+        // The open episode is joined under its row lock, which an end takes
+        // too: a member never lands in an episode that ends past it, and one
+        // that ended meanwhile is replaced by a new one.
+        for _ in 0..3 {
+            let opened: Option<Uuid> = sqlx::query_scalar(
+                "INSERT INTO group_silence_episodes (org_id, group_id, group_name, channel_ids) \
+                 VALUES ($1, $2, $3, $4) \
+                 ON CONFLICT (group_id) WHERE ended_at IS NULL DO NOTHING RETURNING id",
+            )
+            .bind(org.0)
+            .bind(group.id)
+            .bind(&group.name)
+            .bind(channel_ids)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| anyhow::anyhow!("open group silence: {e}"))?;
+            episode = match opened {
+                Some(id) => Some(id),
+                None => sqlx::query_scalar(
+                    "SELECT id FROM group_silence_episodes \
+                     WHERE org_id = $1 AND group_id = $2 AND ended_at IS NULL FOR UPDATE",
+                )
+                .bind(org.0)
+                .bind(group.id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| anyhow::anyhow!("find group silence: {e}"))?,
+            };
+            if episode.is_some() {
+                break;
+            }
+        }
+        let episode = episode
+            .ok_or_else(|| anyhow::anyhow!("join group silence: the episode kept ending"))?;
+        let (ids, since): (Vec<Uuid>, Vec<DateTime<Utc>>) = members.iter().copied().unzip();
+        sqlx::query(
+            "INSERT INTO group_silence_members (episode_id, org_id, target_id, target_name, silent_since) \
+             SELECT $1, $2, t.id, t.name, m.since \
+             FROM unnest($3::uuid[], $4::timestamptz[]) AS m(target_id, since) \
+             JOIN targets t ON t.id = m.target_id AND t.org_id = $2 \
+             ON CONFLICT (target_id) WHERE resumed_at IS NULL DO NOTHING",
+        )
+        .bind(episode)
+        .bind(org.0)
+        .bind(&ids)
+        .bind(&since)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| anyhow::anyhow!("join group silence members: {e}"))?;
+        tx.commit()
+            .await
+            .map_err(|e| anyhow::anyhow!("join group silence: {e}"))?;
+        Ok(episode)
+    }
+
+    async fn group_silences_due(&self) -> Result<Vec<GroupSilence>> {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            id: Uuid,
+            org_id: Uuid,
+            group_name: String,
+            channel_ids: Vec<Uuid>,
+            notified: bool,
+            finished: bool,
+            resumed: bool,
+            members: Vec<String>,
+        }
+        let rows: Vec<Row> = sqlx::query_as(&format!(
+            "SELECT e.id, e.org_id, e.group_name, e.channel_ids, \
+                    e.notified_at IS NOT NULL AS notified, s.finished, \
+                    EXISTS (SELECT 1 FROM group_silence_members m \
+                            WHERE m.episode_id = e.id AND m.org_id = e.org_id \
+                              AND m.resumed_at IS NOT NULL) AS resumed, \
+                    ARRAY(SELECT m.target_name FROM group_silence_members m \
+                          WHERE m.episode_id = e.id AND m.org_id = e.org_id \
+                          ORDER BY m.silent_since, m.id) AS members \
+             FROM group_silence_episodes e \
+             CROSS JOIN LATERAL (SELECT NOT {STILL_SILENT} AS finished) s \
+             /* SAFE: cross-org sweep, each row carries its own org */ \
+             WHERE e.ended_at IS NULL AND (e.notified_at IS NULL OR s.finished)",
+        ))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("group silences due: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| GroupSilence {
+                id: r.id,
+                org: OrgId(r.org_id),
+                group_name: r.group_name,
+                channel_ids: r.channel_ids,
+                members: first_seen(r.members),
+                notified: r.notified,
+                finished: r.finished,
+                resumed: r.resumed,
+            })
+            .collect())
+    }
+
+    async fn mark_group_silence_notified(
+        &self,
+        org: OrgId,
+        id: Uuid,
+        at: DateTime<Utc>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE group_silence_episodes SET notified_at = $3 \
+             WHERE id = $1 AND org_id = $2 AND notified_at IS NULL",
+        )
+        .bind(id)
+        .bind(org.0)
+        .bind(at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("mark group silence notified: {e}"))?;
+        Ok(())
+    }
+
+    async fn end_group_silence(
+        &self,
+        org: OrgId,
+        id: Uuid,
+        at: DateTime<Utc>,
+        told: bool,
+    ) -> Result<()> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| anyhow::anyhow!("end group silence: {e}"))?;
+        let open: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM group_silence_episodes \
+             WHERE id = $1 AND org_id = $2 AND ended_at IS NULL FOR UPDATE",
+        )
+        .bind(id)
+        .bind(org.0)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| anyhow::anyhow!("lock group silence: {e}"))?;
+        if open.is_none() {
+            return Ok(());
+        }
+        // Read after the lock, in a statement of its own, so a member that
+        // joined first is seen and keeps the episode open.
+        let joined: bool = sqlx::query_scalar(&format!(
+            "SELECT {STILL_SILENT} FROM group_silence_episodes e WHERE e.id = $1 AND e.org_id = $2"
+        ))
+        .bind(id)
+        .bind(org.0)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| anyhow::anyhow!("group silence members: {e}"))?;
+        if joined {
+            return Ok(());
+        }
+        sqlx::query(
+            "UPDATE group_silence_episodes \
+             SET ended_at = $3, resolved_notified_at = CASE WHEN $4 THEN $3 END \
+             WHERE id = $1 AND org_id = $2",
+        )
+        .bind(id)
+        .bind(org.0)
+        .bind(at)
+        .bind(told)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| anyhow::anyhow!("end group silence: {e}"))?;
+        tx.commit()
+            .await
+            .map_err(|e| anyhow::anyhow!("end group silence: {e}"))?;
+        Ok(())
     }
 }
 
@@ -257,8 +592,18 @@ pub struct InMemorySilenceStore {
 struct InMemorySilenceState {
     unmonitored: Vec<(OrgId, Uuid)>,
     total: i64,
-    open: std::collections::HashMap<Uuid, (OrgId, bool)>,
+    open: std::collections::HashMap<Uuid, (OrgId, bool, DateTime<Utc>)>,
     resolved: Vec<(OrgId, Uuid)>,
+    groups: HashMap<(OrgId, Uuid), SilenceGroup>,
+    episodes: Vec<MemEpisode>,
+}
+
+struct MemEpisode {
+    silence: GroupSilence,
+    group_id: Uuid,
+    ended: bool,
+    /// `(target, resumed)` per membership row.
+    members: Vec<(Uuid, bool)>,
 }
 
 impl InMemorySilenceStore {
@@ -272,6 +617,10 @@ impl InMemorySilenceStore {
 
     pub fn set_total(&self, total: i64) {
         self.inner.lock().total = total;
+    }
+
+    pub fn set_alerting_group(&self, org: OrgId, target_id: Uuid, group: SilenceGroup) {
+        self.inner.lock().groups.insert((org, target_id), group);
     }
 
     pub fn open_target_ids(&self) -> Vec<Uuid> {
@@ -313,10 +662,11 @@ impl SilenceStore for InMemorySilenceStore {
             .lock()
             .open
             .iter()
-            .map(|(t, (o, notified))| OpenSilence {
+            .map(|(t, (o, notified, since))| OpenSilence {
                 org: *o,
                 target_id: *t,
                 notified: *notified,
+                silent_since: *since,
             })
             .collect())
     }
@@ -327,7 +677,7 @@ impl SilenceStore for InMemorySilenceStore {
             .lock()
             .open
             .iter()
-            .filter(|(_, (o, _))| *o == org)
+            .filter(|(_, (o, _, _))| *o == org)
             .map(|(t, _)| *t)
             .collect())
     }
@@ -340,12 +690,12 @@ impl SilenceStore for InMemorySilenceStore {
         Ok(self.inner.lock().total)
     }
 
-    async fn enter(&self, org: OrgId, target_id: Uuid, _at: DateTime<Utc>) -> Result<()> {
+    async fn enter(&self, org: OrgId, target_id: Uuid, at: DateTime<Utc>) -> Result<()> {
         self.inner
             .lock()
             .open
             .entry(target_id)
-            .or_insert((org, false));
+            .or_insert((org, false, at));
         Ok(())
     }
 
@@ -356,12 +706,133 @@ impl SilenceStore for InMemorySilenceStore {
         Ok(())
     }
 
-    async fn resolve(&self, org: OrgId, target_id: Uuid, _at: DateTime<Utc>) -> Result<bool> {
+    async fn resolve(&self, org: OrgId, target_id: Uuid, _at: DateTime<Utc>) -> Result<Resolved> {
         let mut g = self.inner.lock();
-        if g.open.remove(&target_id).is_some() {
-            g.resolved.push((org, target_id));
-            return Ok(true);
+        if g.open.remove(&target_id).is_none() {
+            return Ok(Resolved::Already);
         }
-        Ok(false)
+        g.resolved.push((org, target_id));
+        let mut grouped = false;
+        for e in g.episodes.iter_mut().filter(|e| !e.ended) {
+            for m in e.members.iter_mut().filter(|(t, r)| *t == target_id && !r) {
+                m.1 = true;
+                grouped = true;
+            }
+        }
+        Ok(if grouped {
+            Resolved::InGroup
+        } else {
+            Resolved::Alone
+        })
+    }
+
+    async fn alerting_groups(
+        &self,
+        monitors: &[(OrgId, Uuid)],
+    ) -> Result<HashMap<(OrgId, Uuid), SilenceGroup>> {
+        let g = self.inner.lock();
+        Ok(monitors
+            .iter()
+            .filter_map(|m| g.groups.get(m).map(|group| (*m, group.clone())))
+            .collect())
+    }
+
+    async fn join_group_silence(
+        &self,
+        org: OrgId,
+        group: &SilenceGroup,
+        channel_ids: &[Uuid],
+        members: &[(Uuid, DateTime<Utc>)],
+    ) -> Result<Uuid> {
+        let mut g = self.inner.lock();
+        let in_one: Vec<Uuid> = g
+            .episodes
+            .iter()
+            .filter(|e| !e.ended)
+            .flat_map(|e| e.members.iter().filter(|(_, r)| !r).map(|(t, _)| *t))
+            .collect();
+        let at = match g
+            .episodes
+            .iter()
+            .position(|e| !e.ended && e.group_id == group.id)
+        {
+            Some(at) => at,
+            None => {
+                g.episodes.push(MemEpisode {
+                    silence: GroupSilence {
+                        id: Uuid::now_v7(),
+                        org,
+                        group_name: group.name.clone(),
+                        channel_ids: channel_ids.to_vec(),
+                        members: Vec::new(),
+                        notified: false,
+                        finished: false,
+                        resumed: false,
+                    },
+                    group_id: group.id,
+                    ended: false,
+                    members: Vec::new(),
+                });
+                g.episodes.len() - 1
+            }
+        };
+        let episode = &mut g.episodes[at];
+        for (target, _) in members.iter().filter(|(t, _)| !in_one.contains(t)) {
+            episode.members.push((*target, false));
+            episode.silence.members.push(target.to_string());
+        }
+        Ok(episode.silence.id)
+    }
+
+    async fn group_silences_due(&self) -> Result<Vec<GroupSilence>> {
+        let g = self.inner.lock();
+        Ok(g.episodes
+            .iter()
+            .filter(|e| !e.ended)
+            .map(|e| GroupSilence {
+                finished: e.members.iter().all(|(_, r)| *r),
+                resumed: e.members.iter().any(|(_, r)| *r),
+                members: first_seen(e.silence.members.clone()),
+                ..e.silence.clone()
+            })
+            .filter(|s| !s.notified || s.finished)
+            .collect())
+    }
+
+    async fn mark_group_silence_notified(
+        &self,
+        _org: OrgId,
+        id: Uuid,
+        _at: DateTime<Utc>,
+    ) -> Result<()> {
+        if let Some(e) = self
+            .inner
+            .lock()
+            .episodes
+            .iter_mut()
+            .find(|e| e.silence.id == id)
+        {
+            e.silence.notified = true;
+        }
+        Ok(())
+    }
+
+    async fn end_group_silence(
+        &self,
+        _org: OrgId,
+        id: Uuid,
+        _at: DateTime<Utc>,
+        _told: bool,
+    ) -> Result<()> {
+        if let Some(e) = self
+            .inner
+            .lock()
+            .episodes
+            .iter_mut()
+            .find(|e| e.silence.id == id && e.members.iter().all(|(_, r)| *r))
+        {
+            e.ended = true;
+        }
+        Ok(())
     }
 }

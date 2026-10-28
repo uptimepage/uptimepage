@@ -3081,6 +3081,7 @@ async fn every_close_stamps_resolved_at_at_its_closing_update_pg() {
             )
             .await
             .unwrap()
+            .is_some()
     );
     let (at, closing) = close_marks(&pool, recovered).await;
     assert!(at.is_some(), "the monitor recovering");

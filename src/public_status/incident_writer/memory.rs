@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::domain::{CheckStatus, OrgId, Recovered};
 use crate::error::Result;
 
-use super::{IncidentStore, NewOpenIncident, OpenIncident};
+use super::{Closed, IncidentStore, NewOpenIncident, OpenIncident};
 
 // ── In-memory implementation (for tests) ────────────────────────────────────
 
@@ -173,7 +173,12 @@ impl IncidentStore for InMemoryIncidentStore {
         Ok(Some(id))
     }
 
-    async fn close(&self, _org: OrgId, incident_id: Uuid, ended_at: DateTime<Utc>) -> Result<bool> {
+    async fn close(
+        &self,
+        _org: OrgId,
+        incident_id: Uuid,
+        ended_at: DateTime<Utc>,
+    ) -> Result<Option<Closed>> {
         let mut g = self.inner.lock();
         let mut closed = false;
         for bucket in g.by_target.values_mut() {
@@ -188,7 +193,7 @@ impl IncidentStore for InMemoryIncidentStore {
         if closed {
             g.closes += 1;
         }
-        Ok(closed)
+        Ok(closed.then(Closed::default))
     }
 
     async fn set_recovering(

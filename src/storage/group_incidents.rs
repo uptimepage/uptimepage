@@ -145,15 +145,25 @@ pub async fn attach_member(pool: &PgPool, org: OrgId, member: Uuid) -> Result<At
         .await
         .map_err(db("attach: open group incident"))?,
     };
-    let seq: i32 = sqlx::query_scalar(
-        "UPDATE incidents SET member_seq = member_seq + 1, updated_at = now() \
-         WHERE id = $1 AND org_id = $2 RETURNING member_seq",
+    // The group is down while any member is: a down member raises a group
+    // incident a degraded one opened.
+    let (seq, raised): (i32, bool) = sqlx::query_as(
+        "WITH before AS (SELECT status_at_start FROM incidents WHERE id = $1 AND org_id = $2) \
+         UPDATE incidents SET member_seq = member_seq + 1, \
+             status_at_start = CASE WHEN $3 = 'down' THEN 'down' ELSE status_at_start END, \
+             updated_at = now() \
+         WHERE id = $1 AND org_id = $2 \
+         RETURNING member_seq, $3 = 'down' AND (SELECT status_at_start FROM before) <> 'down'",
     )
     .bind(group_incident)
     .bind(org.0)
+    .bind(&status_at_start)
     .fetch_one(&mut *tx)
     .await
     .map_err(db("attach: number member"))?;
+    if raised {
+        note_group_raised(&mut tx, org, group_incident).await?;
+    }
     sqlx::query(
         "UPDATE incidents SET group_incident_id = $3, group_member_seq = $4, \
              page_owed_at = NULL, updated_at = now() \
@@ -182,6 +192,42 @@ pub async fn attach_member(pool: &PgPool, org: OrgId, member: Uuid) -> Result<At
         group_incident,
         seq,
         opened,
+    })
+}
+
+/// What [`lock_group_of`] took.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GroupLock {
+    /// Not a group incident, or its group already deleted: nothing to take.
+    NotGroup,
+    /// The group incident's group row, held until the transaction ends.
+    Held,
+    /// Its group was deleted since the incident was read.
+    Gone,
+}
+
+/// Takes a group incident's group row, which attach and close take before any
+/// incident's, ahead of the incident's own locks.
+pub(crate) async fn lock_group_of(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+    incident: Uuid,
+) -> Result<GroupLock> {
+    let group: Option<Uuid> = sqlx::query_scalar(
+        "SELECT group_id FROM incidents WHERE id = $1 AND org_id = $2 AND origin = 'group'",
+    )
+    .bind(incident)
+    .bind(org.0)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(db("group of incident"))?
+    .flatten();
+    let Some(group) = group else {
+        return Ok(GroupLock::NotGroup);
+    };
+    Ok(match lock_group(tx, org, group).await? {
+        true => GroupLock::Held,
+        false => GroupLock::Gone,
     })
 }
 
@@ -231,14 +277,25 @@ pub(crate) async fn lock_for_member_close(
     Ok(MemberClose::Routed)
 }
 
+/// Why an attached member's incident closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MemberLeft {
+    Recovered,
+    /// Its monitor was deleted, by this user when one is named.
+    Deleted(Option<crate::domain::UserId>),
+}
+
 /// Records an attached member's close on its group incident, and closes the
-/// group incident with the last member down. The group's recovery notice then
-/// rides `closing_notice_at` like any closed incident's. True when it closed.
+/// group incident with the last member down: as a recovery, or as the
+/// monitor-deleted close when the last one left by its monitor's delete. The
+/// group's notice then rides `closing_notice_at` like any closed incident's.
+/// True when it closed.
 pub(crate) async fn member_closed(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: OrgId,
     group_incident: Uuid,
     member: Uuid,
+    left: MemberLeft,
 ) -> Result<bool> {
     let (target_id, target_name): (Option<Uuid>, Option<String>) = sqlx::query_as(
         "SELECT target_id, target_name FROM incidents WHERE id = $1 AND org_id = $2",
@@ -248,11 +305,15 @@ pub(crate) async fn member_closed(
     .fetch_one(&mut **tx)
     .await
     .map_err(db("close: read member"))?;
+    let (kind, deleted_by) = match left {
+        MemberLeft::Recovered => (IncidentEventKind::MemberUp, None),
+        MemberLeft::Deleted(by) => (IncidentEventKind::MonitorDeleted, by),
+    };
     log_member_event(
         tx,
         org,
         group_incident,
-        IncidentEventKind::MemberUp,
+        kind,
         member,
         target_id,
         target_name,
@@ -262,19 +323,43 @@ pub(crate) async fn member_closed(
     let closed = sqlx::query(
         "UPDATE incidents i SET ended_at = m.ended_at, \
              duration_secs = GREATEST(0, EXTRACT(EPOCH FROM (m.ended_at - i.started_at))::int), \
-             state = 'resolved', resolved_by = NULL, next_escalation_at = NULL, \
+             state = 'resolved', resolved_by = $4, next_escalation_at = NULL, \
              recovering_since = NULL, closing_notice_at = now(), resolved_at = now(), \
-             updated_at = now() \
+             closed_by_monitor_delete = $3, updated_at = now() \
          FROM (SELECT max(ended_at) AS ended_at, bool_and(ended_at IS NOT NULL) AS all_up \
                  FROM incidents WHERE org_id = $2 AND group_incident_id = $1) m \
          WHERE i.id = $1 AND i.org_id = $2 AND i.ended_at IS NULL AND m.all_up",
     )
     .bind(group_incident)
     .bind(org.0)
+    .bind(matches!(left, MemberLeft::Deleted(_)))
+    .bind(deleted_by.map(|u| u.0))
     .execute(&mut **tx)
     .await
     .map_err(db("close: close group incident"))?;
     Ok(closed.rows_affected() > 0)
+}
+
+/// The timeline line a group incident gets when a member takes it to down.
+pub(crate) const GROUP_RAISED_NOTE: &str = "raised to down: a member is confirmed down";
+
+async fn note_group_raised(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+    group_incident: Uuid,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO incident_events (org_id, incident_id, kind, actor_type, message) \
+         VALUES ($1, $2, $3, 'system', $4)",
+    )
+    .bind(org.0)
+    .bind(group_incident)
+    .bind(IncidentEventKind::Note.as_db_str())
+    .bind(GROUP_RAISED_NOTE)
+    .execute(&mut **tx)
+    .await
+    .map_err(db("note group raised"))?;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

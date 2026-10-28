@@ -27,8 +27,8 @@ pub use aggregator::{AggregatorConfig, OrgAggregator};
 pub use cache::{HistoryMarker, MarkerKind, PageCache, PageCacheError};
 
 pub use incident_writer::{
-    InMemoryIncidentStore, IncidentStore, IncidentWriter, IncidentWriterConfig, NewOpenIncident,
-    OpenIncident, PgIncidentStore,
+    Closed, InMemoryIncidentStore, IncidentStore, IncidentWriter, IncidentWriterConfig,
+    NewOpenIncident, OpenIncident, PgIncidentStore,
 };
 pub use logo_storage::LogoMime;
 pub use source::{

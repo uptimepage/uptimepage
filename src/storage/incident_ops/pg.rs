@@ -19,6 +19,7 @@ use crate::domain::{
 };
 use crate::error::Result;
 use crate::storage::admin::NOT_HELD_PREDICATE;
+use crate::storage::group_incidents::{GroupLock, lock_group_of};
 use crate::storage::locks::{advisory_xact_lock, incident_lock_key};
 
 use super::{
@@ -347,6 +348,195 @@ async fn arm_escalation_tx(
     Ok(())
 }
 
+/// A group incident is watched while one of its members still down is: on,
+/// held by no plan and in no window that holds alerts. With all of them paused
+/// or held, its pages wait as a paused monitor's do. For the incidents row the
+/// query names `i`.
+fn group_watched_sql(i: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM incidents m \
+                 JOIN targets mt ON mt.id = m.target_id AND mt.org_id = m.org_id \
+                 WHERE m.group_incident_id = {i}.id AND m.org_id = {i}.org_id \
+                   AND m.ended_at IS NULL AND mt.enabled AND mt.plan_hold_at IS NULL \
+                   AND NOT {window})",
+        window = crate::storage::suppressing_window_sql("mt.id", "mt.org_id"),
+    )
+}
+
+/// A digest is due on group incident `i` of group `g`: it is open and alerts
+/// again, members joined past the last word, and that word went out a window
+/// ago.
+fn digest_due_sql(i: &str, g: &str) -> String {
+    format!(
+        "{i}.ended_at IS NULL AND {g}.alert_again AND {i}.member_seq > {i}.member_notice_seq \
+         AND {i}.last_member_notice_at <= now() - make_interval(secs => {window})",
+        window = super::MEMBER_NOTICE_WINDOW_SECS,
+    )
+}
+
+/// Resolving a group incident resolves its members still open, as the same
+/// actor and owing no notice of their own: the group's covers them. A member
+/// still failing opens a fresh incident on the writer's next tick.
+async fn resolve_members_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+    group_incident: Uuid,
+    actor: Actor,
+) -> Result<()> {
+    let members: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM incidents \
+         WHERE org_id = $1 AND group_incident_id = $2 AND ended_at IS NULL ORDER BY id",
+    )
+    .bind(org.0)
+    .bind(group_incident)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|e| anyhow::anyhow!("group members to resolve: {e}"))?;
+    for member in &members {
+        advisory_xact_lock(&mut **tx, &incident_lock_key(*member))
+            .await
+            .map_err(|e| anyhow::anyhow!("member lock: {e}"))?;
+    }
+    let resolved: Vec<(Uuid, String)> = sqlx::query_as(
+        "UPDATE incidents \
+         SET state = 'resolved', ended_at = COALESCE(ended_at, recovering_since, now()), \
+             duration_secs = COALESCE(duration_secs, GREATEST(0, EXTRACT(EPOCH FROM \
+                 (COALESCE(ended_at, recovering_since, now()) - started_at))::int)), \
+             resolved_by = $3, next_escalation_at = NULL, recovering_since = NULL, \
+             resolved_at = now(), updated_at = now() \
+         WHERE id = ANY($1) AND org_id = $2 AND ended_at IS NULL \
+         RETURNING id, visibility",
+    )
+    .bind(&members)
+    .bind(org.0)
+    .bind(actor.user_id())
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|e| anyhow::anyhow!("resolve group members: {e}"))?;
+    let resolution = resolved_public_message(None);
+    for (member, visibility) in resolved {
+        insert_event_tx(tx, org, member, IncidentEventKind::Resolved, actor, None).await?;
+        if visibility == "public" {
+            sqlx::query(
+                "INSERT INTO incident_updates (org_id, incident_id, phase, message, author, generated) \
+                 VALUES ($1, $2, 'resolved', $3, 'system', true)",
+            )
+            .bind(org.0)
+            .bind(member)
+            .bind(&resolution.message)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| anyhow::anyhow!("member public resolution: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// The members a due digest covers, numbered `from..=to` and still down.
+struct Digest {
+    from: i32,
+    to: i32,
+    down: Vec<Uuid>,
+}
+
+/// Takes the digest due on `group_incident`, the caller holding the group's
+/// lock, and moves its watermark past the members it covers. `None` when none
+/// is due; a range whose members are all back up is passed over with no rows,
+/// and the minute keeps counting from the last word that went out.
+async fn take_digest(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+    group_incident: Uuid,
+) -> Result<Option<Digest>> {
+    let range: Option<(i32, i32)> = sqlx::query_as(&format!(
+        "SELECT i.member_notice_seq + 1, i.member_seq FROM incidents i \
+         JOIN monitor_groups g ON g.id = i.group_id AND g.org_id = i.org_id \
+         WHERE i.id = $1 AND i.org_id = $2 AND {}",
+        digest_due_sql("i", "g")
+    ))
+    .bind(group_incident)
+    .bind(org.0)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|e| anyhow::anyhow!("digest due: {e}"))?;
+    let Some((from, to)) = range else {
+        return Ok(None);
+    };
+    let down: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM incidents \
+         WHERE org_id = $1 AND group_incident_id = $2 AND ended_at IS NULL \
+           AND group_member_seq BETWEEN $3 AND $4 \
+         ORDER BY group_member_seq",
+    )
+    .bind(org.0)
+    .bind(group_incident)
+    .bind(from)
+    .bind(to)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|e| anyhow::anyhow!("digest members down: {e}"))?;
+    sqlx::query(
+        "UPDATE incidents SET member_notice_seq = $3, \
+             last_member_notice_at = CASE WHEN $4 THEN now() ELSE last_member_notice_at END, \
+             updated_at = now() \
+         WHERE id = $1 AND org_id = $2",
+    )
+    .bind(group_incident)
+    .bind(org.0)
+    .bind(to)
+    .bind(!down.is_empty())
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| anyhow::anyhow!("advance digest: {e}"))?;
+    Ok(Some(Digest { from, to, down }))
+}
+
+/// Stores on a group page's rows the members still down that it names. The
+/// first page to reach anyone also covers every member numbered so far, and
+/// marks them told. The caller holds the group's lock, so no attach or close
+/// lands between this read and the rows.
+async fn cover_members(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+    group_incident: Uuid,
+    rows: &[Uuid],
+    first_word: bool,
+) -> Result<()> {
+    let first: Option<i32> = if first_word {
+        sqlx::query_scalar(
+            "UPDATE incidents SET member_notice_seq = member_seq, \
+                 last_member_notice_at = now(), updated_at = now() \
+             WHERE id = $1 AND org_id = $2 AND last_member_notice_at IS NULL \
+             RETURNING member_seq",
+        )
+        .bind(group_incident)
+        .bind(org.0)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(|e| anyhow::anyhow!("mark members told: {e}"))?
+    } else {
+        None
+    };
+    sqlx::query(
+        "UPDATE incident_notifications SET \
+             member_from_seq = CASE WHEN $4::int IS NOT NULL THEN 1 END, \
+             member_to_seq = $4, \
+             member_incident_ids = ARRAY( \
+                 SELECT id FROM incidents \
+                 WHERE org_id = $2 AND group_incident_id = $3 AND ended_at IS NULL \
+                 ORDER BY group_member_seq) \
+         WHERE id = ANY($1) AND org_id = $2",
+    )
+    .bind(rows)
+    .bind(org.0)
+    .bind(group_incident)
+    .bind(first)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| anyhow::anyhow!("cover members: {e}"))?;
+    Ok(())
+}
+
 async fn insert_notification<'e, E: sqlx::PgExecutor<'e>>(
     executor: E,
     n: NewIncidentNotification,
@@ -492,12 +682,15 @@ impl PgIncidentOpsStore {
             .begin()
             .await
             .map_err(|e| anyhow::anyhow!("begin: {e}"))?;
+        // Resolving a group incident resolves its members.
+        lock_group_of(&mut tx, org, id).await?;
         advisory_xact_lock(&mut *tx, &incident_lock_key(id))
             .await
             .map_err(|e| anyhow::anyhow!("incident lock: {e}"))?;
 
-        let current: Option<(String, bool)> = sqlx::query_as(
-            "SELECT state, origin = 'monitor' AND target_id IS NULL AND target_name IS NOT NULL \
+        let current: Option<(String, bool, Option<Uuid>, bool)> = sqlx::query_as(
+            "SELECT state, origin = 'monitor' AND target_id IS NULL AND target_name IS NOT NULL, \
+                    group_incident_id, origin = 'group' \
              FROM incidents WHERE id = $1 AND org_id = $2 FOR UPDATE",
         )
         .bind(id)
@@ -505,9 +698,15 @@ impl PgIncidentOpsStore {
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| anyhow::anyhow!("load incident state: {e}"))?;
-        let Some((state_str, ended_with_monitor)) = current else {
+        let Some((state_str, ended_with_monitor, attached, is_group)) = current else {
             return unlisted(LifecycleOutcome::NotFound);
         };
+        if let Some(group_incident) = attached {
+            return Err(super::use_group_incident(group_incident));
+        }
+        if is_group && transition == IncidentTransition::Reopen {
+            return Err(super::group_incident_no_reopen());
+        }
         // Read under the row lock the monitor delete also takes, so a reopen
         // cannot land on an incident the delete has just closed.
         if ended_with_monitor && transition == IncidentTransition::Reopen {
@@ -582,6 +781,9 @@ impl PgIncidentOpsStore {
             }
         } else {
             insert_event_tx(&mut tx, org, id, event_kind, actor, note.as_deref()).await?;
+            if is_group && to == IncidentState::Resolved && !unchanged {
+                resolve_members_tx(&mut tx, org, id, actor).await?;
+            }
             record_incident_audit_tx(
                 &mut tx,
                 org,
@@ -786,18 +988,24 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             human_resolved: i64,
             closed_with_monitor: i64,
         }
+        // A group incident counts once for its members, which are left out. A
+        // member a group delete detached counts, but its time to that point
+        // was the group's outage.
         let s: Scalars = sqlx::query_as(
             "SELECT count(*) AS total, \
                  (avg(extract(epoch FROM (acknowledged_at - started_at))) \
-                     FILTER (WHERE acknowledged_at IS NOT NULL))::float8 AS mtta, \
+                     FILTER (WHERE acknowledged_at IS NOT NULL AND detached_at IS NULL))::float8 AS mtta, \
                  (avg(extract(epoch FROM (ended_at - started_at))) \
-                     FILTER (WHERE ended_at IS NOT NULL AND NOT closed_by_monitor_delete))::float8 AS mttr, \
+                     FILTER (WHERE ended_at IS NOT NULL AND NOT closed_by_monitor_delete \
+                         AND NOT closed_by_group_delete AND detached_at IS NULL))::float8 AS mttr, \
                  count(*) FILTER (WHERE state = 'resolved' AND resolved_by IS NULL \
-                     AND NOT closed_by_monitor_delete) AS auto_resolved, \
+                     AND NOT closed_by_monitor_delete AND NOT closed_by_group_delete) AS auto_resolved, \
                  count(*) FILTER (WHERE state = 'resolved' AND resolved_by IS NOT NULL \
-                     AND NOT closed_by_monitor_delete) AS human_resolved, \
-                 count(*) FILTER (WHERE closed_by_monitor_delete) AS closed_with_monitor \
-             FROM incidents WHERE org_id = $1 AND started_at >= $2",
+                     AND NOT closed_by_monitor_delete AND NOT closed_by_group_delete) AS human_resolved, \
+                 count(*) FILTER (WHERE closed_by_monitor_delete OR closed_by_group_delete) \
+                     AS closed_with_monitor \
+             FROM incidents \
+             WHERE org_id = $1 AND started_at >= $2 AND group_incident_id IS NULL",
         )
         .bind(org.0)
         .bind(since)
@@ -826,12 +1034,14 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         };
         let by_severity = bucket(
             "SELECT severity, count(*) FROM incidents \
-             WHERE org_id = $1 AND started_at >= $2 GROUP BY severity ORDER BY count DESC",
+             WHERE org_id = $1 AND started_at >= $2 AND group_incident_id IS NULL \
+             GROUP BY severity ORDER BY count DESC",
         )
         .await?;
         let by_state = bucket(
             "SELECT state, count(*) FROM incidents \
-             WHERE org_id = $1 AND started_at >= $2 GROUP BY state ORDER BY count DESC",
+             WHERE org_id = $1 AND started_at >= $2 AND group_incident_id IS NULL \
+             GROUP BY state ORDER BY count DESC",
         )
         .await?;
 
@@ -1167,9 +1377,10 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         // Lock the row and read the pre-publish visibility so the opening
         // update below only fires on an internal->public transition, not on a
         // re-publish.
-        let prior: Option<(String, Option<Uuid>, bool)> = sqlx::query_as(
+        let prior: Option<(String, Option<Uuid>, bool, bool)> = sqlx::query_as(
             "SELECT visibility, target_id, \
-                    origin = 'monitor' AND target_id IS NULL AND target_name IS NOT NULL \
+                    origin = 'monitor' AND target_id IS NULL AND target_name IS NOT NULL, \
+                    origin = 'group' \
              FROM incidents WHERE id = $1 AND org_id = $2 FOR UPDATE",
         )
         .bind(id)
@@ -1177,9 +1388,12 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| anyhow::anyhow!("publish lock: {e}"))?;
-        let Some((prior_visibility, target_id, ended_with_monitor)) = prior else {
+        let Some((prior_visibility, target_id, ended_with_monitor, is_group)) = prior else {
             return Ok(None);
         };
+        if is_group {
+            return Err(super::group_incident_internal());
+        }
         let pages = if target_id.is_none() {
             // No other page ever carried the deleted monitor, and none would
             // know what to call it.
@@ -1302,10 +1516,16 @@ impl IncidentOpsStore for PgIncidentOpsStore {
     }
 
     async fn closed_with_monitors(&self, org: OrgId, monitors: &[Uuid]) -> Result<Vec<Uuid>> {
+        // A group incident whose last member down left with its monitor
+        // closed in the same delete.
         sqlx::query_scalar(
-            "SELECT id FROM incidents \
-             WHERE org_id = $1 AND target_ref = ANY($2) AND target_id IS NULL \
-               AND closed_by_monitor_delete",
+            "SELECT id FROM incidents i \
+             WHERE org_id = $1 AND closed_by_monitor_delete AND ( \
+                 (target_ref = ANY($2) AND target_id IS NULL) \
+                 OR (origin = 'group' AND EXISTS ( \
+                     SELECT 1 FROM incidents m \
+                     WHERE m.org_id = i.org_id AND m.group_incident_id = i.id \
+                       AND m.target_ref = ANY($2))))",
         )
         .bind(org.0)
         .bind(monitors)
@@ -1490,6 +1710,12 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             .begin()
             .await
             .map_err(|e| anyhow::anyhow!("begin: {e}"))?;
+        // A group page names its members under the group's lock.
+        let group = match lock_group_of(&mut tx, f.org, f.incident_id).await? {
+            GroupLock::Gone => return Ok(None),
+            GroupLock::Held => Some(()),
+            GroupLock::NotGroup => None,
+        };
         // The lifecycle transitions' lock and order, so a reopen and a page
         // serialise and each reads what the other committed.
         advisory_xact_lock(&mut *tx, &incident_lock_key(f.incident_id))
@@ -1512,6 +1738,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         if reopen_count_tx(&mut tx, f.org, f.incident_id).await? != f.episode {
             return Ok(None);
         }
+        let mut digest = None;
         let settled =
             match f.kind {
                 FanOutKind::Opening(arm) => {
@@ -1585,6 +1812,16 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                     .rows_affected()
                         > 0
                 }
+                FanOutKind::MemberDigest => {
+                    if group.is_none() {
+                        return Ok(None);
+                    }
+                    let Some(range) = take_digest(&mut tx, f.org, f.incident_id).await? else {
+                        return Ok(None);
+                    };
+                    digest = Some(range);
+                    true
+                }
                 FanOutKind::Reminder => sqlx::query(
                     "UPDATE incidents SET renotify_count = renotify_count + 1, updated_at = now() \
                  WHERE id = $1 AND org_id = $2 AND state = 'triggered' \
@@ -1601,9 +1838,42 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         if !settled {
             return Ok(None);
         }
+        if digest.as_ref().is_some_and(|d| d.down.is_empty()) {
+            tx.commit()
+                .await
+                .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
+            return Ok(Some(Vec::new()));
+        }
+        let reaches = f.rows.iter().any(|n| n.channel_id.is_some());
+        let first_word = reaches
+            && matches!(
+                f.kind,
+                FanOutKind::Opening(_) | FanOutKind::Release(_) | FanOutKind::Rung { .. }
+            );
         let mut ids = Vec::with_capacity(f.rows.len());
         for n in f.rows {
             ids.push(insert_notification(&mut *tx, n).await?);
+        }
+        match digest {
+            Some(Digest { from, to, down }) => {
+                sqlx::query(
+                    "UPDATE incident_notifications \
+                     SET member_from_seq = $3, member_to_seq = $4, member_incident_ids = $5 \
+                     WHERE id = ANY($1) AND org_id = $2",
+                )
+                .bind(&ids)
+                .bind(f.org.0)
+                .bind(from)
+                .bind(to)
+                .bind(&down)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| anyhow::anyhow!("digest members: {e}"))?;
+            }
+            None if group.is_some() => {
+                cover_members(&mut tx, f.org, f.incident_id, &ids, first_word).await?;
+            }
+            None => {}
         }
         for (kind, message) in &f.events {
             insert_event_tx(
@@ -1620,6 +1890,76 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             .await
             .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
         Ok(Some(ids))
+    }
+
+    async fn notice_members(&self, org: OrgId, notification_id: Uuid) -> Result<Vec<String>> {
+        sqlx::query_scalar(
+            "SELECT i.target_name FROM incident_notifications n \
+             CROSS JOIN LATERAL unnest(n.member_incident_ids) WITH ORDINALITY AS m(id, ord) \
+             JOIN incidents i ON i.id = m.id AND i.org_id = n.org_id \
+             WHERE n.id = $1 AND n.org_id = $2 AND i.target_name IS NOT NULL \
+             ORDER BY m.ord",
+        )
+        .bind(notification_id)
+        .bind(org.0)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("notice members: {e}").into())
+    }
+
+    async fn attach_member(&self, org: OrgId, member: Uuid) -> Result<super::Attach> {
+        crate::storage::group_incidents::attach_member(&self.pool, org, member).await
+    }
+
+    async fn member_digest_due(&self, org: OrgId, group_incident: Uuid) -> Result<bool> {
+        sqlx::query_scalar(&format!(
+            "SELECT EXISTS (SELECT 1 FROM incidents i \
+             JOIN monitor_groups g ON g.id = i.group_id AND g.org_id = i.org_id \
+             WHERE i.id = $1 AND i.org_id = $2 AND {})",
+            digest_due_sql("i", "g")
+        ))
+        .bind(group_incident)
+        .bind(org.0)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("member digest due: {e}").into())
+    }
+
+    async fn group_watched(&self, org: OrgId, group_incident: Uuid) -> Result<bool> {
+        sqlx::query_scalar(&format!(
+            "SELECT EXISTS (SELECT 1 FROM incidents i \
+             WHERE i.id = $1 AND i.org_id = $2 AND {})",
+            group_watched_sql("i")
+        ))
+        .bind(group_incident)
+        .bind(org.0)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("group watched: {e}").into())
+    }
+
+    async fn due_member_digests(&self, limit: usize) -> Result<Vec<super::DueDigest>> {
+        let cap = (limit as i64).clamp(1, 1000);
+        // Unwatched ones wait without holding the head of the queue.
+        let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(&format!(
+            "SELECT i.id, i.org_id FROM incidents i \
+             JOIN monitor_groups g ON g.id = i.group_id AND g.org_id = i.org_id \
+             WHERE i.origin = 'group' AND {} AND {} \
+             ORDER BY i.last_member_notice_at LIMIT $1",
+            digest_due_sql("i", "g"),
+            group_watched_sql("i")
+        ))
+        .bind(cap)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("due member digests: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, org)| super::DueDigest {
+                id,
+                org: OrgId(org),
+            })
+            .collect())
     }
 
     async fn pending_notifications(
@@ -1911,11 +2251,14 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         let sql = format!(
             "SELECT i.id, i.org_id, i.page_owed_at \
              FROM incidents i \
-             JOIN targets t ON t.id = i.target_id AND t.org_id = i.org_id \
+             LEFT JOIN targets t ON t.id = i.target_id AND t.org_id = i.org_id \
              WHERE i.page_owed_at IS NOT NULL AND i.page_owed_at <= $1 \
-                 AND i.ended_at IS NULL AND i.paging_enabled \
-                 AND t.enabled AND {NOT_HELD_PREDICATE} \
+                 AND i.ended_at IS NULL AND {may_page} \
+                 AND CASE WHEN i.origin = 'group' THEN {group_watched} \
+                          ELSE t.enabled AND {NOT_HELD_PREDICATE} END \
              ORDER BY i.page_owed_at ASC LIMIT $2",
+            may_page = may_page_predicate!("i"),
+            group_watched = group_watched_sql("i"),
         );
         let rows: Vec<Row> = sqlx::query_as(&sql)
             .bind(cutoff)
@@ -2102,25 +2445,32 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         // retries are the retry sweep's job. The
         // `(org_id, incident_id, created_at)` index serves the max as an
         // index-only scan.
+        // A group incident takes its interval from its group, and is watched
+        // while one of its members still down is.
         let sql = format!(
             "SELECT i.id, i.org_id, i.target_id, i.escalation_policy_id, \
                     i.escalation_level, i.escalation_round \
              FROM incidents i \
-             JOIN targets t ON t.id = i.target_id AND t.org_id = i.org_id \
+             LEFT JOIN targets t ON t.id = i.target_id AND t.org_id = i.org_id \
+             LEFT JOIN monitor_groups g \
+                 ON i.origin = 'group' AND g.id = i.group_id AND g.org_id = i.org_id \
+             CROSS JOIN LATERAL (SELECT COALESCE(t.renotify_interval_secs, g.renotify_interval_secs) \
+                                     AS secs) r \
              WHERE i.state = 'triggered' AND i.ended_at IS NULL \
                  AND i.recovering_since IS NULL \
                  AND i.next_escalation_at IS NULL \
                  AND i.page_owed_at IS NULL \
-                 AND t.renotify_interval_secs > 0 \
-                 AND {not_held} \
-                 AND NOT {window} \
+                 AND i.group_incident_id IS NULL \
+                 AND r.secs > 0 \
+                 AND CASE WHEN g.id IS NOT NULL THEN {group_watched} \
+                          ELSE t.id IS NOT NULL AND {not_held} AND NOT {window} END \
                  AND ( \
                      SELECT max(n.created_at) FROM incident_notifications n \
                      WHERE n.incident_id = i.id AND n.org_id = i.org_id \
                        AND n.channel_id IS NOT NULL \
                  ) <= $1 - make_interval(secs => GREATEST( \
-                     t.renotify_interval_secs::double precision, \
-                     LEAST(t.renotify_interval_secs::double precision \
+                     r.secs::double precision, \
+                     LEAST(r.secs::double precision \
                                * pow(2, LEAST(i.renotify_count, 20)), \
                            86400))) \
              ORDER BY ( \
@@ -2131,6 +2481,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
              LIMIT $2",
             not_held = crate::storage::admin::NOT_HELD_PREDICATE,
             window = crate::storage::suppressing_window_sql("t.id", "t.org_id"),
+            group_watched = group_watched_sql("i"),
         );
         let rows: Vec<Row> = sqlx::query_as(&sql)
             .bind(now)
@@ -2184,6 +2535,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                ) \
                AND i.state = 'triggered' AND i.ended_at IS NULL \
                AND i.recovering_since IS NULL \
+               AND i.group_incident_id IS NULL \
                AND t.enabled AND {not_held} \
                AND held.held_at IS NOT NULL \
                AND NOT EXISTS ( \
@@ -2245,6 +2597,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                    AND h.channel_id IS NULL AND h.transport = 'damped' \
              ) held ON TRUE \
              WHERE i.state = 'triggered' AND i.recovering_since IS NULL \
+               AND i.group_incident_id IS NULL \
                AND t.enabled AND {not_held} \
                AND held.held_at IS NOT NULL \
                AND held.held_at <= $1 \

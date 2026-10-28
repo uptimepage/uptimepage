@@ -25,6 +25,7 @@ use crate::domain::{
     OpsIncident, OrgId, TransitionError, UserId,
 };
 use crate::error::Result;
+pub use crate::storage::group_incidents::Attach;
 
 mod memory;
 mod pg;
@@ -304,6 +305,23 @@ pub enum FanOutKind {
     /// An outage reminder, recorded only while the incident is triggered, its
     /// monitor is not back up, and its episode's first page is recorded.
     Reminder,
+    /// The members of a group incident down since its last word about them,
+    /// to the channels its episode reached. Records only while one is due,
+    /// judged under the group's lock: the group alerts again, the first word
+    /// went out [`MEMBER_NOTICE_WINDOW_SECS`] or more ago, and members joined
+    /// since. When every one of them is back up it moves past them and
+    /// records no rows.
+    MemberDigest,
+}
+
+/// At most one member-down digest per group incident in this long.
+pub const MEMBER_NOTICE_WINDOW_SECS: i64 = 60;
+
+/// A group incident with a member-down digest due.
+#[derive(Debug, Clone)]
+pub struct DueDigest {
+    pub id: Uuid,
+    pub org: OrgId,
 }
 
 /// An open incident whose episode still owes its first page.
@@ -365,6 +383,44 @@ pub(crate) fn pages_beyond_deleted_monitor() -> crate::error::AppError {
         crate::error::codes::INCIDENT_MONITOR_DELETED,
         "this incident's monitor was deleted, so it can only be shown on the pages that showed the monitor",
     )
+}
+
+/// A member of a group incident is acted on through the group incident.
+pub(crate) fn use_group_incident(group_incident: Uuid) -> crate::error::AppError {
+    crate::error::AppError::conflict(
+        crate::error::codes::USE_GROUP_INCIDENT,
+        format!("this incident is part of group incident {group_incident}; act on that one"),
+    )
+}
+
+/// A group incident follows its members, so nothing would close it again.
+pub(crate) fn group_incident_no_reopen() -> crate::error::AppError {
+    crate::error::AppError::conflict(
+        crate::error::codes::GROUP_INCIDENT_NO_REOPEN,
+        "a group incident cannot be reopened; the next member failure opens a new one",
+    )
+}
+
+/// A group incident pages responders; its members are what status pages show.
+pub(crate) fn group_incident_internal() -> crate::error::AppError {
+    crate::error::AppError::conflict(
+        crate::error::codes::GROUP_INCIDENT_INTERNAL,
+        "a group incident stays internal; its members' incidents are the public ones",
+    )
+}
+
+/// Ack, resolve and reopen refused on a member of a group incident, and reopen
+/// on a group incident.
+pub(crate) fn group_refusal(
+    incident: &OpsIncident,
+    transition: crate::domain::IncidentTransition,
+) -> Option<crate::error::AppError> {
+    if let Some(group_incident) = incident.group.group_incident_id {
+        return Some(use_group_incident(group_incident));
+    }
+    (incident.origin == crate::domain::IncidentOrigin::Group
+        && transition == crate::domain::IncidentTransition::Reopen)
+        .then(group_incident_no_reopen)
 }
 
 pub(crate) fn unknown_status_pages(missing: usize) -> crate::error::AppError {
@@ -566,8 +622,25 @@ pub trait IncidentOpsStore: Send + Sync {
     /// entries and its bookkeeping. `None`, with nothing written, once the page
     /// no longer applies: the incident is gone or resolved, has no monitor or
     /// no paging, has reopened past `f.episode`, or the kind's own guard fails.
-    /// Row ids come back in the order given.
+    /// Row ids come back in the order given. A group incident's rows also
+    /// store the members still down, read under the group's lock, and the
+    /// first of its pages to reach anyone marks them told.
     async fn record_fan_out(&self, f: FanOut) -> Result<Option<Vec<Uuid>>>;
+    /// The members a group page's row named, by name, in the order they
+    /// joined. Empty for any other row.
+    async fn notice_members(&self, org: OrgId, notification_id: Uuid) -> Result<Vec<String>>;
+    /// A routed member incident's opening: it joins its group's open incident,
+    /// or opens one owed its first page.
+    async fn attach_member(&self, org: OrgId, member: Uuid) -> Result<Attach>;
+    /// Cross-org open group incidents whose member-down digest is due, as
+    /// [`FanOutKind::MemberDigest`] judges it. Longest waiting first.
+    async fn due_member_digests(&self, limit: usize) -> Result<Vec<DueDigest>>;
+    /// Whether this group incident's digest is due now, for the cheap check
+    /// before planning one.
+    async fn member_digest_due(&self, org: OrgId, group_incident: Uuid) -> Result<bool>;
+    /// A group incident pages while one of its members still down is watched:
+    /// on, held by no plan and in no maintenance window that holds alerts.
+    async fn group_watched(&self, org: OrgId, group_incident: Uuid) -> Result<bool>;
     /// Cross-org failed pages still under the attempt cap whose backoff has
     /// elapsed (`next_attempt_at` null or `<= now`), soonest-due first — the
     /// engine's retry sweep. A `queued` row counts once older than

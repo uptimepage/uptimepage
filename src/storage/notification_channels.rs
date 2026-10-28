@@ -210,8 +210,8 @@ pub trait NotificationChannelStore: Send + Sync {
     async fn auto_bound_ids(&self, org: OrgId, tags: &[String]) -> Result<Vec<Uuid>>;
 }
 
-/// Every channel that should hear about `target`: bound first, then rule
-/// matches, deduped.
+/// Every channel that should hear about a monitor or group with these bindings
+/// and tags: bound first, then rule matches, deduped.
 ///
 /// Who, not what to do when the lookup fails — that is the caller's, because
 /// their second chances differ. A page that errors here writes no notification
@@ -221,10 +221,11 @@ pub trait NotificationChannelStore: Send + Sync {
 pub async fn paging_channel_ids(
     store: &dyn NotificationChannelStore,
     org: OrgId,
-    target: &crate::domain::Target,
+    alerts: &crate::domain::TargetAlerts,
+    tags: &[String],
 ) -> Result<Vec<Uuid>> {
-    let mut ids: Vec<Uuid> = target.alerts.iter().map(|b| b.channel_id).collect();
-    for id in store.auto_bound_ids(org, &target.tags).await? {
+    let mut ids: Vec<Uuid> = alerts.iter().map(|b| b.channel_id).collect();
+    for id in store.auto_bound_ids(org, tags).await? {
         if !ids.contains(&id) {
             ids.push(id);
         }
@@ -1510,13 +1511,17 @@ mod tests {
             channel_id: bound.id,
         }]);
 
-        let ids = paging_channel_ids(&store, org(), &target).await.unwrap();
+        let ids = paging_channel_ids(&store, org(), &target.alerts, &target.tags)
+            .await
+            .unwrap();
         assert_eq!(ids, vec![bound.id, by_rule.id]);
 
         // Retagging moves coverage with no write to the channel.
         target.tags = vec!["web".into()];
         assert_eq!(
-            paging_channel_ids(&store, org(), &target).await.unwrap(),
+            paging_channel_ids(&store, org(), &target.alerts, &target.tags)
+                .await
+                .unwrap(),
             vec![bound.id]
         );
     }

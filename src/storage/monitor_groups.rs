@@ -629,3 +629,126 @@ fn updated_metadata(before: &MonitorGroup, after: &MonitorGroup) -> serde_json::
     }
     meta
 }
+
+/// Single-tenant test double: groups by id, no members or incidents behind
+/// them.
+#[derive(Default)]
+pub struct InMemoryMonitorGroupStore {
+    groups: parking_lot::Mutex<Vec<MonitorGroup>>,
+}
+
+impl InMemoryMonitorGroupStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&self, group: MonitorGroup) {
+        self.groups.lock().push(group);
+    }
+}
+
+#[async_trait]
+impl MonitorGroupStore for InMemoryMonitorGroupStore {
+    async fn list(&self, _org: OrgId) -> Result<Vec<MonitorGroup>> {
+        let mut groups = self.groups.lock().clone();
+        groups.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(groups)
+    }
+
+    async fn get(&self, _org: OrgId, id: Uuid) -> Result<Option<MonitorGroup>> {
+        Ok(self.groups.lock().iter().find(|g| g.id == id).cloned())
+    }
+
+    async fn create(
+        &self,
+        _org: OrgId,
+        new: NewMonitorGroup,
+        source: WriteSource,
+        actor: Option<UserId>,
+    ) -> Result<MonitorGroup> {
+        let name = required_name(&new.name)?;
+        let mut groups = self.groups.lock();
+        if groups.iter().any(|g| g.name == name) {
+            return Err(name_taken_error());
+        }
+        let now = Utc::now();
+        let group = MonitorGroup {
+            id: Uuid::now_v7(),
+            name,
+            alert_as_one: new.alert_as_one,
+            alerts: new.alerts,
+            renotify_interval_secs: new.renotify_interval_secs,
+            alert_again: new.alert_again,
+            tags: new.tags,
+            escalation_policy_id: None,
+            write_source: source,
+            created_at: now,
+            created_by: actor,
+            updated_at: now,
+            updated_by: actor,
+        };
+        groups.push(group.clone());
+        Ok(group)
+    }
+
+    async fn update(
+        &self,
+        _org: OrgId,
+        id: Uuid,
+        update: MonitorGroupUpdate,
+        source: WriteSource,
+        actor: Option<UserId>,
+    ) -> Result<Option<MonitorGroup>> {
+        let name = update.name.as_deref().map(required_name).transpose()?;
+        let mut groups = self.groups.lock();
+        if let Some(name) = &name
+            && groups.iter().any(|g| g.id != id && &g.name == name)
+        {
+            return Err(name_taken_error());
+        }
+        let Some(g) = groups.iter_mut().find(|g| g.id == id) else {
+            return Ok(None);
+        };
+        if let Some(name) = name {
+            g.name = name;
+        }
+        if let Some(v) = update.alert_as_one {
+            g.alert_as_one = v;
+        }
+        if let Some(v) = update.alerts {
+            g.alerts = v;
+        }
+        if let Some(v) = update.renotify_interval_secs {
+            g.renotify_interval_secs = v;
+        }
+        if let Some(v) = update.alert_again {
+            g.alert_again = v;
+        }
+        if let Some(v) = update.tags {
+            g.tags = v;
+        }
+        g.write_source = source;
+        g.updated_by = actor;
+        g.updated_at = Utc::now();
+        Ok(Some(g.clone()))
+    }
+
+    async fn delete(
+        &self,
+        _org: OrgId,
+        id: Uuid,
+        _actor: Option<UserId>,
+    ) -> Result<Option<DeletedGroup>> {
+        let mut groups = self.groups.lock();
+        let Some(at) = groups.iter().position(|g| g.id == id) else {
+            return Ok(None);
+        };
+        let gone = groups.remove(at);
+        Ok(Some(DeletedGroup {
+            name: gone.name,
+            members: 0,
+            closed_incident: None,
+            detached: Vec::new(),
+        }))
+    }
+}

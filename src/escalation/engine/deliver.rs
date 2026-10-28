@@ -86,17 +86,41 @@ pub(super) enum Rebuilt {
 pub(super) type Attempt = (NotificationStatus, Option<String>, Option<String>);
 
 impl Worker {
-    /// Re-resolve the incident + monitor + channel for a retry.
+    /// Re-resolve the incident + monitor + channel for a retry. A group page
+    /// names the members its row stored, as its first attempt did.
     pub(super) async fn rebuild_notice(
         &self,
         org: OrgId,
         incident_id: Uuid,
         channel_id: Uuid,
         reason: NotificationReason,
+        notification_id: Uuid,
     ) -> Result<Rebuilt> {
         let Some(incident) = self.ops.get(org, incident_id).await? else {
             return Ok(Rebuilt::Gone);
         };
+        if incident.origin == crate::domain::IncidentOrigin::Group {
+            // A deleted group's incident is closed: only its closing notice is
+            // still worth sending.
+            if incident.group.group_id.is_none() && !reason.closes_incident() {
+                return Ok(Rebuilt::MonitorDeleted);
+            }
+            let Some(channel) = self.channels.get(org, channel_id).await? else {
+                return Ok(Rebuilt::Gone);
+            };
+            let members = self.ops.notice_members(org, notification_id).await?;
+            let notice = self.notice(
+                &incident,
+                incident.group.group_name.clone(),
+                reason,
+                crate::domain::members_note(reason, &members),
+            );
+            return Ok(Rebuilt::Ready(Box::new((
+                notice,
+                channel,
+                standing(&incident),
+            ))));
+        }
         if incident.monitor_deleted() {
             // Paging went with the monitor. A notice that the incident ended
             // still goes out, under the name the incident kept.

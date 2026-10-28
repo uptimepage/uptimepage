@@ -6,9 +6,9 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::domain::{
-    EscalationDecision, IncidentEventKind, IncidentState, NewIncidentNotification,
+    EscalationDecision, IncidentEventKind, IncidentOrigin, IncidentState, NewIncidentNotification,
     NotificationChannel, NotificationOutcome, NotificationReason, NotificationStatus, OrgId,
-    failure_run_reached, next_step, wait_after,
+    failure_run_reached, members_note, next_step, wait_after,
 };
 use crate::error::Result;
 use crate::notifier::event::IncidentNotice;
@@ -283,16 +283,12 @@ impl Worker {
         if incident.state != IncidentState::Triggered || incident.recovering_since.is_some() {
             return Ok(());
         }
-        let Some(target_id) = incident.target_id else {
+        let Some(subject) = self.subject(d.org, &incident).await? else {
             return Ok(());
         };
-        let Some(target) = self.targets.get(d.org, target_id).await? else {
-            return Ok(());
-        };
-        if !target.enabled || target.renotify_interval_secs == 0 {
-            return Ok(());
-        }
-        if self.alerts_suppressed(d.org, target_id).await {
+        if subject.renotify_interval_secs() == 0
+            || !self.watched(d.org, &incident, &subject).await?
+        {
             return Ok(());
         }
         let channels = resolvable_channels(&self.ops.notifications_for(d.org, d.id).await?);
@@ -304,7 +300,7 @@ impl Worker {
         };
         let notice = self.notice(
             &incident,
-            Some(target.name.clone()),
+            Some(subject.name().to_string()),
             NotificationReason::Reminder,
             None,
         );
@@ -370,19 +366,16 @@ impl Worker {
                 round,
                 delay_secs,
             } => {
-                let Some(target_id) = incident.target_id else {
-                    return Ok(());
-                };
-                let Some(target) = self.targets.get(d.org, target_id).await? else {
+                let Some(subject) = self.subject(d.org, &incident).await? else {
                     return Ok(());
                 };
                 // Push the timer out rather than clearing it: nothing re-arms a
                 // cleared one but a fresh open, so the rest of the ladder would
                 // never page once the monitor came back. A recovery held since
-                // the claim waits the same way, in case the failure returns.
-                if !target.enabled
-                    || incident.recovering_since.is_some()
-                    || self.alerts_suppressed(d.org, target.id).await
+                // the claim waits the same way, in case the failure returns. A
+                // group waits while every member down is paused or held.
+                if incident.recovering_since.is_some()
+                    || !self.watched(d.org, &incident, &subject).await?
                 {
                     let next_at =
                         Utc::now() + chrono::Duration::seconds(SUPPRESSED_ESCALATION_RETRY_SECS);
@@ -399,7 +392,7 @@ impl Worker {
                 }
                 let notice = self.notice(
                     &incident,
-                    Some(target.name.clone()),
+                    Some(subject.name().to_string()),
                     NotificationReason::Escalated,
                     None,
                 );
@@ -512,6 +505,23 @@ impl Worker {
         let Some(ids) = self.ops.record_fan_out(fan_out).await? else {
             return Ok(None);
         };
+        // A group page names the members its rows stored, read back so a
+        // retry of any of them names the same.
+        let mut notice = notice.clone();
+        if notice.origin == IncidentOrigin::Group
+            && let Some(row) = ids
+                .iter()
+                .zip(&channels)
+                .find_map(|(id, c)| c.is_some().then_some(*id))
+        {
+            // The rows are recorded, so this sends them either way: without the
+            // names rather than a takeover later.
+            match self.ops.notice_members(org, row).await {
+                Ok(members) => notice.note = members_note(notice.reason, &members).or(notice.note),
+                Err(err) => tracing::warn!(error = %err, "group page members not read"),
+            }
+        }
+        let notice = &notice;
         let attempts = ids
             .into_iter()
             .zip(channels)
@@ -748,7 +758,7 @@ impl Worker {
         // exhaust instead of retrying forever.
         let rebuilt = match p.channel_id {
             Some(cid) => {
-                self.rebuild_notice(p.org, p.incident_id, cid, p.reason)
+                self.rebuild_notice(p.org, p.incident_id, cid, p.reason, p.id)
                     .await?
             }
             None => Rebuilt::Gone,

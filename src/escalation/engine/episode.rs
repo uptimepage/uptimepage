@@ -4,11 +4,11 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::domain::{
-    EscalationDecision, IncidentEventKind, IncidentState, NotificationReason, NotificationStatus,
-    OpsIncident, OrgId, Target, next_step, wait_after,
+    EscalationDecision, IncidentEventKind, IncidentOrigin, IncidentState, NotificationReason,
+    NotificationStatus, OpsIncident, OrgId, Subject, Target, TargetAlerts, next_step, wait_after,
 };
 use crate::error::Result;
-use crate::storage::{Arming, ClosingNotice, DueIncident, FanOutKind, OwedPage};
+use crate::storage::{Actor, Arming, Attach, ClosingNotice, DueIncident, FanOutKind, OwedPage};
 
 use super::rules::{
     DAMPED_TRANSPORT, Damper, FlapState, MAINTENANCE_TRANSPORT, RELEASED_TRANSPORT,
@@ -16,6 +16,14 @@ use super::rules::{
     resolvable_channels,
 };
 use super::sweep::{Planned, empty_rung_event};
+
+/// The group incident a routed member's attach joined.
+enum Joined {
+    /// It opened the group incident, which owes its first page.
+    Opened(Uuid),
+    /// It joined one already open, which may owe a digest.
+    Into(Uuid),
+}
 use super::{SWEEP_CONCURRENCY, Worker};
 
 impl Worker {
@@ -24,6 +32,7 @@ impl Worker {
     /// loop.
     pub(super) async fn sweep(&self) {
         self.page_owed().await;
+        self.send_digests().await;
         self.reconcile_closed().await;
         self.release_held().await;
         self.release_maintenance().await;
@@ -256,70 +265,107 @@ impl Worker {
         // and a sweep never interleave their reads and sends; which page
         // records is the store's call, under the incident's lock. Held for the
         // whole resolve+page+record sequence.
-        let _guard = self.page_lock(incident_id).lock().await;
+        let joined = {
+            let _guard = self.page_lock(incident_id).lock().await;
+            self.page_locked(org, incident_id, reason, damper).await?
+        };
+        // Under the group incident's own lock, never nested in a member's: two
+        // incidents can share a shard.
+        match joined {
+            Some(Joined::Opened(group_incident)) => {
+                let _guard = self.page_lock(group_incident).lock().await;
+                self.page_locked(org, group_incident, NotificationReason::Opened, damper)
+                    .await?;
+            }
+            Some(Joined::Into(group_incident)) => self.digest_one(org, group_incident).await?,
+            None => {}
+        }
+        Ok(())
+    }
+
+    /// One page under the incident's lock. A routed member's attach returns
+    /// the group incident it joined, for its first page or a digest.
+    async fn page_locked(
+        &self,
+        org: OrgId,
+        incident_id: Uuid,
+        reason: NotificationReason,
+        damper: Damper,
+    ) -> Result<Option<Joined>> {
         // Sent only while the close still owes it: not twice, not after a
         // reopen withdrew it, and not while the sweep holds it.
         if reason.closes_incident() {
-            return match self
+            if let Some(claim) = self
                 .ops
                 .claim_closing_notice(org, incident_id, self.claim_lease_secs())
                 .await?
             {
-                Some(claim) => self.close_out(org, incident_id, claim).await,
-                None => Ok(()),
-            };
+                self.close_out(org, incident_id, claim).await?;
+            }
+            return Ok(None);
         }
         let Some(incident) = self.ops.get(org, incident_id).await? else {
-            return Ok(());
+            return Ok(None);
         };
+        if incident.origin == IncidentOrigin::Group {
+            if matches!(
+                reason,
+                NotificationReason::Opened | NotificationReason::Reopened
+            ) {
+                self.open_group_episode(org, &incident).await?;
+            }
+            return Ok(None);
+        }
         // Once the monitor is gone nothing pages.
         if incident.monitor_deleted() {
-            return Ok(());
+            return Ok(None);
         }
         let Some(target_id) = incident.target_id else {
-            return Ok(());
+            return Ok(None);
         };
         let Some(target) = self.targets.get(org, target_id).await? else {
-            return Ok(());
+            return Ok(None);
         };
         match reason {
             // A held monitor rides the pause branch: the writer already skips
             // it, so this only catches an episode that was open when the hold
             // landed. Its closing notice still goes out, above, or an outage
             // that ended would stay on the customer's timeline forever.
-            _ if !target.enabled || target.plan_hold_at.is_some() => Ok(()),
+            _ if !target.enabled || target.plan_hold_at.is_some() => Ok(None),
             NotificationReason::Opened | NotificationReason::Reopened => {
                 self.open_episode(org, &incident, &target, damper).await
             }
             // Claimed above, before the incident is read.
             NotificationReason::Resolved
             | NotificationReason::MonitorDeleted
-            | NotificationReason::GroupDeleted => Ok(()),
+            | NotificationReason::GroupDeleted => Ok(None),
             // Escalation and reminder pages originate from the sweep, never an
             // inbound signal; a member-down notice from a group's attach.
             NotificationReason::Escalated
             | NotificationReason::Reminder
-            | NotificationReason::MemberDown => Ok(()),
+            | NotificationReason::MemberDown => Ok(None),
             // Silence has no incident row; the silence sweep delivers it.
-            NotificationReason::NoData | NotificationReason::DataResumed => Ok(()),
+            NotificationReason::NoData | NotificationReason::DataResumed => Ok(None),
         }
     }
 
     /// Page the first rung and arm escalation, recorded as one fan-out before
     /// anything is sent. A duplicate Opened signal while the episode is already
     /// paged is a no-op; a monitor with no policy falls back to its bound
-    /// channels (the pre-policy behaviour) with no laddered re-paging.
+    /// channels (the pre-policy behaviour) with no laddered re-paging. A
+    /// member routed to a group passes the same holds, then joins the group's
+    /// incident instead; one that opened it is returned for its first page.
     async fn open_episode(
         &self,
         org: OrgId,
         incident: &OpsIncident,
         target: &Target,
         damper: Damper,
-    ) -> Result<()> {
+    ) -> Result<Option<Joined>> {
         // Read before anything goes out, so every row this page writes stays
         // this episode's even if the incident reopens while it is sending.
         let Some(episode) = self.ops.generation(org, incident.id).await? else {
-            return Ok(());
+            return Ok(None);
         };
         // Named by the episode read here, not by whoever asked for the page:
         // a reopen can land between the ask and this read.
@@ -353,14 +399,14 @@ impl Worker {
                 kind(None),
             )
             .await?;
-            return Ok(());
+            return Ok(None);
         }
         // The scan read `triggered` a sweep ago and a flapping monitor
         // recovers inside that gap. Its all-clear already ran and reached
         // nobody, so paging now announces an outage no recovery would follow.
         // Here because `page` holds the per-incident lock.
         if releasing && incident.state != IncidentState::Triggered {
-            return Ok(());
+            return Ok(None);
         }
         let mut note = None;
         let mut events = Vec::new();
@@ -386,7 +432,7 @@ impl Worker {
             if held {
                 metrics::counter!(crate::metric_names::ALERTS_HELD_MAINTENANCE).increment(1);
             }
-            return Ok(());
+            return Ok(None);
         }
         if damper == Damper::Apply && !operator_declared {
             match self.flap_state(org, target).await? {
@@ -413,78 +459,48 @@ impl Worker {
                     if held {
                         metrics::counter!(crate::metric_names::ALERTS_DAMPED).increment(1);
                     }
-                    return Ok(());
+                    return Ok(None);
                 }
             }
         }
-        let notice = self.notice(incident, Some(target.name.clone()), reason, note);
-        let (mut planned, arm) = match self.policies.resolve_for_target(org, target.id).await? {
-            Some(policy_id) => {
-                let Some(policy) = self.policies.get(org, policy_id).await? else {
-                    return Ok(());
-                };
-                match next_step(&policy.steps, policy.repeat_count, 0, 0) {
-                    EscalationDecision::Page {
-                        level, delay_secs, ..
-                    } => {
-                        let targets = self
-                            .resolve_targets(org, &policy, level, Utc::now())
+        if incident.group.routed_group_id.is_some() {
+            match self.ops.attach_member(org, incident.id).await? {
+                Attach::Joined {
+                    group_incident,
+                    opened,
+                    ..
+                } => {
+                    // The group pages instead, so a flap crossing is said here.
+                    for (kind, message) in events {
+                        self.ops
+                            .append_event(org, incident.id, kind, Actor::System, Some(message))
                             .await?;
-                        let planned = self
-                            .plan_channels(org, incident.id, reason, level, &targets, episode)
-                            .await?;
-                        if planned.is_empty() {
-                            events.push(empty_rung_event(level));
-                        }
-                        let wait =
-                            wait_after(&policy.steps, policy.repeat_count, level, 0, delay_secs);
-                        let next_at = Some(Utc::now() + chrono::Duration::seconds(wait.into()));
-                        (
-                            planned,
-                            Some(Arming {
-                                policy_id,
-                                level,
-                                next_at,
-                            }),
-                        )
                     }
-                    // Policy with no steps: record the binding so the console
-                    // shows it, but page no one.
-                    EscalationDecision::Exhausted => (
-                        Planned::new(org, incident.id, episode),
-                        Some(Arming {
-                            policy_id,
-                            level: 0,
-                            next_at: None,
-                        }),
-                    ),
+                    return Ok(Some(match opened {
+                        true => Joined::Opened(group_incident),
+                        false => Joined::Into(group_incident),
+                    }));
                 }
+                Attach::Settled => return Ok(None),
+                // Its group was deleted since: it pages on its own.
+                Attach::Standalone => {}
             }
-            None => {
-                // Propagated on purpose: nothing is written, so the whole
-                // episode is tried again. Falling back to the bound channels
-                // would record rows, and a recorded episode is one that is
-                // never revisited — the rule's channels would then miss the
-                // outage entirely rather than be paged a tick late.
-                let targets = channel_targets(
-                    crate::storage::notification_channels::paging_channel_ids(
-                        self.channels.as_ref(),
-                        org,
-                        target,
-                    )
-                    .await?,
-                );
-                let mut planned = self
-                    .plan_channels(org, incident.id, reason, 0, &targets, episode)
-                    .await?;
-                if planned.is_empty() {
-                    // Nothing bound, or every bound channel gone: without a row
-                    // this episode would be re-run every tick, re-appending its
-                    // timeline lines each time.
-                    planned.push_marker(UNREACHABLE_TRANSPORT, reason);
-                }
-                (planned, None)
-            }
+        }
+        let notice = self.notice(incident, Some(target.name.clone()), reason, note);
+        let policy = self.policies.resolve_for_target(org, target.id).await?;
+        let Some((mut planned, arm)) = self
+            .plan_opening(
+                org,
+                incident.id,
+                policy,
+                (&target.alerts, &target.tags),
+                reason,
+                episode,
+                &mut events,
+            )
+            .await?
+        else {
+            return Ok(None);
         };
         if releasing && planned.is_empty() {
             planned.push_marker(RELEASED_TRANSPORT, reason);
@@ -493,9 +509,137 @@ impl Worker {
             .send_fan_out(planned, events, kind(arm), &notice)
             .await?
         else {
+            return Ok(None);
+        };
+        self.log_paged(org, incident.id, reason, delivered).await?;
+        Ok(None)
+    }
+
+    /// The first page of a group incident: its group's policy or channels,
+    /// with no maintenance hold or damper of its own, since its members passed
+    /// theirs to attach. Waits, owed, while every member down is paused or held.
+    pub(super) async fn open_group_episode(
+        &self,
+        org: OrgId,
+        incident: &OpsIncident,
+    ) -> Result<()> {
+        let Some(Subject::Group(group)) = self.subject(org, incident).await? else {
+            return Ok(());
+        };
+        if !self.ops.group_watched(org, incident.id).await? {
+            return Ok(());
+        }
+        let Some(episode) = self.ops.generation(org, incident.id).await? else {
+            return Ok(());
+        };
+        let reason = opening_reason(episode);
+        let mut events = Vec::new();
+        let notice = self.notice(incident, Some(group.name.clone()), reason, None);
+        let policy = self.policies.resolve_for_group(org, group.id).await?;
+        let Some((planned, arm)) = self
+            .plan_opening(
+                org,
+                incident.id,
+                policy,
+                (&group.alerts, &group.tags),
+                reason,
+                episode,
+                &mut events,
+            )
+            .await?
+        else {
+            return Ok(());
+        };
+        let Some(delivered) = self
+            .send_fan_out(planned, events, FanOutKind::Opening(arm), &notice)
+            .await?
+        else {
             return Ok(());
         };
         self.log_paged(org, incident.id, reason, delivered).await
+    }
+
+    /// The first rung of `policy`, or the channels these bindings and tags
+    /// reach when no policy applies, and the arming that goes with it. `None`
+    /// when the policy was deleted between resolving it and reading it:
+    /// nothing is written, so the episode is tried again.
+    #[allow(clippy::too_many_arguments)]
+    async fn plan_opening(
+        &self,
+        org: OrgId,
+        incident_id: Uuid,
+        policy: Option<Uuid>,
+        (alerts, tags): (&TargetAlerts, &[String]),
+        reason: NotificationReason,
+        episode: i64,
+        events: &mut Vec<(IncidentEventKind, String)>,
+    ) -> Result<Option<(Planned, Option<Arming>)>> {
+        let Some(policy_id) = policy else {
+            // Propagated on purpose: nothing is written, so the whole episode
+            // is tried again. Falling back to the bound channels would record
+            // rows, and a recorded episode is one that is never revisited — the
+            // rule's channels would then miss the outage entirely rather than be
+            // paged a tick late.
+            let targets = channel_targets(
+                crate::storage::notification_channels::paging_channel_ids(
+                    self.channels.as_ref(),
+                    org,
+                    alerts,
+                    tags,
+                )
+                .await?,
+            );
+            let mut planned = self
+                .plan_channels(org, incident_id, reason, 0, &targets, episode)
+                .await?;
+            if planned.is_empty() {
+                // Nothing bound, or every bound channel gone: without a row this
+                // episode would be re-run every tick, re-appending its timeline
+                // lines each time.
+                planned.push_marker(UNREACHABLE_TRANSPORT, reason);
+            }
+            return Ok(Some((planned, None)));
+        };
+        let Some(policy) = self.policies.get(org, policy_id).await? else {
+            return Ok(None);
+        };
+        Ok(Some(
+            match next_step(&policy.steps, policy.repeat_count, 0, 0) {
+                EscalationDecision::Page {
+                    level, delay_secs, ..
+                } => {
+                    let targets = self
+                        .resolve_targets(org, &policy, level, Utc::now())
+                        .await?;
+                    let planned = self
+                        .plan_channels(org, incident_id, reason, level, &targets, episode)
+                        .await?;
+                    if planned.is_empty() {
+                        events.push(empty_rung_event(level));
+                    }
+                    let wait = wait_after(&policy.steps, policy.repeat_count, level, 0, delay_secs);
+                    let next_at = Some(Utc::now() + chrono::Duration::seconds(wait.into()));
+                    (
+                        planned,
+                        Some(Arming {
+                            policy_id,
+                            level,
+                            next_at,
+                        }),
+                    )
+                }
+                // Policy with no steps: record the binding so the console shows
+                // it, but page no one.
+                EscalationDecision::Exhausted => (
+                    Planned::new(org, incident_id, episode),
+                    Some(Arming {
+                        policy_id,
+                        level: 0,
+                        next_at: None,
+                    }),
+                ),
+            },
+        ))
     }
 
     /// Record the one bookkeeping row that stands in for a page, with its
@@ -581,7 +725,8 @@ impl Worker {
     /// Tell the channels paged this episode that the incident ended, in the
     /// words its close calls for. Once the monitor is gone they still hear it,
     /// under the name the incident kept, and the monitor's recovery opt-out
-    /// went with it.
+    /// went with it. A group incident is told under the group's kept name,
+    /// whether or not the group still exists.
     async fn notify_ended(
         &self,
         org: OrgId,
@@ -589,6 +734,12 @@ impl Worker {
         claim: &mut chrono::DateTime<Utc>,
     ) -> Result<()> {
         let reason = incident.closing_reason();
+        if incident.origin == IncidentOrigin::Group {
+            let name = incident.group.group_name.clone();
+            return self
+                .notify_closed(org, incident, name, reason, true, claim)
+                .await;
+        }
         if incident.monitor_deleted() {
             let name = incident.target_name.clone();
             return self

@@ -64,6 +64,15 @@ pub trait EscalationPolicyStore: Send + Sync {
         target_id: Uuid,
         policy_id: Option<Uuid>,
     ) -> Result<bool>;
+    /// [`Self::resolve_for_target`] for a group that alerts as one.
+    async fn resolve_for_group(&self, org: OrgId, group_id: Uuid) -> Result<Option<Uuid>>;
+    /// [`Self::set_target_policy`] for a group.
+    async fn set_group_policy(
+        &self,
+        org: OrgId,
+        group_id: Uuid,
+        policy_id: Option<Uuid>,
+    ) -> Result<bool>;
     /// The org's default policy id, if set and live.
     async fn org_default(&self, org: OrgId) -> Result<Option<Uuid>>;
     /// The live policies that page each schedule, as `(schedule_id, policy
@@ -581,6 +590,47 @@ impl EscalationPolicyStore for PgEscalationPolicyStore {
         Ok(result.rows_affected() > 0)
     }
 
+    async fn resolve_for_group(&self, org: OrgId, group_id: Uuid) -> Result<Option<Uuid>> {
+        let id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT p.id FROM monitor_groups g \
+             JOIN organizations o ON o.id = g.org_id \
+             LEFT JOIN escalation_policies p \
+                 ON p.id = COALESCE(g.escalation_policy_id, o.default_escalation_policy_id) \
+                 AND p.deleted_at IS NULL \
+             WHERE g.id = $1 AND g.org_id = $2",
+        )
+        .bind(group_id)
+        .bind(org.0)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| AppError::Other(anyhow::anyhow!("resolve_for_group: {e}")))?
+        .flatten();
+        Ok(id)
+    }
+
+    async fn set_group_policy(
+        &self,
+        org: OrgId,
+        group_id: Uuid,
+        policy_id: Option<Uuid>,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE monitor_groups SET escalation_policy_id = $3, updated_at = now() \
+             WHERE id = $1 AND org_id = $2 \
+                 AND ($3::uuid IS NULL OR EXISTS ( \
+                     SELECT 1 FROM escalation_policies p \
+                     WHERE p.id = $3 AND p.org_id = $2 AND p.deleted_at IS NULL \
+                 ))",
+        )
+        .bind(group_id)
+        .bind(org.0)
+        .bind(policy_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Other(anyhow::anyhow!("set_group_policy: {e}")))?;
+        Ok(result.rows_affected() > 0)
+    }
+
     async fn org_default(&self, org: OrgId) -> Result<Option<Uuid>> {
         let id: Option<Uuid> = sqlx::query_scalar(
             "SELECT p.id FROM organizations o \
@@ -633,7 +683,35 @@ pub struct InMemoryEscalationPolicyStore {
 struct MemState {
     policies: Vec<(OrgId, EscalationPolicy, bool)>,
     target_policy: Vec<(OrgId, Uuid, Uuid)>,
+    group_policy: Vec<(OrgId, Uuid, Uuid)>,
     org_default: Vec<(OrgId, Uuid)>,
+}
+
+impl MemState {
+    fn live(&self, org: OrgId, policy: Uuid) -> bool {
+        self.policies
+            .iter()
+            .any(|(o, p, deleted)| *o == org && p.id == policy && !*deleted)
+    }
+
+    fn bound_or_default(
+        &self,
+        org: OrgId,
+        bound: &[(OrgId, Uuid, Uuid)],
+        id: Uuid,
+    ) -> Option<Uuid> {
+        bound
+            .iter()
+            .find(|(o, t, _)| *o == org && *t == id)
+            .map(|(_, _, p)| *p)
+            .or_else(|| {
+                self.org_default
+                    .iter()
+                    .find(|(o, _)| *o == org)
+                    .map(|(_, p)| *p)
+            })
+            .filter(|p| self.live(org, *p))
+    }
 }
 
 impl InMemoryEscalationPolicyStore {
@@ -782,29 +860,34 @@ impl EscalationPolicyStore for InMemoryEscalationPolicyStore {
         slot.2 = true;
         // Clear dangling bindings so affected monitors fall back to the default.
         g.target_policy.retain(|(o, _, p)| !(*o == org && *p == id));
+        g.group_policy.retain(|(o, _, p)| !(*o == org && *p == id));
         g.org_default.retain(|(o, p)| !(*o == org && *p == id));
         Ok(true)
     }
 
     async fn resolve_for_target(&self, org: OrgId, target_id: Uuid) -> Result<Option<Uuid>> {
         let g = self.inner.lock();
-        let bound = g
-            .target_policy
-            .iter()
-            .find(|(o, t, _)| *o == org && *t == target_id)
-            .map(|(_, _, p)| *p)
-            .or_else(|| {
-                g.org_default
-                    .iter()
-                    .find(|(o, _)| *o == org)
-                    .map(|(_, p)| *p)
-            });
-        // Hide soft-deleted/unknown policies, mirroring the SQL join.
-        Ok(bound.filter(|pid| {
-            g.policies
-                .iter()
-                .any(|(o, p, deleted)| *o == org && p.id == *pid && !*deleted)
-        }))
+        Ok(g.bound_or_default(org, &g.target_policy, target_id))
+    }
+
+    async fn resolve_for_group(&self, org: OrgId, group_id: Uuid) -> Result<Option<Uuid>> {
+        let g = self.inner.lock();
+        Ok(g.bound_or_default(org, &g.group_policy, group_id))
+    }
+
+    async fn set_group_policy(
+        &self,
+        org: OrgId,
+        group_id: Uuid,
+        policy_id: Option<Uuid>,
+    ) -> Result<bool> {
+        let mut g = self.inner.lock();
+        g.group_policy
+            .retain(|(o, t, _)| !(*o == org && *t == group_id));
+        if let Some(pid) = policy_id {
+            g.group_policy.push((org, group_id, pid));
+        }
+        Ok(true)
     }
 
     async fn target_policy(&self, org: OrgId, target_id: Uuid) -> Result<Option<Uuid>> {

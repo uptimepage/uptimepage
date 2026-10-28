@@ -76,10 +76,11 @@ pub use heartbeats::{
     HeartbeatMonitor, HeartbeatStore, InMemoryHeartbeatStore, PgHeartbeatStore, PingAccepted,
 };
 pub use incident_ops::{
-    Acknowledged, Actor, AppPress, Arming, ClaimedEscalation, ClosingNotice, DueClosingNotices,
-    DueIncident, EmergencyAck, FanOut, FanOutKind, InMemoryIncidentOpsStore, IncidentOpsFilter,
-    IncidentOpsStore, IncidentSort, LifecycleOutcome, OwedPage, PendingNotification,
-    PgIncidentOpsStore, QUEUED_TAKEOVER_SECS,
+    Acknowledged, Actor, AppPress, Arming, Attach, ClaimedEscalation, ClosingNotice,
+    DueClosingNotices, DueDigest, DueIncident, EmergencyAck, FanOut, FanOutKind,
+    InMemoryIncidentOpsStore, IncidentOpsFilter, IncidentOpsStore, IncidentSort, LifecycleOutcome,
+    MEMBER_NOTICE_WINDOW_SECS, OwedPage, PendingNotification, PgIncidentOpsStore,
+    QUEUED_TAKEOVER_SECS,
 };
 pub use incidents::{
     InMemoryIncidentNarrationStore, IncidentBrief, IncidentBriefFilter, IncidentNarrationStore,
@@ -93,6 +94,9 @@ pub use maintenance::{
 };
 pub use manual::{InMemoryManualStore, ManualChange, ManualStore, PgManualStore};
 pub use memory::{InMemorySink, InMemoryTargetStore};
+pub use monitor_groups::{
+    DeletedGroup, InMemoryMonitorGroupStore, MonitorGroupStore, PgMonitorGroupStore,
+};
 pub use monitor_shares::{
     CreateShareOutcome, InMemoryMonitorShareStore, MonitorShareStore, PgMonitorShareStore,
 };
@@ -117,7 +121,10 @@ pub use page_assets::{
 };
 pub use postgres::PostgresTargetStore;
 pub use postmortems::{InMemoryPostmortemStore, PgPostmortemStore, PostmortemStore};
-pub use silence::{InMemorySilenceStore, OpenSilence, PgSilenceStore, SilenceStore};
+pub use silence::{
+    GroupSilence, InMemorySilenceStore, OpenSilence, PgSilenceStore, Resolved, SilenceGroup,
+    SilenceStore,
+};
 pub use status_pages::{
     AddComponentOutcome, InMemoryStatusPageStore, PgStatusPageStore, StatusPageStore,
 };

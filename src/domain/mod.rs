@@ -88,7 +88,7 @@ pub use manual::{MAX_MANUAL_NOTE_CHARS, ManualState, ManualStatus};
 pub use membership::{Membership, Role};
 pub use monitor_group::{
     MAX_GROUP_NAME_LEN, MonitorGroup, MonitorGroupUpdate, NewMonitorGroup, Subject,
-    group_deleted_message, member_list, normalize_group_name,
+    group_deleted_message, member_list, members_note, normalize_group_name,
 };
 pub use monitor_share::{
     CreatedShare, MonitorShare, MonitorShareId, NewMonitorShare, ResolvedShare, SharePageUse,

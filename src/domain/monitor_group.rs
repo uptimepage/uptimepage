@@ -28,6 +28,19 @@ pub fn member_list(names: &[String]) -> String {
     }
 }
 
+/// The line a group page adds naming its members still down. A member-down
+/// notice names the ones who joined; any other names all that are down.
+pub fn members_note(reason: super::NotificationReason, names: &[String]) -> Option<String> {
+    if names.is_empty() {
+        return None;
+    }
+    let lead = match reason {
+        super::NotificationReason::MemberDown => "Also down",
+        _ => "Down",
+    };
+    Some(format!("{lead}: {}", member_list(names)))
+}
+
 /// Closing note of a group incident whose group was deleted, naming the
 /// members it hands back to their own channels.
 pub fn group_deleted_message(still_down: &[String]) -> String {
@@ -107,13 +120,13 @@ pub struct MonitorGroupUpdate {
 }
 
 /// What a page is about: one monitor, or a group that alerts as one.
-#[derive(Debug, Clone, Copy)]
-pub enum Subject<'a> {
-    Monitor(&'a Target),
-    Group(&'a MonitorGroup),
+#[derive(Debug, Clone)]
+pub enum Subject {
+    Monitor(Box<Target>),
+    Group(MonitorGroup),
 }
 
-impl Subject<'_> {
+impl Subject {
     pub fn name(&self) -> &str {
         match self {
             Self::Monitor(t) => &t.name,

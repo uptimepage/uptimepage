@@ -75,9 +75,14 @@ pub trait IncidentStore: Send + Sync {
     /// incident for it closed at or after `started_at`, so the evidence
     /// predates a resolution. The caller must not page.
     async fn insert_open(&self, org: OrgId, new: NewOpenIncident) -> Result<Option<Uuid>>;
-    /// `true` = this call flipped the incident to resolved; `false` = it was
+    /// `Some` = this call flipped the incident to resolved; `None` = it was
     /// already closed (lost the race), so the caller must not page.
-    async fn close(&self, org: OrgId, incident_id: Uuid, ended_at: DateTime<Utc>) -> Result<bool>;
+    async fn close(
+        &self,
+        org: OrgId,
+        incident_id: Uuid,
+        ended_at: DateTime<Utc>,
+    ) -> Result<Option<Closed>>;
     /// Move `regions` from not-confirmed to confirmed on a still-open incident.
     /// A union, so two writers widening at once both land.
     async fn widen(&self, org: OrgId, incident_id: Uuid, regions: &[String]) -> Result<()>;
@@ -101,6 +106,14 @@ pub trait IncidentStore: Send + Sync {
     /// Keep a stretch a still-open incident was back up in, once however often
     /// it is sent, and drop the recovering mark that stretch began.
     async fn relapse(&self, org: OrgId, incident_id: Uuid, recovered: Recovered) -> Result<()>;
+}
+
+/// A close that landed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Closed {
+    /// The group incident this member's close closed with it, its last member
+    /// down.
+    pub group_incident: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]
@@ -411,13 +424,16 @@ impl IncidentWriter {
                     incident_id,
                     ended_at,
                 } => {
-                    if self
+                    if let Some(closed) = self
                         .incident_store
                         .close(org, incident_id, ended_at)
                         .await?
                     {
                         tracing::info!(%org, target_id = %target.id, incident_id = %incident_id, "incident closed");
                         self.signal(org, incident_id, NotificationReason::Resolved);
+                        if let Some(group_incident) = closed.group_incident {
+                            self.signal(org, group_incident, NotificationReason::Resolved);
+                        }
                     }
                 }
                 Action::Widen {

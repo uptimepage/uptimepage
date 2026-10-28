@@ -227,7 +227,7 @@ async fn a_stretch_back_up_inside_the_hold_is_not_downtime_pg() {
         until: at(4),
     };
     writer.relapse(org, id, unmarked).await.expect("unmarked");
-    assert!(writer.close(org, id, at(2)).await.expect("close"));
+    assert!(writer.close(org, id, at(2)).await.expect("close").is_some());
 
     let narration = PgIncidentNarrationStore::new(pool.clone());
     let incidents = narration
@@ -610,7 +610,13 @@ async fn an_incident_reopened_on_a_paused_monitor_is_paused_pg() {
         .await
         .expect("insert")
         .expect("opened");
-    assert!(writer.close(org, id, at(50)).await.expect("close"));
+    assert!(
+        writer
+            .close(org, id, at(50))
+            .await
+            .expect("close")
+            .is_some()
+    );
     PostgresTargetStore::from_pool(pool.clone(), None)
         .set_enabled(org, &[target_id], false, Some(user))
         .await

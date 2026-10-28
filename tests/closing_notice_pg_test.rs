@@ -207,7 +207,13 @@ async fn every_close_owes_its_notice_and_a_reopen_withdraws_it_pg() {
         .unwrap();
     assert_eq!(f.notice_at(recovered).await, None, "open owes nothing");
     let checked_at = Utc::now() - chrono::Duration::minutes(3);
-    assert!(writer.close(f.org, recovered, checked_at).await.unwrap());
+    assert!(
+        writer
+            .close(f.org, recovered, checked_at)
+            .await
+            .unwrap()
+            .is_some()
+    );
     let owed = f.notice_at(recovered).await.expect("the recovery owes it");
     assert!(owed > f.ended_at(recovered).await.unwrap());
 

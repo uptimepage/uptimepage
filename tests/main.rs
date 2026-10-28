@@ -53,6 +53,7 @@ mod error_classes_test;
 mod escalation_policies_test;
 mod fleet_ribbon_test;
 mod flow_runs_test;
+mod group_paging_pg_test;
 mod heartbeat_ping_test;
 mod heartbeat_pings_ch_test;
 mod heartbeats_pg_test;

@@ -12,7 +12,7 @@
 //! blind is told. Delivery reuses the public notifier transports; it does not
 //! touch the incident/escalation path (silence has no incident row).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,14 +24,19 @@ use uuid::Uuid;
 
 use crate::config::WhatsAppAppBotConfig;
 use crate::domain::quota::RegionCaps;
-use crate::domain::{IncidentOrigin, IncidentSeverity, IncidentUrgency, NotificationReason, OrgId};
+use crate::domain::{
+    IncidentOrigin, IncidentSeverity, IncidentUrgency, NotificationReason, OrgId, TargetAlerts,
+    member_list,
+};
 use crate::error::Result;
 use crate::http_outbound::OutboundHttpClient;
 use crate::metric_names;
 use crate::notifier::event::IncidentNotice;
 use crate::notifier::{CentralBotDelivery, EmailDelivery, build_notifier};
 use crate::quotas::QuotaService;
-use crate::storage::{NotificationChannelStore, SilenceStore, TargetStore};
+use crate::storage::{
+    GroupSilence, NotificationChannelStore, Resolved, SilenceGroup, SilenceStore, TargetStore,
+};
 
 const TICK: Duration = Duration::from_secs(30);
 /// Above this fraction of all enabled monitors silent at once, treat it as one
@@ -46,6 +51,12 @@ const MAX_SILENCE_FRACTION: f64 = 0.25;
 pub trait SilenceDelivery: Send + Sync {
     /// Returns whether the notice reached at least one channel.
     async fn notify(&self, org: OrgId, target_id: Uuid, reason: NotificationReason) -> bool;
+    /// The channels a group's silence notices go to: its bindings and tag
+    /// rules, as its pages resolve them.
+    async fn group_channels(&self, org: OrgId, group: &SilenceGroup) -> Vec<Uuid>;
+    /// One notice for a group's silence episode, keyed by the episode, to the
+    /// channels it opened with. Returns whether it reached one.
+    async fn notify_group(&self, silence: &GroupSilence, reason: NotificationReason) -> bool;
 }
 
 /// Production delivery over the public notifier transports. Holds the same
@@ -63,39 +74,47 @@ pub struct SilenceNotifier {
     pub alert_channel_stop_secret: String,
 }
 
-#[async_trait]
-impl SilenceDelivery for SilenceNotifier {
-    async fn notify(&self, org: OrgId, target_id: Uuid, reason: NotificationReason) -> bool {
-        let Ok(Some(target)) = self.targets.get(org, target_id).await else {
-            return false;
-        };
-        let notice = IncidentNotice {
-            incident_id: target_id,
-            reason,
-            monitor_name: Some(target.name.clone()),
-            title: None,
-            severity: IncidentSeverity::default(),
-            urgency: IncidentUrgency::default(),
-            origin: IncidentOrigin::Monitor,
-            started_at: Utc::now(),
-            ended_at: None,
-            error_sample: None,
-            regions_down: Vec::new(),
-            regions_up: Vec::new(),
-            url: None,
-            note: None,
-        };
-        let central = self.central_bot.as_ref().map(|c| c.as_central());
-        let mut delivered = false;
-        // A failed rule lookup costs the rule's channels, never the bound ones:
-        // a transient database error must not silence the whole notice.
-        let channel_ids = crate::storage::notification_channels::paging_channel_ids(
+fn silence_notice(
+    key: Uuid,
+    name: String,
+    reason: NotificationReason,
+    note: Option<String>,
+) -> IncidentNotice {
+    IncidentNotice {
+        incident_id: key,
+        reason,
+        monitor_name: Some(name),
+        title: None,
+        severity: IncidentSeverity::default(),
+        urgency: IncidentUrgency::default(),
+        origin: IncidentOrigin::Monitor,
+        started_at: Utc::now(),
+        ended_at: None,
+        error_sample: None,
+        regions_down: Vec::new(),
+        regions_up: Vec::new(),
+        url: None,
+        note,
+    }
+}
+
+impl SilenceNotifier {
+    /// A failed rule lookup costs the rule's channels, never the bound ones: a
+    /// transient database error must not silence the whole notice.
+    async fn channel_ids(&self, org: OrgId, alerts: &TargetAlerts, tags: &[String]) -> Vec<Uuid> {
+        crate::storage::notification_channels::paging_channel_ids(
             self.channels.as_ref(),
             org,
-            &target,
+            alerts,
+            tags,
         )
         .await
-        .unwrap_or_else(|_| target.alerts.iter().map(|b| b.channel_id).collect());
+        .unwrap_or_else(|_| alerts.iter().map(|b| b.channel_id).collect())
+    }
+
+    async fn deliver(&self, org: OrgId, channel_ids: Vec<Uuid>, notice: &IncidentNotice) -> bool {
+        let central = self.central_bot.as_ref().map(|c| c.as_central());
+        let mut delivered = false;
         for channel_id in channel_ids {
             let Ok(Some(channel)) = self.channels.get(org, channel_id).await else {
                 continue;
@@ -125,7 +144,7 @@ impl SilenceDelivery for SilenceNotifier {
                     org,
                     &channel,
                     n.as_ref(),
-                    &notice,
+                    notice,
                 )
                 .await
                 .is_ok(),
@@ -143,6 +162,33 @@ impl SilenceDelivery for SilenceNotifier {
             delivered |= sent;
         }
         delivered
+    }
+}
+
+#[async_trait]
+impl SilenceDelivery for SilenceNotifier {
+    async fn notify(&self, org: OrgId, target_id: Uuid, reason: NotificationReason) -> bool {
+        let Ok(Some(target)) = self.targets.get(org, target_id).await else {
+            return false;
+        };
+        let channel_ids = self.channel_ids(org, &target.alerts, &target.tags).await;
+        let notice = silence_notice(target_id, target.name, reason, None);
+        self.deliver(org, channel_ids, &notice).await
+    }
+
+    async fn group_channels(&self, org: OrgId, group: &SilenceGroup) -> Vec<Uuid> {
+        self.channel_ids(org, &group.alerts, &group.tags).await
+    }
+
+    async fn notify_group(&self, silence: &GroupSilence, reason: NotificationReason) -> bool {
+        let notice = silence_notice(
+            silence.id,
+            silence.group_name.clone(),
+            reason,
+            Some(format!("Members: {}", member_list(&silence.members))),
+        );
+        self.deliver(silence.org, silence.channel_ids.clone(), &notice)
+            .await
     }
 }
 
@@ -223,9 +269,10 @@ pub async fn sweep(
 
     for s in &open {
         if !unmonitored.contains(&(s.org, s.target_id)) {
-            // Only the instance that flips the row notifies — no duplicate resume.
-            let flipped = store.resolve(s.org, s.target_id, now).await?;
-            if flipped
+            // Only the instance that flips the row notifies — no duplicate
+            // resume. A member of a group's silence comes back inside it: the
+            // group says so once, when every member has.
+            if store.resolve(s.org, s.target_id, now).await? == Resolved::Alone
                 && s.notified
                 && !mass
                 && let Some(d) = delivery
@@ -242,21 +289,96 @@ pub async fn sweep(
             "many monitors unmonitored at once — likely a regional probe outage; customer notices suppressed"
         );
     } else if let Some(d) = delivery {
-        // Send-then-mark keeps retrying a transient transport failure; a 2-instance
-        // deploy overlap may double-send a no-data notice, which is benign.
-        for s in store.list_open().await? {
-            if !s.notified
-                && d.notify(s.org, s.target_id, NotificationReason::NoData)
-                    .await
-            {
-                store.mark_notified(s.org, s.target_id, now).await?;
-            }
-        }
+        notify_silent(store, d, now).await?;
     } else if !unmonitored.is_empty() {
         tracing::warn!(
             unmonitored = unmonitored.len(),
             "monitors have no live probe (silent)"
         );
+    }
+    if let Some(d) = delivery {
+        settle_group_silences(store, d, now, mass).await?;
+    }
+    Ok(())
+}
+
+/// A silent monitor and since when, as a group silence holds it.
+type SilentMember = (Uuid, chrono::DateTime<Utc>);
+
+/// Tells the newly silent. A monitor whose group alerts as one goes into that
+/// group's episode instead, which carries its notice: members of one group
+/// silent in the same tick share one, and later ones join it quietly.
+/// Send-then-mark keeps retrying a transient transport failure; a 2-instance
+/// deploy overlap may double-send a no-data notice, which is benign.
+async fn notify_silent(
+    store: &dyn SilenceStore,
+    d: &dyn SilenceDelivery,
+    now: chrono::DateTime<Utc>,
+) -> Result<()> {
+    let pending: Vec<_> = store
+        .list_open()
+        .await?
+        .into_iter()
+        .filter(|s| !s.notified)
+        .collect();
+    let keys: Vec<(OrgId, Uuid)> = pending.iter().map(|s| (s.org, s.target_id)).collect();
+    let groups = store.alerting_groups(&keys).await?;
+    let mut by_group: HashMap<(OrgId, Uuid), (SilenceGroup, Vec<SilentMember>)> = HashMap::new();
+    for s in pending {
+        match groups.get(&(s.org, s.target_id)) {
+            Some(group) => by_group
+                .entry((s.org, group.id))
+                .or_insert_with(|| (group.clone(), Vec::new()))
+                .1
+                .push((s.target_id, s.silent_since)),
+            None => {
+                if d.notify(s.org, s.target_id, NotificationReason::NoData)
+                    .await
+                {
+                    store.mark_notified(s.org, s.target_id, now).await?;
+                }
+            }
+        }
+    }
+    for ((org, _), (group, members)) in by_group {
+        let channels = d.group_channels(org, &group).await;
+        store
+            .join_group_silence(org, &group, &channels, &members)
+            .await?;
+        for (target_id, _) in members {
+            store.mark_notified(org, target_id, now).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Sends what group silence episodes owe: the opening notice until it lands,
+/// and once every member is back the resumed one, which ends the episode. One
+/// that never got its opening notice out ends without a word.
+async fn settle_group_silences(
+    store: &dyn SilenceStore,
+    d: &dyn SilenceDelivery,
+    now: chrono::DateTime<Utc>,
+    mass: bool,
+) -> Result<()> {
+    for silence in store.group_silences_due().await? {
+        if silence.finished {
+            // Members all deleted: nothing came back to announce. A member
+            // that joins after the read, which takes two sweeps at once, keeps
+            // the episode open and the back notice repeats once it is back.
+            let told = silence.notified
+                && silence.resumed
+                && !mass
+                && d.notify_group(&silence, NotificationReason::DataResumed)
+                    .await;
+            store
+                .end_group_silence(silence.org, silence.id, now, told)
+                .await?;
+        } else if !mass && d.notify_group(&silence, NotificationReason::NoData).await {
+            store
+                .mark_group_silence_notified(silence.org, silence.id, now)
+                .await?;
+        }
     }
     Ok(())
 }
@@ -270,6 +392,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingDelivery {
         sent: Mutex<Vec<(Uuid, NotificationReason)>>,
+        group_sent: Mutex<Vec<(Uuid, NotificationReason, usize)>>,
     }
     #[async_trait]
     impl SilenceDelivery for RecordingDelivery {
@@ -277,6 +400,95 @@ mod tests {
             self.sent.lock().push((target_id, reason));
             true
         }
+        async fn group_channels(&self, _org: OrgId, _group: &SilenceGroup) -> Vec<Uuid> {
+            Vec::new()
+        }
+        async fn notify_group(&self, silence: &GroupSilence, reason: NotificationReason) -> bool {
+            self.group_sent
+                .lock()
+                .push((silence.id, reason, silence.members.len()));
+            true
+        }
+    }
+
+    fn group() -> SilenceGroup {
+        SilenceGroup {
+            id: Uuid::now_v7(),
+            name: "DNS".into(),
+            alerts: Default::default(),
+            tags: Vec::new(),
+        }
+    }
+
+    async fn tick(store: &InMemorySilenceStore, d: &RecordingDelivery) {
+        sweep(
+            store,
+            Some(d),
+            Duration::from_secs(120),
+            &RegionCaps::default(),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_group_alerting_as_one_says_once_that_its_members_went_silent_and_came_back() {
+        let org = OrgId(Uuid::now_v7());
+        let (ns, a, mx, alone) = (
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+        );
+        let store = InMemorySilenceStore::new();
+        store.set_total(100);
+        let dns = group();
+        for m in [ns, a, mx] {
+            store.set_alerting_group(org, m, dns.clone());
+        }
+        let d = RecordingDelivery::default();
+
+        store.set_unmonitored(vec![(org, ns), (org, a), (org, alone)]);
+        tick(&store, &d).await;
+        let opened = d.group_sent.lock().clone();
+        assert_eq!(opened.len(), 1);
+        assert_eq!((opened[0].1, opened[0].2), (NotificationReason::NoData, 2));
+        assert_eq!(*d.sent.lock(), vec![(alone, NotificationReason::NoData)]);
+
+        // A later member joins without a notice; one back alone says nothing.
+        store.set_unmonitored(vec![(org, ns), (org, a), (org, mx)]);
+        tick(&store, &d).await;
+        store.set_unmonitored(vec![(org, a), (org, mx)]);
+        tick(&store, &d).await;
+        assert_eq!(d.group_sent.lock().len(), 1);
+
+        store.set_unmonitored(vec![]);
+        tick(&store, &d).await;
+        let all = d.group_sent.lock().clone();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[1], (opened[0].0, NotificationReason::DataResumed, 3));
+        assert_eq!(
+            count(&d, NotificationReason::DataResumed),
+            1,
+            "the lone monitor only"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_mass_outage_tells_no_group_either() {
+        let org = OrgId(Uuid::now_v7());
+        let store = InMemorySilenceStore::new();
+        store.set_total(4);
+        let dns = group();
+        let silent: Vec<_> = (0..3).map(|_| (org, Uuid::now_v7())).collect();
+        for (o, t) in &silent {
+            store.set_alerting_group(*o, *t, dns.clone());
+        }
+        let d = RecordingDelivery::default();
+        store.set_unmonitored(silent);
+        tick(&store, &d).await;
+        assert!(d.group_sent.lock().is_empty());
+        assert!(d.sent.lock().is_empty());
     }
 
     fn count(d: &RecordingDelivery, reason: NotificationReason) -> usize {

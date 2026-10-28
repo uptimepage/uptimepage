@@ -433,22 +433,66 @@ pub(crate) fn decode_target_row(row: TargetRow, cipher: Option<&Cipher>) -> Resu
 /// update rather than claiming a recovery. A maintenance window that already
 /// started keeps those pages too, though it loses the monitor itself.
 ///
-/// Locks the monitors first, then their incidents, the order every other writer
-/// takes them in. An incident opening concurrently waits on the monitor and
-/// then fails on its absence. A reopen that already holds its incident commits
-/// before the close below reads it, so the close sees it open and closes it.
+/// Locks the groups their open incidents route to, then the monitors, then the
+/// group incidents and their incidents, the order every other writer takes them
+/// in. An incident opening concurrently waits on the monitor and then fails on
+/// its absence. A reopen that already holds its incident commits before the
+/// close below reads it, so the close sees it open and closes it. A member of a
+/// group incident leaves it with the delete, owing no notice of its own; the
+/// last one down closes the group incident as deleted, not recovered.
 async fn close_incidents_of_deleted_targets(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: OrgId,
     ids: &[Uuid],
     actor: Option<UserId>,
 ) -> Result<u64> {
+    let groups: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT DISTINCT routed_group_id FROM incidents \
+         WHERE org_id = $2 AND target_id = ANY($1) AND ended_at IS NULL \
+           AND routed_group_id IS NOT NULL ORDER BY 1",
+    )
+    .bind(ids)
+    .bind(org.0)
+    .fetch_all(&mut **tx)
+    .await
+    .context("delete target: member groups")?;
+    for group in &groups {
+        crate::storage::monitor_groups::lock_group(tx, org, *group).await?;
+    }
     sqlx::query("SELECT id FROM targets WHERE id = ANY($1) AND org_id = $2 ORDER BY id FOR UPDATE")
         .bind(ids)
         .bind(org.0)
         .execute(&mut **tx)
         .await
         .context("delete target: lock")?;
+    let members: Vec<(Uuid, Uuid)> = sqlx::query_as(
+        "SELECT id, group_incident_id FROM incidents \
+         WHERE org_id = $2 AND target_id = ANY($1) AND ended_at IS NULL \
+           AND group_incident_id IS NOT NULL ORDER BY group_incident_id, id",
+    )
+    .bind(ids)
+    .bind(org.0)
+    .fetch_all(&mut **tx)
+    .await
+    .context("delete target: attached members")?;
+    let mut group_incidents: Vec<Uuid> = members.iter().map(|(_, g)| *g).collect();
+    group_incidents.dedup();
+    for group_incident in &group_incidents {
+        advisory_xact_lock(
+            &mut **tx,
+            &crate::storage::locks::incident_lock_key(*group_incident),
+        )
+        .await
+        .context("delete target: group incident lock")?;
+    }
+    sqlx::query(
+        "SELECT id FROM incidents WHERE id = ANY($1) AND org_id = $2 ORDER BY id FOR UPDATE",
+    )
+    .bind(&group_incidents)
+    .bind(org.0)
+    .execute(&mut **tx)
+    .await
+    .context("delete target: lock group incidents")?;
     sqlx::query(
         "SELECT id FROM incidents WHERE target_id = ANY($1) AND org_id = $2 ORDER BY id FOR UPDATE",
     )
@@ -487,7 +531,7 @@ async fn close_incidents_of_deleted_targets(
                    resolved_by = $3,
                    next_escalation_at = NULL,
                    closed_by_monitor_delete = true,
-                   closing_notice_at = now(),
+                   closing_notice_at = CASE WHEN group_incident_id IS NULL THEN now() END,
                    resolved_at = now(),
                    updated_at = now()
                WHERE org_id = $2 AND ended_at IS NULL
@@ -553,6 +597,16 @@ async fn close_incidents_of_deleted_targets(
     .fetch_one(&mut **tx)
     .await
     .context("delete target: close incidents")?;
+    for (member, group_incident) in members {
+        crate::storage::group_incidents::member_closed(
+            tx,
+            org,
+            group_incident,
+            member,
+            crate::storage::group_incidents::MemberLeft::Deleted(actor),
+        )
+        .await?;
+    }
     Ok(closed.max(0) as u64)
 }
 

@@ -182,11 +182,19 @@ async fn close_reports_only_the_call_that_flipped_the_row_pg() {
     let ended = chrono::Utc::now();
 
     assert!(
-        store.close(org, id, ended).await.expect("close 1"),
+        store
+            .close(org, id, ended)
+            .await
+            .expect("close 1")
+            .is_some(),
         "the call that flips ended_at must report true"
     );
     assert!(
-        !store.close(org, id, ended).await.expect("close 2"),
+        store
+            .close(org, id, ended)
+            .await
+            .expect("close 2")
+            .is_none(),
         "a re-close (or race loser) must report false and not re-page"
     );
     assert_eq!(
@@ -291,6 +299,7 @@ async fn widen_is_a_union_and_leaves_a_closed_incident_alone_pg() {
             .close(org, id, chrono::Utc::now())
             .await
             .expect("close")
+            .is_some()
     );
     store
         .widen(org, id, &["sg".into()])
@@ -341,7 +350,13 @@ async fn a_resolution_is_the_line_the_next_open_must_start_after_pg() {
         .await
         .expect("insert_open")
         .expect("first open");
-    assert!(store.close(org, first, at(300)).await.expect("close"));
+    assert!(
+        store
+            .close(org, first, at(300))
+            .await
+            .expect("close")
+            .is_some()
+    );
 
     // A declaration resolved later than the monitor incident does not move
     // the line: only monitor-origin closes count.

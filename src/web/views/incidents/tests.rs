@@ -973,7 +973,7 @@ fn reports_page_renders_kpis_and_top_monitors() {
     assert!(html.contains("api-gateway"));
     // Every resolved incident is accounted for.
     assert!(
-        html.contains("1 closed when their monitor was deleted"),
+        html.contains("1 closed when their monitor or group was deleted"),
         "{html}"
     );
     // A deleted monitor is still named, with nothing to link to.

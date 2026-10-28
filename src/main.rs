@@ -533,6 +533,9 @@ async fn main() -> Result<()> {
                 contacts: contact_store.clone(),
                 linked_apps: linked_app_store.clone(),
                 targets: target_store.clone(),
+                groups: Arc::new(uptimepage::storage::PgMonitorGroupStore::new(
+                    pg_pool_for_stores.clone(),
+                )),
                 channels: notification_channel_store.clone(),
                 maintenance: maintenance_store.clone(),
                 orgs: org_directory.clone(),

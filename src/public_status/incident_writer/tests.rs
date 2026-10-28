@@ -2296,7 +2296,13 @@ async fn a_resolution_draws_a_line_the_old_evidence_cannot_cross() {
 
     // Resolved by hand at -180s, with no recovery in the results.
     let org = OrgId(Uuid::nil());
-    assert!(incidents.close(org, opened[0].id, at(180)).await.unwrap());
+    assert!(
+        incidents
+            .close(org, opened[0].id, at(180))
+            .await
+            .unwrap()
+            .is_some()
+    );
     for _ in 0..3 {
         w.tick_once().await.expect("tick after resolve");
     }
@@ -2340,6 +2346,7 @@ async fn the_store_refuses_an_open_from_evidence_a_resolution_covered() {
             .close(org, first, now - ChronoDuration::seconds(100))
             .await
             .unwrap()
+            .is_some()
     );
 
     let stale = incidents

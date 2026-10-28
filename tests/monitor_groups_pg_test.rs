@@ -15,7 +15,7 @@ use uptimepage::domain::{
     NewNotificationChannel, NewTarget, OrgId, SlackConfig, TargetAlerts, TargetUpdate, WriteSource,
 };
 use uptimepage::error::{AppError, codes};
-use uptimepage::public_status::{IncidentStore, PgIncidentStore};
+use uptimepage::public_status::{Closed, IncidentStore, PgIncidentStore};
 use uptimepage::storage::group_incidents::{Attach, attach_member};
 use uptimepage::storage::monitor_groups::{MonitorGroupStore, PgMonitorGroupStore};
 use uptimepage::storage::{
@@ -554,15 +554,23 @@ async fn the_group_incident_closes_with_its_last_member_down() {
     let now = chrono::Utc::now();
     let later = now - chrono::Duration::seconds(30);
 
-    assert!(writer.close(f.org, a_down, now).await.unwrap());
-    assert!(!writer.close(f.org, a_down, now).await.unwrap());
+    assert_eq!(
+        writer.close(f.org, a_down, now).await.unwrap(),
+        Some(Closed::default())
+    );
+    assert!(writer.close(f.org, a_down, now).await.unwrap().is_none());
     let member = incident(&f.pool, a_down).await;
     assert!(member.ended_at.is_some());
     assert_eq!(member.closing_notice_at, None);
     assert_eq!(incident(&f.pool, group_incident).await.ended_at, None);
 
     // Backdated earlier than the first close: the group ends with the latest.
-    assert!(writer.close(f.org, ns_down, later).await.unwrap());
+    assert_eq!(
+        writer.close(f.org, ns_down, later).await.unwrap(),
+        Some(Closed {
+            group_incident: Some(group_incident)
+        })
+    );
     let g = incident(&f.pool, group_incident).await;
     assert_eq!(
         g.ended_at.map(|t| t.timestamp_micros()),
@@ -575,7 +583,13 @@ async fn the_group_incident_closes_with_its_last_member_down() {
     );
 
     let routed_unattached = f.routed_incident(ns.id, group, 1).await;
-    assert!(writer.close(f.org, routed_unattached, now).await.unwrap());
+    assert!(
+        writer
+            .close(f.org, routed_unattached, now)
+            .await
+            .unwrap()
+            .is_some()
+    );
     assert!(
         incident(&f.pool, routed_unattached)
             .await
@@ -723,5 +737,131 @@ async fn group_links_stay_inside_the_org_and_point_at_group_incidents() {
     .execute(&f.pool)
     .await;
     assert!(group_without_group.is_err());
+    f.done().await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_group_silence_holds_its_members_until_every_one_is_back() {
+    use uptimepage::storage::{PgSilenceStore, Resolved, SilenceStore};
+    let Some(f) = Fixture::new("grp_silence").await else {
+        return;
+    };
+    let ops = f.channel("ops").await;
+    let mut new = NewMonitorGroup::named("DNS");
+    new.alert_as_one = true;
+    new.alerts = TargetAlerts(vec![uptimepage::domain::AlertBinding { channel_id: ops }]);
+    f.groups
+        .create(f.org, new, WriteSource::Ui, None)
+        .await
+        .unwrap();
+    let ns = f.monitor("ns", Some("DNS")).await.id;
+    let a = f.monitor("a", Some("DNS")).await.id;
+    let mx = f.monitor("mx", Some("DNS")).await.id;
+    let alone = f.monitor("alone", None).await.id;
+    let store = PgSilenceStore::new(f.pool.clone());
+    let now = chrono::Utc::now();
+    for m in [ns, a, mx] {
+        store.enter(f.org, m, now).await.unwrap();
+    }
+
+    let groups = store
+        .alerting_groups(&[(f.org, ns), (f.org, alone)])
+        .await
+        .unwrap();
+    assert_eq!(groups.len(), 1);
+    let group = groups[&(f.org, ns)].clone();
+    assert_eq!(
+        group
+            .alerts
+            .iter()
+            .map(|b| b.channel_id)
+            .collect::<Vec<_>>(),
+        vec![ops]
+    );
+
+    let episode = store
+        .join_group_silence(f.org, &group, &[ops], &[(ns, now), (a, now)])
+        .await
+        .unwrap();
+    let due = store.group_silences_due().await.unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(
+        (due[0].id, due[0].notified, due[0].finished),
+        (episode, false, false)
+    );
+    assert_eq!(due[0].members, vec!["ns", "a"]);
+    assert_eq!(due[0].channel_ids, vec![ops]);
+    store
+        .mark_group_silence_notified(f.org, episode, now)
+        .await
+        .unwrap();
+    assert!(store.group_silences_due().await.unwrap().is_empty());
+
+    let again = store
+        .join_group_silence(f.org, &group, &[], &[(mx, now), (ns, now)])
+        .await
+        .unwrap();
+    assert_eq!(again, episode);
+    assert_eq!(
+        store.resolve(f.org, ns, now).await.unwrap(),
+        Resolved::InGroup
+    );
+    assert_eq!(
+        store.resolve(f.org, ns, now).await.unwrap(),
+        Resolved::Already
+    );
+    assert_eq!(
+        store.resolve(f.org, alone, now).await.unwrap(),
+        Resolved::Already
+    );
+    // Silent again while the episode is open: a fresh row in the same one.
+    store.enter(f.org, ns, now).await.unwrap();
+    store
+        .join_group_silence(f.org, &group, &[], &[(ns, now)])
+        .await
+        .unwrap();
+    for m in [ns, a] {
+        assert_eq!(
+            store.resolve(f.org, m, now).await.unwrap(),
+            Resolved::InGroup
+        );
+    }
+    assert!(store.group_silences_due().await.unwrap().is_empty());
+    f.targets.delete(f.org, mx, None).await.unwrap();
+    let due = store.group_silences_due().await.unwrap();
+    assert_eq!(due.len(), 1);
+    assert!(due[0].finished && due[0].resumed);
+    assert_eq!(due[0].members, vec!["ns", "a", "mx"]);
+
+    store
+        .end_group_silence(f.org, episode, now, true)
+        .await
+        .unwrap();
+    assert!(store.group_silences_due().await.unwrap().is_empty());
+    let next = store
+        .join_group_silence(f.org, &group, &[ops], &[(ns, now)])
+        .await
+        .unwrap();
+    assert_ne!(next, episode);
+
+    // Every member deleted: the episode is over, but nothing came back.
+    let mut mail = NewMonitorGroup::named("Mail");
+    mail.alert_as_one = true;
+    f.groups
+        .create(f.org, mail, WriteSource::Ui, None)
+        .await
+        .unwrap();
+    let z = f.monitor("z", Some("Mail")).await.id;
+    store.enter(f.org, z, now).await.unwrap();
+    let mail = store.alerting_groups(&[(f.org, z)]).await.unwrap()[&(f.org, z)].clone();
+    let gone = store
+        .join_group_silence(f.org, &mail, &[], &[(z, now)])
+        .await
+        .unwrap();
+    f.targets.delete(f.org, z, None).await.unwrap();
+    let due = store.group_silences_due().await.unwrap();
+    let ended = due.iter().find(|d| d.id == gone).expect("due");
+    assert!(ended.finished && !ended.resumed);
     f.done().await;
 }

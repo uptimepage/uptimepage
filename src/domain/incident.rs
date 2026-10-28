@@ -1184,8 +1184,8 @@ pub struct IncidentMetrics {
     pub by_state: Vec<MetricBucket>,
     pub auto_resolved: u64,
     pub human_resolved: u64,
-    /// Closed because their monitor was deleted: in `total` and the resolved
-    /// state, outside MTTR and the two counts above.
+    /// Closed because their monitor or their group was deleted: in `total`
+    /// and the resolved state, outside MTTR and the two counts above.
     #[serde(default)]
     pub closed_with_monitor: u64,
     pub top_monitors: Vec<MonitorIncidentCount>,
