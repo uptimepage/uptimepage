@@ -208,12 +208,19 @@ WITH org AS (SELECT id FROM organizations WHERE slug='${SLUG}'),
   ('domain-expiry', false, NULL, NULL, 0, 'Integrations', ARRAY['domain'], false,
    '{"type":"domain_expiry","domain":"uptimepage.dev","warn_days":60,"critical_days":14,"timeout":10000}')
      ),
+     grp AS (
+       INSERT INTO monitor_groups (org_id, name)
+       SELECT DISTINCT org.id, spec.gname FROM org, spec WHERE spec.gname IS NOT NULL
+       ON CONFLICT (org_id, name) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id, name
+     ),
      ins AS (
        INSERT INTO targets
-         (org_id, name, check_spec, interval_secs, enabled, tags, group_name, owner_user_id)
+         (org_id, name, check_spec, interval_secs, enabled, tags, group_id, owner_user_id)
        SELECT org.id, spec.name, spec.spec::jsonb,
               CASE WHEN spec.spec::jsonb->>'type' IN ('tls_cert','domain_expiry') THEN 86400 ELSE 60 END,
-              true, spec.tags, spec.gname,
+              true, spec.tags,
+              (SELECT grp.id FROM grp WHERE grp.name = spec.gname),
               CASE WHEN spec.has_owner AND '${OWNER_USER_ID}' <> ''
                    THEN '${OWNER_USER_ID}'::uuid ELSE NULL END
        FROM org, spec
@@ -535,9 +542,9 @@ SELECT t.id, c.id, t.org_id, (array_position(m.names, c.name) - 1)::int
          WHEN t.tags @> ARRAY['db']     THEN ARRAY['Engineering Slack','Runbook automation','Ops phone']
          WHEN t.tags @> ARRAY['email']  THEN ARRAY['Engineering Slack','Ops email']
          WHEN t.tags @> ARRAY['ops']    THEN ARRAY['Self-hosted ntfy','Engineering Slack','Status bot']
-         WHEN t.group_name = 'Edge'         THEN ARRAY['Engineering Slack','Community Discord']
-         WHEN t.group_name = 'Integrations' THEN ARRAY['Engineering Slack','Platform Teams']
-         WHEN t.group_name = 'Infrastructure' THEN ARRAY['Engineering Slack','Runbook automation']
+         WHEN (SELECT g.name FROM monitor_groups g WHERE g.id = t.group_id) = 'Edge'         THEN ARRAY['Engineering Slack','Community Discord']
+         WHEN (SELECT g.name FROM monitor_groups g WHERE g.id = t.group_id) = 'Integrations' THEN ARRAY['Engineering Slack','Platform Teams']
+         WHEN (SELECT g.name FROM monitor_groups g WHERE g.id = t.group_id) = 'Infrastructure' THEN ARRAY['Engineering Slack','Runbook automation']
          ELSE ARRAY['Engineering Slack']
        END AS names) m
   JOIN chan c ON c.name = ANY(m.names)
@@ -555,7 +562,7 @@ UPDATE targets t SET
     WHEN t.tags @> ARRAY['p0'] THEN 900
     WHEN t.tags @> ARRAY['p1'] THEN 1800
     WHEN t.tags @> ARRAY['tls'] OR t.tags @> ARRAY['domain'] THEN 86400
-    WHEN t.group_name = 'Edge' THEN 1800
+    WHEN (SELECT g.name FROM monitor_groups g WHERE g.id = t.group_id) = 'Edge' THEN 1800
     ELSE 3600 END
 WHERE t.org_id = (SELECT id FROM org);
 SQL

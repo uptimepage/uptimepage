@@ -21,6 +21,7 @@ pub mod maintenance;
 pub mod manual;
 pub mod membership;
 pub mod metrics;
+pub mod monitor_group;
 pub mod monitor_share;
 pub mod notification_channel;
 pub mod on_call;
@@ -68,13 +69,14 @@ pub use escalation_policy::{
 };
 pub use heartbeat::{CadenceAdvice, HeartbeatPingRecord, ObservedCadence, Ping, PingSignal};
 pub use incident::{
-    ActionItem, ActorType, Incident, IncidentAcknowledgement, IncidentEvent, IncidentEventKind,
-    IncidentMetrics, IncidentNarrationUpdate, IncidentNotification, IncidentOrigin,
-    IncidentPostmortem, IncidentState, IncidentTransition, IncidentUrgency, IncidentVisibility,
-    MONITOR_DELETED_MESSAGE, MetricBucket, MonitorIncidentCount, NewIncidentNotification,
-    NewIncidentUpdate, NewManualIncident, NotificationOutcome, NotificationReason,
-    NotificationStatus, OpsIncident, PostmortemUpsert, TransitionError, coalesce_incidents,
-    confirmed_downtime_secs, elapsed_at, next_state, uptime_pct_from_downtime,
+    ActionItem, ActorType, GROUP_DELETED_MESSAGE, Incident, IncidentAcknowledgement, IncidentEvent,
+    IncidentEventKind, IncidentGroupLink, IncidentMetrics, IncidentNarrationUpdate,
+    IncidentNotification, IncidentOrigin, IncidentPostmortem, IncidentState, IncidentTransition,
+    IncidentUrgency, IncidentVisibility, MONITOR_DELETED_MESSAGE, MetricBucket,
+    MonitorIncidentCount, NewIncidentNotification, NewIncidentUpdate, NewManualIncident,
+    NotificationOutcome, NotificationReason, NotificationStatus, OpsIncident, PostmortemUpsert,
+    TransitionError, coalesce_incidents, confirmed_downtime_secs, elapsed_at, next_state,
+    uptime_pct_from_downtime,
 };
 pub use linked_app::{ExternalId, Linked, LinkedApp, LinkedAppAccount};
 pub use locale::Locale;
@@ -84,6 +86,10 @@ pub use maintenance::{
 };
 pub use manual::{MAX_MANUAL_NOTE_CHARS, ManualState, ManualStatus};
 pub use membership::{Membership, Role};
+pub use monitor_group::{
+    MAX_GROUP_NAME_LEN, MonitorGroup, MonitorGroupUpdate, NewMonitorGroup, Subject,
+    group_deleted_message, member_list, normalize_group_name,
+};
 pub use monitor_share::{
     CreatedShare, MonitorShare, MonitorShareId, NewMonitorShare, ResolvedShare, SharePageUse,
 };

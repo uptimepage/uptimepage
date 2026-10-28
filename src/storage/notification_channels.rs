@@ -661,8 +661,8 @@ impl NotificationChannelStore for PgNotificationChannelStore {
             .map_err(|e| AppError::Other(anyhow!("begin: {e}")))?;
         // Each step written out rather than left to the foreign-key cascades,
         // whose firing order follows trigger names. LOCK ORDER: the channel,
-        // then its pages in id order, then its bindings in monitor order, the
-        // order a monitor delete takes pages and bindings in.
+        // then its pages in id order, then its bindings in group and then in
+        // monitor order, the order a monitor delete takes pages and bindings in.
         let kind: Option<String> = sqlx::query_scalar(
             "SELECT kind FROM notification_channels WHERE id = $1 AND org_id = $2 FOR UPDATE",
         )
@@ -684,6 +684,17 @@ impl NotificationChannelStore for PgNotificationChannelStore {
         .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Other(anyhow!("detach channel pages: {e}")))?;
+        sqlx::query(
+            "DELETE FROM group_channels WHERE (group_id, channel_id) IN ( \
+                 SELECT group_id, channel_id FROM group_channels \
+                  WHERE channel_id = $1 AND org_id = $2 \
+                  ORDER BY group_id, channel_id FOR UPDATE)",
+        )
+        .bind(id)
+        .bind(org.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::Other(anyhow!("unbind channel from groups: {e}")))?;
         sqlx::query(
             "DELETE FROM target_channels WHERE (target_id, channel_id) IN ( \
                  SELECT target_id, channel_id FROM target_channels \

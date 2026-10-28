@@ -292,10 +292,14 @@ impl Worker {
                 self.open_episode(org, &incident, &target, damper).await
             }
             // Claimed above, before the incident is read.
-            NotificationReason::Resolved | NotificationReason::MonitorDeleted => Ok(()),
+            NotificationReason::Resolved
+            | NotificationReason::MonitorDeleted
+            | NotificationReason::GroupDeleted => Ok(()),
             // Escalation and reminder pages originate from the sweep, never an
-            // inbound signal.
-            NotificationReason::Escalated | NotificationReason::Reminder => Ok(()),
+            // inbound signal; a member-down notice from a group's attach.
+            NotificationReason::Escalated
+            | NotificationReason::Reminder
+            | NotificationReason::MemberDown => Ok(()),
             // Silence has no incident row; the silence sweep delivers it.
             NotificationReason::NoData | NotificationReason::DataResumed => Ok(()),
         }

@@ -80,6 +80,7 @@ mod me_theme_test;
 mod me_time_format_test;
 mod migrator_pg_test;
 mod mode_parameterization_test;
+mod monitor_groups_pg_test;
 mod monitor_share_audit_test;
 mod monitor_shares_pg_test;
 mod network_path_test;

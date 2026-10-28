@@ -25,6 +25,19 @@ fn resolved_public_message_uses_note_or_default() {
     }
 }
 
+#[test]
+fn the_sql_episode_kinds_are_the_ones_that_start_an_episode() {
+    let kinds: Vec<String> = IncidentEventKind::ALL
+        .iter()
+        .filter(|k| k.starts_episode())
+        .map(|k| format!("'{}'", k.as_db_str()))
+        .collect();
+    assert_eq!(
+        super::EPISODE_EVENT_KINDS,
+        format!("({})", kinds.join(", "))
+    );
+}
+
 fn org() -> OrgId {
     OrgId(Uuid::nil())
 }
@@ -43,6 +56,7 @@ fn seed_triggered(store: &InMemoryIncidentOpsStore) -> Uuid {
         target_name: None,
         target_kind: None,
         closed_by_monitor_delete: false,
+        group: Default::default(),
         title: None,
         state: IncidentState::Triggered,
         severity: IncidentSeverity::Major,

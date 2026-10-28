@@ -375,19 +375,23 @@ pub enum IncidentOrigin {
     #[default]
     Monitor,
     Manual,
+    /// Opened by the first failing member of a group that alerts as one.
+    Group,
 }
 
 impl IncidentOrigin {
-    pub const ALL: &'static [Self] = &[Self::Monitor, Self::Manual];
+    pub const ALL: &'static [Self] = &[Self::Monitor, Self::Manual, Self::Group];
     pub fn as_db_str(self) -> &'static str {
         match self {
             Self::Monitor => "monitor",
             Self::Manual => "manual",
+            Self::Group => "group",
         }
     }
     pub fn from_db_str(s: &str) -> Self {
         match s {
             "manual" => Self::Manual,
+            "group" => Self::Group,
             _ => Self::Monitor,
         }
     }
@@ -516,6 +520,11 @@ pub enum IncidentEventKind {
     PostmortemPublished,
     PostmortemUnpublished,
     MonitorDeleted,
+    MemberDown,
+    MemberUp,
+    GroupDeleted,
+    /// A group delete handed this member back to its own channels: a new episode.
+    Detached,
 }
 
 impl IncidentEventKind {
@@ -537,6 +546,10 @@ impl IncidentEventKind {
         Self::PostmortemPublished,
         Self::PostmortemUnpublished,
         Self::MonitorDeleted,
+        Self::MemberDown,
+        Self::MemberUp,
+        Self::GroupDeleted,
+        Self::Detached,
     ];
     pub fn as_db_str(self) -> &'static str {
         match self {
@@ -557,8 +570,18 @@ impl IncidentEventKind {
             Self::PostmortemPublished => "postmortem_published",
             Self::PostmortemUnpublished => "postmortem_unpublished",
             Self::MonitorDeleted => "monitor_deleted",
+            Self::MemberDown => "member_down",
+            Self::MemberUp => "member_up",
+            Self::GroupDeleted => "group_deleted",
+            Self::Detached => "detached",
         }
     }
+
+    /// Starts a new episode of the incident it is logged on.
+    pub fn starts_episode(self) -> bool {
+        matches!(self, Self::Reopened | Self::Detached)
+    }
+
     /// Unknown values fall back to `Note` so a forward-migrated row never
     /// panics a read path.
     pub fn from_db_str(s: &str) -> Self {
@@ -579,6 +602,10 @@ impl IncidentEventKind {
             "postmortem_published" => Self::PostmortemPublished,
             "postmortem_unpublished" => Self::PostmortemUnpublished,
             "monitor_deleted" => Self::MonitorDeleted,
+            "member_down" => Self::MemberDown,
+            "member_up" => Self::MemberUp,
+            "group_deleted" => Self::GroupDeleted,
+            "detached" => Self::Detached,
             _ => Self::Note,
         }
     }
@@ -632,11 +659,18 @@ pub enum NotificationReason {
     /// The monitor was deleted and its incident closed with it. Not a
     /// recovery: nothing says the service came back.
     MonitorDeleted,
+    /// More members of a group already alerting went down.
+    MemberDown,
+    /// The group was deleted and its incident closed with it; not a recovery.
+    GroupDeleted,
 }
 
 /// What responders and status page readers are told when a monitor's deletion
 /// closes its incident.
 pub const MONITOR_DELETED_MESSAGE: &str = "Monitoring was removed; this incident was closed.";
+
+/// What responders are told when deleting a group closes its incident.
+pub const GROUP_DELETED_MESSAGE: &str = "The group was deleted; this incident was closed.";
 
 impl NotificationReason {
     pub const ALL: &'static [Self] = &[
@@ -648,6 +682,8 @@ impl NotificationReason {
         Self::DataResumed,
         Self::Reminder,
         Self::MonitorDeleted,
+        Self::MemberDown,
+        Self::GroupDeleted,
     ];
     pub fn as_db_str(self) -> &'static str {
         match self {
@@ -659,6 +695,8 @@ impl NotificationReason {
             Self::DataResumed => "data_resumed",
             Self::Reminder => "reminder",
             Self::MonitorDeleted => "monitor_deleted",
+            Self::MemberDown => "member_down",
+            Self::GroupDeleted => "group_deleted",
         }
     }
     /// An incident still running that nobody has been told to stop chasing,
@@ -674,7 +712,10 @@ impl NotificationReason {
     /// Tells responders the incident is over, so it goes to the channels that
     /// were paged and still goes out once the monitor is gone.
     pub fn closes_incident(self) -> bool {
-        matches!(self, Self::Resolved | Self::MonitorDeleted)
+        matches!(
+            self,
+            Self::Resolved | Self::MonitorDeleted | Self::GroupDeleted
+        )
     }
 
     pub fn from_db_str(s: &str) -> Self {
@@ -686,6 +727,8 @@ impl NotificationReason {
             "data_resumed" => Self::DataResumed,
             "reminder" => Self::Reminder,
             "monitor_deleted" => Self::MonitorDeleted,
+            "member_down" => Self::MemberDown,
+            "group_deleted" => Self::GroupDeleted,
             _ => Self::Opened,
         }
     }
@@ -766,6 +809,22 @@ pub struct OpsIncident {
     pub regions_up: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(skip)]
+    pub group: IncidentGroupLink,
+}
+
+/// An incident's place in a group that alerts as one.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IncidentGroupLink {
+    /// A group incident's group, until the group is deleted.
+    pub group_id: Option<Uuid>,
+    /// A group incident's group name, kept after the group is deleted.
+    pub group_name: Option<String>,
+    /// The group a member incident opened routed to; cleared by a group delete.
+    pub routed_group_id: Option<Uuid>,
+    /// The group incident a member incident is part of.
+    pub group_incident_id: Option<Uuid>,
+    pub closed_by_group_delete: bool,
 }
 
 impl OpsIncident {
@@ -792,9 +851,19 @@ impl OpsIncident {
     pub fn closing_reason(&self) -> NotificationReason {
         if self.closed_by_monitor_delete {
             NotificationReason::MonitorDeleted
+        } else if self.group.closed_by_group_delete {
+            NotificationReason::GroupDeleted
         } else {
             NotificationReason::Resolved
         }
+    }
+
+    /// May page at all: paging is on and it has a monitor, or it is a group
+    /// incident whose group still exists. `MAY_PAGE_PREDICATE` in SQL.
+    pub fn may_page(&self) -> bool {
+        self.paging_enabled
+            && (self.target_id.is_some()
+                || (self.origin == IncidentOrigin::Group && self.group.group_id.is_some()))
     }
 }
 

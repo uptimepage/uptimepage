@@ -84,8 +84,9 @@ reset_seeded_history "$ORG" "$TAG"
 
 echo "==> Postgres: create the monitors"
 pg -q <<SQL
-INSERT INTO targets (org_id, name, check_spec, interval_secs, tags, group_name, alert_confirmations)
-SELECT '${ORG}', name, spec::jsonb, secs, ARRAY['${TAG}', tag], 'Check facts (seeded)', confirmations
+INSERT INTO monitor_groups (org_id, name) VALUES ('${ORG}', 'Check facts (seeded)') ON CONFLICT (org_id, name) DO NOTHING;
+INSERT INTO targets (org_id, name, check_spec, interval_secs, tags, group_id, alert_confirmations)
+SELECT '${ORG}', name, spec::jsonb, secs, ARRAY['${TAG}', tag], (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Check facts (seeded)'), confirmations
 FROM (VALUES
   ('facts-tls-ok', 'github.com certificate', 3600, 1,
    '{"type":"tls_cert","host":"github.com","port":443,"server_name":null,"warn_days":30,"critical_days":7,"timeout":5000,"ip_version":"any"}'),

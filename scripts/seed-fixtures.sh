@@ -219,12 +219,19 @@ WITH org AS (SELECT id FROM organizations WHERE slug='${SLUG}'),
   ('fix-domain',  true,  false, 'Domain Expiry',   'Internal',        5,  'Infrastructure',false,
    '{"type":"domain_expiry","domain":"example.com","warn_days":60,"critical_days":14,"timeout":10000}')
      ),
+     grp AS (
+       INSERT INTO monitor_groups (org_id, name)
+       SELECT DISTINCT org.id, spec.gname FROM org, spec WHERE spec.gname IS NOT NULL
+       ON CONFLICT (org_id, name) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id, name
+     ),
      ins AS (
        INSERT INTO targets
-         (org_id, name, check_spec, interval_secs, enabled, tags, group_name, owner_user_id)
+         (org_id, name, check_spec, interval_secs, enabled, tags, group_id, owner_user_id)
        SELECT org.id, spec.name, spec.spec::jsonb,
               CASE WHEN spec.spec::jsonb->>'type' IN ('tls_cert','domain_expiry') THEN 86400 ELSE 60 END,
-              spec.is_enabled, ARRAY['seed-fixtures'], spec.gname,
+              spec.is_enabled, ARRAY['seed-fixtures'],
+              (SELECT grp.id FROM grp WHERE grp.name = spec.gname),
               CASE WHEN spec.has_owner AND '${OWNER_USER_ID}' <> ''
                    THEN '${OWNER_USER_ID}'::uuid ELSE NULL END
        FROM org, spec

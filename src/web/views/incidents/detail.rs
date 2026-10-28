@@ -212,6 +212,10 @@ fn event_kind_label(e: &IncidentEvent) -> &'static str {
         PostmortemPublished => "postmortem published",
         PostmortemUnpublished => "postmortem unpublished",
         MonitorDeleted => "monitor deleted",
+        MemberDown => "member down",
+        MemberUp => "member up",
+        GroupDeleted => "group deleted",
+        Detached => "left the group",
     }
 }
 

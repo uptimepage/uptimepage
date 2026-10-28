@@ -972,12 +972,9 @@ pub async fn bulk_action(
             state.target_store.remove_tags(org, &req.ids, tags).await?
         }
         BulkAction::SetGroup { group } => {
-            // Trim + treat "" as clear so the wire format stays one shape
-            // (omit field = no-op, send "" or null = clear).
-            let normalized = group.as_deref().map(str::trim).filter(|s| !s.is_empty());
             state
                 .target_store
-                .set_group(org, &req.ids, normalized)
+                .set_group(org, &req.ids, group.as_deref(), Some(user))
                 .await?
         }
         BulkAction::SetInterval { interval } => {

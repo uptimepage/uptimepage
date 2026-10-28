@@ -62,11 +62,12 @@ DELETE FROM incidents
 DELETE FROM targets WHERE org_id = '${ORG}' AND tags @> ARRAY['seed-mh'];
 DELETE FROM status_pages WHERE org_id = '${ORG}' AND slug = '${PAGE_SLUG}';
 
-INSERT INTO targets (org_id, name, check_spec, interval_secs, enabled, tags, group_name)
+INSERT INTO monitor_groups (org_id, name) VALUES ('${ORG}', 'Seeded') ON CONFLICT (org_id, name) DO NOTHING;
+INSERT INTO targets (org_id, name, check_spec, interval_secs, enabled, tags, group_id)
 VALUES
-  ('${ORG}', 'Website (seeded)',     '{"type":"manual"}'::jsonb, 60, true, ARRAY['seed-mh','mh-website'], 'Seeded'),
-  ('${ORG}', 'API (seeded)',         '{"type":"manual"}'::jsonb, 60, true, ARRAY['seed-mh','mh-api'],     'Seeded'),
-  ('${ORG}', 'Back office (seeded)', '{"type":"manual"}'::jsonb, 60, true, ARRAY['seed-mh','mh-office'],  'Seeded');
+  ('${ORG}', 'Website (seeded)',     '{"type":"manual"}'::jsonb, 60, true, ARRAY['seed-mh','mh-website'], (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Seeded')),
+  ('${ORG}', 'API (seeded)',         '{"type":"manual"}'::jsonb, 60, true, ARRAY['seed-mh','mh-api'],     (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Seeded')),
+  ('${ORG}', 'Back office (seeded)', '{"type":"manual"}'::jsonb, 60, true, ARRAY['seed-mh','mh-office'],  (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Seeded'));
 
 INSERT INTO status_pages (org_id, slug, name, enabled)
 VALUES ('${ORG}', '${PAGE_SLUG}', 'History demo', true);

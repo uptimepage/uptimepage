@@ -123,6 +123,9 @@ pub struct Target {
     #[serde(default)]
     #[schema(example = "API & Web", nullable = true, max_length = 50)]
     pub group_name: Option<String>,
+    #[serde(default)]
+    #[schema(nullable = true)]
+    pub group_id: Option<Uuid>,
     /// FK to `users.id`. Nullable; cleared if the user is removed.
     #[serde(default)]
     #[schema(nullable = true)]
@@ -274,6 +277,7 @@ impl Target {
             recovery_period_secs: 0,
             region_policy: Default::default(),
             group_name: None,
+            group_id: None,
             owner_user_id: None,
             write_source: WriteSource::Ui,
             created_at: Utc::now(),
@@ -335,7 +339,7 @@ where
     Option::<T>::deserialize(d).map(Some)
 }
 
-fn default_true() -> bool {
+pub(super) fn default_true() -> bool {
     true
 }
 
@@ -343,7 +347,7 @@ fn default_alert_confirmations() -> u32 {
     2
 }
 
-fn default_renotify_interval_secs() -> u32 {
+pub(super) fn default_renotify_interval_secs() -> u32 {
     3600
 }
 

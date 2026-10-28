@@ -150,8 +150,9 @@ pub trait TargetStore: Send + Sync {
         org: OrgId,
         filter: TargetFilter,
     ) -> Result<std::collections::HashMap<String, i64>>;
-    /// Distinct non-null `group_name`s across the org, sorted. Powers the
-    /// group filter dropdown so its options are org-wide, not page-scoped.
+    /// Every group's name across the org, sorted, empty groups included.
+    /// Powers the group filter dropdown so its options are org-wide, not
+    /// page-scoped.
     async fn distinct_groups(&self, org: OrgId) -> Result<Vec<String>>;
     /// `id → name` for every live target in the org. A projection: it skips the
     /// `check_spec` decode + secret decrypt that `list` pays, for callers that
@@ -246,9 +247,15 @@ pub trait TargetStore: Send + Sync {
     async fn add_tags(&self, org: OrgId, ids: &[Uuid], tags: &[String]) -> Result<TagAddOutcome>;
     /// Removes `tags` from every named target; returns the set that existed.
     async fn remove_tags(&self, org: OrgId, ids: &[Uuid], tags: &[String]) -> Result<Vec<Uuid>>;
-    /// Sets every named target's `group_name` to `group` (None clears).
-    /// Returns the set that existed.
-    async fn set_group(&self, org: OrgId, ids: &[Uuid], group: Option<&str>) -> Result<Vec<Uuid>>;
+    /// Moves every named target into the group called `group`, created when
+    /// new (None or blank clears). Returns the set that existed.
+    async fn set_group(
+        &self,
+        org: OrgId,
+        ids: &[Uuid],
+        group: Option<&str>,
+        actor: Option<UserId>,
+    ) -> Result<Vec<Uuid>>;
     /// Sets every named target's interval, except those whose check kind is in
     /// `skip_kinds`, which come back in `skipped`.
     async fn set_interval(

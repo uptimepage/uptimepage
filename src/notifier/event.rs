@@ -3,7 +3,8 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::domain::{
-    IncidentOrigin, IncidentSeverity, IncidentUrgency, MONITOR_DELETED_MESSAGE, NotificationReason,
+    GROUP_DELETED_MESSAGE, IncidentOrigin, IncidentSeverity, IncidentUrgency,
+    MONITOR_DELETED_MESSAGE, NotificationReason,
 };
 use crate::text::{single_line, truncate_chars};
 
@@ -64,6 +65,7 @@ impl IncidentNotice {
         match self.reason {
             NotificationReason::Reopened => "REOPENED",
             NotificationReason::Reminder => "STILL OPEN",
+            NotificationReason::MemberDown => "SPREADING",
             _ => "OPEN",
         }
     }
@@ -116,7 +118,8 @@ impl IncidentNotice {
             NotificationReason::Opened
             | NotificationReason::Escalated
             | NotificationReason::Reopened
-            | NotificationReason::Reminder => format!(
+            | NotificationReason::Reminder
+            | NotificationReason::MemberDown => format!(
                 "{label} — {sev} incident {state}{err}",
                 label = self.label(),
                 sev = self.severity.as_db_str(),
@@ -136,6 +139,9 @@ impl IncidentNotice {
             }
             NotificationReason::MonitorDeleted => {
                 format!("{label} — {MONITOR_DELETED_MESSAGE}", label = self.label())
+            }
+            NotificationReason::GroupDeleted => {
+                format!("{label} — {GROUP_DELETED_MESSAGE}", label = self.label())
             }
             NotificationReason::NoData => format!(
                 "{label} — NO DATA: monitoring interrupted, no check results received",

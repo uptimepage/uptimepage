@@ -49,7 +49,7 @@ struct MemState {
 
 /// Whether a new episode of `incident` owes its first page: it may page.
 fn may_page(incident: &OpsIncident) -> bool {
-    incident.paging_enabled && incident.target_id.is_some()
+    incident.may_page()
 }
 
 /// Episode number off the timeline, matching the Postgres store.
@@ -62,11 +62,7 @@ fn reopens_before(state: &MemState, incident_id: Uuid, at: DateTime<Utc>) -> i64
     state
         .events
         .iter()
-        .filter(|e| {
-            e.incident_id == incident_id
-                && e.kind == IncidentEventKind::Reopened
-                && e.occurred_at <= at
-        })
+        .filter(|e| e.incident_id == incident_id && e.kind.starts_episode() && e.occurred_at <= at)
         .count() as i64
 }
 
@@ -580,6 +576,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             target_name: monitor.as_ref().map(|t| t.name.clone()),
             target_kind: monitor.as_ref().map(|t| t.check.kind().to_string()),
             closed_by_monitor_delete: false,
+            group: Default::default(),
             title: Some(new.title),
             state: IncidentState::Triggered,
             severity: new.severity,
@@ -1192,7 +1189,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
                 claim: lease_to,
                 episode: events
                     .iter()
-                    .filter(|e| e.incident_id == inc.id && e.kind == IncidentEventKind::Reopened)
+                    .filter(|e| e.incident_id == inc.id && e.kind.starts_episode())
                     .count() as i64,
             });
             inc.next_escalation_at = Some(lease_to);

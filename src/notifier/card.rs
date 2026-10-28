@@ -7,7 +7,8 @@
 use chrono::{DateTime, Utc};
 
 use crate::domain::{
-    IncidentOrigin, IncidentSeverity, MONITOR_DELETED_MESSAGE, NotificationReason,
+    GROUP_DELETED_MESSAGE, IncidentOrigin, IncidentSeverity, MONITOR_DELETED_MESSAGE,
+    NotificationReason,
 };
 use crate::notifier::event::IncidentNotice;
 use crate::text::{single_line, truncate_chars};
@@ -117,6 +118,7 @@ pub enum CardTemplate {
     Incident,
     Resolved,
     MonitorDeleted,
+    GroupDeleted,
     NoData,
     DataResumed,
 }
@@ -127,9 +129,11 @@ impl CardTemplate {
             NotificationReason::Opened
             | NotificationReason::Reopened
             | NotificationReason::Escalated
-            | NotificationReason::Reminder => Self::Incident,
+            | NotificationReason::Reminder
+            | NotificationReason::MemberDown => Self::Incident,
             NotificationReason::Resolved => Self::Resolved,
             NotificationReason::MonitorDeleted => Self::MonitorDeleted,
+            NotificationReason::GroupDeleted => Self::GroupDeleted,
             NotificationReason::NoData => Self::NoData,
             NotificationReason::DataResumed => Self::DataResumed,
         }
@@ -183,7 +187,7 @@ impl CardTemplate {
                         .push(CardField::text("Duration", spell_duration(minutes)));
                 }
             }
-            Self::MonitorDeleted => {
+            Self::MonitorDeleted | Self::GroupDeleted => {
                 card.fields.push(CardField::time("Started", n.started_at));
                 if let Some(end) = n.ended_at {
                     card.fields.push(CardField::time("Closed", end));
@@ -204,7 +208,7 @@ impl CardTemplate {
             },
             Self::NoData => CardTone::Warning,
             Self::Resolved => CardTone::Recovered,
-            Self::MonitorDeleted => CardTone::Closed,
+            Self::MonitorDeleted | Self::GroupDeleted => CardTone::Closed,
             // An outage that ended and a monitor that started reporting again
             // ask for different follow-up, so they do not look alike.
             Self::DataResumed => CardTone::Resumed,
@@ -220,6 +224,7 @@ impl CardTemplate {
             ),
             Self::Resolved => "Incident resolved".into(),
             Self::MonitorDeleted => MONITOR_DELETED_MESSAGE.into(),
+            Self::GroupDeleted => GROUP_DELETED_MESSAGE.into(),
             Self::NoData => "No data: monitoring interrupted, no check results received".into(),
             Self::DataResumed => "Monitoring resumed, receiving check results again".into(),
         }

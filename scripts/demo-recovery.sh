@@ -144,16 +144,17 @@ start_service
 
 echo "==> Creating the demo monitors and status page"
 pg -q <<SQL
-INSERT INTO targets (org_id, name, check_spec, interval_secs, enabled, tags, group_name,
+INSERT INTO monitor_groups (org_id, name) VALUES ('${ORG}', 'Demo') ON CONFLICT (org_id, name) DO NOTHING;
+INSERT INTO targets (org_id, name, check_spec, interval_secs, enabled, tags, group_id,
                      alert_confirmations, region_policy, recovery_period_secs)
 VALUES
-  ('${ORG}', 'Webmail',       '$(spec ok)'::jsonb,   60, true, ARRAY['${TAG}','demo-webmail'], 'Demo', 2, '"any"'::jsonb, 180),
-  ('${ORG}', 'Website',       '$(spec ok)'::jsonb,   60, true, ARRAY['${TAG}','demo-website'], 'Demo', 2, '"any"'::jsonb, 180),
-  ('${ORG}', 'API',           '$(spec ok)'::jsonb,   60, true, ARRAY['${TAG}','demo-api'],     'Demo', 2, '"any"'::jsonb, 180),
-  ('${ORG}', 'Mail relay',    '$(spec ok)'::jsonb,   60, true, ARRAY['${TAG}','demo-relay'],   'Demo', 2, '"any"'::jsonb, 180),
-  ('${ORG}', 'Control panel', '$(spec ok)'::jsonb,   60, true, ARRAY['${TAG}','demo-panel'],   'Demo', 2, '"any"'::jsonb, 180),
-  ('${ORG}', 'DNS',           '$(spec ok)'::jsonb,   60, true, ARRAY['${TAG}','demo-dns'],     'Demo', 2, '"any"'::jsonb, 180),
-  ('${ORG}', 'Live service',  '$(spec flap)'::jsonb, 10, false, ARRAY['${TAG}','demo-live'],   'Demo', 2, '"any"'::jsonb, ${HOLD});
+  ('${ORG}', 'Webmail',       '$(spec ok)'::jsonb,   60, true, ARRAY['${TAG}','demo-webmail'], (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Demo'), 2, '"any"'::jsonb, 180),
+  ('${ORG}', 'Website',       '$(spec ok)'::jsonb,   60, true, ARRAY['${TAG}','demo-website'], (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Demo'), 2, '"any"'::jsonb, 180),
+  ('${ORG}', 'API',           '$(spec ok)'::jsonb,   60, true, ARRAY['${TAG}','demo-api'],     (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Demo'), 2, '"any"'::jsonb, 180),
+  ('${ORG}', 'Mail relay',    '$(spec ok)'::jsonb,   60, true, ARRAY['${TAG}','demo-relay'],   (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Demo'), 2, '"any"'::jsonb, 180),
+  ('${ORG}', 'Control panel', '$(spec ok)'::jsonb,   60, true, ARRAY['${TAG}','demo-panel'],   (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Demo'), 2, '"any"'::jsonb, 180),
+  ('${ORG}', 'DNS',           '$(spec ok)'::jsonb,   60, true, ARRAY['${TAG}','demo-dns'],     (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Demo'), 2, '"any"'::jsonb, 180),
+  ('${ORG}', 'Live service',  '$(spec flap)'::jsonb, 10, false, ARRAY['${TAG}','demo-live'],   (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Demo'), 2, '"any"'::jsonb, ${HOLD});
 
 INSERT INTO target_regions (target_id, region)
 SELECT id, '${REGION}' FROM targets WHERE org_id = '${ORG}' AND tags @> ARRAY['${TAG}'];

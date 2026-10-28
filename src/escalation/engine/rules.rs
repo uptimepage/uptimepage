@@ -240,15 +240,15 @@ pub(super) struct Standing {
 pub(super) fn reason_is_stale(reason: NotificationReason, now: Standing) -> bool {
     let state = now.state;
     match reason {
-        NotificationReason::Opened | NotificationReason::Reopened => {
-            state == IncidentState::Resolved
-        }
+        NotificationReason::Opened
+        | NotificationReason::Reopened
+        | NotificationReason::MemberDown => state == IncidentState::Resolved,
         NotificationReason::Escalated => state == IncidentState::Resolved || now.recovering,
         // A reminder only says "still unacknowledged", which an ack ends.
         NotificationReason::Reminder => state != IncidentState::Triggered || now.recovering,
-        NotificationReason::Resolved | NotificationReason::MonitorDeleted => {
-            state != IncidentState::Resolved
-        }
+        NotificationReason::Resolved
+        | NotificationReason::MonitorDeleted
+        | NotificationReason::GroupDeleted => state != IncidentState::Resolved,
         NotificationReason::NoData | NotificationReason::DataResumed => false,
     }
 }

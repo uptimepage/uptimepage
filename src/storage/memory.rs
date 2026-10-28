@@ -13,7 +13,7 @@ use crate::domain::metrics::{
 use crate::domain::target::MAX_TAGS_PER_TARGET;
 use crate::domain::{
     AlertBinding, CheckResult, CheckStatus, NewTarget, OrgId, PlacedTarget, Target, TargetUpdate,
-    UserId, WriteSource,
+    UserId, WriteSource, normalize_group_name,
 };
 use crate::error::Result;
 use crate::storage::traits::{
@@ -757,7 +757,12 @@ impl InMemoryTargetStore {
             renotify_interval_secs: new.renotify_interval_secs,
             recovery_period_secs,
             region_policy: new.region_policy.unwrap_or_default(),
-            group_name: new.group_name,
+            group_name: new
+                .group_name
+                .as_deref()
+                .and_then(normalize_group_name)
+                .map(str::to_owned),
+            group_id: None,
             owner_user_id: new.owner_user_id.flatten(),
             write_source: source,
             created_at: now,
@@ -1020,7 +1025,10 @@ impl TargetStore for InMemoryTargetStore {
             t.region_policy = p;
         }
         if let Some(v) = update.group_name {
-            t.group_name = v;
+            t.group_name = v
+                .as_deref()
+                .and_then(normalize_group_name)
+                .map(str::to_owned);
         }
         if let Some(v) = update.owner_user_id {
             t.owner_user_id = v;
@@ -1205,13 +1213,19 @@ impl TargetStore for InMemoryTargetStore {
         Ok(hit)
     }
 
-    async fn set_group(&self, _org: OrgId, ids: &[Uuid], group: Option<&str>) -> Result<Vec<Uuid>> {
+    async fn set_group(
+        &self,
+        _org: OrgId,
+        ids: &[Uuid],
+        group: Option<&str>,
+        _actor: Option<UserId>,
+    ) -> Result<Vec<Uuid>> {
         let mut guard = self.targets.lock();
         let now = Utc::now();
         let mut hit = Vec::new();
         for t in guard.iter_mut() {
             if ids.contains(&t.id) {
-                t.group_name = group.map(str::to_owned);
+                t.group_name = group.and_then(normalize_group_name).map(str::to_owned);
                 t.updated_at = now;
                 hit.push(t.id);
             }

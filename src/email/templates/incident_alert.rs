@@ -4,7 +4,8 @@
 use chrono::{DateTime, Utc};
 
 use crate::domain::{
-    IncidentOrigin, IncidentSeverity, IncidentUrgency, MONITOR_DELETED_MESSAGE, NotificationReason,
+    GROUP_DELETED_MESSAGE, IncidentOrigin, IncidentSeverity, IncidentUrgency,
+    MONITOR_DELETED_MESSAGE, NotificationReason,
 };
 use crate::email::templates::layout::{self, ButtonStyle, Page, Tone};
 use crate::email::templates::{RenderedEmail, html_escape, single_line, utc_stamp};
@@ -42,7 +43,9 @@ impl IncidentAlert {
     fn tone(&self) -> Tone {
         match self.reason {
             NotificationReason::Resolved | NotificationReason::DataResumed => Tone::Good,
-            NotificationReason::NoData | NotificationReason::MonitorDeleted => Tone::Info,
+            NotificationReason::NoData
+            | NotificationReason::MonitorDeleted
+            | NotificationReason::GroupDeleted => Tone::Info,
             _ => match self.severity {
                 IncidentSeverity::Minor => Tone::Warn,
                 _ => Tone::Bad,
@@ -60,6 +63,8 @@ impl IncidentAlert {
             NotificationReason::Reopened => format!("{sev} INCIDENT REOPENED"),
             NotificationReason::Resolved => "INCIDENT RESOLVED".into(),
             NotificationReason::MonitorDeleted => "MONITORING REMOVED".into(),
+            NotificationReason::GroupDeleted => "GROUP REMOVED".into(),
+            NotificationReason::MemberDown => format!("{sev} INCIDENT: MORE DOWN"),
             NotificationReason::NoData => "MONITORING INTERRUPTED".into(),
             NotificationReason::DataResumed => "MONITORING RESUMED".into(),
             NotificationReason::Reminder => format!("{sev} INCIDENT STILL OPEN"),
@@ -74,6 +79,7 @@ impl IncidentAlert {
                 None => "Recovered".into(),
             },
             NotificationReason::MonitorDeleted => MONITOR_DELETED_MESSAGE.into(),
+            NotificationReason::GroupDeleted => GROUP_DELETED_MESSAGE.into(),
             NotificationReason::NoData => "No check results are arriving".into(),
             NotificationReason::DataResumed => "Check results are arriving again".into(),
             // No failing check behind it, so the detection wording would be a
@@ -100,6 +106,7 @@ impl IncidentAlert {
                 | NotificationReason::Escalated
                 | NotificationReason::Reopened
                 | NotificationReason::Reminder
+                | NotificationReason::MemberDown
         )
     }
 

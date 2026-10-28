@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::domain::{ActorType, CheckStatus, IncidentEventKind, OrgId, Recovered};
 use crate::error::Result;
+use crate::storage::group_incidents::{self, MemberClose};
 
 use super::{IncidentStore, NewOpenIncident, OpenIncident};
 
@@ -22,7 +23,91 @@ impl PgIncidentStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
+
+    /// A member routed to a group closes under its group's locks, so it cannot
+    /// slip past an attach, and the group incident closes with its last member.
+    async fn close_routed(
+        &self,
+        org: OrgId,
+        incident_id: Uuid,
+        ended_at: DateTime<Utc>,
+    ) -> Result<bool> {
+        let route: Option<Option<Uuid>> = sqlx::query_scalar(
+            "SELECT routed_group_id FROM incidents \
+             WHERE id = $1 AND org_id = $2 AND ended_at IS NULL",
+        )
+        .bind(incident_id)
+        .bind(org.0)
+        .fetch_optional(&self.pool)
+        .await
+        .context("incident close: read route")?;
+        let Some(route) = route else {
+            return Ok(false);
+        };
+        let mut tx = self.pool.begin().await.context("incident close: begin")?;
+        // A group delete since the plain close cleared the route, so the
+        // member closes as a monitor of its own.
+        let routed = match route {
+            Some(group) => {
+                match group_incidents::lock_for_member_close(&mut tx, org, incident_id, group)
+                    .await?
+                {
+                    MemberClose::Gone => return Ok(false),
+                    MemberClose::Unrouted => false,
+                    MemberClose::Routed => true,
+                }
+            }
+            None => false,
+        };
+        let closed: Option<(Uuid, Option<Uuid>)> = sqlx::query_as(CLOSE_SQL)
+            .bind(incident_id)
+            .bind(ended_at)
+            .bind(org.0)
+            .bind(crate::storage::incident_ops::AUTO_RESOLVED_MESSAGE)
+            .bind(routed)
+            .fetch_optional(&mut *tx)
+            .await
+            .context("incident close: routed")?;
+        let Some((_, group_incident)) = closed else {
+            return Ok(false);
+        };
+        if let Some(group_incident) = group_incident {
+            group_incidents::member_closed(&mut tx, org, group_incident, incident_id).await?;
+        }
+        tx.commit().await.context("incident close: commit")?;
+        Ok(true)
+    }
 }
+
+/// Recovery: close the row, resolve with no human resolver. For a public
+/// incident, append a `resolved` update for the timeline. The UPDATE matches
+/// only while ended_at was NULL, so the statement returns a row only for the
+/// call that actually closed it — a re-run or the race loser returns None and
+/// never re-pages. `closing_notice_at` is dated by the commit, not by `$2`: the
+/// recovering check can predate it. A member attached to a group incident owes
+/// no notice of its own. `$5` picks members routed to a group, which close
+/// under the group's locks.
+const CLOSE_SQL: &str = r#"WITH closed AS (
+       UPDATE incidents
+          SET ended_at = $2,
+              duration_secs = GREATEST(0, EXTRACT(EPOCH FROM ($2 - started_at))::int),
+              state = 'resolved',
+              resolved_by = NULL,
+              next_escalation_at = NULL,
+              recovering_since = NULL,
+              closing_notice_at = CASE WHEN group_incident_id IS NULL THEN now() END,
+              resolved_at = now(),
+              updated_at = now()
+        WHERE id = $1 AND org_id = $3 AND ended_at IS NULL
+          AND (routed_group_id IS NOT NULL) = $5
+       RETURNING id, org_id, visibility, group_incident_id
+   ),
+   ins AS (
+       INSERT INTO incident_updates (org_id, incident_id, phase, message, author, generated)
+       SELECT org_id, id, 'resolved', $4, 'system', true
+       FROM closed WHERE visibility = 'public'
+   )
+   SELECT id, group_incident_id FROM closed"#;
 
 #[derive(FromRow)]
 struct OpenIncidentRow {
@@ -250,42 +335,19 @@ impl IncidentStore for PgIncidentStore {
     }
 
     async fn close(&self, org: OrgId, incident_id: Uuid, ended_at: DateTime<Utc>) -> Result<bool> {
-        // Recovery: close the row, resolve with no human resolver. For a public
-        // incident, append a `resolved` update for the timeline. The UPDATE
-        // matches only while ended_at was NULL, so the final SELECT returns a
-        // row only for the call that actually closed it — a re-run or the race
-        // loser returns None and never re-pages. `closing_notice_at` is dated
-        // by the commit, not by `$2`: the recovering check can predate it.
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            r#"WITH closed AS (
-                   UPDATE incidents
-                      SET ended_at = $2,
-                          duration_secs = GREATEST(0, EXTRACT(EPOCH FROM ($2 - started_at))::int),
-                          state = 'resolved',
-                          resolved_by = NULL,
-                          next_escalation_at = NULL,
-                          recovering_since = NULL,
-                          closing_notice_at = now(),
-                          resolved_at = now(),
-                          updated_at = now()
-                    WHERE id = $1 AND org_id = $3 AND ended_at IS NULL
-                   RETURNING id, org_id, visibility
-               ),
-               ins AS (
-                   INSERT INTO incident_updates (org_id, incident_id, phase, message, author, generated)
-                   SELECT org_id, id, 'resolved', $4, 'system', true
-                   FROM closed WHERE visibility = 'public'
-               )
-               SELECT id FROM closed"#,
-        )
-        .bind(incident_id)
-        .bind(ended_at)
-        .bind(org.0)
-        .bind(crate::storage::incident_ops::AUTO_RESOLVED_MESSAGE)
-        .fetch_optional(&self.pool)
-        .await
-        .context("incident close")?;
-        Ok(row.is_some())
+        let closed: Option<(Uuid, Option<Uuid>)> = sqlx::query_as(CLOSE_SQL)
+            .bind(incident_id)
+            .bind(ended_at)
+            .bind(org.0)
+            .bind(crate::storage::incident_ops::AUTO_RESOLVED_MESSAGE)
+            .bind(false)
+            .fetch_optional(&self.pool)
+            .await
+            .context("incident close")?;
+        if closed.is_some() {
+            return Ok(true);
+        }
+        self.close_routed(org, incident_id, ended_at).await
     }
 
     async fn set_recovering(

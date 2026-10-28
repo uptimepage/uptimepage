@@ -38,6 +38,29 @@ pub use pg::PgIncidentOpsStore;
 /// over only once it is older than any single delivery can run.
 pub const QUEUED_TAKEOVER_SECS: i64 = 120;
 
+/// The `incident_events.kind` values that start a new episode, for
+/// `kind IN {EPISODE_EVENT_KINDS}`. [`IncidentEventKind::starts_episode`] in Rust.
+pub(crate) const EPISODE_EVENT_KINDS: &str = "('reopened', 'detached')";
+
+/// [`crate::domain::OpsIncident::may_page`] for the incidents row the query
+/// names `$i`.
+macro_rules! may_page_predicate {
+    ($i:literal) => {
+        concat!(
+            "(",
+            $i,
+            ".paging_enabled AND (",
+            $i,
+            ".target_id IS NOT NULL OR (",
+            $i,
+            ".origin = 'group' AND ",
+            $i,
+            ".group_id IS NOT NULL)))"
+        )
+    };
+}
+pub(crate) use may_page_predicate;
+
 /// Who is performing an action. Maps onto `incident_events.actor_type` +
 /// `actor_id`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -176,3 +176,97 @@ async fn the_owed_page_migration_marks_only_episodes_that_never_paged() {
     pool.close().await;
     drop_test_db(&test_db).await;
 }
+
+/// Existing labels become one group per trimmed name, a blank one no group,
+/// and every monitor keeps its group.
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn the_group_migration_makes_one_group_per_trimmed_name() {
+    use crate::common::{make_user, unique_slug};
+    use uuid::Uuid;
+    let Some((url, test_db)) = fresh_test_db("groupmig").await else {
+        return;
+    };
+    let pool = open_test_pool(&url).await;
+    MIGRATOR
+        .undo(&pool, 109)
+        .await
+        .expect("undo the group migration");
+    let mut orgs = Vec::new();
+    for _ in 0..2 {
+        let user = make_user(&pool, "groupmig").await;
+        let org =
+            uptimepage::storage::create_org_with_owner(&pool, user, &unique_slug("groupmig"), "n")
+                .await
+                .unwrap()
+                .unwrap()
+                .id
+                .0;
+        orgs.push(org);
+    }
+    let labels: [Option<&str>; 10] = [
+        Some(""),
+        Some("  "),
+        Some("\u{00A0}"),
+        Some("\u{3000}"),
+        None,
+        Some("DNS"),
+        Some("DNS "),
+        Some("DNS\u{2003}"),
+        Some("\u{200B}"),
+        Some(" Mail"),
+    ];
+    let mut targets: Vec<(Uuid, Uuid, Option<&str>)> = Vec::new();
+    for org in &orgs {
+        for label in labels {
+            let id: Uuid = sqlx::query_scalar(
+                "INSERT INTO targets (org_id, name, check_spec, interval_secs, group_name, created_at) \
+                 VALUES ($1, 'svc', '{}'::jsonb, 30, $2, now() - interval '1 day') RETURNING id",
+            )
+            .bind(org)
+            .bind(label)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            targets.push((*org, id, label));
+        }
+    }
+
+    MIGRATOR.run(&pool).await.expect("migrate again");
+
+    for org in &orgs {
+        let mut groups: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM monitor_groups WHERE org_id = $1")
+                .bind(org)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        groups.sort();
+        assert_eq!(groups, vec!["DNS", "Mail", "\u{200B}"]);
+    }
+    for (org, id, label) in targets {
+        let group: Option<String> = sqlx::query_scalar(
+            "SELECT g.name FROM targets t LEFT JOIN monitor_groups g \
+                 ON g.id = t.group_id AND g.org_id = $2 \
+             WHERE t.id = $1",
+        )
+        .bind(id)
+        .bind(org)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let want = label.map(str::trim).filter(|l| !l.is_empty());
+        assert_eq!(group.as_deref(), want, "{label:?}");
+    }
+    let oldest: bool = sqlx::query_scalar(
+        "SELECT bool_and(created_at < now() - interval '23 hours' AND created_by IS NULL) \
+         FROM monitor_groups",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(oldest);
+
+    pool.close().await;
+    drop_test_db(&test_db).await;
+}

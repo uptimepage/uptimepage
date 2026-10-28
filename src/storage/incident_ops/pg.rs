@@ -11,9 +11,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::domain::{
-    ActorType, IncidentAcknowledgement, IncidentEvent, IncidentEventKind, IncidentMetrics,
-    IncidentNotification, IncidentOrigin, IncidentSeverity, IncidentState, IncidentTransition,
-    IncidentUrgency, IncidentVisibility, MetricBucket, MonitorIncidentCount,
+    ActorType, IncidentAcknowledgement, IncidentEvent, IncidentEventKind, IncidentGroupLink,
+    IncidentMetrics, IncidentNotification, IncidentOrigin, IncidentSeverity, IncidentState,
+    IncidentTransition, IncidentUrgency, IncidentVisibility, MetricBucket, MonitorIncidentCount,
     NewIncidentNotification, NewManualIncident, NotificationOutcome, NotificationReason,
     NotificationStatus, OpsIncident, OrgId, UserId, next_state,
 };
@@ -23,10 +23,11 @@ use crate::storage::locks::{advisory_xact_lock, incident_lock_key};
 
 use super::{
     AUTO_RESOLVED_MESSAGE, Acknowledged, Actor, ClaimedEscalation, ClosingNotice,
-    DueClosingNotices, DueIncident, EmergencyAck, FanOut, FanOutKind, INCIDENT_DETAIL_ROW_CAP,
-    IncidentOpsFilter, IncidentOpsStore, IncidentStateCounts, LifecycleOutcome, OwedPage,
-    PendingNotification, QUEUED_TAKEOVER_SECS, UpdateText, opening_update_message,
-    pages_with_monitor, status_page_required, unnamed_sender,
+    DueClosingNotices, DueIncident, EPISODE_EVENT_KINDS, EmergencyAck, FanOut, FanOutKind,
+    INCIDENT_DETAIL_ROW_CAP, IncidentOpsFilter, IncidentOpsStore, IncidentStateCounts,
+    LifecycleOutcome, OwedPage, PendingNotification, QUEUED_TAKEOVER_SECS, UpdateText,
+    may_page_predicate, opening_update_message, pages_with_monitor, status_page_required,
+    unnamed_sender,
 };
 
 pub struct PgIncidentOpsStore {
@@ -45,7 +46,8 @@ const OPS_COLS: &str = "id, target_id, target_ref, target_name, target_kind, clo
      paging_enabled, counts_as_downtime, started_at, ended_at, acknowledged_at, \
      acknowledged_by, assigned_to, resolved_by, escalation_policy_id, escalation_level, \
      escalation_round, next_escalation_at, recovering_since, \
-     check_count, error_sample, regions_down, regions_up, created_at, updated_at";
+     check_count, error_sample, regions_down, regions_up, created_at, updated_at, \
+     group_id, group_name, routed_group_id, group_incident_id, closed_by_group_delete";
 
 /// Point a monitor-less incident at exactly `pages`. A page outside `org`
 /// is refused as unknown, so the answer never confirms another tenant's id.
@@ -170,6 +172,11 @@ struct OpsIncidentRow {
     regions_up: Option<Vec<String>>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    group_id: Option<Uuid>,
+    group_name: Option<String>,
+    routed_group_id: Option<Uuid>,
+    group_incident_id: Option<Uuid>,
+    closed_by_group_delete: bool,
 }
 
 fn row_to_ops(r: OpsIncidentRow) -> OpsIncident {
@@ -205,6 +212,13 @@ fn row_to_ops(r: OpsIncidentRow) -> OpsIncident {
         regions_up: r.regions_up.unwrap_or_default(),
         created_at: r.created_at,
         updated_at: r.updated_at,
+        group: IncidentGroupLink {
+            group_id: r.group_id,
+            group_name: r.group_name,
+            routed_group_id: r.routed_group_id,
+            group_incident_id: r.group_incident_id,
+            closed_by_group_delete: r.closed_by_group_delete,
+        },
     }
 }
 
@@ -394,10 +408,10 @@ async fn reopen_count_tx(
     org: OrgId,
     id: Uuid,
 ) -> Result<i64> {
-    sqlx::query_scalar(
+    sqlx::query_scalar(&format!(
         "SELECT count(*) FROM incident_events \
-         WHERE incident_id = $1 AND org_id = $2 AND kind = 'reopened'",
-    )
+         WHERE incident_id = $1 AND org_id = $2 AND kind IN {EPISODE_EVENT_KINDS}"
+    ))
     .bind(id)
     .bind(org.0)
     .fetch_one(&mut **tx)
@@ -962,11 +976,12 @@ impl IncidentOpsStore for PgIncidentOpsStore {
     }
 
     async fn generation(&self, org: OrgId, id: Uuid) -> Result<Option<i64>> {
-        let row: Option<(i64,)> = sqlx::query_as(
+        let row: Option<(i64,)> = sqlx::query_as(&format!(
             "SELECT (SELECT count(*) FROM incident_events e \
-                     WHERE e.incident_id = i.id AND e.org_id = i.org_id AND e.kind = 'reopened') \
-             FROM incidents i WHERE i.id = $1 AND i.org_id = $2",
-        )
+                     WHERE e.incident_id = i.id AND e.org_id = i.org_id \
+                       AND e.kind IN {EPISODE_EVENT_KINDS}) \
+             FROM incidents i WHERE i.id = $1 AND i.org_id = $2"
+        ))
         .bind(id)
         .bind(org.0)
         .fetch_optional(&self.pool)
@@ -1054,14 +1069,14 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                  acknowledged_at = NULL, acknowledged_by = NULL, \
                  escalation_level = 0, escalation_round = 0, renotify_count = 0, \
                  closing_notice_at = NULL, resolved_at = NULL, recovering_since = NULL, \
-                 page_owed_at = CASE WHEN paging_enabled AND target_id IS NOT NULL \
-                     THEN now() END, \
+                 page_owed_at = CASE WHEN {may_page} THEN now() END, \
                  paused_since = CASE WHEN paused_since IS NULL AND origin = 'monitor' AND EXISTS ( \
                      SELECT 1 FROM targets t \
                      WHERE t.id = incidents.target_id AND t.org_id = incidents.org_id AND NOT t.enabled \
                  ) THEN ended_at ELSE paused_since END, \
                  updated_at = now() \
-             WHERE id = $1 AND org_id = $2 AND ($3::uuid IS NULL OR true) RETURNING {OPS_COLS}"
+             WHERE id = $1 AND org_id = $2 AND ($3::uuid IS NULL OR true) RETURNING {OPS_COLS}",
+            may_page = may_page_predicate!("incidents"),
         );
         self.transition(
             org,
@@ -1391,23 +1406,24 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         }
         // Rows are stamped at insert, under the incident lock, so their order
         // is the order the acknowledgements landed and the credited one leads.
-        let rows: Vec<(Uuid, String, Option<Uuid>, bool, DateTime<Utc>)> = sqlx::query_as(
-            "WITH current AS ( \
+        let rows: Vec<(Uuid, String, Option<Uuid>, bool, DateTime<Utc>)> =
+            sqlx::query_as(&format!(
+                "WITH current AS ( \
                  SELECT i.id, (SELECT count(*) FROM incident_events r \
                                WHERE r.incident_id = i.id AND r.org_id = i.org_id \
-                                 AND r.kind = 'reopened') AS episode \
+                                 AND r.kind IN {EPISODE_EVENT_KINDS}) AS episode \
                  FROM incidents i WHERE i.org_id = $1 AND i.id = ANY($2)) \
              SELECT a.incident_id, a.actor_type, a.actor_id, a.anonymous, a.acknowledged_at \
              FROM incident_acknowledgements a \
              JOIN current c ON c.id = a.incident_id AND c.episode = a.episode \
              WHERE a.org_id = $1 \
-             ORDER BY a.acknowledged_at, a.id",
-        )
-        .bind(org.0)
-        .bind(ids)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("list acknowledgements: {e}"))?;
+             ORDER BY a.acknowledged_at, a.id"
+            ))
+            .bind(org.0)
+            .bind(ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("list acknowledgements: {e}"))?;
         let mut out: HashMap<Uuid, Vec<IncidentAcknowledgement>> = HashMap::new();
         for (incident_id, actor_type, actor_id, anonymous, at) in rows {
             out.entry(incident_id)
@@ -1479,12 +1495,12 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         advisory_xact_lock(&mut *tx, &incident_lock_key(f.incident_id))
             .await
             .map_err(|e| anyhow::anyhow!("incident lock: {e}"))?;
-        let pageable: Option<(bool,)> = sqlx::query_as(
+        let pageable: Option<(bool,)> = sqlx::query_as(concat!(
             "SELECT page_owed_at IS NOT NULL FROM incidents \
-             WHERE id = $1 AND org_id = $2 AND target_id IS NOT NULL AND paging_enabled \
-                 AND state <> 'resolved' \
-             FOR UPDATE",
-        )
+             WHERE id = $1 AND org_id = $2 AND ",
+            may_page_predicate!("incidents"),
+            " AND state <> 'resolved' FOR UPDATE"
+        ))
         .bind(f.incident_id)
         .bind(f.org.0)
         .fetch_optional(&mut *tx)
@@ -1694,17 +1710,17 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             provider_receipt: String,
             generation: i64,
         }
-        let rows: Vec<Row> = sqlx::query_as(
+        let rows: Vec<Row> = sqlx::query_as(&format!(
             r#"SELECT id, org_id, incident_id, channel_id, provider_receipt,
                       (SELECT count(*) FROM incident_events e
                        WHERE e.incident_id = n.incident_id AND e.org_id = n.org_id
-                         AND e.kind = 'reopened'
+                         AND e.kind IN {EPISODE_EVENT_KINDS}
                          AND e.occurred_at <= COALESCE(n.sent_at, n.created_at)) AS generation
                FROM incident_notifications n
                WHERE provider_receipt IS NOT NULL AND acked_at IS NULL
                  AND status = 'sent' AND channel_id IS NOT NULL
-               ORDER BY sent_at ASC LIMIT $1"#,
-        )
+               ORDER BY sent_at ASC LIMIT $1"#
+        ))
         .bind(cap)
         .fetch_all(&self.pool)
         .await
@@ -1736,17 +1752,17 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             provider_receipt: String,
             generation: i64,
         }
-        let rows: Vec<Row> = sqlx::query_as(
+        let rows: Vec<Row> = sqlx::query_as(&format!(
             r#"SELECT id, org_id, incident_id, channel_id, provider_receipt,
                       (SELECT count(*) FROM incident_events e
                        WHERE e.incident_id = n.incident_id AND e.org_id = n.org_id
-                         AND e.kind = 'reopened'
+                         AND e.kind IN {EPISODE_EVENT_KINDS}
                          AND e.occurred_at <= COALESCE(n.sent_at, n.created_at)) AS generation
                FROM incident_notifications n
                WHERE org_id = $1 AND incident_id = $2
                  AND provider_receipt IS NOT NULL AND acked_at IS NULL
-                 AND status = 'sent' AND channel_id IS NOT NULL"#,
-        )
+                 AND status = 'sent' AND channel_id IS NOT NULL"#
+        ))
         .bind(org.0)
         .bind(incident_id)
         .fetch_all(&self.pool)
@@ -1841,7 +1857,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         // Claim-and-lease: lock the due rows with SKIP LOCKED and push their
         // timer forward so a concurrent engine instance never re-selects them
         // before this one pages + records the real next time.
-        let rows: Vec<Row> = sqlx::query_as(
+        let rows: Vec<Row> = sqlx::query_as(&format!(
             "UPDATE incidents SET next_escalation_at = $1 + make_interval(secs => $2::double precision) \
              WHERE id IN ( \
                  SELECT id FROM incidents \
@@ -1855,8 +1871,8 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                  escalation_round, next_escalation_at, \
                  (SELECT count(*) FROM incident_events e \
                   WHERE e.incident_id = incidents.id AND e.org_id = incidents.org_id \
-                      AND e.kind = 'reopened') AS episode",
-        )
+                      AND e.kind IN {EPISODE_EVENT_KINDS}) AS episode"
+        ))
         .bind(now)
         .bind(lease_secs.max(1) as f64)
         .bind(cap)

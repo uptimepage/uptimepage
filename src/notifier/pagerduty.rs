@@ -122,11 +122,13 @@ impl PagerDutyNotifier {
         match reason {
             NotificationReason::Resolved
             | NotificationReason::MonitorDeleted
+            | NotificationReason::GroupDeleted
             | NotificationReason::DataResumed => true,
             NotificationReason::Opened
             | NotificationReason::Reopened
             | NotificationReason::Escalated
             | NotificationReason::Reminder
+            | NotificationReason::MemberDown
             | NotificationReason::NoData => false,
         }
     }

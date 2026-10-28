@@ -33,6 +33,7 @@ pub(super) fn ops(state: IncidentState) -> OpsIncident {
         target_name: None,
         target_kind: None,
         closed_by_monitor_delete: false,
+        group: Default::default(),
         title: None,
         state,
         severity: crate::domain::IncidentSeverity::Major,

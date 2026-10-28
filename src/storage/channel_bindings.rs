@@ -1,9 +1,9 @@
-//! A monitor's notification channels live in `target_channels`, whose foreign
-//! keys drop a binding in the transaction that deletes its monitor or its
-//! channel. A write that binds channels locks them here first, before any
-//! monitor or binding row. A statement that removes the bindings of several
-//! monitors locks them first in `(target_id, channel_id)` order, so two such
-//! removals sharing rows cannot each hold one the other waits on.
+//! A monitor's notification channels live in `target_channels` and a group's in
+//! `group_channels`, whose foreign keys drop a binding in the transaction that
+//! deletes its owner or its channel. A write that binds channels locks them
+//! here first, before any group, monitor or binding row. A statement that
+//! removes the bindings of several owners locks them first in key order, so
+//! two such removals sharing rows cannot each hold one the other waits on.
 
 use std::collections::HashMap;
 
@@ -32,6 +32,43 @@ macro_rules! target_alerts_column {
     };
 }
 pub(crate) use target_alerts_column;
+
+/// [`target_alerts_column`] for the monitor_groups row the query names `$g`.
+macro_rules! group_alerts_column {
+    ($g:literal) => {
+        concat!(
+            "COALESCE((SELECT jsonb_agg(jsonb_build_object('channel_id', gc.channel_id) \
+                                        ORDER BY gc.position, gc.channel_id) \
+                         FROM group_channels gc WHERE gc.group_id = ",
+            $g,
+            ".id), '[]'::jsonb) AS alerts"
+        )
+    };
+}
+pub(crate) use group_alerts_column;
+
+/// Whose bindings a write changes.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum BindingOwner {
+    Target,
+    Group,
+}
+
+impl BindingOwner {
+    const fn table(self) -> &'static str {
+        match self {
+            Self::Target => "target_channels",
+            Self::Group => "group_channels",
+        }
+    }
+
+    const fn column(self) -> &'static str {
+        match self {
+            Self::Target => "target_id",
+            Self::Group => "group_id",
+        }
+    }
+}
 
 /// Locks, in the shared order, every binding of the monitors a delete is about
 /// to cascade away.
@@ -93,46 +130,52 @@ pub(crate) async fn lock_bound_channels(
     }
 }
 
-/// Binds `targets[i]` to `channels[i]` at `positions[i]`. The caller holds the
+/// Binds `owners[i]` to `channels[i]` at `positions[i]`. The caller holds the
 /// channels.
 pub(crate) async fn insert_bindings(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: OrgId,
-    targets: &[Uuid],
+    owner: BindingOwner,
+    owners: &[Uuid],
     channels: &[Uuid],
     positions: &[i32],
 ) -> Result<()> {
-    if targets.is_empty() {
+    if owners.is_empty() {
         return Ok(());
     }
-    sqlx::query(
-        "INSERT INTO target_channels (target_id, channel_id, org_id, position) \
+    let sql = format!(
+        "INSERT INTO {} ({}, channel_id, org_id, position) \
          SELECT t, c, $4, p FROM unnest($1::uuid[], $2::uuid[], $3::int4[]) AS u(t, c, p)",
-    )
-    .bind(targets)
-    .bind(channels)
-    .bind(positions)
-    .bind(org.0)
-    .execute(&mut **tx)
-    .await
-    .map_err(|e| AppError::Other(anyhow!("insert bindings: {e}")))?;
+        owner.table(),
+        owner.column(),
+    );
+    sqlx::query(&sql)
+        .bind(owners)
+        .bind(channels)
+        .bind(positions)
+        .bind(org.0)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| AppError::Other(anyhow!("insert bindings: {e}")))?;
     Ok(())
 }
 
-/// Makes `target`'s bindings exactly `channels`, in that order, writing only
-/// the rows that change: a kept binding is left alone, so a channel delete
-/// running at the same time removes it without waiting on this write. The
-/// caller holds the channels and the target row.
+/// Makes `id`'s bindings exactly `channels`, in that order, writing only the
+/// rows that change: a kept binding is left alone, so a channel delete running
+/// at the same time removes it without waiting on this write. The caller holds
+/// the channels and the owner's row.
 pub(crate) async fn set_bindings(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: OrgId,
-    target: Uuid,
+    owner: BindingOwner,
+    id: Uuid,
     channels: &[Uuid],
 ) -> Result<()> {
-    let current: HashMap<Uuid, i32> = sqlx::query_as(
-        "SELECT channel_id, position FROM target_channels WHERE target_id = $1 AND org_id = $2",
-    )
-    .bind(target)
+    let (table, column) = (owner.table(), owner.column());
+    let current: HashMap<Uuid, i32> = sqlx::query_as(&format!(
+        "SELECT channel_id, position FROM {table} WHERE {column} = $1 AND org_id = $2"
+    ))
+    .bind(id)
     .bind(org.0)
     .fetch_all(&mut **tx)
     .await
@@ -162,11 +205,11 @@ pub(crate) async fn set_bindings(
     }
 
     if !removed.is_empty() {
-        sqlx::query(
-            "DELETE FROM target_channels \
-             WHERE target_id = $1 AND org_id = $2 AND channel_id = ANY($3::uuid[])",
-        )
-        .bind(target)
+        sqlx::query(&format!(
+            "DELETE FROM {table} \
+             WHERE {column} = $1 AND org_id = $2 AND channel_id = ANY($3::uuid[])"
+        ))
+        .bind(id)
         .bind(org.0)
         .bind(&removed)
         .execute(&mut **tx)
@@ -174,12 +217,12 @@ pub(crate) async fn set_bindings(
         .map_err(|e| AppError::Other(anyhow!("remove bindings: {e}")))?;
     }
     if !moved.is_empty() {
-        sqlx::query(
-            "UPDATE target_channels tc SET position = u.p \
+        sqlx::query(&format!(
+            "UPDATE {table} b SET position = u.p \
              FROM unnest($3::uuid[], $4::int4[]) AS u(c, p) \
-             WHERE tc.target_id = $1 AND tc.org_id = $2 AND tc.channel_id = u.c",
-        )
-        .bind(target)
+             WHERE b.{column} = $1 AND b.org_id = $2 AND b.channel_id = u.c"
+        ))
+        .bind(id)
         .bind(org.0)
         .bind(&moved)
         .bind(&moved_to)
@@ -187,6 +230,6 @@ pub(crate) async fn set_bindings(
         .await
         .map_err(|e| AppError::Other(anyhow!("reorder bindings: {e}")))?;
     }
-    let targets = vec![target; added.len()];
-    insert_bindings(tx, org, &targets, &added, &added_at).await
+    let owners = vec![id; added.len()];
+    insert_bindings(tx, org, owner, &owners, &added, &added_at).await
 }

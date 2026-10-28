@@ -65,7 +65,8 @@ echo "==> Postgres: (re)create the flapping monitor and its control"
 pg <<SQL
 DELETE FROM targets WHERE org_id = '${ORG}' AND tags @> ARRAY['seed-flap'];
 
-INSERT INTO targets (org_id, name, check_spec, interval_secs, enabled, tags, group_name,
+INSERT INTO monitor_groups (org_id, name) VALUES ('${ORG}', 'Seeded') ON CONFLICT (org_id, name) DO NOTHING;
+INSERT INTO targets (org_id, name, check_spec, interval_secs, enabled, tags, group_id,
                      alert_confirmations, region_policy)
 VALUES
   ('${ORG}', 'Blocked API (seeded)',
@@ -73,13 +74,13 @@ VALUES
      "headers":{},"body":null,"timeout":10000,"follow_redirects":false,"max_redirects":0,
      "expected_status":{"kind":"exact","value":200},"expected_body_contains":null,
      "verify_tls":true,"basic_auth":null,"bearer_token":null}'::jsonb,
-   60, true, ARRAY['seed-flap','flap-blocked'], 'Seeded', 2, '"majority"'::jsonb),
+   60, true, ARRAY['seed-flap','flap-blocked'], (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Seeded'), 2, '"majority"'::jsonb),
   ('${ORG}', 'Healthy twin (seeded)',
    '{"type":"http","url":"https://healthy-twin.example.com/health","method":"GET",
      "headers":{},"body":null,"timeout":10000,"follow_redirects":false,"max_redirects":0,
      "expected_status":{"kind":"exact","value":200},"expected_body_contains":null,
      "verify_tls":true,"basic_auth":null,"bearer_token":null}'::jsonb,
-   60, true, ARRAY['seed-flap','flap-clean'], 'Seeded', 2, '"majority"'::jsonb);
+   60, true, ARRAY['seed-flap','flap-clean'], (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Seeded'), 2, '"majority"'::jsonb);
 
 -- Only the regions this seed writes history for: a monitor assigned to a
 -- region with no data reads as a coverage gap, which is a different story.

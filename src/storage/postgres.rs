@@ -21,11 +21,12 @@ use crate::error::{AppError, Result};
 use crate::security::Cipher;
 use crate::storage::accounts;
 use crate::storage::channel_bindings::{
-    ALERT_CHANNEL_FIELD, BULK_CHANNELS_FIELD, insert_bindings, lock_bindings_of,
+    ALERT_CHANNEL_FIELD, BULK_CHANNELS_FIELD, BindingOwner, insert_bindings, lock_bindings_of,
     lock_bound_channels, set_bindings,
 };
 use crate::storage::count_sql;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock};
+use crate::storage::monitor_groups::{resolve_group, resolve_groups};
 use crate::storage::postgres_secrets::{decrypt_in_place, encrypt_in_place};
 use crate::storage::traits::{
     ChannelEdit, IntervalOutcome, RegionOption, TagAddOutcome, TargetFilter, TargetSort,
@@ -81,8 +82,12 @@ macro_rules! target_columns {
             $t,
             ".recovery_period_secs",
             ", ",
+            "(SELECT mg.name FROM monitor_groups mg WHERE mg.id = ",
             $t,
-            ".group_name",
+            ".group_id) AS group_name",
+            ", ",
+            $t,
+            ".group_id",
             ", ",
             $t,
             ".owner_user_id",
@@ -283,6 +288,7 @@ pub(crate) struct TargetRow {
     pub(crate) renotify_interval_secs: i32,
     pub(crate) recovery_period_secs: i32,
     pub(crate) group_name: Option<String>,
+    pub(crate) group_id: Option<Uuid>,
     pub(crate) owner_user_id: Option<Uuid>,
     pub(crate) write_source: String,
     pub(crate) created_at: DateTime<Utc>,
@@ -316,6 +322,28 @@ fn pause_metadata<'a>(flipped: impl Iterator<Item = (&'a Uuid, &'a String)>) -> 
         "count": named.len(),
         "targets": sample,
         "truncated": named.len() > AUDIT_SAMPLE,
+    })
+}
+
+/// Audit row for monitors moved into `to` (None: out of any group), each with
+/// the group it left.
+fn group_change_metadata<'a>(
+    to: Option<(Uuid, &str)>,
+    moved: impl Iterator<Item = (Uuid, &'a str, Option<Uuid>)>,
+) -> serde_json::Value {
+    let moved: Vec<(Uuid, &str, Option<Uuid>)> = moved.collect();
+    let sample: Vec<serde_json::Value> = moved
+        .iter()
+        .take(AUDIT_SAMPLE)
+        .map(
+            |(id, name, from)| serde_json::json!({ "id": id, "name": name, "from_group_id": from }),
+        )
+        .collect();
+    serde_json::json!({
+        "group": to.map(|(id, name)| serde_json::json!({ "id": id, "name": name })),
+        "count": moved.len(),
+        "targets": sample,
+        "truncated": moved.len() > AUDIT_SAMPLE,
     })
 }
 
@@ -384,6 +412,7 @@ pub(crate) fn decode_target_row(row: TargetRow, cipher: Option<&Cipher>) -> Resu
         recovery_period_secs: row.recovery_period_secs.max(0) as u32,
         region_policy,
         group_name: row.group_name,
+        group_id: row.group_id,
         owner_user_id: row.owner_user_id,
         write_source: WriteSource::from_db(&row.write_source),
         created_at: row.created_at,
@@ -556,7 +585,8 @@ impl TargetStore for PostgresTargetStore {
                  AND ($2::bool IS NULL OR enabled = $2)
                  AND ($3::text IS NULL OR $3 = ANY(tags))
                  AND ($4::text IS NULL OR name ILIKE $4)
-                 AND ($5::text IS NULL OR group_name = $5)
+                 AND ($5::text IS NULL OR group_id = (
+                     SELECT mg.id FROM monitor_groups mg WHERE mg.org_id = $1 AND mg.name = $5))
                  AND ($6::uuid IS NULL OR owner_user_id = $6)
                  AND ($9::text IS NULL OR kind = $9)
                  AND ($10::text IS NULL OR EXISTS (
@@ -583,15 +613,12 @@ impl TargetStore for PostgresTargetStore {
     }
 
     async fn distinct_groups(&self, org: OrgId) -> Result<Vec<String>> {
-        let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT DISTINCT group_name FROM targets \
-             WHERE org_id = $1 AND group_name IS NOT NULL AND group_name <> '' \
-             ORDER BY group_name",
-        )
-        .bind(org.0)
-        .fetch_all(&self.pool)
-        .await
-        .context("distinct target groups")?;
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT name FROM monitor_groups WHERE org_id = $1 ORDER BY name")
+                .bind(org.0)
+                .fetch_all(&self.pool)
+                .await
+                .context("distinct target groups")?;
         Ok(rows.into_iter().map(|(g,)| g).collect())
     }
 
@@ -619,7 +646,8 @@ impl TargetStore for PostgresTargetStore {
                  AND ($2::bool IS NULL OR enabled = $2)
                  AND ($3::text IS NULL OR $3 = ANY(tags))
                  AND ($4::text IS NULL OR name ILIKE $4)
-                 AND ($5::text IS NULL OR group_name = $5)
+                 AND ($5::text IS NULL OR group_id = (
+                     SELECT mg.id FROM monitor_groups mg WHERE mg.org_id = $1 AND mg.name = $5))
                  AND ($6::uuid IS NULL OR owner_user_id = $6)
                GROUP BY kind"#,
         )
@@ -753,9 +781,10 @@ impl TargetStore for PostgresTargetStore {
         }
         let channel_ids: Vec<Uuid> = new.alerts.iter().map(|b| b.channel_id).collect();
         lock_bound_channels(&mut tx, org, &channel_ids, ALERT_CHANNEL_FIELD).await?;
+        let group_id = resolve_group(&mut tx, org, new.group_name.as_deref(), source, None).await?;
         let row: TargetRow = sqlx::query_as::<_, TargetRow>(&format!(
             r#"INSERT INTO targets (org_id, name, check_spec, interval_secs, enabled, tags,
-                                    group_name, owner_user_id, write_source, region_policy,
+                                    group_id, owner_user_id, write_source, region_policy,
                                     alert_confirmations, notify_recovery, renotify_interval_secs,
                                     recovery_period_secs)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
@@ -767,7 +796,7 @@ impl TargetStore for PostgresTargetStore {
         .bind(new.interval.as_secs() as i32)
         .bind(new.enabled)
         .bind(&new.tags)
-        .bind(&new.group_name)
+        .bind(group_id)
         .bind(new.owner())
         .bind(source.as_str())
         .bind(region_policy_json)
@@ -783,7 +812,15 @@ impl TargetStore for PostgresTargetStore {
         })?;
         let targets = vec![row.id; channel_ids.len()];
         let positions: Vec<i32> = (0..).take(channel_ids.len()).collect();
-        insert_bindings(&mut tx, org, &targets, &channel_ids, &positions).await?;
+        insert_bindings(
+            &mut tx,
+            org,
+            BindingOwner::Target,
+            &targets,
+            &channel_ids,
+            &positions,
+        )
+        .await?;
         self.assign_default_region(&mut tx, &[row.id]).await?;
         tx.commit().await.context("create target: commit")?;
         // Returned before the bindings above were written.
@@ -828,19 +865,28 @@ impl TargetStore for PostgresTargetStore {
             .alerts
             .as_ref()
             .map(|a| a.iter().map(|b| b.channel_id).collect());
-        // Only a flip of `enabled` has an audit row to bundle and only a write
-        // that sends `alerts` has bindings to write, so only those paths pay
-        // for a transaction. Every other edit stays the single statement it
-        // was, which matters for the per-target writes a bulk create fans out.
-        let mut tx = if update.enabled.is_some() || channel_ids.is_some() {
-            Some(self.pool.begin().await.context("update target: begin")?)
-        } else {
-            None
-        };
-        // LOCK ORDER: channels, then the `targets` row, then its bindings.
+        // Only a flip of `enabled` or a group change has an audit row to
+        // bundle and only a write that sends `alerts` has bindings to write, so
+        // only those paths pay for a transaction. Every other edit stays the
+        // single statement it was, which matters for the per-target writes a
+        // bulk create fans out.
+        let mut tx =
+            if update.enabled.is_some() || channel_ids.is_some() || update.group_name.is_some() {
+                Some(self.pool.begin().await.context("update target: begin")?)
+            } else {
+                None
+            };
+        // LOCK ORDER: channels, then the group, then the `targets` row, then
+        // its bindings.
         if let (Some(tx), Some(ids)) = (tx.as_mut(), &channel_ids) {
             lock_bound_channels(tx, org, ids, ALERT_CHANNEL_FIELD).await?;
         }
+        let group_id = match (tx.as_mut(), &update.group_name) {
+            (Some(tx), Some(name)) => Some(
+                resolve_group(tx, org, name.as_deref(), source.unwrap_or_default(), actor).await?,
+            ),
+            _ => None,
+        };
         // Read under a row lock, so a concurrent flip can't land between the
         // state this compares against and the write that follows, and two
         // saves of one monitor's bindings run one after the other.
@@ -849,9 +895,9 @@ impl TargetStore for PostgresTargetStore {
         // touches `heartbeat_monitors`, matching `set_enabled`. Hoisting the
         // rearm ahead of this read would invert the pair and deadlock a resume
         // racing a bulk resume of the same monitor.
-        let was_enabled: Option<bool> = match tx.as_mut() {
-            Some(tx) => sqlx::query_scalar(
-                "SELECT enabled FROM targets WHERE id = $1 AND org_id = $2 FOR UPDATE",
+        let before: Option<(bool, Option<Uuid>)> = match tx.as_mut() {
+            Some(tx) => sqlx::query_as(
+                "SELECT enabled, group_id FROM targets WHERE id = $1 AND org_id = $2 FOR UPDATE",
             )
             .bind(id)
             .bind(org.0)
@@ -860,8 +906,11 @@ impl TargetStore for PostgresTargetStore {
             .context("update target: read enabled")?,
             None => None,
         };
-        if let (Some(tx), Some(ids), Some(_)) = (tx.as_mut(), &channel_ids, was_enabled) {
-            set_bindings(tx, org, id, ids).await?;
+        if tx.is_some() && before.is_none() {
+            return Ok(None);
+        }
+        if let (Some(tx), Some(ids), Some(_)) = (tx.as_mut(), &channel_ids, before) {
+            set_bindings(tx, org, BindingOwner::Target, id, ids).await?;
         }
         let sql = format!(
             r#"{rearm_cte}UPDATE targets SET
@@ -875,7 +924,7 @@ impl TargetStore for PostgresTargetStore {
                  notify_recovery = COALESCE($15, notify_recovery),
                  renotify_interval_secs = COALESCE($16, renotify_interval_secs),
                  recovery_period_secs = COALESCE($17, recovery_period_secs),
-                 group_name = CASE WHEN $7::bool THEN $8 ELSE group_name END,
+                 group_id = CASE WHEN $7::bool THEN $8 ELSE group_id END,
                  owner_user_id = CASE WHEN $9::bool THEN $10 ELSE owner_user_id END,
                  write_source = COALESCE($12, write_source),
                  updated_at = now()
@@ -889,8 +938,8 @@ impl TargetStore for PostgresTargetStore {
             .bind(interval_secs)
             .bind(update.enabled)
             .bind(update.tags)
-            .bind(update.group_name.is_some())
-            .bind(update.group_name.clone().flatten())
+            .bind(group_id.is_some())
+            .bind(group_id.flatten())
             .bind(update.owner_user_id.is_some())
             .bind(update.owner_user_id.flatten())
             .bind(org.0)
@@ -917,7 +966,7 @@ impl TargetStore for PostgresTargetStore {
             // Only the enabled flip is audited here. The rest of an edit is
             // recoverable from the row itself; a paused monitor stops answering,
             // and nothing else records who stopped it.
-            if let (Some(r), Some(was)) = (row.as_ref(), was_enabled)
+            if let (Some(r), Some((was, _))) = (row.as_ref(), before)
                 && r.enabled != was
             {
                 mark_incident_pauses(&mut tx, org, &[r.id], r.enabled).await?;
@@ -927,6 +976,21 @@ impl TargetStore for PostgresTargetStore {
                     actor,
                     pause_action(r.enabled),
                     pause_metadata(std::iter::once((&r.id, &r.name))),
+                )
+                .await?;
+            }
+            if let (Some(r), Some((_, from))) = (row.as_ref(), before)
+                && r.group_id != from
+            {
+                crate::storage::orgs::record_audit_tx(
+                    &mut tx,
+                    org,
+                    actor,
+                    "target.group_changed",
+                    group_change_metadata(
+                        r.group_id.zip(r.group_name.as_deref()),
+                        std::iter::once((r.id, r.name.as_str(), from)),
+                    ),
                 )
                 .await?;
             }
@@ -1009,22 +1073,22 @@ impl TargetStore for PostgresTargetStore {
         // `set_target_policy`.
         let sql = format!(
             r#"INSERT INTO targets (id, org_id, name, check_spec, interval_secs, enabled, tags,
-                                    group_name, owner_user_id, write_source,
+                                    group_id, owner_user_id, write_source,
                                     alert_confirmations, notify_recovery, renotify_interval_secs,
                                     recovery_period_secs, region_policy, escalation_policy_id)
                SELECT u.id, $8, u.name, u.check_spec, u.interval_secs, u.enabled,
                       ARRAY(SELECT jsonb_array_elements_text(u.tags)),
-                      u.group_name, u.owner_user_id,
+                      u.group_id, u.owner_user_id,
                       $9,
                       u.alert_confirmations, u.notify_recovery, u.renotify_interval_secs,
                       u.recovery_period_secs, u.region_policy,
                       (SELECT p.id FROM escalation_policies p
                         WHERE p.id = u.escalation_policy_id AND p.org_id = $8 AND p.deleted_at IS NULL)
                FROM UNNEST($1::text[], $2::jsonb[], $3::int4[], $4::bool[], $5::jsonb[],
-                           $6::text[], $7::uuid[], $10::int4[], $11::bool[], $12::int4[],
+                           $6::uuid[], $7::uuid[], $10::int4[], $11::bool[], $12::int4[],
                            $13::jsonb[], $14::uuid[], $15::int4[], $16::uuid[])
                     AS u(name, check_spec, interval_secs, enabled, tags,
-                         group_name, owner_user_id, alert_confirmations, notify_recovery,
+                         group_id, owner_user_id, alert_confirmations, notify_recovery,
                          renotify_interval_secs, region_policy, id, recovery_period_secs,
                          escalation_policy_id)
                RETURNING {TARGET_COLUMNS}"#
@@ -1037,7 +1101,6 @@ impl TargetStore for PostgresTargetStore {
         // Postgres rejects ragged 2-D arrays (text[][] must be rectangular), so
         // pass per-row tag lists as jsonb and unpack on the server side.
         let mut tags_json: Vec<Json<Vec<String>>> = Vec::with_capacity(len);
-        let mut group_name: Vec<Option<String>> = Vec::with_capacity(len);
         let mut owner_user_id: Vec<Option<Uuid>> = Vec::with_capacity(len);
         let mut confirmations: Vec<i32> = Vec::with_capacity(len);
         let mut recoveries: Vec<bool> = Vec::with_capacity(len);
@@ -1091,6 +1154,8 @@ impl TargetStore for PostgresTargetStore {
             }
         }
         lock_bound_channels(&mut tx, org, &bound_channels, ALERT_CHANNEL_FIELD).await?;
+        let group_names: Vec<Option<String>> = items.iter().map(|t| t.group_name.clone()).collect();
+        let group_ids = resolve_groups(&mut tx, org, &group_names, source, None).await?;
         let alerts: Vec<TargetAlerts> = items.iter().map(|t| t.alerts.clone()).collect();
 
         let rows: Vec<TargetRow> = if let Some(cipher) = &self.cipher {
@@ -1106,7 +1171,6 @@ impl TargetStore for PostgresTargetStore {
                 intervals.push(new.interval.as_secs() as i32);
                 enabled.push(new.enabled);
                 tags_json.push(Json(new.tags));
-                group_name.push(new.group_name);
                 owner_user_id.push(new.owner_user_id.flatten());
                 confirmations.push(new.alert_confirmations.max(1) as i32);
                 recoveries.push(new.notify_recovery);
@@ -1119,7 +1183,7 @@ impl TargetStore for PostgresTargetStore {
                 .bind(&intervals)
                 .bind(&enabled)
                 .bind(&tags_json)
-                .bind(&group_name)
+                .bind(&group_ids)
                 .bind(&owner_user_id)
                 .bind(org.0)
                 .bind(source.as_str())
@@ -1144,7 +1208,6 @@ impl TargetStore for PostgresTargetStore {
                 intervals.push(new.interval.as_secs() as i32);
                 enabled.push(new.enabled);
                 tags_json.push(Json(new.tags));
-                group_name.push(new.group_name);
                 owner_user_id.push(new.owner_user_id.flatten());
                 confirmations.push(new.alert_confirmations.max(1) as i32);
                 recoveries.push(new.notify_recovery);
@@ -1157,7 +1220,7 @@ impl TargetStore for PostgresTargetStore {
                 .bind(&intervals)
                 .bind(&enabled)
                 .bind(&tags_json)
-                .bind(&group_name)
+                .bind(&group_ids)
                 .bind(&owner_user_id)
                 .bind(org.0)
                 .bind(source.as_str())
@@ -1173,7 +1236,15 @@ impl TargetStore for PostgresTargetStore {
                 .context("bulk insert targets")?
         };
 
-        insert_bindings(&mut tx, org, &bound_targets, &bound_channels, &bound_at).await?;
+        insert_bindings(
+            &mut tx,
+            org,
+            BindingOwner::Target,
+            &bound_targets,
+            &bound_channels,
+            &bound_at,
+        )
+        .await?;
 
         let mut target_ids: Vec<Uuid> = Vec::new();
         let mut region_ids: Vec<&str> = Vec::new();
@@ -1462,21 +1533,54 @@ impl TargetStore for PostgresTargetStore {
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
-    async fn set_group(&self, org: OrgId, ids: &[Uuid], group: Option<&str>) -> Result<Vec<Uuid>> {
+    async fn set_group(
+        &self,
+        org: OrgId,
+        ids: &[Uuid],
+        group: Option<&str>,
+        actor: Option<UserId>,
+    ) -> Result<Vec<Uuid>> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let rows: Vec<(Uuid,)> = sqlx::query_as(
-            r#"UPDATE targets SET group_name = $2, updated_at = now()
-               WHERE id = ANY($1) AND org_id = $3 RETURNING id"#,
+        let mut tx = self.pool.begin().await.context("bulk set_group: begin")?;
+        let group_id = resolve_group(&mut tx, org, group, WriteSource::Ui, actor).await?;
+        let rows: Vec<(Uuid, String, Option<Uuid>)> = sqlx::query_as(
+            r#"WITH locked AS (
+                   SELECT id, group_id FROM targets
+                   WHERE id = ANY($1) AND org_id = $3 ORDER BY id FOR UPDATE
+               )
+               UPDATE targets t SET group_id = $2, updated_at = now()
+               FROM locked WHERE t.id = locked.id AND t.org_id = $3
+               RETURNING t.id, t.name, locked.group_id"#,
         )
         .bind(ids)
-        .bind(group)
+        .bind(group_id)
         .bind(org.0)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
         .context("bulk set_group")?;
-        Ok(rows.into_iter().map(|(id,)| id).collect())
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+        let moved: Vec<(Uuid, &str, Option<Uuid>)> = rows
+            .iter()
+            .filter(|(_, _, from)| *from != group_id)
+            .map(|(id, name, from)| (*id, name.as_str(), *from))
+            .collect();
+        if !moved.is_empty() {
+            let name = group.and_then(crate::domain::normalize_group_name);
+            crate::storage::orgs::record_audit_tx(
+                &mut tx,
+                org,
+                actor,
+                "target.group_changed",
+                group_change_metadata(group_id.zip(name), moved.into_iter()),
+            )
+            .await?;
+        }
+        tx.commit().await.context("bulk set_group: commit")?;
+        Ok(rows.into_iter().map(|(id, _, _)| id).collect())
     }
 
     async fn set_interval(

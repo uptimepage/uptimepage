@@ -88,9 +88,10 @@ INSERT INTO seed_components VALUES
   ('og-website', 'Website', 0), ('og-api', 'API', 1), ('og-dashboard', 'Dashboard', 2),
   ('og-checkout', 'Checkout', 3), ('og-webhooks', 'Webhooks', 4);
 
-INSERT INTO targets (org_id, name, check_spec, interval_secs, enabled, tags, group_name)
+INSERT INTO monitor_groups (org_id, name) VALUES ('${ORG}', 'Outage demo') ON CONFLICT (org_id, name) DO NOTHING;
+INSERT INTO targets (org_id, name, check_spec, interval_secs, enabled, tags, group_id)
 SELECT '${ORG}', name || ' (seeded)', '{"type":"manual"}'::jsonb, 60, true,
-       ARRAY['seed-og', tag], 'Outage demo'
+       ARRAY['seed-og', tag], (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Outage demo')
   FROM seed_components;
 
 INSERT INTO status_pages (org_id, slug, name, enabled)

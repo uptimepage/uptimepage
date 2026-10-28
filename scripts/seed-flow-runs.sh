@@ -70,7 +70,8 @@ pg <<SQL
 DELETE FROM targets
  WHERE org_id = '${ORG}' AND tags @> ARRAY['seed-flow'];
 
-INSERT INTO targets (org_id, name, check_spec, interval_secs, enabled, tags, group_name)
+INSERT INTO monitor_groups (org_id, name) VALUES ('${ORG}', 'Journeys') ON CONFLICT (org_id, name) DO NOTHING;
+INSERT INTO targets (org_id, name, check_spec, interval_secs, enabled, tags, group_id)
 VALUES (
   '${ORG}',
   'Login flow (seeded)',
@@ -86,7 +87,7 @@ VALUES (
     "timeout":30000,
     "step_timeout":10000,
     "verify_tls":true}'::jsonb,
-  $(( STEP_MIN * 60 )), true, ARRAY['seed-flow'], 'Journeys'
+  $(( STEP_MIN * 60 )), true, ARRAY['seed-flow'], (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Journeys')
 );
 
 -- Assigned to whatever regions the running stack actually has, same as any

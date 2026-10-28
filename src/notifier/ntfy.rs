@@ -94,7 +94,9 @@ impl NtfyNotifier {
             },
             tags: match notice.reason {
                 NotificationReason::Resolved => ["white_check_mark"],
-                NotificationReason::MonitorDeleted => ["white_circle"],
+                NotificationReason::MonitorDeleted | NotificationReason::GroupDeleted => {
+                    ["white_circle"]
+                }
                 _ => ["rotating_light"],
             },
             click: notice.url.as_deref(),

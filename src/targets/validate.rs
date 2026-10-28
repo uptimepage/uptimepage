@@ -348,8 +348,13 @@ pub(crate) fn normalize_tags(tags: &[String]) -> Result<Vec<String>> {
 
 pub(crate) fn validate_group_name(group: Option<&str>) -> Result<()> {
     use crate::error::validation;
-    if let Some(g) = group {
-        validation::check_length(g, "group_name", 50, codes::GROUP_TOO_LONG)?;
+    if let Some(g) = group.and_then(crate::domain::normalize_group_name) {
+        validation::check_length(
+            g,
+            "group_name",
+            crate::domain::MAX_GROUP_NAME_LEN,
+            codes::GROUP_TOO_LONG,
+        )?;
     }
     Ok(())
 }

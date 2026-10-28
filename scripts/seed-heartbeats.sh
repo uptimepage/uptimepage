@@ -56,26 +56,27 @@ echo "==> Postgres: (re)create the seeded heartbeat monitors"
 pg <<SQL
 DELETE FROM targets WHERE org_id = '${ORG}' AND tags @> ARRAY['seed-heartbeat'];
 
-INSERT INTO targets (org_id, name, check_spec, interval_secs, enabled, tags, group_name)
+INSERT INTO monitor_groups (org_id, name) VALUES ('${ORG}', 'Jobs') ON CONFLICT (org_id, name) DO NOTHING;
+INSERT INTO targets (org_id, name, check_spec, interval_secs, enabled, tags, group_id)
 VALUES
   ('${ORG}', 'Nightly backup (seeded)',
    '{"type":"heartbeat","period":300000,"grace":60000}'::jsonb,
-   60, true, ARRAY['seed-heartbeat','hb-healthy'], 'Jobs'),
+   60, true, ARRAY['seed-heartbeat','hb-healthy'], (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Jobs')),
   ('${ORG}', 'Invoice sync (seeded)',
    '{"type":"heartbeat","period":600000,"grace":120000}'::jsonb,
-   60, true, ARRAY['seed-heartbeat','hb-too-tight'], 'Jobs'),
+   60, true, ARRAY['seed-heartbeat','hb-too-tight'], (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Jobs')),
   ('${ORG}', 'Cache warmer (seeded)',
    '{"type":"heartbeat","period":3600000,"grace":300000}'::jsonb,
-   60, true, ARRAY['seed-heartbeat','hb-too-loose'], 'Jobs'),
+   60, true, ARRAY['seed-heartbeat','hb-too-loose'], (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Jobs')),
   ('${ORG}', 'Offsite rsync (seeded)',
    '{"type":"heartbeat","period":900000,"grace":120000}'::jsonb,
-   60, true, ARRAY['seed-heartbeat','hb-failed'], 'Jobs'),
+   60, true, ARRAY['seed-heartbeat','hb-failed'], (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Jobs')),
   ('${ORG}', 'Warehouse ETL (seeded)',
    '{"type":"heartbeat","period":3600000,"grace":300000,"max_runtime":900000}'::jsonb,
-   60, true, ARRAY['seed-heartbeat','hb-running'], 'Jobs'),
+   60, true, ARRAY['seed-heartbeat','hb-running'], (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Jobs')),
   ('${ORG}', 'Report mailer (seeded)',
    '{"type":"heartbeat","period":900000,"grace":120000}'::jsonb,
-   60, true, ARRAY['seed-heartbeat','hb-thin'], 'Jobs');
+   60, true, ARRAY['seed-heartbeat','hb-thin'], (SELECT id FROM monitor_groups WHERE org_id = '${ORG}' AND name = 'Jobs'));
 SQL
 
 echo "==> waiting for the app to mint the ping tokens"
