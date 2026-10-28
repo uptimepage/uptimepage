@@ -652,7 +652,8 @@
           </div>
           <div>
             <span class="mb-1.5 block text-xs text-muted">Group</span>
-            <input type="hidden" name="group_name" value="{{ form.group_name }}" data-group-value>
+            <input type="hidden" name="group_name" value="{{ form.group_name }}" data-group-value
+                   data-group-initial="{{ form.group_name }}" data-group-pages="{{ form.group_pages_json }}">
             <div class="flex flex-wrap items-center gap-1.5" data-group-chips role="radiogroup" aria-label="Group">
               {% for g in form.group_options %}
               <label class="scope-token">
@@ -665,6 +666,7 @@
               <button type="button" class="scope-token" data-group-add aria-label="Add group">+</button>
             </div>
             <p class="mt-1 text-xs text-muted">Pick one (click again to clear); <kbd>+</kbd> adds a new group.</p>
+            <p class="mt-1 text-xs text-state-warn" data-group-warning hidden></p>
           </div>
         </div>
       </div>

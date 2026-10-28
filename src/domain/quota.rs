@@ -208,6 +208,32 @@ pub struct RetentionDays {
     pub evidence: u16,
 }
 
+/// The plan's caps a monitor write enforces inside its own transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WriteCaps {
+    /// Monitors, and the groups an account may hold.
+    pub targets: i64,
+    pub flow_checks: i64,
+    /// Rows a group change adds to the pages that show that group.
+    pub public_components: i64,
+}
+
+impl WriteCaps {
+    pub const UNLIMITED: Self = Self {
+        targets: i64::MAX,
+        flow_checks: i64::MAX,
+        public_components: i64::MAX,
+    };
+
+    pub fn of(plan: &Plan) -> Self {
+        Self {
+            targets: i64::from(plan.max_targets),
+            flow_checks: i64::from(plan.max_flow_checks),
+            public_components: i64::from(plan.max_public_components),
+        }
+    }
+}
+
 /// Cache-key tags for the usage cache. One vocabulary, equal to the
 /// `plans` column names so the transparency endpoint, the UI, and any
 /// future invalidation hook all name a quota the same way.

@@ -43,8 +43,7 @@ async fn seed(store: &PostgresTargetStore, org: OrgId, name: &str) -> Uuid {
             http_target(name),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap()

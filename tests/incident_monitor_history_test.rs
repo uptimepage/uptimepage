@@ -83,8 +83,7 @@ impl Fixture {
                 http_target(name),
                 WriteSource::Ui,
                 None,
-                i64::MAX,
-                i64::MAX,
+                uptimepage::domain::WriteCaps::UNLIMITED,
             )
             .await
             .unwrap()
@@ -420,8 +419,7 @@ async fn an_incident_cannot_name_another_orgs_monitor() {
             http_target("theirs"),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap()

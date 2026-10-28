@@ -167,6 +167,24 @@ pub struct ComponentRow {
     pub public_name: String,
     pub public_group: String,
     pub detail_link: bool,
+    /// The heading of the group section that shows it; it leaves only with
+    /// the group.
+    pub section: Option<String>,
+}
+
+/// A monitor group shown on the page.
+pub struct SectionRow {
+    pub id: String,
+    pub heading: String,
+    pub group_name: String,
+    pub members: usize,
+    pub left_off: u32,
+}
+
+/// A group the page does not show yet.
+pub struct GroupChoice {
+    pub id: String,
+    pub name: String,
 }
 
 pub(crate) fn kind_label(kind: &str) -> &'static str {
@@ -262,6 +280,8 @@ pub struct PageEditorPage {
     pub max_logo_dim_px: u32,
     /// Monitors on this page first (in order), then the rest by name.
     pub components: Vec<ComponentRow>,
+    pub sections: Vec<SectionRow>,
+    pub group_choices: Vec<GroupChoice>,
     /// Confirmed + pending subscribers, newest first.
     pub subscribers: Vec<SubscriberView>,
     /// `public`, `private` or `off`, as the rail's first legend reads.
@@ -358,11 +378,41 @@ pub async fn page_editor(
         .await?;
     let kind_by_id: std::collections::HashMap<Uuid, &'static str> =
         all_targets.iter().map(|t| (t.id, t.check.kind())).collect();
+    let (sections, group_choices) = match state.db.as_ref() {
+        Some(pool) => {
+            let sections = crate::storage::page_sections::list(pool, org, id).await?;
+            let shown: std::collections::HashSet<Uuid> =
+                sections.iter().map(|s| s.group_id).collect();
+            let choices = state
+                .monitor_group_store
+                .list(org)
+                .await?
+                .into_iter()
+                .filter(|g| !shown.contains(&g.id))
+                .map(|g| GroupChoice {
+                    id: g.id.to_string(),
+                    name: g.name,
+                })
+                .collect();
+            (sections, choices)
+        }
+        None => (Vec::new(), Vec::new()),
+    };
+    let heading_of: std::collections::HashMap<Uuid, String> = sections
+        .iter()
+        .map(|s| {
+            (
+                s.id,
+                s.heading.clone().unwrap_or_else(|| s.group_name.clone()),
+            )
+        })
+        .collect();
     let mut rows: Vec<ComponentRow> = curated
         .iter()
         .map(|c| {
             let kind = kind_by_id.get(&c.target_id).copied().unwrap_or("");
             ComponentRow {
+                section: c.section_id.and_then(|s| heading_of.get(&s).cloned()),
                 target_id: c.target_id.to_string(),
                 monitor_name: c.monitor_name.clone(),
                 kind: kind_label(kind),
@@ -391,8 +441,19 @@ pub async fn page_editor(
             public_name: String::new(),
             public_group: String::new(),
             detail_link: false,
+            section: None,
         }
     }));
+    let sections: Vec<SectionRow> = sections
+        .into_iter()
+        .map(|s| SectionRow {
+            id: s.id.to_string(),
+            heading: s.heading.unwrap_or_default(),
+            members: s.members.len(),
+            left_off: s.left_off,
+            group_name: s.group_name,
+        })
+        .collect();
 
     let cfg = &state.cfg.public_status;
     let b = &page.branding;
@@ -540,6 +601,8 @@ pub async fn page_editor(
         max_logo_bytes: u64::from(cfg.max_logo_size_bytes),
         max_logo_dim_px: cfg.max_logo_dimension_px,
         components: rows,
+        sections,
+        group_choices,
         subscribers,
         visibility,
         lock,
@@ -616,7 +679,10 @@ mod tests {
                 public_name: "API".into(),
                 public_group: String::new(),
                 detail_link: false,
+                section: None,
             }],
+            sections: Vec::new(),
+            group_choices: Vec::new(),
             subscribers: Vec::new(),
             visibility: "public",
             lock: None,

@@ -50,6 +50,8 @@ pub struct StatusView {
 pub struct GroupView {
     pub heading: String,
     pub components: Vec<ComponentView>,
+    /// A monitor group's section: its combined state as (label, class).
+    pub status: Option<(String, &'static str)>,
 }
 
 pub struct ComponentView {
@@ -369,6 +371,17 @@ pub(super) fn build_group(
 ) -> GroupView {
     GroupView {
         heading: g.name.clone().unwrap_or_else(|| text.tr.t("group-other")),
+        status: g.status.map(|state| {
+            let as_component = match state {
+                OverallState::Operational => PublicComponentStatus::Operational,
+                OverallState::Maintenance => PublicComponentStatus::Maintenance,
+                OverallState::MinorDisruption => PublicComponentStatus::Degraded,
+                OverallState::PartialOutage => PublicComponentStatus::PartialOutage,
+                OverallState::MajorOutage => PublicComponentStatus::MajorOutage,
+            };
+            let (_, class, _) = component_classes(as_component);
+            (text.tr.t(overall_label_id(state)), class)
+        }),
         components: g
             .components
             .iter()

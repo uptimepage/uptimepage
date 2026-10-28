@@ -195,8 +195,7 @@ async fn rendered_groups_follow_the_stored_order() {
                 public_target(&unique),
                 WriteSource::Ui,
                 None,
-                i64::MAX,
-                i64::MAX,
+                uptimepage::domain::WriteCaps::UNLIMITED,
             )
             .await
             .expect("create public target");
@@ -281,8 +280,7 @@ async fn a_deleted_monitors_incident_stays_on_its_page() {
             public_target(&format!("agg-gone-{}", Uuid::now_v7())),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create target");
@@ -345,8 +343,7 @@ async fn build_round_trips_seeded_data() {
             public_target(&unique),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create public target");
@@ -405,8 +402,7 @@ async fn detail_link_renders_only_for_a_live_share() {
             public_target("dl"),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create target");
@@ -514,8 +510,7 @@ async fn a_component_that_recorded_nothing_is_no_data_not_operational() {
             public_target(&unique),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create public target");
@@ -575,8 +570,7 @@ async fn a_paused_monitors_open_incident_keeps_its_component_down() {
             public_target(&unique),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create public target");
@@ -639,8 +633,7 @@ async fn component_history_returns_strip_for_public_target() {
             public_target(&unique),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create public target");
@@ -698,8 +691,7 @@ async fn build_excludes_internal_incidents() {
             mk_target("pub"),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create public target");
@@ -709,8 +701,7 @@ async fn build_excludes_internal_incidents() {
             mk_target("int"),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create internal target");
@@ -814,8 +805,7 @@ async fn build_component_state_follows_confirmed_incidents() {
             mk_target("partial"),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create partial target");
@@ -825,8 +815,7 @@ async fn build_component_state_follows_confirmed_incidents() {
             mk_target("major"),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create major target");
@@ -1011,8 +1000,7 @@ async fn internal_auto_incident_paints_strip_manual_stays_hidden() {
             mk_target("auto"),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create auto target");
@@ -1022,8 +1010,7 @@ async fn internal_auto_incident_paints_strip_manual_stays_hidden() {
             mk_target("manual"),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create manual target");
@@ -1151,8 +1138,7 @@ async fn a_published_declaration_paints_only_when_it_counts() {
             mk_target("notice"),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create notice target");
@@ -1162,8 +1148,7 @@ async fn a_published_declaration_paints_only_when_it_counts() {
             mk_target("outage"),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create outage target");
@@ -1290,8 +1275,7 @@ async fn published_postmortem_surfaces_on_public_incident() {
             public_target(&unique),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create public target");
@@ -1367,8 +1351,7 @@ async fn a_page_incident_shows_only_on_the_pages_it_names() {
             public_target(&format!("agg-pgi-{}", Uuid::now_v7())),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create target");
@@ -1500,8 +1483,7 @@ async fn a_page_is_named_by_its_display_name_else_its_org() {
             public_target(&format!("agg-name-{}", Uuid::now_v7())),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create public target");

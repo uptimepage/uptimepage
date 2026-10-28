@@ -390,7 +390,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Add monitors to a status page as public components, in one confirmation where the client can show a prompt. Give each a public_name the page's readers will understand, since the monitor's own name is operator-facing, and a public_group to file related components together. Monitors already on the page are reported as such rather than duplicated. detail_link_enabled publishes a per-monitor detail view that shows the monitor's real name and address, not public_name. Not read-only.",
+        description = "Add monitors to a status page as public components, in one confirmation where the client can show a prompt. Give each a public_name the page's readers will understand, since the monitor's own name is operator-facing, and a public_group to file related components together. Monitors already on the page are reported as such rather than duplicated. detail_link_enabled publishes a per-monitor detail view that shows the monitor's real name and address, not public_name. groups adds monitor groups as live sections: a heading with the members' combined state, every member as its own row, and members that join or leave the group joining or leaving the page; members past the plan's public component limit stay off. Not read-only.",
         title = "Add status page components",
         annotations(
             read_only_hint = false,
@@ -414,7 +414,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Change how one monitor is presented on a status page: its public name, description, group or position. An omitted field is left alone. Not read-only; idempotent.",
+        description = "Change how one monitor is presented on a status page: its public name, description, group or position; or, with section_id, a group section's heading. An omitted field is left alone. A section member's heading is its section's, so its public_group does nothing. Not read-only; idempotent.",
         title = "Update status page component",
         annotations(
             read_only_hint = false,
@@ -429,7 +429,11 @@ impl McpServer {
     ) -> Result<Json<ComponentUpdated>, McpToolError> {
         let auth = McpAuth::from_ctx(&ctx)?;
         let pool = self.require_pool()?;
-        let args_json = json!({ "slug": args.slug, "monitor_id": args.monitor_id });
+        let args_json = json!({
+            "slug": args.slug,
+            "monitor_id": args.monitor_id,
+            "section_id": args.section_id,
+        });
         let result = self
             .update_status_page_component_inner(&ctx, &auth, &args)
             .await;

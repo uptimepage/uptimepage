@@ -125,6 +125,7 @@ impl McpServer {
             .await
             .map_err(config_error)?
             .ok_or_else(|| McpToolError::not_found("group not found"))?;
+        crate::api::handlers::groups::clear_section_pages(&self.state, auth.org, id).await;
 
         Ok(Json(MonitorGroupUpdated {
             id: id.to_string(),

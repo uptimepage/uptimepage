@@ -176,6 +176,7 @@ impl McpServer {
                 },
                 None,
                 Some(auth.user_id),
+                crate::domain::WriteCaps::UNLIMITED,
             )
             .await
             .map_err(|e| McpToolError::internal(format!("set enabled: {e}")))?
@@ -736,13 +737,34 @@ impl McpServer {
             ));
         }
 
+        // Only a group change adds rows or groups the plan caps.
+        let (caps, left) = match update.group_choice() {
+            Some(_) => {
+                let plan = self
+                    .state
+                    .quotas
+                    .limit_for_org(auth.org)
+                    .await
+                    .map_err(|e| McpToolError::internal(format!("plan: {e}")))?;
+                (
+                    crate::domain::WriteCaps::of(&plan),
+                    self.state.publishing().pages_showing(auth.org, &[id]).await,
+                )
+            }
+            None => (crate::domain::WriteCaps::UNLIMITED, Vec::new()),
+        };
         // `None`: not restamping `write_source` is what keeps a terraform marker.
         self.state
             .target_store
-            .update(auth.org, id, update, None, Some(auth.user_id))
+            .update(auth.org, id, update, None, Some(auth.user_id), caps)
             .await
             .map_err(|e| McpToolError::internal(format!("update monitor: {e}")))?
             .ok_or_else(|| McpToolError::not_found("monitor not found"))?;
+        self.state.publishing().invalidate_page_ids(&left).await;
+        self.state
+            .publishing()
+            .invalidate_targets(auth.org, &[id])
+            .await;
 
         Ok(Json(MonitorUpdateResult {
             id: id.to_string(),

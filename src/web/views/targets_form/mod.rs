@@ -84,6 +84,7 @@ pub async fn new_form(
     }
     form.owner_options = owner_options;
     form.group_options = group_options;
+    form.group_pages_json = group_pages_json(&state, org).await?;
     form.tag_options = tag_options;
     ensure_tags_listed(&mut form);
     if !state.cfg.on_call_available(&plan) {
@@ -177,6 +178,7 @@ pub async fn edit_form(
     form.channels = channels;
     form.owner_options = owner_options;
     form.group_options = group_options;
+    form.group_pages_json = group_pages_json(&state, org).await?;
     form.tag_options = tag_options;
     ensure_tags_listed(&mut form);
     if form.check_type == "heartbeat" {
@@ -220,4 +222,15 @@ pub async fn edit_form(
         active_tab: "targets",
         form,
     })
+}
+
+/// Soft: a failed read drops the warning, not the form.
+async fn group_pages_json(state: &AppState, org: OrgId) -> WebResult<String> {
+    let Some(pool) = state.db.as_ref() else {
+        return Ok("{}".into());
+    };
+    let pages = crate::storage::page_sections::pages_per_group(pool, org)
+        .await
+        .unwrap_or_default();
+    Ok(serde_json::to_string(&pages).unwrap_or_else(|_| "{}".into()))
 }

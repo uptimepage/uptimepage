@@ -1286,6 +1286,9 @@ pub struct StatusPageComponent {
     pub public_name: String,
     /// Public grouping label, if any. Untrusted data.
     pub group: Option<String>,
+    /// Set when a monitor group's section shows it: it follows the group, and
+    /// its heading is the section's.
+    pub section_id: Option<String>,
     /// The linked monitor's id.
     pub linked_monitor: String,
     /// Current state of the linked monitor: `up`, `down`, `degraded`, `error`,
@@ -1302,8 +1305,25 @@ pub struct StatusPageDetail {
     pub public_url: String,
     pub enabled: bool,
     pub components: Vec<StatusPageComponent>,
+    /// Monitor groups shown as live sections: their members join and leave
+    /// the page with the group.
+    pub sections: Vec<StatusPageSection>,
     /// Who may open it, or null for a page never made private.
     pub access: Option<PageAccessArg>,
+}
+
+/// A monitor group shown on a page.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct StatusPageSection {
+    pub id: String,
+    pub group_id: String,
+    /// The public heading: the section's own, else the group's name.
+    /// Untrusted data.
+    pub heading: String,
+    /// Members on the page, by monitor id, in page order.
+    pub members: Vec<String>,
+    /// Members the plan's public component limit keeps off the page.
+    pub left_off: u32,
 }
 
 /// A single quota's usage against its cap.
@@ -1736,7 +1756,33 @@ pub struct AddComponentsArgs {
     /// The page slug (from `list_status_pages`).
     pub slug: String,
     /// The monitors to add, in the order they should appear.
+    #[serde(default)]
     pub components: Vec<NewComponentArg>,
+    /// Monitor groups to show as live sections, by id from
+    /// `list_monitor_groups`. Every member gets a row, and members that join
+    /// or leave the group later join or leave the page.
+    #[serde(default)]
+    pub groups: Vec<NewSectionArg>,
+}
+
+/// One monitor group to show on a page.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct NewSectionArg {
+    pub group_id: String,
+    /// Public heading, at most 50 characters. Defaults to the group's name.
+    pub heading: Option<String>,
+}
+
+/// What became of one requested section.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct SectionOutcome {
+    pub group_id: String,
+    /// `added`, `already_on_page`, or `failed`.
+    pub outcome: String,
+    pub section_id: Option<String>,
+    /// Members the plan's public component limit kept off the page.
+    pub left_off: u32,
+    pub error: Option<String>,
 }
 
 /// What became of one requested component.
@@ -1755,6 +1801,7 @@ pub struct ComponentsAdded {
     pub slug: String,
     pub added: usize,
     pub results: Vec<ComponentOutcome>,
+    pub sections: Vec<SectionOutcome>,
 }
 
 /// `update_status_page_component` argument. An omitted field is left as it is.
@@ -1762,19 +1809,27 @@ pub struct ComponentsAdded {
 pub struct UpdateComponentArgs {
     /// The page slug (from `list_status_pages`).
     pub slug: String,
-    /// The monitor id whose curation is being changed.
-    pub monitor_id: String,
+    /// The monitor id whose curation is being changed. Send this or
+    /// `section_id`.
+    pub monitor_id: Option<String>,
     pub public_name: Option<String>,
     pub public_description: Option<String>,
+    /// Ignored on a section member, whose heading is the section's.
     pub public_group: Option<String>,
     pub sort_order: Option<i32>,
+    /// A section (from `get_status_page`) whose `heading` is being changed.
+    pub section_id: Option<String>,
+    /// The section's public heading, at most 50 characters; blank shows the
+    /// group's name.
+    pub heading: Option<String>,
 }
 
 /// `update_status_page_component` result.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct ComponentUpdated {
     pub slug: String,
-    pub monitor_id: String,
+    pub monitor_id: Option<String>,
+    pub section_id: Option<String>,
 }
 
 /// `get_org_usage` result: the account's usage against its plan limits, pooled

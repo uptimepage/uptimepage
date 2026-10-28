@@ -144,8 +144,7 @@ pub async fn duplicate(
             placed,
             write_source,
             Some(user),
-            i64::from(plan.max_targets),
-            i64::from(plan.max_flow_checks),
+            crate::domain::WriteCaps::of(&plan),
         )
         .await?;
     ops.settle_created(org, &created, &regions).await;

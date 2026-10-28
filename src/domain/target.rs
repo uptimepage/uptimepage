@@ -8,7 +8,7 @@ use uuid::Uuid;
 use super::WriteSource;
 use super::alert::TargetAlerts;
 use super::check::CheckSpec;
-use super::monitor_group::GroupChoice;
+use super::monitor_group::{GroupChoice, normalize_group_name};
 use super::result::CheckStatus;
 use super::user::UserId;
 
@@ -367,6 +367,25 @@ impl TargetUpdate {
             (None, None) => None,
         }
     }
+
+    /// Drops a group choice naming the group `current` is in already. Forms
+    /// and Terraform send the group on every save, and a change takes the
+    /// account lock.
+    pub fn drop_unchanged_group(&mut self, current: &Target) {
+        let unchanged = match self.group_choice() {
+            None => return,
+            Some(Some(GroupChoice::Id(id))) => current.group_id == Some(id),
+            Some(Some(GroupChoice::Name(name))) => match normalize_group_name(name) {
+                Some(name) => current.group_name.as_deref() == Some(name),
+                None => current.group_id.is_none(),
+            },
+            Some(None) => current.group_id.is_none(),
+        };
+        if unchanged {
+            self.group_id = None;
+            self.group_name = None;
+        }
+    }
 }
 
 /// Lifts the inner `Option<T>` into `Some(Option<T>)` so a missing field
@@ -577,5 +596,54 @@ mod slowed_at_tests {
             ..t
         };
         assert!(serde_json::to_value(&slowed).unwrap()["slowed_at"].is_string());
+    }
+}
+
+#[cfg(test)]
+mod drop_unchanged_group_tests {
+    use super::*;
+
+    fn in_group(name: &str, id: Uuid) -> Target {
+        Target {
+            group_name: Some(name.into()),
+            group_id: Some(id),
+            ..Target::sample(Duration::from_secs(60))
+        }
+    }
+
+    fn patch(json: serde_json::Value) -> TargetUpdate {
+        serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn the_group_the_monitor_is_in_is_no_change() {
+        let id = Uuid::new_v4();
+        let current = in_group("DNS", id);
+        for json in [
+            serde_json::json!({"group_name": " DNS "}),
+            serde_json::json!({"group_id": id}),
+        ] {
+            let mut u = patch(json);
+            u.drop_unchanged_group(&current);
+            assert!(u.group_choice().is_none());
+        }
+        let mut leave = patch(serde_json::json!({"group_name": ""}));
+        leave.drop_unchanged_group(&Target::sample(Duration::from_secs(60)));
+        assert!(leave.group_choice().is_none());
+    }
+
+    #[test]
+    fn another_group_or_leaving_stays_a_change() {
+        let current = in_group("DNS", Uuid::new_v4());
+        for json in [
+            serde_json::json!({"group_name": "Mail"}),
+            serde_json::json!({"group_id": Uuid::new_v4()}),
+            serde_json::json!({"group_name": null}),
+            serde_json::json!({"group_id": null}),
+        ] {
+            let mut u = patch(json);
+            u.drop_unchanged_group(&current);
+            assert!(u.group_choice().is_some());
+        }
     }
 }

@@ -205,8 +205,7 @@ async fn build_fixture() -> Option<Fixture> {
                     http_target(&format!("conc-{i}-{j}")),
                     WriteSource::Ui,
                     None,
-                    i64::MAX,
-                    i64::MAX,
+                    uptimepage::domain::WriteCaps::UNLIMITED,
                 )
                 .await
                 .expect("create target");

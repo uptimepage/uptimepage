@@ -74,8 +74,7 @@ async fn make_heartbeat_target(pool: &sqlx::PgPool, org: OrgId, name: &str, enab
             heartbeat_target(name, enabled),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create target")
@@ -264,6 +263,7 @@ async fn enable_rearms_only_disabled_heartbeats_live_pg() {
             },
             Some(WriteSource::Ui),
             None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap();
@@ -323,6 +323,7 @@ async fn dead_tokens_stop_recording_and_sync_heals_rows_live_pg() {
             },
             Some(WriteSource::Ui),
             None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect_err("the store refuses a check of another kind");
@@ -1537,7 +1538,13 @@ async fn a_coarse_stored_interval_is_evaluated_at_the_windows_cadence_live_pg() 
     let mut coarse = heartbeat_target("coarse", true);
     coarse.interval = Duration::from_secs(60_000);
     let coarse = targets
-        .create(org_a, coarse, WriteSource::Ui, None, i64::MAX, i64::MAX)
+        .create(
+            org_a,
+            coarse,
+            WriteSource::Ui,
+            None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
         .await
         .expect("create target")
         .id;

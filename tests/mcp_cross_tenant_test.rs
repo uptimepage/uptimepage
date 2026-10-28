@@ -159,8 +159,7 @@ async fn seed_monitor_with_incident(pool: &PgPool, org: OrgId) -> (Uuid, Uuid) {
             secret_monitor(),
             WriteSource::Api,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("insert target")
@@ -184,7 +183,13 @@ async fn seed_tagged_monitor(pool: &PgPool, org: OrgId, tag: &str) {
     target.name = format!("tagged-{tag}");
     target.tags = vec![tag.to_string()];
     PostgresTargetStore::from_pool(pool.clone(), None)
-        .create(org, target, WriteSource::Api, None, i64::MAX, i64::MAX)
+        .create(
+            org,
+            target,
+            WriteSource::Api,
+            None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
         .await
         .expect("insert tagged target");
 }
@@ -447,8 +452,7 @@ async fn no_write_touches_a_terraform_managed_monitor() {
             secret_monitor(),
             WriteSource::Terraform,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("insert terraform-managed target")
@@ -475,8 +479,7 @@ async fn no_write_touches_a_terraform_managed_monitor() {
             secret_monitor(),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("insert ui target")
@@ -524,8 +527,7 @@ async fn an_uneditable_field_is_refused_rather_than_ignored() {
             secret_monitor(),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("insert target")
@@ -638,8 +640,7 @@ async fn a_channel_from_another_org_cannot_be_bound() {
             secret_monitor(),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("insert target")
@@ -697,8 +698,7 @@ async fn a_tag_the_shared_validator_rejects_never_reaches_the_prompt() {
             secret_monitor(),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("insert target")
@@ -732,8 +732,7 @@ async fn seed_monitor(pool: &PgPool, org: OrgId) -> Uuid {
             secret_monitor(),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("insert target")
@@ -1689,7 +1688,13 @@ async fn groups_are_listed_retuned_and_shown_on_monitors_and_incidents() {
     let mut member = secret_monitor();
     member.group_id = Some(dns);
     let member = PostgresTargetStore::from_pool(pool.clone(), None)
-        .create(org_a, member, WriteSource::Api, None, i64::MAX, i64::MAX)
+        .create(
+            org_a,
+            member,
+            WriteSource::Api,
+            None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
         .await
         .unwrap()
         .id;
@@ -1809,5 +1814,87 @@ async fn groups_are_listed_retuned_and_shown_on_monitors_and_incidents() {
     assert_eq!(
         read["result"]["structuredContent"]["group_incident_id"],
         group_incident
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn a_group_is_added_to_a_page_as_a_section() {
+    use uptimepage::domain::NewMonitorGroup;
+    use uptimepage::storage::MonitorGroupStore;
+
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (mcp, org_a, _) = connect(&pool).await;
+    let slug = unique_slug("mcpsec");
+    seed_page(&pool, org_a, &slug).await;
+    let group = uptimepage::storage::PgMonitorGroupStore::new(pool.clone())
+        .create(
+            org_a,
+            NewMonitorGroup::named("DNS"),
+            WriteSource::Ui,
+            None,
+            i64::MAX,
+        )
+        .await
+        .unwrap()
+        .id;
+    let mut member = secret_monitor();
+    member.group_id = Some(group);
+    let member = PostgresTargetStore::from_pool(pool.clone(), None)
+        .create(
+            org_a,
+            member,
+            WriteSource::Api,
+            None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
+        .await
+        .unwrap()
+        .id;
+
+    let added = mcp
+        .call(
+            "add_status_page_components",
+            json!({ "slug": slug, "groups": [{ "group_id": group, "heading": "Name servers" }] }),
+        )
+        .await;
+    assert_eq!(error_code(&added), None, "{added}");
+    let outcome = &added["result"]["structuredContent"]["sections"][0];
+    assert_eq!(outcome["outcome"], "added");
+    let section = outcome["section_id"].as_str().unwrap().to_string();
+
+    let page = mcp.call("get_status_page", json!({ "slug": slug })).await;
+    let content = &page["result"]["structuredContent"];
+    assert_eq!(content["sections"][0]["heading"], "Name servers");
+    assert_eq!(
+        content["sections"][0]["members"],
+        json!([member.to_string()])
+    );
+    assert_eq!(content["components"][0]["section_id"], section.as_str());
+
+    let renamed = mcp
+        .call(
+            "update_status_page_component",
+            json!({ "slug": slug, "section_id": section, "heading": "DNS" }),
+        )
+        .await;
+    assert_eq!(error_code(&renamed), None, "{renamed}");
+    let page = mcp.call("get_status_page", json!({ "slug": slug })).await;
+    assert_eq!(
+        page["result"]["structuredContent"]["sections"][0]["heading"],
+        "DNS"
+    );
+
+    let again = mcp
+        .call(
+            "add_status_page_components",
+            json!({ "slug": slug, "groups": [{ "group_id": group }] }),
+        )
+        .await;
+    assert_eq!(
+        again["result"]["structuredContent"]["sections"][0]["outcome"],
+        "already_on_page"
     );
 }

@@ -96,7 +96,13 @@ async fn make_target(store: &dyn TargetStore, org: OrgId, name: &str, secret: bo
         regions: None,
     };
     store
-        .create(org, nt, WriteSource::Ui, None, i64::MAX, i64::MAX)
+        .create(
+            org,
+            nt,
+            WriteSource::Ui,
+            None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
         .await
         .unwrap()
         .id

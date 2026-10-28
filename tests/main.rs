@@ -104,6 +104,7 @@ mod orgs_api_test;
 mod orgs_storage_test;
 mod page_asset_audit_test;
 mod page_assets_pg_test;
+mod page_sections_pg_test;
 mod partition_retention_test;
 mod passkey_ceremony_test;
 mod passkey_test;

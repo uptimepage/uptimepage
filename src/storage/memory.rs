@@ -13,7 +13,7 @@ use crate::domain::metrics::{
 use crate::domain::target::MAX_TAGS_PER_TARGET;
 use crate::domain::{
     AlertBinding, CheckResult, CheckStatus, NewTarget, OrgId, PlacedTarget, Target, TargetUpdate,
-    UserId, WriteSource, normalize_group_name,
+    UserId, WriteCaps, WriteSource, normalize_group_name,
 };
 use crate::error::Result;
 use crate::storage::traits::{
@@ -941,9 +941,9 @@ impl TargetStore for InMemoryTargetStore {
         new: NewTarget,
         source: WriteSource,
         _actor: Option<UserId>,
-        max_targets: i64,
-        max_flow_checks: i64,
+        caps: WriteCaps,
     ) -> Result<Target> {
+        let (max_targets, max_flow_checks) = (caps.targets, caps.flow_checks);
         let mut guard = self.targets.lock();
         // Lock held across count + push, so this is atomic for the same
         // reason the Postgres count-in-INSERT is.
@@ -981,6 +981,7 @@ impl TargetStore for InMemoryTargetStore {
         update: TargetUpdate,
         source: Option<WriteSource>,
         _actor: Option<UserId>,
+        _caps: WriteCaps,
     ) -> Result<Option<Target>> {
         let mut guard = self.targets.lock();
         let Some(t) = guard.iter_mut().find(|t| t.id == id) else {
@@ -1059,9 +1060,9 @@ impl TargetStore for InMemoryTargetStore {
         items: Vec<PlacedTarget>,
         source: WriteSource,
         _actor: Option<UserId>,
-        max_targets: i64,
-        max_flow_checks: i64,
+        caps: WriteCaps,
     ) -> Result<Vec<Target>> {
+        let (max_targets, max_flow_checks) = (caps.targets, caps.flow_checks);
         let mut guard = self.targets.lock();
         if guard.len() as i64 + items.len() as i64 > max_targets {
             return Err(crate::error::AppError::quota_exceeded(
@@ -1228,6 +1229,7 @@ impl TargetStore for InMemoryTargetStore {
         ids: &[Uuid],
         group: Option<&str>,
         _actor: Option<UserId>,
+        _caps: WriteCaps,
     ) -> Result<Vec<Uuid>> {
         let mut guard = self.targets.lock();
         let now = Utc::now();
@@ -1435,8 +1437,7 @@ mod tests {
                 },
                 WriteSource::Ui,
                 None,
-                i64::MAX,
-                i64::MAX,
+                crate::domain::WriteCaps::UNLIMITED,
             )
             .await
             .unwrap()
@@ -1459,6 +1460,7 @@ mod tests {
                 },
                 None,
                 None,
+                crate::domain::WriteCaps::UNLIMITED,
             )
             .await
             .expect_err("kind swap");
@@ -1474,7 +1476,14 @@ mod tests {
         assert_eq!(kept.name, "m", "a refused update writes nothing");
 
         let edited = store
-            .update(org, id, patch(tcp(8443)), None, None)
+            .update(
+                org,
+                id,
+                patch(tcp(8443)),
+                None,
+                None,
+                crate::domain::WriteCaps::UNLIMITED,
+            )
             .await
             .unwrap()
             .unwrap();
@@ -1516,7 +1525,13 @@ mod tests {
 
         let full: Vec<String> = (0..MAX_TAGS_PER_TARGET).map(|i| format!("t{i}")).collect();
         let crowded = store
-            .create(org, seed(full), WriteSource::Ui, None, i64::MAX, i64::MAX)
+            .create(
+                org,
+                seed(full),
+                WriteSource::Ui,
+                None,
+                crate::domain::WriteCaps::UNLIMITED,
+            )
             .await
             .unwrap()
             .id;
@@ -1526,8 +1541,7 @@ mod tests {
                 seed(vec!["prod".into()]),
                 WriteSource::Ui,
                 None,
-                i64::MAX,
-                i64::MAX,
+                crate::domain::WriteCaps::UNLIMITED,
             )
             .await
             .unwrap()

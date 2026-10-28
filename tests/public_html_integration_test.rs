@@ -89,6 +89,7 @@ impl PublicSource for PublishedSource {
             generated_at: Utc::now(),
             site_name: "uptimepage".into(),
             groups: vec![PublicComponentGroup {
+                status: None,
                 name: Some("Edge".into()),
                 components: vec![component],
             }],
@@ -281,6 +282,7 @@ impl PublicSource for EmptyDataSource {
             generated_at: Utc::now(),
             site_name: "uptimepage".into(),
             groups: vec![PublicComponentGroup {
+                status: None,
                 name: None,
                 components: vec![component],
             }],
@@ -376,6 +378,7 @@ impl PublicSource for MaintenanceDominatesSource {
             generated_at: now,
             site_name: "uptimepage".into(),
             groups: vec![PublicComponentGroup {
+                status: None,
                 name: None,
                 components: vec![component],
             }],

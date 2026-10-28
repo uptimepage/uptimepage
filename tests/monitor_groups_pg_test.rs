@@ -74,7 +74,13 @@ impl Fixture {
             regions: None,
         };
         self.targets
-            .create(self.org, new, WriteSource::Ui, None, i64::MAX, i64::MAX)
+            .create(
+                self.org,
+                new,
+                WriteSource::Ui,
+                None,
+                uptimepage::domain::WriteCaps::UNLIMITED,
+            )
             .await
             .unwrap()
     }
@@ -214,6 +220,65 @@ async fn the_database_trims_a_group_name_as_str_trim_does() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
+async fn the_backfill_cuts_a_label_longer_than_a_group_name_holds() {
+    use sqlx::{Connection, Executor};
+    let Ok(raw) = std::env::var("DATABASE_URL") else {
+        return;
+    };
+    let mut url = Url::parse(&raw).unwrap();
+    let db = format!("grp_backfill_{}", Uuid::now_v7().simple());
+    url.set_path("/postgres");
+    let mut admin = sqlx::PgConnection::connect(url.as_str()).await.unwrap();
+    admin
+        .execute(format!("CREATE DATABASE {db}").as_str())
+        .await
+        .unwrap();
+    url.set_path(&format!("/{db}"));
+    let pool = common::open_test_pool(url.as_str()).await;
+    let before_groups = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .iter()
+                .filter(|m| m.version < 110)
+                .cloned()
+                .collect(),
+        ),
+        ..sqlx::migrate::Migrator::DEFAULT
+    };
+    before_groups.run(&pool).await.unwrap();
+
+    let org = org(&pool, "grp").await;
+    // Bulk moves stored a label of any length before groups had a limit.
+    let long = format!("{} tail", "x".repeat(49));
+    for (name, label) in [("a", long.clone()), ("b", format!("{long} more"))] {
+        sqlx::query(
+            "INSERT INTO targets (org_id, name, check_spec, interval_secs, group_name) \
+             VALUES ($1, $2, '{}'::jsonb, 30, $3)",
+        )
+        .bind(org.0)
+        .bind(name)
+        .bind(label)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    MIGRATOR.run(&pool).await.unwrap();
+
+    let groups: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT g.name, count(t.id) FROM monitor_groups g \
+         JOIN targets t ON t.group_id = g.id WHERE g.org_id = $1 GROUP BY g.name",
+    )
+    .bind(org.0)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(groups, vec![("x".repeat(49), 2)]);
+    pool.close().await;
+    common::drop_test_db(&db).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
 async fn the_label_column_is_frozen_and_reads_come_from_the_group() {
     let Some(f) = Fixture::new("grp_frozen").await else {
         return;
@@ -294,6 +359,7 @@ async fn a_monitor_write_finds_or_creates_its_group_by_trimmed_name() {
             },
             Some(WriteSource::Api),
             None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap()
@@ -303,7 +369,13 @@ async fn a_monitor_write_finds_or_creates_its_group_by_trimmed_name() {
 
     let hit = f
         .targets
-        .set_group(f.org, &[ns.id, a.id], None, None)
+        .set_group(
+            f.org,
+            &[ns.id, a.id],
+            None,
+            None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
         .await
         .unwrap();
     assert_eq!(hit.len(), 2);
@@ -314,14 +386,26 @@ async fn a_monitor_write_finds_or_creates_its_group_by_trimmed_name() {
     );
     let nobody = f
         .targets
-        .set_group(f.org, &[Uuid::now_v7()], Some("Typo"), None)
+        .set_group(
+            f.org,
+            &[Uuid::now_v7()],
+            Some("Typo"),
+            None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
         .await
         .unwrap();
     assert!(nobody.is_empty());
     assert_eq!(f.audit_count("group.created").await, 2);
 
     f.targets
-        .set_group(f.org, &[ns.id], Some("  Mail "), None)
+        .set_group(
+            f.org,
+            &[ns.id],
+            Some("  Mail "),
+            None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
         .await
         .unwrap();
     let in_mail = f
@@ -342,11 +426,41 @@ async fn a_monitor_write_finds_or_creates_its_group_by_trimmed_name() {
 
     let too_long = f
         .targets
-        .set_group(f.org, &[ns.id], Some(&"x".repeat(51)), None)
+        .set_group(
+            f.org,
+            &[ns.id],
+            Some(&"x".repeat(51)),
+            None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
         .await;
     assert!(
         matches!(too_long, Err(AppError::BadRequest { code, .. }) if code == codes::GROUP_TOO_LONG)
     );
+
+    let from_tf = f
+        .targets
+        .update(
+            f.org,
+            a.id,
+            TargetUpdate {
+                group_name: Some(Some("Infra".into())),
+                ..Default::default()
+            },
+            Some(WriteSource::Terraform),
+            None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let infra = f
+        .groups
+        .get(f.org, from_tf.group_id.expect("joined"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(infra.write_source, WriteSource::Api);
     f.done().await;
 }
 
@@ -842,6 +956,29 @@ async fn a_group_silence_holds_its_members_until_every_one_is_back() {
     assert_eq!(due.len(), 1);
     assert!(due[0].finished && due[0].resumed);
     assert_eq!(due[0].members, vec!["ns", "a", "mx"]);
+
+    // A member that joins after that read keeps the episode open past the end.
+    let late = f.monitor("late", Some("DNS")).await.id;
+    store.enter(f.org, late, now).await.unwrap();
+    store
+        .join_group_silence(f.org, &group, &[], &[(late, now)])
+        .await
+        .unwrap();
+    store
+        .end_group_silence(f.org, episode, now, true)
+        .await
+        .unwrap();
+    let still_open: bool =
+        sqlx::query_scalar("SELECT ended_at IS NULL FROM group_silence_episodes WHERE id = $1")
+            .bind(episode)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert!(still_open);
+    assert_eq!(
+        store.resolve(f.org, late, now).await.unwrap(),
+        Resolved::InGroup
+    );
 
     store
         .end_group_silence(f.org, episode, now, true)

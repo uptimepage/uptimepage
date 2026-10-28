@@ -101,11 +101,23 @@ async fn logged_in_operator_cannot_read_another_orgs_target() {
     // production (`AppState` holds one store, the request supplies the org).
     let store = PostgresTargetStore::from_pool(pool.clone(), None);
     let t_a = store
-        .create(org_a, a_target(), WriteSource::Ui, None, i64::MAX, i64::MAX)
+        .create(
+            org_a,
+            a_target(),
+            WriteSource::Ui,
+            None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
         .await
         .expect("create A's target");
     let t_b = store
-        .create(org_b, a_target(), WriteSource::Ui, None, i64::MAX, i64::MAX)
+        .create(
+            org_b,
+            a_target(),
+            WriteSource::Ui,
+            None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
         .await
         .expect("create B's target");
 

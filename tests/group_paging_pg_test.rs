@@ -135,7 +135,13 @@ impl Fixture {
             regions: None,
         };
         self.targets
-            .create(self.org, new, WriteSource::Ui, None, i64::MAX, i64::MAX)
+            .create(
+                self.org,
+                new,
+                WriteSource::Ui,
+                None,
+                uptimepage::domain::WriteCaps::UNLIMITED,
+            )
             .await
             .unwrap()
             .id

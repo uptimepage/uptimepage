@@ -151,8 +151,16 @@
 
         {% for group in view.groups %}
         <section aria-labelledby="group-{{ loop.index }}-heading" class="space-y-3">
+            {% if let Some((label, class)) = group.status %}
+            <div class="flex flex-wrap items-baseline justify-between gap-3">
+                <h2 id="group-{{ loop.index }}-heading"
+                    class="text-sm font-semibold uppercase tracking-wide text-quiet">{{ group.heading }}</h2>
+                <span class="text-sm font-medium {{ class }}">{{ label }}</span>
+            </div>
+            {% else %}
             <h2 id="group-{{ loop.index }}-heading"
                 class="text-sm font-semibold uppercase tracking-wide text-quiet">{{ group.heading }}</h2>
+            {% endif %}
             <ul class="public-callout public-callout--neutral divide-y divide-[color:var(--theme-line)] overflow-hidden p-0">
                 {% for c in group.components %}
                 <li class="p-5">

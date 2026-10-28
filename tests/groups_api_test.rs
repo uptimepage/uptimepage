@@ -814,7 +814,17 @@ async fn an_account_holds_as_many_groups_as_its_plan_allows_monitors() {
     let new: uptimepage::domain::NewTarget =
         serde_json::from_value(monitor_body(json!({ "group_name": "G" }))).unwrap();
     let refused = uptimepage::storage::PostgresTargetStore::from_pool(api.pool.clone(), None)
-        .create(api.org, new, WriteSource::Ui, None, 2, 2)
+        .create(
+            api.org,
+            new,
+            WriteSource::Ui,
+            None,
+            uptimepage::domain::WriteCaps {
+                targets: 2,
+                flow_checks: 2,
+                public_components: i64::MAX,
+            },
+        )
         .await;
     assert!(
         matches!(
@@ -829,4 +839,89 @@ async fn an_account_holds_as_many_groups_as_its_plan_allows_monitors() {
         .await
         .unwrap();
     assert_eq!(groups, 2);
+}
+
+#[tokio::test]
+#[ignore = "needs DATABASE_URL"]
+async fn a_group_section_round_trips_over_the_api() {
+    let Some(api) = Api::new(|_| {}).await else {
+        return;
+    };
+    let slug = common::unique_slug("secapi");
+    let (status, page) = api
+        .send(
+            "POST",
+            "/api/v1/status-pages",
+            Some(json!({ "slug": slug, "name": "Status" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{page}");
+    let pid = id(&page);
+    let group = api.group(json!({ "name": "DNS" })).await;
+    let gid = id(&group);
+    let member = api.monitor(json!({ "group_id": gid })).await;
+    let tid = id(&member);
+
+    let path = format!("/api/v1/status-pages/{pid}/sections");
+    let (status, section) = api
+        .send(
+            "POST",
+            &path,
+            Some(json!({ "group_id": gid, "heading": " Name servers " })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{section}");
+    assert_eq!(section["heading"], "Name servers");
+    assert_eq!(section["members"], json!([tid]));
+    let sid = id(&section);
+
+    let (status, err) = api
+        .send("POST", &path, Some(json!({ "group_id": gid })))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(code(&err), "SECTION_EXISTS");
+
+    let (_, components) = api
+        .send(
+            "GET",
+            &format!("/api/v1/status-pages/{pid}/components"),
+            None,
+        )
+        .await;
+    assert_eq!(components[0]["section_id"], sid.as_str());
+    let (status, err) = api
+        .send(
+            "DELETE",
+            &format!("/api/v1/status-pages/{pid}/components/{tid}"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(code(&err), "SECTION_MEMBER");
+
+    let (status, _) = api
+        .send(
+            "PATCH",
+            &format!("{path}/{sid}"),
+            Some(json!({ "heading": null })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, list) = api.send("GET", &path, None).await;
+    assert!(list[0]["heading"].is_null());
+    assert_eq!(list[0]["group_name"], "DNS");
+
+    let (status, _) = api.send("DELETE", &format!("{path}/{sid}"), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, components) = api
+        .send(
+            "GET",
+            &format!("/api/v1/status-pages/{pid}/components"),
+            None,
+        )
+        .await;
+    assert_eq!(components, json!([]));
+    let (status, err) = api.send("DELETE", &format!("{path}/{sid}"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(code(&err), "SECTION_NOT_FOUND");
 }

@@ -24,6 +24,7 @@ pub(super) fn empty_create_form() -> FormModel {
         group_name: String::new(),
         group_options: Vec::new(),
         group_alert: None,
+        group_pages_json: "{}".into(),
         tag_options: Vec::new(),
         owner_user_id: String::new(),
         owner_options: Vec::new(),
@@ -153,6 +154,7 @@ pub(super) fn form_from_target(t: Target) -> Result<FormModel, AppError> {
         // Populated by the handler from `distinct_groups` / `list_tags`.
         group_options: Vec::new(),
         group_alert: None,
+        group_pages_json: "{}".into(),
         tag_options: Vec::new(),
         owner_user_id,
         // Populated by the handler from `orgs::list_members`.

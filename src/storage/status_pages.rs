@@ -212,9 +212,18 @@ const PAGE_COLUMNS: &str = "id, org_id, slug::text AS slug, name, enabled, \
      public_show_powered_by, public_style, public_hide_from_search, \
      public_website_url, public_locale, write_source, created_at, updated_at, plan_hold_at";
 
-/// Groups render contiguously, placed by their earliest component.
-pub(crate) const COMPONENT_ORDER: &str = "MIN(spc.sort_order) OVER (PARTITION BY spc.public_group), \
-     spc.public_group NULLS LAST, spc.sort_order";
+/// The section a page row is in, for a query that aliases the row `spc` and
+/// its monitor `t`: the one its monitor's group has on the page.
+pub(crate) const SECTION_JOIN: &str = "LEFT JOIN status_page_sections sec \
+     ON sec.status_page_id = spc.status_page_id AND sec.org_id = spc.org_id \
+     AND sec.group_id = t.group_id";
+
+/// Groups render contiguously, placed by their earliest component. A row is
+/// grouped by its section, else by its heading text, so two groups that share
+/// a heading stay apart. For a query that joins [`SECTION_JOIN`].
+pub(crate) const COMPONENT_ORDER: &str = "MIN(spc.sort_order) OVER (PARTITION BY \
+     COALESCE('s:' || sec.id::text, 'h:' || spc.public_group)), \
+     COALESCE('s:' || sec.id::text, 'h:' || spc.public_group) NULLS LAST, spc.sort_order";
 
 fn is_unique_violation(e: &sqlx::Error) -> bool {
     e.as_database_error()
@@ -228,6 +237,7 @@ fn slug_taken() -> AppError {
 #[derive(sqlx::FromRow)]
 struct ComponentRow {
     target_id: Uuid,
+    section_id: Option<Uuid>,
     monitor_name: String,
     public_name: Option<String>,
     public_description: Option<String>,
@@ -409,11 +419,12 @@ impl StatusPageStore for PgStatusPageStore {
         page: StatusPageId,
     ) -> Result<Vec<StatusPageComponent>> {
         let rows: Vec<ComponentRow> = sqlx::query_as(&format!(
-            r#"SELECT spc.target_id, t.name AS monitor_name,
+            r#"SELECT spc.target_id, sec.id AS section_id, t.name AS monitor_name,
                       spc.public_name, spc.public_description, spc.public_group, spc.sort_order,
                       spc.detail_link_enabled, spc.share_id, ms.id IS NOT NULL AS share_live
                FROM status_page_components spc
                JOIN targets t ON t.id = spc.target_id AND t.org_id = spc.org_id
+               {SECTION_JOIN}
                LEFT JOIN monitor_shares ms
                       ON ms.id = spc.share_id
                      AND ms.revoked_at IS NULL
@@ -430,6 +441,7 @@ impl StatusPageStore for PgStatusPageStore {
             .into_iter()
             .map(|r| StatusPageComponent {
                 target_id: r.target_id,
+                section_id: r.section_id,
                 monitor_name: r.monitor_name,
                 public_name: r.public_name,
                 public_description: r.public_description,
@@ -596,6 +608,12 @@ impl StatusPageStore for PgStatusPageStore {
         actor: Option<UserId>,
     ) -> Result<bool> {
         let mut tx = self.pool.begin().await.map_err(db_err)?;
+        // Held so a move into a group with a section cannot slip in between
+        // the membership check and the delete.
+        let account = accounts::account_for_org(&mut *tx, org).await?;
+        advisory_xact_lock(&mut *tx, &account_lock_key(account))
+            .await
+            .map_err(db_err)?;
         // A monitor's deletion locks the monitor, then its incidents, then
         // pins them to its pages; lock the monitor first, so the two queue
         // instead of deadlocking over the pins.
@@ -605,46 +623,28 @@ impl StatusPageStore for PgStatusPageStore {
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
-        // What the page already showed for this monitor stays in its history,
-        // under the name the page gave it: started windows, and incidents that
-        // were ever public.
-        let removed: Option<(Uuid,)> = sqlx::query_as(&format!(
-            r#"WITH removed AS (
-                   DELETE FROM status_page_components
-                   WHERE status_page_id = $1 AND target_id = $2 AND org_id = $3
-                   RETURNING status_page_id, target_id, public_name
-               ), leaving AS (
-                   SELECT r.status_page_id, r.target_id,
-                          COALESCE(NULLIF(r.public_name, ''), t.name) AS name
-                   FROM removed r
-                   JOIN targets t ON t.id = r.target_id AND t.org_id = $3
-               ), windows AS (
-                   {keep_windows}
-               ), incidents AS (
-                   INSERT INTO incident_status_pages
-                       (org_id, incident_id, status_page_id, component_name)
-                   SELECT $3, i.id, l.status_page_id, l.name
-                   FROM leaving l
-                   JOIN incidents i ON i.target_id = l.target_id AND i.org_id = $3
-                   WHERE {ever_public}
-                     AND i.started_at >= now() - make_interval(days => {kept_days})
-                   ON CONFLICT (incident_id, status_page_id) DO UPDATE
-                   SET component_name = COALESCE(incident_status_pages.component_name,
-                                                 EXCLUDED.component_name)
-               )
-               SELECT target_id FROM removed"#,
-            keep_windows =
-                crate::storage::maintenance::keep_started_windows_sql("leaving", "$3", None),
-            ever_public = crate::storage::incidents::ever_public_sql("i", "$3"),
-            kept_days = crate::storage::maintenance::PAGE_HISTORY_DAYS,
-        ))
+        let in_section: Option<i32> = sqlx::query_scalar(
+            "SELECT 1 FROM status_page_sections s \
+             JOIN targets t ON t.group_id = s.group_id AND t.org_id = s.org_id \
+             WHERE s.org_id = $1 AND s.status_page_id = $2 AND t.id = $3",
+        )
+        .bind(org.0)
         .bind(page.0)
         .bind(target_id)
-        .bind(org.0)
         .fetch_optional(&mut *tx)
         .await
         .map_err(db_err)?;
-        if removed.is_some() {
+        if in_section.is_some() {
+            return Err(AppError::conflict(
+                codes::SECTION_MEMBER,
+                "this monitor is shown through its group's section: take it out of the group \
+                 or remove the section",
+            ));
+        }
+        let removed =
+            crate::storage::page_sections::delete_rows(&mut tx, org, &[(page.0, target_id)], actor)
+                .await?;
+        if !removed.is_empty() {
             crate::storage::orgs::record_audit_tx(
                 &mut tx,
                 org,
@@ -655,7 +655,7 @@ impl StatusPageStore for PgStatusPageStore {
             .await?;
         }
         tx.commit().await.map_err(db_err)?;
-        Ok(removed.is_some())
+        Ok(!removed.is_empty())
     }
 
     async fn reorder_components(
@@ -669,24 +669,28 @@ impl StatusPageStore for PgStatusPageStore {
         }
         let indices: Vec<i32> = (0..ordered_target_ids.len() as i32).collect();
         // Renumbered group-first so the stored order is the rendered order.
-        sqlx::query(
+        // A section's members are pulled together at its first member's place.
+        sqlx::query(&format!(
             r#"WITH incoming AS (
-                   SELECT u.target_id, u.ord, spc.public_group
+                   SELECT u.target_id, u.ord,
+                          COALESCE('s:' || sec.id::text, 'h:' || spc.public_group) AS key
                    FROM UNNEST($3::uuid[], $4::int4[]) AS u(target_id, ord)
                    JOIN status_page_components spc
                      ON spc.target_id = u.target_id
                     AND spc.status_page_id = $1
                     AND spc.org_id = $2
+                   JOIN targets t ON t.id = spc.target_id AND t.org_id = spc.org_id
+                   {SECTION_JOIN}
                ),
                grouped AS (
-                   SELECT target_id, ord, public_group,
-                          MIN(ord) OVER (PARTITION BY public_group) AS group_ord
+                   SELECT target_id, ord, key,
+                          MIN(ord) OVER (PARTITION BY key) AS group_ord
                    FROM incoming
                ),
                settled AS (
                    SELECT target_id,
                           ROW_NUMBER() OVER (
-                              ORDER BY group_ord, public_group NULLS LAST, ord
+                              ORDER BY group_ord, key NULLS LAST, ord
                           ) - 1 AS ord
                    FROM grouped
                )
@@ -695,7 +699,7 @@ impl StatusPageStore for PgStatusPageStore {
                FROM settled
                WHERE spc.status_page_id = $1 AND spc.org_id = $2
                  AND spc.target_id = settled.target_id"#,
-        )
+        ))
         .bind(page.0)
         .bind(org.0)
         .bind(ordered_target_ids)
@@ -966,6 +970,7 @@ impl StatusPageStore for InMemoryStatusPageStore {
             .iter()
             .filter(|c| c.page == page && c.org == org)
             .map(|c| StatusPageComponent {
+                section_id: None,
                 target_id: c.target_id,
                 monitor_name: String::new(),
                 public_name: c.public_name.clone(),

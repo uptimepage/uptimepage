@@ -28,6 +28,7 @@ use crate::storage::channel_bindings::{
 use crate::storage::incident_ops::may_page_predicate;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock, incident_lock_key};
 use crate::storage::orgs::record_audit_tx;
+use crate::storage::page_sections;
 
 const GROUP_COLUMNS: &str = concat!(
     "g.id, g.name, g.alert_as_one, g.renotify_interval_secs, g.alert_again, g.tags, \
@@ -84,6 +85,8 @@ pub struct DeletedGroup {
     pub closed_incident: Option<Uuid>,
     /// Member incidents still down, now paging on their own as a new episode.
     pub detached: Vec<Uuid>,
+    /// Pages whose section for the group went with it.
+    pub pages: Vec<Uuid>,
 }
 
 /// What a group holds now.
@@ -591,6 +594,12 @@ impl MonitorGroupStore for PgMonitorGroupStore {
         .await
         .map_err(db("lock group members"))?;
         let (closed_incident, detached) = close_group_incident(&mut tx, org, id, actor).await?;
+        let rows = page_sections::group_rows(&mut tx, org, id).await?;
+        let pages = page_sections::remove_rows(&mut tx, org, &rows, actor)
+            .await?
+            .pages
+            .into_iter()
+            .collect();
         sqlx::query("DELETE FROM monitor_groups WHERE id = $1 AND org_id = $2")
             .bind(id)
             .bind(org.0)
@@ -617,6 +626,7 @@ impl MonitorGroupStore for PgMonitorGroupStore {
             members: members.len(),
             closed_incident,
             detached,
+            pages,
         }))
     }
 }
@@ -895,6 +905,7 @@ impl MonitorGroupStore for InMemoryMonitorGroupStore {
             members: 0,
             closed_incident: None,
             detached: Vec::new(),
+            pages: Vec::new(),
         }))
     }
 }

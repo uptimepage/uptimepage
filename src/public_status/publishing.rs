@@ -41,6 +41,27 @@ impl Publishing<'_> {
         }
     }
 
+    /// The pages that show any of `ids` now, read before a group change so
+    /// the pages they leave are cleared too.
+    pub async fn pages_showing(&self, org: OrgId, ids: &[Uuid]) -> Vec<StatusPageId> {
+        if ids.is_empty() {
+            return Vec::new();
+        }
+        self.pages
+            .pages_for_targets(org, ids)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "could not resolve pages for cache invalidation");
+                Vec::new()
+            })
+    }
+
+    pub async fn invalidate_page_ids(&self, pages: &[StatusPageId]) {
+        for page in pages {
+            self.source.invalidate(*page).await;
+        }
+    }
+
     /// Bust cached public status pages that surface any of `ids`.
     pub async fn invalidate_targets(&self, org: OrgId, ids: &[Uuid]) {
         if ids.is_empty() {

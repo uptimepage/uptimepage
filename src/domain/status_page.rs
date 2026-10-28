@@ -93,6 +93,11 @@ pub struct StatusPageUpdate {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct StatusPageComponent {
     pub target_id: Uuid,
+    /// Set on a member of a group's section: the section shows it, so its
+    /// heading comes from the section and it leaves only with the group.
+    #[serde(default)]
+    #[schema(nullable = true)]
+    pub section_id: Option<Uuid>,
     /// The monitor's operator-side name (for the curation UI).
     pub monitor_name: String,
     #[schema(nullable = true)]

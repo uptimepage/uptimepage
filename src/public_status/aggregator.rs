@@ -34,7 +34,7 @@ use crate::i18n::Tr;
 use crate::security::Cipher;
 use crate::storage::capability_token;
 use crate::storage::maintenance::{started_sql, window_spans_sql};
-use crate::storage::status_pages::COMPONENT_ORDER;
+use crate::storage::status_pages::{COMPONENT_ORDER, SECTION_JOIN};
 
 use super::cache::{HistoryMarker, MarkerKind, PageSettings};
 use super::history::{WindowQuery, names_on_page, page_windows, public_updates};
@@ -104,6 +104,8 @@ struct PageComponent {
     name: String,
     description: Option<String>,
     group: Option<String>,
+    /// The monitor group section it shows in, which owns its heading.
+    section: Option<Uuid>,
     detail_url: Option<String>,
 }
 
@@ -231,6 +233,8 @@ impl OrgAggregator {
             component_uptime(&component_ids, &day_presence, &unplanned, now, days);
 
         let mut groups: Vec<PublicComponentGroup> = Vec::new();
+        // Neighbours share a group by key, never by heading text.
+        let mut keys: Vec<(Option<Uuid>, Option<String>)> = Vec::new();
         for c in &components {
             let maint = maintenance_by_target.contains(&c.id);
             let DayStrip {
@@ -256,12 +260,27 @@ impl OrgAggregator {
                 uptime_pct: uptime_by_target.remove(&c.id).flatten(),
                 detail_url: c.detail_url.clone(),
             };
+            let key = (
+                c.section,
+                c.section.is_none().then(|| c.group.clone()).flatten(),
+            );
             match groups.last_mut() {
-                Some(g) if g.name == c.group => g.components.push(pc),
-                _ => groups.push(PublicComponentGroup {
-                    name: c.group.clone(),
-                    components: vec![pc],
-                }),
+                Some(g) if keys.last() == Some(&key) => g.components.push(pc),
+                _ => {
+                    keys.push(key);
+                    groups.push(PublicComponentGroup {
+                        name: c.group.clone(),
+                        components: vec![pc],
+                        status: None,
+                    });
+                }
+            }
+        }
+        for (g, (section, _)) in groups.iter_mut().zip(&keys) {
+            if section.is_some() {
+                let members: Vec<PublicComponentStatus> =
+                    g.components.iter().map(|c| c.current_status).collect();
+                g.status = Some(overall_state(&members));
             }
         }
 
@@ -384,10 +403,13 @@ impl OrgAggregator {
         let rows: Vec<PageComponentRow> = sqlx::query_as::<_, PageComponentRow>(&format!(
             r#"SELECT spc.target_id, t.name AS monitor_name,
                       spc.public_name, spc.public_description,
-                      spc.public_group,
+                      spc.public_group, sec.id AS section_id,
+                      COALESCE(sec.heading, mg.name) AS section_heading,
                       CASE WHEN spc.detail_link_enabled THEN ms.token_enc END AS share_token_enc
                FROM status_page_components spc
                JOIN targets t ON t.id = spc.target_id AND t.org_id = spc.org_id
+               {SECTION_JOIN}
+               LEFT JOIN monitor_groups mg ON mg.id = sec.group_id AND mg.org_id = sec.org_id
                LEFT JOIN monitor_shares ms
                       ON ms.id = spc.share_id
                      AND ms.revoked_at IS NULL
@@ -407,7 +429,11 @@ impl OrgAggregator {
                 id: r.target_id,
                 name: r.public_name.unwrap_or(r.monitor_name),
                 description: r.public_description,
-                group: r.public_group,
+                group: match r.section_id {
+                    Some(_) => r.section_heading,
+                    None => r.public_group,
+                },
+                section: r.section_id,
                 detail_url: r
                     .share_token_enc
                     .as_deref()
@@ -1082,6 +1108,8 @@ struct PageComponentRow {
     public_name: Option<String>,
     public_description: Option<String>,
     public_group: Option<String>,
+    section_id: Option<Uuid>,
+    section_heading: Option<String>,
     share_token_enc: Option<String>,
 }
 

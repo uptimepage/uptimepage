@@ -317,6 +317,17 @@ pub async fn update(
         validate_region_policy(update.region_policy, available.len())?;
     }
     validate_group_choice(update.group_name.is_some(), update.group_id.is_some())?;
+    if update.group_choice().is_some() {
+        let stored =
+            match stored_target.take() {
+                Some(stored) => stored,
+                None => state.target_store.get(org, id).await?.ok_or_else(|| {
+                    AppError::not_found(codes::TARGET_NOT_FOUND, "target not found")
+                })?,
+            };
+        update.drop_unchanged_group(&stored);
+        stored_target = Some(stored);
+    }
     if let Some(Some(g)) = update.group_name.as_ref() {
         validate_group_name(Some(g.as_str()))?;
         ops.check_group_room(org, Some(user), Some(g.as_str()))
@@ -329,12 +340,21 @@ pub async fn update(
         .await?;
     // The disabled→enabled re-arm is folded into the store's enable statement,
     // so this path (and every other enable surface) inherits it.
+    // Only a group change adds rows or groups the plan caps.
+    let (caps, left) = match update.group_choice() {
+        Some(_) => (
+            crate::domain::WriteCaps::of(&*state.quotas.limit_for_org(org).await?),
+            state.publishing().pages_showing(org, &[id]).await,
+        ),
+        None => (crate::domain::WriteCaps::UNLIMITED, Vec::new()),
+    };
     match state
         .target_store
-        .update(org, id, update, Some(source), Some(user))
+        .update(org, id, update, Some(source), Some(user), caps)
         .await?
     {
         Some(t) => {
+            state.publishing().invalidate_page_ids(&left).await;
             state.publishing().invalidate_targets(org, &[id]).await;
             Ok(Redacted::new(t))
         }
@@ -851,11 +871,16 @@ pub async fn bulk_create(
             placed,
             source,
             Some(user),
-            i64::from(plan.max_targets),
-            i64::from(plan.max_flow_checks),
+            crate::domain::WriteCaps::of(&plan),
         )
         .await?;
     ops.report_initial_states(org, &out);
+    let grouped: Vec<Uuid> = out
+        .iter()
+        .filter(|t| t.group_id.is_some())
+        .map(|t| t.id)
+        .collect();
+    state.publishing().invalidate_targets(org, &grouped).await;
     Ok((StatusCode::CREATED, Redacted::new(out)))
 }
 
@@ -982,10 +1007,15 @@ pub async fn bulk_action(
                 .target_ops()
                 .check_group_room(org, Some(user), group.as_deref())
                 .await?;
-            state
+            let caps = crate::domain::WriteCaps::of(&*state.quotas.limit_for_org(org).await?);
+            let left = state.publishing().pages_showing(org, &req.ids).await;
+            let moved = state
                 .target_store
-                .set_group(org, &req.ids, group.as_deref(), Some(user))
-                .await?
+                .set_group(org, &req.ids, group.as_deref(), Some(user), caps)
+                .await?;
+            state.publishing().invalidate_page_ids(&left).await;
+            state.publishing().invalidate_targets(org, &moved).await;
+            moved
         }
         BulkAction::SetInterval { interval } => {
             let interval = bulk_interval(&state, org, *interval).await?;

@@ -15,7 +15,7 @@ use crate::domain::metrics::{TagCount, TargetsSummary};
 use crate::domain::target::MAX_TAGS_PER_TARGET;
 use crate::domain::{
     CheckSpec, GroupChoice, MONITOR_DELETED_MESSAGE, NewTarget, OrgId, PlacedTarget,
-    RegionIncidentPolicy, Target, TargetAlerts, TargetUpdate, UserId, WriteSource,
+    RegionIncidentPolicy, Target, TargetAlerts, TargetUpdate, UserId, WriteCaps, WriteSource,
 };
 use crate::error::{AppError, Result};
 use crate::security::Cipher;
@@ -27,6 +27,7 @@ use crate::storage::channel_bindings::{
 use crate::storage::count_sql;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock};
 use crate::storage::monitor_groups::{resolve_group, resolve_groups};
+use crate::storage::page_sections::{GroupMove, follow_moves};
 use crate::storage::postgres_secrets::{decrypt_in_place, encrypt_in_place};
 use crate::storage::traits::{
     ChannelEdit, IntervalOutcome, RegionOption, TagAddOutcome, TargetFilter, TargetSort,
@@ -442,6 +443,19 @@ pub(crate) fn decode_target_row(row: TargetRow, cipher: Option<&Cipher>) -> Resu
     })
 }
 
+/// A delete leaves its monitors' groups, so it queues behind group changes on
+/// the account lock as they do: a move locks two groups in no fixed order.
+async fn lock_account_for_delete(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+) -> Result<()> {
+    let account = accounts::account_for_org(&mut **tx, org).await?;
+    advisory_xact_lock(&mut **tx, &account_lock_key(account))
+        .await
+        .context("delete target: account lock")?;
+    Ok(())
+}
+
 /// Settle the incidents of monitors about to be deleted, inside the delete's
 /// transaction. The incidents outlive the monitors, so nothing else will close
 /// a monitor's incident once its monitor is gone: it is closed here, as resolved
@@ -805,9 +819,9 @@ impl TargetStore for PostgresTargetStore {
         new: NewTarget,
         source: WriteSource,
         actor: Option<UserId>,
-        max_targets: i64,
-        max_flow_checks: i64,
+        caps: WriteCaps,
     ) -> Result<Target> {
+        let (max_targets, max_flow_checks) = (caps.targets, caps.flow_checks);
         let check_json = self.encode_check(&new.check)?;
         let region_policy_json = serde_json::to_value(new.region_policy.unwrap_or_default())
             .context("encoding region_policy JSON")?;
@@ -905,6 +919,12 @@ impl TargetStore for PostgresTargetStore {
         )
         .await?;
         self.assign_default_region(&mut tx, &[row.id]).await?;
+        let joined = GroupMove {
+            target: row.id,
+            from: None,
+            to: group_id,
+        };
+        follow_moves(&mut tx, org, &[joined], caps.public_components, actor).await?;
         tx.commit().await.context("create target: commit")?;
         // Returned before the bindings above were written.
         let mut target = self.decode_row(row)?;
@@ -919,6 +939,7 @@ impl TargetStore for PostgresTargetStore {
         update: TargetUpdate,
         source: Option<WriteSource>,
         actor: Option<UserId>,
+        caps: WriteCaps,
     ) -> Result<Option<Target>> {
         let check_json = update
             .check
@@ -960,14 +981,43 @@ impl TargetStore for PostgresTargetStore {
             } else {
                 None
             };
-        // LOCK ORDER: channels, then the group, then the `targets` row, then
-        // its bindings.
+        // LOCK ORDER: the account for a group change, channels, then the
+        // groups left and joined, then the `targets` row, then its bindings.
+        let choice = update.group_choice();
+        if let (Some(tx), Some(_)) = (tx.as_mut(), choice) {
+            let account = accounts::account_for_org(&mut **tx, org).await?;
+            advisory_xact_lock(&mut **tx, &account_lock_key(account))
+                .await
+                .context("update target: account lock")?;
+        }
         if let (Some(tx), Some(ids)) = (tx.as_mut(), &channel_ids) {
             lock_bound_channels(tx, org, ids, ALERT_CHANNEL_FIELD).await?;
         }
-        let group_id = match (tx.as_mut(), update.group_choice()) {
+        let mut left: Option<Uuid> = None;
+        let group_id = match (tx.as_mut(), choice) {
             (Some(tx), Some(choice)) => {
-                Some(resolve_group(tx, org, choice, source.unwrap_or_default(), actor, None).await?)
+                left = sqlx::query_scalar(
+                    "SELECT group_id FROM targets WHERE id = $1 AND org_id = $2",
+                )
+                .bind(id)
+                .bind(org.0)
+                .fetch_optional(&mut **tx)
+                .await
+                .context("update target: current group")?
+                .flatten();
+                let joined = resolve_group(
+                    tx,
+                    org,
+                    choice,
+                    source.unwrap_or_default(),
+                    actor,
+                    Some(caps.targets),
+                )
+                .await?;
+                if let Some(from) = left.filter(|g| Some(*g) != joined) {
+                    crate::storage::monitor_groups::lock_group(tx, org, from).await?;
+                }
+                Some(joined)
             }
             _ => None,
         };
@@ -992,6 +1042,13 @@ impl TargetStore for PostgresTargetStore {
         };
         if tx.is_some() && before.is_none() {
             return Ok(None);
+        }
+        // Group changes hold the account lock, so the group read above holds.
+        if group_id.is_some() && before.is_some_and(|(_, from)| from != left) {
+            return Err(AppError::conflict(
+                crate::error::codes::GROUP_CHANGE_CONFLICT,
+                "the group changed while saving; try again",
+            ));
         }
         if let (Some(tx), Some(ids), Some(_)) = (tx.as_mut(), &channel_ids, before) {
             set_bindings(tx, org, BindingOwner::Target, id, ids).await?;
@@ -1077,6 +1134,12 @@ impl TargetStore for PostgresTargetStore {
                     ),
                 )
                 .await?;
+                let moved = GroupMove {
+                    target: r.id,
+                    from,
+                    to: r.group_id,
+                };
+                follow_moves(&mut tx, org, &[moved], caps.public_components, actor).await?;
             }
             tx.commit().await.context("update target: commit")?;
         }
@@ -1088,6 +1151,7 @@ impl TargetStore for PostgresTargetStore {
 
     async fn delete(&self, org: OrgId, id: Uuid, actor: Option<UserId>) -> Result<bool> {
         let mut tx = self.pool.begin().await.context("delete target: begin")?;
+        lock_account_for_delete(&mut tx, org).await?;
         let incidents_closed =
             close_incidents_of_deleted_targets(&mut tx, org, &[id], actor).await?;
         lock_bindings_of(&mut tx, org, &[id]).await?;
@@ -1127,9 +1191,9 @@ impl TargetStore for PostgresTargetStore {
         items: Vec<PlacedTarget>,
         source: WriteSource,
         actor: Option<UserId>,
-        max_targets: i64,
-        max_flow_checks: i64,
+        caps: WriteCaps,
     ) -> Result<Vec<Target>> {
+        let (max_targets, max_flow_checks) = (caps.targets, caps.flow_checks);
         if items.is_empty() {
             return Ok(Vec::new());
         }
@@ -1322,6 +1386,16 @@ impl TargetStore for PostgresTargetStore {
                 .await
                 .context("bulk insert targets")?
         };
+        let joined: Vec<GroupMove> = rows
+            .iter()
+            .filter(|r| r.group_id.is_some())
+            .map(|r| GroupMove {
+                target: r.id,
+                from: None,
+                to: r.group_id,
+            })
+            .collect();
+        follow_moves(&mut tx, org, &joined, caps.public_components, actor).await?;
 
         insert_bindings(
             &mut tx,
@@ -1518,6 +1592,7 @@ impl TargetStore for PostgresTargetStore {
             return Ok(Vec::new());
         }
         let mut tx = self.pool.begin().await.context("bulk delete: begin")?;
+        lock_account_for_delete(&mut tx, org).await?;
         let incidents_closed = close_incidents_of_deleted_targets(&mut tx, org, ids, actor).await?;
         lock_bindings_of(&mut tx, org, ids).await?;
         let rows: Vec<(Uuid, String)> = sqlx::query_as(
@@ -1626,20 +1701,37 @@ impl TargetStore for PostgresTargetStore {
         ids: &[Uuid],
         group: Option<&str>,
         actor: Option<UserId>,
+        caps: WriteCaps,
     ) -> Result<Vec<Uuid>> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
         let mut tx = self.pool.begin().await.context("bulk set_group: begin")?;
+        let account = accounts::account_for_org(&mut *tx, org).await?;
+        advisory_xact_lock(&mut *tx, &account_lock_key(account))
+            .await
+            .context("bulk set_group: account lock")?;
         let group_id = resolve_group(
             &mut tx,
             org,
             group.map(GroupChoice::Name),
             WriteSource::Ui,
             actor,
-            None,
+            Some(caps.targets),
         )
         .await?;
+        let left: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT DISTINCT group_id FROM targets \
+             WHERE id = ANY($1) AND org_id = $2 AND group_id IS NOT NULL ORDER BY 1",
+        )
+        .bind(ids)
+        .bind(org.0)
+        .fetch_all(&mut *tx)
+        .await
+        .context("bulk set_group: groups left")?;
+        for from in left.into_iter().filter(|g| Some(*g) != group_id) {
+            crate::storage::monitor_groups::lock_group(&mut tx, org, from).await?;
+        }
         let rows: Vec<(Uuid, String, Option<Uuid>)> = sqlx::query_as(
             r#"WITH locked AS (
                    SELECT id, group_id FROM targets
@@ -1670,9 +1762,18 @@ impl TargetStore for PostgresTargetStore {
                 org,
                 actor,
                 "target.group_changed",
-                group_change_metadata(group_id.zip(name), moved.into_iter()),
+                group_change_metadata(group_id.zip(name), moved.iter().copied()),
             )
             .await?;
+            let moves: Vec<GroupMove> = moved
+                .iter()
+                .map(|(target, _, from)| GroupMove {
+                    target: *target,
+                    from: *from,
+                    to: group_id,
+                })
+                .collect();
+            follow_moves(&mut tx, org, &moves, caps.public_components, actor).await?;
         }
         tx.commit().await.context("bulk set_group: commit")?;
         Ok(rows.into_iter().map(|(id, _, _)| id).collect())

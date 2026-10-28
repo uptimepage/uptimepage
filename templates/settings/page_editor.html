@@ -213,6 +213,32 @@
       <p class="text-pretty px-4 pt-3 text-xs text-muted">Toggle which monitors appear on this page; set an optional public name / group. Drag the <span aria-hidden="true">⠿</span> handle to reorder live components.</p>
       <p class="text-pretty px-4 pt-1 text-xs text-muted"><strong class="font-medium text-body">Detail link</strong> adds an <em>uptime history</em> link beside the component, opening that monitor&rsquo;s read-only detail view. Credentials, headers and request bodies are masked, but the page publishes the monitor&rsquo;s <strong class="font-medium text-body">real name, checked address and tags</strong> — not the public name you set here. It is backed by a share link listed on the monitor; revoking that link, or removing the component, kills the URL.</p>
       <p class="px-4 pt-1 font-mono text-xs text-quiet"># saves as you edit — the save button above is for the page itself</p>
+      <div class="mx-4 mt-3 space-y-2 rounded-sm border p-3" style="border-color:var(--theme-line)" data-sections>
+        <span class="flag-label block">monitor groups</span>
+        <p class="text-pretty text-xs text-muted">A group shows as a live section: a heading with its members' combined state, each member as its own row. Monitors that join or leave the group join or leave the page.</p>
+        {% for sec in sections %}
+        <div class="flex flex-wrap items-center gap-2" data-section-id="{{ sec.id }}">
+          <input type="text" data-section-heading value="{{ sec.heading }}" maxlength="50" placeholder="{{ sec.group_name }}"
+                 aria-label="Heading for group {{ sec.group_name }}" autocomplete="off" class="field w-56 text-xs">
+          <span class="font-mono text-xs text-muted">{{ sec.group_name }} · {{ sec.members }} on page</span>
+          {% if sec.left_off > 0 %}<span class="text-xs text-state-warn" title="The plan's public component limit keeps them off the page">{{ sec.left_off }} left off: plan limit. Free slots or upgrade, then remove and re-add the group.</span>{% endif %}
+          <button type="button" data-section-remove data-section-members="{{ sec.members }}" class="row-link row-link--danger ml-auto">remove group</button>
+        </div>
+        {% endfor %}
+        {% if !group_choices.is_empty() %}
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="field-outline w-64">
+            <span class="field-outline__label">Monitor group</span>
+            <select data-section-group aria-label="Monitor group to add" class="w-full field">
+              {% for g in group_choices %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <button type="button" data-section-add class="sticker-btn px-2.5 py-1 text-xs">+ add group</button>
+        </div>
+        {% else if sections.is_empty() %}
+        <p class="font-mono text-xs text-quiet"># no monitor groups yet — set a monitor's group on its form</p>
+        {% endif %}
+      </div>
       <datalist id="component-groups">{% for g in groups %}<option value="{{ g }}"></option>{% endfor %}</datalist>
       <div class="mt-3 overflow-x-auto">
       <table class="w-full text-left text-sm">
@@ -233,10 +259,10 @@
           {% for c in components %}
           <tr data-target-id="{{ c.target_id }}" data-kind="{{ c.kind }}" data-monitor-name="{{ c.monitor_name }}" class="transition-opacity">
             <td class="w-10 p-0 align-middle"><button type="button" data-drag-handle aria-label="Reorder {{ c.monitor_name }}" class="inline-flex h-10 w-10 items-center justify-center rounded select-none text-base leading-none text-quiet transition-transform cursor-grab hover:text-body focus-visible:text-body active:cursor-grabbing motion-safe:active:scale-[0.96] disabled:cursor-default disabled:opacity-0"{% if !c.on_page %} disabled tabindex="-1"{% endif %}>⠿</button></td>
-            <td class="p-0 align-middle"><label class="flex h-10 w-full cursor-pointer items-center px-4 has-[:disabled]:cursor-default"><input type="checkbox" data-on-page aria-label="Show {{ c.monitor_name }} on this page"{% if c.on_page %} checked{% endif %}></label></td>
+            <td class="p-0 align-middle"><label class="flex h-10 w-full cursor-pointer items-center px-4 has-[:disabled]:cursor-default"{% if c.section.is_some() %} title="Shown through its group: take it out of the group, or remove the group from the page"{% endif %}><input type="checkbox" data-on-page aria-label="Show {{ c.monitor_name }} on this page"{% if c.on_page %} checked{% endif %}{% if c.section.is_some() %} disabled{% endif %}></label></td>
             <td class="px-4 py-2 align-middle text-body">{{ c.monitor_name }} <span class="ml-1 rounded bg-[color:var(--theme-surface-sunk)] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted">{{ c.kind }}</span></td>
             <td class="px-4 py-2"><input type="text" data-field="public_name" value="{{ c.public_name }}" maxlength="80" placeholder="{{ c.name_hint }}" aria-label="Public name for {{ c.monitor_name }}" autocomplete="off" class="w-full field text-xs"{% if !c.on_page %} disabled{% endif %}></td>
-            <td class="px-4 py-2"><input type="text" data-field="public_group" list="component-groups" value="{{ c.public_group }}" maxlength="50" aria-label="Group for {{ c.monitor_name }}" autocomplete="off" class="w-full field text-xs"{% if !c.on_page %} disabled{% endif %}></td>
+            <td class="px-4 py-2">{% if let Some(sec) = c.section %}<span class="font-mono text-xs text-muted">in group {{ sec }}</span>{% else %}<input type="text" data-field="public_group" list="component-groups" value="{{ c.public_group }}" maxlength="50" aria-label="Group for {{ c.monitor_name }}" autocomplete="off" class="w-full field text-xs"{% if !c.on_page %} disabled{% endif %}>{% endif %}</td>
             <td class="p-0 align-middle"><label class="flex h-10 w-full cursor-pointer items-center px-4 has-[:disabled]:cursor-default"><input type="checkbox" data-field="detail_link_enabled" aria-label="Link {{ c.monitor_name }} to its detail view"{% if c.detail_link %} checked{% endif %}{% if !c.on_page %} disabled{% endif %}></label></td>
           </tr>
           {% endfor %}
@@ -714,6 +740,38 @@
           groupList.appendChild(o);
         }
       }
+
+      const sections = document.querySelector('[data-sections]');
+      sections?.querySelector('[data-section-add]')?.addEventListener('click', async () => {
+        const group = sections.querySelector('[data-section-group]').value;
+        try {
+          await api('POST', '/api/v1/status-pages/' + id + '/sections', { group_id: group });
+          window.location.reload();
+        } catch (m) { err(m); }
+      });
+      sections?.querySelectorAll('[data-section-id]').forEach((row) => {
+        const sid = row.dataset.sectionId;
+        row.querySelector('[data-section-heading]').addEventListener('change', async (e) => {
+          try {
+            await api('PATCH', '/api/v1/status-pages/' + id + '/sections/' + sid, { heading: e.target.value || null });
+            ok('heading saved');
+          } catch (m) { err(m); }
+        });
+        row.querySelector('[data-section-remove]').addEventListener('click', async (e) => {
+          const n = e.target.dataset.sectionMembers;
+          const yes = await window.smConfirm({
+            title: 'Remove group from page?',
+            body: 'Its ' + n + ' member row(s) leave the page; the page keeps their incident and maintenance history.',
+            confirmLabel: 'remove',
+            danger: true,
+          });
+          if (!yes) return;
+          try {
+            await api('DELETE', '/api/v1/status-pages/' + id + '/sections/' + sid);
+            window.location.reload();
+          } catch (m) { err(m); }
+        });
+      });
 
       rowsBody.querySelectorAll(ROW).forEach((tr) => {
         const tid = tr.dataset.targetId;

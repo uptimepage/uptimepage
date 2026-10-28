@@ -236,6 +236,11 @@ pub struct PublicComponentGroup {
     #[schema(nullable = true, example = "API")]
     pub name: Option<String>,
     pub components: Vec<PublicComponent>,
+    /// A monitor group's section only: its members' combined state, by the
+    /// rule the page's own banner uses. Absent on a hand-made heading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = true)]
+    pub status: Option<OverallState>,
 }
 
 /// What an incident did to its component, in the page's own words: measured

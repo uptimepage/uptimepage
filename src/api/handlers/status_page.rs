@@ -519,7 +519,11 @@ pub async fn update_component(
     delete, path = "/api/v1/status-pages/{id}/components/{target_id}", tag = "status-pages",
     summary = "Remove a monitor from a page",
     params(("id" = Uuid, Path), ("target_id" = Uuid, Path)),
-    responses((status = 204, description = "Removed"), (status = 404, body = ApiError)),
+    responses(
+        (status = 204, description = "Removed"),
+        (status = 404, body = ApiError),
+        (status = 409, body = ApiError, description = "SECTION_MEMBER: shown through its group's section; take it out of the group or remove the section"),
+    ),
 )]
 pub async fn remove_component(
     State(state): State<AppState>,
@@ -527,28 +531,12 @@ pub async fn remove_component(
     CurrentUser(user): CurrentUser,
     Path((id, target_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode> {
-    // Read the backing share before the row goes: removal drops `share_id`, and
-    // an unrevoked token would keep serving the monitor with nothing left to
-    // attribute it to.
-    let share = state
-        .status_page_store
-        .list_components(org, StatusPageId(id))
-        .await?
-        .into_iter()
-        .find(|c| c.target_id == target_id)
-        .and_then(|c| c.share_id);
     if !state
         .status_page_store
         .remove_component(org, StatusPageId(id), target_id, Some(user))
         .await?
     {
         return Err(component_not_found());
-    }
-    if let Some(share) = share {
-        state
-            .monitor_share_store
-            .revoke(org, target_id, share, Some(user))
-            .await?;
     }
     state.public_source.invalidate(StatusPageId(id)).await;
     Ok(StatusCode::NO_CONTENT)
@@ -1083,4 +1071,140 @@ mod tests {
             "re-encoded output must not contain the appended payload"
         );
     }
+}
+
+// ── Sections ─────────────────────────────────────────────────────────────────
+
+/// A monitor group to show on a page as a live section.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NewPageSection {
+    pub group_id: Uuid,
+    /// Public heading; omit or leave blank to show the group's name.
+    #[serde(default)]
+    #[schema(nullable = true, max_length = 50)]
+    pub heading: Option<String>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PageSectionUpdate {
+    /// Public heading; `null` or blank shows the group's name.
+    #[schema(nullable = true, max_length = 50)]
+    pub heading: Option<String>,
+}
+
+fn clean_heading(heading: Option<String>) -> Result<Option<String>> {
+    clean_curation(
+        heading,
+        "heading",
+        crate::storage::page_sections::MAX_HEADING_LEN,
+    )
+}
+
+#[utoipa::path(
+    get, path = "/api/v1/status-pages/{id}/sections", tag = "status-pages",
+    summary = "List the monitor groups shown on a page",
+    params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, body = Vec<crate::storage::page_sections::PageSection>),
+        (status = 404, body = ApiError),
+    ),
+)]
+pub async fn list_sections(
+    State(state): State<AppState>,
+    Authorized(org, _): Authorized<StatusPageRead>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<crate::storage::page_sections::PageSection>>> {
+    load(&state, org, id).await?;
+    let pool = state.require_db()?;
+    Ok(Json(
+        crate::storage::page_sections::list(pool, org, id).await?,
+    ))
+}
+
+#[utoipa::path(
+    post, path = "/api/v1/status-pages/{id}/sections", tag = "status-pages",
+    summary = "Show a monitor group on a page",
+    description = "The section mirrors the group: every member gets a row on the page, a member already on it by hand moves into the section with its settings, and monitors that join or leave the group later join or leave the page. Members past the plan's public component limit stay off the page; `left_off` counts them.",
+    params(("id" = Uuid, Path)),
+    request_body = NewPageSection,
+    responses(
+        (status = 201, body = crate::storage::page_sections::PageSection),
+        (status = 400, body = ApiError, description = "Heading too long"),
+        (status = 404, body = ApiError, description = "Page or group not in this org"),
+        (status = 409, body = ApiError, description = "SECTION_EXISTS: the group already has a section on this page"),
+    ),
+)]
+pub async fn add_section(
+    State(state): State<AppState>,
+    OwnerAuthorized(org, _): OwnerAuthorized<StatusPageWrite>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(new): Json<NewPageSection>,
+) -> Result<(StatusCode, Json<crate::storage::page_sections::PageSection>)> {
+    let heading = clean_heading(new.heading)?;
+    let pool = state.require_db()?;
+    let plan = state.quotas.limit_for_org(org).await?;
+    let (section, change) = crate::storage::page_sections::add(
+        pool,
+        org,
+        id,
+        new.group_id,
+        heading,
+        i64::from(plan.max_public_components),
+        Some(user),
+    )
+    .await?;
+    for page in change.pages {
+        state.public_source.invalidate(StatusPageId(page)).await;
+    }
+    let view = crate::storage::page_sections::list(pool, org, id)
+        .await?
+        .into_iter()
+        .find(|s| s.id == section)
+        .ok_or_else(crate::storage::page_sections::section_not_found)?;
+    Ok((StatusCode::CREATED, Json(view)))
+}
+
+#[utoipa::path(
+    patch, path = "/api/v1/status-pages/{id}/sections/{section_id}", tag = "status-pages",
+    summary = "Change a section's heading",
+    params(("id" = Uuid, Path), ("section_id" = Uuid, Path)),
+    request_body = PageSectionUpdate,
+    responses((status = 204, description = "Updated"), (status = 404, body = ApiError)),
+)]
+pub async fn update_section(
+    State(state): State<AppState>,
+    OwnerAuthorized(org, _): OwnerAuthorized<StatusPageWrite>,
+    CurrentUser(user): CurrentUser,
+    Path((id, section)): Path<(Uuid, Uuid)>,
+    Json(upd): Json<PageSectionUpdate>,
+) -> Result<StatusCode> {
+    let heading = clean_heading(upd.heading)?;
+    let pool = state.require_db()?;
+    crate::storage::page_sections::update(pool, org, id, section, heading, Some(user)).await?;
+    state.public_source.invalidate(StatusPageId(id)).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    delete, path = "/api/v1/status-pages/{id}/sections/{section_id}", tag = "status-pages",
+    summary = "Stop showing a monitor group on a page",
+    description = "Removes the section and its members' rows; the page keeps their incident and maintenance history.",
+    params(("id" = Uuid, Path), ("section_id" = Uuid, Path)),
+    responses((status = 204, description = "Removed"), (status = 404, body = ApiError)),
+)]
+pub async fn remove_section(
+    State(state): State<AppState>,
+    OwnerAuthorized(org, _): OwnerAuthorized<StatusPageDelete>,
+    CurrentUser(user): CurrentUser,
+    Path((id, section)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode> {
+    let pool = state.require_db()?;
+    let change = crate::storage::page_sections::remove(pool, org, id, section, Some(user)).await?;
+    for page in change.pages {
+        state.public_source.invalidate(StatusPageId(page)).await;
+    }
+    Ok(StatusCode::NO_CONTENT)
 }

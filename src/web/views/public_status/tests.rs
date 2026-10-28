@@ -28,6 +28,7 @@ fn sample_page() -> PublicStatusPage {
         generated_at: Utc::now(),
         site_name: "Acme".into(),
         groups: vec![PublicComponentGroup {
+            status: None,
             name: Some("API".into()),
             components: vec![PublicComponent {
                 id: Uuid::nil(),

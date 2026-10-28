@@ -562,8 +562,7 @@ async fn rotating_a_healed_row_mints_without_parking_a_phantom_overlap() {
             },
             WriteSource::Api,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap()

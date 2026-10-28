@@ -162,8 +162,7 @@ async fn two_tenants_never_see_each_others_data() {
             target_named(&format!("a-target-{}", Uuid::now_v7())),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create target in a");
@@ -173,8 +172,7 @@ async fn two_tenants_never_see_each_others_data() {
             target_named(&format!("b-target-{}", Uuid::now_v7())),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .expect("create target in b");

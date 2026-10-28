@@ -12,7 +12,8 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::{
-    MonitorGroup, MonitorGroupUpdate, NewMonitorGroup, OrgId, TargetAlerts, WriteSource,
+    MonitorGroup, MonitorGroupUpdate, NewMonitorGroup, OrgId, StatusPageId, TargetAlerts,
+    WriteSource,
 };
 use crate::error::ApiError;
 use crate::error::codes;
@@ -196,13 +197,14 @@ pub async fn update(
         .update(org, id, update, source, Some(user))
         .await?
         .ok_or_else(not_found)?;
+    clear_section_pages(&state, org, id).await;
     Ok(Json(view(&state, org, group).await?))
 }
 
 #[utoipa::path(
     delete, path = "/api/v1/groups/{id}", tag = "groups",
     summary = "Delete a monitor group",
-    description = "Its monitors stay, ungrouped. An open group incident closes with a note, not a recovery, and each member still down alerts on its own channels from then on.",
+    description = "Its monitors stay, ungrouped, and leave every status page that shows the group as a section, their page names and detail links with them. An open group incident closes with a note, not a recovery, and each member still down alerts on its own channels from then on.",
     params(("id" = Uuid, Path)),
     responses((status = 204, description = "Deleted"), (status = 404, body = ApiError)),
 )]
@@ -212,10 +214,29 @@ pub async fn delete(
     CurrentUser(user): CurrentUser,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode> {
-    state
+    let deleted = state
         .monitor_group_store
         .delete(org, id, Some(user))
         .await?
         .ok_or_else(not_found)?;
+    for page in deleted.pages {
+        state.public_source.invalidate(StatusPageId(page)).await;
+    }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// A section without its own heading shows the group's name, so a group edit
+/// clears the pages that show it. Soft: a lost clear waits out the cache TTL.
+pub(crate) async fn clear_section_pages(state: &AppState, org: OrgId, group: Uuid) {
+    let Some(pool) = state.db.as_ref() else {
+        return;
+    };
+    match crate::storage::page_sections::pages_for_group(pool, org, group).await {
+        Ok(pages) => {
+            for page in pages {
+                state.public_source.invalidate(StatusPageId(page)).await;
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "could not resolve pages for cache invalidation"),
+    }
 }

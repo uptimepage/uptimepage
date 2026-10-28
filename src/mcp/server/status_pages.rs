@@ -18,13 +18,15 @@ use crate::public_status::curation::{clean_curation, clean_curation_patch, valid
 use crate::quotas::ratelimit::RateLimitCategory;
 use crate::storage::status_pages::AddComponentOutcome;
 
+use crate::error::AppError;
 use crate::mcp::auth::McpAuth;
 use crate::mcp::confirm::require_confirmation;
 use crate::mcp::error::{McpToolError, codes, config_error};
 use crate::mcp::schema::{
     AddComponentsArgs, ComponentOutcome, ComponentUpdated, ComponentsAdded, CreateStatusPageArgs,
-    NewComponentArg, PageAccessArg, PageAccessRuleArg, PageEmailAccessArg, PagePasswordAccessArg,
-    StatusPageWritten, UpdateComponentArgs, UpdateStatusPageArgs,
+    NewComponentArg, NewSectionArg, PageAccessArg, PageAccessRuleArg, PageEmailAccessArg,
+    PagePasswordAccessArg, SectionOutcome, StatusPageWritten, UpdateComponentArgs,
+    UpdateStatusPageArgs,
 };
 
 use super::McpServer;
@@ -373,12 +375,13 @@ impl McpServer {
         self.enforce_rate_limit(auth.org, RateLimitCategory::ApiWrites)
             .await?;
 
-        if args.components.is_empty() {
+        if args.components.is_empty() && args.groups.is_empty() {
             return Err(McpToolError::invalid_argument(
-                "pass at least one monitor to add",
+                "pass at least one monitor or group to add",
             ));
         }
         let page = self.page_by_slug(auth.org, &args.slug).await?;
+        let sections = self.prepare_sections(auth, &args.groups).await?;
         // Positions continue from what the page already shows; restarting at 0
         // would interleave this batch with the components already on it.
         let existing = self
@@ -399,7 +402,7 @@ impl McpServer {
         } else {
             "The page is unpublished, so nothing is public yet."
         };
-        let mut lines = Vec::with_capacity(prepared.len());
+        let mut lines = Vec::with_capacity(prepared.len() + sections.len());
         for c in &prepared {
             let name = self.monitor_label(auth.org, c.target_id).await;
             lines.push(match &c.public_name {
@@ -407,12 +410,21 @@ impl McpServer {
                 None => name,
             });
         }
+        for (_, name, heading) in &sections {
+            let shown = heading.as_deref().unwrap_or(name);
+            lines.push(format!(
+                "group \"{}\" as a section headed \"{}\": every member, now and as it changes",
+                sanitize_prompt(name),
+                sanitize_prompt(shown)
+            ));
+        }
         require_confirmation(
             ctx,
             auth,
             format!(
-                "Add {} monitor(s) to status page \"{}\"? {published}\n\n{}",
+                "Add {} monitor(s) and {} group(s) to status page \"{}\"? {published}\n\n{}",
                 prepared.len(),
+                sections.len(),
                 sanitize_prompt(&page.name),
                 lines.join("\n"),
             ),
@@ -468,6 +480,47 @@ impl McpServer {
             });
         }
 
+        let pool = self.require_pool()?;
+        let mut section_results = Vec::with_capacity(sections.len());
+        for (group, _, heading) in sections {
+            let outcome = crate::storage::page_sections::add(
+                pool,
+                auth.org,
+                page.id.0,
+                group,
+                heading,
+                max,
+                Some(auth.user_id),
+            )
+            .await;
+            section_results.push(match outcome {
+                Ok((section, change)) => {
+                    added += 1;
+                    SectionOutcome {
+                        group_id: group.to_string(),
+                        outcome: "added".into(),
+                        section_id: Some(section.to_string()),
+                        left_off: u32::try_from(change.left_off).unwrap_or(u32::MAX),
+                        error: None,
+                    }
+                }
+                Err(e) => SectionOutcome {
+                    group_id: group.to_string(),
+                    outcome: match e {
+                        AppError::Conflict {
+                            code: crate::error::codes::SECTION_EXISTS,
+                            ..
+                        } => "already_on_page",
+                        _ => "failed",
+                    }
+                    .into(),
+                    section_id: None,
+                    left_off: 0,
+                    error: Some(e.to_string()),
+                },
+            });
+        }
+
         if added > 0 {
             self.state.public_source.invalidate(page.id).await;
         }
@@ -475,7 +528,35 @@ impl McpServer {
             slug: page.slug,
             added,
             results,
+            sections: section_results,
         }))
+    }
+
+    /// Each requested group, checked before the confirmation names it.
+    async fn prepare_sections(
+        &self,
+        auth: &McpAuth,
+        requested: &[NewSectionArg],
+    ) -> Result<Vec<(uuid::Uuid, String, Option<String>)>, McpToolError> {
+        let mut out = Vec::with_capacity(requested.len());
+        for r in requested {
+            let id = parse_uuid(&r.group_id, "group id")?;
+            let heading = clean_curation(
+                r.heading.clone(),
+                "heading",
+                crate::storage::page_sections::MAX_HEADING_LEN,
+            )
+            .map_err(config_error)?;
+            let group = self
+                .state
+                .monitor_group_store
+                .get(auth.org, id)
+                .await
+                .map_err(|e| McpToolError::internal(format!("monitor group: {e}")))?
+                .ok_or_else(|| McpToolError::not_found(format!("group {id} not found")))?;
+            out.push((id, group.name, heading));
+        }
+        Ok(out)
     }
 
     /// All validated up front, so a bad field in the tenth entry does not leave
@@ -531,7 +612,17 @@ impl McpServer {
             .await?;
 
         let page = self.page_by_slug(auth.org, &args.slug).await?;
-        let target_id = parse_uuid(&args.monitor_id, "monitor id")?;
+        if let Some(section) = args.section_id.as_deref() {
+            return self
+                .update_section_heading(ctx, auth, &page, section, args)
+                .await;
+        }
+        let Some(monitor_id) = args.monitor_id.as_deref() else {
+            return Err(McpToolError::invalid_argument(
+                "pass monitor_id, or section_id with a heading",
+            ));
+        };
+        let target_id = parse_uuid(monitor_id, "monitor id")?;
         if args.public_name.is_none()
             && args.public_description.is_none()
             && args.public_group.is_none()
@@ -592,7 +683,66 @@ impl McpServer {
         self.state.public_source.invalidate(page.id).await;
         Ok(Json(ComponentUpdated {
             slug: page.slug,
-            monitor_id: target_id.to_string(),
+            monitor_id: Some(target_id.to_string()),
+            section_id: None,
+        }))
+    }
+
+    async fn update_section_heading(
+        &self,
+        ctx: &RequestContext<RoleServer>,
+        auth: &McpAuth,
+        page: &crate::domain::StatusPage,
+        section: &str,
+        args: &UpdateComponentArgs,
+    ) -> Result<Json<ComponentUpdated>, McpToolError> {
+        let section = parse_uuid(section, "section id")?;
+        let Some(heading) = args.heading.clone() else {
+            return Err(McpToolError::invalid_argument(
+                "nothing to change; pass heading",
+            ));
+        };
+        let heading = clean_curation(
+            Some(heading),
+            "heading",
+            crate::storage::page_sections::MAX_HEADING_LEN,
+        )
+        .map_err(config_error)?;
+        require_confirmation(
+            ctx,
+            auth,
+            format!(
+                "Change a section heading on status page \"{}\" to \"{}\"?",
+                sanitize_prompt(&page.name),
+                heading
+                    .as_deref()
+                    .map(sanitize_prompt)
+                    .unwrap_or_else(|| "the group's name".into())
+            ),
+        )
+        .await?;
+        let pool = self.require_pool()?;
+        crate::storage::page_sections::update(
+            pool,
+            auth.org,
+            page.id.0,
+            section,
+            heading,
+            Some(auth.user_id),
+        )
+        .await
+        .map_err(|e| match e {
+            AppError::NotFound {
+                code: crate::error::codes::SECTION_NOT_FOUND,
+                ..
+            } => McpToolError::not_found("section is not on this page"),
+            other => config_error(other),
+        })?;
+        self.state.public_source.invalidate(page.id).await;
+        Ok(Json(ComponentUpdated {
+            slug: page.slug.clone(),
+            monitor_id: None,
+            section_id: Some(section.to_string()),
         }))
     }
 }

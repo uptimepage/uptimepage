@@ -293,6 +293,7 @@ impl AppState {
             results: &self.result_sink,
             cfg: &self.cfg,
             db: self.db.as_ref(),
+            publishing: self.publishing(),
         }
     }
 

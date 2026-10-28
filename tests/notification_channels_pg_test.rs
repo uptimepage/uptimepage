@@ -404,7 +404,13 @@ async fn target_alert_binding_channel_lookup_is_org_scoped_live_pg() {
         regions: None,
     };
     let created = targets
-        .create(org_a, new_target, WriteSource::Ui, None, i64::MAX, i64::MAX)
+        .create(
+            org_a,
+            new_target,
+            WriteSource::Ui,
+            None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
         .await
         .expect("A creates a target bound to its own channel");
 
@@ -622,7 +628,15 @@ async fn a_channel_delete_removes_only_its_own_bindings_live_pg() {
     let ch_a = new_channel(org_a, "a").await.unwrap();
     let ch_b = new_channel(org_a, "b").await.unwrap();
     let theirs = new_channel(org_b, "theirs").await.unwrap();
-    let create = |org, new| targets.create(org, new, WriteSource::Ui, None, i64::MAX, i64::MAX);
+    let create = |org, new| {
+        targets.create(
+            org,
+            new,
+            WriteSource::Ui,
+            None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
+    };
     let both = create(org_a, bound_target("both", &[ch_a.id, ch_b.id]))
         .await
         .unwrap();
@@ -666,14 +680,20 @@ async fn a_binding_across_orgs_is_refused_live_pg() {
             bound_target("b", &[]),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap();
 
     match targets
-        .update(org_b, theirs.id, set_alerts(&[ch_a.id]), None, None)
+        .update(
+            org_b,
+            theirs.id,
+            set_alerts(&[ch_a.id]),
+            None,
+            None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
         .await
     {
         Err(AppError::BadRequest { code, .. }) => assert_eq!(code, codes::INVALID_ALERT_CONFIG),
@@ -726,8 +746,7 @@ async fn a_save_keeps_the_order_it_names_live_pg() {
             bound_target("t", &[c, d, e]),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap();
@@ -735,7 +754,14 @@ async fn a_save_keeps_the_order_it_names_live_pg() {
 
     for order in [vec![e, c], vec![c, e, d], vec![]] {
         let saved = targets
-            .update(org, created.id, set_alerts(&order), None, None)
+            .update(
+                org,
+                created.id,
+                set_alerts(&order),
+                None,
+                None,
+                uptimepage::domain::WriteCaps::UNLIMITED,
+            )
             .await
             .unwrap()
             .unwrap();
@@ -769,8 +795,7 @@ async fn delete_waits_for_a_binding_write_in_flight_then_removes_it_live_pg() {
             bound_target("t", &[]),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap();
@@ -780,7 +805,14 @@ async fn delete_waits_for_a_binding_write_in_flight_then_removes_it_live_pg() {
         let store = PostgresTargetStore::from_pool(workers.clone(), None);
         async move {
             store
-                .update(org, target.id, set_alerts(&[ch.id]), None, None)
+                .update(
+                    org,
+                    target.id,
+                    set_alerts(&[ch.id]),
+                    None,
+                    None,
+                    uptimepage::domain::WriteCaps::UNLIMITED,
+                )
                 .await
         }
     });
@@ -826,8 +858,7 @@ async fn a_binding_write_behind_the_delete_is_refused_live_pg() {
             bound_target(name, chs),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
     };
     let bound_one = create("bound", &[ch.id]).await.unwrap();
@@ -846,7 +877,14 @@ async fn a_binding_write_behind_the_delete_is_refused_live_pg() {
         let store = PostgresTargetStore::from_pool(workers.clone(), None);
         async move {
             store
-                .update(org, late.id, set_alerts(&[ch.id]), None, None)
+                .update(
+                    org,
+                    late.id,
+                    set_alerts(&[ch.id]),
+                    None,
+                    None,
+                    uptimepage::domain::WriteCaps::UNLIMITED,
+                )
                 .await
         }
     });
@@ -893,8 +931,7 @@ async fn a_save_dropping_the_channel_being_deleted_does_not_deadlock_live_pg() {
             bound_target("t", &[c.id, d.id]),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap();
@@ -905,7 +942,14 @@ async fn a_save_dropping_the_channel_being_deleted_does_not_deadlock_live_pg() {
         let store = PostgresTargetStore::from_pool(workers.clone(), None);
         async move {
             store
-                .update(org, target.id, set_alerts(&[d.id]), None, None)
+                .update(
+                    org,
+                    target.id,
+                    set_alerts(&[d.id]),
+                    None,
+                    None,
+                    uptimepage::domain::WriteCaps::UNLIMITED,
+                )
                 .await
         }
     });
@@ -952,8 +996,7 @@ async fn two_saves_of_one_monitor_take_turns_live_pg() {
             bound_target("t", &[]),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap();
@@ -963,7 +1006,14 @@ async fn two_saves_of_one_monitor_take_turns_live_pg() {
         let store = PostgresTargetStore::from_pool(workers.clone(), None);
         tokio::spawn(async move {
             store
-                .update(org, target.id, set_alerts(&order), None, None)
+                .update(
+                    org,
+                    target.id,
+                    set_alerts(&order),
+                    None,
+                    None,
+                    uptimepage::domain::WriteCaps::UNLIMITED,
+                )
                 .await
         })
     };
@@ -1024,8 +1074,7 @@ async fn a_bulk_edit_takes_its_channels_before_any_monitor_live_pg() {
             bound_target(name, chs),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
     };
     let t1 = create("t1", &[c.id]).await.unwrap();
@@ -1105,8 +1154,7 @@ async fn deleting_a_monitor_and_its_channel_together_does_not_deadlock_live_pg()
             bound_target("t", &[kept, gone]),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap();
@@ -1156,8 +1204,7 @@ async fn a_closing_notice_and_both_deletes_do_not_deadlock_live_pg() {
             bound_target("t", &[ch.id]),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap();
@@ -1235,8 +1282,7 @@ async fn two_pages_shared_by_both_deletes_are_taken_in_one_order_live_pg() {
             bound_target("t", &[ch.id]),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap();
@@ -1367,8 +1413,7 @@ async fn due_for_renotify_selects_overdue_open_unacked_live_pg() {
             mk_target("overdue", 3600),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap();
@@ -1378,8 +1423,7 @@ async fn due_for_renotify_selects_overdue_open_unacked_live_pg() {
             mk_target("recent", 3600),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap();
@@ -1389,8 +1433,7 @@ async fn due_for_renotify_selects_overdue_open_unacked_live_pg() {
             mk_target("off", 0),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap();
@@ -2650,8 +2693,7 @@ async fn two_monitors_on_one_channel(
                 bound_target(name, &[ch]),
                 WriteSource::Ui,
                 None,
-                i64::MAX,
-                i64::MAX,
+                uptimepage::domain::WriteCaps::UNLIMITED,
             )
             .await
             .unwrap();

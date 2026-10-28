@@ -561,7 +561,14 @@ async fn a_paused_stretch_is_not_downtime_pg() {
         ..Default::default()
     };
     targets
-        .update(org, target_id, resume, Some(WriteSource::Ui), Some(user))
+        .update(
+            org,
+            target_id,
+            resume,
+            Some(WriteSource::Ui),
+            Some(user),
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
         .await
         .expect("resume")
         .expect("found");

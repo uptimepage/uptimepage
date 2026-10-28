@@ -134,8 +134,7 @@ async fn add_and_remove_component_write_audit_rows() {
             },
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap();

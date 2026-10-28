@@ -403,6 +403,15 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
             get(handlers::status_page::list_components).post(handlers::status_page::add_component),
         )
         .route(
+            "/status-pages/{id}/sections",
+            get(handlers::status_page::list_sections).post(handlers::status_page::add_section),
+        )
+        .route(
+            "/status-pages/{id}/sections/{section_id}",
+            axum::routing::patch(handlers::status_page::update_section)
+                .delete(handlers::status_page::remove_section),
+        )
+        .route(
             "/status-pages/{id}/components/reorder",
             post(handlers::status_page::reorder_components),
         )

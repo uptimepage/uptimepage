@@ -11,7 +11,7 @@ use crate::domain::metrics::{
 };
 use crate::domain::{
     CheckResult, CheckStatus, HeartbeatPingRecord, NewTarget, ObservedCadence, OrgId, PlacedTarget,
-    Target, TargetUpdate, UserId, WriteSource,
+    Target, TargetUpdate, UserId, WriteCaps, WriteSource,
 };
 use crate::error::Result;
 
@@ -181,8 +181,7 @@ pub trait TargetStore: Send + Sync {
         new: NewTarget,
         source: WriteSource,
         actor: Option<UserId>,
-        max_targets: i64,
-        max_flow_checks: i64,
+        caps: WriteCaps,
     ) -> Result<Target>;
     /// A `source` of `None` leaves `write_source` as it was, for a writer that
     /// must not claim authorship and erase another tool's marker. An update that
@@ -197,6 +196,7 @@ pub trait TargetStore: Send + Sync {
         update: TargetUpdate,
         source: Option<WriteSource>,
         actor: Option<UserId>,
+        caps: WriteCaps,
     ) -> Result<Option<Target>>;
     /// A monitor is a hard delete, so the `target.deleted` audit row written in
     /// the same transaction is the only surviving record that it existed.
@@ -209,8 +209,7 @@ pub trait TargetStore: Send + Sync {
         items: Vec<PlacedTarget>,
         source: WriteSource,
         actor: Option<UserId>,
-        max_targets: i64,
-        max_flow_checks: i64,
+        caps: WriteCaps,
     ) -> Result<Vec<Target>>;
     async fn list_updated_since(&self, org: OrgId, since: DateTime<Utc>) -> Result<Vec<Target>>;
     /// Aggregate tag inventory across all targets. `prefix` filters tag names
@@ -257,6 +256,7 @@ pub trait TargetStore: Send + Sync {
         ids: &[Uuid],
         group: Option<&str>,
         actor: Option<UserId>,
+        caps: WriteCaps,
     ) -> Result<Vec<Uuid>>;
     /// Sets every named target's interval, except those whose check kind is in
     /// `skip_kinds`, which come back in `skipped`.

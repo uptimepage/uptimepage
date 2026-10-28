@@ -819,7 +819,12 @@ import { parseDuration } from "./_duration.js";
         // edit (partial PATCH) keeps the stored values.
         if (recoveryEl) payload.notify_recovery = recoveryEl.checked;
         if (renotifyEl) payload.renotify_interval_secs = parseInt(renotifyEl.value, 10) || 0;
-        payload.group_name = groupRaw === "" ? null : groupRaw;
+        // An edit sends the group only when it changed, so a save from a form
+        // loaded before a rename does not recreate the old name.
+        const groupInitial = (form.querySelector("[data-group-value]")?.dataset.groupInitial || "").trim();
+        if (form.dataset.mode !== "edit" || groupRaw !== groupInitial) {
+            payload.group_name = groupRaw === "" ? null : groupRaw;
+        }
         payload.owner_user_id = ownerRaw === "" ? null : ownerRaw;
         return { payload };
     }

@@ -49,6 +49,9 @@ pub struct FormModel {
     /// Set while the monitor's group alerts as one: its own channels, policy
     /// and tags are kept but muted.
     pub group_alert: Option<GroupAlertNote>,
+    /// Group name to the number of status pages that show it, as JSON: a
+    /// monitor joining one of those groups is published on those pages.
+    pub group_pages_json: String,
     /// Existing org tag names, rendered as selectable chips.
     pub tag_options: Vec<String>,
     /// Selected owner user-id (or empty string for "unowned"); the form

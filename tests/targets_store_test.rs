@@ -67,7 +67,13 @@ async fn seed(
         regions: None,
     };
     store
-        .create(org, nt, WriteSource::Ui, None, i64::MAX, i64::MAX)
+        .create(
+            org,
+            nt,
+            WriteSource::Ui,
+            None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
         .await
         .unwrap()
         .id
@@ -322,8 +328,7 @@ async fn an_update_can_decline_to_claim_authorship() {
             declared,
             WriteSource::Terraform,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap()
@@ -339,6 +344,7 @@ async fn an_update_can_decline_to_claim_authorship() {
             },
             None,
             None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap()
@@ -360,6 +366,7 @@ async fn an_update_can_decline_to_claim_authorship() {
             },
             Some(WriteSource::Api),
             None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap()
@@ -418,8 +425,7 @@ async fn the_recovery_period_round_trips_through_every_write() {
             held("single", 600),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap();
@@ -441,8 +447,7 @@ async fn the_recovery_period_round_trips_through_every_write() {
             ],
             WriteSource::Api,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap();
@@ -463,6 +468,7 @@ async fn the_recovery_period_round_trips_through_every_write() {
             },
             None,
             None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap()
@@ -478,6 +484,7 @@ async fn the_recovery_period_round_trips_through_every_write() {
             },
             None,
             None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap()
@@ -554,8 +561,7 @@ async fn a_bulk_tag_add_stops_at_the_cap_and_says_which_monitor_was_full() {
             make(full, "crowded"),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap()
@@ -566,8 +572,7 @@ async fn a_bulk_tag_add_stops_at_the_cap_and_says_which_monitor_was_full() {
             make(vec!["prod".into()], "roomy"),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap()

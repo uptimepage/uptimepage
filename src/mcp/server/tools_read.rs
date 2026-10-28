@@ -37,8 +37,8 @@ use crate::mcp::schema::{
     MonitorGroupList, MonitorHistory, MonitorList, MonitorListItem, NoisyMonitor, OrgHealth,
     OrgUsage, PagePasswordUse, PageViewerItem, PageViewerList, PausedStretch, Quota,
     RecoveredStretch, RegionList, StatusPageComponent as McpComponent, StatusPageDetail,
-    StatusPageList, StatusPageSummary, TagItem, TagList, VariableList, VariableSummary,
-    WorstMonitor,
+    StatusPageList, StatusPageSection, StatusPageSummary, TagItem, TagList, VariableList,
+    VariableSummary, WorstMonitor,
 };
 
 use super::McpServer;
@@ -804,7 +804,7 @@ impl McpServer {
     /// One status page with its components and each component's current state —
     /// the "what do customers see" view.
     #[tool(
-        description = "One status page: name, public URL, enabled, and its components with each linked monitor's current state. Read-only.",
+        description = "One status page: name, public URL, enabled, its components with each linked monitor's current state, and the monitor groups it shows as sections with their members. Read-only.",
         title = "Status page details",
         annotations(read_only_hint = true)
     )]
@@ -854,18 +854,37 @@ impl McpServer {
             .map(|c| McpComponent {
                 public_name: sanitize_data(&c.public_name.unwrap_or(c.monitor_name)),
                 group: c.public_group.as_deref().map(sanitize_data),
+                section_id: c.section_id.map(|s| s.to_string()),
                 linked_monitor: c.target_id.to_string(),
                 state: current_state(metrics.get(&c.target_id), folded.get(&c.target_id).copied())
                     .to_string(),
             })
             .collect();
 
+        let pool = self
+            .state
+            .db
+            .as_ref()
+            .ok_or_else(|| McpToolError::internal("db unavailable"))?;
+        let sections = crate::storage::page_sections::list(pool, org, page.id.0)
+            .await
+            .map_err(|e| McpToolError::internal(format!("page sections: {e}")))?
+            .into_iter()
+            .map(|s| StatusPageSection {
+                id: s.id.to_string(),
+                group_id: s.group_id.to_string(),
+                heading: sanitize_data(s.heading.as_deref().unwrap_or(&s.group_name)),
+                members: s.members.iter().map(Uuid::to_string).collect(),
+                left_off: s.left_off,
+            })
+            .collect();
         Ok(Json(StatusPageDetail {
             slug: page.slug.clone(),
             name: sanitize_data(&page.name),
             public_url: self.page_public_url(&page.slug),
             enabled: page.enabled,
             components,
+            sections,
             access: self.page_access(org, page.id).await?,
         }))
     }

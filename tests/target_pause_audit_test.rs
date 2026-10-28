@@ -43,8 +43,7 @@ async fn seed(store: &PostgresTargetStore, org: OrgId, name: &str) -> Uuid {
             http_target(name),
             WriteSource::Ui,
             None,
-            i64::MAX,
-            i64::MAX,
+            uptimepage::domain::WriteCaps::UNLIMITED,
         )
         .await
         .unwrap()
@@ -165,7 +164,14 @@ async fn a_single_monitor_pause_is_attributed_too() {
         ..Default::default()
     };
     store
-        .update(org.id, id, pause, Some(WriteSource::Ui), Some(user))
+        .update(
+            org.id,
+            id,
+            pause,
+            Some(WriteSource::Ui),
+            Some(user),
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
         .await
         .unwrap()
         .unwrap();
@@ -182,7 +188,14 @@ async fn a_single_monitor_pause_is_attributed_too() {
         ..Default::default()
     };
     store
-        .update(org.id, id, rename, Some(WriteSource::Ui), Some(user))
+        .update(
+            org.id,
+            id,
+            rename,
+            Some(WriteSource::Ui),
+            Some(user),
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
         .await
         .unwrap()
         .unwrap();
@@ -193,7 +206,14 @@ async fn a_single_monitor_pause_is_attributed_too() {
         ..Default::default()
     };
     store
-        .update(org.id, id, again, Some(WriteSource::Ui), Some(user))
+        .update(
+            org.id,
+            id,
+            again,
+            Some(WriteSource::Ui),
+            Some(user),
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
         .await
         .unwrap()
         .unwrap();

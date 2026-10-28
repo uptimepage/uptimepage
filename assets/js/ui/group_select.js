@@ -12,8 +12,31 @@
     function chips() {
         return Array.from(container.querySelectorAll("[data-group-pick]"));
     }
+    // Joining a group a status page shows publishes the monitor there, and
+    // leaving one takes it off, so the form says so before the save does it.
+    const warning = document.querySelector("[data-group-warning]");
+    let pagesByGroup = {};
+    try { pagesByGroup = JSON.parse(hidden.dataset.groupPages || "{}"); } catch { pagesByGroup = {}; }
+    const plural = (n) => `${n} status page${n === 1 ? "" : "s"}`;
+    function warn(value) {
+        if (!warning) return;
+        const initial = hidden.dataset.groupInitial || "";
+        if (value === initial) {
+            warning.hidden = true;
+            return;
+        }
+        const name = (document.querySelector('[name="name"]')?.value || "").trim() || "this monitor";
+        const lines = [];
+        const left = pagesByGroup[initial] || 0;
+        if (left) lines.push(`Leaving ${initial} takes this monitor off ${plural(left)}, with its page name and detail link there.`);
+        const joined = pagesByGroup[value] || 0;
+        if (joined) lines.push(`${value} is on ${plural(joined)}; this monitor will show there as ${name}.`);
+        warning.textContent = lines.join(" ");
+        warning.hidden = lines.length === 0;
+    }
     function setGroup(value) {
         hidden.value = value;
+        warn(value);
         hidden.dispatchEvent(new Event("change", { bubbles: true }));
     }
 

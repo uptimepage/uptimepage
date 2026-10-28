@@ -39,6 +39,7 @@ pub struct TargetOps<'a> {
     pub(crate) results: &'a std::sync::Arc<dyn ResultSink>,
     pub(crate) cfg: &'a AppConfig,
     pub(crate) db: Option<&'a sqlx::PgPool>,
+    pub(crate) publishing: crate::public_status::publishing::Publishing<'a>,
 }
 
 impl TargetOps<'_> {
@@ -98,14 +99,7 @@ impl TargetOps<'_> {
     ) -> Result<Target> {
         let t = self
             .targets
-            .create(
-                org,
-                new,
-                source,
-                actor,
-                i64::from(plan.max_targets),
-                i64::from(plan.max_flow_checks),
-            )
+            .create(org, new, source, actor, crate::domain::WriteCaps::of(plan))
             .await?;
         // The store seeds the deployment's default region; only this write makes a
         // set that seed does not contain stick.
@@ -127,6 +121,13 @@ impl TargetOps<'_> {
     /// stopping at the first keeps a database outage from stalling the request
     /// once per monitor.
     pub(crate) async fn settle_created(&self, org: OrgId, created: &[Target], regions: &[String]) {
+        // A member of a group shown on a page joined it in the same write.
+        let grouped: Vec<Uuid> = created
+            .iter()
+            .filter(|t| t.group_id.is_some())
+            .map(|t| t.id)
+            .collect();
+        self.publishing.invalidate_targets(org, &grouped).await;
         for t in created.iter().filter(|t| t.check.as_heartbeat().is_some()) {
             if let Err(err) = self.ensure_heartbeat(org, t.id).await {
                 tracing::warn!(org_id = %org.0, target_id = %t.id, error = %err, "ping rows left to the scheduler");

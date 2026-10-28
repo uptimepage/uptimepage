@@ -127,7 +127,7 @@ pub use public::{
     PublicMaintenance, PublicMaintenanceList, PublicMaintenanceUpdate, PublicPostmortem,
     PublicStatusPage, Recovered, incident_impact, outage_parts, stored_incident_impact,
 };
-pub use quota::{Plan, PlanLimits, QuotaEvent};
+pub use quota::{Plan, PlanLimits, QuotaEvent, WriteCaps};
 pub use reserved_slugs::is_reserved;
 pub use result::{
     CheckDiagnostic, CheckDiagnosticKind, CheckResult, CheckStatus, DiagnosticConfidence,

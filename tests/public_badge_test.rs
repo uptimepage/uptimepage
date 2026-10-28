@@ -60,6 +60,7 @@ impl PublicSource for BadgeSource {
             generated_at: Utc::now(),
             site_name: "uptimepage".into(),
             groups: vec![PublicComponentGroup {
+                status: None,
                 name: Some("Edge".into()),
                 components: vec![component],
             }],

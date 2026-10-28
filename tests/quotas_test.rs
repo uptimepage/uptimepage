@@ -910,7 +910,17 @@ async fn the_atomic_writer_counts_the_siblings_monitors() {
         regions: None,
     };
     let err = store
-        .create(org_b, new, WriteSource::Ui, None, 2, 0)
+        .create(
+            org_b,
+            new,
+            WriteSource::Ui,
+            None,
+            uptimepage::domain::WriteCaps {
+                targets: 2,
+                flow_checks: 0,
+                public_components: i64::MAX,
+            },
+        )
         .await
         .expect_err("pooled cap must refuse the write");
     match err {
