@@ -49,7 +49,7 @@ blurb = "A tour of the app: dashboard, monitors, incidents, settings, and sharin
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-11
+lastmod = 2026-10-29
 
 [[page]]
 slug = "incidents"
@@ -59,7 +59,7 @@ blurb = "Acknowledgement, ownership, on-call, escalation, and the retrospective 
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-09
+lastmod = 2026-10-29
 
 [[page]]
 slug = "monitor-types"
@@ -82,6 +82,16 @@ created = 2026-07-22
 lastmod = 2026-10-26
 
 [[page]]
+slug = "groups"
+title = "Monitor groups"
+description = "Group related monitors as a label, or have the group alert as one: one incident and one page for many failures, its own channels, and a live status section."
+blurb = "A label for related monitors, or one incident and one page for all of them."
+section = "guide"
+scope = "everyone"
+created = 2026-10-28
+lastmod = 2026-10-29
+
+[[page]]
 slug = "public-status"
 title = "Public status page"
 description = "The customer-facing surface: components and their uptime, incident updates, scheduled maintenance, subscribers, badges, and the public JSON and RSS endpoints."
@@ -89,7 +99,7 @@ blurb = "The customer-facing surface: components, incidents, maintenance, badges
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-22
+lastmod = 2026-10-29
 
 [[page]]
 slug = "per-org-status"
@@ -99,7 +109,7 @@ blurb = "Running one or more branded status pages per organization, each on its 
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-09
+lastmod = 2026-10-29
 
 [[page]]
 slug = "share-links"
@@ -159,7 +169,7 @@ blurb = "The /api/v1 surface: monitors, incidents, channels, status pages, and t
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-26
+lastmod = 2026-10-28
 
 [[page]]
 slug = "terraform"
@@ -169,7 +179,7 @@ blurb = "Managing monitors, channels, and status pages as code with the official
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-24
+lastmod = 2026-10-29
 
 [[page]]
 slug = "mcp"
@@ -179,7 +189,7 @@ blurb = "Letting an LLM client answer operational questions and take guarded act
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-17
+lastmod = 2026-10-29
 
 [[page]]
 slug = "quotas"
@@ -189,7 +199,7 @@ blurb = "How plans bound resources and request budgets, and how each limit is en
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-23
+lastmod = 2026-10-29
 
 [[page]]
 slug = "multi-tenancy"

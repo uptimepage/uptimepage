@@ -50,6 +50,10 @@ The org **owner** manages pages from the operator UI at `/settings/pages` (a lis
 | `PATCH /api/v1/status-pages/{id}/components/{target_id}` | set per-page name / description / group |
 | `DELETE /api/v1/status-pages/{id}/components/{target_id}` | remove a monitor from the page |
 | `POST /api/v1/status-pages/{id}/components/reorder` | set the component order |
+| `GET /api/v1/status-pages/{id}/sections` | the [monitor groups](groups.md#on-a-status-page) shown as live sections |
+| `POST /api/v1/status-pages/{id}/sections` | show a monitor group as a section |
+| `PATCH /api/v1/status-pages/{id}/sections/{section_id}` | change a section's heading |
+| `DELETE /api/v1/status-pages/{id}/sections/{section_id}` | stop showing the group |
 | `POST /api/v1/status-pages/{id}/logo` | upload a logo (multipart) |
 | `DELETE /api/v1/status-pages/{id}/logo` | remove the logo |
 
@@ -85,7 +89,7 @@ A monitor appears on a page only while a `status_page_components` binding exists
 | `public_group` | optional group label; same value clusters together, ungrouped renders last (≤ 50 chars) |
 | `sort_order` | integer sort key within a group (ASC); the reorder endpoint rewrites it |
 
-The per-page **distinct-target** cap is `max_public_components`: it counts unique monitors across all of the org's pages. A monitor already published on one page costs nothing to add to another; a brand-new monitor at the cap is rejected with a quota error. Adding a monitor already on the page is an idempotent no-op; adding a page or target that isn't in the caller's org is a 404, not a quota error.
+The per-page **distinct-target** cap is `max_public_components`: it counts unique monitors across all of the org's pages. A monitor already published on one page costs nothing to add to another; a brand-new monitor at the cap is rejected with a quota error. Adding a monitor already on the page is an idempotent no-op; adding a page or target that isn't in the caller's org is a 404, not a quota error. A group section is not refused at the cap: the members that fit are added, the rest stay off the page, and the editor and the section's `left_off` say how many.
 
 ### About text
 

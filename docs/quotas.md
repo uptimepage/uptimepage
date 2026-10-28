@@ -42,6 +42,8 @@ Four plans ship seeded: `free`, `founding` (a more generous free tier granted to
 | `max_on_call_schedules` | 0 | 0 | 0 | 25 | On-call schedules |
 | `max_logo_size_bytes` | 1048576 | 1048576 | 1048576 | 1048576 | Status-page logo upload ceiling (1 MiB) |
 
+[Monitor groups](groups.md) have no column of their own: an account holds as many as its `max_targets`, counted across its orgs, and going past it is `422 QUOTA_EXCEEDED` with `quota: max_groups`. An override of `max_targets` moves it too.
+
 Feature flags ride on the same row: `custom_domain_enabled`, `white_label_enabled`,
 `sms_alerts_enabled`, `incident_narration_enabled`, `on_call_enabled`,
 `private_pages_enabled`. On-call, SMS, private pages and white-label are

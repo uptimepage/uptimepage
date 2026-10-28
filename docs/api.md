@@ -32,7 +32,7 @@ On the website, documentation pages, blog posts and the homepage also answer `Ac
 | `POST` | `/api/v1/targets/bulk-action` | enable / disable / delete / tag-add / tag-remove / set-group / set-interval / channel bindings on many ids |
 | `POST` | `/api/v1/targets/test` | run a one-shot check against a `CheckSpec` without persisting |
 | `POST` | `/api/v1/targets/{id}/check-now` | run an immediate check using the target's stored credentials |
-| `GET` | `/api/v1/targets` | list targets (`limit`, `offset`, `tag`, `enabled`, `q`) — paginated |
+| `GET` | `/api/v1/targets` | list targets (`limit`, `offset`, `tag`, `enabled`, `q`) — paginated; `tag` matches `effective_tags` |
 | `GET` | `/api/v1/targets/{id}` | get one target |
 | `PATCH` | `/api/v1/targets/{id}` | update name, check spec, interval, enabled, tags |
 | `DELETE` | `/api/v1/targets/{id}` | delete a target |
@@ -62,6 +62,13 @@ On the website, documentation pages, blog posts and the homepage also answer `Ac
 | `POST` | `/api/v1/account/billing/cancel` | cancel: at the end of the paid period, or at once while the last payment failed |
 | `DELETE` | `/api/v1/account/billing/cancel` | withdraw a scheduled cancel |
 | `GET` | `/api/v1/tags` | tag inventory with target counts (`q` prefix) — paginated |
+| `GET` | `/api/v1/groups` | list monitor groups, empty ones included; see [Monitor groups](#monitor-groups) |
+| `POST` | `/api/v1/groups` | create a monitor group |
+| `GET` | `/api/v1/groups/{id}` | get one group |
+| `PATCH` | `/api/v1/groups/{id}` | rename it, switch `alert_as_one`, change its channels, reminder, `alert_again` or tags |
+| `DELETE` | `/api/v1/groups/{id}` | delete a group; its monitors stay, ungrouped |
+| `GET` | `/api/v1/groups/{id}/escalation-policy` | the policy the group incident follows |
+| `PUT` | `/api/v1/groups/{id}/escalation-policy` | bind the group's own policy, `{ "policy_id": … }`, or clear it with `null` (owner, `oncall:write`; `403 ON_CALL_DISABLED` off the Team plan) |
 | `GET` | `/api/v1/dashboard/summary` | per-org rollup (5-second in-process cache, keyed by `OrgId`) |
 | `GET` | `/healthz` | liveness — always 200 once the process is up |
 | `GET` | `/readyz` | readiness — pings the target store; 503 if unreachable |
@@ -109,11 +116,15 @@ edit it with `PATCH`. Model + caps in [Per-org status pages](per-org-status.md).
 | `GET` | `/api/v1/status-pages/{id}` | one page + its live URL, logo URL and `access` |
 | `PATCH` | `/api/v1/status-pages/{id}` | rename, change slug, publish/unpublish, set the language (`public_locale`), edit branding, change who may open it (`access`) |
 | `DELETE` | `/api/v1/status-pages/{id}` | delete the page |
-| `GET` | `/api/v1/status-pages/{id}/components` | the monitors curated onto the page |
+| `GET` | `/api/v1/status-pages/{id}/components` | the monitors curated onto the page; a member of a group section carries its `section_id` |
 | `POST` | `/api/v1/status-pages/{id}/components` | add a monitor (distinct-target cap `max_public_components`) |
 | `PATCH` | `/api/v1/status-pages/{id}/components/{target_id}` | per-page `public_name` / `public_description` / `public_group` (JSON `null` clears) |
-| `DELETE` | `/api/v1/status-pages/{id}/components/{target_id}` | remove a monitor from the page |
+| `DELETE` | `/api/v1/status-pages/{id}/components/{target_id}` | remove a monitor from the page (`409 SECTION_MEMBER` for a member of a group section) |
 | `POST` | `/api/v1/status-pages/{id}/components/reorder` | set component order |
+| `GET` | `/api/v1/status-pages/{id}/sections` | the monitor groups shown on the page as sections |
+| `POST` | `/api/v1/status-pages/{id}/sections` | show a monitor group as a live section, `{ "group_id", "heading"? }` |
+| `PATCH` | `/api/v1/status-pages/{id}/sections/{section_id}` | change its `heading` (`null` or blank shows the group's name) |
+| `DELETE` | `/api/v1/status-pages/{id}/sections/{section_id}` | stop showing the group, and remove its members' rows |
 | `POST` | `/api/v1/status-pages/{id}/logo` | upload a logo (multipart) |
 | `DELETE` | `/api/v1/status-pages/{id}/logo` | remove the logo |
 | `GET` | `/api/v1/status-pages/{id}/access/viewers` | who signed in to a private page |
@@ -158,6 +169,8 @@ off; `enabled: true` with none stored is `400 PASSWORD_REQUIRED` (field
 `access.password.value`). `value` with `enabled: false` stores it and leaves the
 way in off. Audit entries say a password was `set` or `changed`, never what it
 is. See [Who can open a page](public-status.md#who-can-open-a-page).
+
+A section shows a [monitor group](groups.md#on-a-status-page) on the page and mirrors it: adding one gives every member a row (a member already on the page by hand moves into it with its settings), and from then on a monitor that joins or leaves the group joins or leaves the page, in the same transaction as its group change. Members keep the component routes for their own `public_name`, `public_description`, detail link and order. A section reads back as `{ id, group_id, group_name, heading, members, left_off, created_at }`: `members` lists the monitor ids on the page in page order, and `left_off` counts the members the `max_public_components` cap keeps off it, who stay off until the section is removed and added again. `heading` is at most 50 characters (`400 BRANDING_INVALID`, as for the other per-page text); a group that already has a section on the page is `409 SECTION_EXISTS`, and an unknown section id `404 SECTION_NOT_FOUND`. Deleting the section or the group removes the members' rows; the page keeps their incident and maintenance history, and their detail links are revoked.
 
 ### Public status endpoints
 
@@ -488,7 +501,10 @@ Use a dedicated low-privilege test account, never a real or admin credential: th
                              // take the default-selected set under the plan's
                              // region cap. Every id must be enabled, the set
                              // must fit the cap, and a heartbeat may name none.
-  "group_name": "API",       // optional, at most 50 characters; null clears
+  "group_name": "API",       // optional, at most 50 characters, trimmed; a new
+                             // name creates the group. Blank or null clears
+  "group_id": "…",           // or join an existing group by id. Send one of the
+                             // two: both is 400 GROUP_ID_AND_NAME. null clears
   "owner_user_id": "…",      // optional member of the org. Left out on create,
                              // the caller owns it, so name one when the token
                              // is a shared pipeline's; null leaves it unowned,
@@ -499,7 +515,7 @@ Use a dedicated low-privilege test account, never a real or admin credential: th
 }
 ```
 
-Server returns the full `Target` including `id` (UUIDv7), `created_at`, `updated_at`, and `write_source`. The assigned regions are read back from `GET /api/v1/targets/{id}/regions` and changed with `PUT` on the same path; a `regions` array that names an unknown or disabled id, or any id on a heartbeat or manual monitor, is `422 REGION_INVALID`, and one wider than the plan allows is `422 QUOTA_EXCEEDED`. A `POST /api/v1/targets/bulk` item takes the same field; an item without it shares the default set.
+Server returns the full `Target` including `id` (UUIDv7), `created_at`, `updated_at`, `write_source`, both `group_id` and `group_name`, and `effective_tags`: read only, the group's tags while the monitor's group [alerts as one](#monitor-groups), else the monitor's own `tags`. `tags` always stays the monitor's own, so a `GET` then `PATCH` round trip never copies the group's onto it. The assigned regions are read back from `GET /api/v1/targets/{id}/regions` and changed with `PUT` on the same path; a `regions` array that names an unknown or disabled id, or any id on a heartbeat or manual monitor, is `422 REGION_INVALID`, and one wider than the plan allows is `422 QUOTA_EXCEEDED`. A `POST /api/v1/targets/bulk` item takes the same field; an item without it shares the default set.
 
 A monitor's kind is fixed after creation. A `check` sent on `PATCH` must keep the stored `type`; one whose `type` differs is `400 Bad Request` (`CHECK_KIND_IMMUTABLE`, `field: check.type`), since the monitor keeps its id and would otherwise carry two kinds' results in one history. Create a new monitor to watch something else.
 
@@ -597,6 +613,33 @@ after it is created.
 - **Kind change** (`PATCH` only) — `a monitor's check type is fixed after creation; create a new monitor to watch something else` (`CHECK_KIND_IMMUTABLE`). The stored `check.type` is the only one a `PATCH` may send.
 - **IP version** — `2001:db8::1 is an IPv6 address; set ip_version to any or ipv6` (`INVALID_IP_VERSION`). A host written as an IP address can only be reached over its own family.
 - **TLS verification + credentials** — `verify_tls = false cannot be combined with basic_auth or bearer_token over https`. When verification is disabled any host presenting a forged certificate can collect the stored credential on every check interval. Set `verify_tls = true` (recommended) or remove the credential from the target.
+
+## Monitor groups
+
+A group is the record a monitor's `group_id` points at. Off, it is a label; with `alert_as_one` on, a member's failure opens one group incident that pages the group's channels and escalation policy instead of the member's own. [Monitor groups](groups.md) describes the behaviour. Groups use the monitors' scopes: `targets:read` to read them, `targets:write` to create and change them, `targets:delete` to delete one.
+
+```jsonc
+{
+  "name": "example.com DNS",          // required on create; trimmed, at most 50
+                                      // characters, unique in the org
+  "alert_as_one": true,               // default false
+  "alerts": [ { "channel_id": "…" } ], // the group incident's channels, as on a monitor
+  "renotify_interval_secs": 1800,     // default 3600; 0 turns reminders off,
+                                      // otherwise at least 60
+  "alert_again": true,                // default true: another member down sends
+                                      // a message, at most one a minute
+  "tags": ["dns", "p0"]               // shown on the members while the group alerts
+                                      // as one, and what tag-rule channels match
+}
+```
+
+`PATCH` takes the same fields, each optional: omit one to leave it alone; `alerts` and `tags` replace the whole list. Turning `alert_as_one` on or off changes only failures that start afterwards, so an incident open now ends the way it started. Responses add `id`, `write_source`, `created_at`, `updated_at`, `member_count` and `open_incident_id`, the group incident open now. `POST` answers `201` with a `Location` header.
+
+A blank name is `400 INVALID_GROUP_NAME`, a name over 50 characters `400 GROUP_TOO_LONG`, and a name already used in the org `409 GROUP_NAME_TAKEN`. Tags, the reminder and channels are checked as on a monitor. An account holds as many groups as its plan allows monitors, counted across its orgs; past that a create is `422 QUOTA_EXCEEDED` with `quota: max_groups`, and so is a monitor write or bulk move that names a new group. `DELETE` answers `204`. The monitors stay, ungrouped, and leave every page that shows the group as a section. An open group incident closes with a note, not a recovery, and each member still down alerts on its own channels from then on.
+
+On a monitor, `group_id` or `group_name` puts it in a group (see [Target payload](#target-payload)). An unknown or foreign `group_id` is `400 GROUP_NOT_FOUND`, and a `group_name` over 50 characters `400 GROUP_TOO_LONG`. If the group changes under a monitor write, the write is `409 GROUP_CHANGE_CONFLICT`; send it again.
+
+Incidents: a group incident has `origin: "group"` and `group: { id, name }`, where `id` turns `null` once the group is deleted and `name` keeps its last name. A member incident carries `group_incident_id`, and `GET /api/v1/incidents/{id}` on a group incident lists up to 500 `members` in the order they joined. `closed_by_group_delete` marks a group incident that deleting its group closed; it counts toward neither MTTR nor who resolved what. On a member incident, acknowledge, resolve and reopen are `409 USE_GROUP_INCIDENT`, naming the group incident to act on instead. Reopening a group incident is `409 GROUP_INCIDENT_NO_REOPEN`, and publishing one is `409 GROUP_INCIDENT_INTERNAL`, since status pages show its members.
 
 ## Notification channels
 
@@ -781,7 +824,7 @@ Common codes: `INVALID_URL_SCHEME`, `INVALID_URL_FORMAT`, `INVALID_ADDRESS`, `SS
 
 | Code | HTTP | Meaning |
 |---|---|---|
-| `QUOTA_EXCEEDED` | 422 | A plan quota would be exceeded. `details` carries `quota` (e.g. `max_targets`, `max_members`, `max_public_components`), `current`, `limit`, `plan`. |
+| `QUOTA_EXCEEDED` | 422 | A plan quota would be exceeded. `details` carries `quota` (e.g. `max_targets`, `max_members`, `max_public_components`, `max_groups`), `current`, `limit`, `plan`. |
 | `MIN_CHECK_INTERVAL` | 422 | Requested check interval is below the effective floor (`max(plan.min_check_interval_secs, kind_min)`), where `kind_min` is 43200 for `domain_expiry`, 3600 for `tls_cert`, 300 for `flow`, 60 for `heartbeat` and `manual`, and 10 for `http` / `tcp` / `ping` / `dns`. Enforced on create, bulk, **and** PATCH. |
 | `INVITATIONS_LIMIT` | 409 | The org is at its pending-invitation cap. |
 | `RATE_LIMITED` | 429 | A per-minute rate budget was exceeded. `Retry-After` (seconds) is set; `details.scope` names the tier, e.g. `per_account_api_writes`. |
@@ -797,6 +840,23 @@ Common codes: `INVALID_URL_SCHEME`, `INVALID_URL_FORMAT`, `INVALID_ADDRESS`, `SS
 | `ACCOUNT_OWNER_REQUIRED` | 403 | The caller is in the account but does not own it, so cannot change holds or billing. |
 
 See [Quotas & rate limits](quotas.md) for the quota model, the per-minute categories, and the deny-list policy.
+
+### Group and section codes
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `INVALID_GROUP_NAME` | 400 | A group's name is blank after trimming. |
+| `GROUP_TOO_LONG` | 400 | A group's `name`, or a monitor's `group_name`, is over 50 characters. |
+| `GROUP_ID_AND_NAME` | 400 | A monitor write sent both `group_id` and `group_name`; send one. |
+| `GROUP_NOT_FOUND` | 400, 404 | The group does not exist in this org: `400` for a monitor's `group_id`, `404` on a group route or a section's `group_id`. |
+| `GROUP_NAME_TAKEN` | 409 | Another group in the org has this name. |
+| `GROUP_CHANGE_CONFLICT` | 409 | The group changed while the write was saving. Send it again. |
+| `USE_GROUP_INCIDENT` | 409 | Acknowledge, resolve or reopen on a member of a group incident. The message names the group incident to act on. |
+| `GROUP_INCIDENT_NO_REOPEN` | 409 | A group incident cannot be reopened; the next member failure opens a new one. |
+| `GROUP_INCIDENT_INTERNAL` | 409 | A group incident cannot be published; publish its members' incidents. |
+| `SECTION_NOT_FOUND` | 404 | No such section on this page. |
+| `SECTION_EXISTS` | 409 | The group already has a section on this page. |
+| `SECTION_MEMBER` | 409 | The monitor is on the page through its group's section: take it out of the group, or remove the section. |
 
 ## Pagination envelope
 
@@ -946,7 +1006,7 @@ Returns coalesced down / error periods. A contiguous run of bad statuses becomes
 
 `GET /api/v1/tags?q=prod&limit=100`
 
-Returns every tag currently in use across the caller's targets (enabled or disabled), with target count, sorted by descending count then alphabetical. `q` is a prefix filter for autocomplete. Scoped to the active org — in SaaS mode another org's tags are invisible.
+Returns every tag currently in use across the caller's targets (enabled or disabled), with target count, sorted by descending count then alphabetical. Tags are counted as the list shows them, by `effective_tags`: a member of a group that alerts as one counts under the group's tags. `q` is a prefix filter for autocomplete. Scoped to the active org — in SaaS mode another org's tags are invisible.
 
 ```jsonc
 { "items": [ { "name": "prod", "count": 12 }, { "name": "staging", "count": 4 } ],
@@ -983,7 +1043,8 @@ Returns every tag currently in use across the caller's targets (enabled or disab
   // alternatives: { "type": "enable" }, { "type": "delete" },
   //   { "type": "tag_add",    "tags": ["frozen"] },
   //   { "type": "tag_remove", "tags": ["frozen"] },
-  //   { "type": "set_group",  "group": "tier1" } // null clears the group
+  //   { "type": "set_group",  "group": "tier1" } // by name, a new one is created;
+  //                                              // null clears the group
   //   { "type": "set_interval",   "interval": 300 }
   //   { "type": "channel_add",    "channel_ids": ["..."] }
   //   { "type": "channel_remove", "channel_ids": ["..."] }

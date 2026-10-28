@@ -44,6 +44,10 @@ Your declaration is left alone in step 3. The writer never resolves what a perso
 
 Each incident carries a **severity** (`minor` / `major` / `critical`) and an **urgency** (`high` pages on-call, `low` notifies only; urgency decides how hard it pages once alerting is on). A declared incident takes the severity you choose; an auto-opened one currently defaults to `major` until an operator changes it.
 
+### A group that alerts as one
+
+A monitor in a [group](groups.md) that alerts as one still opens its own incident, so its uptime and history stay its own, but the incident is attached to one **group incident** that does the paging: the group's channels and escalation policy, reminders on the group's interval, and one message a minute at most about other members going down. Acknowledge and resolve the group incident; resolving it resolves its members. A member incident refuses acknowledge, resolve and reopen with the group incident's id, a group incident cannot be reopened, and it stays internal: status pages show the members, so publish a member's incident instead. The console lists the group incident with its members nested under it.
+
 ## The console
 
 `/incidents` is the operator console — a management surface distinct from the dashboard's at-a-glance banner. It lists incidents with severity, state, monitor, assignee, and age, filterable by state. `/incidents/{id}` is the detail view: header, the action bar, the trigger sample, and the activity log.
@@ -134,6 +138,8 @@ Publishing a postmortem surfaces it on the public incident page: customers see t
 - **MTTA** — mean time to acknowledge (`acknowledged_at − started_at`).
 - **MTTR** — mean time to resolve (`ended_at − started_at`).
 - Total incidents, counts by severity and by state, auto-resolved vs human-resolved, and the noisiest monitors.
+
+A group incident counts once: the member incidents attached to it are left out of MTTA, MTTR and the counts, and one that deleting its group closed counts toward neither MTTR nor the resolved totals.
 
 The same numbers are available to automation through the MCP `get_incident_metrics` tool.
 

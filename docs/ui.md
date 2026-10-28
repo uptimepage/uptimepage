@@ -14,6 +14,8 @@ The cards give you overall uptime, response time, check volume, and the current 
 
 **Monitors** lists everything you are checking, with filters by name, tag, and enabled state. Monitors created by an API token or by Terraform carry a small `api` or `terraform` chip, so it is obvious which ones a UI edit might get overwritten on the next apply.
 
+Monitors in a [group](groups.md) sit under the group's header, which shows the worst member's state, `[group alert]` when the group alerts as one, and the group incident open now. Its ⋯ menu opens the group's settings or turns alerting as one on and off. Select monitors and use **Move to group…** to file several at once.
+
 Opening a monitor gives you its detail view: current status, uptime figures, response-time percentiles, a breakdown of where the time goes (DNS, connect, TLS, first byte), recent check results, and the incident history. Four time ranges (1 hour, 24 hours, 7 days, 30 days) switch the whole page at once, and if the monitor runs in several regions you can filter any chart down to one of them.
 
 **Add monitor** takes a URL, an interval, and the regions to check from. HTTP is the default; [Monitor types](monitor-types.md) covers the other eight. Two sections are worth a look before you save:

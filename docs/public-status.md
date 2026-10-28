@@ -49,6 +49,10 @@ curl -X DELETE https://app.uptimepage.dev/api/v1/status-pages/$PAGE_ID/component
 
 On the `PATCH`, `public_name`, `public_description`, and `public_group` use the same three-state semantics as incident narration: **omit** the field to leave it unchanged, send a string to set it, or send JSON `null` to clear it back to the default (real monitor name / no group). Blanking the field in the UI clears it for you.
 
+### Showing a monitor group
+
+A [monitor group](groups.md#on-a-status-page) can sit on a page as a live section: its heading shows the members' combined state, and each member is its own row with its own public name, order and detail link. Monitors that join or leave the group join or leave the page. Add one in the editor under **monitor groups**, or with `POST /api/v1/status-pages/{id}/sections` (see [REST API](api.md#operator-endpoints-status-pages)). A hand-set **Group** label still works beside it, and two blocks with the same heading text stay separate.
+
 ## Linking a component to its detail view
 
 Ticking **Detail link** adds an *uptime history* link beside the component, pointing at that monitor's [share link](share-links.md) — the read-only detail view with uptime, latency, recent results and incident history. The component's own name is never the link text, because a component named after a domain would read as a link to that site.
