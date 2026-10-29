@@ -217,6 +217,45 @@ async fn update_maintenance_changes_title() {
 }
 
 #[tokio::test]
+async fn a_description_is_kept_without_blank_lines_around_it() {
+    let app = make_app();
+    let mut body = valid_window();
+    body["description"] = json!("\nRead-only.\n\nNo action needed.\n ");
+    let create = app
+        .clone()
+        .oneshot(json_request("POST", "/api/v1/maintenance", body))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+    let v = body_json(create).await;
+    assert_eq!(v["description"], "Read-only.\n\nNo action needed.");
+    let id = v["id"].as_str().unwrap();
+    let resp = app
+        .clone()
+        .oneshot(json_request(
+            "PATCH",
+            &format!("/api/v1/maintenance/{id}"),
+            json!({"description": "  Moved to Sunday.\n\n"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["description"], "Moved to Sunday.");
+
+    let mut blank = valid_window();
+    blank["description"] = json!("\n  \n");
+    let resp = app
+        .oneshot(json_request("POST", "/api/v1/maintenance", blank))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    assert!(
+        body_json(resp).await["description"].is_null(),
+        "a blank description is no description"
+    );
+}
+
+#[tokio::test]
 async fn cancelled_window_stays_as_history() {
     let app = make_app();
     let create = app

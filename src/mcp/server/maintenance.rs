@@ -130,7 +130,7 @@ impl McpServer {
             .await?;
 
         let names = self.monitor_names(auth.org).await?;
-        let new = NewMaintenanceWindow {
+        let mut new = NewMaintenanceWindow {
             title: args.title.clone(),
             description: args.description.clone(),
             starts_at: parse_rfc3339(&args.starts_at, "starts_at")?,
@@ -140,7 +140,7 @@ impl McpServer {
         };
         self.state
             .maintenance_ops()
-            .vet_new(auth.org, &new)
+            .vet_new(auth.org, &mut new)
             .await
             .map_err(window_error)?;
         let published = self.published_monitors(auth.org).await?;
@@ -444,15 +444,16 @@ pub(super) fn build_window_patch(
     let stored_description = existing.description.as_deref().unwrap_or_default();
     if let Some(description) = args
         .description
-        .as_ref()
-        .filter(|d| d.as_str() != stored_description)
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| *d != stored_description)
     {
         moved(
             "description",
             sanitize_data(stored_description),
             sanitize_data(description),
         );
-        update.description = Some(description.clone());
+        update.description = Some(description.to_owned());
     }
     if let Some(raw) = &args.starts_at {
         let starts = parse_rfc3339(raw, "starts_at")?;

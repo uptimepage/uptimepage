@@ -144,6 +144,27 @@ async fn post_update_appends_to_timeline() {
 }
 
 #[tokio::test]
+async fn post_update_keeps_no_blank_lines_around_the_message() {
+    let (app, store) = build_test_app_with_seedable_incidents(|_| {});
+    let inc = seed_incident();
+    let id = inc.id;
+    store.seed(inc);
+    let resp = app
+        .oneshot(json_request(
+            "POST",
+            &format!("/api/v1/incidents/{id}/updates"),
+            json!({ "phase": "identified", "message": "\nRolling back.\n\nNext update soon.\n\n" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    assert_eq!(
+        body_json(resp).await["message"],
+        "Rolling back.\n\nNext update soon."
+    );
+}
+
+#[tokio::test]
 async fn post_update_empty_message_rejected() {
     let (app, store) = build_test_app_with_seedable_incidents(|_| {});
     let inc = seed_incident();

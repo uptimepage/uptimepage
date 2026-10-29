@@ -2095,6 +2095,20 @@ fn a_window_value_that_already_matches_is_not_a_change() {
 }
 
 #[test]
+fn a_description_that_differs_only_in_blank_lines_is_not_a_change() {
+    let mut window = stored_window(30);
+    window.description = Some("Read-only.".into());
+    let args = UpdateMaintenanceArgs {
+        description: Some("\nRead-only.\n\n".into()),
+        ..window_args()
+    };
+    let (update, changes) =
+        build_window_patch(&args, &window, &monitor_names(), Utc::now()).unwrap();
+    assert!(changes.is_empty(), "{changes:?}");
+    assert!(update.changed_fields().is_empty());
+}
+
+#[test]
 fn end_now_ends_only_a_running_window_and_stands_alone() {
     let now = Utc::now();
     let names = monitor_names();

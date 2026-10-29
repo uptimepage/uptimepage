@@ -192,12 +192,13 @@ pub async fn post_incident_update(
     Authorized(org, _): Authorized<IncidentsWrite>,
     CurrentUser(user): CurrentUser,
     Path(id): Path<Uuid>,
-    Json(new): Json<NewIncidentUpdate>,
+    Json(mut new): Json<NewIncidentUpdate>,
 ) -> Result<(
     StatusCode,
     AppendHeaders<[(axum::http::HeaderName, HeaderValue); 1]>,
     Json<PublicIncidentUpdate>,
 )> {
+    new.message = new.message.trim().to_owned();
     validate_message(&new.message, "message")?;
     let entry = state
         .incident_narration_store

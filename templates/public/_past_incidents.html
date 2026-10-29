@@ -42,7 +42,7 @@
                 <span class="min-w-0 space-y-1">
                     {% call headline(e) %}{% endcall %}
                     {% call meta(e) %}{% endcall %}
-                    {% if let Some(msg) = e.message %}<span class="block text-pretty text-sm text-muted group-open/fold:hidden">{{ msg }}</span>{% endif %}
+                    {% if let Some(msg) = e.message %}<span class="block whitespace-pre-line text-pretty text-sm text-muted group-open/fold:hidden">{{ msg }}</span>{% endif %}
                 </span>
             </summary>
             {% if let Some(full) = e.full_message %}<p class="past-fold__full whitespace-pre-line text-pretty text-sm text-muted">{{ full }}</p>{% endif %}
@@ -61,7 +61,7 @@
         <article class="space-y-1" id="past-{{ e.key }}">
             {% call headline(e) %}{% endcall %}
             {% call meta(e) %}{% endcall %}
-            {% if let Some(msg) = e.message %}<p class="text-pretty text-sm text-muted">{{ msg }}</p>{% endif %}
+            {% if let Some(msg) = e.message %}<p class="whitespace-pre-line text-pretty text-sm text-muted">{{ msg }}</p>{% endif %}
         </article>
         {% endif %}
     </li>

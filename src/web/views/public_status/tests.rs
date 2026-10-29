@@ -1456,27 +1456,116 @@ fn a_long_maintenance_description_opens_in_place_and_hides_its_preview() {
     }
     .render()
     .unwrap();
-    let class_of = |text: &str| {
-        let tag = &html[..html.find(text).unwrap()];
-        let start = tag.rfind("class=\"").unwrap() + 7;
-        tag[start..start + tag[start..].find('"').unwrap()].to_owned()
-    };
     assert!(
-        class_of(r#" id="past-"#)
-            .split(' ')
-            .any(|c| c == "group/fold"),
+        has_class(&html, r#" id="past-"#, "group/fold"),
         "the long description opens in place"
     );
     assert!(
-        class_of(">Traffic moves")
-            .split(' ')
-            .any(|c| c == "group-open/fold:hidden"),
+        has_class(&html, ">Traffic moves", "group-open/fold:hidden"),
         "the preview hides itself once the row is open"
     );
     assert!(
         html.contains(full.trim_end()),
         "the open row shows all of it"
     );
+}
+
+/// Whether the tag open where `text` first appears carries `class`.
+fn has_class(html: &str, text: &str, class: &str) -> bool {
+    let at = html
+        .find(text)
+        .unwrap_or_else(|| panic!("{text:?} is not on the page"));
+    let tag = &html[html[..at].rfind('<').unwrap()..at];
+    let Some(start) = tag.find("class=\"").map(|i| i + 7) else {
+        return false;
+    };
+    tag[start..start + tag[start..].find('"').unwrap()]
+        .split(' ')
+        .any(|c| c == class)
+}
+
+#[test]
+fn written_text_keeps_its_line_breaks() {
+    let mut p = sample_page();
+    let now = p.generated_at;
+    let window = |id: u128, description: &str, starts_at, ends_at| PublicMaintenance {
+        updates: Vec::new(),
+        id: Uuid::from_u128(id),
+        title: format!("Window {id}"),
+        description: Some(description.into()),
+        starts_at,
+        ends_at,
+        affected_component_names: vec!["Gateway".into()],
+    };
+    let update = |message: &str| PublicIncidentUpdate {
+        posted_at: now - ChronoDuration::minutes(1),
+        phase: IncidentStatusPhase::Identified,
+        message: message.into(),
+        generated: false,
+    };
+    p.active_maintenance = vec![window(
+        1,
+        "Running now.\n\nRead-only meanwhile.",
+        now - ChronoDuration::minutes(5),
+        now + ChronoDuration::hours(1),
+    )];
+    p.upcoming_maintenance = vec![window(
+        2,
+        "Starts soon.\n\nNo action needed.",
+        now + ChronoDuration::hours(2),
+        now + ChronoDuration::hours(3),
+    )];
+    let mut late = window(
+        3,
+        "Disks swap one by one.",
+        now - ChronoDuration::hours(6),
+        now - ChronoDuration::hours(5),
+    );
+    late.updates.push(PublicMaintenanceUpdate {
+        posted_at: now - ChronoDuration::hours(5),
+        phase: MaintenanceUpdatePhase::Completed,
+        message: "Ran late.\n\nAll disks swapped.".into(),
+    });
+    p.recent_maintenance = vec![
+        window(
+            4,
+            "Done early.\n\nNo data lost.",
+            now - ChronoDuration::hours(4),
+            now - ChronoDuration::hours(3),
+        ),
+        late,
+    ];
+    let mut open = fake_incident(now - ChronoDuration::minutes(14), 1, "Latency spike");
+    open.ended_at = None;
+    open.status_phase = IncidentStatusPhase::Identified;
+    open.updates
+        .push(update("Investigating.\n\nNext update in 30 minutes."));
+    let mut resolved = fake_incident(now - ChronoDuration::hours(8), 2, "API degraded");
+    resolved
+        .updates
+        .push(update("Rolled back.\n\nErrors cleared."));
+    p.active_incidents = vec![open];
+    p.recent_incidents = vec![resolved];
+    let view = build_view(&p, &[], &Default::default(), all_tab(), Tr::default());
+    let html = StatusRegion {
+        tr: Tr::default(),
+        view,
+    }
+    .render()
+    .unwrap();
+    for text in [
+        ">Running now.\n\nRead-only meanwhile.<",
+        ">Starts soon.\n\nNo action needed.<",
+        "“Investigating.\n\nNext update in 30 minutes.”",
+        ">Done early.\n\nNo data lost.<",
+        ">Ran late.\n\nAll disks swapped.<",
+        ">Rolled back.\n\nErrors cleared.<",
+    ] {
+        assert!(
+            has_class(&html, text, "whitespace-pre-line"),
+            "{text:?} keeps its line breaks"
+        );
+    }
 }
 
 #[test]

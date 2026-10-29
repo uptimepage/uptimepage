@@ -29,15 +29,17 @@ impl MaintenanceOps<'_> {
     pub async fn create(
         &self,
         org: OrgId,
-        new: NewMaintenanceWindow,
+        mut new: NewMaintenanceWindow,
         source: WriteSource,
         actor: Option<UserId>,
     ) -> Result<MaintenanceWindow> {
-        self.vet_new(org, &new).await?;
+        self.vet_new(org, &mut new).await?;
         self.store.create(org, new, source, actor).await
     }
 
-    pub async fn vet_new(&self, org: OrgId, new: &NewMaintenanceWindow) -> Result<()> {
+    /// Trims the description in `new`, and drops one left blank.
+    pub async fn vet_new(&self, org: OrgId, new: &mut NewMaintenanceWindow) -> Result<()> {
+        new.description = trimmed(new.description.take()).filter(|d| !d.is_empty());
         validation::validate_title(&new.title, "title")?;
         validation::validate_description(new.description.as_deref(), "description")?;
         validate_time_range(new.starts_at, new.ends_at)?;
@@ -76,7 +78,7 @@ impl MaintenanceOps<'_> {
             })
     }
 
-    /// An end-now edit is pinned to `now` in `update`.
+    /// Trims the description in `update`, and pins an end-now edit to `now`.
     pub async fn vet_update(
         &self,
         org: OrgId,
@@ -84,6 +86,7 @@ impl MaintenanceOps<'_> {
         update: &mut MaintenanceWindowUpdate,
         now: DateTime<Utc>,
     ) -> Result<()> {
+        update.description = trimmed(update.description.take());
         reject_closed(existing.phase(now))?;
         if update.changed_fields().is_empty() {
             return Ok(());
@@ -147,10 +150,11 @@ impl MaintenanceOps<'_> {
         message: &str,
         actor: Option<UserId>,
     ) -> Result<MaintenanceUpdate> {
+        let message = message.trim();
         validation::validate_message(message, "message")?;
         match self
             .store
-            .post_update(org, id, message.trim(), MAX_UPDATES_PER_WINDOW, actor)
+            .post_update(org, id, message, MAX_UPDATES_PER_WINDOW, actor)
             .await?
         {
             PostedUpdate::Posted(update) => Ok(update),
@@ -259,6 +263,12 @@ fn require_future_end(ends: DateTime<Utc>) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Every page shows a description with its line breaks, so stray blank lines
+/// around it would show too.
+fn trimmed(description: Option<String>) -> Option<String> {
+    description.map(|d| d.trim().to_owned())
 }
 
 #[cfg(test)]

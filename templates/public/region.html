@@ -58,7 +58,7 @@
                     </p>
                     {% match inc.latest_message %}
                         {% when Some with (msg) %}
-                            <p class="text-pretty rounded-sm px-3 py-2 text-sm italic text-muted"
+                            <p class="whitespace-pre-line text-pretty rounded-sm px-3 py-2 text-sm italic text-muted"
                                style="background: var(--theme-surface-elev);">“{{ msg }}”</p>
                         {% when None %}
                     {% endmatch %}
@@ -90,7 +90,7 @@
                     {% if !m.affects.is_empty() %} · {{ tr.t("maintenance-affects") }} {{ m.affects }}{% endif %}
                 </p>
                 {% match m.description %}
-                    {% when Some with (d) %}<p class="text-pretty text-quiet">{{ d }}</p>{% when None %}
+                    {% when Some with (d) %}<p class="whitespace-pre-line text-pretty text-quiet">{{ d }}</p>{% when None %}
                 {% endmatch %}
                 {% if let Some(u) = m.latest_update %}
                 <div class="mt-1 border-l-2 border-[color:var(--theme-line)] pl-3">
@@ -119,7 +119,7 @@
                     {% if !m.affects.is_empty() %} · {{ tr.t("maintenance-affects") }} {{ m.affects }}{% endif %}
                 </p>
                 {% match m.description %}
-                    {% when Some with (d) %}<p class="text-pretty text-quiet">{{ d }}</p>{% when None %}
+                    {% when Some with (d) %}<p class="whitespace-pre-line text-pretty text-quiet">{{ d }}</p>{% when None %}
                 {% endmatch %}
                 {% if let Some(u) = m.latest_update %}
                 <div class="mt-1 border-l-2 border-[color:var(--theme-line)] pl-3">
