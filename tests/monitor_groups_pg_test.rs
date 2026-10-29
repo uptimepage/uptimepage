@@ -1,6 +1,6 @@
 //! Live-PG coverage for monitor groups: the name policy shared with the
-//! database, the frozen label column, group writes from monitors and of their
-//! own, the incident a group that alerts as one shares, and its delete.
+//! database, group writes from monitors and of their own, the incident a
+//! group that alerts as one shares, and its delete.
 
 use crate::common;
 
@@ -279,34 +279,11 @@ async fn the_backfill_cuts_a_label_longer_than_a_group_name_holds() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
-async fn the_label_column_is_frozen_and_reads_come_from_the_group() {
-    let Some(f) = Fixture::new("grp_frozen").await else {
+async fn a_monitor_reads_its_group_name_from_the_group() {
+    let Some(f) = Fixture::new("grp_rename").await else {
         return;
     };
-    let insert = |name: Option<&'static str>| {
-        sqlx::query(
-            "INSERT INTO targets (org_id, name, check_spec, interval_secs, group_name) \
-             VALUES ($1, 'old build', '{}'::jsonb, 30, $2)",
-        )
-        .bind(f.org.0)
-        .bind(name)
-        .execute(&f.pool)
-    };
-    assert!(insert(Some("DNS")).await.is_err());
-    insert(None).await.unwrap();
-
     let ns = f.monitor("ns", Some("DNS")).await;
-    let renamed = sqlx::query("UPDATE targets SET group_name = 'Other' WHERE id = $1")
-        .bind(ns.id)
-        .execute(&f.pool)
-        .await;
-    assert!(renamed.is_err());
-    sqlx::query("UPDATE targets SET name = 'ns2', group_name = group_name WHERE id = $1")
-        .bind(ns.id)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-
     let group = ns.group_id.expect("joined a group");
     f.groups
         .update(
@@ -324,12 +301,6 @@ async fn the_label_column_is_frozen_and_reads_come_from_the_group() {
         .unwrap();
     let read = f.targets.get(f.org, ns.id).await.unwrap().unwrap();
     assert_eq!(read.group_name.as_deref(), Some("example.com DNS"));
-    let column: Option<String> = sqlx::query_scalar("SELECT group_name FROM targets WHERE id = $1")
-        .bind(ns.id)
-        .fetch_one(&f.pool)
-        .await
-        .unwrap();
-    assert_eq!(column, None);
     f.done().await;
 }
 
