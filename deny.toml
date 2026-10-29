@@ -41,10 +41,6 @@ ignore = [
     # The latest askama (0.16.1) still depends on it. Revisit when
     # askama_derive drops or replaces basic-toml.
     "RUSTSEC-2026-0374",
-    # `webpki-roots` 0.26.11, a shim sqlx-core 0.8 pulls in that re-exports the
-    # 1.x roots. Cargo.toml floors those at 1.0.10, which drops the emSign root,
-    # so only the shim matches. Revisit on sqlx 0.9.
-    "RUSTSEC-2026-0381",
     # `rustls-pemfile` — archived in favour of `rustls-pki-types::pem`.
     # Dev-dep-only (test cert helpers); harmless. Revisit when test deps
     # migrate.

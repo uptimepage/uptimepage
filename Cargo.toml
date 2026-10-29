@@ -38,6 +38,8 @@ hyper-rustls = { version = "0.27", default-features = false, features = ["http1"
 # TLS
 rustls = "0.23"
 rustls-native-certs = "0.8"
+# 1.0.10 drops the distrusted emSign root (RUSTSEC-2026-0381). The 0.26 shim
+# sqlx pulls in re-exports these roots, so this floor covers it too.
 webpki-roots = "1.0.10"
 tokio-rustls = "0.26"
 
@@ -100,7 +102,7 @@ mime_guess = "2"
 # Public-page `public_about`: parse markdown, then sanitise the HTML. The
 # parser output is never trusted — every byte passes through the ammonia
 # allowlist before it reaches a template.
-pulldown-cmark = { version = "0.13.3", default-features = false, features = ["html"] }
+pulldown-cmark = { version = "0.13.5", default-features = false, features = ["html"] }
 ammonia = "4.2.4"
 
 # Utilities
