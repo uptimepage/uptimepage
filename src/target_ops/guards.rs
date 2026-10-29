@@ -12,7 +12,7 @@ use crate::storage::channel_bindings::{ALERT_CHANNEL_FIELD, unknown_channel};
 use crate::targets::flow_capable_set;
 use crate::targets::validate::{
     RegionSnapshot, flow_covered, normalize_region_ids, reject_manual_recovery_period,
-    validate_heartbeat_cadence,
+    validate_heartbeat_cadence, validate_interval_fits,
 };
 
 use super::TargetOps;
@@ -190,6 +190,9 @@ impl TargetOps<'_> {
         update: &mut TargetUpdate,
         prefetched: Option<&Target>,
     ) -> Result<()> {
+        if let Some(interval) = update.interval {
+            validate_interval_fits(interval)?;
+        }
         let requested = update.interval.map(|i| i.as_secs() as i64);
         // 1 and 0 are what a manual monitor runs on, so only another value needs
         // the kind.

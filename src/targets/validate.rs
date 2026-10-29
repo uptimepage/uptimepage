@@ -191,6 +191,7 @@ pub(crate) fn validate_new_target(
         new.alert_confirmations = 1;
         reject_manual_recovery_period(new.recovery_period())?;
     }
+    validate_interval_fits(new.interval)?;
     let requested = new.interval.as_secs() as i64;
     let kind_floor = min_interval_secs_for_kind(new.check.kind()) as i64;
     let plan_floor = if manual {
@@ -243,13 +244,27 @@ pub(crate) fn validate_heartbeat_cadence(
     Ok(())
 }
 
+/// The column is an INTEGER: a larger interval would wrap on the way in, past
+/// the plan's floor.
+pub(crate) fn validate_interval_fits(interval: std::time::Duration) -> Result<()> {
+    if i32::try_from(interval.as_secs()).is_err() {
+        return Err(AppError::bad_request_field(
+            codes::INVALID_INTERVAL,
+            format!("interval must be at most {}s", i32::MAX),
+            "interval",
+        ));
+    }
+    Ok(())
+}
+
 /// The outage reminder cadence is either off (0) or no tighter than a minute —
 /// a sub-minute reminder would just spam responders.
+/// The column is an INTEGER, so the top is i32's.
 pub(crate) fn validate_renotify_interval(secs: Option<u32>) -> Result<()> {
-    if matches!(secs, Some(n) if n > 0 && n < 60) {
+    if matches!(secs, Some(n) if (n > 0 && n < 60) || i32::try_from(n).is_err()) {
         return Err(AppError::bad_request_field(
             codes::INVALID_ALERT_CONFIG,
-            "renotify_interval_secs must be 0 (off) or at least 60",
+            "renotify_interval_secs must be 0 (off) or from 60 to 2147483647",
             "renotify_interval_secs",
         ));
     }
@@ -285,10 +300,10 @@ pub(crate) fn reject_manual_recovery_period(secs: u32) -> Result<()> {
 
 /// One confirmation minimum — alerting after zero failures is meaningless.
 pub(crate) fn validate_alert_confirmations(n: Option<u32>) -> Result<()> {
-    if matches!(n, Some(0)) {
+    if matches!(n, Some(n) if n == 0 || i32::try_from(n).is_err()) {
         return Err(AppError::bad_request_field(
             codes::INVALID_ALERT_CONFIG,
-            "alert_confirmations must be >= 1",
+            "alert_confirmations must be from 1 to 2147483647",
             "alert_confirmations",
         ));
     }

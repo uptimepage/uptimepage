@@ -169,7 +169,7 @@ blurb = "The /api/v1 surface: monitors, incidents, channels, status pages, and t
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-28
+lastmod = 2026-10-29
 
 [[page]]
 slug = "terraform"

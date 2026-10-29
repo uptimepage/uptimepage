@@ -973,3 +973,30 @@ fn a_named_region_set_is_cleaned_and_an_empty_one_refused() {
         );
     }
 }
+
+#[test]
+fn renotify_interval_fits_the_column() {
+    assert!(validate_renotify_interval(Some(0)).is_ok());
+    assert!(validate_renotify_interval(Some(60)).is_ok());
+    assert!(validate_renotify_interval(Some(i32::MAX as u32)).is_ok());
+    assert!(validate_renotify_interval(Some(59)).is_err());
+    assert!(validate_renotify_interval(Some(i32::MAX as u32 + 1)).is_err());
+}
+
+#[test]
+fn alert_confirmations_fit_the_column() {
+    assert!(validate_alert_confirmations(Some(1)).is_ok());
+    assert!(validate_alert_confirmations(Some(i32::MAX as u32)).is_ok());
+    assert!(validate_alert_confirmations(Some(0)).is_err());
+    assert!(validate_alert_confirmations(Some(i32::MAX as u32 + 1)).is_err());
+}
+
+#[test]
+fn an_interval_fits_the_column() {
+    use std::time::Duration;
+    assert!(validate_interval_fits(Duration::from_secs(i32::MAX as u64)).is_ok());
+    assert_eq!(
+        code_of(validate_interval_fits(Duration::from_secs((1 << 32) + 60)).unwrap_err()),
+        codes::INVALID_INTERVAL
+    );
+}

@@ -587,8 +587,8 @@ attempt cap; per-incident delivery state is visible at
 
 - a duplicate `channel_id` in the array
 - `notification channel <id> does not exist` — unknown id, or one owned by another org
-- `alert_confirmations must be >= 1`
-- `renotify_interval_secs must be 0 (off) or at least 60`
+- `alert_confirmations must be from 1 to 2147483647`
+- `renotify_interval_secs must be 0 (off) or from 60 to 2147483647`
 - `recovery_period_secs must be between 0 and 1800`
 
 A `region_policy` of `{ "count": N }` where `N` is `0` or exceeds the
