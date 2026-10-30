@@ -5,7 +5,7 @@
     <span class="monitors-group__title">{{ gb.name }}</span>
     {% if let Some(g) = gb.group %}
     {% if g.alert_as_one %}<span class="cli-brackets font-mono text-xs text-muted" title="One incident and one alert for the whole group">group alert</span>{% endif %}
-    {% if let Some(inc) = g.incident %}<a href="/incidents/{{ inc.id }}" class="status-badge status-badge--down">incident since <time datetime="{{ inc.since|iso_ts }}" data-tz="at">{{ inc.since|iso_ts }}</time>{% if inc.acked %} · acked{% endif %}</a>{% endif %}
+    {% if let Some(inc) = g.incident %}<a href="/incidents/{{ inc.id }}" class="status-badge status-badge--down"><span>incident since <time datetime="{{ inc.since|iso_ts }}" data-tz="at">{{ inc.since|human_ts }}</time>{% if inc.acked %} · acked{% endif %}</span></a>{% endif %}
     {% endif %}
     <span class="monitors-group__meta">
       {{ gb.total }} monitor{% if gb.total != 1 %}s{% endif %}

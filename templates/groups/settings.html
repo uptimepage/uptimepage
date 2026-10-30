@@ -15,12 +15,12 @@
         {% if let Some(m) = managed_by %}<span class="managed-chip" title="Managed by {{ m }} — changes made here may be overwritten on the next apply">{{ m }}</span>{% endif %}
       </div>
       <p class="font-mono text-xs text-quiet">
-        created <time datetime="{{ created.at|iso_ts }}" data-tz>{{ created.at|iso_ts }}</time>{% if let Some(by) = created.by %} by {{ by }}{% endif %}
-        · changed <time datetime="{{ changed.at|iso_ts }}" data-tz>{{ changed.at|iso_ts }}</time>{% if let Some(by) = changed.by %} by {{ by }}{% endif %} in {{ changed_in }}
+        created <time datetime="{{ created.at|iso_ts }}" data-tz>{{ created.at|human_ts }}</time>{% if let Some(by) = created.by %} by {{ by }}{% endif %}
+        · changed <time datetime="{{ changed.at|iso_ts }}" data-tz>{{ changed.at|human_ts }}</time>{% if let Some(by) = changed.by %} by {{ by }}{% endif %} in {{ changed_in }}
       </p>
       {% if let Some(inc) = open_incident %}
       <p class="text-sm">
-        <a href="/incidents/{{ inc.id }}" class="underline decoration-dotted hover:text-body">incident since <time datetime="{{ inc.since|iso_ts }}" data-tz="at">{{ inc.since|iso_ts }}</time>{% if inc.acked %} · acked{% endif %}</a>
+        <a href="/incidents/{{ inc.id }}" class="underline decoration-dotted hover:text-body">incident since <time datetime="{{ inc.since|iso_ts }}" data-tz="at">{{ inc.since|human_ts }}</time>{% if inc.acked %} · acked{% endif %}</a>
       </p>
       {% endif %}
     </header>
