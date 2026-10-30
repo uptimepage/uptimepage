@@ -138,7 +138,7 @@
 
     {% if branding.show_powered_by %}
     <footer class="mx-auto max-w-3xl px-4 py-8 text-xs text-quiet">
-        {{ tr.t("powered-by") }} <a href="https://uptimepage.dev/?utm_source=status-page&amp;utm_medium=powered-by" class="hover:text-body">uptimepage</a>
+        {{ tr.t("powered-by") }} {% include "public/_credit_link.html" %}
     </footer>
     {% endif %}
 </body>

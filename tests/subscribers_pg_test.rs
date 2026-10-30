@@ -176,6 +176,8 @@ fn config() -> SubscriberDispatchConfig {
             base_domain: "example.com".into(),
             public_base_url: "https://app.example.com".into(),
             subdomain_routes: true,
+            enforce_plan_features: true,
+            default_show_powered_by: true,
         },
         "dispatch-secret".into(),
         "status@example.com".into(),
@@ -677,6 +679,56 @@ async fn a_german_page_mails_its_subscribers_in_german() {
         rendered.subject
     );
     assert!(rendered.html_body.contains(r#"<html lang="de">"#));
+    done(pool, &name).await;
+}
+
+/// A page whose plan cannot drop the footer badge carries the credit in its
+/// mail too; a white-label page that turned the badge off carries neither.
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn the_mail_carries_the_credit_only_where_the_plan_keeps_the_badge() {
+    let Some((pool, name)) = isolated("subcr").await else {
+        return;
+    };
+    let org = seed_org(&pool).await;
+    let target = seed_target(&pool, org, "mon").await;
+    let page = seed_page(&pool, org).await;
+    sqlx::query("UPDATE status_pages SET public_show_powered_by = false WHERE id = $1")
+        .bind(page)
+        .execute(&pool)
+        .await
+        .unwrap();
+    add_component(&pool, org, page, target).await;
+    confirmed_subscriber(&pool, org, page, "cr@example.com").await;
+    let incident = seed_incident(&pool, org, target, "public").await;
+
+    let mailed = async || -> String {
+        add_update(&pool, org, incident, 0).await;
+        let mem = Arc::new(InMemoryEmailSender::new());
+        dispatcher(pool.clone(), mem.clone())
+            .run_once()
+            .await
+            .unwrap();
+        let mail = mails_to(&mem, "cr@example.com").pop().expect("mailed");
+        mail.template.render("Uptimepage").text_body
+    };
+    let free = mailed().await;
+    assert!(
+        free.contains("Status page by uptimepage — free for your own project"),
+        "{free}"
+    );
+    assert!(free.contains("utm_source=status-email"), "{free}");
+
+    sqlx::query(
+        "UPDATE accounts SET plan_id = 'team' \
+         WHERE id = (SELECT account_id FROM organizations WHERE id = $1)",
+    )
+    .bind(org)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let team = mailed().await;
+    assert!(!team.contains("Status page by uptimepage"), "{team}");
     done(pool, &name).await;
 }
 

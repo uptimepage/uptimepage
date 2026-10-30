@@ -109,7 +109,7 @@ blurb = "Running one or more branded status pages per organization, each on its 
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-29
+lastmod = 2026-10-30
 
 [[page]]
 slug = "share-links"

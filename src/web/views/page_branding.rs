@@ -9,8 +9,11 @@ use crate::domain::{OrgId, PublicOrgBranding, StatusPageId};
 use crate::request::host::is_subdomain_public_request;
 use crate::storage::orgs::{OrgBranding, load_page_branding};
 
+use crate::domain::Locale;
+use crate::public_status::credit;
 use crate::public_status::status_title;
 use crate::public_status::urls::LOGO_ROUTE;
+use crate::request::host::published_page_origin;
 
 /// Operator-controlled branding, resolved for rendering. Optional DB fields
 /// have already had their defaults applied here, so the template just prints
@@ -26,6 +29,9 @@ pub struct BrandingView {
     pub brand_text: &'static str,
     pub logo_url: Option<String>,
     pub show_powered_by: bool,
+    /// Host the page is published on, which the credit link reports as the
+    /// page that sent the visit.
+    pub credit_host: Option<String>,
     /// The Licenses and Source code footer links. See `enforce_source_links`.
     pub show_source_links: bool,
     pub style: &'static str,
@@ -55,6 +61,10 @@ impl BrandingView {
 
     pub fn status_title(&self) -> String {
         status_title(&self.display_name)
+    }
+
+    pub fn credit_url(&self, locale: Locale) -> String {
+        credit::url(locale, credit::Surface::Page, self.credit_host.as_deref())
     }
 
     pub fn robots(&self) -> &'static str {
@@ -90,6 +100,7 @@ impl BrandingView {
                 .as_deref()
                 .map(|h| format!("{LOGO_ROUTE}?v={h}")),
             show_powered_by: o.branding.show_powered_by(cfg.default_show_powered_by),
+            credit_host: None,
             show_source_links: true,
             style: o.branding.public_style.as_str(),
             home,
@@ -146,7 +157,13 @@ pub async fn resolve_branding(
         }
     };
     let enforced = state.cfg.quotas.enforce_plan_features;
-    view.show_powered_by = enforce_powered_by(view.show_powered_by, enforced, white_label);
+    view.show_powered_by = credit::shown(view.show_powered_by, enforced, white_label);
+    // A self-hosted page's host is the operator's, not ours to collect.
+    if enforced {
+        view.credit_host = published_page_origin(&state.request_state(), headers, page)
+            .as_deref()
+            .and_then(credit::host_of);
+    }
     view.show_source_links = enforce_source_links(enforced, view.show_powered_by);
     view.follow_website_link = enforce_follow_link(enforced, white_label, view.hide_from_search);
     view
@@ -160,17 +177,6 @@ pub(crate) fn status_home(state: &AppState, headers: &HeaderMap) -> &'static str
         "/"
     } else {
         "/status"
-    }
-}
-
-/// White-label is Pro-only: where plans are enforced a plan without white-label
-/// always shows the "powered by" badge, whatever the page stored. Self-host and
-/// white-label plans keep the stored preference.
-fn enforce_powered_by(stored: bool, enforced: bool, white_label: bool) -> bool {
-    if enforced && !white_label {
-        true
-    } else {
-        stored
     }
 }
 
@@ -290,17 +296,6 @@ impl BrandingView {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn powered_by_forced_for_saas_non_white_label() {
-        // SaaS free: badge shown even if the page tried to hide it.
-        assert!(enforce_powered_by(false, true, false));
-        assert!(enforce_powered_by(true, true, false));
-        // SaaS white-label (Pro): stored preference honoured.
-        assert!(!enforce_powered_by(false, true, true));
-        // Self-host: unrestricted, stored preference honoured.
-        assert!(!enforce_powered_by(false, false, false));
-    }
 
     #[test]
     fn source_links_follow_the_badge_only_on_saas() {

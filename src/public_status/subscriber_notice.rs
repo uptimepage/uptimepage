@@ -11,10 +11,12 @@ use crate::domain::Locale;
 use crate::email::templates::subscriber_maintenance::MaintenanceNotice;
 use crate::email::templates::subscriber_outage::{OutageComponent, OutageMail};
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
+use crate::public_status::credit;
 use crate::storage::page_sql::PageRow;
 use crate::storage::subscribers;
 
-/// The deploy's addressing, to turn a page into the links its mail carries.
+/// The deploy's addressing and badge rule, to turn a page into the links its
+/// mail carries.
 #[derive(Debug, Clone)]
 pub struct PageLinks {
     /// Wildcard base domain for `{slug}.{base_domain}` page links; empty on a
@@ -24,6 +26,10 @@ pub struct PageLinks {
     /// Whether pages are served on hosts of their own; decides where on the
     /// origin the page itself lives.
     pub subdomain_routes: bool,
+    /// Whether a plan without white-label must carry the credit.
+    pub enforce_plan_features: bool,
+    /// The credit on a page that stored no preference.
+    pub default_show_powered_by: bool,
 }
 
 impl PageLinks {
@@ -38,11 +44,17 @@ impl PageLinks {
         // The page's own address: subscribers keep it, so it has to be the
         // URL the page answers on rather than one that redirects there.
         let url = crate::public_status::urls::status_url_for(self.subdomain_routes, &origin);
+        let credit = credit::in_mail(
+            page.show_powered_by.unwrap_or(self.default_show_powered_by),
+            self.enforce_plan_features,
+            page.white_label,
+        );
         PageSnapshot {
             name: page.page_name.clone(),
             locale: page.public_locale.clone(),
             origin,
             url,
+            credit,
         }
     }
 }
@@ -53,6 +65,10 @@ pub struct PageSnapshot {
     pub locale: String,
     pub origin: String,
     pub url: String,
+    /// The mail carries the uptimepage credit, as the page's footer does.
+    /// Absent from a notice planned before the credit existed.
+    #[serde(default)]
+    pub credit: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,6 +130,16 @@ impl NoticePayload {
         format!("{}/status/incidents/{incident_id}", self.page.origin)
     }
 
+    fn credit_url(&self) -> Option<String> {
+        self.page.credit.then(|| {
+            credit::url(
+                self.locale(),
+                credit::Surface::Email,
+                credit::host_of(&self.page.origin).as_deref(),
+            )
+        })
+    }
+
     pub fn unsubscribe_url(&self, secret: &str, subscriber_id: Uuid) -> String {
         subscribers::unsubscribe_url(secret, &self.page.origin, subscriber_id)
     }
@@ -142,6 +168,7 @@ impl NoticePayload {
                 message: message.clone(),
                 incident_url: self.incident_url(*incident_id),
                 unsubscribe_url,
+                credit_url: self.credit_url(),
             },
             NoticeBody::Outage {
                 resolved,
@@ -163,6 +190,7 @@ impl NoticePayload {
                     .collect(),
                 page_url: self.page.url.clone(),
                 unsubscribe_url,
+                credit_url: self.credit_url(),
             }),
             NoticeBody::Maintenance {
                 title,
@@ -188,6 +216,7 @@ impl NoticePayload {
                 ends_at: *ends_at,
                 page_url: self.page.url.clone(),
                 unsubscribe_url,
+                credit_url: self.credit_url(),
             },
             NoticeBody::MaintenanceUpdate {
                 title,
@@ -208,6 +237,7 @@ impl NoticePayload {
                 ends_at: *ends_at,
                 page_url: self.page.url.clone(),
                 unsubscribe_url,
+                credit_url: self.credit_url(),
             },
         };
         TransactionalEmail {
@@ -291,6 +321,7 @@ mod tests {
             locale: "en".into(),
             origin: "https://acme.example.com".into(),
             url: "https://acme.example.com".into(),
+            credit: false,
         }
     }
 
@@ -351,5 +382,104 @@ mod tests {
             "https://u".into(),
         );
         assert_eq!(mail.template.list_unsubscribe_url(), Some("https://u"));
+    }
+
+    fn row(white_label: bool, show_powered_by: Option<bool>) -> PageRow {
+        PageRow {
+            page_id: Uuid::nil(),
+            org_id: Uuid::nil(),
+            page_name: "Acme status".into(),
+            public_locale: "en".into(),
+            slug: "acme".into(),
+            custom_domain: None,
+            custom_domain_published: false,
+            show_powered_by,
+            white_label,
+        }
+    }
+
+    fn hosted() -> PageLinks {
+        PageLinks {
+            base_domain: "example.com".into(),
+            public_base_url: "https://app.example.com".into(),
+            subdomain_routes: true,
+            enforce_plan_features: true,
+            default_show_powered_by: true,
+        }
+    }
+
+    fn rendered(page: PageSnapshot) -> crate::email::templates::RenderedEmail {
+        NoticePayload {
+            page,
+            body: NoticeBody::Maintenance {
+                maintenance_id: Uuid::nil(),
+                title: "Database upgrade".into(),
+                description: None,
+                phase: "scheduled".into(),
+                starts_at: Utc::now(),
+                ends_at: Utc::now(),
+            },
+        }
+        .email(
+            EmailAddress::new("status@example.com", "Status"),
+            "a@example.com",
+            "https://u".into(),
+        )
+        .template
+        .render("Uptimepage")
+    }
+
+    #[test]
+    fn the_mail_carries_the_credit_unless_the_plan_sells_white_label() {
+        let free = hosted().snapshot(&row(false, Some(false)));
+        assert!(free.credit, "a plan without white-label cannot drop it");
+        let mail = rendered(free);
+        for body in [&mail.text_body, &mail.html_body] {
+            assert!(
+                body.contains("Status page by uptimepage — free for your own project"),
+                "{body}"
+            );
+        }
+        assert!(mail.text_body.contains(
+            "https://uptimepage.dev/free-status-page?utm_source=status-email&utm_medium=email\
+             &utm_campaign=footer&utm_content=acme.example.com"
+        ));
+
+        let pro = hosted().snapshot(&row(true, Some(false)));
+        assert!(!pro.credit);
+        let mail = rendered(pro);
+        for body in [&mail.text_body, &mail.html_body] {
+            assert!(!body.contains("Status page by uptimepage"), "{body}");
+            assert!(!body.contains("utm_source=status-email"), "{body}");
+        }
+
+        assert!(
+            hosted().snapshot(&row(true, None)).credit,
+            "white-label follows the page's own choice, the deploy default here"
+        );
+    }
+
+    #[test]
+    fn a_self_hosted_page_mails_without_the_credit() {
+        let links = PageLinks {
+            enforce_plan_features: false,
+            ..hosted()
+        };
+        assert!(!links.snapshot(&row(false, Some(true))).credit);
+    }
+
+    #[test]
+    fn a_notice_planned_before_the_credit_goes_without() {
+        let mut json = serde_json::to_value(NoticePayload {
+            page: hosted().snapshot(&row(false, None)),
+            body: NoticeBody::Outage {
+                resolved: true,
+                components: Vec::new(),
+            },
+        })
+        .unwrap();
+        json["page"].as_object_mut().unwrap().remove("credit");
+        let back: NoticePayload = serde_json::from_value(json).unwrap();
+        assert!(!back.page.credit);
     }
 }

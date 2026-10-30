@@ -314,6 +314,7 @@ email-view-page-button = Statusseite ansehen
 email-unsubscribe = Abbestellen
 email-unsubscribe-text = Abbestellen:
 email-footnote = Sie erhalten diese E-Mail, weil Sie { $page } abonniert haben. { $unsubscribe }.
+email-credit = Statusseite von uptimepage – kostenlos für Ihr eigenes Projekt
 
 ## Private page sign-in
 

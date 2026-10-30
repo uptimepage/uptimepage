@@ -298,6 +298,7 @@ email-view-page-button = View status page
 email-unsubscribe = Unsubscribe
 email-unsubscribe-text = Unsubscribe:
 email-footnote = You're receiving this because you subscribed to { $page }. { $unsubscribe }.
+email-credit = Status page by uptimepage — free for your own project
 
 ## Private page sign-in
 

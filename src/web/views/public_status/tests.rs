@@ -761,6 +761,7 @@ fn branding_renders_logo_about_and_color() {
     assert!(html.contains(r#"src="/status/branding/logo?v=deadbeefcafef00d""#));
     assert!(html.contains("<strong>hi</strong> there"));
     assert!(!html.contains("Powered by"));
+    assert!(!html.contains("uptimepage.dev/free-status-page"));
 }
 
 #[test]
@@ -937,7 +938,41 @@ fn powered_by_shown_by_default() {
     .unwrap();
     assert!(html.contains("Powered by"));
     assert!(
-        html.contains(r#"<a href="https://uptimepage.dev/?utm_source=status-page&amp;utm_medium=powered-by" class="hover:text-body">uptimepage</a>"#)
+        html.contains(r#"<a href="https://uptimepage.dev/free-status-page?utm_source=status-page&#38;utm_medium=powered-by&#38;utm_campaign=footer" class="hover:text-body"><svg "#),
+        "{html}"
+    );
+    assert!(html.contains("<title>uptimepage</title>"), "{html}");
+}
+
+/// The credit carries the page's host, so a visit to the site can be traced
+/// to the page it came from, and links the landing in the page's language.
+#[test]
+fn powered_by_names_the_page_that_sent_the_visit() {
+    let branding = BrandingView {
+        credit_host: Some("status.acme.test".into()),
+        ..BrandingView::sample(PublicOrgBranding::default())
+    };
+    let html = StatusFullPage {
+        reader: Reader::default(),
+        tr: Tr::new(crate::domain::Locale::De),
+        view: build_view(
+            &sample_page(),
+            &[],
+            &Default::default(),
+            all_tab(),
+            Tr::default(),
+        ),
+        branding,
+        og: OgMeta::default(),
+    }
+    .render()
+    .unwrap();
+    assert!(
+        html.contains(
+            "https://uptimepage.dev/de/free-status-page?utm_source=status-page&#38;utm_medium=powered-by\
+             &#38;utm_campaign=footer&#38;utm_content=status.acme.test"
+        ),
+        "{html}"
     );
 }
 

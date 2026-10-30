@@ -7,6 +7,7 @@ pub mod access;
 pub mod aggregator;
 pub mod badge;
 pub mod cache;
+pub mod credit;
 pub mod curation;
 pub mod custom_domain_ask;
 pub mod history;

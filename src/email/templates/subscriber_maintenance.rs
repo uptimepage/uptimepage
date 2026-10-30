@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::email::templates::layout::{self, ButtonStyle, Page, Tone};
-use crate::email::templates::{RenderedEmail, subscriber_footnote};
+use crate::email::templates::{RenderedEmail, subscriber_credit_text, subscriber_footnote};
 use crate::i18n::Tr;
 
 /// What a maintenance email tells a subscriber.
@@ -52,6 +52,7 @@ pub fn render(
     ends_at: DateTime<Utc>,
     page_url: &str,
     unsubscribe_url: &str,
+    credit_url: Option<&str>,
 ) -> RenderedEmail {
     let completed = matches!(notice, MaintenanceNotice::Completed { .. });
     let heading = tr.t(notice.heading_key());
@@ -67,13 +68,14 @@ pub fn render(
          {desc_text}\n\
          {view}\n  {page_url}\n\
          \n\
-         {unsubscribe}\n  {unsubscribe_url}\n",
+         {unsubscribe}\n  {unsubscribe_url}\n{credit}",
         when = tr.t_args(
             "email-maintenance-when",
             [("window", window.as_str().into())]
         ),
         view = tr.t("email-view-page"),
         unsubscribe = tr.t("email-unsubscribe-text"),
+        credit = subscriber_credit_text(tr, credit_url),
     );
 
     let fact = tr.t(if notice.ran() {
@@ -105,7 +107,12 @@ pub fn render(
                 Some(&window),
             ),
             body,
-            footnote: Some(subscriber_footnote(tr, page_name, unsubscribe_url)),
+            footnote: Some(subscriber_footnote(
+                tr,
+                page_name,
+                unsubscribe_url,
+                credit_url,
+            )),
         },
     );
 
@@ -132,6 +139,7 @@ mod tests {
             Utc.with_ymd_and_hms(2026, 8, 20, 3, 0, 0).unwrap(),
             "https://acme.test/",
             "https://acme.test/subscribe/unsubscribe?s=1&t=2",
+            None,
         )
     }
 
@@ -160,6 +168,7 @@ mod tests {
             Utc.with_ymd_and_hms(2026, 3, 20, 3, 0, 0).unwrap(),
             "https://acme.test/",
             "https://acme.test/subscribe/unsubscribe?s=1&t=2",
+            None,
         );
         assert_eq!(
             r.subject,

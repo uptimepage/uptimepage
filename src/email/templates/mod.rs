@@ -58,8 +58,14 @@ pub(crate) fn fill_slot(text: &str, markup: &str) -> String {
     html_escape(text).replacen(MARKUP_SLOT, markup, 1)
 }
 
-pub(crate) fn subscriber_footnote(tr: Tr, page_name: &str, unsubscribe_url: &str) -> String {
-    layout::fine_print(&fill_slot(
+/// Attribution and opt-out, then the uptimepage credit where the page carries one.
+pub(crate) fn subscriber_footnote(
+    tr: Tr,
+    page_name: &str,
+    unsubscribe_url: &str,
+    credit_url: Option<&str>,
+) -> String {
+    let mut html = layout::fine_print(&fill_slot(
         &tr.t_args(
             "email-footnote",
             [
@@ -68,7 +74,21 @@ pub(crate) fn subscriber_footnote(tr: Tr, page_name: &str, unsubscribe_url: &str
             ],
         ),
         &layout::quiet_link(unsubscribe_url, &tr.t("email-unsubscribe")),
-    ))
+    ));
+    if let Some(url) = credit_url {
+        html.push_str(&layout::fine_print(&layout::quiet_link(
+            url,
+            &tr.t("email-credit"),
+        )));
+    }
+    html
+}
+
+/// The plain-text body's closing credit line, or nothing.
+pub(crate) fn subscriber_credit_text(tr: Tr, credit_url: Option<&str>) -> String {
+    credit_url
+        .map(|url| format!("\n{}\n  {url}\n", tr.t("email-credit")))
+        .unwrap_or_default()
 }
 
 /// Attribute-context escaping. Same rule as [`html_escape`] today (the quote

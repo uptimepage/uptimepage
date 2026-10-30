@@ -70,14 +70,36 @@ pub struct PageRow {
     pub slug: String,
     pub custom_domain: Option<String>,
     pub custom_domain_published: bool,
+    /// The page's stored badge preference; `None` follows the deploy default.
+    pub show_powered_by: Option<bool>,
+    pub white_label: bool,
 }
+
+/// Each [`PageRow`] field: the expression that reads it, and its name.
+const PAGE_ROW: [(&str, &str); 9] = [
+    ("sp.id", "page_id"),
+    ("sp.org_id", "org_id"),
+    (PAGE_PUBLIC_NAME, "page_name"),
+    ("sp.public_locale", "public_locale"),
+    ("sp.slug::text", "slug"),
+    ("sp.custom_domain::text", "custom_domain"),
+    (PAGE_CUSTOM_DOMAIN_PUBLISHED, "custom_domain_published"),
+    ("sp.public_show_powered_by", "show_powered_by"),
+    ("sp_plan.white_label_enabled", "white_label"),
+];
 
 /// The columns of a [`PageRow`], for a query that aliases the page `sp` and
 /// joins [`PAGE_PLAN_JOIN`].
 pub(crate) fn page_row_columns() -> String {
-    format!(
-        "sp.id AS page_id, sp.org_id, {PAGE_PUBLIC_NAME} AS page_name, sp.public_locale, \
-         sp.slug::text AS slug, sp.custom_domain::text AS custom_domain, \
-         {PAGE_CUSTOM_DOMAIN_PUBLISHED} AS custom_domain_published"
-    )
+    PAGE_ROW
+        .iter()
+        .map(|(expr, name)| format!("{expr} AS {name}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The names [`page_row_columns`] gives its columns, for a query that reads
+/// them back out of a subquery.
+pub(crate) fn page_row_names() -> String {
+    PAGE_ROW.map(|(_, name)| name).join(", ")
 }

@@ -644,6 +644,8 @@ mod tests {
                 slug: "acme".into(),
                 custom_domain: None,
                 custom_domain_published: false,
+                show_powered_by: None,
+                white_label: false,
             },
             update_id: Uuid::nil(),
             phase: "investigating".into(),

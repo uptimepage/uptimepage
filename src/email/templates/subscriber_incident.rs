@@ -1,8 +1,11 @@
 use crate::domain::IncidentStatusPhase;
 use crate::email::templates::layout::{self, ButtonStyle, Page, Tone};
-use crate::email::templates::{RenderedEmail, single_line, subscriber_footnote};
+use crate::email::templates::{
+    RenderedEmail, single_line, subscriber_credit_text, subscriber_footnote,
+};
 use crate::i18n::Tr;
 
+#[allow(clippy::too_many_arguments)]
 pub fn render(
     tr: Tr,
     page_name: &str,
@@ -11,6 +14,7 @@ pub fn render(
     message: &str,
     incident_url: &str,
     unsubscribe_url: &str,
+    credit_url: Option<&str>,
 ) -> RenderedEmail {
     // Parsed back to the enum so a new variant has to be classified here
     // rather than defaulting to "still going wrong". That guard is the
@@ -35,10 +39,11 @@ pub fn render(
          \n\
          {view}\n  {incident_url}\n\
          \n\
-         {unsubscribe}\n  {unsubscribe_url}\n",
+         {unsubscribe}\n  {unsubscribe_url}\n{credit}",
         status = tr.t_args("email-status-line", [("phase", label.as_str().into())]),
         view = tr.t("email-view-page"),
         unsubscribe = tr.t("email-unsubscribe-text"),
+        credit = subscriber_credit_text(tr, credit_url),
     );
 
     let mut body = layout::prose(message);
@@ -57,7 +62,12 @@ pub fn render(
             signature: None,
             header: layout::band(tone, &label.to_uppercase(), incident_title, None),
             body,
-            footnote: Some(subscriber_footnote(tr, page_name, unsubscribe_url)),
+            footnote: Some(subscriber_footnote(
+                tr,
+                page_name,
+                unsubscribe_url,
+                credit_url,
+            )),
         },
     );
 
@@ -83,6 +93,7 @@ mod tests {
             "We are looking into elevated errors.",
             "https://acme.test/incidents/1",
             "https://acme.test/subscribe/unsubscribe?s=1&t=2",
+            None,
         );
         assert_eq!(
             r.subject,
@@ -103,6 +114,7 @@ mod tests {
             "Fix in progress.",
             "https://acme.test/incidents/1",
             "https://acme.test/subscribe/unsubscribe?s=1&t=2",
+            None,
         );
         assert_eq!(
             r.subject,
@@ -120,6 +132,38 @@ mod tests {
     }
 
     #[test]
+    fn the_credit_closes_both_bodies_when_the_page_carries_it() {
+        let r = render(
+            Tr::new(crate::domain::Locale::De),
+            "Acme status",
+            "Checkout is failing",
+            "resolved",
+            "Fixed.",
+            "https://acme.test/incidents/1",
+            "https://acme.test/subscribe/unsubscribe?s=1&t=2",
+            Some(
+                "https://uptimepage.dev/de/free-status-page?utm_source=status-email&utm_medium=email",
+            ),
+        );
+        let line = "Statusseite von uptimepage – kostenlos für Ihr eigenes Projekt";
+        assert!(
+            r.text_body.ends_with(&format!(
+                "{line}\n  https://uptimepage.dev/de/free-status-page?utm_source=status-email&utm_medium=email\n"
+            )),
+            "{}",
+            r.text_body
+        );
+        assert!(
+            r.html_body.contains(
+                "href=\"https://uptimepage.dev/de/free-status-page?utm_source=status-email&amp;utm_medium=email\""
+            ),
+            "{}",
+            r.html_body
+        );
+        assert!(r.html_body.contains(line));
+    }
+
+    #[test]
     fn a_postmortem_does_not_read_as_an_open_problem() {
         let r = render(
             Tr::default(),
@@ -129,6 +173,7 @@ mod tests {
             "What happened and what we changed.",
             "https://acme.test/incidents/1",
             "https://acme.test/subscribe/unsubscribe?s=1&t=2",
+            None,
         );
         // Tone::Good's signal colour; the warn amber would say "still broken".
         assert!(r.html_body.contains("#43d58f"), "{}", r.html_body);
@@ -145,6 +190,7 @@ mod tests {
             "Root cause found.\nA fix is deployed.",
             "https://acme.test/incidents/1",
             "https://acme.test/subscribe/unsubscribe?s=1&t=2",
+            None,
         );
         assert!(
             r.html_body

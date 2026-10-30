@@ -9,7 +9,9 @@ use uuid::Uuid;
 
 use crate::error::Result;
 use crate::storage::admin::not_held_sql;
-use crate::storage::page_sql::{PAGE_PLAN_JOIN, PAGE_SERVED, PageRow, page_row_columns};
+use crate::storage::page_sql::{
+    PAGE_PLAN_JOIN, PAGE_SERVED, PageRow, page_row_columns, page_row_names,
+};
 use crate::storage::subscribers::FANOUT_LOOKBACK_HOURS;
 
 /// Whether window `mw` shows on page `sp`: through one of the page's
@@ -65,9 +67,7 @@ pub async fn pending_window_notices(
     limit: i64,
 ) -> Result<Vec<WindowNoticeRow>> {
     let sql = format!(
-        "SELECT page_id, org_id, page_name, public_locale, slug, custom_domain,
-                custom_domain_published, maintenance_id, phase, title, description,
-                starts_at, ends_at
+        "SELECT {names}, maintenance_id, phase, title, description, starts_at, ends_at
          FROM (
              SELECT {page},
                     mw.id AS maintenance_id, mw.title, mw.description, mw.starts_at, mw.ends_at,
@@ -90,6 +90,7 @@ pub async fn pending_window_notices(
          LIMIT $1",
         SHOWN_ON_PAGE = shown_on_page_sql("mw.ends_at"),
         page = page_row_columns(),
+        names = page_row_names(),
     );
     let rows = sqlx::query_as::<_, WindowNoticeRow>(&sql)
         .bind(limit)

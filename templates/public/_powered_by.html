@@ -1,1 +1,1 @@
-{% if branding.show_powered_by %}{{ tr.t("powered-by") }} <a href="https://uptimepage.dev/?utm_source=status-page&amp;utm_medium=powered-by" class="hover:text-body">uptimepage</a> · {% endif %}
+{% if branding.show_powered_by %}{{ tr.t("powered-by") }} {% include "public/_credit_link.html" %} · {% endif %}

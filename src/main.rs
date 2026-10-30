@@ -730,6 +730,8 @@ async fn main() -> Result<()> {
                     base_domain: cfg.public_status.base_domain.clone(),
                     public_base_url: cfg.auth.public_base_url.clone(),
                     subdomain_routes: cfg.tenancy.subdomain_public_routes,
+                    enforce_plan_features: cfg.quotas.enforce_plan_features,
+                    default_show_powered_by: cfg.public_status.default_show_powered_by,
                 },
                 unsubscribe_secret.clone(),
                 cfg.email.from_address.clone(),

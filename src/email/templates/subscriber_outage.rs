@@ -2,7 +2,9 @@ use chrono::{DateTime, Utc};
 
 use crate::domain::Locale;
 use crate::email::templates::layout::{self, ButtonStyle, Page, Tone};
-use crate::email::templates::{RenderedEmail, single_line, subscriber_footnote};
+use crate::email::templates::{
+    RenderedEmail, single_line, subscriber_credit_text, subscriber_footnote,
+};
 use crate::i18n::Tr;
 
 /// Names a preheader spells out before it counts the rest.
@@ -17,6 +19,8 @@ pub struct OutageMail {
     pub components: Vec<OutageComponent>,
     pub page_url: String,
     pub unsubscribe_url: String,
+    /// The uptimepage credit's link, on a page that carries the credit.
+    pub credit_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,12 +139,13 @@ pub fn render(mail: &OutageMail) -> RenderedEmail {
          {text_lines}\n\
          {view}\n  {page_url}\n\
          \n\
-         {unsubscribe}\n  {unsubscribe_url}\n",
+         {unsubscribe}\n  {unsubscribe_url}\n{credit}",
         status = tr.t_args("email-status-line", [("phase", label.as_str().into())]),
         view = tr.t("email-view-page"),
         page_url = mail.page_url,
         unsubscribe = tr.t("email-unsubscribe-text"),
         unsubscribe_url = mail.unsubscribe_url,
+        credit = subscriber_credit_text(tr, mail.credit_url.as_deref()),
     );
 
     let mut body = layout::prose(&lead);
@@ -163,6 +168,7 @@ pub fn render(mail: &OutageMail) -> RenderedEmail {
                 tr,
                 &mail.page_name,
                 &mail.unsubscribe_url,
+                mail.credit_url.as_deref(),
             )),
         },
     );
@@ -208,6 +214,7 @@ mod tests {
             ],
             page_url: "https://acme.test/".into(),
             unsubscribe_url: "https://acme.test/subscribe/unsubscribe?s=1&t=2".into(),
+            credit_url: None,
         }
     }
 

@@ -696,6 +696,7 @@ mod tests {
             brand_text: "#ffffff",
             logo_url: None,
             show_powered_by,
+            credit_host: None,
             show_source_links: show_powered_by,
             style: "dark",
             home: "/",

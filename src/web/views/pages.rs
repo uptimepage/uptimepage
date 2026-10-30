@@ -462,25 +462,7 @@ pub async fn page_editor(
         .as_deref()
         .map(|o| public_status_url(&state.cfg, o))
         .unwrap_or_default();
-    // Absolute origin for the badge: subdomain in SaaS mode, else the
-    // configured public base URL so path-based/self-host deploys still get a
-    // README-ready link.
-    let badge_origin = crate::public_status::urls::page_origin(
-        &state.cfg.public_status.base_domain,
-        &state.cfg.auth.public_base_url,
-        &page.slug,
-        None,
-        false,
-    );
-    let badge_url = (!badge_origin.is_empty()).then(|| {
-        format!(
-            "{}/api/public/v1/badge.svg",
-            badge_origin.trim_end_matches('/')
-        )
-    });
-    let badge_link = (!status_url.is_empty()).then(|| {
-        format!("{status_url}?utm_source=status-badge&utm_medium=badge&utm_campaign=embed")
-    });
+    let (badge_url, badge_link) = badge_embed(&state.cfg, &page.slug);
     let logo_url = b
         .logo_hash
         .as_deref()
@@ -616,6 +598,27 @@ pub async fn page_editor(
     .into_response())
 }
 
+/// The badge image and the status page it links to. Both are absolute,
+/// subdomain in SaaS mode, else the configured public base URL: the embed
+/// lives on someone else's site, where a relative link points at that site.
+fn badge_embed(cfg: &crate::config::AppConfig, slug: &str) -> (Option<String>, Option<String>) {
+    let base = public_base(cfg, slug);
+    let origin = match base.as_deref() {
+        Some(own) if !own.is_empty() => own,
+        _ => cfg.auth.public_base_url.trim_end_matches('/'),
+    };
+    if origin.is_empty() {
+        return (None, None);
+    }
+    let link = base.is_some().then(|| {
+        format!(
+            "{}?utm_source=status-badge&utm_medium=badge&utm_campaign=embed",
+            public_status_url(cfg, origin)
+        )
+    });
+    (Some(format!("{origin}/api/public/v1/badge.svg")), link)
+}
+
 /// Overall-badge alt text. Strips `"` so the value can't break out of the
 /// copied `alt="…"` attribute.
 fn badge_alt_label(page_name: &str) -> String {
@@ -735,6 +738,53 @@ mod tests {
         assert!(html.contains("utm_source=status-badge"));
         assert!(html.contains("[!["));
         assert!(html.contains("alt=\"Acme Status\""));
+        assert!(
+            html.contains(
+                "&lt;a href=\"https://acme.uptimepage.dev?utm_source=status-badge&#38;utm_medium=badge\
+                 &#38;utm_campaign=embed\" target=\"_blank\" rel=\"noopener\"&gt;\
+                 &lt;img src=\"https://acme.uptimepage.dev/api/public/v1/badge.svg\""
+            ),
+            "{html}"
+        );
+    }
+
+    /// An embed lives on someone else's site, so a path-based deploy's badge
+    /// links its page by full address rather than `/status`.
+    #[test]
+    fn the_badge_links_its_page_by_full_address() {
+        let mut cfg = crate::config::AppConfig::load().expect("config");
+        cfg.tenancy.subdomain_public_routes = false;
+        cfg.tenancy.path_based_public_routes = true;
+        // Path mode serves the page on the public base URL, base domain or not.
+        cfg.public_status.base_domain = "example.com".into();
+        cfg.auth.public_base_url = "https://status.example.com/".into();
+        let (src, href) = badge_embed(&cfg, "acme");
+        assert_eq!(
+            src.as_deref(),
+            Some("https://status.example.com/api/public/v1/badge.svg")
+        );
+        assert_eq!(
+            href.as_deref(),
+            Some(
+                "https://status.example.com/status\
+                 ?utm_source=status-badge&utm_medium=badge&utm_campaign=embed"
+            )
+        );
+
+        cfg.tenancy.subdomain_public_routes = true;
+        cfg.tenancy.path_based_public_routes = false;
+        cfg.public_status.base_domain = "example.com".into();
+        let (src, href) = badge_embed(&cfg, "acme");
+        assert_eq!(
+            src.as_deref(),
+            Some("https://acme.example.com/api/public/v1/badge.svg")
+        );
+        assert_eq!(
+            href.as_deref(),
+            Some(
+                "https://acme.example.com?utm_source=status-badge&utm_medium=badge&utm_campaign=embed"
+            )
+        );
     }
 
     #[test]

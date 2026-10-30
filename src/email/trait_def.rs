@@ -272,6 +272,8 @@ pub enum EmailTemplate {
         message: String,
         incident_url: String,
         unsubscribe_url: String,
+        /// The uptimepage credit's link, on a page that carries the credit.
+        credit_url: Option<String>,
     },
     /// Told once to the owner. A pending heartbeat alerts nobody by design, so
     /// without this a monitor somebody half-wired stays quiet forever.
@@ -327,6 +329,8 @@ pub enum EmailTemplate {
         ends_at: DateTime<Utc>,
         page_url: String,
         unsubscribe_url: String,
+        /// The uptimepage credit's link, on a page that carries the credit.
+        credit_url: Option<String>,
     },
     /// The account owner's payment failed; full service continues until
     /// `retry_by`. Sent again at each reminder stage while it stays unpaid.
@@ -508,6 +512,7 @@ impl EmailTemplate {
                 message,
                 incident_url,
                 unsubscribe_url,
+                credit_url,
             } => templates::subscriber_incident::render(
                 Tr::new(*locale),
                 page_name,
@@ -516,6 +521,7 @@ impl EmailTemplate {
                 message,
                 incident_url,
                 unsubscribe_url,
+                credit_url.as_deref(),
             ),
             EmailTemplate::SupportRequest {
                 request_id,
@@ -551,6 +557,7 @@ impl EmailTemplate {
                 ends_at,
                 page_url,
                 unsubscribe_url,
+                credit_url,
             } => templates::subscriber_maintenance::render(
                 Tr::new(*locale),
                 page_name,
@@ -560,6 +567,7 @@ impl EmailTemplate {
                 *ends_at,
                 page_url,
                 unsubscribe_url,
+                credit_url.as_deref(),
             ),
             EmailTemplate::PaymentFailed {
                 plan_name,
