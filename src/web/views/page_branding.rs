@@ -21,7 +21,7 @@ use crate::request::host::published_page_origin;
 pub struct BrandingView {
     pub display_name: String,
     /// Pre-sanitised HTML (markdown → ammonia allow-list). Rendered with the
-    /// `safe` filter; it is the *only* unescaped value on the page.
+    /// `safe` filter.
     pub about_html: Option<String>,
     /// Already passed through `safe_brand_color`; safe to interpolate into
     /// the `:root` `<style>` block verbatim.
@@ -83,7 +83,7 @@ impl BrandingView {
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .map(render_about);
+            .map(crate::markdown::about_html);
         let brand_color = safe_brand_color(
             o.branding.public_brand_color.as_deref(),
             &cfg.default_brand_color,
@@ -252,31 +252,6 @@ fn safe_brand_text_for(brand_hex: &str) -> &'static str {
     }
 }
 
-/// Allow-list sanitiser for `public_about`. Built once: the tag set and
-/// builder are immutable, and `clean` takes `&self`, so there's no reason to
-/// reconstruct it per render.
-static ABOUT_SANITIZER: std::sync::LazyLock<ammonia::Builder<'static>> =
-    std::sync::LazyLock::new(|| {
-        let mut b = ammonia::Builder::default();
-        b.tags(
-            ["p", "strong", "em", "a", "br", "ul", "ol", "li"]
-                .into_iter()
-                .collect(),
-        )
-        .link_rel(Some("noopener nofollow"));
-        b
-    });
-
-/// Renders `public_about` markdown to HTML, then strips everything outside a
-/// small allow-list. The parser output is never trusted: ammonia is the
-/// boundary, not pulldown-cmark.
-fn render_about(markdown: &str) -> String {
-    let parser = pulldown_cmark::Parser::new(markdown);
-    let mut html = String::new();
-    pulldown_cmark::html::push_html(&mut html, parser);
-    ABOUT_SANITIZER.clean(&html).to_string()
-}
-
 #[cfg(test)]
 impl BrandingView {
     /// Acme's page under the default config, served at `/`.
@@ -358,23 +333,6 @@ mod tests {
         for bad in ["", "blue", "#fff", "#zzzzzz"] {
             assert_eq!(safe_brand_text_for(bad), "#ffffff");
         }
-    }
-
-    #[test]
-    fn render_about_strips_disallowed_and_keeps_allowlist() {
-        let html = render_about("**bold** _em_ <script>alert(1)</script>\n\n- a\n- b");
-        assert!(html.contains("<strong>bold</strong>"));
-        assert!(html.contains("<em>em</em>"));
-        assert!(html.contains("<li>a</li>"));
-        assert!(!html.contains("<script"));
-        assert!(!html.contains("alert(1)"));
-    }
-
-    #[test]
-    fn render_about_adds_rel_to_links() {
-        let html = render_about("[x](https://example.com)");
-        assert!(html.contains("href=\"https://example.com\""));
-        assert!(html.contains("rel=\"noopener nofollow\""));
     }
 
     #[test]

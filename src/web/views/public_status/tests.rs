@@ -1540,7 +1540,7 @@ fn written_text_keeps_its_line_breaks() {
     };
     p.active_maintenance = vec![window(
         1,
-        "Running now.\n\nRead-only meanwhile.",
+        "Running now.\nRead-only meanwhile.",
         now - ChronoDuration::minutes(5),
         now + ChronoDuration::hours(1),
     )];
@@ -1589,8 +1589,6 @@ fn written_text_keeps_its_line_breaks() {
     .render()
     .unwrap();
     for text in [
-        ">Running now.\n\nRead-only meanwhile.<",
-        ">Starts soon.\n\nNo action needed.<",
         "“Investigating.\n\nNext update in 30 minutes.”",
         ">Done early.\n\nNo data lost.<",
         ">Ran late.\n\nAll disks swapped.<",
@@ -1598,9 +1596,86 @@ fn written_text_keeps_its_line_breaks() {
     ] {
         assert!(
             has_class(&html, text, "whitespace-pre-line"),
-            "{text:?} keeps its line breaks"
+            "the preview {text:?} keeps its line breaks"
         );
     }
+    for written in [
+        "<p>Running now.<br>\nRead-only meanwhile.</p>",
+        "<p>Starts soon.</p>\n<p>No action needed.</p>",
+        "<p>Ran late.</p>\n<p>All disks swapped.</p>",
+    ] {
+        assert!(html.contains(written), "{written:?} keeps its line breaks");
+    }
+}
+
+#[test]
+fn written_markdown_renders_and_previews_show_its_words() {
+    let mut p = sample_page();
+    let now = p.generated_at;
+    let window = |id: u128, description: &str, starts_at, ends_at| PublicMaintenance {
+        updates: Vec::new(),
+        id: Uuid::from_u128(id),
+        title: format!("Window {id}"),
+        description: Some(description.into()),
+        starts_at,
+        ends_at,
+        affected_component_names: vec!["Gateway".into()],
+    };
+    p.active_maintenance = vec![window(
+        1,
+        "Writes **pause**, see [the plan](https://example.com/plan).",
+        now - ChronoDuration::minutes(5),
+        now + ChronoDuration::hours(1),
+    )];
+    p.recent_maintenance = vec![window(
+        2,
+        "- one disk\n- then <the other>",
+        now - ChronoDuration::hours(6),
+        now - ChronoDuration::hours(5),
+    )];
+    let mut open = fake_incident(now - ChronoDuration::minutes(14), 1, "Latency spike");
+    open.ended_at = None;
+    open.updates.push(PublicIncidentUpdate {
+        posted_at: now - ChronoDuration::minutes(1),
+        phase: IncidentStatusPhase::Identified,
+        message: "**Investigating** the `api` pool.".into(),
+        generated: false,
+    });
+    p.active_incidents = vec![open];
+    let view = build_view(&p, &[], &Default::default(), all_tab(), Tr::default());
+    let html = StatusRegion {
+        tr: Tr::default(),
+        view,
+    }
+    .render()
+    .unwrap();
+    assert!(
+        html.contains(
+            "<p>Writes <strong>pause</strong>, see \
+             <a href=\"https://example.com/plan\" rel=\"noopener nofollow\">the plan</a>.</p>"
+        ),
+        "the description renders its Markdown"
+    );
+    assert!(
+        html.contains("“Investigating the api pool.”"),
+        "the incident quote is a preview, without the markup"
+    );
+    assert!(
+        has_class(
+            &html,
+            r#" id="past-00000000-0000-0000-0000-000000000002""#,
+            "group/fold"
+        ),
+        "a formatted description opens to show it"
+    );
+    assert!(
+        html.contains(">• one disk\n• then &#60;the other&#62;<"),
+        "the preview keeps the list's lines"
+    );
+    assert!(
+        html.contains("<li>then &lt;the other&gt;</li>"),
+        "the open row shows the list, its HTML as typed"
+    );
 }
 
 #[test]

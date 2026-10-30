@@ -7,6 +7,7 @@
 //! and is re-exported here so the derive sites don't have to know.
 
 pub use self::display::*;
+pub use self::markup::*;
 pub use self::static_refs::*;
 
 /// Cache-busting asset URLs + AGPL-3.0 source-offer metadata.
@@ -141,6 +142,24 @@ mod static_refs {
             assert_eq!(short_commit("v0.13.0-acme.1"), "v0.13.0-acme.1");
             assert_eq!(short_commit(""), "");
         }
+    }
+}
+
+/// Customer-written text that may carry Markdown.
+mod markup {
+    use askama::filters::Safe;
+
+    /// `{{ update.message|markdown }}` → sanitised HTML, every line break kept.
+    #[askama::filter_fn]
+    pub fn markdown(value: &str, _: &dyn askama::Values) -> askama::Result<Safe<String>> {
+        Ok(Safe(crate::markdown::to_html(value)))
+    }
+
+    /// `{{ update.message|plain }}` → its words without the Markdown, for a
+    /// one-line place.
+    #[askama::filter_fn]
+    pub fn plain(value: &str, _: &dyn askama::Values) -> askama::Result<String> {
+        Ok(crate::markdown::to_plain(value))
     }
 }
 

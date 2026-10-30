@@ -52,7 +52,7 @@
         {% if all_monitors.is_empty() %}<span class="font-mono text-xs text-quiet"># no monitors</span>{% endif %}
       </div>
       {% if let Some(d) = window.description %}
-      <p class="whitespace-pre-line text-pretty text-sm text-body">{{ d }}</p>
+      <div class="md-text text-pretty text-sm text-body">{{ d|markdown }}</div>
       {% else %}
       <p class="font-mono text-xs text-quiet"># no description</p>
       {% endif %}
@@ -74,7 +74,7 @@
         <span class="status-badge status-badge--tag">{{ u.phase }}</span>
         <span class="font-mono text-xs text-muted">{{ u.author }}</span>
         <time class="ml-auto font-mono text-xs tabular-nums text-quiet" datetime="{{ u.posted_at|iso_ts }}" data-tz="exact">{{ u.posted_at|human_ts }}</time>
-        <p class="w-full whitespace-pre-line text-body">{{ u.message }}</p>
+        <div class="md-text w-full text-body">{{ u.message|markdown }}</div>
       </li>
       {% endfor %}
     </ol>
@@ -87,6 +87,7 @@
         <span class="mb-1.5 block text-xs text-muted">Post an update</span>
         <textarea name="message" required rows="3" maxlength="2000"
                   class="w-full field" placeholder="{% if window.phase == "completed" %}how it went, and when it really ended{% else %}what changed, in words a customer can read{% endif %}"></textarea>
+        {% include "_markdown_hint.html" %}
       </div>
       <div class="flex flex-wrap items-end justify-between gap-3">
         <p class="font-mono text-xs text-quiet"># shown on your status pages and sent to their subscribers; it cannot be edited</p>

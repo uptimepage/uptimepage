@@ -5,6 +5,8 @@
 //! Word engine has no flex/grid and no client parses the app's `oklch()` tokens,
 //! so the palette below is those tokens converted once.
 
+use std::sync::LazyLock;
+
 use crate::email::templates::{attr_escape, html_escape};
 
 const INK: &str = "#0c1318";
@@ -116,17 +118,61 @@ pub fn wordmark(site_name: &str, heading: &str) -> String {
     )
 }
 
+/// Style of a body paragraph, shared with the paragraphs of [`markdown`].
+static PARAGRAPH: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "margin:0 0 14px;font-family:{SANS};font-size:15px;line-height:1.6;\
+         color:{INK_MUTED};text-wrap:pretty;"
+    )
+});
+
 /// Body paragraph. `html` is caller-escaped so it can carry links and `<strong>`.
 pub fn paragraph(html: &str) -> String {
-    format!(
-        "<p style=\"margin:0 0 14px;font-family:{SANS};font-size:15px;line-height:1.6;\
-         color:{INK_MUTED};text-wrap:pretty;\">{html}</p>\n"
-    )
+    format!("<p style=\"{style}\">{html}</p>\n", style = *PARAGRAPH)
 }
 
 /// Customer-written prose: escaped here, with its own line breaks kept.
 pub fn prose(text: &str) -> String {
     paragraph(&html_escape(text).replace('\n', "<br>"))
+}
+
+/// Inline style for each tag the Markdown allow-list keeps: mail clients
+/// drop a `<style>` block.
+static MARKDOWN_STYLES: LazyLock<[(&str, String); 7]> = LazyLock::new(|| {
+    let list = format!(
+        "margin:0 0 14px;padding:0 0 0 22px;font-family:{SANS};font-size:15px;\
+         line-height:1.6;color:{INK_MUTED};"
+    );
+    [
+        ("p", PARAGRAPH.clone()),
+        ("ul", list.clone()),
+        ("ol", list),
+        ("li", "margin:0 0 4px;".to_owned()),
+        ("a", format!("color:{BRAND};text-decoration:underline;")),
+        ("code", format!("font-family:{MONO};font-size:13px;")),
+        (
+            "pre",
+            format!(
+                "margin:0 0 14px;padding:12px 14px;background-color:{SURFACE};\
+                 border:1px solid {LINE_SOFT};border-radius:6px;font-family:{MONO};\
+                 font-size:13px;line-height:1.55;color:{INK_MUTED};\
+                 white-space:pre-wrap;word-break:break-word;"
+            ),
+        ),
+    ]
+});
+
+static MARKDOWN: LazyLock<ammonia::Builder<'static>> = LazyLock::new(|| {
+    let mut b = crate::markdown::sanitizer();
+    for (tag, style) in MARKDOWN_STYLES.iter() {
+        b.set_tag_attribute_value(*tag, "style", style.as_str());
+    }
+    b
+});
+
+/// Customer-written Markdown, as the status page renders it.
+pub fn markdown(text: &str) -> String {
+    crate::markdown::render(text, &MARKDOWN)
 }
 
 /// Label/value rows. Values are escaped here, so no row can carry markup.

@@ -46,6 +46,7 @@
                   aria-label="Summary"
                   placeholder="the outage in a sentence or two, as you would tell a colleague">{{ summary }}</textarea>
         <span class="mt-1 block text-xs text-muted">Shown first on the public page, so lead with impact rather than chronology.</span>
+        {% include "_markdown_hint.html" %}
       </div>
     </fieldset>
 
@@ -55,6 +56,7 @@
         <textarea name="root_cause" rows="3" maxlength="5000" class="w-full field"
                   aria-label="Root cause"
                   placeholder="the condition that made this possible, not the trigger that set it off">{{ root_cause }}</textarea>
+        {% include "_markdown_hint.html" %}
       </div>
     </fieldset>
 
@@ -64,6 +66,7 @@
         <textarea name="impact" rows="3" maxlength="5000" class="w-full field"
                   aria-label="Impact"
                   placeholder="which customers, which features, for how long">{{ impact }}</textarea>
+        {% include "_markdown_hint.html" %}
       </div>
     </fieldset>
 

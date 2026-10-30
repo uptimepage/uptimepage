@@ -46,7 +46,7 @@ pub fn render(
         credit = subscriber_credit_text(tr, credit_url),
     );
 
-    let mut body = layout::prose(message);
+    let mut body = layout::markdown(message);
     body.push_str(&layout::button(
         incident_url,
         &tr.t("email-view-page-button"),
@@ -57,7 +57,7 @@ pub fn render(
         tr.lang(),
         Page {
             title: &subject,
-            preheader: &single_line(message),
+            preheader: &single_line(&crate::markdown::to_plain(message)),
             // A customer's subscribers hear from the page, not from us.
             signature: None,
             header: layout::band(tone, &label.to_uppercase(), incident_title, None),
@@ -194,7 +194,38 @@ mod tests {
         );
         assert!(
             r.html_body
-                .contains("Root cause found.<br>A fix is deployed.")
+                .contains("Root cause found.<br>\nA fix is deployed."),
+            "{}",
+            r.html_body
+        );
+    }
+
+    #[test]
+    fn an_update_in_markdown_is_styled_inline_and_previewed_plain() {
+        let r = render(
+            Tr::default(),
+            "Acme status",
+            "Checkout is failing",
+            "identified",
+            "**Root cause** in [the pool](https://acme.test/pool), see <ticket>.",
+            "https://acme.test/incidents/1",
+            "https://acme.test/subscribe/unsubscribe?s=1&t=2",
+            None,
+        );
+        let html = &r.html_body;
+        assert!(html.contains("<strong>Root cause</strong>"), "{html}");
+        assert!(
+            html.contains(
+                "<a href=\"https://acme.test/pool\" style=\"color:#007a45;text-decoration:underline;\" \
+                 rel=\"noopener nofollow\">the pool</a>"
+            ),
+            "{html}"
+        );
+        assert!(html.contains("<p style=\"margin:0 0 14px;"), "{html}");
+        assert!(html.contains("see &lt;ticket&gt;."), "{html}");
+        assert!(
+            html.contains("Root cause in the pool, see &lt;ticket&gt;."),
+            "the preheader drops the markup: {html}"
         );
     }
 }

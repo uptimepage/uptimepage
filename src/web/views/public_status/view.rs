@@ -14,7 +14,7 @@ use crate::pagination::HistoryCursor;
 use crate::public_status::overall_status::{day_tone, overall_label_id};
 use crate::public_status::{HistoryMarker, MarkerKind};
 
-use super::incident_display::{UPDATE_PREVIEW_CHARS, impact_classes, phase_classes};
+use super::incident_display::{impact_classes, phase_classes, preview};
 use super::past::{HistoryTab, PastEvents, TabLink, build_past, mixed_within_caps, tab_links};
 
 pub const RSS_URL: &str = "/api/public/v1/incidents.rss";
@@ -632,9 +632,10 @@ pub(super) fn build_incident_summary(
     tr: Tr,
 ) -> IncidentSummary {
     let header = build_incident_header(i, now, tr);
-    let latest_message = i.updates.last().map(|u: &PublicIncidentUpdate| {
-        crate::text::truncate_chars(&u.message, UPDATE_PREVIEW_CHARS)
-    });
+    let latest_message = i
+        .updates
+        .last()
+        .and_then(|u: &PublicIncidentUpdate| preview(&u.message));
     IncidentSummary {
         permalink: format!("/status/incidents/{}", header.id),
         header,

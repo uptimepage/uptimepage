@@ -87,6 +87,7 @@ pub struct MaintenanceUpdate {
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NewMaintenanceUpdate {
+    /// Markdown, with every line break kept. Raw HTML shows as typed.
     #[schema(
         example = "The data copy is slower than planned. We now expect to finish by 23:30 UTC.",
         max_length = 2000
@@ -99,6 +100,7 @@ pub struct NewMaintenanceUpdate {
 pub struct NewMaintenanceWindow {
     #[schema(example = "Database upgrade", max_length = 200)]
     pub title: String,
+    /// Markdown, with every line break kept. Raw HTML shows as typed.
     #[serde(default)]
     #[schema(nullable = true)]
     pub description: Option<String>,
@@ -121,6 +123,7 @@ fn default_true() -> bool {
 #[serde(deny_unknown_fields)]
 pub struct MaintenanceWindowUpdate {
     pub title: Option<String>,
+    /// Markdown, with every line break kept. Raw HTML shows as typed.
     pub description: Option<String>,
     pub starts_at: Option<DateTime<Utc>>,
     pub ends_at: Option<DateTime<Utc>>,

@@ -12,7 +12,7 @@ use crate::i18n::Tr;
 use crate::public_status::history::HistoryEntry;
 use fluent_templates::fluent_bundle::FluentValue;
 
-use super::incident_display::{UPDATE_PREVIEW_CHARS, impact_classes, phase_classes};
+use super::incident_display::{impact_classes, phase_classes, preview, previews_whole};
 use crate::public_status::outages::STARTED_TOGETHER;
 
 /// Rows that ended within this long stay in view; older ones fold away
@@ -133,8 +133,8 @@ pub struct PastEntry {
     /// The latest update a person wrote, or a window's description, cut to
     /// the preview length.
     pub message: Option<String>,
-    /// Whether a window's row opens: its description is longer than the
-    /// preview, or updates were posted to it.
+    /// Whether a window's row opens: its preview cuts or unformats the
+    /// description, or updates were posted to it.
     pub opens: bool,
     /// What an open window row shows first: its whole description.
     pub full_message: Option<String>,
@@ -318,8 +318,8 @@ fn fold(incidents: &[&PublicIncident], now: DateTime<Utc>, tr: Tr) -> Vec<PastEn
 
 /// A maintenance window as a row. One that is still running says so. Its
 /// text is the latest update, else the description; a row with updates, or a
-/// description longer than the preview, opens to the description and every
-/// update.
+/// description the preview does not show as written, opens to the description
+/// and every update.
 fn window(m: &PublicMaintenance, now: DateTime<Utc>, tr: Tr) -> PastEntry {
     let description = m
         .description
@@ -352,9 +352,8 @@ fn window(m: &PublicMaintenance, now: DateTime<Utc>, tr: Tr) -> PastEntry {
             .last()
             .map(|u| u.message.as_str())
             .or(description)
-            .map(|text| crate::text::truncate_chars(text, UPDATE_PREVIEW_CHARS)),
-        opens: !m.updates.is_empty()
-            || description.is_some_and(|d| d.chars().count() > UPDATE_PREVIEW_CHARS),
+            .and_then(preview),
+        opens: !m.updates.is_empty() || description.is_some_and(|d| !previews_whole(d)),
         full_message: description.map(str::to_owned),
         thread: m
             .updates
@@ -414,7 +413,7 @@ fn narrated(inc: &PublicIncident) -> Option<String> {
         .iter()
         .rev()
         .find(|u| !u.generated)
-        .map(|u| crate::text::truncate_chars(&u.message, UPDATE_PREVIEW_CHARS))
+        .and_then(|u| preview(&u.message))
 }
 
 fn lasted(inc: &PublicIncident, now: DateTime<Utc>) -> i64 {
@@ -541,6 +540,7 @@ mod tests {
     use chrono::TimeZone;
     use uuid::Uuid;
 
+    use super::super::incident_display::UPDATE_PREVIEW_CHARS;
     use super::*;
     use crate::domain::{IncidentSeverity, PublicIncidentUpdate, PublicMaintenanceUpdate};
 
@@ -922,6 +922,32 @@ mod tests {
             row.full_message.as_deref().map(str::len),
             Some(UPDATE_PREVIEW_CHARS + 1)
         );
+    }
+
+    #[test]
+    fn a_short_description_opens_only_when_its_preview_drops_markdown() {
+        let mut plain = maintenance(at(7, 2, 0), 1, &["API"]);
+        plain.description = Some("Done early.\r\nNo data lost.".into());
+        let mut formatted = maintenance(at(7, 4, 0), 1, &["API"]);
+        formatted.description = Some("Done **early**.".into());
+        let past = build_past(
+            &[],
+            &[plain, formatted],
+            HistoryTab::All,
+            now(),
+            Tr::default(),
+        );
+        assert!(past.recent[0].opens, "the formatted one opens");
+        assert_eq!(past.recent[0].message.as_deref(), Some("Done early."));
+        assert!(!past.recent[1].opens, "the plain one shows whole");
+    }
+
+    #[test]
+    fn a_description_with_no_words_left_previews_nothing() {
+        let mut rule = maintenance(at(7, 2, 0), 1, &["API"]);
+        rule.description = Some("---".into());
+        let past = build_past(&[], &[rule], HistoryTab::All, now(), Tr::default());
+        assert!(past.recent[0].message.is_none());
     }
 
     #[test]

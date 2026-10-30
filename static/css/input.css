@@ -73,6 +73,43 @@
     .legal-doc th {
         @apply bg-[color:var(--theme-surface-sunk)] font-semibold text-[color:var(--theme-ink)];
     }
+
+    /* Customer Markdown in incident and maintenance text. It takes the colour
+       and size of where it sits; preflight strips block and list spacing, so
+       that is put back here. */
+    .md-text {
+        overflow-wrap: anywhere;
+    }
+    .md-text > * + *,
+    .md-text li > * + * {
+        @apply mt-2;
+    }
+    .md-text ul {
+        @apply list-disc pl-5;
+    }
+    .md-text ol {
+        @apply list-decimal pl-5;
+    }
+    .md-text li + li {
+        @apply mt-0.5;
+    }
+    .md-text a {
+        @apply underline underline-offset-2;
+    }
+    .md-text strong {
+        @apply font-semibold;
+    }
+    .md-text code {
+        @apply rounded bg-[color:var(--theme-surface-sunk)] px-1 py-0.5 font-mono;
+        font-size: 0.9em;
+    }
+    .md-text pre {
+        @apply rounded bg-[color:var(--theme-surface-sunk)] px-3 py-2 font-mono text-xs whitespace-pre-wrap;
+    }
+    .md-text pre code {
+        @apply bg-transparent p-0;
+        font-size: inherit;
+    }
 }
 
 @layer base {

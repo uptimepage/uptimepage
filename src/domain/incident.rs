@@ -213,6 +213,7 @@ where
 #[serde(deny_unknown_fields)]
 pub struct NewIncidentUpdate {
     pub phase: IncidentStatusPhase,
+    /// Markdown, with every line break kept. Raw HTML shows as typed.
     #[schema(min_length = 1, max_length = 2000)]
     pub message: String,
 }
@@ -1157,7 +1158,8 @@ pub struct IncidentPostmortem {
 }
 
 /// Operator-supplied postmortem content. Each field replaces the stored value;
-/// `action_items` is the full list every save.
+/// `action_items` is the full list every save. `summary`, `root_cause` and
+/// `impact` are Markdown, with every line break kept. Raw HTML shows as typed.
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PostmortemUpsert {

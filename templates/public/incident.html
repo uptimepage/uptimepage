@@ -62,7 +62,7 @@
                                 <span class="{{ u.phase_class }}">{{ u.phase_label }}</span>
                                 <time datetime="{{ u.posted_at|iso_ts }}" data-tz="exact" class="text-quiet">{{ u.posted_at|human_ts }}</time>
                             </div>
-                            <p class="mt-2 whitespace-pre-line text-sm text-body">{{ u.message }}</p>
+                            <div class="mt-2 md-text text-sm text-body">{{ u.message|markdown }}</div>
                         </li>
                         {% endfor %}
                     </ol>
@@ -74,13 +74,13 @@
                 <h2 id="postmortem-heading" class="text-sm font-semibold uppercase tracking-wide text-quiet">{{ tr.t("postmortem-heading") }}</h2>
                 <div class="public-callout public-callout--neutral space-y-4 text-sm text-body">
                     {% match pm.summary %}{% when Some with (s) %}
-                    <div><div class="text-xs uppercase tracking-wide text-quiet">{{ tr.t("postmortem-summary") }}</div><p class="mt-1 whitespace-pre-line">{{ s }}</p></div>
+                    <div><div class="text-xs uppercase tracking-wide text-quiet">{{ tr.t("postmortem-summary") }}</div><div class="mt-1 md-text">{{ s|markdown }}</div></div>
                     {% when None %}{% endmatch %}
                     {% match pm.root_cause %}{% when Some with (s) %}
-                    <div><div class="text-xs uppercase tracking-wide text-quiet">{{ tr.t("postmortem-root-cause") }}</div><p class="mt-1 whitespace-pre-line">{{ s }}</p></div>
+                    <div><div class="text-xs uppercase tracking-wide text-quiet">{{ tr.t("postmortem-root-cause") }}</div><div class="mt-1 md-text">{{ s|markdown }}</div></div>
                     {% when None %}{% endmatch %}
                     {% match pm.impact %}{% when Some with (s) %}
-                    <div><div class="text-xs uppercase tracking-wide text-quiet">{{ tr.t("postmortem-impact") }}</div><p class="mt-1 whitespace-pre-line">{{ s }}</p></div>
+                    <div><div class="text-xs uppercase tracking-wide text-quiet">{{ tr.t("postmortem-impact") }}</div><div class="mt-1 md-text">{{ s|markdown }}</div></div>
                     {% when None %}{% endmatch %}
                     {% if !pm.action_items.is_empty() %}
                     <div>

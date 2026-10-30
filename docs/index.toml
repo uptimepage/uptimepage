@@ -99,7 +99,7 @@ blurb = "The customer-facing surface: components, incidents, maintenance, badges
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-29
+lastmod = 2026-10-30
 
 [[page]]
 slug = "per-org-status"

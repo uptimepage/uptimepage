@@ -90,12 +90,12 @@
                     {% if !m.affects.is_empty() %} · {{ tr.t("maintenance-affects") }} {{ m.affects }}{% endif %}
                 </p>
                 {% match m.description %}
-                    {% when Some with (d) %}<p class="whitespace-pre-line text-pretty text-quiet">{{ d }}</p>{% when None %}
+                    {% when Some with (d) %}<div class="md-text text-pretty text-quiet">{{ d|markdown }}</div>{% when None %}
                 {% endmatch %}
                 {% if let Some(u) = m.latest_update %}
                 <div class="mt-1 border-l-2 border-[color:var(--theme-line)] pl-3">
                     <p class="text-xs text-quiet">{{ tr.t("maintenance-latest-update") }} · <time datetime="{{ u.posted_at|iso_ts }}" data-tz="day-time">{{ u.posted_at|human_ts }}</time></p>
-                    <p class="whitespace-pre-line text-pretty text-body">{{ u.message }}</p>
+                    <div class="md-text text-pretty text-body">{{ u.message|markdown }}</div>
                 </div>
                 {% endif %}
             </li>
@@ -119,12 +119,12 @@
                     {% if !m.affects.is_empty() %} · {{ tr.t("maintenance-affects") }} {{ m.affects }}{% endif %}
                 </p>
                 {% match m.description %}
-                    {% when Some with (d) %}<p class="whitespace-pre-line text-pretty text-quiet">{{ d }}</p>{% when None %}
+                    {% when Some with (d) %}<div class="md-text text-pretty text-quiet">{{ d|markdown }}</div>{% when None %}
                 {% endmatch %}
                 {% if let Some(u) = m.latest_update %}
                 <div class="mt-1 border-l-2 border-[color:var(--theme-line)] pl-3">
                     <p class="text-xs text-quiet">{{ tr.t("maintenance-latest-update") }} · <time datetime="{{ u.posted_at|iso_ts }}" data-tz="day-time">{{ u.posted_at|human_ts }}</time></p>
-                    <p class="whitespace-pre-line text-pretty text-body">{{ u.message }}</p>
+                    <div class="md-text text-pretty text-body">{{ u.message|markdown }}</div>
                 </div>
                 {% endif %}
             </li>

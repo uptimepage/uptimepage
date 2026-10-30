@@ -85,7 +85,7 @@ pub fn render(
     });
     let mut body = layout::facts(&[(fact.as_str(), window.clone())]);
     if let Some(said) = said {
-        body.push_str(&layout::prose(said));
+        body.push_str(&layout::markdown(said));
     }
     body.push_str(&layout::button(
         page_url,

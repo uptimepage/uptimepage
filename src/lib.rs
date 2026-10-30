@@ -21,6 +21,7 @@ pub mod http_outbound;
 pub mod i18n;
 pub mod jobs;
 pub mod maintenance_ops;
+pub(crate) mod markdown;
 pub mod mcp;
 pub mod metric_names;
 pub mod net;

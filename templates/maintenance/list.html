@@ -58,7 +58,8 @@
             <a href="/maintenance/{{ row.id }}" title="{{ row.title }}"
                class="block max-w-[26rem] truncate text-sm font-medium text-body hover:underline">{{ row.title }}</a>
             {% if let Some(d) = row.description %}
-            <p class="mt-0.5 max-w-[26rem] truncate text-xs text-muted" title="{{ d }}">{{ d }}</p>
+            {% let words = d|plain %}
+            <p class="mt-0.5 max-w-[26rem] truncate text-xs text-muted" title="{{ words }}">{{ words }}</p>
             {% endif %}
             <div class="mt-1.5 flex flex-wrap items-center gap-1">
               {% for m in row.monitors %}<span class="dashboard-chip dashboard-chip--flat">{{ m }}</span>{% endfor %}

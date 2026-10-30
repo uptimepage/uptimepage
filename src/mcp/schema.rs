@@ -1560,6 +1560,8 @@ pub struct PostIncidentUpdateArgs {
     /// The incident id.
     pub id: String,
     /// Public message shown on the status page.
+    /// Markdown: `**bold**`, `_italic_`, `[links](url)`, lists and `` `code` ``;
+    /// every line break is kept and raw HTML shows as typed.
     pub message: String,
     /// Optional phase: `investigating`, `identified`, `monitoring`,
     /// `resolved`, `postmortem`. Defaults to `investigating`.
@@ -1943,6 +1945,8 @@ pub struct PostMaintenanceUpdateArgs {
     /// What readers should know now, up to 2000 characters: the work runs
     /// late, it finished, or what changed. Write it for the people reading
     /// the status page, and give any time with its zone.
+    /// Markdown: `**bold**`, `_italic_`, `[links](url)`, lists and `` `code` ``;
+    /// every line break is kept and raw HTML shows as typed.
     pub message: String,
 }
 
@@ -1961,6 +1965,8 @@ pub struct CreateMaintenanceArgs {
     /// Shown on the status page and in subscriber notices. At most 200 characters.
     pub title: String,
     /// Shown with the title. At most 5000 characters.
+    /// Markdown: `**bold**`, `_italic_`, `[links](url)`, lists and `` `code` ``;
+    /// every line break is kept and raw HTML shows as typed.
     pub description: Option<String>,
     /// RFC 3339 start. A start already past opens the window at once.
     pub starts_at: String,
@@ -1982,6 +1988,8 @@ pub struct UpdateMaintenanceArgs {
     /// At most 200 characters.
     pub title: Option<String>,
     /// At most 5000 characters. An empty string clears it.
+    /// Markdown: `**bold**`, `_italic_`, `[links](url)`, lists and `` `code` ``;
+    /// every line break is kept and raw HTML shows as typed.
     pub description: Option<String>,
     /// RFC 3339.
     pub starts_at: Option<String>,

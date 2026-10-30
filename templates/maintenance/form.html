@@ -109,6 +109,7 @@
           <textarea name="description" rows="4" maxlength="5000" class="w-full field"
                     placeholder="what is changing and what readers will notice">{{ description }}</textarea>
         </label>
+        {% include "_markdown_hint.html" %}
         <p class="text-xs text-muted">{% if mode == "create" %}Subscribers get one notice when you schedule this and another when it ends.{% else %}Subscribers were told when this was scheduled. Later edits are not re-sent.{% endif %}</p>
       </div>
     </fieldset>

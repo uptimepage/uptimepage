@@ -258,8 +258,8 @@ pub async fn public_incident(
     tag = "public_status",
     summary = "RSS 2.0 feed of public incidents",
     description = "Most recent 50 incidents from public components. Item \
-                   title is the incident title; item description is the \
-                   concatenated update messages.",
+                   title is the incident title; item description is its \
+                   updates as entity-encoded HTML, each under its phase.",
     security(),
     params(FeedQuery),
     responses(

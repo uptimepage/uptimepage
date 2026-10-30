@@ -610,9 +610,14 @@ pub fn build_rss(
         let body: String = i
             .updates
             .iter()
-            .map(|u| format!("[{}] {}", tr.t(phase_id(u.phase)), u.message))
-            .collect::<Vec<_>>()
-            .join(" \n");
+            .map(|u| {
+                format!(
+                    "<p>[{}]</p>\n{}",
+                    xml_escape(&tr.t(phase_id(u.phase))),
+                    crate::markdown::to_html(&u.message)
+                )
+            })
+            .collect();
         out.push_str("<item>");
         out.push_str(&format!("<title>{}</title>", xml_escape(&i.title)));
         out.push_str(&format!("<guid isPermaLink=\"false\">{}</guid>", i.id));
@@ -830,8 +835,34 @@ mod tests {
         );
         assert!(!xml.contains("<script>"), "{xml}");
         assert!(xml.contains("&lt;script&gt;"), "{xml}");
-        assert!(xml.contains("a &lt; b &amp; c"), "{xml}");
+        assert!(xml.contains("a &amp;lt; b &amp;amp; c"), "{xml}");
         assert!(xml.contains("A &amp; B Status Incidents"), "{xml}");
+    }
+
+    #[test]
+    fn an_item_carries_its_updates_as_html() {
+        let inc = sample_incident(
+            0xc01,
+            vec![update(
+                0,
+                IncidentStatusPhase::Identified,
+                "Follow [the guide](https://acme.test/migrate) <now>.",
+            )],
+        );
+        let xml = build_rss(
+            "Site",
+            links("https://acme.example.com"),
+            Locale::En,
+            std::slice::from_ref(&inc),
+        );
+        assert!(
+            xml.contains(
+                "<description>&lt;p&gt;[identified]&lt;/p&gt;\n&lt;p&gt;Follow &lt;a \
+                 href=&quot;https://acme.test/migrate&quot; rel=&quot;noopener nofollow&quot;&gt;\
+                 the guide&lt;/a&gt; &amp;lt;now&amp;gt;.&lt;/p&gt;\n</description>"
+            ),
+            "{xml}"
+        );
     }
 
     #[test]
@@ -892,8 +923,14 @@ mod tests {
             Locale::En,
             std::slice::from_ref(&inc),
         );
-        assert!(xml.contains("[investigating] looking"), "{xml}");
-        assert!(xml.contains("[resolved] fixed"), "{xml}");
+        assert!(
+            xml.contains("[investigating]&lt;/p&gt;\n&lt;p&gt;looking"),
+            "{xml}"
+        );
+        assert!(
+            xml.contains("[resolved]&lt;/p&gt;\n&lt;p&gt;fixed"),
+            "{xml}"
+        );
         assert!(xml.contains(&format!(
             "<pubDate>{}</pubDate>",
             inc.updates.last().unwrap().posted_at.to_rfc2822()

@@ -49,7 +49,7 @@
         <div class="dashboard-incident-banner__update">
           <time class="dashboard-subhead__mono" datetime="{{ u.posted_at|iso_ts }}" data-tz>{{ u.posted_at|human_ts }}</time>
           <span class="dashboard-incident-banner__phase">{{ u.phase_label }}</span>
-          <span>{{ u.message }}</span>
+          <span>{{ u.message|plain }}</span>
         </div>
         {% endif %}
       </div>

@@ -45,13 +45,13 @@
                     {% if let Some(msg) = e.message %}<span class="block whitespace-pre-line text-pretty text-sm text-muted group-open/fold:hidden">{{ msg }}</span>{% endif %}
                 </span>
             </summary>
-            {% if let Some(full) = e.full_message %}<p class="past-fold__full whitespace-pre-line text-pretty text-sm text-muted">{{ full }}</p>{% endif %}
+            {% if let Some(full) = e.full_message %}<div class="past-fold__full md-text text-pretty text-sm text-muted">{{ full|markdown }}</div>{% endif %}
             {% if !e.thread.is_empty() %}
             <ol class="past-fold__items">
                 {% for u in e.thread %}
                 <li class="space-y-0.5 text-sm">
                     <span class="block text-xs text-quiet">{{ u.phase_label }} · <time datetime="{{ u.posted_at|iso_ts }}" data-tz="day-time">{{ u.posted_at|human_ts }}</time></span>
-                    <span class="block whitespace-pre-line text-pretty text-body">{{ u.message }}</span>
+                    <div class="md-text text-pretty text-body">{{ u.message|markdown }}</div>
                 </li>
                 {% endfor %}
             </ol>
