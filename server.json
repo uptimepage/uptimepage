@@ -11,9 +11,9 @@
   },
   "icons": [
     {
-      "src": "https://uptimepage.dev/static/img/org-icon.png",
+      "src": "https://uptimepage.dev/static/img/favicon-512.png",
       "mimeType": "image/png",
-      "sizes": ["1024x1024"]
+      "sizes": ["512x512"]
     }
   ],
   "remotes": [

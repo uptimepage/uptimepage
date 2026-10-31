@@ -7,7 +7,7 @@ appVersion: "1.6.0"
 # `-0` so vendor builds (v1.31.1-gke.x) satisfy the constraint.
 kubeVersion: ">=1.29.0-0"
 home: https://uptimepage.dev
-icon: https://uptimepage.dev/static/img/org-icon.png
+icon: https://uptimepage.dev/static/img/favicon-512.png
 sources:
   - https://github.com/uptimepage/uptimepage
 keywords:

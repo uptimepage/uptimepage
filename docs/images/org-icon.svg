@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#f7f9fa"/>
-  <rect x="8" y="8" width="496" height="496" rx="88" fill="none" stroke="#dde2e8" stroke-width="4"/>
-  <g font-family="Menlo, 'Courier New', monospace" font-weight="700" text-anchor="middle">
-    <text x="120" y="312" font-size="240" fill="#7c8493">[</text>
-    <text x="256" y="330" font-size="320" fill="#0d9a5b">↑</text>
-    <text x="392" y="312" font-size="240" fill="#7c8493">]</text>
-  </g>
-</svg>
