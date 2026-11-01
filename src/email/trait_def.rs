@@ -8,7 +8,8 @@ use thiserror::Error;
 
 use super::templates::incident_alert::IncidentAlert;
 use super::templates::monitors_slowed::SlowedMonitor;
-use super::templates::subscriber_maintenance::MaintenanceNotice;
+use super::templates::subscriber_incident::IncidentMail;
+use super::templates::subscriber_maintenance::MaintenanceMail;
 use super::templates::subscriber_outage::OutageMail;
 use super::templates::{self, RenderedEmail};
 use crate::domain::{Landing, Locale};
@@ -264,17 +265,7 @@ pub enum EmailTemplate {
         expires_in_minutes: u32,
     },
     /// A public incident update delivered to a confirmed subscriber.
-    SubscriberIncident {
-        locale: Locale,
-        page_name: String,
-        incident_title: String,
-        phase: String,
-        message: String,
-        incident_url: String,
-        unsubscribe_url: String,
-        /// The uptimepage credit's link, on a page that carries the credit.
-        credit_url: Option<String>,
-    },
+    SubscriberIncident(IncidentMail),
     /// Told once to the owner. A pending heartbeat alerts nobody by design, so
     /// without this a monitor somebody half-wired stays quiet forever.
     HeartbeatNeverPinged {
@@ -320,18 +311,7 @@ pub enum EmailTemplate {
     SubscriberOutage(OutageMail),
     /// A maintenance-window announcement, completion or posted update for a
     /// confirmed subscriber.
-    SubscriberMaintenance {
-        locale: Locale,
-        page_name: String,
-        title: String,
-        notice: MaintenanceNotice,
-        starts_at: DateTime<Utc>,
-        ends_at: DateTime<Utc>,
-        page_url: String,
-        unsubscribe_url: String,
-        /// The uptimepage credit's link, on a page that carries the credit.
-        credit_url: Option<String>,
-    },
+    SubscriberMaintenance(MaintenanceMail),
     /// The account owner's payment failed; full service continues until
     /// `retry_by`. Sent again at each reminder stage while it stays unpaid.
     PaymentFailed {
@@ -504,25 +484,7 @@ impl EmailTemplate {
                 code,
                 *expires_in_minutes,
             ),
-            EmailTemplate::SubscriberIncident {
-                locale,
-                page_name,
-                incident_title,
-                phase,
-                message,
-                incident_url,
-                unsubscribe_url,
-                credit_url,
-            } => templates::subscriber_incident::render(
-                Tr::new(*locale),
-                page_name,
-                incident_title,
-                phase,
-                message,
-                incident_url,
-                unsubscribe_url,
-                credit_url.as_deref(),
-            ),
+            EmailTemplate::SubscriberIncident(mail) => templates::subscriber_incident::render(mail),
             EmailTemplate::SupportRequest {
                 request_id,
                 topic,
@@ -548,27 +510,9 @@ impl EmailTemplate {
                 },
             ),
             EmailTemplate::SubscriberOutage(mail) => templates::subscriber_outage::render(mail),
-            EmailTemplate::SubscriberMaintenance {
-                locale,
-                page_name,
-                title,
-                notice,
-                starts_at,
-                ends_at,
-                page_url,
-                unsubscribe_url,
-                credit_url,
-            } => templates::subscriber_maintenance::render(
-                Tr::new(*locale),
-                page_name,
-                title,
-                notice,
-                *starts_at,
-                *ends_at,
-                page_url,
-                unsubscribe_url,
-                credit_url.as_deref(),
-            ),
+            EmailTemplate::SubscriberMaintenance(mail) => {
+                templates::subscriber_maintenance::render(mail)
+            }
             EmailTemplate::PaymentFailed {
                 plan_name,
                 retry_by,
@@ -632,8 +576,8 @@ impl EmailTemplate {
             EmailTemplate::IncidentAlert(_) => None,
             EmailTemplate::SubscriberConfirm { confirm_url, .. } => Some(confirm_url),
             EmailTemplate::PageAccessCode { url, .. } => Some(url),
-            EmailTemplate::SubscriberIncident { incident_url, .. } => Some(incident_url),
-            EmailTemplate::SubscriberMaintenance { page_url, .. } => Some(page_url),
+            EmailTemplate::SubscriberIncident(mail) => Some(&mail.incident_url),
+            EmailTemplate::SubscriberMaintenance(mail) => Some(&mail.page_url),
             EmailTemplate::SubscriberOutage(mail) => Some(&mail.page_url),
             EmailTemplate::SupportRequest { .. } => None,
             EmailTemplate::PaymentFailed { fix_url, .. } => Some(fix_url),
@@ -681,16 +625,12 @@ impl EmailTemplate {
     /// body, behind a confirmation, so disabling stays a deliberate act.
     pub fn list_unsubscribe_url(&self) -> Option<&str> {
         match self {
-            EmailTemplate::SubscriberIncident {
-                unsubscribe_url, ..
-            }
-            | EmailTemplate::SubscriberMaintenance {
-                unsubscribe_url, ..
-            }
-            | EmailTemplate::SubscriberConfirm {
+            EmailTemplate::SubscriberConfirm {
                 unsubscribe_url, ..
             } => Some(unsubscribe_url),
-            EmailTemplate::SubscriberOutage(mail) => Some(&mail.unsubscribe_url),
+            EmailTemplate::SubscriberIncident(mail) => Some(&mail.footer.unsubscribe_url),
+            EmailTemplate::SubscriberMaintenance(mail) => Some(&mail.footer.unsubscribe_url),
+            EmailTemplate::SubscriberOutage(mail) => Some(&mail.footer.unsubscribe_url),
             EmailTemplate::ChannelVerification { decline_url, .. } => decline_url.as_deref(),
             _ => None,
         }

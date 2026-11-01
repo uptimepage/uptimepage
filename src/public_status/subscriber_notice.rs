@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::domain::Locale;
-use crate::email::templates::subscriber_maintenance::MaintenanceNotice;
+use crate::email::templates::SubscriberFooter;
+use crate::email::templates::subscriber_incident::IncidentMail;
+use crate::email::templates::subscriber_maintenance::{MaintenanceMail, MaintenanceNotice};
 use crate::email::templates::subscriber_outage::{OutageComponent, OutageMail};
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
 use crate::public_status::credit;
@@ -153,6 +155,10 @@ impl NoticePayload {
     ) -> TransactionalEmail {
         let locale = self.locale();
         let page_name = self.page.name.clone();
+        let footer = SubscriberFooter {
+            unsubscribe_url,
+            credit_url: self.credit_url(),
+        };
         let template = match &self.body {
             NoticeBody::IncidentUpdate {
                 incident_id,
@@ -160,16 +166,15 @@ impl NoticePayload {
                 phase,
                 message,
                 ..
-            } => EmailTemplate::SubscriberIncident {
+            } => EmailTemplate::SubscriberIncident(IncidentMail {
                 locale,
                 page_name,
                 incident_title: incident_title.clone(),
                 phase: phase.clone(),
                 message: message.clone(),
                 incident_url: self.incident_url(*incident_id),
-                unsubscribe_url,
-                credit_url: self.credit_url(),
-            },
+                footer,
+            }),
             NoticeBody::Outage {
                 resolved,
                 components,
@@ -189,8 +194,7 @@ impl NoticePayload {
                     })
                     .collect(),
                 page_url: self.page.url.clone(),
-                unsubscribe_url,
-                credit_url: self.credit_url(),
+                footer,
             }),
             NoticeBody::Maintenance {
                 title,
@@ -199,7 +203,7 @@ impl NoticePayload {
                 starts_at,
                 ends_at,
                 ..
-            } => EmailTemplate::SubscriberMaintenance {
+            } => EmailTemplate::SubscriberMaintenance(MaintenanceMail {
                 locale,
                 page_name,
                 title: title.clone(),
@@ -215,9 +219,8 @@ impl NoticePayload {
                 starts_at: *starts_at,
                 ends_at: *ends_at,
                 page_url: self.page.url.clone(),
-                unsubscribe_url,
-                credit_url: self.credit_url(),
-            },
+                footer,
+            }),
             NoticeBody::MaintenanceUpdate {
                 title,
                 starts_at,
@@ -225,7 +228,7 @@ impl NoticePayload {
                 phase,
                 message,
                 ..
-            } => EmailTemplate::SubscriberMaintenance {
+            } => EmailTemplate::SubscriberMaintenance(MaintenanceMail {
                 locale,
                 page_name,
                 title: title.clone(),
@@ -236,9 +239,8 @@ impl NoticePayload {
                 starts_at: *starts_at,
                 ends_at: *ends_at,
                 page_url: self.page.url.clone(),
-                unsubscribe_url,
-                credit_url: self.credit_url(),
-            },
+                footer,
+            }),
         };
         TransactionalEmail {
             from,
@@ -382,6 +384,85 @@ mod tests {
             "https://u".into(),
         );
         assert_eq!(mail.template.list_unsubscribe_url(), Some("https://u"));
+    }
+
+    #[test]
+    fn every_notice_keeps_its_action_unsubscribe_and_credit_links() {
+        let now = Utc::now();
+        let incident_id = Uuid::nil();
+        let incident_url = format!("https://acme.example.com/status/incidents/{incident_id}");
+        let unsubscribe_url = "https://acme.example.com/subscribe/unsubscribe?s=1&t=2";
+        let notices = [
+            NoticeBody::IncidentUpdate {
+                incident_id,
+                incident_title: "API errors".into(),
+                update_id: Uuid::nil(),
+                phase: "identified".into(),
+                message: "Fix rolling out".into(),
+            },
+            NoticeBody::Outage {
+                resolved: false,
+                components: vec![ComponentSnapshot {
+                    name: "API".into(),
+                    title: "API errors".into(),
+                    incident_id,
+                    degraded: false,
+                    started_at: now,
+                    ended_at: None,
+                }],
+            },
+            NoticeBody::Maintenance {
+                maintenance_id: Uuid::nil(),
+                title: "Database upgrade".into(),
+                description: None,
+                phase: "scheduled".into(),
+                starts_at: now,
+                ends_at: now,
+            },
+            NoticeBody::MaintenanceUpdate {
+                maintenance_id: Uuid::nil(),
+                title: "Database upgrade".into(),
+                starts_at: now,
+                ends_at: now,
+                update_id: Uuid::nil(),
+                phase: "completed".into(),
+                message: "Upgrade complete".into(),
+            },
+        ];
+        for body in notices {
+            let primary_url = if matches!(body, NoticeBody::IncidentUpdate { .. }) {
+                incident_url.as_str()
+            } else {
+                "https://acme.example.com"
+            };
+            for credit in [false, true] {
+                let notice = NoticePayload {
+                    page: PageSnapshot { credit, ..page() },
+                    body: body.clone(),
+                };
+                let template = notice
+                    .email(
+                        EmailAddress::new("status@example.com", "Status"),
+                        "a@example.com",
+                        unsubscribe_url.into(),
+                    )
+                    .template;
+                assert_eq!(template.primary_url(), Some(primary_url));
+                assert_eq!(template.list_unsubscribe_url(), Some(unsubscribe_url));
+
+                let rendered = template.render("Uptimepage");
+                assert!(rendered.text_body.contains(unsubscribe_url));
+                assert!(
+                    rendered
+                        .html_body
+                        .contains(&unsubscribe_url.replace('&', "&amp;"))
+                );
+                for body in [&rendered.text_body, &rendered.html_body] {
+                    assert!(body.contains(primary_url), "{body}");
+                    assert_eq!(body.contains("utm_source=status-email"), credit, "{body}");
+                }
+            }
+        }
     }
 
     fn row(white_label: bool, show_powered_by: Option<bool>) -> PageRow {

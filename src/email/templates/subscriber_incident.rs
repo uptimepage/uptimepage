@@ -1,21 +1,31 @@
-use crate::domain::IncidentStatusPhase;
+use crate::domain::{IncidentStatusPhase, Locale};
 use crate::email::templates::layout::{self, ButtonStyle, Page, Tone};
-use crate::email::templates::{
-    RenderedEmail, single_line, subscriber_credit_text, subscriber_footnote,
-};
+use crate::email::templates::{RenderedEmail, SubscriberFooter, single_line};
 use crate::i18n::Tr;
 
-#[allow(clippy::too_many_arguments)]
-pub fn render(
-    tr: Tr,
-    page_name: &str,
-    incident_title: &str,
-    phase: &str,
-    message: &str,
-    incident_url: &str,
-    unsubscribe_url: &str,
-    credit_url: Option<&str>,
-) -> RenderedEmail {
+/// A public incident update delivered to a confirmed subscriber.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IncidentMail {
+    pub locale: Locale,
+    pub page_name: String,
+    pub incident_title: String,
+    pub phase: String,
+    pub message: String,
+    pub incident_url: String,
+    pub footer: SubscriberFooter,
+}
+
+pub fn render(mail: &IncidentMail) -> RenderedEmail {
+    let IncidentMail {
+        locale,
+        page_name,
+        incident_title,
+        phase,
+        message,
+        incident_url,
+        footer,
+    } = mail;
+    let tr = Tr::new(*locale);
     // Parsed back to the enum so a new variant has to be classified here
     // rather than defaulting to "still going wrong". That guard is the
     // compiler's, and covers variants only: from_db_str reads an unrecognised
@@ -43,7 +53,8 @@ pub fn render(
         status = tr.t_args("email-status-line", [("phase", label.as_str().into())]),
         view = tr.t("email-view-page"),
         unsubscribe = tr.t("email-unsubscribe-text"),
-        credit = subscriber_credit_text(tr, credit_url),
+        unsubscribe_url = footer.unsubscribe_url,
+        credit = footer.credit_text(tr),
     );
 
     let mut body = layout::markdown(message);
@@ -62,12 +73,7 @@ pub fn render(
             signature: None,
             header: layout::band(tone, &label.to_uppercase(), incident_title, None),
             body,
-            footnote: Some(subscriber_footnote(
-                tr,
-                page_name,
-                unsubscribe_url,
-                credit_url,
-            )),
+            footnote: Some(footer.footnote(tr, page_name)),
         },
     );
 
@@ -80,21 +86,22 @@ pub fn render(
 
 #[cfg(test)]
 mod tests {
-    use super::render;
-    use crate::i18n::Tr;
+    use super::*;
 
     #[test]
     fn phase_drives_the_status_band_and_the_subject() {
-        let r = render(
-            Tr::default(),
-            "Acme status",
-            "Checkout is failing",
-            "investigating",
-            "We are looking into elevated errors.",
-            "https://acme.test/incidents/1",
-            "https://acme.test/subscribe/unsubscribe?s=1&t=2",
-            None,
-        );
+        let r = render(&IncidentMail {
+            locale: Locale::En,
+            page_name: "Acme status".into(),
+            incident_title: "Checkout is failing".into(),
+            phase: "investigating".into(),
+            message: "We are looking into elevated errors.".into(),
+            incident_url: "https://acme.test/incidents/1".into(),
+            footer: SubscriberFooter {
+                unsubscribe_url: "https://acme.test/subscribe/unsubscribe?s=1&t=2".into(),
+                credit_url: None,
+            },
+        });
         assert_eq!(
             r.subject,
             "[Acme status] Checkout is failing — Investigating"
@@ -106,16 +113,18 @@ mod tests {
 
     #[test]
     fn a_german_page_reports_in_german() {
-        let r = render(
-            Tr::new(crate::domain::Locale::De),
-            "Acme status",
-            "Checkout is failing",
-            "identified",
-            "Fix in progress.",
-            "https://acme.test/incidents/1",
-            "https://acme.test/subscribe/unsubscribe?s=1&t=2",
-            None,
-        );
+        let r = render(&IncidentMail {
+            locale: Locale::De,
+            page_name: "Acme status".into(),
+            incident_title: "Checkout is failing".into(),
+            phase: "identified".into(),
+            message: "Fix in progress.".into(),
+            incident_url: "https://acme.test/incidents/1".into(),
+            footer: SubscriberFooter {
+                unsubscribe_url: "https://acme.test/subscribe/unsubscribe?s=1&t=2".into(),
+                credit_url: None,
+            },
+        });
         assert_eq!(
             r.subject,
             "[Acme status] Checkout is failing — Ursache erkannt"
@@ -133,18 +142,20 @@ mod tests {
 
     #[test]
     fn the_credit_closes_both_bodies_when_the_page_carries_it() {
-        let r = render(
-            Tr::new(crate::domain::Locale::De),
-            "Acme status",
-            "Checkout is failing",
-            "resolved",
-            "Fixed.",
-            "https://acme.test/incidents/1",
-            "https://acme.test/subscribe/unsubscribe?s=1&t=2",
-            Some(
-                "https://uptimepage.dev/de/free-status-page?utm_source=status-email&utm_medium=email",
-            ),
-        );
+        let r = render(&IncidentMail {
+            locale: Locale::De,
+            page_name: "Acme status".into(),
+            incident_title: "Checkout is failing".into(),
+            phase: "resolved".into(),
+            message: "Fixed.".into(),
+            incident_url: "https://acme.test/incidents/1".into(),
+            footer: SubscriberFooter {
+                unsubscribe_url: "https://acme.test/subscribe/unsubscribe?s=1&t=2".into(),
+                credit_url: Some(
+                    "https://uptimepage.dev/de/free-status-page?utm_source=status-email&utm_medium=email".into(),
+                ),
+            },
+        });
         let line = "Statusseite von uptimepage – kostenlos für Ihr eigenes Projekt";
         assert!(
             r.text_body.ends_with(&format!(
@@ -165,16 +176,18 @@ mod tests {
 
     #[test]
     fn a_postmortem_does_not_read_as_an_open_problem() {
-        let r = render(
-            Tr::default(),
-            "Acme status",
-            "Checkout is failing",
-            "postmortem",
-            "What happened and what we changed.",
-            "https://acme.test/incidents/1",
-            "https://acme.test/subscribe/unsubscribe?s=1&t=2",
-            None,
-        );
+        let r = render(&IncidentMail {
+            locale: Locale::En,
+            page_name: "Acme status".into(),
+            incident_title: "Checkout is failing".into(),
+            phase: "postmortem".into(),
+            message: "What happened and what we changed.".into(),
+            incident_url: "https://acme.test/incidents/1".into(),
+            footer: SubscriberFooter {
+                unsubscribe_url: "https://acme.test/subscribe/unsubscribe?s=1&t=2".into(),
+                credit_url: None,
+            },
+        });
         // Tone::Good's signal colour; the warn amber would say "still broken".
         assert!(r.html_body.contains("#43d58f"), "{}", r.html_body);
         assert!(!r.html_body.contains("#f3b94c"));
@@ -182,16 +195,18 @@ mod tests {
 
     #[test]
     fn an_update_written_in_paragraphs_keeps_its_line_breaks() {
-        let r = render(
-            Tr::default(),
-            "Acme status",
-            "Checkout is failing",
-            "resolved",
-            "Root cause found.\nA fix is deployed.",
-            "https://acme.test/incidents/1",
-            "https://acme.test/subscribe/unsubscribe?s=1&t=2",
-            None,
-        );
+        let r = render(&IncidentMail {
+            locale: Locale::En,
+            page_name: "Acme status".into(),
+            incident_title: "Checkout is failing".into(),
+            phase: "resolved".into(),
+            message: "Root cause found.\nA fix is deployed.".into(),
+            incident_url: "https://acme.test/incidents/1".into(),
+            footer: SubscriberFooter {
+                unsubscribe_url: "https://acme.test/subscribe/unsubscribe?s=1&t=2".into(),
+                credit_url: None,
+            },
+        });
         assert!(
             r.html_body
                 .contains("Root cause found.<br>\nA fix is deployed."),
@@ -202,16 +217,18 @@ mod tests {
 
     #[test]
     fn an_update_in_markdown_is_styled_inline_and_previewed_plain() {
-        let r = render(
-            Tr::default(),
-            "Acme status",
-            "Checkout is failing",
-            "identified",
-            "**Root cause** in [the pool](https://acme.test/pool), see <ticket>.",
-            "https://acme.test/incidents/1",
-            "https://acme.test/subscribe/unsubscribe?s=1&t=2",
-            None,
-        );
+        let r = render(&IncidentMail {
+            locale: Locale::En,
+            page_name: "Acme status".into(),
+            incident_title: "Checkout is failing".into(),
+            phase: "identified".into(),
+            message: "**Root cause** in [the pool](https://acme.test/pool), see <ticket>.".into(),
+            incident_url: "https://acme.test/incidents/1".into(),
+            footer: SubscriberFooter {
+                unsubscribe_url: "https://acme.test/subscribe/unsubscribe?s=1&t=2".into(),
+                credit_url: None,
+            },
+        });
         let html = &r.html_body;
         assert!(html.contains("<strong>Root cause</strong>"), "{html}");
         assert!(

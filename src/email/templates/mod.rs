@@ -58,37 +58,43 @@ pub(crate) fn fill_slot(text: &str, markup: &str) -> String {
     html_escape(text).replacen(MARKUP_SLOT, markup, 1)
 }
 
-/// Attribution and opt-out, then the uptimepage credit where the page carries one.
-pub(crate) fn subscriber_footnote(
-    tr: Tr,
-    page_name: &str,
-    unsubscribe_url: &str,
-    credit_url: Option<&str>,
-) -> String {
-    let mut html = layout::fine_print(&fill_slot(
-        &tr.t_args(
-            "email-footnote",
-            [
-                ("page", page_name.replace(MARKUP_SLOT, "").into()),
-                ("unsubscribe", MARKUP_SLOT.into()),
-            ],
-        ),
-        &layout::quiet_link(unsubscribe_url, &tr.t("email-unsubscribe")),
-    ));
-    if let Some(url) = credit_url {
-        html.push_str(&layout::fine_print(&layout::quiet_link(
-            url,
-            &tr.t("email-credit"),
-        )));
-    }
-    html
+/// The closing links shared by incident, maintenance and outage subscriber mail.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubscriberFooter {
+    pub unsubscribe_url: String,
+    /// The uptimepage credit's link, on a page that carries the credit.
+    pub credit_url: Option<String>,
 }
 
-/// The plain-text body's closing credit line, or nothing.
-pub(crate) fn subscriber_credit_text(tr: Tr, credit_url: Option<&str>) -> String {
-    credit_url
-        .map(|url| format!("\n{}\n  {url}\n", tr.t("email-credit")))
-        .unwrap_or_default()
+impl SubscriberFooter {
+    /// Attribution and opt-out, then the uptimepage credit where the page carries one.
+    pub(crate) fn footnote(&self, tr: Tr, page_name: &str) -> String {
+        let mut html = layout::fine_print(&fill_slot(
+            &tr.t_args(
+                "email-footnote",
+                [
+                    ("page", page_name.replace(MARKUP_SLOT, "").into()),
+                    ("unsubscribe", MARKUP_SLOT.into()),
+                ],
+            ),
+            &layout::quiet_link(&self.unsubscribe_url, &tr.t("email-unsubscribe")),
+        ));
+        if let Some(url) = &self.credit_url {
+            html.push_str(&layout::fine_print(&layout::quiet_link(
+                url,
+                &tr.t("email-credit"),
+            )));
+        }
+        html
+    }
+
+    /// The plain-text body's closing credit line, or nothing.
+    pub(crate) fn credit_text(&self, tr: Tr) -> String {
+        self.credit_url
+            .as_deref()
+            .map(|url| format!("\n{}\n  {url}\n", tr.t("email-credit")))
+            .unwrap_or_default()
+    }
 }
 
 /// Attribute-context escaping. Same rule as [`html_escape`] today (the quote

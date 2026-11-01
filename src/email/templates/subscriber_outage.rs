@@ -2,9 +2,7 @@ use chrono::{DateTime, Utc};
 
 use crate::domain::Locale;
 use crate::email::templates::layout::{self, ButtonStyle, Page, Tone};
-use crate::email::templates::{
-    RenderedEmail, single_line, subscriber_credit_text, subscriber_footnote,
-};
+use crate::email::templates::{RenderedEmail, SubscriberFooter, single_line};
 use crate::i18n::Tr;
 
 /// Names a preheader spells out before it counts the rest.
@@ -18,9 +16,7 @@ pub struct OutageMail {
     pub resolved: bool,
     pub components: Vec<OutageComponent>,
     pub page_url: String,
-    pub unsubscribe_url: String,
-    /// The uptimepage credit's link, on a page that carries the credit.
-    pub credit_url: Option<String>,
+    pub footer: SubscriberFooter,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,8 +140,8 @@ pub fn render(mail: &OutageMail) -> RenderedEmail {
         view = tr.t("email-view-page"),
         page_url = mail.page_url,
         unsubscribe = tr.t("email-unsubscribe-text"),
-        unsubscribe_url = mail.unsubscribe_url,
-        credit = subscriber_credit_text(tr, mail.credit_url.as_deref()),
+        unsubscribe_url = mail.footer.unsubscribe_url,
+        credit = mail.footer.credit_text(tr),
     );
 
     let mut body = layout::prose(&lead);
@@ -164,12 +160,7 @@ pub fn render(mail: &OutageMail) -> RenderedEmail {
             signature: None,
             header: layout::band(tone, &label.to_uppercase(), &headline, Some(&sub)),
             body,
-            footnote: Some(subscriber_footnote(
-                tr,
-                &mail.page_name,
-                &mail.unsubscribe_url,
-                mail.credit_url.as_deref(),
-            )),
+            footnote: Some(mail.footer.footnote(tr, &mail.page_name)),
         },
     );
 
@@ -213,8 +204,10 @@ mod tests {
                 component("Webhooks", "19:02:37", end("19:04:37")),
             ],
             page_url: "https://acme.test/".into(),
-            unsubscribe_url: "https://acme.test/subscribe/unsubscribe?s=1&t=2".into(),
-            credit_url: None,
+            footer: SubscriberFooter {
+                unsubscribe_url: "https://acme.test/subscribe/unsubscribe?s=1&t=2".into(),
+                credit_url: None,
+            },
         }
     }
 

@@ -1,7 +1,8 @@
 use chrono::{DateTime, Utc};
 
+use crate::domain::Locale;
 use crate::email::templates::layout::{self, ButtonStyle, Page, Tone};
-use crate::email::templates::{RenderedEmail, subscriber_credit_text, subscriber_footnote};
+use crate::email::templates::{RenderedEmail, SubscriberFooter};
 use crate::i18n::Tr;
 
 /// What a maintenance email tells a subscriber.
@@ -42,22 +43,35 @@ impl MaintenanceNotice {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn render(
-    tr: Tr,
-    page_name: &str,
-    title: &str,
-    notice: &MaintenanceNotice,
-    starts_at: DateTime<Utc>,
-    ends_at: DateTime<Utc>,
-    page_url: &str,
-    unsubscribe_url: &str,
-    credit_url: Option<&str>,
-) -> RenderedEmail {
+/// A maintenance announcement, completion or posted update for a subscriber.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MaintenanceMail {
+    pub locale: Locale,
+    pub page_name: String,
+    pub title: String,
+    pub notice: MaintenanceNotice,
+    pub starts_at: DateTime<Utc>,
+    pub ends_at: DateTime<Utc>,
+    pub page_url: String,
+    pub footer: SubscriberFooter,
+}
+
+pub fn render(mail: &MaintenanceMail) -> RenderedEmail {
+    let MaintenanceMail {
+        locale,
+        page_name,
+        title,
+        notice,
+        starts_at,
+        ends_at,
+        page_url,
+        footer,
+    } = mail;
+    let tr = Tr::new(*locale);
     let completed = matches!(notice, MaintenanceNotice::Completed { .. });
     let heading = tr.t(notice.heading_key());
     let subject = format!("[{page_name}] {heading}: {title}");
-    let window = format!("{} — {}", tr.utc_stamp(starts_at), tr.utc_stamp(ends_at));
+    let window = format!("{} — {}", tr.utc_stamp(*starts_at), tr.utc_stamp(*ends_at));
     let said = notice.text();
     let desc_text = said.map(|d| format!("\n{d}\n")).unwrap_or_default();
 
@@ -75,7 +89,8 @@ pub fn render(
         ),
         view = tr.t("email-view-page"),
         unsubscribe = tr.t("email-unsubscribe-text"),
-        credit = subscriber_credit_text(tr, credit_url),
+        unsubscribe_url = footer.unsubscribe_url,
+        credit = footer.credit_text(tr),
     );
 
     let fact = tr.t(if notice.ran() {
@@ -107,12 +122,7 @@ pub fn render(
                 Some(&window),
             ),
             body,
-            footnote: Some(subscriber_footnote(
-                tr,
-                page_name,
-                unsubscribe_url,
-                credit_url,
-            )),
+            footnote: Some(footer.footnote(tr, page_name)),
         },
     );
 
@@ -125,22 +135,23 @@ pub fn render(
 
 #[cfg(test)]
 mod tests {
-    use super::{MaintenanceNotice, render};
-    use crate::i18n::Tr;
+    use super::*;
     use chrono::{TimeZone, Utc};
 
     fn rendered(notice: MaintenanceNotice) -> crate::email::templates::RenderedEmail {
-        render(
-            Tr::default(),
-            "Acme status",
-            "Database upgrade",
-            &notice,
-            Utc.with_ymd_and_hms(2026, 8, 20, 1, 0, 0).unwrap(),
-            Utc.with_ymd_and_hms(2026, 8, 20, 3, 0, 0).unwrap(),
-            "https://acme.test/",
-            "https://acme.test/subscribe/unsubscribe?s=1&t=2",
-            None,
-        )
+        render(&MaintenanceMail {
+            locale: Locale::En,
+            page_name: "Acme status".into(),
+            title: "Database upgrade".into(),
+            notice,
+            starts_at: Utc.with_ymd_and_hms(2026, 8, 20, 1, 0, 0).unwrap(),
+            ends_at: Utc.with_ymd_and_hms(2026, 8, 20, 3, 0, 0).unwrap(),
+            page_url: "https://acme.test/".into(),
+            footer: SubscriberFooter {
+                unsubscribe_url: "https://acme.test/subscribe/unsubscribe?s=1&t=2".into(),
+                credit_url: None,
+            },
+        })
     }
 
     #[test]
@@ -159,17 +170,19 @@ mod tests {
 
     #[test]
     fn a_german_page_dates_the_window_in_german() {
-        let r = render(
-            Tr::new(crate::domain::Locale::De),
-            "Acme status",
-            "Database upgrade",
-            &MaintenanceNotice::Scheduled { description: None },
-            Utc.with_ymd_and_hms(2026, 3, 20, 1, 0, 0).unwrap(),
-            Utc.with_ymd_and_hms(2026, 3, 20, 3, 0, 0).unwrap(),
-            "https://acme.test/",
-            "https://acme.test/subscribe/unsubscribe?s=1&t=2",
-            None,
-        );
+        let r = render(&MaintenanceMail {
+            locale: Locale::De,
+            page_name: "Acme status".into(),
+            title: "Database upgrade".into(),
+            notice: MaintenanceNotice::Scheduled { description: None },
+            starts_at: Utc.with_ymd_and_hms(2026, 3, 20, 1, 0, 0).unwrap(),
+            ends_at: Utc.with_ymd_and_hms(2026, 3, 20, 3, 0, 0).unwrap(),
+            page_url: "https://acme.test/".into(),
+            footer: SubscriberFooter {
+                unsubscribe_url: "https://acme.test/subscribe/unsubscribe?s=1&t=2".into(),
+                credit_url: None,
+            },
+        });
         assert_eq!(
             r.subject,
             "[Acme status] Geplante Wartung: Database upgrade"
