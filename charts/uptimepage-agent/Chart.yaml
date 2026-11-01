@@ -2,7 +2,7 @@ apiVersion: v2
 name: uptimepage-agent
 description: Regional probe agent for an Uptimepage control plane, hosted or self-hosted
 type: application
-version: 0.6.0
+version: 0.6.1
 appVersion: "1.6.0"
 # `-0` so vendor builds (v1.31.1-gke.x) satisfy the constraint.
 kubeVersion: ">=1.29.0-0"
@@ -37,4 +37,4 @@ annotations:
       url: https://uptimepage.dev/static/marketing/monitor-latency-by-region.webp
   artifacthub.io/changes: |
     - kind: changed
-      description: Tracks application 1.6.0
+      description: Use the green favicon as the chart icon

@@ -289,7 +289,7 @@ blurb = "Installing the Helm charts: external databases, ingress timeouts, ICMP,
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-07-26
-lastmod = 2026-10-28
+lastmod = 2026-11-01
 
 [[page]]
 slug = "multi-region"
