@@ -9,6 +9,7 @@ const SOURCE_HOSTS = new Map([
   ["devto", "dev.to"],
   ["fazier", "fazier.com"],
   ["hashnode", "hashnode.com"],
+  ["linkedin", "linkedin.com"],
   ["medium", "medium.com"],
   ["outbid", "outbid.lol"],
   ["perplexity", "perplexity.ai"],
