@@ -21,7 +21,8 @@ impl SsrfGuard {
     }
 
     /// Production default: block every non-public address (loopback, RFC1918,
-    /// link-local, ULA, cloud metadata, 6to4/NAT64 with embedded private v4).
+    /// link-local, cloud metadata, IPv6 outside `2000::/3`, 6to4/NAT64/Teredo
+    /// with embedded private v4).
     pub fn strict() -> Self {
         Self::new(false)
     }
@@ -87,8 +88,7 @@ pub fn is_blocked_ip(ip: IpAddr) -> bool {
 }
 
 fn is_blocked_v4(ip: Ipv4Addr) -> bool {
-    if ip.is_unspecified()
-        || ip.is_loopback()
+    if ip.is_loopback()
         || ip.is_private()
         || ip.is_link_local()
         || ip.is_broadcast()
@@ -98,6 +98,8 @@ fn is_blocked_v4(ip: Ipv4Addr) -> bool {
         return true;
     }
     match ip.octets() {
+        // 0.0.0.0/8 — "this network" (RFC 1122)
+        [0, _, _, _] => true,
         // 100.64.0.0/10 — CGNAT (RFC 6598)
         [100, b, _, _] if (64..=127).contains(&b) => true,
         // 192.0.0.0/24 — IETF protocol assignments (RFC 6890)
@@ -111,65 +113,59 @@ fn is_blocked_v4(ip: Ipv4Addr) -> bool {
 }
 
 fn is_blocked_v6(ip: Ipv6Addr) -> bool {
-    if ip.is_unspecified()
-        || ip.is_loopback()
-        || ip.is_multicast()
-        || ip.is_unique_local()
-        || ip.is_unicast_link_local()
-    {
-        return true;
-    }
+    // IPv4-mapped and well-known NAT64 addresses reach the IPv4 they carry.
     if let Some(mapped) = ip.to_ipv4_mapped() {
         return is_blocked_v4(mapped);
     }
     let seg = ip.segments();
-    // ::/96 (deprecated IPv4-compatible, excluding ::1 / :: already handled)
-    if seg[0..6].iter().all(|s| *s == 0) {
+    if let Some(embedded) = extract_nat64(&seg) {
+        return is_blocked_v4(embedded);
+    }
+    // 2000::/3 is the only space allocated for global unicast. Outside it sit
+    // loopback, unspecified, ULA, link-local, site-local, multicast, discard,
+    // local-use NAT64 and the IPv4-compatible and -translated forms.
+    if seg[0] & 0xe000 != 0x2000 {
         return true;
     }
-    // 2001:db8::/32 documentation
-    if seg[0] == 0x2001 && seg[1] == 0xdb8 {
-        return true;
+    match seg {
+        // 2001:2::/48 benchmarking (RFC 5180)
+        [0x2001, 0x0002, 0, ..] => true,
+        // 2001:db8::/32 documentation (RFC 3849)
+        [0x2001, 0x0db8, ..] => true,
+        // 3fff::/20 documentation (RFC 9637)
+        [0x3fff, b, ..] if b < 0x1000 => true,
+        // IPv6 transition mechanisms can embed IPv4 inside the v6 address. A
+        // public-looking v6 address may carry a private v4 inside it that
+        // would otherwise reach internal infrastructure through a relay.
+        _ => {
+            extract_6to4(&seg).is_some_and(is_blocked_v4)
+                || extract_teredo(&seg).is_some_and(|ends| ends.into_iter().any(is_blocked_v4))
+        }
     }
-    // 100::/64 discard
-    if seg[0] == 0x0100 && seg[1] == 0 && seg[2] == 0 && seg[3] == 0 {
-        return true;
-    }
-    // IPv6 transition mechanisms can embed IPv4 inside the v6 address. A
-    // public-looking v6 address may carry a private v4 inside it that would
-    // otherwise reach internal infrastructure through a translator.
-    if let Some(embedded) = extract_6to4(&seg).or_else(|| extract_nat64(&seg))
-        && is_blocked_v4(embedded)
-    {
-        return true;
-    }
-    false
 }
 
 /// 6to4 (RFC 3056) encodes an IPv4 address into the second and third 16-bit
 /// segments of a `2002::/16` address.
 fn extract_6to4(seg: &[u16; 8]) -> Option<Ipv4Addr> {
-    (seg[0] == 0x2002).then(|| {
-        Ipv4Addr::new(
-            (seg[1] >> 8) as u8,
-            (seg[1] & 0xff) as u8,
-            (seg[2] >> 8) as u8,
-            (seg[2] & 0xff) as u8,
-        )
-    })
+    (seg[0] == 0x2002).then(|| v4_from(seg[1], seg[2]))
 }
 
 /// NAT64 well-known prefix `64:ff9b::/96` (RFC 6052) carries the embedded
 /// IPv4 in the final two 16-bit segments.
 fn extract_nat64(seg: &[u16; 8]) -> Option<Ipv4Addr> {
-    (seg[0] == 0x0064 && seg[1] == 0xff9b && seg[2..6].iter().all(|s| *s == 0)).then(|| {
-        Ipv4Addr::new(
-            (seg[6] >> 8) as u8,
-            (seg[6] & 0xff) as u8,
-            (seg[7] >> 8) as u8,
-            (seg[7] & 0xff) as u8,
-        )
-    })
+    (seg[0] == 0x0064 && seg[1] == 0xff9b && seg[2..6].iter().all(|s| *s == 0))
+        .then(|| v4_from(seg[6], seg[7]))
+}
+
+/// Teredo (RFC 4380) carries the server's IPv4 in segments 2-3 and the
+/// client's, bit-inverted, in segments 6-7 of a `2001::/32` address. A relay
+/// sends to both: indirect bubbles go via the server (RFC 4380 §5.2.4).
+fn extract_teredo(seg: &[u16; 8]) -> Option<[Ipv4Addr; 2]> {
+    (seg[0] == 0x2001 && seg[1] == 0).then(|| [v4_from(seg[2], seg[3]), v4_from(!seg[6], !seg[7])])
+}
+
+fn v4_from(hi: u16, lo: u16) -> Ipv4Addr {
+    Ipv4Addr::from((u32::from(hi) << 16) | u32::from(lo))
 }
 
 #[cfg(test)]
@@ -209,6 +205,13 @@ mod tests {
     }
 
     #[test]
+    fn blocks_ipv4_this_network() {
+        assert!(blocked("0.1.2.3"));
+        assert!(blocked("0.255.255.255"));
+        assert!(blocked("::ffff:0.1.2.3"));
+    }
+
+    #[test]
     fn blocks_ipv4_reserved_ranges() {
         assert!(blocked("100.64.0.1")); // CGNAT
         assert!(blocked("100.127.255.255"));
@@ -242,6 +245,12 @@ mod tests {
     }
 
     #[test]
+    fn blocks_ipv6_site_local() {
+        assert!(blocked("fec0::1"));
+        assert!(blocked("feff:ffff::1"));
+    }
+
+    #[test]
     fn blocks_ipv6_mapped_private_v4() {
         assert!(blocked("::ffff:127.0.0.1"));
         assert!(blocked("::ffff:169.254.169.254"));
@@ -251,7 +260,28 @@ mod tests {
     #[test]
     fn blocks_ipv6_documentation_and_discard() {
         assert!(blocked("2001:db8::1"));
+        assert!(blocked("3fff::1"));
+        assert!(blocked("3fff:fff:ffff::1"));
         assert!(blocked("100::1"));
+    }
+
+    #[test]
+    fn blocks_ipv6_benchmarking() {
+        assert!(blocked("2001:2::1"));
+        assert!(blocked("2001:2:0:ffff::1"));
+    }
+
+    #[test]
+    fn blocks_ipv6_outside_global_unicast() {
+        assert!(blocked("4000::1"));
+        assert!(blocked("5f00::1")); // SRv6 SIDs
+        assert!(blocked("e000::1"));
+        // ::a00:1 → deprecated IPv4-compatible 10.0.0.1
+        assert!(blocked("::a00:1"));
+        // ::ffff:0:a9fe:a9fe → IPv4-translated 169.254.169.254
+        assert!(blocked("::ffff:0:a9fe:a9fe"));
+        // 64:ff9b::/32 outside the /96 well-known layout
+        assert!(blocked("64:ff9b:0:0:a00:1::"));
     }
 
     #[test]
@@ -287,9 +317,37 @@ mod tests {
     }
 
     #[test]
+    fn blocks_local_use_nat64_whatever_it_carries() {
+        // 64:ff9b:1::a00:1 → embedded 10.0.0.1 under a /96 layout
+        assert!(blocked("64:ff9b:1::a00:1"));
+        // 64:ff9b:1::101:101 → embedded 1.1.1.1 under a /96 layout
+        assert!(blocked("64:ff9b:1::101:101"));
+        assert!(blocked("64:ff9b:1:ffff:ffff:ffff:ffff:ffff"));
+    }
+
+    #[test]
+    fn blocks_teredo_carrying_private_ipv4() {
+        // server 65.54.227.120, client !80ff:fffe → 127.0.0.1
+        assert!(blocked("2001:0:4136:e378:8000:63bf:80ff:fffe"));
+        // server 65.54.227.120, client !5601:5601 → 169.254.169.254
+        assert!(blocked("2001:0:4136:e378:8000:63bf:5601:5601"));
+        // server 10.0.0.1, client !fefe:fefe → 1.1.1.1
+        assert!(blocked("2001:0:a00:1:8000:63bf:fefe:fefe"));
+    }
+
+    #[test]
+    fn allows_teredo_carrying_public_ipv4() {
+        // server 65.54.227.120, client !fefe:fefe → 1.1.1.1
+        assert!(!blocked("2001:0:4136:e378:8000:63bf:fefe:fefe"));
+    }
+
+    #[test]
     fn allows_public_ipv6() {
         assert!(!blocked("2606:4700:4700::1111"));
         assert!(!blocked("2001:4860:4860::8888"));
+        assert!(!blocked("3fff:1000::1"));
+        // AS112-v6, globally reachable inside the IETF 2001::/23 block
+        assert!(!blocked("2001:4:112::1"));
     }
 
     #[test]

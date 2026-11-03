@@ -19,7 +19,7 @@ Override `UPTIMEPAGE_CONFIG_PATH` to point at an alternate base config file.
 | `checker` | `per_host_max_inflight`, `rdap_max_inflight` | per-(org, host, port) and per-TLD RDAP concurrency caps. `per_host_max_inflight` is fail-fast: an over-cap tick is dropped, no `CheckResult` written. `rdap_max_inflight` queues the lookup for a free slot, bounded by the check timeout |
 | `http_client` | `tcp_keepalive_secs`, `bot_url`, `user_agent` | per-check connection keep-alive (one request's lifetime — checks connect fresh, no pool), and the outbound `User-Agent`: `Mozilla/5.0 (compatible; uptimepage/<version>; +<bot_url>)`. Point `bot_url` at a page that says who runs your instance, on the control plane and every agent; the default links [Probe identity](bot.md), which tells site owners the request came from a self-hosted copy. `user_agent` replaces the whole header |
 | `dns` | `cache_size`, `positive_ttl_secs`, `negative_ttl_secs`, `servers` | hickory resolver — point at internal resolvers when needed |
-| `security` | `allow_private_targets` | SSRF guard: when `false` (default) any target resolving to loopback / private / link-local / reserved IPs is rejected |
+| `security` | `allow_private_targets` | SSRF guard: when `false` (default) any target resolving to loopback / private / link-local / reserved IPs, or to IPv6 outside global unicast `2000::/3` that carries no public IPv4, is rejected |
 | `security` | `credentials_kek_base64` | 32-byte base64 key encrypting `basic_auth` / `bearer_token` at rest. Empty (default) stores plaintext — dev only |
 | `security` | `trusted_proxies` | CIDR ranges whose `X-Forwarded-For` is honoured for client-IP extraction. Empty means no reverse proxy: the TCP peer is trusted as-is |
 | `security.disclosure` | `contact`, `acknowledgments`, `preferred_languages` | your RFC 9116 `/.well-known/security.txt`, served on every host when `contact` is set and on none when it is empty. `contact` takes `mailto:`, `tel:` or `https://` URIs, most preferred first; `Policy` is `legal.security_policy_url` when that is https; `Expires` is filled in 180 days ahead on each request, so the file never lapses and a restart never waits on a renewal. No `Canonical`, since tenant subdomains cannot all be listed |
@@ -542,13 +542,14 @@ In the shipped compose stack the env var is `AGENT_FLOW_ENABLED`, which maps to 
 - **`scheduler.enabled`** (default `true`) turns the in-process scheduler on. Off makes the process a pure dashboard/brain with no local probing, useful once regional agents cover all check traffic.
 - **`dns.servers`** accepts either bare IPs (`"1.1.1.1"`) or `ip:port` form. Used as is — no system resolver fallback.
 - **`security.allow_private_targets`** is the SSRF guard. Default `false` blocks:
-  - Loopback (`127.0.0.0/8`, `::1`)
+  - Loopback (`127.0.0.0/8`, `::1`) and "this network" (`0.0.0.0/8`)
   - RFC1918 private (`10/8`, `172.16/12`, `192.168/16`)
-  - Link-local (`169.254/16`, `fe80::/10`) — covers AWS/GCP metadata `169.254.169.254`
-  - Carrier-grade NAT (`100.64/10`)
-  - IPv6 ULA (`fc00::/7`), discard, IPv4-mapped private, documentation ranges
-  - Multicast, broadcast, unspecified, reserved-for-future-use
-  - IPv6 transition mechanisms: `2002::/16` (6to4) and `64:ff9b::/96` (NAT64) are decoded to their embedded IPv4 and rejected when the inner IPv4 falls in any blocked range
+  - Link-local (`169.254/16`), which covers AWS/GCP metadata `169.254.169.254`
+  - Carrier-grade NAT (`100.64/10`) and IETF protocol assignments (`192.0.0.0/24`)
+  - Benchmarking (`198.18/15`, `2001:2::/48`) and documentation (`192.0.2/24`, `198.51.100/24`, `203.0.113/24`, `2001:db8::/32`, `3fff::/20`)
+  - Multicast, broadcast and reserved-for-future-use (`240/4`)
+  - Every IPv6 address outside global unicast `2000::/3`: ULA (`fc00::/7`), link-local (`fe80::/10`), site-local (`fec0::/10`), multicast, discard, local-use NAT64 (`64:ff9b:1::/48`) and the IPv4-compatible and IPv4-translated forms
+  - IPv6 that carries an IPv4 when the inner IPv4 falls in any blocked range: IPv4-mapped (`::ffff:0:0/96`) and NAT64 (`64:ff9b::/96`) are judged only by the IPv4 they carry; 6to4 (`2002::/16`) is decoded to its embedded IPv4; Teredo (`2001::/32`) to both its server and client IPv4
   The guard runs both at API submission (rejects IP-literal URLs synchronously) and after DNS resolution at connect time (catches DNS rebinding). Flip to `true` for internal monitoring where private targets are the goal — operators are then responsible for network segmentation.
 - **`security.credentials_kek_base64`** enables AES-256-GCM encryption of HTTP `basic_auth` and `bearer_token` values inside the `targets.check_spec` JSONB column. Generate with `openssl rand -base64 32`. Each write produces a fresh 12-byte random nonce; the on-disk shape is `{"$enc":"v1:<nonce>:<ciphertext>"}`. When the key is unset the service logs a startup warning and stores credentials plaintext (dev-friendly upgrade path — existing plaintext rows continue to read after a key is provisioned). Rotation and KMS integration are out of scope for the current version; treat the KEK as long-lived and protect it via your secret-management of choice (env file with restricted mode, container secret, etc.). A malformed KEK fails the process at startup.
 - **Per-IP rate limiting** on `/api/v1/*` is the reverse proxy's job, not an in-process config block. In-process limiting is per-org and per-user, driven by `[rate_limits]` and the plan's per-minute budgets: see [docs/api.md](api.md#rate-limiting).
