@@ -323,6 +323,9 @@ services:
   postgres:
     image: postgres:18-alpine
     restart: unless-stopped
+    # Room for the shutdown checkpoint; Docker's 10 s default can cut it off
+    # into crash recovery.
+    stop_grace_period: 60s
     logging: *logging
     expose:
       - "5432"

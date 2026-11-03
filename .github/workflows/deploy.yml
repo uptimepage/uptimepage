@@ -460,28 +460,37 @@ jobs:
           done
 
           # Single-file bind mounts pin the inode at container-create time:
-          # a rewritten (new-inode) config is invisible to the running CH, and
-          # a plain `restart` re-reads the same stale inode. Hash host vs
-          # in-container and force-recreate CH only on drift (same pattern as
-          # the Caddyfile block below). Must run BEFORE the readyz gate, which
-          # probes from the CH container and would hang if CH were looping.
-          ch_recreate=""
-          for pair in \
+          # a rewritten (new-inode) config is invisible to the running
+          # container, and a plain `restart` re-reads the same stale inode.
+          # Hash host vs in-container to tell when a recreate is due (same
+          # pattern as the Caddyfile block below).
+          config_drifted() {
+            local svc=$1 pair hf cf host_h ctr_h ctr_line drifted=1
+            shift
+            for pair in "$@"; do
+              hf="${pair%%:*}"; cf="${pair#*:}"
+              host_h=$(sha256sum "$hf" 2>/dev/null | awk '{print $1}')
+              # Still unreadable after retries → down, force a recreate (safe default).
+              ctr_h=""
+              for try in 1 2 3; do
+                if ctr_line=$(docker compose exec -T "$svc" sha256sum "$cf" 2>/dev/null); then
+                  ctr_h=$(printf '%s' "$ctr_line" | awk '{print $1}')
+                  break
+                fi
+                [ "$try" = 3 ] || sleep 2
+              done
+              if [ -z "$host_h" ] || [ "$host_h" != "$ctr_h" ]; then
+                echo "${svc} config drift on ${hf} (host=${host_h:0:12} ctr=${ctr_h:0:12})"
+                drifted=0
+              fi
+            done
+            return "$drifted"
+          }
+          # Must run BEFORE the readyz gate, which probes from the CH container
+          # and would hang if CH were looping.
+          if config_drifted clickhouse \
             "clickhouse-config.xml:/etc/clickhouse-server/config.d/custom.xml" \
-            "clickhouse-users.xml:/etc/clickhouse-server/users.d/zz-default-password.xml"; do
-            hf="${pair%%:*}"; cf="${pair#*:}"
-            host_h=$(sha256sum "$hf" 2>/dev/null | awk '{print $1}')
-            if ctr_line=$(docker compose exec -T clickhouse sha256sum "$cf" 2>/dev/null); then
-              ctr_h=$(printf '%s' "$ctr_line" | awk '{print $1}')
-            else
-              ctr_h=""   # CH down/unreadable → force a recreate (safe default)
-            fi
-            if [ -z "$host_h" ] || [ "$host_h" != "$ctr_h" ]; then
-              echo "CH config drift on ${hf} (host=${host_h:0:12} ctr=${ctr_h:0:12})"
-              ch_recreate=1
-            fi
-          done
-          if [ -n "$ch_recreate" ]; then
+            "clickhouse-users.xml:/etc/clickhouse-server/users.d/zz-default-password.xml"; then
             echo "recreating clickhouse to re-resolve bind mounts to current inodes"
             docker compose up -d --no-build --force-recreate clickhouse
           fi
@@ -1347,6 +1356,28 @@ jobs:
           # on quoting, so it could pass a config Compose then reads otherwise.
           docker compose run --rm --no-deps --entrypoint caddy caddy \
             validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+          # --- apply a changed postgresql.conf -------------------------------
+          # max_connections and the memory settings load only at server start,
+          # so a changed file needs a recreate, after the gates above and before
+          # the new color connects. A file that cannot start would take the
+          # database from both colors, so it first boots a scratch cluster.
+          if config_drifted postgres "postgresql.conf:/etc/postgresql/postgresql.conf"; then
+            docker compose run --rm --no-deps -T --user postgres --entrypoint sh postgres -c '
+              log=/tmp/pgcheck.log
+              { initdb -D /tmp/pgcheck >"$log" 2>&1 \
+                && pg_ctl -D /tmp/pgcheck -w -t 60 -l "$log" \
+                  -o "-c config_file=/etc/postgresql/postgresql.conf -c listen_addresses=" start >/dev/null \
+                && pg_ctl -D /tmp/pgcheck -m fast stop >/dev/null; } \
+                || { tail -n 20 "$log"; exit 1; }' \
+              || { echo "::error::a scratch Postgres on the new postgresql.conf failed (log above); Postgres left as it was"; exit 1; }
+            echo "::warning::recreating Postgres for its new config; both colors lose the database until it is healthy"
+            docker compose up -d --no-build --force-recreate --wait --wait-timeout 120 postgres || {
+              echo "::error::Postgres did not turn healthy after its config recreate"
+              docker compose logs --tail 50 postgres || true
+              exit 1
+            }
+          fi
 
           # --- blue/green cutover -------------------------------------------
           # Boot the idle color on the new image while the active color keeps

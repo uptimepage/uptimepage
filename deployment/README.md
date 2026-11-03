@@ -463,6 +463,12 @@ docker compose pull
 docker compose up -d
 ```
 
+`up -d` leaves Postgres running when only `postgresql.conf` changed, and the bind mount keeps showing it the old file. Recreate it to apply the new one:
+
+```bash
+docker compose up -d --force-recreate postgres
+```
+
 Changing a network's own settings (subnet, `enable_ipv6`) is the one case
 `up -d <service>` cannot handle: Compose stops that service, then fails to
 remove the network because other containers still hold endpoints on it, and

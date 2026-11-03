@@ -151,6 +151,8 @@ No external migrator. The app owns its schema lifecycle symmetrically.
 - The practical ceiling is set by file descriptors and ephemeral ports, not RAM
 - At 50k concurrent checks against external targets, RSS sits around 200-400 MB depending on response sizes
 - The optional `metrics` profile adds a Grafana Alloy container (~100 MB RSS plus a small bounded remote-write WAL volume) — account for it when sizing the host if you enable it
+- Each instance opens up to `storage.postgres.max_connections` (16 by default) plus 2 for the email send gate. Set the Postgres server's `max_connections` to cover every instance that can run at once, plus a few for backups and an admin `psql`. A blue/green deploy runs two instances for its length, so the shipped `deployment/postgresql.conf` sets 50. When the server is short, connections opened during the overlap fail with `sorry, too many clients already`, and a new instance that cannot connect never turns ready.
+- Postgres reads `max_connections` only at startup: after changing it, recreate the container (`docker compose up -d --force-recreate postgres`). A restart can keep reading the old file, because a single-file bind mount pins the inode it started with.
 
 ## Graceful shutdown
 
