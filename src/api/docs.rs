@@ -49,6 +49,7 @@ use crate::storage::UptimeStats;
         license(name = "MIT"),
     ),
     servers((url = "/", description = "Current host")),
+    modifiers(&DescribeBareResponses),
     paths(
         handlers::health::healthz,
         handlers::health::readyz,
@@ -478,4 +479,41 @@ pub fn openapi() -> &'static utoipa::openapi::OpenApi {
     static DOC: std::sync::LazyLock<utoipa::openapi::OpenApi> =
         std::sync::LazyLock::new(ApiDoc::openapi);
     &DOC
+}
+
+/// OpenAPI requires a description on every response, and utoipa leaves it out
+/// when the annotation gives none, so those get the status's reason phrase.
+struct DescribeBareResponses;
+
+impl utoipa::Modify for DescribeBareResponses {
+    fn modify(&self, doc: &mut utoipa::openapi::OpenApi) {
+        use utoipa::openapi::RefOr;
+        for item in doc.paths.paths.values_mut() {
+            let ops = [
+                &mut item.get,
+                &mut item.put,
+                &mut item.post,
+                &mut item.delete,
+                &mut item.options,
+                &mut item.head,
+                &mut item.patch,
+                &mut item.trace,
+            ];
+            for op in ops.into_iter().flatten() {
+                for (status, response) in &mut op.responses.responses {
+                    if let RefOr::T(response) = response
+                        && response.description.is_empty()
+                    {
+                        response.description = status
+                            .parse()
+                            .ok()
+                            .and_then(|code| axum::http::StatusCode::from_u16(code).ok())
+                            .and_then(|code| code.canonical_reason())
+                            .unwrap_or("Response")
+                            .to_owned();
+                    }
+                }
+            }
+        }
+    }
 }

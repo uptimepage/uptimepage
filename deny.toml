@@ -30,10 +30,9 @@ ignore = [
     # `fastrand`/`parking_lot` test helpers. No action available; will drop
     # out as those crates migrate to `web-time`.
     "RUSTSEC-2024-0384",
-    # `paste` — author archived; transitive via `clickhouse` (polonius-the-crab)
-    # and `utoipa-axum`. No safe upgrade; replacements (`pastey`,
-    # `with_builtin_macros`) require upstream PRs. Revisit on clickhouse
-    # 0.16 / utoipa-axum 0.3.
+    # `paste` — author archived; transitive via `clickhouse` (polonius-the-crab).
+    # No safe upgrade; replacements (`pastey`, `with_builtin_macros`) require
+    # upstream PRs. Revisit on clickhouse 0.16.
     "RUSTSEC-2024-0436",
     # `basic-toml` — archived, unmaintained. Compiled into the askama_derive
     # proc-macro through askama's default `config` feature, which path-based
@@ -57,14 +56,6 @@ ignore = [
     # through crypto-glue 0.2, unreleased. Revisit on the next webauthn-rs
     # publish.
     "RUSTSEC-2026-0387",
-    # `zip` 3 — symlink targets and SUID bits on `extract()`. Build-only, via
-    # utoipa-swagger-ui's build script, which never calls `extract()`: it
-    # writes the regular files of the pinned Swagger UI release archive into
-    # OUT_DIR. Nothing unzips at runtime. utoipa-swagger-ui 10 still requires
-    # zip 8; revisit when juhaku/utoipa#1645 (zip 9) ships in a release.
-    "RUSTSEC-2026-0367",
-    "RUSTSEC-2026-0368",
-    "RUSTSEC-2026-0369",
 ]
 
 # ── Licenses: explicit allow-list. Anything outside the list fails CI. ──────

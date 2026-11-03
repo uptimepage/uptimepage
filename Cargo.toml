@@ -102,7 +102,7 @@ mime_guess = "2"
 # Public-page `public_about`: parse markdown, then sanitise the HTML. The
 # parser output is never trusted — every byte passes through the ammonia
 # allowlist before it reaches a template.
-pulldown-cmark = { version = "0.13.5", default-features = false, features = ["html"] }
+pulldown-cmark = { version = "0.13.6", default-features = false, features = ["html"] }
 ammonia = "4.2.4"
 
 # Utilities
@@ -171,9 +171,8 @@ webauthn-rs = { version = "=0.6.1-dev", default-features = false, features = [
 webauthn-rs-proto = "=0.6.1-dev"
 
 # OpenAPI schema derivation
-utoipa = { version = "5.5", features = ["axum_extras", "chrono", "uuid", "url"] }
-utoipa-axum = "0.2"
-utoipa-swagger-ui = { version = "9", features = ["axum"] }
+utoipa = { version = "6", features = ["axum_extras", "chrono", "uuid", "url"] }
+utoipa-swagger-ui = { version = "10", features = ["axum"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 ipnet = { version = "2.12.0", features = ["serde"] }
 chrono-tz = { version = "0.10.4", default-features = false }

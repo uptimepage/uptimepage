@@ -138,6 +138,28 @@ fn dump_openapi_spec_for_inspection() {
     std::fs::write("/tmp/openapi.json", &doc).unwrap();
 }
 
+#[test]
+fn every_response_has_a_description() {
+    let doc = serde_json::to_value(uptimepage::api::docs::openapi()).unwrap();
+    let mut bare = Vec::new();
+    for (path, item) in doc["paths"].as_object().unwrap() {
+        for (method, op) in item.as_object().unwrap() {
+            let Some(responses) = op["responses"].as_object() else {
+                continue;
+            };
+            for (status, response) in responses {
+                let described = response["description"]
+                    .as_str()
+                    .is_some_and(|d| !d.is_empty());
+                if !described && response.get("$ref").is_none() {
+                    bare.push(format!("{method} {path} {status}"));
+                }
+            }
+        }
+    }
+    assert!(bare.is_empty(), "responses without a description: {bare:?}");
+}
+
 #[tokio::test]
 async fn swagger_ui_is_reachable() {
     let resp = app()
