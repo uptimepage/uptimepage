@@ -28,6 +28,7 @@ pub mod on_call;
 pub mod org;
 pub mod page_access;
 pub mod page_asset;
+pub mod page_timezone;
 pub mod preferences;
 pub mod public;
 pub mod quota;
@@ -119,6 +120,7 @@ pub use page_access::{
     RECHECK_DAY_CHOICES, RuleError, SESSION_DAY_CHOICES, ValidAccess, normalize_email,
 };
 pub use page_asset::{AssetSlot, SlotPolicy};
+pub use page_timezone::PageTimezone;
 pub use preferences::{DisplayPrefs, TimeFormat};
 pub use public::{
     ComponentHistoryResponse, DayState, Downtime, ImpactSpan, IncidentImpact, IncidentSeverity,

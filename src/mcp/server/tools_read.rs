@@ -804,7 +804,7 @@ impl McpServer {
     /// One status page with its components and each component's current state —
     /// the "what do customers see" view.
     #[tool(
-        description = "One status page: name, public URL, enabled, its components with each linked monitor's current state, and the monitor groups it shows as sections with their members. Read-only.",
+        description = "One status page: name, public URL, enabled, subscriber email time zone, its components with each linked monitor's current state, and the monitor groups it shows as sections with their members. Read-only.",
         title = "Status page details",
         annotations(read_only_hint = true)
     )]
@@ -883,6 +883,7 @@ impl McpServer {
             name: sanitize_data(&page.name),
             public_url: self.page_public_url(&page.slug),
             enabled: page.enabled,
+            timezone: page.public_timezone.as_str().to_owned(),
             components,
             sections,
             access: self.page_access(org, page.id).await?,

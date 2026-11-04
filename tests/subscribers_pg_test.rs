@@ -682,6 +682,45 @@ async fn a_german_page_mails_its_subscribers_in_german() {
     done(pool, &name).await;
 }
 
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_page_with_a_zone_states_its_maintenance_window_in_that_zone() {
+    let Some((pool, name)) = isolated("subtz").await else {
+        return;
+    };
+    let org = seed_org(&pool).await;
+    let target = seed_target(&pool, org, "mon").await;
+    let page = seed_page(&pool, org).await;
+    sqlx::query("UPDATE status_pages SET public_timezone = 'Asia/Tokyo' WHERE id = $1")
+        .bind(page)
+        .execute(&pool)
+        .await
+        .unwrap();
+    add_component(&pool, org, page, target).await;
+    confirmed_subscriber(&pool, org, page, "tz@example.com").await;
+    let window = seed_maintenance(&pool, org, 24, 25).await;
+    add_maintenance_component(&pool, org, window, target).await;
+
+    let mem = Arc::new(InMemoryEmailSender::new());
+    dispatcher(pool.clone(), mem.clone())
+        .run_once()
+        .await
+        .unwrap();
+    let mail = mails_to(&mem, "tz@example.com").pop().expect("mailed");
+    let rendered = mail.template.render("Uptimepage");
+    assert!(
+        rendered.text_body.contains(" JST"),
+        "{}",
+        rendered.text_body
+    );
+    assert!(
+        !rendered.text_body.contains(" UTC"),
+        "{}",
+        rendered.text_body
+    );
+    done(pool, &name).await;
+}
+
 /// A page whose plan cannot drop the footer badge carries the credit in its
 /// mail too; a white-label page that turned the badge off carries neither.
 #[tokio::test]

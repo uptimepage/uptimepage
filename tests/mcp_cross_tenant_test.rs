@@ -1066,6 +1066,34 @@ async fn status_page_tools_cannot_reach_another_orgs_page_or_monitor() {
     assert!(error_message(&moved).contains("already taken"), "{moved}");
     assert_eq!(page_row(&pool, &a_slug).await, Some(("Acme".into(), false)));
 
+    let zoned = mcp
+        .call(
+            "update_status_page",
+            json!({ "slug": a_slug, "timezone": "Europe/Berlin" }),
+        )
+        .await;
+    assert_eq!(error_code(&zoned), None, "{zoned}");
+    assert_eq!(
+        zoned["result"]["structuredContent"]["timezone"],
+        "Europe/Berlin"
+    );
+    let read = mcp.call("get_status_page", json!({ "slug": a_slug })).await;
+    assert_eq!(
+        read["result"]["structuredContent"]["timezone"],
+        "Europe/Berlin"
+    );
+    let unknown = mcp
+        .call(
+            "update_status_page",
+            json!({ "slug": a_slug, "timezone": "Mars/Olympus" }),
+        )
+        .await;
+    assert_eq!(
+        error_code(&unknown).as_deref(),
+        Some("invalid_argument"),
+        "{unknown}"
+    );
+
     let borrowed = mcp
         .call(
             "add_status_page_components",

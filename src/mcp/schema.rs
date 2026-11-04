@@ -1304,6 +1304,8 @@ pub struct StatusPageDetail {
     pub name: String,
     pub public_url: String,
     pub enabled: bool,
+    /// IANA time zone of the times in its subscriber emails.
+    pub timezone: String,
     pub components: Vec<StatusPageComponent>,
     /// Monitor groups shown as live sections: their members join and leave
     /// the page with the group.
@@ -1710,6 +1712,8 @@ pub struct StatusPageWritten {
     pub name: String,
     pub public_url: String,
     pub enabled: bool,
+    /// IANA time zone of the times in its subscriber emails.
+    pub timezone: String,
     /// Who may open it, or null for a page never made private.
     pub access: Option<PageAccessArg>,
 }
@@ -1730,6 +1734,9 @@ pub struct UpdateStatusPageArgs {
     /// Replace who may open it: make it private, change its list, or make it
     /// public again.
     pub access: Option<PageAccessArg>,
+    /// IANA time zone for the times in its subscriber emails, such as
+    /// `Europe/Berlin`. The page itself shows each visitor their own time.
+    pub timezone: Option<String>,
 }
 
 /// One monitor to curate onto a page.

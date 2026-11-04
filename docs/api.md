@@ -114,7 +114,7 @@ edit it with `PATCH`. Model + caps in [Per-org status pages](per-org-status.md).
 | `GET` | `/api/v1/status-pages` | list this org's pages |
 | `POST` | `/api/v1/status-pages` | create a page (capped at `max_status_pages`; slug globally unique) |
 | `GET` | `/api/v1/status-pages/{id}` | one page + its live URL, logo URL and `access` |
-| `PATCH` | `/api/v1/status-pages/{id}` | rename, change slug, publish/unpublish, set the language (`public_locale`), edit branding, change who may open it (`access`) |
+| `PATCH` | `/api/v1/status-pages/{id}` | rename, change slug, publish/unpublish, set the language (`public_locale`) and the email time zone (`public_timezone`), edit branding, change who may open it (`access`) |
 | `DELETE` | `/api/v1/status-pages/{id}` | delete the page |
 | `GET` | `/api/v1/status-pages/{id}/components` | the monitors curated onto the page; a member of a group section carries its `section_id` |
 | `POST` | `/api/v1/status-pages/{id}/components` | add a monitor (distinct-target cap `max_public_components`) |

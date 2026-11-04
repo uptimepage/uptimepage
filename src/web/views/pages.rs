@@ -20,6 +20,7 @@ use crate::request::auth::CurrentOrg;
 use crate::templates::filters;
 use crate::web::error::WebResult;
 use crate::web::views::resolve_org;
+use crate::web::views::time_zones::{ZoneChoice, zone_choices};
 
 const TAB_PAGES: &str = "pages";
 
@@ -259,6 +260,8 @@ pub struct PageEditorPage {
     pub website_url: String,
     pub styles: Vec<StyleOption>,
     pub locales: Vec<LocaleOption>,
+    pub timezone: String,
+    pub timezones: Vec<ZoneChoice>,
     /// Groups already in use, offered as suggestions so a second spelling of
     /// one group does not quietly become a second section on the page.
     pub groups: Vec<String>,
@@ -571,6 +574,8 @@ pub async fn page_editor(
         website_url: b.public_website_url.clone().unwrap_or_default(),
         styles,
         locales,
+        timezone: page.public_timezone.as_str().to_owned(),
+        timezones: zone_choices(page.public_timezone.as_str(), chrono::Utc::now()),
         groups,
         host_suffix: public_host_suffix(&state.cfg),
         status_url,
@@ -659,6 +664,8 @@ mod tests {
             website_url: String::new(),
             styles: Vec::new(),
             locales: Vec::new(),
+            timezone: "UTC".into(),
+            timezones: Vec::new(),
             groups: Vec::new(),
             host_suffix: Some(".uptimepage.dev".into()),
             status_url: "https://acme.uptimepage.dev".into(),
@@ -803,6 +810,23 @@ mod tests {
         assert!(!html.contains(r#"id="slug-form""#), "{html}");
         assert!(!html.contains(r#"id="branding-form""#), "{html}");
         assert_eq!(html.matches("type=\"submit\"").count(), 1, "{html}");
+    }
+
+    #[test]
+    fn the_editor_selects_the_stored_zone_and_saves_it_with_the_form() {
+        let mut page = editor(None);
+        page.timezone = "Europe/Berlin".into();
+        page.timezones = zone_choices("Europe/Berlin", chrono::Utc::now());
+        let html = page.render().unwrap();
+        assert!(
+            html.contains(r#"<option value="Europe/Berlin" selected>"#),
+            "{html}"
+        );
+        assert_eq!(html.matches(" selected>").count(), 1, "{html}");
+        assert!(
+            html.contains("public_timezone: document.getElementById('f-timezone').value"),
+            "{html}"
+        );
     }
 
     /// A second listener still parses, but the outer one only registers the

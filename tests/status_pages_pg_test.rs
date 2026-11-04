@@ -17,8 +17,8 @@ use std::time::Duration;
 
 use uptimepage::domain::{
     CheckSpec, ExpectedStatus, Locale, NewMonitorShare, NewStatusPage, NewStatusPageComponent,
-    NewTarget, OrgId, PublicOrgBranding, StatusPageComponentUpdate, StatusPageId, StatusPageUpdate,
-    UserId, WriteSource,
+    NewTarget, OrgId, PageTimezone, PublicOrgBranding, StatusPageComponentUpdate, StatusPageId,
+    StatusPageUpdate, UserId, WriteSource,
 };
 use uptimepage::error::AppError;
 use uptimepage::error::codes;
@@ -900,6 +900,37 @@ async fn assert_locale_round_trips(store: &dyn StatusPageStore, org: OrgId) {
     assert_eq!(rebranded.public_locale, Locale::De);
     let read = store.get(org, created.id).await.unwrap().expect("page");
     assert_eq!(read.public_locale, Locale::De);
+
+    assert_eq!(read.public_timezone, PageTimezone::default());
+    let berlin = PageTimezone::from_db("Europe/Berlin");
+    let zoned = store
+        .update(
+            org,
+            created.id,
+            StatusPageUpdate {
+                public_timezone: Some(berlin),
+                ..Default::default()
+            },
+            WriteSource::Api,
+        )
+        .await
+        .unwrap()
+        .expect("page");
+    assert_eq!(zoned.public_timezone, berlin);
+    let renamed = store
+        .update(
+            org,
+            created.id,
+            StatusPageUpdate {
+                name: Some("renamed".into()),
+                ..Default::default()
+            },
+            WriteSource::Api,
+        )
+        .await
+        .unwrap()
+        .expect("page");
+    assert_eq!(renamed.public_timezone, berlin, "an edit keeps the zone");
 }
 
 #[tokio::test]

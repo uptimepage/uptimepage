@@ -115,7 +115,7 @@ pub(crate) fn duration_words(secs: i64) -> String {
     }
 }
 
-/// Wall-clock stamp for English mail; [`Tr::utc_stamp`] owns the format.
+/// Wall-clock UTC stamp for English mail; [`Tr::stamp`] owns the format.
 pub(crate) fn utc_stamp(ts: chrono::DateTime<chrono::Utc>) -> String {
     Tr::default().utc_stamp(ts)
 }

@@ -3,11 +3,12 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use chrono::{DateTime, Datelike, Utc};
+use chrono::{DateTime, Datelike, Offset, Utc};
+use chrono_tz::Tz;
 use fluent_templates::fluent_bundle::FluentValue;
 use fluent_templates::{LanguageIdentifier, langid, static_loader};
 
-use crate::domain::Locale;
+use crate::domain::{Locale, PageTimezone};
 use crate::duration::{DurationUnit, duration_parts};
 
 static_loader! {
@@ -132,17 +133,37 @@ impl Tr {
         )
     }
 
-    /// Wall-clock stamp for mail, always UTC: an inbox has no viewer timezone.
-    pub fn utc_stamp(self, at: DateTime<Utc>) -> String {
+    /// Wall-clock stamp for mail, with its zone named: an inbox has no viewer
+    /// timezone.
+    pub fn stamp(self, at: DateTime<Utc>, zone: PageTimezone) -> String {
+        let local = at.with_timezone(&zone.tz());
         self.t_args(
             "date-stamp",
             [
-                ("day", at.day().into()),
-                ("month", self.month_short(at.month()).into()),
-                ("year", at.year().into()),
-                ("time", at.format("%H:%M").to_string().into()),
+                ("day", local.day().into()),
+                ("month", self.month_short(local.month()).into()),
+                ("year", local.year().into()),
+                ("time", local.format("%H:%M").to_string().into()),
+                ("zone", self.zone_name(&local).into()),
             ],
         )
+    }
+
+    pub fn utc_stamp(self, at: DateTime<Utc>) -> String {
+        self.stamp(at, PageTimezone::default())
+    }
+
+    /// The zone's abbreviation in this language; the offset when tzdata has no
+    /// letters for it, as for `America/Sao_Paulo`.
+    fn zone_name(self, local: &DateTime<Tz>) -> String {
+        let abbreviation = local.format("%Z").to_string();
+        if abbreviation.starts_with(['+', '-']) {
+            return utc_offset(local.offset().fix().local_minus_utc());
+        }
+        let id = format!("zone-abbr-{}", abbreviation.to_ascii_lowercase());
+        PUBLIC
+            .lookup_single_language::<&str>(self.lang_id(), &id, None)
+            .unwrap_or(abbreviation)
     }
 
     /// Two-unit duration, e.g. `2h 14m`.
@@ -194,6 +215,20 @@ impl Tr {
     pub fn percent(self, pct: f64) -> String {
         let value = format!("{pct:.2}").replace('.', &self.t("decimal-separator"));
         self.t_args("percent", [("value", value.into())])
+    }
+}
+
+/// `UTC-3`, `UTC+5:45`, and plain `UTC` at no offset.
+fn utc_offset(secs: i32) -> String {
+    if secs == 0 {
+        return "UTC".to_owned();
+    }
+    let sign = if secs < 0 { '-' } else { '+' };
+    let (hours, minutes) = (secs.abs() / 3600, secs.abs() % 3600 / 60);
+    if minutes == 0 {
+        format!("UTC{sign}{hours}")
+    } else {
+        format!("UTC{sign}{hours}:{minutes:02}")
     }
 }
 
@@ -386,6 +421,66 @@ mod tests {
         assert_eq!(tr.auto_incident_title("API", "down"), "API: ausgefallen");
         assert_eq!(tr.auto_incident_title("", "down"), "Dienststörung");
         assert_eq!(Tr::default().auto_incident_title("API", "down"), "API down");
+    }
+
+    fn zone(name: &str) -> PageTimezone {
+        PageTimezone::from_db(name)
+    }
+
+    #[test]
+    fn a_stamp_reads_in_the_page_zone_on_both_sides_of_a_clock_change() {
+        let tr = Tr::default();
+        let berlin = zone("Europe/Berlin");
+        let winter = Utc.with_ymd_and_hms(2026, 3, 29, 0, 30, 0).unwrap();
+        let summer = Utc.with_ymd_and_hms(2026, 3, 29, 1, 30, 0).unwrap();
+        assert_eq!(tr.stamp(winter, berlin), "29 Mar 2026 01:30 CET");
+        assert_eq!(tr.stamp(summer, berlin), "29 Mar 2026 03:30 CEST");
+    }
+
+    #[test]
+    fn a_stamp_moves_to_the_local_day() {
+        let at = Utc.with_ymd_and_hms(2026, 12, 31, 23, 30, 0).unwrap();
+        assert_eq!(
+            Tr::default().stamp(at, zone("Asia/Tokyo")),
+            "1 Jan 2027 08:30 JST"
+        );
+    }
+
+    #[test]
+    fn a_zone_without_letters_prints_its_offset() {
+        let tr = Tr::default();
+        let at = Utc.with_ymd_and_hms(2026, 8, 20, 12, 0, 0).unwrap();
+        assert_eq!(
+            tr.stamp(at, zone("America/Sao_Paulo")),
+            "20 Aug 2026 09:00 UTC-3"
+        );
+        assert_eq!(
+            tr.stamp(at, zone("Asia/Kathmandu")),
+            "20 Aug 2026 17:45 UTC+5:45"
+        );
+        assert_eq!(
+            tr.stamp(at, zone("Atlantic/Azores")),
+            "20 Aug 2026 12:00 UTC"
+        );
+    }
+
+    #[test]
+    fn german_names_the_zones_it_has_a_word_for() {
+        let tr = Tr::new(Locale::De);
+        let summer = Utc.with_ymd_and_hms(2026, 8, 20, 1, 5, 0).unwrap();
+        let winter = Utc.with_ymd_and_hms(2026, 1, 20, 1, 5, 0).unwrap();
+        assert_eq!(
+            tr.stamp(summer, zone("Europe/Berlin")),
+            "20. Aug. 2026, 03:05 MESZ"
+        );
+        assert_eq!(
+            tr.stamp(winter, zone("Europe/Berlin")),
+            "20. Jan. 2026, 02:05 MEZ"
+        );
+        assert_eq!(
+            tr.stamp(summer, zone("America/New_York")),
+            "19. Aug. 2026, 21:05 EDT"
+        );
     }
 
     #[test]

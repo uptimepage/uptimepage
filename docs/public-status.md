@@ -229,9 +229,17 @@ Posting writes a `maintenance.update_posted` entry to the audit log.
 
 Each page has a language: English by default, or German. Set it under **Language** in the page editor, with `PATCH /api/v1/status-pages/{id}` and `{"public_locale": "de"}` (see [Page identity and branding](per-org-status.md#page-identity-and-branding)), or with `locale` on [`uptimepage_status_page`](terraform.md); `en` switches back.
 
-The language covers what the page writes itself: status labels, headings and buttons, dates and durations, the title of an incident you never named, the status badge, the RSS feed's own title, the subscribe flow, and the confirmation, incident and maintenance emails sent to subscribers. Times in those emails stay in UTC. Text you write is shown as written: page, component and group names, the about text, incident titles and updates, and maintenance windows.
+The language covers what the page writes itself: status labels, headings and buttons, dates and durations, the title of an incident you never named, the status badge, the RSS feed's own title, the subscribe flow, and the confirmation, incident and maintenance emails sent to subscribers. Text you write is shown as written: page, component and group names, the about text, incident titles and updates, and maintenance windows.
 
 A German page sends `Content-Language: de` and formats dates the German way in every browser. An English page formats dates the way the visitor's browser does. The RSS feed declares the page's language, and the public JSON API keeps its state keys (`operational`, `investigating`) in English. One page has one language, so for two audiences run two pages.
+
+## Time zone
+
+An email has no browser to ask, so a page's subscriber emails show their times in one zone: UTC by default, or the one you set. Set it under **Time zone** in the page editor, with `PATCH /api/v1/status-pages/{id}` and `{"public_timezone": "Europe/Berlin"}`, with `timezone` on the `update_status_page` [MCP tool](mcp.md), or with `timezone` on [`uptimepage_status_page`](terraform.md). Any IANA zone name works.
+
+Maintenance and outage emails name the zone beside each time, as in `20 Aug 2026 03:00 CEST`, so a window that crosses a clock change reads correctly at both ends. A zone with no common abbreviation shows its offset, such as `UTC-3`. German pages use the German names, such as `MESZ`. A notice already on its way when you change the zone keeps the old one, with the zone still named.
+
+The setting covers those emails only. The page itself shows each visitor their own time, webhook subscribers get UTC timestamps, and text you write is sent as written.
 
 ## Who can open a page
 

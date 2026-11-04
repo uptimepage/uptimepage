@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::domain::Locale;
+use crate::domain::{Locale, PageTimezone};
 use crate::email::templates::SubscriberFooter;
 use crate::email::templates::subscriber_incident::IncidentMail;
 use crate::email::templates::subscriber_maintenance::{MaintenanceMail, MaintenanceNotice};
@@ -54,6 +54,7 @@ impl PageLinks {
         PageSnapshot {
             name: page.page_name.clone(),
             locale: page.public_locale.clone(),
+            timezone: page.public_timezone.clone(),
             origin,
             url,
             credit,
@@ -61,10 +62,17 @@ impl PageLinks {
     }
 }
 
+fn utc() -> String {
+    PageTimezone::default().into()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PageSnapshot {
     pub name: String,
     pub locale: String,
+    /// Absent from a notice planned before pages had a zone.
+    #[serde(default = "utc")]
+    pub timezone: String,
     pub origin: String,
     pub url: String,
     /// The mail carries the uptimepage credit, as the page's footer does.
@@ -154,6 +162,7 @@ impl NoticePayload {
         unsubscribe_url: String,
     ) -> TransactionalEmail {
         let locale = self.locale();
+        let zone = PageTimezone::from_db(&self.page.timezone);
         let page_name = self.page.name.clone();
         let footer = SubscriberFooter {
             unsubscribe_url,
@@ -180,6 +189,7 @@ impl NoticePayload {
                 components,
             } => EmailTemplate::SubscriberOutage(OutageMail {
                 locale,
+                zone,
                 page_name,
                 resolved: *resolved,
                 components: components
@@ -205,6 +215,7 @@ impl NoticePayload {
                 ..
             } => EmailTemplate::SubscriberMaintenance(MaintenanceMail {
                 locale,
+                zone,
                 page_name,
                 title: title.clone(),
                 notice: if phase == "completed" {
@@ -230,6 +241,7 @@ impl NoticePayload {
                 ..
             } => EmailTemplate::SubscriberMaintenance(MaintenanceMail {
                 locale,
+                zone,
                 page_name,
                 title: title.clone(),
                 notice: MaintenanceNotice::Update {
@@ -321,6 +333,7 @@ mod tests {
         PageSnapshot {
             name: "Acme status".into(),
             locale: "en".into(),
+            timezone: "UTC".into(),
             origin: "https://acme.example.com".into(),
             url: "https://acme.example.com".into(),
             credit: false,
@@ -471,6 +484,7 @@ mod tests {
             org_id: Uuid::nil(),
             page_name: "Acme status".into(),
             public_locale: "en".into(),
+            public_timezone: "UTC".into(),
             slug: "acme".into(),
             custom_domain: None,
             custom_domain_published: false,
@@ -508,6 +522,28 @@ mod tests {
         )
         .template
         .render("Uptimepage")
+    }
+
+    #[test]
+    fn a_notice_planned_before_pages_had_a_zone_still_sends_in_utc() {
+        let stored = serde_json::json!({
+            "name": "Acme status",
+            "locale": "en",
+            "origin": "https://acme.example.com",
+            "url": "https://acme.example.com",
+            "credit": false,
+        });
+        let page: PageSnapshot = serde_json::from_value(stored).unwrap();
+        assert_eq!(page.timezone, "UTC");
+    }
+
+    #[test]
+    fn the_snapshot_carries_the_page_zone_into_the_mail() {
+        let mut stored = row(true, None);
+        stored.public_timezone = "Asia/Tokyo".into();
+        let mail = rendered(hosted().snapshot(&stored));
+        assert!(mail.text_body.contains(" JST"), "{}", mail.text_body);
+        assert!(!mail.text_body.contains(" UTC"), "{}", mail.text_body);
     }
 
     #[test]

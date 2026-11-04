@@ -99,7 +99,7 @@ blurb = "The customer-facing surface: components, incidents, maintenance, badges
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-30
+lastmod = 2026-11-04
 
 [[page]]
 slug = "per-org-status"
@@ -109,7 +109,7 @@ blurb = "Running one or more branded status pages per organization, each on its 
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-30
+lastmod = 2026-11-04
 
 [[page]]
 slug = "share-links"
@@ -169,7 +169,7 @@ blurb = "The /api/v1 surface: monitors, incidents, channels, status pages, and t
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-29
+lastmod = 2026-11-04
 
 [[page]]
 slug = "terraform"
@@ -179,7 +179,7 @@ blurb = "Managing monitors, channels, and status pages as code with the official
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-29
+lastmod = 2026-11-04
 
 [[page]]
 slug = "mcp"
@@ -189,7 +189,7 @@ blurb = "Letting an LLM client answer operational questions and take guarded act
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-29
+lastmod = 2026-11-04
 
 [[page]]
 slug = "quotas"

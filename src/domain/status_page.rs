@@ -13,6 +13,7 @@ use super::WriteSource;
 use super::locale::Locale;
 use super::monitor_share::MonitorShareId;
 use super::org::{OrgId, PublicOrgBranding};
+use super::page_timezone::PageTimezone;
 
 /// Strongly-typed status-page id, mirroring [`OrgId`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type, ToSchema)]
@@ -50,6 +51,7 @@ pub struct StatusPage {
     #[serde(flatten)]
     pub branding: PublicOrgBranding,
     pub public_locale: Locale,
+    pub public_timezone: PageTimezone,
     pub write_source: WriteSource,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -83,6 +85,7 @@ pub struct StatusPageUpdate {
     pub enabled: Option<bool>,
     pub branding: Option<PublicOrgBranding>,
     pub public_locale: Option<Locale>,
+    pub public_timezone: Option<PageTimezone>,
     /// Replaces who may open the page, in the same transaction as the rest.
     #[serde(skip)]
     #[schema(ignore)]

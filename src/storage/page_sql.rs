@@ -67,6 +67,7 @@ pub struct PageRow {
     pub org_id: Uuid,
     pub page_name: String,
     pub public_locale: String,
+    pub public_timezone: String,
     pub slug: String,
     pub custom_domain: Option<String>,
     pub custom_domain_published: bool,
@@ -76,11 +77,12 @@ pub struct PageRow {
 }
 
 /// Each [`PageRow`] field: the expression that reads it, and its name.
-const PAGE_ROW: [(&str, &str); 9] = [
+const PAGE_ROW: [(&str, &str); 10] = [
     ("sp.id", "page_id"),
     ("sp.org_id", "org_id"),
     (PAGE_PUBLIC_NAME, "page_name"),
     ("sp.public_locale", "public_locale"),
+    ("sp.public_timezone", "public_timezone"),
     ("sp.slug::text", "slug"),
     ("sp.custom_domain::text", "custom_domain"),
     (PAGE_CUSTOM_DOMAIN_PUBLISHED, "custom_domain_published"),

@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::custom_domains::CustomDomainRow;
 use crate::domain::{
-    Locale, MonitorShareId, NewStatusPage, NewStatusPageComponent, OrgId, PageRef,
+    Locale, MonitorShareId, NewStatusPage, NewStatusPageComponent, OrgId, PageRef, PageTimezone,
     PublicOrgBranding, PublicStyle, StatusPage, StatusPageComponent, StatusPageComponentUpdate,
     StatusPageId, StatusPageUpdate, UserId, WriteSource,
 };
@@ -172,6 +172,7 @@ struct PageRow {
     public_hide_from_search: bool,
     public_website_url: Option<String>,
     public_locale: String,
+    public_timezone: String,
     write_source: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -197,6 +198,7 @@ impl PageRow {
                 public_website_url: self.public_website_url,
             },
             public_locale: Locale::from_db(&self.public_locale),
+            public_timezone: PageTimezone::from_db(&self.public_timezone),
             write_source: WriteSource::from_db(&self.write_source),
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -210,7 +212,7 @@ const PAGE_COLUMNS: &str = "id, org_id, slug::text AS slug, name, enabled, \
      (SELECT pa.content_hash FROM page_assets pa \
       WHERE pa.status_page_id = status_pages.id AND pa.slot = 'logo') AS logo_hash, \
      public_show_powered_by, public_style, public_hide_from_search, \
-     public_website_url, public_locale, write_source, created_at, updated_at, plan_hold_at";
+     public_website_url, public_locale, public_timezone, write_source, created_at, updated_at, plan_hold_at";
 
 /// The section a page row is in, for a query that aliases the row `spc` and
 /// its monitor `t`: the one its monitor's group has on the page.
@@ -338,7 +340,7 @@ impl StatusPageStore for PgStatusPageStore {
         source: WriteSource,
     ) -> Result<Option<StatusPage>> {
         // Branding `Some` replaces the display fields wholesale; `None` leaves
-        // them. name/slug/enabled/locale use COALESCE so a partial update is honest.
+        // them. name/slug/enabled/locale/zone use COALESCE so a partial update is honest.
         let b = upd.branding;
         let mut tx = self.pool.begin().await.map_err(db_err)?;
         let row: Option<PageRow> = sqlx::query_as(&format!(
@@ -355,6 +357,7 @@ impl StatusPageStore for PgStatusPageStore {
                    CASE WHEN $6::bool THEN $12 ELSE public_hide_from_search END,
                  public_website_url  = CASE WHEN $6::bool THEN $13 ELSE public_website_url END,
                  public_locale = COALESCE($15, public_locale),
+                 public_timezone = COALESCE($16, public_timezone),
                  write_source = $14,
                  updated_at = now()
                WHERE id = $1 AND org_id = $2
@@ -375,6 +378,7 @@ impl StatusPageStore for PgStatusPageStore {
         .bind(b.as_ref().and_then(|x| x.public_website_url.clone()))
         .bind(source.as_str())
         .bind(upd.public_locale.map(Locale::as_str))
+        .bind(upd.public_timezone.map(PageTimezone::as_str))
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| if is_unique_violation(&e) { slug_taken() } else { db_err(e) })?;
@@ -867,6 +871,7 @@ impl StatusPageStore for InMemoryStatusPageStore {
             enabled: new.enabled,
             branding: PublicOrgBranding::default(),
             public_locale: Locale::default(),
+            public_timezone: PageTimezone::default(),
             write_source: source,
             created_at: now,
             updated_at: now,
@@ -942,6 +947,9 @@ impl StatusPageStore for InMemoryStatusPageStore {
         }
         if let Some(l) = upd.public_locale {
             p.public_locale = l;
+        }
+        if let Some(z) = upd.public_timezone {
+            p.public_timezone = z;
         }
         p.write_source = source;
         p.updated_at = Utc::now();

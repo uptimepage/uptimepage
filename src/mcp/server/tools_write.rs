@@ -368,7 +368,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Rename a status page, move it to a new slug, publish and unpublish it, or change who may open it. An omitted field is left alone. Changing the slug moves the public URL and breaks existing links. access replaces the page's access settings and list whole: protected true makes it private to the listed domains and addresses (Team plan), and removes subscribers the list does not cover; protected false makes it public again and keeps the list. Not read-only; idempotent.",
+        description = "Rename a status page, move it to a new slug, publish and unpublish it, change who may open it, or set the IANA time zone of its subscriber emails. An omitted field is left alone. Changing the slug moves the public URL and breaks existing links. access replaces the page's access settings and list whole: protected true makes it private to the listed domains and addresses (Team plan), and removes subscribers the list does not cover; protected false makes it public again and keeps the list. Not read-only; idempotent.",
         title = "Update status page",
         annotations(
             read_only_hint = false,

@@ -10,9 +10,9 @@ use rmcp::service::RequestContext;
 use crate::auth::scope::Scope;
 use crate::domain::{
     AccessError, AccessRule, AccessRuleKind, AccessSpec, AccessWrite, EmailAccessSpec,
-    NewStatusPage, NewStatusPageComponent, OrgId, PageAccess, PageRef, PasswordAccessSpec,
-    StatusPage, StatusPageComponentUpdate, StatusPageId, StatusPageUpdate, WriteSource,
-    validate_slug,
+    NewStatusPage, NewStatusPageComponent, OrgId, PageAccess, PageRef, PageTimezone,
+    PasswordAccessSpec, StatusPage, StatusPageComponentUpdate, StatusPageId, StatusPageUpdate,
+    WriteSource, validate_slug,
 };
 use crate::public_status::curation::{clean_curation, clean_curation_patch, validate_name};
 use crate::quotas::ratelimit::RateLimitCategory;
@@ -98,6 +98,7 @@ impl McpServer {
             name: sanitize_data(&page.name),
             public_url: self.page_public_url(&page.slug),
             enabled: page.enabled,
+            timezone: page.public_timezone.as_str().to_owned(),
             access: self.page_access(page.org_id, page.id).await?,
         }))
     }
@@ -263,9 +264,20 @@ impl McpServer {
             }
             None => None,
         };
-        if name.is_none() && new_slug.is_none() && args.enabled.is_none() && args.access.is_none() {
+        let timezone = args
+            .timezone
+            .clone()
+            .map(PageTimezone::try_from)
+            .transpose()
+            .map_err(McpToolError::invalid_argument)?;
+        if name.is_none()
+            && new_slug.is_none()
+            && args.enabled.is_none()
+            && args.access.is_none()
+            && timezone.is_none()
+        {
             return Err(McpToolError::invalid_argument(
-                "nothing to change; pass name, new_slug, enabled or access",
+                "nothing to change; pass name, new_slug, enabled, access or timezone",
             ));
         }
         let stored = self.stored_access(auth.org, page.id).await?;
@@ -297,6 +309,9 @@ impl McpServer {
             } else {
                 "unpublish it, hiding it from the public".to_string()
             });
+        }
+        if let Some(z) = timezone {
+            effects.push(format!("state subscriber email times in {}", z.as_str()));
         }
         if let Some(w) = &access {
             effects.push(match (was_private, w.access.is_private()) {
@@ -341,6 +356,7 @@ impl McpServer {
                     enabled: args.enabled,
                     branding: None,
                     public_locale: None,
+                    public_timezone: timezone,
                     access,
                 },
                 WriteSource::Api,

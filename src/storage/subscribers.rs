@@ -641,6 +641,7 @@ mod tests {
                 org_id: Uuid::nil(),
                 page_name: "acme".into(),
                 public_locale: public_locale.into(),
+                public_timezone: "UTC".into(),
                 slug: "acme".into(),
                 custom_domain: None,
                 custom_domain_published: false,

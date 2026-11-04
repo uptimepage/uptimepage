@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::domain::Locale;
+use crate::domain::{Locale, PageTimezone};
 use crate::email::templates::layout::{self, ButtonStyle, Page, Tone};
 use crate::email::templates::{RenderedEmail, SubscriberFooter, single_line};
 use crate::i18n::Tr;
@@ -12,6 +12,7 @@ const NAMED_COMPONENTS: usize = 3;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutageMail {
     pub locale: Locale,
+    pub zone: PageTimezone,
     pub page_name: String,
     pub resolved: bool,
     pub components: Vec<OutageComponent>,
@@ -76,7 +77,7 @@ pub fn render(mail: &OutageMail) -> RenderedEmail {
     let headline = mail.headline(tr);
     let subject = format!("[{}] {headline} — {label}", mail.page_name);
     let started = mail.started_at().unwrap_or_default();
-    let since = tr.utc_stamp(started);
+    let since = tr.stamp(started, mail.zone);
 
     let (lead, sub, preheader) = if mail.resolved {
         let ended = mail.ended_at().unwrap_or(started);
@@ -87,7 +88,7 @@ pub fn render(mail: &OutageMail) -> RenderedEmail {
                 [
                     ("duration", total.clone().into()),
                     ("from", since.clone().into()),
-                    ("to", tr.utc_stamp(ended).into()),
+                    ("to", tr.stamp(ended, mail.zone).into()),
                 ],
             ),
             format!("{since} · {total}"),
@@ -194,6 +195,7 @@ mod tests {
         let end = |s: &'static str| resolved.then_some(s);
         OutageMail {
             locale,
+            zone: PageTimezone::default(),
             page_name: "Acme status".into(),
             resolved,
             components: vec![
@@ -230,6 +232,29 @@ mod tests {
         );
         assert!(r.html_body.contains("Website, API, Dashboard and 2 more"));
         assert!(r.html_body.contains("Unsubscribe"));
+    }
+
+    #[test]
+    fn its_times_read_in_the_page_zone() {
+        let berlin = PageTimezone::from_db("Europe/Berlin");
+        let started = render(&OutageMail {
+            zone: berlin,
+            ..five(false, Locale::En)
+        });
+        let resolved = render(&OutageMail {
+            zone: berlin,
+            ..five(true, Locale::En)
+        });
+        for body in [
+            &started.text_body,
+            &started.html_body,
+            &resolved.text_body,
+            &resolved.html_body,
+        ] {
+            assert!(body.contains("21 Oct 2026 21:02 CEST"), "{body}");
+            assert!(!body.contains("UTC"), "{body}");
+        }
+        assert!(resolved.text_body.contains("21 Oct 2026 21:04 CEST"));
     }
 
     #[test]

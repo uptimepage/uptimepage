@@ -34,6 +34,7 @@ use crate::web::views::on_call_calendar::{CalendarModel, calendar, overrides_fro
 use crate::web::views::on_call_roster::{MemberChoice, Roster, org_members};
 use crate::web::views::resolve_org;
 use crate::web::views::team_lock::{TeamLock, plan_locked, shows_teaser, team_lock};
+use crate::web::views::time_zones::{ZoneChoice, zone_choices};
 
 const TAB_ON_CALL: &str = "on-call";
 
@@ -203,12 +204,6 @@ pub struct LayerModel {
     /// Empty when it is on call at all hours.
     pub windows: Vec<WindowModel>,
     pub participants: Vec<MemberChoice>,
-}
-
-/// A zone in the picker, labelled with its offset from UTC right now.
-pub struct ZoneChoice {
-    pub name: String,
-    pub label: String,
 }
 
 pub struct ScheduleFormModel {
@@ -390,62 +385,6 @@ fn length_in_unit(rotation: RotationType, secs: i32) -> String {
         RotationType::Weekly => (secs / 604_800).to_string(),
         RotationType::Custom => exact_duration(secs.unsigned_abs()),
     }
-}
-
-/// The picker's zones: `current` first when the list leaves it out, since the
-/// API takes any IANA name, then [`timezone_names`], each with its offset at
-/// `now`.
-fn zone_choices(current: &str, now: DateTime<Utc>) -> Vec<ZoneChoice> {
-    let names = timezone_names();
-    let stored = (!names.contains(&current)).then_some(current);
-    stored
-        .into_iter()
-        .chain(names)
-        .map(|name| {
-            let tz: chrono_tz::Tz = name.parse().unwrap_or(chrono_tz::UTC);
-            let offset = now.with_timezone(&tz).format("%:z").to_string();
-            ZoneChoice {
-                label: if name == "UTC" {
-                    name.to_owned()
-                } else {
-                    format!("{name} (UTC{offset})")
-                },
-                name: name.to_owned(),
-            }
-        })
-        .collect()
-}
-
-/// Region-named zones and UTC, the ones a person picks from. Leaves out
-/// country and legacy names such as `US/Eastern` and `GB`, and the
-/// sign-inverted `Etc/GMT+N`; the API still accepts any IANA name.
-fn timezone_names() -> Vec<&'static str> {
-    const REGIONS: [&str; 10] = [
-        "Africa",
-        "America",
-        "Antarctica",
-        "Arctic",
-        "Asia",
-        "Atlantic",
-        "Australia",
-        "Europe",
-        "Indian",
-        "Pacific",
-    ];
-    static NAMES: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
-        std::iter::once("UTC")
-            .chain(
-                chrono_tz::TZ_VARIANTS
-                    .iter()
-                    .map(|tz| tz.name())
-                    .filter(|name| {
-                        name.split_once('/')
-                            .is_some_and(|(r, _)| REGIONS.contains(&r))
-                    }),
-            )
-            .collect()
-    });
-    NAMES.clone()
 }
 
 /// An instant as wall-clock time in `tz`, for a `datetime-local` input.
@@ -955,16 +894,6 @@ mod tests {
         assert_eq!(length_in_unit(RotationType::Weekly, 1_209_600), "2");
         assert_eq!(length_in_unit(RotationType::Custom, 43_200), "12h");
         assert_eq!(length_in_unit(RotationType::Custom, 5_400), "90m");
-    }
-
-    #[test]
-    fn a_stored_zone_the_list_leaves_out_is_still_offered() {
-        let now = t("2026-01-15T12:00:00Z");
-        let zones = zone_choices("US/Eastern", now);
-        assert_eq!(zones[0].name, "US/Eastern");
-        assert_eq!(zones[0].label, "US/Eastern (UTC-05:00)");
-        assert_eq!(zones[1].label, "UTC");
-        assert_eq!(zone_choices("UTC", now)[0].name, "UTC");
     }
 
     #[test]

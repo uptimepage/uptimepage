@@ -129,6 +129,16 @@
         <span id="locale-help" class="mt-1 block text-xs text-muted">Page labels, dates and subscriber emails. Text you write stays as written.</span>
       </label>
 
+      <div class="field-outline sm:max-w-xs">
+        <span class="field-outline__label">Time zone</span>
+        <select id="f-timezone" data-sm-combobox data-sm-combobox-search aria-label="Time zone" aria-describedby="timezone-help" class="w-full field">
+          {% for tz in timezones %}
+          <option value="{{ tz.name }}"{% if tz.name == timezone %} selected{% endif %}>{{ tz.label }}</option>
+          {% endfor %}
+        </select>
+        <span id="timezone-help" class="mt-1 block text-xs text-muted">Times in subscriber emails. The page itself shows each visitor their own time.</span>
+      </div>
+
       <label class="field-outline">
         <span class="field-outline__label">About</span>
         <textarea id="f-about" maxlength="500" rows="2" autocomplete="off" class="w-full field"
@@ -516,6 +526,7 @@
             enabled: access.visibility() !== 'off',
             access: access.payload(),
             public_locale: document.getElementById('f-locale').value,
+            public_timezone: document.getElementById('f-timezone').value,
             branding: {
               public_display_name: document.getElementById('f-display').value || null,
               public_about: document.getElementById('f-about').value || null,

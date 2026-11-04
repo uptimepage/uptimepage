@@ -421,6 +421,15 @@ async fn data_export_redacts_credentials_and_excludes_other_emails() {
     .await
     .unwrap();
 
+    sqlx::query(
+        "INSERT INTO status_pages (org_id, slug, name, public_timezone) \
+         VALUES ($1, 'export-page', 'Export', 'Europe/Berlin')",
+    )
+    .bind(org)
+    .execute(&pool)
+    .await
+    .unwrap();
+
     // A linked app account is exported by its label; the id it was linked by
     // is kept only as a hash and must not come back as one.
     sqlx::query(
@@ -454,6 +463,10 @@ async fn data_export_redacts_credentials_and_excludes_other_emails() {
     let target = &owned[0]["targets"][0];
     assert_eq!(target["check"]["basic_auth"], json!("***"));
     assert_eq!(target["check"]["bearer_token"], json!("***"));
+    assert_eq!(
+        owned[0]["status_pages"][0]["public_timezone"],
+        "Europe/Berlin"
+    );
 
     // Co-member appears by name + role only.
     let members = owned[0]["members"].as_array().unwrap();

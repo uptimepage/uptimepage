@@ -236,6 +236,44 @@ async fn page_language_and_branding_are_saved_independently() {
     .await;
     assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "unsupported: {body}");
 
+    let (_, body) = read(router.clone().oneshot(get()).await.unwrap()).await;
+    assert_eq!(body["public_timezone"], "UTC", "a new page states UTC");
+
+    let (st, body) = read(
+        router
+            .clone()
+            .oneshot(patch(&id, json!({ "public_timezone": "Europe/Berlin" })))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "set a zone: {body}");
+    assert_eq!(body["public_timezone"], "Europe/Berlin");
+    assert_eq!(body["public_locale"], "de", "language kept");
+
+    for name in ["Mars/Olympus", "europe/berlin", ""] {
+        let (st, body) = read(
+            router
+                .clone()
+                .oneshot(patch(&id, json!({ "public_timezone": name })))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{name}: {body}");
+    }
+
+    let (st, body) = read(
+        router
+            .clone()
+            .oneshot(patch(&id, json!({ "name": "Renamed" })))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "edit without a zone: {body}");
+    assert_eq!(body["public_timezone"], "Europe/Berlin", "zone kept");
+
     let (st, body) = read(
         router
             .clone()

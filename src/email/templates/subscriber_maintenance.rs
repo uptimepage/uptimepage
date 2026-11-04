@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::domain::Locale;
+use crate::domain::{Locale, PageTimezone};
 use crate::email::templates::layout::{self, ButtonStyle, Page, Tone};
 use crate::email::templates::{RenderedEmail, SubscriberFooter};
 use crate::i18n::Tr;
@@ -47,6 +47,7 @@ impl MaintenanceNotice {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MaintenanceMail {
     pub locale: Locale,
+    pub zone: PageTimezone,
     pub page_name: String,
     pub title: String,
     pub notice: MaintenanceNotice,
@@ -59,6 +60,7 @@ pub struct MaintenanceMail {
 pub fn render(mail: &MaintenanceMail) -> RenderedEmail {
     let MaintenanceMail {
         locale,
+        zone,
         page_name,
         title,
         notice,
@@ -71,7 +73,11 @@ pub fn render(mail: &MaintenanceMail) -> RenderedEmail {
     let completed = matches!(notice, MaintenanceNotice::Completed { .. });
     let heading = tr.t(notice.heading_key());
     let subject = format!("[{page_name}] {heading}: {title}");
-    let window = format!("{} — {}", tr.utc_stamp(*starts_at), tr.utc_stamp(*ends_at));
+    let window = format!(
+        "{} — {}",
+        tr.stamp(*starts_at, *zone),
+        tr.stamp(*ends_at, *zone)
+    );
     let said = notice.text();
     let desc_text = said.map(|d| format!("\n{d}\n")).unwrap_or_default();
 
@@ -141,6 +147,7 @@ mod tests {
     fn rendered(notice: MaintenanceNotice) -> crate::email::templates::RenderedEmail {
         render(&MaintenanceMail {
             locale: Locale::En,
+            zone: PageTimezone::default(),
             page_name: "Acme status".into(),
             title: "Database upgrade".into(),
             notice,
@@ -152,6 +159,31 @@ mod tests {
                 credit_url: None,
             },
         })
+    }
+
+    #[test]
+    fn the_window_reads_in_the_page_zone_in_every_body() {
+        let r = render(&MaintenanceMail {
+            locale: Locale::De,
+            zone: PageTimezone::from_db("Europe/Berlin"),
+            page_name: "Acme status".into(),
+            title: "Database upgrade".into(),
+            notice: MaintenanceNotice::Scheduled { description: None },
+            starts_at: Utc.with_ymd_and_hms(2026, 10, 25, 0, 30, 0).unwrap(),
+            ends_at: Utc.with_ymd_and_hms(2026, 10, 25, 1, 30, 0).unwrap(),
+            page_url: "https://acme.test/".into(),
+            footer: SubscriberFooter {
+                unsubscribe_url: "https://acme.test/subscribe/unsubscribe?s=1&t=2".into(),
+                credit_url: None,
+            },
+        });
+        for body in [&r.text_body, &r.html_body] {
+            assert!(
+                body.contains("25. Okt. 2026, 02:30 MESZ — 25. Okt. 2026, 02:30 MEZ"),
+                "each end names its own side of the clock change: {body}"
+            );
+            assert!(!body.contains("UTC"), "{body}");
+        }
     }
 
     #[test]
@@ -172,6 +204,7 @@ mod tests {
     fn a_german_page_dates_the_window_in_german() {
         let r = render(&MaintenanceMail {
             locale: Locale::De,
+            zone: PageTimezone::default(),
             page_name: "Acme status".into(),
             title: "Database upgrade".into(),
             notice: MaintenanceNotice::Scheduled { description: None },

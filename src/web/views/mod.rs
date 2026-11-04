@@ -47,6 +47,7 @@ pub mod telegram;
 mod telegram_account;
 mod telegram_press;
 mod telegram_send;
+pub mod time_zones;
 pub mod variables;
 pub mod verify_channel;
 pub mod whatsapp;

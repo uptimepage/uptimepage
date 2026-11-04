@@ -19,9 +19,9 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::{
     AccessError, AccessSpec, AccessWrite, AssetSlot, Locale, NewStatusPage, NewStatusPageComponent,
-    OrgId, PageAccess, PagePasswordView, PageRef, PublicOrgBranding, PublicStyle, StatusPage,
-    StatusPageComponent, StatusPageComponentUpdate, StatusPageId, StatusPageUpdate, UserId,
-    validate_slug,
+    OrgId, PageAccess, PagePasswordView, PageRef, PageTimezone, PublicOrgBranding, PublicStyle,
+    StatusPage, StatusPageComponent, StatusPageComponentUpdate, StatusPageId, StatusPageUpdate,
+    UserId, validate_slug,
 };
 use crate::error::ApiError;
 use crate::error::codes;
@@ -56,6 +56,8 @@ pub struct StatusPageView {
     pub public_style: PublicStyle,
     /// Language of the public page and its subscriber emails.
     pub public_locale: Locale,
+    /// IANA zone of the times in its subscriber emails.
+    pub public_timezone: PageTimezone,
     /// Raw override (absent = inherit the default); round-trips the tri-state
     /// that `show_powered_by` below collapses.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -99,6 +101,8 @@ pub struct UpdatePageRequest {
     pub enabled: Option<bool>,
     /// Language of the public page and its subscriber emails.
     pub public_locale: Option<Locale>,
+    /// IANA zone of the times in its subscriber emails.
+    pub public_timezone: Option<PageTimezone>,
     /// When present, replaces the page's display branding wholesale (the logo
     /// has its own endpoints, so it is untouched here).
     pub branding: Option<BrandingInput>,
@@ -311,6 +315,7 @@ pub async fn update_page(
                 enabled: req.enabled,
                 branding,
                 public_locale: req.public_locale,
+                public_timezone: req.public_timezone,
                 access,
             },
             source,
@@ -924,6 +929,7 @@ fn view(state: &AppState, p: StatusPage, access: Option<&PageAccess>) -> StatusP
         public_brand_color: b.public_brand_color.clone(),
         public_style: b.public_style,
         public_locale: p.public_locale,
+        public_timezone: p.public_timezone,
         public_show_powered_by: b.public_show_powered_by,
         show_powered_by: b.show_powered_by(cfg.default_show_powered_by),
         public_hide_from_search: b.public_hide_from_search,
