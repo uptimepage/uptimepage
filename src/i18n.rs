@@ -23,6 +23,8 @@ static_loader! {
 
 static EN: LanguageIdentifier = langid!("en");
 static DE: LanguageIdentifier = langid!("de");
+static ES: LanguageIdentifier = langid!("es");
+static PT_PT: LanguageIdentifier = langid!("pt-PT");
 
 /// Message lookups in one page's language.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -45,6 +47,8 @@ impl Tr {
         match self.0 {
             Locale::En => "en_US",
             Locale::De => "de_DE",
+            Locale::Es => "es_ES",
+            Locale::PtPt => "pt_PT",
         }
     }
 
@@ -53,7 +57,7 @@ impl Tr {
     pub fn date_locale(self) -> Option<&'static str> {
         match self.0 {
             Locale::En => None,
-            Locale::De => Some("de"),
+            other => Some(other.as_str()),
         }
     }
 
@@ -61,6 +65,8 @@ impl Tr {
         match self.0 {
             Locale::En => &EN,
             Locale::De => &DE,
+            Locale::Es => &ES,
+            Locale::PtPt => &PT_PT,
         }
     }
 
@@ -358,6 +364,26 @@ mod tests {
         }
     }
 
+    /// A translation that drops a placeable still formats, so the subject line
+    /// would quietly lose the page's name.
+    #[test]
+    fn every_message_takes_the_english_variables() {
+        let variable = regex::Regex::new(r"\$([a-z_]+)").unwrap();
+        let variables = |body: &str| -> BTreeSet<String> {
+            variable
+                .captures_iter(body)
+                .map(|c| c[1].to_owned())
+                .collect()
+        };
+        let en: HashMap<String, String> =
+            message_bodies(&catalogue(Locale::En)).into_iter().collect();
+        for locale in Locale::ALL {
+            for (id, body) in message_bodies(&catalogue(locale)) {
+                assert_eq!(variables(&body), variables(&en[&id]), "{locale:?} {id}");
+            }
+        }
+    }
+
     #[test]
     fn every_referenced_id_exists() {
         let en = message_ids(&catalogue(Locale::En));
@@ -421,6 +447,42 @@ mod tests {
         assert_eq!(tr.auto_incident_title("API", "down"), "API: ausgefallen");
         assert_eq!(tr.auto_incident_title("", "down"), "Dienststörung");
         assert_eq!(Tr::default().auto_incident_title("API", "down"), "API down");
+    }
+
+    #[test]
+    fn spanish_formats_its_own_dates_numbers_and_durations() {
+        let tr = Tr::new(Locale::Es);
+        let at = Utc.with_ymd_and_hms(2026, 9, 2, 14, 5, 0).unwrap();
+        assert_eq!(tr.month_year(at), "Septiembre de 2026");
+        assert_eq!(tr.day(at), "2 sept 2026");
+        assert_eq!(tr.utc_stamp(at), "2 sept 2026, 14:05 UTC");
+        assert_eq!(tr.duration(134 * 60), "2 h 14 min");
+        assert_eq!(tr.ago(45), "hace 45 s");
+        assert_eq!(tr.percent(99.9666), "99,97 %");
+        assert_eq!(tr.auto_incident_title("API", "down"), "API: no disponible");
+    }
+
+    #[test]
+    fn european_portuguese_formats_its_own_dates_numbers_and_durations() {
+        let tr = Tr::new(Locale::PtPt);
+        let at = Utc.with_ymd_and_hms(2026, 3, 2, 14, 5, 0).unwrap();
+        assert_eq!(tr.month_year(at), "Março de 2026");
+        assert_eq!(tr.day(at), "2 mar. 2026");
+        assert_eq!(tr.utc_stamp(at), "2 mar. 2026, 14:05 UTC");
+        assert_eq!(tr.duration(134 * 60), "2 h 14 min");
+        assert_eq!(tr.ago(45), "há 45 s");
+        assert_eq!(tr.percent(99.9666), "99,97%");
+        assert_eq!(tr.auto_incident_title("API", "down"), "API: indisponível");
+    }
+
+    #[test]
+    fn zero_takes_the_plural_in_spanish_and_european_portuguese() {
+        for locale in [Locale::Es, Locale::PtPt] {
+            let count =
+                |n: i32| Tr::new(locale).t_args("past-incident-count", [("count", n.into())]);
+            assert_eq!(count(0), "0 incidentes");
+            assert_eq!(count(1), "1 incidente");
+        }
     }
 
     fn zone(name: &str) -> PageTimezone {

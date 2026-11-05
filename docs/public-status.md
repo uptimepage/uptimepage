@@ -227,11 +227,11 @@ Posting writes a `maintenance.update_posted` entry to the audit log.
 
 ## Language
 
-Each page has a language: English by default, or German. Set it under **Language** in the page editor, with `PATCH /api/v1/status-pages/{id}` and `{"public_locale": "de"}` (see [Page identity and branding](per-org-status.md#page-identity-and-branding)), or with `locale` on [`uptimepage_status_page`](terraform.md); `en` switches back.
+Each page has a language: English by default, or German (`de`), Spanish (`es`) or European Portuguese (`pt-PT`). Set it under **Language** in the page editor, with `PATCH /api/v1/status-pages/{id}` and `{"public_locale": "de"}` (see [Page identity and branding](per-org-status.md#page-identity-and-branding)), or with `locale` on [`uptimepage_status_page`](terraform.md); `en` switches back.
 
 The language covers what the page writes itself: status labels, headings and buttons, dates and durations, the title of an incident you never named, the status badge, the RSS feed's own title, the subscribe flow, and the confirmation, incident and maintenance emails sent to subscribers. Text you write is shown as written: page, component and group names, the about text, incident titles and updates, and maintenance windows.
 
-A German page sends `Content-Language: de` and formats dates the German way in every browser. An English page formats dates the way the visitor's browser does. The RSS feed declares the page's language, and the public JSON API keeps its state keys (`operational`, `investigating`) in English. One page has one language, so for two audiences run two pages.
+A page in one of these languages sends its tag as `Content-Language`, such as `Content-Language: de`, and formats dates that language's way in every browser. An English page formats dates the way the visitor's browser does. The RSS feed declares the page's language, and the public JSON API keeps its state keys (`operational`, `investigating`) in English. One page has one language, so for two audiences run two pages.
 
 ## Time zone
 

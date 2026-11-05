@@ -511,10 +511,8 @@ fn every_status_label_has_a_message_in_every_locale() {
     }
 }
 
-#[test]
-fn german_page_renders_german_chrome() {
-    let tr = Tr::new(crate::domain::Locale::De);
-    let html = StatusFullPage {
+fn render_status(tr: Tr) -> String {
+    StatusFullPage {
         reader: Reader::default(),
         tr,
         view: build_view(&sample_page(), &[], &Default::default(), all_tab(), tr),
@@ -522,7 +520,12 @@ fn german_page_renders_german_chrome() {
         og: OgMeta::default(),
     }
     .render()
-    .unwrap();
+    .unwrap()
+}
+
+#[test]
+fn german_page_renders_german_chrome() {
+    let html = render_status(Tr::new(crate::domain::Locale::De));
     assert!(
         html.contains(r#"<html lang="de" data-time-locale="de">"#),
         "{html}"
@@ -533,6 +536,18 @@ fn german_page_renders_german_chrome() {
     assert!(!html.contains("Subscribe to updates"));
     assert!(!html.contains("Last checked"));
     assert!(!html.contains('\u{2068}'));
+}
+
+#[test]
+fn european_portuguese_page_carries_its_full_tag() {
+    let html = render_status(Tr::new(crate::domain::Locale::PtPt));
+    assert!(
+        html.contains(r#"<html lang="pt-PT" data-time-locale="pt-PT">"#),
+        "{html}"
+    );
+    assert!(html.contains(r#"<meta property="og:locale" content="pt_PT">"#));
+    assert!(html.contains("Subscrever atualizações"));
+    assert!(!html.contains("Subscribe to updates"));
 }
 
 #[test]

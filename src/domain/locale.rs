@@ -8,15 +8,20 @@ pub enum Locale {
     #[default]
     En,
     De,
+    Es,
+    #[serde(rename = "pt-PT")]
+    PtPt,
 }
 
 impl Locale {
-    pub const ALL: [Self; 2] = [Self::En, Self::De];
+    pub const ALL: [Self; 4] = [Self::En, Self::De, Self::Es, Self::PtPt];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::En => "en",
             Self::De => "de",
+            Self::Es => "es",
+            Self::PtPt => "pt-PT",
         }
     }
 
@@ -24,6 +29,8 @@ impl Locale {
         match self {
             Self::En => "English",
             Self::De => "Deutsch",
+            Self::Es => "Español",
+            Self::PtPt => "Português (Portugal)",
         }
     }
 

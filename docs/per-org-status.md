@@ -70,7 +70,7 @@ Every route is scoped to the caller's active org: a page id that isn't in that o
 | `public_brand_color` | `#RRGGBB` (6-digit hex) | `#3b82f6` |
 | `public_about` | Markdown, ≤ 500 chars, rendered to sanitised HTML | omitted |
 | `public_style` | one of the named themes | `default` |
-| `public_locale` | language of the page's own labels, dates and subscriber emails: `en` or `de`. Text you write is shown as written (see [Language](public-status.md#language)) | `en` |
+| `public_locale` | language of the page's own labels, dates and subscriber emails: `en`, `de`, `es` or `pt-PT`. Text you write is shown as written (see [Language](public-status.md#language)) | `en` |
 | `public_timezone` | IANA zone of the times in the page's subscriber emails, such as `Europe/Berlin`. The page itself shows each visitor their own time (see [Time zone](public-status.md#time-zone)) | `UTC` |
 | `public_show_powered_by` | footer attribution toggle, which on a hosted deploy also sets the one-line credit closing the page's incident, outage and maintenance emails. Honoured only on plans with `white_label_enabled`; on any other hosted plan the badge always renders, whatever this is set to. Turning it off on a white-label hosted page also drops the Licenses and Source code links; a self-hosted page keeps them, since AGPL-3.0 section 13 has an operator of modified code offer its source to every visitor | on |
 | `public_website_url` | `http(s)` address, ≤ 200 chars. The header logo (or display name) links here, so a reader who arrived from your site can get back. The link carries `rel="nofollow"` unless the plan sells white-label (see [Quotas](quotas.md#the-seeded-plans)) | header links to the status page root |

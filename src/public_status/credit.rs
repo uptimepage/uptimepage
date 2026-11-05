@@ -52,6 +52,9 @@ pub fn url(locale: Locale, surface: Surface, host: Option<&str>) -> String {
     let prefix = match locale {
         Locale::En => "",
         Locale::De => "/de",
+        Locale::Es => "/es",
+        // The site has no European Portuguese.
+        Locale::PtPt => "/pt-br",
     };
     let mut query = url::form_urlencoded::Serializer::new(String::new());
     query
@@ -108,6 +111,14 @@ mod tests {
             url(Locale::De, Surface::Email, None),
             "https://uptimepage.dev/de/free-status-page?utm_source=status-email&utm_medium=email\
              &utm_campaign=footer"
+        );
+        assert!(
+            url(Locale::Es, Surface::Page, None)
+                .starts_with("https://uptimepage.dev/es/free-status-page?")
+        );
+        assert!(
+            url(Locale::PtPt, Surface::Page, None)
+                .starts_with("https://uptimepage.dev/pt-br/free-status-page?")
         );
     }
 
