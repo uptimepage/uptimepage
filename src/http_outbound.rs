@@ -38,10 +38,10 @@ const MAX_RESPONSE_BYTES: usize = 1 << 20;
 /// would let an endpoint slow at each hold a task for twice this long.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Together well inside `REQUEST_TIMEOUT`, so a result batch caught on a dead
-/// connection can still retry on a new one.
-const CONTROL_PLANE_PING_EVERY: Duration = Duration::from_secs(10);
-const CONTROL_PLANE_PING_TIMEOUT: Duration = Duration::from_secs(10);
+/// Together well inside `REQUEST_TIMEOUT`, so a caller that retries still has
+/// time to do it on a new connection.
+const PING_EVERY: Duration = Duration::from_secs(10);
+const PING_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// `hyper_util`'s error prints only its kind; the cause sits in `source()`.
 pub fn error_chain(e: impl std::error::Error + Send + Sync + 'static) -> String {
@@ -49,45 +49,47 @@ pub fn error_chain(e: impl std::error::Error + Send + Sync + 'static) -> String 
 }
 
 pub fn build_outbound_client(guard: SsrfGuard) -> OutboundHttpClient {
-    client_builder().build(https_connector(guard))
+    client_builder(PING_EVERY, PING_TIMEOUT).build(https_connector(guard))
 }
 
 /// One connection per request: hyper cannot replay a POST whose body it has
 /// already written to a pooled connection the far side dropped.
 pub fn build_single_use_outbound_client(guard: SsrfGuard) -> OutboundHttpClient {
-    client_builder()
+    client_builder(PING_EVERY, PING_TIMEOUT)
         .pool_max_idle_per_host(0)
         .build(https_connector(guard))
 }
 
-/// An agent's calls home. When a path goes silent, a timed-out HTTP/2 request
-/// leaves its connection pooled, so every later request hangs on it until the
-/// kernel gives up about 16 minutes on. Unanswered pings close it in seconds.
 pub fn build_control_plane_client(guard: SsrfGuard) -> OutboundHttpClient {
-    pinging_client_builder(CONTROL_PLANE_PING_EVERY, CONTROL_PLANE_PING_TIMEOUT)
-        .build(https_connector(guard))
+    control_plane_builder(PING_EVERY, PING_TIMEOUT).build(https_connector(guard))
 }
 
-fn pinging_client_builder(
+/// An agent's calls home ping while idle too, so a dead connection is gone
+/// before the next call would wait on it.
+fn control_plane_builder(
     every: Duration,
     timeout: Duration,
 ) -> hyper_util::client::legacy::Builder {
-    let mut builder = client_builder();
-    builder
-        .timer(TokioTimer::new())
-        .http2_keep_alive_interval(every)
-        .http2_keep_alive_timeout(timeout)
-        .http2_keep_alive_while_idle(true);
+    let mut builder = client_builder(every, timeout);
+    builder.http2_keep_alive_while_idle(true);
     builder
 }
 
 /// Same header limits as the probe: the free header and security checkers
 /// fetch through here to show what the monitor sees.
-fn client_builder() -> hyper_util::client::legacy::Builder {
+///
+/// When a path goes silent, a timed-out HTTP/2 request leaves its connection
+/// pooled, so later requests hang on it until the kernel gives up about 16
+/// minutes on. Pings during a request close it in seconds.
+fn client_builder(every: Duration, timeout: Duration) -> hyper_util::client::legacy::Builder {
     let mut builder = Client::builder(TokioExecutor::new());
     builder
         .http1_max_headers(H1_MAX_HEADERS)
-        .http2_max_header_list_size(H2_MAX_HEADER_LIST_SIZE);
+        .http2_max_header_list_size(H2_MAX_HEADER_LIST_SIZE)
+        .timer(TokioTimer::new())
+        .pool_timer(TokioTimer::new())
+        .http2_keep_alive_interval(every)
+        .http2_keep_alive_timeout(timeout);
     builder
 }
 
@@ -511,11 +513,12 @@ mod tests {
         format!("http://{addr}/")
     }
 
-    fn fast_pinging_client() -> Client<HttpConnector, Full<Bytes>> {
-        let ping = Duration::from_millis(100);
-        pinging_client_builder(ping, ping)
-            .http2_only(true)
-            .build(HttpConnector::new())
+    const FAST_PING: Duration = Duration::from_millis(100);
+
+    fn over_plain_http2(
+        mut builder: hyper_util::client::legacy::Builder,
+    ) -> Client<HttpConnector, Full<Bytes>> {
+        builder.http2_only(true).build(HttpConnector::new())
     }
 
     fn get(url: &str) -> Request<Full<Bytes>> {
@@ -525,7 +528,7 @@ mod tests {
     #[tokio::test]
     async fn a_connection_that_stops_answering_pings_is_replaced() {
         let url = server_that_goes_silent().await;
-        let client = fast_pinging_client();
+        let client = over_plain_http2(client_builder(FAST_PING, FAST_PING));
         let deadline = Duration::from_secs(5);
 
         let first = client.request(get(&url)).await.expect("first request");
@@ -546,7 +549,7 @@ mod tests {
     #[tokio::test]
     async fn an_idle_connection_that_stops_answering_pings_is_replaced() {
         let url = server_that_goes_silent().await;
-        let client = fast_pinging_client();
+        let client = over_plain_http2(control_plane_builder(FAST_PING, FAST_PING));
 
         let status = client.request(get(&url)).await.expect("first").status();
         assert_eq!(status, StatusCode::OK);
