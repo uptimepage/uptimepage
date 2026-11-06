@@ -178,8 +178,9 @@ impl EnabledTargetSource for AgentPullSource {
         let resp = match tokio::time::timeout_at(at, self.client.request(req)).await {
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
+                let cause = http_outbound::error_chain(e);
                 return self
-                    .cached_or_err(format!("config pull request failed: {e}"))
+                    .cached_or_err(format!("config pull request failed: {cause}"))
                     .await;
             }
             Err(_) => {
@@ -424,8 +425,9 @@ impl AgentDispatchClient {
         let resp = match tokio::time::timeout_at(at, self.client.request(req)).await {
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
+                let cause = http_outbound::error_chain(e);
                 return Err(AppError::Other(anyhow::anyhow!(
-                    "dispatch claim failed: {e}"
+                    "dispatch claim failed: {cause}"
                 )));
             }
             Err(_) => return Err(AppError::Other(anyhow::anyhow!("dispatch claim timed out"))),
@@ -482,8 +484,9 @@ pub async fn run(cfg: AppConfig) -> Result<()> {
     // input, so it honors the same `allow_private_targets` knob as the probe
     // client. Default (knob off) keeps the strict guard; a local/integration
     // control plane on a private address opts in via the flag.
-    let outbound =
-        http_outbound::build_outbound_client(SsrfGuard::new(cfg.security.allow_private_targets));
+    let outbound = http_outbound::build_control_plane_client(SsrfGuard::new(
+        cfg.security.allow_private_targets,
+    ));
 
     let flow_capable = cfg.flow.enabled;
     let pull = Arc::new(AgentPullSource::new(
@@ -587,7 +590,7 @@ pub async fn run(cfg: AppConfig) -> Result<()> {
     );
     drop(result_tx);
     let job_client = Arc::new(AgentDispatchClient {
-        client: http_outbound::build_outbound_client(SsrfGuard::new(
+        client: http_outbound::build_control_plane_client(SsrfGuard::new(
             cfg.security.allow_private_targets,
         )),
         claim_url: format!("{base}/api/agent/dispatch"),

@@ -7,7 +7,7 @@ use hyper::header::{ACCEPT, CONTENT_TYPE};
 use hyper::{Method, Request, StatusCode};
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::Client;
-use hyper_util::rt::TokioExecutor;
+use hyper_util::rt::{TokioExecutor, TokioTimer};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use url::Url;
@@ -38,6 +38,11 @@ const MAX_RESPONSE_BYTES: usize = 1 << 20;
 /// would let an endpoint slow at each hold a task for twice this long.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Together well inside `REQUEST_TIMEOUT`, so a result batch caught on a dead
+/// connection can still retry on a new one.
+const CONTROL_PLANE_PING_EVERY: Duration = Duration::from_secs(10);
+const CONTROL_PLANE_PING_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// `hyper_util`'s error prints only its kind; the cause sits in `source()`.
 pub fn error_chain(e: impl std::error::Error + Send + Sync + 'static) -> String {
     format!("{:#}", anyhow::Error::new(e))
@@ -53,6 +58,27 @@ pub fn build_single_use_outbound_client(guard: SsrfGuard) -> OutboundHttpClient 
     client_builder()
         .pool_max_idle_per_host(0)
         .build(https_connector(guard))
+}
+
+/// An agent's calls home. When a path goes silent, a timed-out HTTP/2 request
+/// leaves its connection pooled, so every later request hangs on it until the
+/// kernel gives up about 16 minutes on. Unanswered pings close it in seconds.
+pub fn build_control_plane_client(guard: SsrfGuard) -> OutboundHttpClient {
+    pinging_client_builder(CONTROL_PLANE_PING_EVERY, CONTROL_PLANE_PING_TIMEOUT)
+        .build(https_connector(guard))
+}
+
+fn pinging_client_builder(
+    every: Duration,
+    timeout: Duration,
+) -> hyper_util::client::legacy::Builder {
+    let mut builder = client_builder();
+    builder
+        .timer(TokioTimer::new())
+        .http2_keep_alive_interval(every)
+        .http2_keep_alive_timeout(timeout)
+        .http2_keep_alive_while_idle(true);
+    builder
 }
 
 /// Same header limits as the probe: the free header and security checkers
@@ -454,7 +480,85 @@ fn error_body_summary(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use hyper_util::client::legacy::connect::HttpConnector;
+
     use super::*;
+
+    /// Answers the first connection's first request, then keeps that socket
+    /// open unread, as a dead path would. Later connections are served.
+    async fn server_that_goes_silent() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut goes_silent = true;
+            while let Ok((sock, _)) = listener.accept().await {
+                let silent_after_one = std::mem::take(&mut goes_silent);
+                tokio::spawn(async move {
+                    let mut conn = h2::server::handshake(sock).await.unwrap();
+                    while let Some(Ok((_, mut respond))) = conn.accept().await {
+                        respond
+                            .send_response(hyper::Response::new(()), true)
+                            .unwrap();
+                        if silent_after_one {
+                            let flush = Duration::from_millis(50);
+                            let _ = tokio::time::timeout(flush, conn.accept()).await;
+                            std::future::pending::<()>().await;
+                        }
+                    }
+                });
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    fn fast_pinging_client() -> Client<HttpConnector, Full<Bytes>> {
+        let ping = Duration::from_millis(100);
+        pinging_client_builder(ping, ping)
+            .http2_only(true)
+            .build(HttpConnector::new())
+    }
+
+    fn get(url: &str) -> Request<Full<Bytes>> {
+        Request::get(url).body(Full::new(Bytes::new())).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_connection_that_stops_answering_pings_is_replaced() {
+        let url = server_that_goes_silent().await;
+        let client = fast_pinging_client();
+        let deadline = Duration::from_secs(5);
+
+        let first = client.request(get(&url)).await.expect("first request");
+        assert_eq!(first.status(), StatusCode::OK);
+
+        tokio::time::timeout(deadline, client.request(get(&url)))
+            .await
+            .expect("a silent connection must fail its request, not hang it")
+            .expect_err("nothing answers on the silent connection");
+
+        let replaced = tokio::time::timeout(deadline, client.request(get(&url)))
+            .await
+            .expect("the next request must not reuse the silent connection")
+            .expect("served on a new connection");
+        assert_eq!(replaced.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn an_idle_connection_that_stops_answering_pings_is_replaced() {
+        let url = server_that_goes_silent().await;
+        let client = fast_pinging_client();
+
+        let status = client.request(get(&url)).await.expect("first").status();
+        assert_eq!(status, StatusCode::OK);
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        let replaced = tokio::time::timeout(Duration::from_secs(5), client.request(get(&url)))
+            .await
+            .expect("the silent connection must already be gone")
+            .expect("served on a new connection");
+        assert_eq!(replaced.status(), StatusCode::OK);
+    }
 
     /// One byte of a much longer declared body, then nothing.
     async fn stalling_body_server() -> Url {
