@@ -365,6 +365,20 @@ impl AdHocDispatch {
         }
         Some(meta)
     }
+
+    /// [`Self::complete`] for a result still to be persisted: the check stays
+    /// known until [`Self::forget`], so an agent's retry can find it again.
+    pub fn deliver(&self, check_id: Uuid, result: DeliveredResult) -> Option<DispatchMeta> {
+        let (waiter, meta) = self.pending.get(&check_id)?;
+        if let Some(tx) = waiter.lock().unwrap().take() {
+            let _ = tx.send(result);
+        }
+        Some(meta)
+    }
+
+    pub fn forget(&self, check_id: Uuid) {
+        self.pending.invalidate(&check_id);
+    }
 }
 
 /// Claim→run loop shared by every executor. Claims no more checks than it has
@@ -818,6 +832,21 @@ mod tests {
         let awaited = d.await_result("r", id, rx, QUEUE_WAIT * 4).await;
         assert!(matches!(awaited, Awaited::Delivered(_)));
         deliver.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_report_that_failed_to_persist_can_be_sent_again() {
+        let d = AdHocDispatch::new();
+        let id = Uuid::now_v7();
+        let rx = d.dispatch("r", dispatched(id));
+        assert_eq!(d.claim("r", 1).await.len(), 1);
+
+        assert!(d.deliver(id, result()).is_some());
+        assert!(rx.await.is_ok(), "the first report reaches the request");
+        assert!(d.deliver(id, result()).is_some(), "the retry can persist");
+
+        d.forget(id);
+        assert!(d.deliver(id, result()).is_none());
     }
 
     #[tokio::test]

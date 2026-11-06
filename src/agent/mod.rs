@@ -16,6 +16,7 @@ use hyper::header::{self, AUTHORIZATION, IF_NONE_MATCH};
 use hyper::{HeaderMap, Request, StatusCode};
 use metrics::counter;
 use secrecy::ExposeSecret;
+use serde::Serialize;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use url::Url;
@@ -58,6 +59,9 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 /// one stays live.
 const SEEN_EVERY: Duration = Duration::from_secs(20);
 const SEEN_TIMEOUT: Duration = Duration::from_secs(5);
+/// Longer than a dead connection takes to notice, so a post caught on one can
+/// still go out on a new one.
+const POST_RETRY_BUDGET: Duration = Duration::from_secs(30);
 
 struct PullCache {
     etag: Option<String>,
@@ -333,27 +337,12 @@ impl ResultSink for AgentResultSink {
         // letting the batcher re-flush — is what keeps the id stable: the
         // batcher reforms (supersets) the buffer between ticks.
         let batch_id = Uuid::new_v4();
-        let mut headers = std::collections::BTreeMap::new();
-        headers.insert(
-            "Authorization".to_string(),
-            format!("Bearer {}", self.token),
-        );
-        let backoff = ExponentialBackoffBuilder::new()
-            .with_initial_interval(Duration::from_millis(200))
-            .with_max_interval(Duration::from_secs(5))
-            .with_max_elapsed_time(Some(Duration::from_secs(30)))
-            .build();
-        let op = || async {
-            let body = IngestRequestRef {
-                batch_id,
-                results,
-                flow_runs: &flow_runs,
-            };
-            http_outbound::post_json_with_headers(&self.client, &self.url, &body, &headers)
-                .await
-                .map_err(backoff::Error::transient)
+        let body = IngestRequestRef {
+            batch_id,
+            results,
+            flow_runs: &flow_runs,
         };
-        let sent = backoff::future::retry(backoff, op).await;
+        let sent = post_with_retry(&self.client, &self.url, &self.token, &body).await;
         if sent.is_err() {
             self.flow_runs.restore(flow_runs);
         }
@@ -422,7 +411,8 @@ impl AgentDispatchClient {
             flow_evidence: probe.flow_evidence,
             flow_steps: probe.flow_steps,
         };
-        if let Err(err) = self.post_result(&payload).await {
+        let posted = post_with_retry(&self.client, &self.results_url, &self.token, &payload).await;
+        if let Err(err) = posted {
             tracing::warn!(error = %err, check_id = %check.id, "agent dispatch result post failed");
         }
     }
@@ -467,16 +457,27 @@ impl AgentDispatchClient {
             serde_json::from_slice(&bytes).context("decoding dispatch-claim response")?;
         Ok(parsed.checks)
     }
+}
 
-    async fn post_result(&self, payload: &DispatchReport) -> Result<()> {
-        let mut headers = std::collections::BTreeMap::new();
-        headers.insert(
-            "Authorization".to_string(),
-            format!("Bearer {}", self.token),
-        );
-        http_outbound::post_json_with_headers(&self.client, &self.results_url, payload, &headers)
+async fn post_with_retry<T: Serialize>(
+    client: &OutboundHttpClient,
+    url: &Url,
+    token: &str,
+    body: &T,
+) -> Result<()> {
+    let mut headers = std::collections::BTreeMap::new();
+    headers.insert("Authorization".to_string(), format!("Bearer {token}"));
+    let backoff = ExponentialBackoffBuilder::new()
+        .with_initial_interval(Duration::from_millis(200))
+        .with_max_interval(Duration::from_secs(5))
+        .with_max_elapsed_time(Some(POST_RETRY_BUDGET))
+        .build();
+    let op = || async {
+        http_outbound::post_json_with_headers(client, url, body, &headers)
             .await
-    }
+            .map_err(backoff::Error::transient)
+    };
+    backoff::future::retry(backoff, op).await
 }
 
 /// Run the process as a regional agent until SIGINT/SIGTERM.
@@ -654,5 +655,39 @@ async fn wait_for_signal() {
     #[cfg(not(unix))]
     {
         let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn a_post_cut_off_by_the_network_is_sent_again() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+        let attempts = Arc::new(AtomicU32::new(0));
+        let seen = attempts.clone();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let mut scratch = [0u8; 4096];
+                let _ = sock.read(&mut scratch).await;
+                if seen.fetch_add(1, Ordering::Relaxed) > 0 {
+                    let accepted = b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n";
+                    let _ = sock.write_all(accepted).await;
+                }
+            }
+        });
+        let client = http_outbound::build_control_plane_client(SsrfGuard::relaxed_for_tests());
+
+        post_with_retry(&client, &url, "token", &serde_json::json!({}))
+            .await
+            .expect("the second attempt lands");
+
+        assert_eq!(attempts.load(Ordering::Relaxed), 2);
     }
 }

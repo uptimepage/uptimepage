@@ -297,21 +297,23 @@ pub async fn submit_dispatch_result(
         flow_evidence: req.flow_evidence,
         flow_steps: req.flow_steps,
     };
-    if let Some(meta) = state.ad_hoc.complete(req.check_id, delivered)
-        && crate::ad_hoc_dispatch::persists(meta.kind, &result_for_ch)
-        && let Some(target_id) = meta.target_id
-    {
-        let mut result = result_for_ch;
-        result.target_id = target_id;
-        result.org_id = meta.org_id;
-        state
-            .result_sink
-            .write_batch_tagged(
-                std::slice::from_ref(&result),
-                &agent.region,
-                &agent.agent_id,
-            )
-            .await?;
+    if let Some(meta) = state.ad_hoc.deliver(req.check_id, delivered) {
+        if crate::ad_hoc_dispatch::persists(meta.kind, &result_for_ch)
+            && let Some(target_id) = meta.target_id
+        {
+            let mut result = result_for_ch;
+            result.target_id = target_id;
+            result.org_id = meta.org_id;
+            state
+                .result_sink
+                .write_batch_tagged(
+                    std::slice::from_ref(&result),
+                    &agent.region,
+                    &agent.agent_id,
+                )
+                .await?;
+        }
+        state.ad_hoc.forget(req.check_id);
     }
     Ok(StatusCode::ACCEPTED.into_response())
 }
