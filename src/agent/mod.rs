@@ -25,7 +25,7 @@ use uuid::Uuid;
 use crate::config::AppConfig;
 use crate::domain::agent_wire::{
     AgentTargetsResponse, DispatchBatch, DispatchReport, DispatchedCheck, FlowRunRecord,
-    IngestRequestRef,
+    IngestRequestRef, MAX_FLOW_RUNS_PER_BATCH,
 };
 use crate::domain::{CheckResult, MAX_CHECK_TIMEOUT, OrgId, Target};
 use crate::error::{AppError, Result};
@@ -274,9 +274,12 @@ pub struct PendingFlowRuns {
 }
 
 impl PendingFlowRuns {
+    /// At most what ingest accepts: it refuses a larger batch outright, so a
+    /// backlog sent whole would fail every batch until the agent restarts.
     fn take(&self) -> Vec<FlowRunRecord> {
         let mut q = self.runs.lock().expect("pending flow runs poisoned");
-        q.drain(..).collect()
+        let batch = q.len().min(MAX_FLOW_RUNS_PER_BATCH);
+        q.drain(..batch).collect()
     }
 
     /// Put a drained batch back at the front when its request never landed, so
@@ -689,5 +692,26 @@ mod tests {
             .expect("the second attempt lands");
 
         assert_eq!(attempts.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test]
+    async fn a_flow_run_backlog_goes_out_in_batches_ingest_accepts() {
+        let run = FlowRunRecord {
+            org_id: Uuid::now_v7(),
+            target_id: Uuid::now_v7(),
+            timestamp: chrono::Utc::now(),
+            status: crate::domain::CheckStatus::Up,
+            duration_ms: 1,
+            error: None,
+            steps: Vec::new(),
+            evidence: None,
+        };
+        let pending = PendingFlowRuns::default();
+        pending
+            .write_runs(&vec![run; MAX_FLOW_RUNS_PER_BATCH + 1])
+            .await;
+
+        assert_eq!(pending.take().len(), MAX_FLOW_RUNS_PER_BATCH);
+        assert_eq!(pending.take().len(), 1);
     }
 }

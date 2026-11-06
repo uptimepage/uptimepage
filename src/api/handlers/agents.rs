@@ -17,7 +17,7 @@ use crate::app::AppState;
 use crate::domain::OrgId;
 use crate::domain::agent_wire::{
     AgentTargetDto, AgentTargetsResponse, DispatchBatch, DispatchReport, FlowRunRecord,
-    IngestRequest, IngestResponse,
+    IngestRequest, IngestResponse, MAX_FLOW_RUNS_PER_BATCH,
 };
 use crate::error::codes;
 use crate::error::{AppError, Result};
@@ -35,9 +35,6 @@ pub struct ClaimQuery {
 }
 
 const INGEST_MAX_BATCH: usize = 10_000;
-/// Far tighter than the result cap: a monitor runs one every 300s at most, so a
-/// batch of thousands is a bug or an attempt to make us write rows on demand.
-const INGEST_MAX_FLOW_RUNS: usize = 256;
 /// Reject results timestamped further ahead than this. Past timestamps are
 /// allowed — an agent buffering through a control-plane outage legitimately
 /// drains older results — but a future timestamp would land in the wrong CH
@@ -124,11 +121,11 @@ pub async fn ingest_results(
             ),
         ));
     }
-    if req.flow_runs.len() > INGEST_MAX_FLOW_RUNS {
+    if req.flow_runs.len() > MAX_FLOW_RUNS_PER_BATCH {
         return Err(AppError::unprocessable(
             codes::AGENT_BATCH_TOO_LARGE,
             format!(
-                "batch of {} flow runs exceeds the {INGEST_MAX_FLOW_RUNS} cap",
+                "batch of {} flow runs exceeds the {MAX_FLOW_RUNS_PER_BATCH} cap",
                 req.flow_runs.len()
             ),
         ));

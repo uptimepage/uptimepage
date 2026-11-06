@@ -24,6 +24,10 @@ pub struct AgentTargetDto {
     pub target: Target,
 }
 
+/// Far tighter than the result cap: a monitor runs one every 300s at most, so a
+/// batch of thousands is a bug or an attempt to make us write rows on demand.
+pub const MAX_FLOW_RUNS_PER_BATCH: usize = 256;
+
 /// Config-pull response: every enabled target assigned to the agent's region.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentTargetsResponse {
