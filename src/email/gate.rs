@@ -96,10 +96,8 @@ pub struct SendGate {
 impl SendGate {
     /// Its own two connections, so a busy app pool cannot hold up an alert,
     /// and server-side limits so a stuck row lock or statement fails fast.
-    /// Opens nothing until the first send.
-    pub fn connect_lazy(database_url: &str, rate_limit_per_second: u32) -> sqlx::Result<Self> {
-        let options: PgConnectOptions = database_url.parse()?;
-        let pool = PgPoolOptions::new()
+    pub fn pool_options() -> PgPoolOptions {
+        PgPoolOptions::new()
             .max_connections(2)
             // One kept open, so the first alert after a quiet spell does not
             // spend its budget on a connection handshake.
@@ -115,11 +113,16 @@ impl SendGate {
                     Ok(())
                 })
             })
-            .connect_lazy_with(options);
+    }
+
+    /// Opens nothing until the first send.
+    pub fn connect_lazy(database_url: &str, rate_limit_per_second: u32) -> sqlx::Result<Self> {
+        let options: PgConnectOptions = database_url.parse()?;
+        let pool = Self::pool_options().connect_lazy_with(options);
         Ok(Self::new(pool, rate_limit_per_second))
     }
 
-    fn new(pool: PgPool, rate_limit_per_second: u32) -> Self {
+    pub fn new(pool: PgPool, rate_limit_per_second: u32) -> Self {
         let limit = f64::from(rate_limit_per_second.max(1));
         let now = Instant::now();
         Self {

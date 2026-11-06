@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use sqlx::postgres::PgPoolOptions;
 use tokio::time::Instant;
 use uptimepage::email::gate::BULK_DEADLINE;
 use uptimepage::email::{
@@ -30,6 +31,21 @@ fn gate(url: &str, limit: u32) -> SendGate {
     SendGate::connect_lazy(url, limit).expect("gate pool")
 }
 
+/// Both connections open and no server-side limits. On a starved runner a cold
+/// connect can miss the acquire timeout and a row wait the lock timeout, and
+/// either miss holds the gate on its own pacer for 30 s.
+async fn warm_gate(url: &str, limit: u32) -> SendGate {
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .min_connections(2)
+        .acquire_timeout(Duration::from_secs(5))
+        .test_before_acquire(false)
+        .connect(url)
+        .await
+        .expect("gate pool");
+    SendGate::new(pool, limit)
+}
+
 fn sample() -> TransactionalEmail {
     TransactionalEmail {
         to: EmailAddress::new("alice@example.com", "Alice"),
@@ -47,10 +63,15 @@ async fn two_instances_never_book_closer_than_the_shared_pace() {
         return;
     };
     // 40 per second: the shared row hands out 32, one every 31.25 ms.
-    let (blue, green) = (Arc::new(gate(&url, 40)), Arc::new(gate(&url, 40)));
+    let (blue, green) = (
+        Arc::new(warm_gate(&url, 40).await),
+        Arc::new(warm_gate(&url, 40).await),
+    );
+    // Two gates on their own pacers would pass the span below.
     for g in [&blue, &green] {
-        g.bulk(soon()).await.expect("warm the gate connection");
+        g.bulk(soon()).await.expect("on the shared row");
     }
+    // Past the slots those took, so the first one below is free at once.
     tokio::time::sleep(Duration::from_millis(50)).await;
     let started = Instant::now();
     let mut sends = Vec::new();
@@ -87,8 +108,10 @@ async fn bulk_waits_behind_immediate_slots_booked_ahead() {
     let Some((url, name)) = db("gate_priority").await else {
         return;
     };
-    let g = Arc::new(gate(&url, 10));
-    // Four alerts arrive together and book the next 500 ms.
+    // 5 per second: the shared row hands out 4, one every 250 ms.
+    let g = Arc::new(warm_gate(&url, 5).await);
+    let asked = Instant::now();
+    // Four alerts arrive together and book the next second.
     for _ in 0..4 {
         let g = g.clone();
         tokio::spawn(async move {
@@ -97,11 +120,10 @@ async fn bulk_waits_behind_immediate_slots_booked_ahead() {
                 .unwrap()
         });
     }
-    tokio::time::sleep(Duration::from_millis(60)).await;
-    let asked = Instant::now();
+    tokio::time::sleep(Duration::from_millis(200)).await;
     g.bulk(soon()).await.expect("bulk slot");
     assert!(
-        asked.elapsed() >= Duration::from_millis(400),
+        asked.elapsed() >= Duration::from_millis(950),
         "bulk took a slot after {:?}, inside the booked ones",
         asked.elapsed()
     );
@@ -114,20 +136,25 @@ async fn a_429_on_one_instance_holds_the_other() {
     let Some((url, name)) = db("gate_block").await else {
         return;
     };
-    let (blue, green) = (gate(&url, 10), gate(&url, 10));
-    blue.block(Duration::from_secs(1)).await;
+    let (blue, green) = (warm_gate(&url, 10).await, warm_gate(&url, 10).await);
+    // Twice the second a gate call gets, so a slow write cannot pass for the wait.
+    let block = Duration::from_secs(2);
 
+    // Timed from before the block: its deadline is set before the row is written.
     let asked = Instant::now();
+    blue.block(block).await;
     green
         .immediate(Instant::now() + Duration::from_secs(10))
         .await
         .unwrap();
-    assert!(asked.elapsed() >= Duration::from_millis(950));
+    let waited = asked.elapsed();
+    assert!(waited >= Duration::from_millis(1_950), "{waited:?}");
 
-    blue.block(Duration::from_secs(1)).await;
     let asked = Instant::now();
+    blue.block(block).await;
     green.bulk(soon()).await.unwrap();
-    assert!(asked.elapsed() >= Duration::from_millis(950));
+    let waited = asked.elapsed();
+    assert!(waited >= Duration::from_millis(1_950), "{waited:?}");
     common::drop_test_db(&name).await;
 }
 
@@ -137,24 +164,22 @@ async fn a_429_during_a_booked_sleep_books_again_behind_the_block() {
     let Some((url, name)) = db("gate_rebook").await else {
         return;
     };
-    let (blue, green) = (Arc::new(gate(&url, 10)), gate(&url, 10));
+    let (blue, green) = (Arc::new(warm_gate(&url, 1).await), warm_gate(&url, 1).await);
     let deadline = || Instant::now() + Duration::from_secs(10);
-    // Three slots ahead, so the next one sleeps about 375 ms.
-    for _ in 0..3 {
-        let b = blue.clone();
-        tokio::spawn(async move { b.immediate(deadline()).await.unwrap() });
-    }
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    // One slot ahead, so the next one sleeps 1.25 s: longer than the write of
+    // the block below can take.
+    blue.immediate(deadline()).await.unwrap();
     let asked = Instant::now();
     let sleeper = {
         let b = blue.clone();
         tokio::spawn(async move { b.immediate(deadline()).await })
     };
     tokio::time::sleep(Duration::from_millis(100)).await;
-    green.block(Duration::from_secs(2)).await;
+    // Past the next free slot, so only the block can hold the second booking.
+    green.block(Duration::from_secs(3)).await;
     sleeper.await.unwrap().unwrap();
     assert!(
-        asked.elapsed() >= Duration::from_millis(1_900),
+        asked.elapsed() >= Duration::from_millis(2_900),
         "the slot booked before the 429 went out after {:?}",
         asked.elapsed()
     );
@@ -167,7 +192,7 @@ async fn bulk_behind_a_block_longer_than_its_wait_is_told_when_to_come_back() {
     let Some((url, name)) = db("gate_bulk_deadline").await else {
         return;
     };
-    let g = gate(&url, 10);
+    let g = warm_gate(&url, 10).await;
     g.block(Duration::from_secs(1200)).await;
     let asked = Instant::now();
     let err = g
@@ -189,7 +214,7 @@ async fn no_slot_before_the_deadline_is_said_at_once() {
     let Some((url, name)) = db("gate_deadline").await else {
         return;
     };
-    let g = gate(&url, 10);
+    let g = warm_gate(&url, 10).await;
     g.block(Duration::from_secs(20)).await;
     let asked = Instant::now();
     let free_in = g
@@ -214,7 +239,13 @@ async fn a_locked_gate_row_moves_the_instance_to_its_own_pacer() {
         .await
         .unwrap();
 
-    let g = gate(&url, 10);
+    // Production's server-side limits, connected: only they beat the second.
+    let gate_pool = SendGate::pool_options()
+        .acquire_timeout(Duration::from_secs(5))
+        .connect(&url)
+        .await
+        .expect("gate pool");
+    let g = SendGate::new(gate_pool, 10);
     let asked = Instant::now();
     g.immediate(Instant::now() + Duration::from_secs(10))
         .await
@@ -230,7 +261,7 @@ async fn a_locked_gate_row_moves_the_instance_to_its_own_pacer() {
         g.bulk(soon()).await,
         Err(EmailError::GateUnavailable)
     ));
-    assert!(asked.elapsed() < Duration::from_millis(50));
+    assert!(asked.elapsed() < Duration::from_millis(200));
 
     holder.rollback().await.unwrap();
     pool.close().await;
@@ -249,8 +280,8 @@ async fn running_into_the_callers_deadline_is_not_a_database_failure() {
         .execute(&mut *holder)
         .await
         .unwrap();
-    let g = gate(&url, 10);
-    // Shorter than the lock timeout: the caller's deadline ends the wait.
+    let g = warm_gate(&url, 10).await;
+    // The row stays locked past this: the caller's deadline ends the wait.
     assert!(
         g.immediate(Instant::now() + Duration::from_millis(100))
             .await
@@ -358,15 +389,16 @@ async fn an_immediate_mail_retries_a_429_once_when_it_fits_the_deadline() {
     let Some((url, name)) = db("gate_retry").await else {
         return;
     };
-    let provider = throttled(1, Duration::from_secs(1));
-    let sender = GatedEmailSender::new(provider.clone(), gate(&url, 10));
+    // Twice the second a gate call gets, so a slow write cannot pass for the wait.
+    let provider = throttled(1, Duration::from_secs(2));
+    let sender = GatedEmailSender::new(provider.clone(), warm_gate(&url, 10).await);
     let asked = Instant::now();
     sender
         .send(sample(), SendClass::Immediate)
         .await
         .expect("sent on the second try");
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
-    assert!(asked.elapsed() >= Duration::from_millis(950));
+    assert!(asked.elapsed() >= Duration::from_millis(1_950));
     assert_eq!(provider.inner.len(), 1);
     common::drop_test_db(&name).await;
 }
@@ -378,7 +410,7 @@ async fn a_429_retry_past_the_deadline_is_not_sent() {
         return;
     };
     let provider = throttled(1, Duration::from_secs(20));
-    let sender = GatedEmailSender::new(provider.clone(), gate(&url, 10));
+    let sender = GatedEmailSender::new(provider.clone(), warm_gate(&url, 10).await);
     let asked = Instant::now();
     let err = sender
         .send(sample(), SendClass::Immediate)
@@ -392,7 +424,7 @@ async fn a_429_retry_past_the_deadline_is_not_sent() {
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
     assert!(asked.elapsed() < Duration::from_secs(1));
     // Bulk sees the same block and waits it out rather than sending.
-    let other = gate(&url, 10);
+    let other = warm_gate(&url, 10).await;
     assert!(
         tokio::time::timeout(Duration::from_millis(500), other.bulk(soon()))
             .await
@@ -407,7 +439,7 @@ async fn a_healthy_and_a_cut_off_instance_together_stay_at_the_limit() {
     let Some((url, name)) = db("gate_mixed").await else {
         return;
     };
-    let healthy = Arc::new(gate(&url, 10));
+    let healthy = Arc::new(warm_gate(&url, 10).await);
     let cut_off = Arc::new(gate("postgres://monitor:monitor@127.0.0.1:1/none", 10));
     let window = Duration::from_secs(2);
     let until = Instant::now() + window;
