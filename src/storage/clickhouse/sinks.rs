@@ -66,9 +66,11 @@ impl ClickhouseResultSink {
         let backoff = insert_backoff();
 
         // Full re-send on each retry is intentional and safe ONLY because the
-        // `check_results` table sets `non_replicated_deduplication_window` (see
-        // 001_initial.sql): a commit-then-lost-ack retry re-sends the identical
-        // block, which the server drops by hash instead of double-counting.
+        // `check_results` table and its rollups set
+        // `non_replicated_deduplication_window` (see 001_initial.sql and
+        // `dedup_retries_in_rollups`): a commit-then-lost-ack retry re-sends the
+        // identical block, which the server drops by hash instead of
+        // double-counting.
         // Don't checkpoint mid-batch here — a partial re-send changes the block
         // and defeats that dedup.
         let op = || async {

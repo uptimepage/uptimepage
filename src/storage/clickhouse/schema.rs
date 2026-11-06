@@ -151,8 +151,38 @@ pub async fn migrate(client: &Client) -> Result<()> {
     }
 
     verify_rollup_schema(client).await?;
+    dedup_retries_in_rollups(client).await?;
 
     tracing::info!("clickhouse ready");
+    Ok(())
+}
+
+/// Without their own window, a retry `check_results` drops still counts twice
+/// in the rollups. Not a migration file: ClickHouse refuses this setting
+/// through a materialized view, and the inner table's name differs per install.
+async fn dedup_retries_in_rollups(client: &Client) -> Result<()> {
+    let without_window = client
+        .query(
+            "SELECT name FROM system.tables \
+             WHERE database = currentDatabase() \
+             AND engine_full NOT LIKE '%non_replicated_deduplication_window%' \
+             AND name IN ( \
+                 SELECT concat('.inner_id.', toString(uuid)) FROM system.tables \
+                 WHERE database = currentDatabase() \
+                 AND name IN ('check_results_1m', 'check_results_1h'))",
+        )
+        .fetch_all::<String>()
+        .await
+        .context("find rollup inner tables")?;
+    for table in without_window {
+        client
+            .query(&format!(
+                "ALTER TABLE `{table}` MODIFY SETTING non_replicated_deduplication_window = 1000"
+            ))
+            .execute()
+            .await
+            .with_context(|| format!("set dedup window on {table}"))?;
+    }
     Ok(())
 }
 
