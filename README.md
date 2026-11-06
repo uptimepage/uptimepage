@@ -337,6 +337,8 @@ cargo build --release
 
 Requires Postgres and ClickHouse reachable at the URLs in `config/default.toml`, plus a non-empty fingerprint salt (the app refuses to boot without one):
 
+For a self-managed ClickHouse, also apply the [ClickHouse system-log settings](docs/deployment.md#clickhouse-system-logs).
+
 ```bash
 export UPTIMEPAGE_AUTH__FINGERPRINT_SALT=$(openssl rand -base64 32)
 ```
