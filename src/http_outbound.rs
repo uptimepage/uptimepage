@@ -42,6 +42,7 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// time to do it on a new connection.
 const PING_EVERY: Duration = Duration::from_secs(10);
 const PING_TIMEOUT: Duration = Duration::from_secs(10);
+const _: () = assert!(PING_EVERY.as_secs() + PING_TIMEOUT.as_secs() < REQUEST_TIMEOUT.as_secs());
 
 /// `hyper_util`'s error prints only its kind; the cause sits in `source()`.
 pub fn error_chain(e: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> String {
@@ -100,14 +101,22 @@ fn https_connector(guard: SsrfGuard) -> HttpsConnector<SsrfHttpConnector> {
     // it can't be read (an empty/broken store, or a macOS keychain I/O
     // hiccup under load) rather than panicking the process. Same rule as
     // `http_client::client::server_roots`, which needs an owned store.
-    match hyper_rustls::HttpsConnectorBuilder::new().with_native_roots() {
+    let trusting = match hyper_rustls::HttpsConnectorBuilder::new().with_native_roots() {
         Ok(b) => b,
         Err(_) => hyper_rustls::HttpsConnectorBuilder::new().with_webpki_roots(),
-    }
-    .https_or_http()
-    .enable_http1()
-    .enable_http2()
-    .wrap_connector(SsrfHttpConnector::new(guard))
+    };
+    offering_http2(trusting, guard)
+}
+
+fn offering_http2(
+    trusting: hyper_rustls::HttpsConnectorBuilder<hyper_rustls::builderstates::WantsSchemes>,
+    guard: SsrfGuard,
+) -> HttpsConnector<SsrfHttpConnector> {
+    trusting
+        .https_or_http()
+        .enable_http1()
+        .enable_http2()
+        .wrap_connector(SsrfHttpConnector::new(guard))
 }
 
 pub async fn post_json<T: Serialize>(
@@ -483,21 +492,35 @@ fn error_body_summary(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use hyper_util::client::legacy::connect::HttpConnector;
+    use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 
     use super::*;
 
     /// Answers the first connection's first request, then keeps that socket
-    /// open unread, as a dead path would. Later connections are served.
-    async fn server_that_goes_silent() -> String {
+    /// open unread, as a dead path would. Later connections are served. Speaks
+    /// only HTTP/2 over TLS, so a client has to negotiate it.
+    async fn server_that_goes_silent() -> (String, CertificateDer<'static>) {
+        crate::http_client::client::install_default_crypto_provider();
+        let leaf = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let cert = leaf.cert.der().clone();
+        let key = PrivatePkcs8KeyDer::from(leaf.signing_key.serialize_der());
+        let mut tls = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert.clone()], key.into())
+            .unwrap();
+        tls.alpn_protocols = vec![b"h2".to_vec()];
+        let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(tls));
+
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
+        let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move {
             let mut goes_silent = true;
             while let Ok((sock, _)) = listener.accept().await {
                 let silent_after_one = std::mem::take(&mut goes_silent);
+                let acceptor = acceptor.clone();
                 tokio::spawn(async move {
-                    let mut conn = h2::server::handshake(sock).await.unwrap();
+                    let tls = acceptor.accept(sock).await.unwrap();
+                    let mut conn = h2::server::handshake(tls).await.unwrap();
                     while let Some(Ok((_, mut respond))) = conn.accept().await {
                         respond
                             .send_response(hyper::Response::new(()), true)
@@ -511,15 +534,25 @@ mod tests {
                 });
             }
         });
-        format!("http://{addr}/")
+        (format!("https://localhost:{port}/"), cert)
     }
 
     const FAST_PING: Duration = Duration::from_millis(100);
 
-    fn over_plain_http2(
-        mut builder: hyper_util::client::legacy::Builder,
-    ) -> Client<HttpConnector, Full<Bytes>> {
-        builder.http2_only(true).build(HttpConnector::new())
+    fn trusting_only(
+        root: CertificateDer<'static>,
+        builder: hyper_util::client::legacy::Builder,
+    ) -> OutboundHttpClient {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(root).unwrap();
+        let tls = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let trusting = hyper_rustls::HttpsConnectorBuilder::new().with_tls_config(tls);
+        builder.build(offering_http2(
+            trusting,
+            crate::security::SsrfGuard::relaxed_for_tests(),
+        ))
     }
 
     fn get(url: &str) -> Request<Full<Bytes>> {
@@ -528,8 +561,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_connection_that_stops_answering_pings_is_replaced() {
-        let url = server_that_goes_silent().await;
-        let client = over_plain_http2(client_builder(FAST_PING, FAST_PING));
+        let (url, root) = server_that_goes_silent().await;
+        let client = trusting_only(root, client_builder(FAST_PING, FAST_PING));
         let deadline = Duration::from_secs(5);
 
         let first = client.request(get(&url)).await.expect("first request");
@@ -549,8 +582,8 @@ mod tests {
 
     #[tokio::test]
     async fn an_idle_connection_that_stops_answering_pings_is_replaced() {
-        let url = server_that_goes_silent().await;
-        let client = over_plain_http2(control_plane_builder(FAST_PING, FAST_PING));
+        let (url, root) = server_that_goes_silent().await;
+        let client = trusting_only(root, control_plane_builder(FAST_PING, FAST_PING));
 
         let status = client.request(get(&url)).await.expect("first").status();
         assert_eq!(status, StatusCode::OK);
