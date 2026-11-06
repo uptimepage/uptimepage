@@ -44,8 +44,9 @@ const PING_EVERY: Duration = Duration::from_secs(10);
 const PING_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// `hyper_util`'s error prints only its kind; the cause sits in `source()`.
-pub fn error_chain(e: impl std::error::Error + Send + Sync + 'static) -> String {
-    format!("{:#}", anyhow::Error::new(e))
+pub fn error_chain(e: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> String {
+    let e: Box<dyn std::error::Error + Send + Sync> = e.into();
+    format!("{:#}", anyhow::anyhow!(e))
 }
 
 pub fn build_outbound_client(guard: SsrfGuard) -> OutboundHttpClient {
@@ -363,7 +364,7 @@ async fn read_body_within(
 ) -> Result<std::result::Result<Bytes, String>> {
     match tokio::time::timeout_at(at, Limited::new(body, max_bytes).collect()).await {
         Ok(Ok(collected)) => Ok(Ok(collected.to_bytes())),
-        Ok(Err(e)) => Ok(Err(e.to_string())),
+        Ok(Err(e)) => Ok(Err(error_chain(e))),
         Err(_) => Err(AppError::Other(anyhow::anyhow!(
             "reading the response from {url} exceeded {REQUEST_TIMEOUT:?}"
         ))),

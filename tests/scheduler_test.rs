@@ -8,9 +8,12 @@ use async_trait::async_trait;
 use axum::Router;
 use axum::http::StatusCode;
 use axum::routing::get;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use uptimepage::agent::{AgentPullSource, MAX_PULL_BYTES};
+use uptimepage::domain::agent_wire::{AgentTargetDto, AgentTargetsResponse};
 use uptimepage::domain::{
     CheckResult, CheckSpec, CheckStatus, OrgId, Target, humanize_check_error,
 };
@@ -865,4 +868,76 @@ async fn a_monitor_added_while_running_is_probed_within_seconds() {
     shutdown.cancel();
     handle.await.unwrap().unwrap();
     assert!(matches!(first, Ok(Some(_))), "no probe for the new monitor");
+}
+
+/// Each connection gets the next response, then is closed.
+async fn control_plane_answering(responses: Vec<Vec<u8>>) -> AgentPullSource {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        for response in responses {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut scratch = [0u8; 4096];
+            let _ = sock.read(&mut scratch).await;
+            let _ = sock.write_all(&response).await;
+        }
+    });
+    AgentPullSource::new(
+        uptimepage::http_outbound::build_control_plane_client(
+            uptimepage::security::SsrfGuard::relaxed_for_tests(),
+        ),
+        &format!("http://{addr}"),
+        "token".into(),
+        false,
+    )
+}
+
+fn pull_with_one_target() -> (Target, Vec<u8>) {
+    let target = http_target("127.0.0.1:9".parse().unwrap(), "/", 1000);
+    let body = serde_json::to_vec(&AgentTargetsResponse {
+        region: "eu".into(),
+        targets: vec![AgentTargetDto {
+            org_id: uuid::Uuid::now_v7(),
+            target: target.clone(),
+        }],
+    })
+    .unwrap();
+    let mut response = format!(
+        "HTTP/1.1 200 OK\r\nETag: \"v1\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .into_bytes();
+    response.extend(body);
+    (target, response)
+}
+
+#[tokio::test]
+async fn agent_serves_last_known_config_when_a_pull_loses_its_connection_mid_body() {
+    let (target, first_pull) = pull_with_one_target();
+    let cut_off = b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n{".to_vec();
+    let pull = control_plane_answering(vec![first_pull, cut_off]).await;
+
+    pull.list_all_enabled_targets().await.expect("first pull");
+
+    let served = pull
+        .list_all_enabled_targets()
+        .await
+        .expect("a lost connection is transient");
+    let ids: Vec<_> = served.iter().map(|(_, t)| t.id).collect();
+    assert_eq!(ids, [target.id]);
+}
+
+#[tokio::test]
+async fn agent_reports_a_pull_over_the_size_limit_as_a_failure() {
+    let (_, first_pull) = pull_with_one_target();
+    let size = MAX_PULL_BYTES + 1;
+    let mut oversized = format!("HTTP/1.1 200 OK\r\nContent-Length: {size}\r\n\r\n").into_bytes();
+    oversized.resize(oversized.len() + size, b' ');
+    let pull = control_plane_answering(vec![first_pull, oversized]).await;
+
+    pull.list_all_enabled_targets().await.expect("first pull");
+
+    pull.list_all_enabled_targets()
+        .await
+        .expect_err("a config over the limit will not fix itself");
 }

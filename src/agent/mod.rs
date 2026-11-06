@@ -10,7 +10,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use async_trait::async_trait;
 use backoff::ExponentialBackoffBuilder;
-use http_body_util::{BodyExt, Full, Limited};
+use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use hyper::body::Bytes;
 use hyper::header::{self, AUTHORIZATION, IF_NONE_MATCH};
 use hyper::{HeaderMap, Request, StatusCode};
@@ -48,7 +48,7 @@ use crate::worker::{ResultFanout, WorkerDeps, WorkerPool};
 /// inside the 180 s stop grace period with the final flush's own retries.
 const SETTLE: Duration = Duration::from_secs(MAX_CHECK_TIMEOUT.as_secs() + 15);
 
-const MAX_PULL_BYTES: usize = 32 << 20;
+pub const MAX_PULL_BYTES: usize = 32 << 20;
 /// One exchange with the control plane, headers and body together. A stall
 /// mid-body wedges this loop, and the region then stops probing while still
 /// reporting itself connected.
@@ -150,7 +150,10 @@ impl AgentPullSource {
         let resp = tokio::time::timeout(SEEN_TIMEOUT, self.client.request(req))
             .await
             .context("timed out")?
-            .context("request failed")?;
+            .map_err(|e| {
+                let cause = http_outbound::error_chain(e);
+                AppError::Other(anyhow::anyhow!("request failed: {cause}"))
+            })?;
         let status = resp.status();
         if status != StatusCode::NOT_MODIFIED && !status.is_success() {
             return Err(AppError::Other(anyhow::anyhow!(
@@ -219,16 +222,24 @@ impl EnabledTargetSource for AgentPullSource {
         )
         .await
         {
-            Ok(r) => {
-                r.map_err(|e| AppError::Other(anyhow::anyhow!("reading config-pull body: {e}")))?
+            Ok(Ok(body)) => body.to_bytes(),
+            Ok(Err(e)) if e.is::<LengthLimitError>() => {
+                return Err(AppError::Other(anyhow::anyhow!(
+                    "config pull body is over {MAX_PULL_BYTES} bytes"
+                )));
+            }
+            Ok(Err(e)) => {
+                let cause = http_outbound::error_chain(e);
+                return self
+                    .cached_or_err(format!("reading config-pull body: {cause}"))
+                    .await;
             }
             Err(_) => {
                 return self
                     .cached_or_err("config pull body timed out".into())
                     .await;
             }
-        }
-        .to_bytes();
+        };
         let parsed: AgentTargetsResponse =
             serde_json::from_slice(&bytes).context("decoding config-pull response")?;
         let targets: Vec<(OrgId, Target)> = parsed
@@ -447,7 +458,10 @@ impl AgentDispatchClient {
             tokio::time::timeout_at(at, Limited::new(resp.into_body(), MAX_PULL_BYTES).collect())
                 .await
                 .map_err(|_| AppError::Other(anyhow::anyhow!("dispatch claim body timed out")))?
-                .map_err(|e| AppError::Other(anyhow::anyhow!("reading dispatch-claim body: {e}")))?
+                .map_err(|e| {
+                    let cause = http_outbound::error_chain(e);
+                    AppError::Other(anyhow::anyhow!("reading dispatch-claim body: {cause}"))
+                })?
                 .to_bytes();
         let parsed: DispatchBatch =
             serde_json::from_slice(&bytes).context("decoding dispatch-claim response")?;
@@ -484,13 +498,13 @@ pub async fn run(cfg: AppConfig) -> Result<()> {
     // input, so it honors the same `allow_private_targets` knob as the probe
     // client. Default (knob off) keeps the strict guard; a local/integration
     // control plane on a private address opts in via the flag.
-    let outbound = http_outbound::build_control_plane_client(SsrfGuard::new(
+    let control_plane = http_outbound::build_control_plane_client(SsrfGuard::new(
         cfg.security.allow_private_targets,
     ));
 
     let flow_capable = cfg.flow.enabled;
     let pull = Arc::new(AgentPullSource::new(
-        outbound.clone(),
+        control_plane.clone(),
         &base,
         token.clone(),
         flow_capable,
@@ -500,7 +514,7 @@ pub async fn run(cfg: AppConfig) -> Result<()> {
         .context("agent.control_plane_url is not a valid URL")?;
     let pending_flow_runs = Arc::new(PendingFlowRuns::default());
     let sink: Arc<dyn ResultSink> = Arc::new(AgentResultSink {
-        client: outbound,
+        client: control_plane.clone(),
         url: results_url,
         token: token.clone(),
         flow_runs: pending_flow_runs.clone(),
@@ -590,9 +604,7 @@ pub async fn run(cfg: AppConfig) -> Result<()> {
     );
     drop(result_tx);
     let job_client = Arc::new(AgentDispatchClient {
-        client: http_outbound::build_control_plane_client(SsrfGuard::new(
-            cfg.security.allow_private_targets,
-        )),
+        client: control_plane,
         claim_url: format!("{base}/api/agent/dispatch"),
         results_url: Url::parse(&format!("{base}/api/agent/dispatch/results"))
             .context("agent.control_plane_url is not a valid URL")?,
