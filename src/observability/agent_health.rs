@@ -21,11 +21,12 @@ pub async fn run(repo: OperatorRepo, stale_after: Duration, shutdown: Cancellati
     let mut ticker = interval(TICK);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut stale: HashSet<Uuid> = HashSet::new();
+    let mut regions: HashSet<String> = HashSet::new();
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => return,
             _ = ticker.tick() => {
-                if let Err(err) = sweep(&repo, stale_after, &mut stale).await {
+                if let Err(err) = sweep(&repo, stale_after, &mut stale, &mut regions).await {
                     tracing::warn!(error = %err, "agent health sweep failed");
                 }
             }
@@ -37,6 +38,7 @@ async fn sweep(
     repo: &OperatorRepo,
     stale_after: Duration,
     stale: &mut HashSet<Uuid>,
+    regions: &mut HashSet<String>,
 ) -> Result<()> {
     let agents = repo.list_agents().await?;
     let now = Utc::now();
@@ -50,7 +52,7 @@ async fn sweep(
         // Emit for every agent (incl. disabled) so one that goes dark ages to 0.
         // Per-agent series can freeze if an agent is removed (the metrics facade
         // can't retract); that's fine for dashboards, and alerts page on the
-        // freeze-proof aggregate below instead.
+        // per-region gauges below instead.
         metrics::gauge!(metric_names::AGENT_LAST_SEEN_AGE, "region" => a.region.clone(), "agent" => a.name.clone())
             .set(age as f64);
         metrics::gauge!(metric_names::AGENT_UP, "region" => a.region.clone(), "agent" => a.name.clone())
@@ -68,19 +70,34 @@ async fn sweep(
     // Forget vanished agents so the log-dedup set can't grow unbounded.
     stale.retain(|id| live.contains(id));
     // Recomputed every sweep, so a recovered, disabled, or removed agent drops
-    // out and the gauge can't latch. The count of enabled agents currently
-    // dark, which the dead-man alert pages on.
+    // out and the gauge can't latch.
     metrics::gauge!(metric_names::AGENTS_ENABLED_DOWN).set(stale.len() as f64);
-    // Per-region quorum: fresh enabled agents out of the region's roster. Like
-    // the per-agent gauges this can freeze if a region's last agent is removed;
-    // dashboards read up-of-total and alert on up == 0 (region dark).
-    for (region, total, up) in region_quorum(&agents, now, stale_after) {
-        metrics::gauge!(metric_names::REGION_AGENTS_TOTAL, "region" => region.to_string())
-            .set(total as f64);
-        metrics::gauge!(metric_names::REGION_AGENTS_UP, "region" => region.to_string())
-            .set(up as f64);
+    // Dashboards read up-of-total and the agent-down alert pages on the gap.
+    let quorum = region_quorum(&agents, now, stale_after);
+    for (region, total, up) in &quorum {
+        set_region_gauges(region, *total, *up);
     }
+    // The gauges can't retract, so a region left with no enabled agent would
+    // otherwise page on its last values.
+    for region in vanished(regions, &quorum) {
+        set_region_gauges(region, 0, 0);
+    }
+    *regions = quorum.iter().map(|(r, ..)| (*r).to_owned()).collect();
     Ok(())
+}
+
+fn set_region_gauges(region: &str, total: u32, up: u32) {
+    metrics::gauge!(metric_names::REGION_AGENTS_TOTAL, "region" => region.to_owned())
+        .set(total as f64);
+    metrics::gauge!(metric_names::REGION_AGENTS_UP, "region" => region.to_owned()).set(up as f64);
+}
+
+fn vanished<'a>(known: &'a HashSet<String>, quorum: &[(&str, u32, u32)]) -> Vec<&'a str> {
+    known
+        .iter()
+        .map(String::as_str)
+        .filter(|region| !quorum.iter().any(|(r, ..)| r == region))
+        .collect()
 }
 
 /// Per-region quorum from a roster: `(region, enabled_total, fresh_up)`.
@@ -129,6 +146,13 @@ mod tests {
         out.iter()
             .find(|(r, _, _)| *r == region)
             .map(|(_, t, u)| (*t, *u))
+    }
+
+    #[test]
+    fn a_region_with_no_enabled_agent_left_has_vanished() {
+        let known = HashSet::from(["eu".to_owned(), "us".to_owned()]);
+
+        assert_eq!(vanished(&known, &[("eu", 1, 1)]), ["us"]);
     }
 
     #[test]

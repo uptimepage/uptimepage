@@ -202,11 +202,11 @@ fn register_descriptions() {
     );
     describe_gauge!(
         "uptimepage_agent_up",
-        "1 if a regional agent checked in within the staleness window, else 0, labelled by region and agent. Per-agent series can freeze on agent removal; alert on uptimepage_agents_enabled_down instead"
+        "1 if a regional agent checked in within the staleness window, else 0, labelled by region and agent. Per-agent series can freeze on agent removal; alert on uptimepage_region_agents_total minus uptimepage_region_agents_up instead"
     );
     describe_gauge!(
         "uptimepage_agents_enabled_down",
-        "Count of enabled regional agents currently past the staleness window. Recomputed every sweep so it never latches, the dead-man signal for a probe region going dark"
+        "Count of enabled regional agents currently past the staleness window. Recomputed every sweep so it never latches"
     );
     describe_gauge!(
         "uptimepage_region_agents_total",
@@ -214,7 +214,7 @@ fn register_descriptions() {
     );
     describe_gauge!(
         "uptimepage_region_agents_up",
-        "Enabled regional agents in a region that checked in within the staleness window, labelled by region. Numerator of the per-region quorum; 0 means the region's agents have all gone stale. Recomputed each sweep; like the per-agent gauges it can freeze if a region's last agent is removed"
+        "Enabled regional agents in a region that checked in within the staleness window, labelled by region. Numerator of the per-region quorum; 0 means the region's agents have all gone stale. Recomputed each sweep; set to 0 along with the total once a region has no enabled agent"
     );
     describe_gauge!(
         "uptimepage_region_checks_window",

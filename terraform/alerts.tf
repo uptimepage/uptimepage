@@ -1255,12 +1255,12 @@ resource "grafana_rule_group" "availability" {
     }
   }
 
-  # One or more enabled probe agents stopped checking in, so their regions'
-  # monitors are no longer being probed. Sourced from agents.last_seen_at via
-  # the control plane, so it covers remote agents too. The gauge is recomputed
-  # every sweep (a recovered, disabled, or removed agent drops out), so it
-  # can't latch the way a frozen per-agent series would. no_data = OK: no
-  # agents, or the brain itself dark (the rule above owns that case).
+  # An enabled probe agent stopped checking in, so its region may no longer be
+  # probed. Sourced from agents.last_seen_at via the control plane, so it covers
+  # remote agents too. One alert per region, so the page names it; max by
+  # (region) drops the color label, so a blue/green cutover doesn't restart the
+  # alert mid-outage. no_data = OK: no agents, or the brain itself dark (the rule
+  # above owns that case).
   rule {
     name           = "UptimepageRegionalAgentDown"
     condition      = "C"
@@ -1272,8 +1272,8 @@ resource "grafana_rule_group" "availability" {
       service  = "uptimepage"
     }
     annotations = {
-      summary     = "uptimepage: probe agent down"
-      description = "one or more enabled probe agents have not checked in for over the staleness window, so their regions are unprobed. See /operator/agents for which. Runbook: runbooks/grafana-cloud.md."
+      summary     = "uptimepage: probe agent down in {{ $labels.region }}"
+      description = "{{ $labels.region }} has enabled probe agents past the staleness window. A region with no agent left is unprobed. See /operator/agents. Runbook: runbooks/grafana-cloud.md."
     }
     data {
       ref_id         = "A"
@@ -1285,7 +1285,7 @@ resource "grafana_rule_group" "availability" {
       model = jsonencode({
         refId   = "A"
         instant = true
-        expr    = "uptimepage_agents_enabled_down"
+        expr    = "max by (region) (uptimepage_region_agents_total - uptimepage_region_agents_up)"
       })
     }
     data {
