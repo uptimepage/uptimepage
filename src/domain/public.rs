@@ -313,7 +313,10 @@ pub fn stored_incident_impact(
     )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+/// Declared mildest first, so the derived order reads as how bad it is.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize, ToSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum IncidentSeverity {
     Minor,

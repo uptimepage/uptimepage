@@ -1,0 +1,7 @@
+{
+  "secret": "a-shared-secret-for-tests",
+  "timestamp": "1794059191",
+  "signature": "03f5174172b78d640e38675f24552e70ecf8dc43d6d879a13b2d5f06470b4df5",
+  "body": "grafana_firing.json",
+  "grafana": "13.3.0"
+}

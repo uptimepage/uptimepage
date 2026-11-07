@@ -1,0 +1,12 @@
+{
+  "event_action": "trigger",
+  "dedup_key": "checkout-5xx",
+  "payload": {
+    "summary": "Checkout error rate above 5%",
+    "source": "billing-worker",
+    "severity": "critical",
+    "timestamp": "2026-11-06T09:14:00Z",
+    "custom_details": { "region": "eu-west-1" }
+  },
+  "links": [{ "href": "https://grafana.example.com/d/abc", "text": "Dashboard" }]
+}
