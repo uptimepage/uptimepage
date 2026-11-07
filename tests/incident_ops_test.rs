@@ -17,7 +17,8 @@ use uptimepage::domain::{
 };
 use uptimepage::storage::{
     Actor, AppPress, FanOut, FanOutKind, InMemoryIncidentOpsStore, IncidentOpsStore,
-    LifecycleOutcome, PgIncidentOpsStore, QUEUED_TAKEOVER_SECS, create_org_with_owner,
+    LifecycleOutcome, PgIncidentOpsStore, QUEUED_TAKEOVER_SECS, auto_resolve_in_tx,
+    create_org_with_owner,
 };
 use uuid::Uuid;
 
@@ -3532,4 +3533,53 @@ async fn the_release_scans_wait_for_a_paused_or_held_monitor_pg() {
         set("UPDATE targets SET plan_hold_at = NULL WHERE id = (SELECT target_id FROM incidents WHERE id = $1)").await;
         assert!(due().await, "{transport}: due again once back");
     }
+}
+
+/// A resolve run inside a caller's transaction writes nothing that outlives a
+/// rollback: not the row, the timeline, the audit trail or the public update.
+/// The committed run after it proves each count can move.
+#[tokio::test]
+#[ignore]
+async fn a_resolve_rolled_back_with_its_caller_leaves_no_trace_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, _user, incident) = seed(&pool, "incrollback").await;
+    sqlx::query("UPDATE incidents SET visibility = 'public' WHERE id = $1")
+        .bind(incident)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let trace = async || -> (String, i64, i64, i64) {
+        sqlx::query_as(
+            "SELECT i.state, \
+                    (SELECT count(*) FROM incident_events e WHERE e.incident_id = i.id), \
+                    (SELECT count(*) FROM incident_updates u WHERE u.incident_id = i.id), \
+                    (SELECT count(*) FROM org_audit_log a WHERE a.org_id = i.org_id) \
+             FROM incidents i WHERE i.id = $1",
+        )
+        .bind(incident)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    let before = trace().await;
+
+    let mut tx = pool.begin().await.unwrap();
+    let outcome = auto_resolve_in_tx(&mut tx, org, incident).await.unwrap();
+    assert!(
+        matches!(outcome, LifecycleOutcome::Updated(_)),
+        "{outcome:?}"
+    );
+    tx.rollback().await.unwrap();
+    assert_eq!(trace().await, before, "a rollback keeps nothing");
+
+    let mut tx = pool.begin().await.unwrap();
+    auto_resolve_in_tx(&mut tx, org, incident).await.unwrap();
+    tx.commit().await.unwrap();
+    let (state, events, updates, audit) = trace().await;
+    assert_eq!(state, "resolved");
+    assert_eq!(events, before.1 + 1, "the resolve is on the timeline");
+    assert_eq!(updates, before.2 + 1, "the public resolution is posted");
+    assert_eq!(audit, before.3, "a system resolve writes no audit row");
 }

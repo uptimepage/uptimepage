@@ -33,7 +33,7 @@ mod pg;
 mod tests;
 
 pub use memory::InMemoryIncidentOpsStore;
-pub use pg::PgIncidentOpsStore;
+pub use pg::{PgIncidentOpsStore, auto_resolve_in_tx};
 
 /// A `queued` row is a first attempt still in flight; the retry sweep takes it
 /// over only once it is older than any single delivery can run.

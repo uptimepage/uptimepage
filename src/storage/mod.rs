@@ -81,7 +81,7 @@ pub use incident_ops::{
     DueClosingNotices, DueDigest, DueIncident, EmergencyAck, FanOut, FanOutKind,
     InMemoryIncidentOpsStore, IncidentOpsFilter, IncidentOpsStore, IncidentSort, LifecycleOutcome,
     MEMBER_NOTICE_WINDOW_SECS, OwedPage, PendingNotification, PgIncidentOpsStore,
-    QUEUED_TAKEOVER_SECS,
+    QUEUED_TAKEOVER_SECS, auto_resolve_in_tx,
 };
 pub use incidents::{
     InMemoryIncidentNarrationStore, IncidentBrief, IncidentBriefFilter, IncidentNarrationStore,

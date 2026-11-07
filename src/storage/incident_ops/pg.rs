@@ -664,11 +664,215 @@ async fn incident_was_published(
     .map_err(|e| anyhow::anyhow!("published-event check: {e}").into())
 }
 
+/// Shared transition core, inside the caller's transaction so a caller that
+/// already holds a lock of its own keeps it across the change: lock, read
+/// current state, apply the pure state machine, run `update_sql` to mutate the
+/// row, then log `event_kind`. `public_resolution`, when set, appends a
+/// `resolved` public update when the incident is (or ever was) public. Nothing
+/// is committed here, and an error leaves the transaction for the caller to
+/// drop: a reopen refused by a unique index has already aborted it. Call it
+/// holding no incident or group lock: it takes the group row and then the
+/// incident's lock, the order attach and close use, so holding either first
+/// can deadlock against them. A lock on anything else may be held.
+#[allow(clippy::too_many_arguments)]
+async fn transition_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+    id: Uuid,
+    transition: IncidentTransition,
+    event_kind: IncidentEventKind,
+    actor: Actor,
+    note: Option<String>,
+    update_sql: &str,
+    public_resolution: Option<UpdateText>,
+    expect_generation: Option<i64>,
+) -> Result<Acknowledged> {
+    let unlisted = |outcome| {
+        Ok(Acknowledged {
+            outcome,
+            listed: false,
+        })
+    };
+    // Resolving a group incident resolves its members.
+    lock_group_of(tx, org, id).await?;
+    advisory_xact_lock(&mut **tx, &incident_lock_key(id))
+        .await
+        .map_err(|e| anyhow::anyhow!("incident lock: {e}"))?;
+
+    let current: Option<(String, bool, Option<Uuid>, bool)> = sqlx::query_as(
+        "SELECT state, origin = 'monitor' AND target_id IS NULL AND target_name IS NOT NULL, \
+                    group_incident_id, origin = 'group' \
+             FROM incidents WHERE id = $1 AND org_id = $2 FOR UPDATE",
+    )
+    .bind(id)
+    .bind(org.0)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|e| anyhow::anyhow!("load incident state: {e}"))?;
+    let Some((state_str, ended_with_monitor, attached, is_group)) = current else {
+        return unlisted(LifecycleOutcome::NotFound);
+    };
+    if let Some(group_incident) = attached {
+        return Err(super::use_group_incident(group_incident));
+    }
+    if is_group && transition == IncidentTransition::Reopen {
+        return Err(super::group_incident_no_reopen());
+    }
+    // Read under the row lock the monitor delete also takes, so a reopen
+    // cannot land on an incident the delete has just closed.
+    if ended_with_monitor && transition == IncidentTransition::Reopen {
+        return Err(super::monitor_deleted());
+    }
+    // Under the transition's own locks, so a reopen cannot slip between
+    // this check and the update.
+    let episode = reopen_count_tx(tx, org, id).await?;
+    if expect_generation.is_some_and(|expected| expected != episode) {
+        return unlisted(LifecycleOutcome::Stale);
+    }
+
+    let from = IncidentState::from_db_str(&state_str);
+    let to = match next_state(from, transition) {
+        Ok(to) => to,
+        Err(err) => return unlisted(LifecycleOutcome::IllegalTransition(err)),
+    };
+    // A transition that moves nothing leaves the row alone, so the first
+    // acknowledger keeps the credit an unknown one included, which the
+    // update's `COALESCE` would otherwise backfill. It is still logged: an
+    // engineer taking a page a notification already acknowledged is a real
+    // action. Someone acknowledging an episode they already took is not,
+    // and neither is a repeated public update — subscribers should not
+    // read the same resolution twice.
+    let unchanged = from == to;
+    let row: OpsIncidentRow = if unchanged {
+        let sql = format!("SELECT {OPS_COLS} FROM incidents WHERE id = $1 AND org_id = $2");
+        sqlx::query_as(&sql)
+            .bind(id)
+            .bind(org.0)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(|e| anyhow::anyhow!("load unchanged incident: {e}"))?
+    } else {
+        match sqlx::query_as(update_sql)
+            .bind(id)
+            .bind(org.0)
+            .bind(actor.user_id())
+            .fetch_one(&mut **tx)
+            .await
+        {
+            Ok(row) => row,
+            // Reopen clears ended_at; if one of the same origin is already open
+            // for the target, its unique index rejects it — surface 409.
+            Err(e)
+                if matches!(
+                    e.as_database_error().and_then(|d| d.constraint()),
+                    Some("idx_incidents_org_open_monitor" | "idx_incidents_org_open_manual")
+                ) =>
+            {
+                return Err(crate::error::AppError::conflict(
+                    crate::error::codes::INCIDENT_ALREADY_OPEN,
+                    "another incident is already open for this monitor",
+                ));
+            }
+            Err(e) => return Err(anyhow::anyhow!("apply transition: {e}").into()),
+        }
+    };
+
+    let acknowledging = transition == IncidentTransition::Acknowledge;
+    let newly_listed = if acknowledging {
+        record_acknowledgement_tx(tx, org, id, actor, episode).await?
+    } else {
+        false
+    };
+    let repeat = acknowledging && unchanged && !newly_listed;
+    if repeat {
+        // A note someone wrote is kept; a channel's is a fixed label.
+        if let Some(note) = note.as_deref().filter(|_| actor.writes_notes()) {
+            insert_event_tx(tx, org, id, IncidentEventKind::Note, actor, Some(note)).await?;
+        }
+    } else {
+        insert_event_tx(tx, org, id, event_kind, actor, note.as_deref()).await?;
+        if is_group && to == IncidentState::Resolved && !unchanged {
+            resolve_members_tx(tx, org, id, actor).await?;
+        }
+        record_incident_audit_tx(
+            tx,
+            org,
+            actor,
+            &format!("incident.{}", event_kind.as_db_str()),
+            serde_json::json!({ "incident_id": id, "target_id": row.target_id }),
+        )
+        .await?;
+    }
+    // An incident unpublished before it resolves still has subscribers who
+    // were told it opened; write the closing update whenever it was ever
+    // public, not only while currently public.
+    if let Some(resolution) = public_resolution
+        && !unchanged
+        && (row.visibility == "public" || incident_was_published(tx, org, id).await?)
+    {
+        let author = actor
+            .user_id()
+            .map(|u| u.0.to_string())
+            .unwrap_or_else(|| "system".to_string());
+        sqlx::query(
+            r#"INSERT INTO incident_updates
+                       (org_id, incident_id, phase, message, author, generated)
+                   VALUES ($1, $2, 'resolved', $3, $4, $5)"#,
+        )
+        .bind(org.0)
+        .bind(id)
+        .bind(resolution.message)
+        .bind(author)
+        .bind(resolution.generated)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| anyhow::anyhow!("resolve public update: {e}"))?;
+    }
+    Ok(Acknowledged {
+        outcome: LifecycleOutcome::Updated(Box::new(row_to_ops(row))),
+        listed: newly_listed,
+    })
+}
+
+/// Resolve `id` as the system, the way a recovery does, inside the caller's
+/// transaction. Nothing is committed here, and the lock order of
+/// `transition_tx` applies.
+pub async fn auto_resolve_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+    id: Uuid,
+) -> Result<LifecycleOutcome> {
+    // System recovery: resolved_by stays NULL ($3 = system actor's NULL user).
+    let sql = format!(
+        "UPDATE incidents \
+         SET state = 'resolved', ended_at = COALESCE(ended_at, recovering_since, now()), \
+             duration_secs = COALESCE(duration_secs, GREATEST(0, EXTRACT(EPOCH FROM \
+                 (COALESCE(ended_at, recovering_since, now()) - started_at))::int)), \
+             resolved_by = $3, next_escalation_at = NULL, recovering_since = NULL, \
+             closing_notice_at = now(), resolved_at = now(), updated_at = now() \
+         WHERE id = $1 AND org_id = $2 RETURNING {OPS_COLS}"
+    );
+    transition_tx(
+        tx,
+        org,
+        id,
+        IncidentTransition::AutoResolve,
+        IncidentEventKind::Resolved,
+        Actor::System,
+        None,
+        &sql,
+        Some(UpdateText {
+            message: AUTO_RESOLVED_MESSAGE.to_string(),
+            generated: true,
+        }),
+        None,
+    )
+    .await
+    .map(|a| a.outcome)
+}
+
 impl PgIncidentOpsStore {
-    /// Shared transition core: lock, read current state, apply the pure state
-    /// machine, run `update` to mutate the row, then log `kind`.
-    /// `public_resolution`, when set, appends a `resolved` public update when
-    /// the incident is (or ever was) public.
+    /// [`transition_tx`] in a transaction of its own.
     #[allow(clippy::too_many_arguments)]
     async fn transition(
         &self,
@@ -682,160 +886,28 @@ impl PgIncidentOpsStore {
         public_resolution: Option<UpdateText>,
         expect_generation: Option<i64>,
     ) -> Result<Acknowledged> {
-        let unlisted = |outcome| {
-            Ok(Acknowledged {
-                outcome,
-                listed: false,
-            })
-        };
         let mut tx = self
             .pool
             .begin()
             .await
             .map_err(|e| anyhow::anyhow!("begin: {e}"))?;
-        // Resolving a group incident resolves its members.
-        lock_group_of(&mut tx, org, id).await?;
-        advisory_xact_lock(&mut *tx, &incident_lock_key(id))
-            .await
-            .map_err(|e| anyhow::anyhow!("incident lock: {e}"))?;
-
-        let current: Option<(String, bool, Option<Uuid>, bool)> = sqlx::query_as(
-            "SELECT state, origin = 'monitor' AND target_id IS NULL AND target_name IS NOT NULL, \
-                    group_incident_id, origin = 'group' \
-             FROM incidents WHERE id = $1 AND org_id = $2 FOR UPDATE",
+        let done = transition_tx(
+            &mut tx,
+            org,
+            id,
+            transition,
+            event_kind,
+            actor,
+            note,
+            update_sql,
+            public_resolution,
+            expect_generation,
         )
-        .bind(id)
-        .bind(org.0)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| anyhow::anyhow!("load incident state: {e}"))?;
-        let Some((state_str, ended_with_monitor, attached, is_group)) = current else {
-            return unlisted(LifecycleOutcome::NotFound);
-        };
-        if let Some(group_incident) = attached {
-            return Err(super::use_group_incident(group_incident));
-        }
-        if is_group && transition == IncidentTransition::Reopen {
-            return Err(super::group_incident_no_reopen());
-        }
-        // Read under the row lock the monitor delete also takes, so a reopen
-        // cannot land on an incident the delete has just closed.
-        if ended_with_monitor && transition == IncidentTransition::Reopen {
-            return Err(super::monitor_deleted());
-        }
-        // Under the transition's own locks, so a reopen cannot slip between
-        // this check and the update.
-        let episode = reopen_count_tx(&mut tx, org, id).await?;
-        if expect_generation.is_some_and(|expected| expected != episode) {
-            return unlisted(LifecycleOutcome::Stale);
-        }
-
-        let from = IncidentState::from_db_str(&state_str);
-        let to = match next_state(from, transition) {
-            Ok(to) => to,
-            Err(err) => return unlisted(LifecycleOutcome::IllegalTransition(err)),
-        };
-        // A transition that moves nothing leaves the row alone, so the first
-        // acknowledger keeps the credit an unknown one included, which the
-        // update's `COALESCE` would otherwise backfill. It is still logged: an
-        // engineer taking a page a notification already acknowledged is a real
-        // action. Someone acknowledging an episode they already took is not,
-        // and neither is a repeated public update — subscribers should not
-        // read the same resolution twice.
-        let unchanged = from == to;
-        let row: OpsIncidentRow = if unchanged {
-            let sql = format!("SELECT {OPS_COLS} FROM incidents WHERE id = $1 AND org_id = $2");
-            sqlx::query_as(&sql)
-                .bind(id)
-                .bind(org.0)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(|e| anyhow::anyhow!("load unchanged incident: {e}"))?
-        } else {
-            match sqlx::query_as(update_sql)
-                .bind(id)
-                .bind(org.0)
-                .bind(actor.user_id())
-                .fetch_one(&mut *tx)
-                .await
-            {
-                Ok(row) => row,
-                // Reopen clears ended_at; if one of the same origin is already open
-                // for the target, its unique index rejects it — surface 409.
-                Err(e)
-                    if matches!(
-                        e.as_database_error().and_then(|d| d.constraint()),
-                        Some("idx_incidents_org_open_monitor" | "idx_incidents_org_open_manual")
-                    ) =>
-                {
-                    return Err(crate::error::AppError::conflict(
-                        crate::error::codes::INCIDENT_ALREADY_OPEN,
-                        "another incident is already open for this monitor",
-                    ));
-                }
-                Err(e) => return Err(anyhow::anyhow!("apply transition: {e}").into()),
-            }
-        };
-
-        let acknowledging = transition == IncidentTransition::Acknowledge;
-        let newly_listed = if acknowledging {
-            record_acknowledgement_tx(&mut tx, org, id, actor, episode).await?
-        } else {
-            false
-        };
-        let repeat = acknowledging && unchanged && !newly_listed;
-        if repeat {
-            // A note someone wrote is kept; a channel's is a fixed label.
-            if let Some(note) = note.as_deref().filter(|_| actor.writes_notes()) {
-                insert_event_tx(&mut tx, org, id, IncidentEventKind::Note, actor, Some(note))
-                    .await?;
-            }
-        } else {
-            insert_event_tx(&mut tx, org, id, event_kind, actor, note.as_deref()).await?;
-            if is_group && to == IncidentState::Resolved && !unchanged {
-                resolve_members_tx(&mut tx, org, id, actor).await?;
-            }
-            record_incident_audit_tx(
-                &mut tx,
-                org,
-                actor,
-                &format!("incident.{}", event_kind.as_db_str()),
-                serde_json::json!({ "incident_id": id, "target_id": row.target_id }),
-            )
-            .await?;
-        }
-        // An incident unpublished before it resolves still has subscribers who
-        // were told it opened; write the closing update whenever it was ever
-        // public, not only while currently public.
-        if let Some(resolution) = public_resolution
-            && !unchanged
-            && (row.visibility == "public" || incident_was_published(&mut tx, org, id).await?)
-        {
-            let author = actor
-                .user_id()
-                .map(|u| u.0.to_string())
-                .unwrap_or_else(|| "system".to_string());
-            sqlx::query(
-                r#"INSERT INTO incident_updates
-                       (org_id, incident_id, phase, message, author, generated)
-                   VALUES ($1, $2, 'resolved', $3, $4, $5)"#,
-            )
-            .bind(org.0)
-            .bind(id)
-            .bind(resolution.message)
-            .bind(author)
-            .bind(resolution.generated)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| anyhow::anyhow!("resolve public update: {e}"))?;
-        }
+        .await?;
         tx.commit()
             .await
             .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
-        Ok(Acknowledged {
-            outcome: LifecycleOutcome::Updated(Box::new(row_to_ops(row))),
-            listed: newly_listed,
-        })
+        Ok(done)
     }
 
     async fn resolve_by(
@@ -1279,32 +1351,16 @@ impl IncidentOpsStore for PgIncidentOpsStore {
     }
 
     async fn auto_resolve(&self, org: OrgId, id: Uuid) -> Result<LifecycleOutcome> {
-        // System recovery: resolved_by stays NULL ($3 = system actor's NULL user).
-        let sql = format!(
-            "UPDATE incidents \
-             SET state = 'resolved', ended_at = COALESCE(ended_at, recovering_since, now()), \
-                 duration_secs = COALESCE(duration_secs, GREATEST(0, EXTRACT(EPOCH FROM \
-                     (COALESCE(ended_at, recovering_since, now()) - started_at))::int)), \
-                 resolved_by = $3, next_escalation_at = NULL, recovering_since = NULL, \
-                 closing_notice_at = now(), resolved_at = now(), updated_at = now() \
-             WHERE id = $1 AND org_id = $2 RETURNING {OPS_COLS}"
-        );
-        self.transition(
-            org,
-            id,
-            IncidentTransition::AutoResolve,
-            IncidentEventKind::Resolved,
-            Actor::System,
-            None,
-            &sql,
-            Some(UpdateText {
-                message: AUTO_RESOLVED_MESSAGE.to_string(),
-                generated: true,
-            }),
-            None,
-        )
-        .await
-        .map(|a| a.outcome)
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| anyhow::anyhow!("begin: {e}"))?;
+        let outcome = auto_resolve_in_tx(&mut tx, org, id).await?;
+        tx.commit()
+            .await
+            .map_err(|e| anyhow::anyhow!("commit: {e}"))?;
+        Ok(outcome)
     }
 
     async fn reopen(
