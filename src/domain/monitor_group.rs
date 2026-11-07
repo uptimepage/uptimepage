@@ -113,11 +113,13 @@ pub struct MonitorGroupUpdate {
     pub tags: Option<Vec<String>>,
 }
 
-/// What a page is about: one monitor, or a group that alerts as one.
+/// What a page is about: one monitor, a group that alerts as one, or the
+/// alert source another tool sent it through.
 #[derive(Debug, Clone)]
 pub enum Subject {
     Monitor(Box<Target>),
     Group(MonitorGroup),
+    Source(Box<super::AlertSource>),
 }
 
 impl Subject {
@@ -125,6 +127,16 @@ impl Subject {
         match self {
             Self::Monitor(t) => &t.name,
             Self::Group(g) => &g.name,
+            Self::Source(s) => &s.name,
+        }
+    }
+
+    /// The name a page leads with. An alert leads with its own title and
+    /// names its source beside it, so it has none here.
+    pub fn page_name(&self) -> Option<String> {
+        match self {
+            Self::Source(_) => None,
+            _ => Some(self.name().to_string()),
         }
     }
 
@@ -132,13 +144,16 @@ impl Subject {
         match self {
             Self::Monitor(t) => &t.alerts,
             Self::Group(g) => &g.alerts,
+            Self::Source(s) => &s.alerts,
         }
     }
 
+    /// A source has no tags, so no tag rule reaches it.
     pub fn tags(&self) -> &[String] {
         match self {
             Self::Monitor(t) => &t.tags,
             Self::Group(g) => &g.tags,
+            Self::Source(_) => &[],
         }
     }
 
@@ -146,6 +161,7 @@ impl Subject {
         match self {
             Self::Monitor(t) => t.renotify_interval_secs,
             Self::Group(g) => g.renotify_interval_secs,
+            Self::Source(s) => s.renotify_interval_secs,
         }
     }
 }

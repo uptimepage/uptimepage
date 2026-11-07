@@ -610,6 +610,18 @@ async fn a_sources_incidents_follow_its_rename_and_close_with_its_delete_pg() {
         .unwrap();
     assert_eq!(state, "resolved");
     assert_eq!(source, None);
+    let flagged: bool = sqlx::query_scalar(
+        "SELECT closed_by_source_delete FROM incidents WHERE id = $1 AND org_id = $2",
+    )
+    .bind(incident)
+    .bind(org.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        flagged,
+        "a delete's close stays out of MTTR and who resolved what"
+    );
     assert_eq!(kept_ref, Some(created.id));
     assert_eq!(kept_name.as_deref(), Some("prometheus"));
     assert!(store.get(org, created.id).await.unwrap().is_none());

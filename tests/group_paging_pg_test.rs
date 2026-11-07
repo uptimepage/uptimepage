@@ -254,6 +254,10 @@ fn engine(pool: &PgPool) -> EscalationEngine {
             linked_apps: Arc::new(PgLinkedAppStore::new(pool.clone())),
             targets: Arc::new(PostgresTargetStore::from_pool(pool.clone(), None)),
             groups: Arc::new(PgMonitorGroupStore::new(pool.clone())),
+            sources: Arc::new(uptimepage::storage::alert_sources::PgAlertSourceStore::new(
+                pool.clone(),
+                None,
+            )),
             channels: Arc::new(PgNotificationChannelStore::new(pool.clone(), None)),
             maintenance: Arc::new(PgMaintenanceStore::new(pool.clone())),
             orgs: Arc::new(PgOrgDirectory::new(pool.clone())),

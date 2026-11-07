@@ -50,6 +50,7 @@ fn seed_triggered(store: &InMemoryIncidentOpsStore) -> Uuid {
     let id = Uuid::now_v7();
     let now = Utc::now();
     store.seed(OpsIncident {
+        alert: Default::default(),
         id,
         target_id: Some(Uuid::now_v7()),
         target_ref: None,

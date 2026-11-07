@@ -79,10 +79,10 @@ pub use escalation_policy::{
 pub use group_choice::{GroupChoice, normalize_group_name};
 pub use heartbeat::{CadenceAdvice, HeartbeatPingRecord, ObservedCadence, Ping, PingSignal};
 pub use incident::{
-    ActionItem, GROUP_DELETED_MESSAGE, Incident, IncidentAcknowledgement, IncidentEvent,
-    IncidentEventKind, IncidentGroupLink, IncidentGroupRef, IncidentMetrics,
-    IncidentNarrationUpdate, IncidentNotification, IncidentOrigin, IncidentPostmortem,
-    IncidentState, IncidentTransition, IncidentUrgency, IncidentVisibility,
+    ActionItem, GROUP_DELETED_MESSAGE, Incident, IncidentAcknowledgement, IncidentAlertLink,
+    IncidentAlertSourceRef, IncidentEvent, IncidentEventKind, IncidentGroupLink, IncidentGroupRef,
+    IncidentMetrics, IncidentNarrationUpdate, IncidentNotification, IncidentOrigin,
+    IncidentPostmortem, IncidentState, IncidentTransition, IncidentUrgency, IncidentVisibility,
     MONITOR_DELETED_MESSAGE, MetricBucket, MonitorIncidentCount, NewIncidentNotification,
     NewIncidentUpdate, NewManualIncident, NotificationOutcome, NotificationReason,
     NotificationStatus, OpsIncident, PostmortemUpsert, TransitionError, coalesce_incidents,

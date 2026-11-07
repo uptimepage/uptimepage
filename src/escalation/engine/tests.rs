@@ -72,6 +72,7 @@ pub(super) fn seed_incident(ops: &InMemoryIncidentOpsStore, target_id: Option<Uu
     let now = Utc::now();
     let id = Uuid::now_v7();
     ops.seed(OpsIncident {
+        alert: Default::default(),
         id,
         target_id,
         target_ref: None,
@@ -156,6 +157,7 @@ pub(super) fn engine_cfg(
             linked_apps: Arc::new(crate::storage::InMemoryLinkedAppStore::new()),
             targets,
             groups: Arc::new(crate::storage::InMemoryMonitorGroupStore::new()),
+            sources: Arc::new(crate::storage::alert_sources::InMemoryAlertSourceStore::new()),
             channels,
             maintenance: Arc::new(crate::storage::InMemoryMaintenanceStore::new()),
             orgs: Arc::new(crate::storage::orgs::InMemoryOrgDirectory::new()),
@@ -211,6 +213,7 @@ fn engine_mailing_owned(
             linked_apps: Arc::new(crate::storage::InMemoryLinkedAppStore::new()),
             targets,
             groups: Arc::new(crate::storage::InMemoryMonitorGroupStore::new()),
+            sources: Arc::new(crate::storage::alert_sources::InMemoryAlertSourceStore::new()),
             channels,
             maintenance: Arc::new(crate::storage::InMemoryMaintenanceStore::new()),
             orgs,
@@ -270,6 +273,7 @@ fn engine_maint_policies(
             linked_apps: Arc::new(crate::storage::InMemoryLinkedAppStore::new()),
             targets,
             groups: Arc::new(crate::storage::InMemoryMonitorGroupStore::new()),
+            sources: Arc::new(crate::storage::alert_sources::InMemoryAlertSourceStore::new()),
             channels,
             maintenance,
             orgs: Arc::new(crate::storage::orgs::InMemoryOrgDirectory::new()),
@@ -308,6 +312,7 @@ fn engine_with(
             linked_apps: Arc::new(crate::storage::InMemoryLinkedAppStore::new()),
             targets,
             groups: Arc::new(crate::storage::InMemoryMonitorGroupStore::new()),
+            sources: Arc::new(crate::storage::alert_sources::InMemoryAlertSourceStore::new()),
             channels,
             maintenance: Arc::new(crate::storage::InMemoryMaintenanceStore::new()),
             orgs: Arc::new(crate::storage::orgs::InMemoryOrgDirectory::new()),
@@ -1258,6 +1263,7 @@ async fn the_owed_page_sweep_pages_an_incident_whose_open_signal_was_dropped() {
     let now = Utc::now();
     let id = Uuid::now_v7();
     ops.seed(OpsIncident {
+        alert: Default::default(),
         id,
         target_id: Some(tid),
         target_ref: None,
@@ -1317,6 +1323,7 @@ async fn an_incident_whose_first_page_was_lost_weeks_ago_is_still_paged() {
     let id = Uuid::now_v7();
     let old = now - chrono::Duration::days(21);
     ops.seed(OpsIncident {
+        alert: Default::default(),
         id,
         target_id: Some(tid),
         target_ref: None,

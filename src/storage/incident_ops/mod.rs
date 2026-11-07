@@ -56,7 +56,11 @@ macro_rules! may_page_predicate {
             $i,
             ".origin = 'group' AND ",
             $i,
-            ".group_id IS NOT NULL)))"
+            ".group_id IS NOT NULL) OR (",
+            $i,
+            ".origin = 'alert' AND ",
+            $i,
+            ".alert_source_id IS NOT NULL)))"
         )
     };
 }
@@ -798,6 +802,15 @@ pub trait IncidentOpsStore: Send + Sync {
     /// fail/recover cycles are exactly what it has to see. Excludes manually
     /// declared incidents.
     async fn opens_since(&self, org: OrgId, target_id: Uuid, since: DateTime<Utc>) -> Result<u32>;
+    /// [`Self::opens_since`] for one alert key of a source, by the source's
+    /// kept ref so a source deleted and re-made under its name starts over.
+    async fn alert_opens_since(
+        &self,
+        org: OrgId,
+        source_ref: Uuid,
+        dedup_key: &str,
+        since: DateTime<Utc>,
+    ) -> Result<u32>;
     /// Monitors in `org` that opened at least `min_opens` incidents since
     /// `since`. One aggregate for a whole page render, so the console can mark
     /// a flapping monitor without a per-row query or any stored state.

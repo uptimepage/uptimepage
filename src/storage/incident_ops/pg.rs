@@ -11,11 +11,12 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::domain::{
-    ActorType, IncidentAcknowledgement, IncidentEvent, IncidentEventKind, IncidentGroupLink,
-    IncidentGroupRef, IncidentMetrics, IncidentNotification, IncidentOrigin, IncidentSeverity,
-    IncidentState, IncidentTransition, IncidentUrgency, IncidentVisibility, MetricBucket,
-    MonitorIncidentCount, NewIncidentNotification, NewManualIncident, NotificationOutcome,
-    NotificationReason, NotificationStatus, OpsIncident, OrgId, StatusPageId, UserId, next_state,
+    ActorType, IncidentAcknowledgement, IncidentAlertLink, IncidentAlertSourceRef, IncidentEvent,
+    IncidentEventKind, IncidentGroupLink, IncidentGroupRef, IncidentMetrics, IncidentNotification,
+    IncidentOrigin, IncidentSeverity, IncidentState, IncidentTransition, IncidentUrgency,
+    IncidentVisibility, MetricBucket, MonitorIncidentCount, NewIncidentNotification,
+    NewManualIncident, NotificationOutcome, NotificationReason, NotificationStatus, OpsIncident,
+    OrgId, StatusPageId, UserId, next_state,
 };
 use crate::error::Result;
 use crate::storage::admin::NOT_HELD_PREDICATE;
@@ -48,7 +49,8 @@ const OPS_COLS: &str = "id, target_id, target_ref, target_name, target_kind, clo
      acknowledged_by, assigned_to, resolved_by, escalation_policy_id, escalation_level, \
      escalation_round, next_escalation_at, recovering_since, \
      check_count, error_sample, regions_down, regions_up, created_at, updated_at, \
-     group_id, group_name, routed_group_id, group_incident_id, closed_by_group_delete";
+     group_id, group_name, routed_group_id, group_incident_id, closed_by_group_delete, \
+     alert_source_id, alert_source_name, dedup_key, closed_by_source_delete";
 
 /// Point a monitor-less incident at exactly `pages`. A page outside `org`
 /// is refused as unknown, so the answer never confirms another tenant's id.
@@ -140,6 +142,14 @@ pub(super) fn resolved_public_message(note: Option<&str>) -> UpdateText {
     UpdateText::or_default(note, "This incident has been resolved.")
 }
 
+/// Closed by deleting its monitor, group or alert source: nothing was resolved.
+const CLOSED_BY_DELETE: &str =
+    "(closed_by_monitor_delete OR closed_by_group_delete OR closed_by_source_delete)";
+
+/// An alert incident's source, joined as `s`, is neither paused nor held by
+/// the plan. NULL, so false, once the source is gone.
+const SOURCE_WATCHED: &str = "(s.enabled AND s.plan_hold_at IS NULL)";
+
 #[derive(sqlx::FromRow)]
 struct OpsIncidentRow {
     id: Uuid,
@@ -178,6 +188,10 @@ struct OpsIncidentRow {
     routed_group_id: Option<Uuid>,
     group_incident_id: Option<Uuid>,
     closed_by_group_delete: bool,
+    alert_source_id: Option<Uuid>,
+    alert_source_name: Option<String>,
+    dedup_key: Option<String>,
+    closed_by_source_delete: bool,
 }
 
 /// A group incident one of whose members' monitor name matches `param`, so a
@@ -230,6 +244,14 @@ fn row_to_ops(r: OpsIncidentRow) -> OpsIncident {
             routed_group_id: r.routed_group_id,
             group_incident_id: r.group_incident_id,
             closed_by_group_delete: r.closed_by_group_delete,
+        },
+        alert: IncidentAlertLink {
+            alert_source: r.alert_source_name.map(|name| IncidentAlertSourceRef {
+                id: r.alert_source_id,
+                name,
+            }),
+            dedup_key: r.dedup_key,
+            closed_by_source_delete: r.closed_by_source_delete,
         },
     }
 }
@@ -1164,22 +1186,22 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         // A group incident counts once for its members, which are left out. A
         // member a group delete detached counts, but its time to that point
         // was the group's outage.
-        let s: Scalars = sqlx::query_as(
+        let s: Scalars = sqlx::query_as(&format!(
             "SELECT count(*) AS total, \
                  (avg(extract(epoch FROM (acknowledged_at - started_at))) \
                      FILTER (WHERE acknowledged_at IS NOT NULL AND detached_at IS NULL))::float8 AS mtta, \
                  (avg(extract(epoch FROM (ended_at - started_at))) \
-                     FILTER (WHERE ended_at IS NOT NULL AND NOT closed_by_monitor_delete \
-                         AND NOT closed_by_group_delete AND detached_at IS NULL))::float8 AS mttr, \
+                     FILTER (WHERE ended_at IS NOT NULL AND NOT {deleted} \
+                         AND detached_at IS NULL))::float8 AS mttr, \
                  count(*) FILTER (WHERE state = 'resolved' AND resolved_by IS NULL \
-                     AND NOT closed_by_monitor_delete AND NOT closed_by_group_delete) AS auto_resolved, \
+                     AND NOT {deleted}) AS auto_resolved, \
                  count(*) FILTER (WHERE state = 'resolved' AND resolved_by IS NOT NULL \
-                     AND NOT closed_by_monitor_delete AND NOT closed_by_group_delete) AS human_resolved, \
-                 count(*) FILTER (WHERE closed_by_monitor_delete OR closed_by_group_delete) \
-                     AS closed_with_monitor \
+                     AND NOT {deleted}) AS human_resolved, \
+                 count(*) FILTER (WHERE {deleted}) AS closed_with_monitor \
              FROM incidents \
              WHERE org_id = $1 AND started_at >= $2 AND group_incident_id IS NULL",
-        )
+            deleted = CLOSED_BY_DELETE,
+        ))
         .bind(org.0)
         .bind(since)
         .fetch_one(&self.pool)
@@ -2412,13 +2434,17 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             "SELECT i.id, i.org_id, i.page_owed_at \
              FROM incidents i \
              LEFT JOIN targets t ON t.id = i.target_id AND t.org_id = i.org_id \
+             LEFT JOIN alert_sources s \
+                 ON i.origin = 'alert' AND s.id = i.alert_source_id AND s.org_id = i.org_id \
              WHERE i.page_owed_at IS NOT NULL AND i.page_owed_at <= $1 \
                  AND i.ended_at IS NULL AND {may_page} \
                  AND CASE WHEN i.origin = 'group' THEN {group_watched} \
+                          WHEN i.origin = 'alert' THEN {source_watched} \
                           ELSE t.enabled AND {NOT_HELD_PREDICATE} END \
              ORDER BY i.page_owed_at ASC LIMIT $2",
             may_page = may_page_predicate!("i"),
             group_watched = group_watched_sql("i"),
+            source_watched = SOURCE_WATCHED,
         );
         let rows: Vec<Row> = sqlx::query_as(&sql)
             .bind(cutoff)
@@ -2614,8 +2640,10 @@ impl IncidentOpsStore for PgIncidentOpsStore {
              LEFT JOIN targets t ON t.id = i.target_id AND t.org_id = i.org_id \
              LEFT JOIN monitor_groups g \
                  ON i.origin = 'group' AND g.id = i.group_id AND g.org_id = i.org_id \
-             CROSS JOIN LATERAL (SELECT COALESCE(t.renotify_interval_secs, g.renotify_interval_secs) \
-                                     AS secs) r \
+             LEFT JOIN alert_sources s \
+                 ON i.origin = 'alert' AND s.id = i.alert_source_id AND s.org_id = i.org_id \
+             CROSS JOIN LATERAL (SELECT COALESCE(t.renotify_interval_secs, g.renotify_interval_secs, \
+                                                 s.renotify_interval_secs) AS secs) r \
              WHERE i.state = 'triggered' AND i.ended_at IS NULL \
                  AND i.recovering_since IS NULL \
                  AND i.next_escalation_at IS NULL \
@@ -2623,6 +2651,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                  AND i.group_incident_id IS NULL \
                  AND r.secs > 0 \
                  AND CASE WHEN g.id IS NOT NULL THEN {group_watched} \
+                          WHEN s.id IS NOT NULL THEN {source_watched} \
                           ELSE t.id IS NOT NULL AND {not_held} AND NOT {window} END \
                  AND ( \
                      SELECT max(n.created_at) FROM incident_notifications n \
@@ -2642,6 +2671,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             not_held = crate::storage::admin::NOT_HELD_PREDICATE,
             window = crate::storage::suppressing_window_sql("t.id", "t.org_id"),
             group_watched = group_watched_sql("i"),
+            source_watched = SOURCE_WATCHED,
         );
         let rows: Vec<Row> = sqlx::query_as(&sql)
             .bind(now)
@@ -2750,7 +2780,9 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             "SELECT i.id, i.org_id, i.target_id, i.escalation_policy_id, i.escalation_level, \
                     i.escalation_round \
              FROM incidents i \
-             JOIN targets t ON t.id = i.target_id AND t.org_id = i.org_id \
+             LEFT JOIN targets t ON t.id = i.target_id AND t.org_id = i.org_id \
+             LEFT JOIN alert_sources s \
+                 ON i.origin = 'alert' AND s.id = i.alert_source_id AND s.org_id = i.org_id \
              JOIN LATERAL ( \
                  SELECT max(created_at) AS held_at FROM incident_notifications h \
                  WHERE h.incident_id = i.id AND h.org_id = i.org_id \
@@ -2758,7 +2790,8 @@ impl IncidentOpsStore for PgIncidentOpsStore {
              ) held ON TRUE \
              WHERE i.state = 'triggered' AND i.recovering_since IS NULL \
                AND i.group_incident_id IS NULL \
-               AND t.enabled AND {not_held} \
+               AND CASE WHEN i.origin = 'alert' THEN {source_watched} \
+                        ELSE t.enabled AND {not_held} END \
                AND held.held_at IS NOT NULL \
                AND held.held_at <= $1 \
                AND NOT EXISTS ( \
@@ -2768,6 +2801,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                ) \
              ORDER BY held.held_at ASC LIMIT $2",
             not_held = crate::storage::admin::NOT_HELD_PREDICATE,
+            source_watched = SOURCE_WATCHED,
         );
         let rows: Vec<Row> = sqlx::query_as(&sql)
             .bind(now - hold)
@@ -2826,6 +2860,28 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         .fetch_one(&self.pool)
         .await
         .map_err(|e| anyhow::anyhow!("opens_since: {e}"))?;
+        Ok(u32::try_from(count).unwrap_or(u32::MAX))
+    }
+
+    async fn alert_opens_since(
+        &self,
+        org: OrgId,
+        source_ref: Uuid,
+        dedup_key: &str,
+        since: DateTime<Utc>,
+    ) -> Result<u32> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM incidents \
+             WHERE org_id = $1 AND origin = 'alert' AND alert_source_ref = $2 \
+               AND dedup_key = $3 AND started_at >= $4",
+        )
+        .bind(org.0)
+        .bind(source_ref)
+        .bind(dedup_key)
+        .bind(since)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("alert_opens_since: {e}"))?;
         Ok(u32::try_from(count).unwrap_or(u32::MAX))
     }
 }

@@ -172,6 +172,9 @@ impl CardTemplate {
                         "declared by hand, no monitor detection",
                     ));
                 }
+                if let Some(source) = n.source.as_deref() {
+                    card.fields.push(CardField::text("Source", source));
+                }
                 card.error = n
                     .error_sample
                     .as_deref()
@@ -339,6 +342,7 @@ pub(crate) mod tests {
             regions_down: Vec::new(),
             regions_up: Vec::new(),
             url: Some("https://app.test/i/7".into()),
+            source: None,
             note: None,
         }
     }
@@ -428,6 +432,14 @@ pub(crate) mod tests {
 
         n.reason = NotificationReason::Resolved;
         assert!(!labels(&AlertCard::for_notice(&n, None)).contains(&"Origin"));
+    }
+
+    #[test]
+    fn an_alert_card_names_its_source_while_open() {
+        let mut n = notice(NotificationReason::Opened);
+        n.origin = IncidentOrigin::Alert;
+        n.source = Some("prom-prod".into());
+        assert!(labels(&AlertCard::for_notice(&n, None)).contains(&"Source"));
     }
 
     /// A base URL set without a scheme is not a link any client accepts, and

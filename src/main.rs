@@ -541,6 +541,10 @@ async fn main() -> Result<()> {
                 groups: Arc::new(uptimepage::storage::PgMonitorGroupStore::new(
                     pg_pool_for_stores.clone(),
                 )),
+                sources: Arc::new(uptimepage::storage::alert_sources::PgAlertSourceStore::new(
+                    pg_pool_for_stores.clone(),
+                    cipher.clone(),
+                )),
                 channels: notification_channel_store.clone(),
                 maintenance: maintenance_store.clone(),
                 orgs: org_directory.clone(),

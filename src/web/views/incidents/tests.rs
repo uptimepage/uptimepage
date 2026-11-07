@@ -27,6 +27,7 @@ fn every_check_kind_has_console_label() {
 
 pub(super) fn ops(state: IncidentState) -> OpsIncident {
     OpsIncident {
+        alert: Default::default(),
         id: Uuid::now_v7(),
         target_id: Some(Uuid::now_v7()),
         target_ref: None,

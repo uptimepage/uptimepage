@@ -16,6 +16,7 @@ DROP FUNCTION incidents_snapshot_alert_source();
 
 ALTER TABLE incidents
     DROP CONSTRAINT incident_alert_named,
+    DROP COLUMN closed_by_source_delete,
     DROP COLUMN dedup_key,
     DROP COLUMN alert_source_name,
     DROP COLUMN alert_source_ref,

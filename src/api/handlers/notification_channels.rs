@@ -1013,6 +1013,7 @@ async fn deliver_test(
         regions_down: Vec::new(),
         regions_up: Vec::new(),
         url: None,
+        source: None,
         note: None,
     };
     let sent = match stored {

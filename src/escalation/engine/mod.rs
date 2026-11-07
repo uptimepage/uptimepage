@@ -41,6 +41,8 @@ use rules::{retry_after_hint, retry_delay_secs};
 #[cfg(test)]
 mod alert_controls_tests;
 #[cfg(test)]
+mod alert_episode_tests;
+#[cfg(test)]
 mod closing_notice_tests;
 mod deliver;
 mod episode;
@@ -84,6 +86,7 @@ pub struct EngineDeps {
     pub linked_apps: Arc<dyn LinkedAppStore>,
     pub targets: Arc<dyn TargetStore>,
     pub groups: Arc<dyn MonitorGroupStore>,
+    pub sources: Arc<dyn crate::storage::alert_sources::AlertSourceStore>,
     pub channels: Arc<dyn NotificationChannelStore>,
     pub maintenance: Arc<dyn crate::storage::MaintenanceStore>,
     pub orgs: Arc<dyn OrgDirectory>,
@@ -117,6 +120,7 @@ struct Worker {
     linked_apps: Arc<dyn LinkedAppStore>,
     targets: Arc<dyn TargetStore>,
     groups: Arc<dyn MonitorGroupStore>,
+    sources: Arc<dyn crate::storage::alert_sources::AlertSourceStore>,
     channels: Arc<dyn NotificationChannelStore>,
     maintenance: Arc<dyn crate::storage::MaintenanceStore>,
     orgs: Arc<dyn OrgDirectory>,
@@ -155,6 +159,7 @@ impl EscalationEngine {
             linked_apps,
             targets,
             groups,
+            sources,
             channels,
             maintenance,
             orgs,
@@ -179,6 +184,7 @@ impl EscalationEngine {
                 linked_apps,
                 targets,
                 groups,
+                sources,
                 channels,
                 maintenance,
                 orgs,

@@ -316,6 +316,15 @@ impl Worker {
             }
             return Ok(None);
         }
+        if incident.origin == IncidentOrigin::Alert {
+            if matches!(
+                reason,
+                NotificationReason::Opened | NotificationReason::Reopened
+            ) {
+                self.open_alert_episode(org, &incident, damper).await?;
+            }
+            return Ok(None);
+        }
         // Once the monitor is gone nothing pages.
         if incident.monitor_deleted() {
             return Ok(None);
@@ -376,36 +385,8 @@ impl Worker {
             self.cancel_emergency(org, incident.id, Some(episode)).await;
         }
         let releasing = damper == Damper::Skip;
-        // The first page an episode owes records once, which the store decides;
-        // a release owes nothing and checks here.
-        let kind = |arm| {
-            if releasing {
-                FanOutKind::Release(arm)
-            } else {
-                FanOutKind::Opening(arm)
-            }
-        };
-        if releasing
-            && open_episode_active(
-                &self.ops.notifications_for(org, incident.id).await?,
-                episode,
-            )
-        {
-            // It still ends its hold, or its scan would find it again every
-            // tick.
-            self.record_marker(
-                Planned::marker(org, incident.id, episode, RELEASED_TRANSPORT, reason),
-                None,
-                kind(None),
-            )
-            .await?;
-            return Ok(None);
-        }
-        // The scan read `triggered` a sweep ago and a flapping monitor
-        // recovers inside that gap. Its all-clear already ran and reached
-        // nobody, so paging now announces an outage no recovery would follow.
-        // Here because `page` holds the per-incident lock.
-        if releasing && incident.state != IncidentState::Triggered {
+        let kind = opening_kind(damper);
+        if releasing && self.release_settled(org, incident, episode, reason).await? {
             return Ok(None);
         }
         let mut note = None;
@@ -435,32 +416,24 @@ impl Worker {
             return Ok(None);
         }
         if damper == Damper::Apply && !operator_declared {
-            match self.flap_state(org, target).await? {
-                FlapState::Steady => {}
-                FlapState::Crossing => {
-                    // Without this the operator just sees alerts stop.
-                    events.push((IncidentEventKind::Notified, self.flap_engaged_note(target)));
-                    note = Some(self.flap_notice());
-                }
-                FlapState::Damped => {
-                    // Recorded, not delivered: the release scan pages it if the
-                    // incident outlasts the hold.
-                    let held = self
-                        .record_marker(
-                            Planned::marker(org, incident.id, episode, DAMPED_TRANSPORT, reason),
-                            Some(format!(
-                                "alert held: the monitor is flapping. It pages anyway if this \
-                                 incident is still open in {} minutes",
-                                self.cfg.flap_hold_secs.div_ceil(60)
-                            )),
-                            kind(None),
-                        )
-                        .await?;
-                    if held {
-                        metrics::counter!(crate::metric_names::ALERTS_DAMPED).increment(1);
-                    }
-                    return Ok(None);
-                }
+            let flap = self
+                .flap_state(target.id, |since| {
+                    self.ops.opens_since(org, target.id, since)
+                })
+                .await;
+            if self
+                .damp(
+                    org,
+                    incident.id,
+                    episode,
+                    reason,
+                    flap,
+                    (&target.name, "the monitor"),
+                    (&mut events, &mut note),
+                )
+                .await?
+            {
+                return Ok(None);
             }
         }
         if incident.group.routed_group_id.is_some() {
@@ -557,6 +530,164 @@ impl Worker {
             return Ok(());
         };
         self.log_paged(org, incident.id, reason, delivered).await
+    }
+
+    /// The first page of an alert incident: its source's policy or channels.
+    /// No maintenance hold, since a source has no window and the tool's own
+    /// silences do that job. Damped per alert key, so one flapping alert does
+    /// not hold back the rest of its source. Waits, owed, while the source is
+    /// paused or held by the plan.
+    pub(super) async fn open_alert_episode(
+        &self,
+        org: OrgId,
+        incident: &OpsIncident,
+        damper: Damper,
+    ) -> Result<()> {
+        let Some(Subject::Source(source)) = self.subject(org, incident).await? else {
+            return Ok(());
+        };
+        if !source.enabled || source.plan_hold_at.is_some() {
+            return Ok(());
+        }
+        let Some(episode) = self.ops.generation(org, incident.id).await? else {
+            return Ok(());
+        };
+        let reason = opening_reason(episode);
+        if reason == NotificationReason::Reopened {
+            self.cancel_emergency(org, incident.id, Some(episode)).await;
+        }
+        let releasing = damper == Damper::Skip;
+        let kind = opening_kind(damper);
+        if releasing && self.release_settled(org, incident, episode, reason).await? {
+            return Ok(());
+        }
+        let mut note = None;
+        let mut events = Vec::new();
+        if damper == Damper::Apply
+            && let Some(key) = incident.alert.dedup_key.as_deref()
+        {
+            let flap = self
+                .flap_state(source.id, |since| {
+                    self.ops.alert_opens_since(org, source.id, key, since)
+                })
+                .await;
+            let name = incident.title.as_deref().unwrap_or(&source.name);
+            if self
+                .damp(
+                    org,
+                    incident.id,
+                    episode,
+                    reason,
+                    flap,
+                    (name, "the alert"),
+                    (&mut events, &mut note),
+                )
+                .await?
+            {
+                return Ok(());
+            }
+        }
+        let notice = self.notice(incident, None, reason, note);
+        let policy = self
+            .policies
+            .resolve_for_source(org, source.escalation_policy_id)
+            .await?;
+        let Some((mut planned, arm)) = self
+            .plan_opening(
+                org,
+                incident.id,
+                policy,
+                (&source.alerts, &[]),
+                reason,
+                episode,
+                &mut events,
+            )
+            .await?
+        else {
+            return Ok(());
+        };
+        if releasing && planned.is_empty() {
+            planned.push_marker(RELEASED_TRANSPORT, reason);
+        }
+        let Some(delivered) = self
+            .send_fan_out(planned, events, kind(arm), &notice)
+            .await?
+        else {
+            return Ok(());
+        };
+        self.log_paged(org, incident.id, reason, delivered).await
+    }
+
+    /// A release with nothing left to do: the episode already paged, which
+    /// still ends its hold so the scan stops finding it, or the incident is no
+    /// longer triggered. The scan read `triggered` a sweep ago and a flapping
+    /// subject recovers inside that gap; its all-clear already ran and reached
+    /// nobody, so paging now would announce an outage no recovery follows.
+    /// Called under the page lock.
+    async fn release_settled(
+        &self,
+        org: OrgId,
+        incident: &OpsIncident,
+        episode: i64,
+        reason: NotificationReason,
+    ) -> Result<bool> {
+        if open_episode_active(
+            &self.ops.notifications_for(org, incident.id).await?,
+            episode,
+        ) {
+            self.record_marker(
+                Planned::marker(org, incident.id, episode, RELEASED_TRANSPORT, reason),
+                None,
+                FanOutKind::Release(None),
+            )
+            .await?;
+            return Ok(true);
+        }
+        Ok(incident.state != IncidentState::Triggered)
+    }
+
+    /// Acts on what the damper read. A crossing says so on the timeline and
+    /// in the page, since otherwise the operator just sees alerts stop. A
+    /// damped open is recorded, not delivered: the release scan pages it if
+    /// the incident outlasts the hold. True when it held the page. `who`
+    /// names the subject twice: as the timeline names it, and as the hold
+    /// line does.
+    #[allow(clippy::too_many_arguments)]
+    async fn damp(
+        &self,
+        org: OrgId,
+        incident_id: Uuid,
+        episode: i64,
+        reason: NotificationReason,
+        flap: FlapState,
+        (name, what): (&str, &str),
+        (events, note): (&mut Vec<(IncidentEventKind, String)>, &mut Option<String>),
+    ) -> Result<bool> {
+        match flap {
+            FlapState::Steady => Ok(false),
+            FlapState::Crossing => {
+                events.push((IncidentEventKind::Notified, self.flap_engaged_note(name)));
+                *note = Some(self.flap_notice());
+                Ok(false)
+            }
+            FlapState::Damped => {
+                let held = self
+                    .record_marker(
+                        Planned::marker(org, incident_id, episode, DAMPED_TRANSPORT, reason),
+                        Some(format!(
+                            "alert held: {what} is flapping. It pages anyway if this \
+                             incident is still open in {} minutes",
+                            self.cfg.flap_hold_secs.div_ceil(60)
+                        )),
+                        FanOutKind::Opening(None),
+                    )
+                    .await?;
+                if held {
+                    metrics::counter!(crate::metric_names::ALERTS_DAMPED).increment(1);
+                }
+                Ok(true)
+            }
+        }
     }
 
     /// The first rung of `policy`, or the channels these bindings and tags
@@ -658,22 +789,27 @@ impl Worker {
         Ok(self.ops.record_fan_out(fan_out).await?.is_some())
     }
 
-    /// A lookup failure degrades to [`FlapState::Steady`]: failing to read the
+    /// The damper's reading of how often the subject opened inside its window,
+    /// counted by `opens` from the window's start. Steady with damping off. A
+    /// lookup failure degrades to [`FlapState::Steady`]: failing to read the
     /// history must not silence a real outage.
-    async fn flap_state(&self, org: OrgId, target: &Target) -> Result<FlapState> {
+    async fn flap_state<F, Fut>(&self, subject: Uuid, opens: F) -> FlapState
+    where
+        F: FnOnce(chrono::DateTime<Utc>) -> Fut,
+        Fut: std::future::Future<Output = Result<u32>>,
+    {
         let max = self.cfg.flap_max_opens;
         if max == 0 {
-            return Ok(FlapState::Steady);
+            return FlapState::Steady;
         }
         let since = Utc::now() - chrono::Duration::seconds(self.cfg.flap_window_secs.max(1) as i64);
-        let opens = match self.ops.opens_since(org, target.id, since).await {
-            Ok(n) => n,
+        match opens(since).await {
+            Ok(n) => flap_state(n, max),
             Err(err) => {
-                tracing::warn!(target_id = %target.id, error = %err, "flap lookup failed; paging normally");
-                return Ok(FlapState::Steady);
+                tracing::warn!(subject = %subject, error = %err, "flap lookup failed; paging normally");
+                FlapState::Steady
             }
-        };
-        Ok(flap_state(opens, max))
+        }
     }
 
     /// What the crossing alert tells the recipient, so alerts going quiet is
@@ -687,11 +823,11 @@ impl Worker {
         )
     }
 
-    fn flap_engaged_note(&self, target: &Target) -> String {
+    fn flap_engaged_note(&self, name: &str) -> String {
         format!(
             "\"{}\" has opened {} incidents within {} minutes — alerts for further \
              opens are held until it settles",
-            target.name,
+            name,
             self.cfg.flap_max_opens,
             self.cfg.flap_window_secs.div_ceil(60)
         )
@@ -726,7 +862,9 @@ impl Worker {
     /// words its close calls for. Once the monitor is gone they still hear it,
     /// under the name the incident kept, and the monitor's recovery opt-out
     /// went with it. A group incident is told under the group's kept name,
-    /// whether or not the group still exists.
+    /// whether or not the group still exists. An alert incident is told under
+    /// its source's kept name, and its source's recovery opt-out holds while
+    /// the source exists.
     async fn notify_ended(
         &self,
         org: OrgId,
@@ -734,6 +872,19 @@ impl Worker {
         claim: &mut chrono::DateTime<Utc>,
     ) -> Result<()> {
         let reason = incident.closing_reason();
+        if incident.origin == IncidentOrigin::Alert {
+            let send = match incident.alert.source_id() {
+                Some(id) => self
+                    .sources
+                    .get(org, id)
+                    .await?
+                    .is_none_or(|s| s.notify_recovery),
+                None => true,
+            };
+            return self
+                .notify_closed(org, incident, None, reason, send, claim)
+                .await;
+        }
         if incident.origin == IncidentOrigin::Group {
             let name = incident.group.group_name();
             return self
@@ -825,5 +976,14 @@ impl Worker {
             self.maintenance.alerts_suppressed(org, target_id).await,
             Ok(true)
         )
+    }
+}
+
+/// The fan-out a first page records as: a release owes nothing and is checked
+/// by the caller, an opening records once, which the store decides.
+fn opening_kind(damper: Damper) -> impl Fn(Option<Arming>) -> FanOutKind {
+    move |arm| match damper {
+        Damper::Skip => FanOutKind::Release(arm),
+        Damper::Apply => FanOutKind::Opening(arm),
     }
 }

@@ -74,6 +74,9 @@ pub trait EscalationPolicyStore: Send + Sync {
     ) -> Result<bool>;
     /// [`Self::resolve_for_target`] for a group that alerts as one.
     async fn resolve_for_group(&self, org: OrgId, group_id: Uuid) -> Result<Option<Uuid>>;
+    /// [`Self::resolve_for_target`] for an alert source, whose own binding the
+    /// caller read with it: `bound` while it is live, else the org default.
+    async fn resolve_for_source(&self, org: OrgId, bound: Option<Uuid>) -> Result<Option<Uuid>>;
     /// [`Self::set_target_policy`] for a group, audited as
     /// `group.escalation_policy_set` when it changes the binding.
     async fn set_group_policy(
@@ -660,6 +663,25 @@ impl EscalationPolicyStore for PgEscalationPolicyStore {
         Ok(id)
     }
 
+    async fn resolve_for_source(&self, org: OrgId, bound: Option<Uuid>) -> Result<Option<Uuid>> {
+        let id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT COALESCE(b.id, d.id) FROM organizations o \
+             LEFT JOIN escalation_policies b ON b.id = $2 \
+                 AND b.org_id = o.id AND b.deleted_at IS NULL \
+             LEFT JOIN escalation_policies d ON d.id = o.default_escalation_policy_id \
+                 AND d.org_id = o.id AND d.deleted_at IS NULL \
+             /* SAFE: organizations is keyed by id, which is the tenant boundary */ \
+             WHERE o.id = $1",
+        )
+        .bind(org.0)
+        .bind(bound)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| AppError::Other(anyhow::anyhow!("resolve_for_source: {e}")))?
+        .flatten();
+        Ok(id)
+    }
+
     async fn set_group_policy(
         &self,
         org: OrgId,
@@ -783,18 +805,22 @@ impl MemState {
         bound: &[(OrgId, Uuid, Uuid)],
         id: Uuid,
     ) -> Option<Uuid> {
-        bound
+        let own = bound
             .iter()
             .find(|(o, t, _)| *o == org && *t == id)
-            .map(|(_, _, p)| *p)
-            .filter(|p| self.live(org, *p))
-            .or_else(|| {
-                self.org_default
-                    .iter()
-                    .find(|(o, _)| *o == org)
-                    .map(|(_, p)| *p)
-                    .filter(|p| self.live(org, *p))
-            })
+            .map(|(_, _, p)| *p);
+        self.live_or_default(org, own)
+    }
+
+    /// `own` while it is live, else the org default while that is.
+    fn live_or_default(&self, org: OrgId, own: Option<Uuid>) -> Option<Uuid> {
+        own.filter(|p| self.live(org, *p)).or_else(|| {
+            self.org_default
+                .iter()
+                .find(|(o, _)| *o == org)
+                .map(|(_, p)| *p)
+                .filter(|p| self.live(org, *p))
+        })
     }
 }
 
@@ -957,6 +983,10 @@ impl EscalationPolicyStore for InMemoryEscalationPolicyStore {
     async fn resolve_for_group(&self, org: OrgId, group_id: Uuid) -> Result<Option<Uuid>> {
         let g = self.inner.lock();
         Ok(g.bound_or_default(org, &g.group_policy, group_id))
+    }
+
+    async fn resolve_for_source(&self, org: OrgId, bound: Option<Uuid>) -> Result<Option<Uuid>> {
+        Ok(self.inner.lock().live_or_default(org, bound))
     }
 
     async fn set_group_policy(

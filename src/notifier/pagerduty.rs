@@ -195,6 +195,7 @@ mod tests {
             regions_down: vec!["eu-west".into()],
             regions_up: vec!["us-east".into()],
             url: Some("https://app.uptimepage.dev/i/7".into()),
+            source: None,
             note: None,
         }
     }

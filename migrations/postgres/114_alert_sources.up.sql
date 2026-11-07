@@ -77,6 +77,9 @@ ALTER TABLE incidents
     ADD COLUMN alert_source_ref  UUID,
     ADD COLUMN alert_source_name TEXT,
     ADD COLUMN dedup_key         TEXT,
+    -- Set when deleting the source closed the incident: nothing was resolved,
+    -- so it counts toward neither MTTR nor who resolved what.
+    ADD COLUMN closed_by_source_delete BOOLEAN NOT NULL DEFAULT false,
     ADD CONSTRAINT incident_alert_named CHECK (
         (alert_source_id IS NULL OR alert_source_ref = alert_source_id)
         AND ((alert_source_ref IS NULL) = (alert_source_name IS NULL))

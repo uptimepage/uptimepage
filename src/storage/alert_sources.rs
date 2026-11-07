@@ -681,6 +681,17 @@ impl AlertSourceStore for PgAlertSourceStore {
                 )));
             }
         }
+        // Nothing was resolved, so these count toward neither MTTR nor who
+        // resolved what.
+        sqlx::query(
+            "UPDATE incidents SET closed_by_source_delete = true \
+             WHERE org_id = $1 AND id = ANY($2)",
+        )
+        .bind(org.0)
+        .bind(&closed)
+        .execute(&mut *tx)
+        .await
+        .map_err(db("mark closed by source delete"))?;
         sqlx::query("DELETE FROM alert_sources WHERE id = $1 AND org_id = $2")
             .bind(id)
             .bind(org.0)

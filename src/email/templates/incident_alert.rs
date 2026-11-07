@@ -24,6 +24,8 @@ pub struct IncidentAlert {
     pub severity: IncidentSeverity,
     pub urgency: IncidentUrgency,
     pub origin: IncidentOrigin,
+    /// The alert source that sent it in, for an alert incident.
+    pub source: Option<String>,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
     pub error_sample: Option<String>,
@@ -87,6 +89,12 @@ impl IncidentAlert {
             _ if self.origin == IncidentOrigin::Manual => {
                 format!("Declared by hand at {}", utc_stamp(self.started_at))
             }
+            // Another tool detected it; the claim is the tool's, not ours.
+            _ if self.origin == IncidentOrigin::Alert => format!(
+                "Sent by {} at {}",
+                self.source.as_deref().unwrap_or("an alert source"),
+                utc_stamp(self.started_at)
+            ),
             _ => match self.region_counts() {
                 Some((down, total)) => format!("Failing in {down} of {total} regions"),
                 None => format!("Failing since {}", utc_stamp(self.started_at)),
@@ -170,6 +178,9 @@ impl IncidentAlert {
             rows.push(("Urgency", self.urgency.as_db_str().to_string()));
             if self.origin == IncidentOrigin::Manual {
                 rows.push(("Origin", "declared by hand, no monitor detection".into()));
+            }
+            if let Some(source) = self.source.as_deref() {
+                rows.push(("Source", source.to_string()));
             }
         }
         if self.has_incident_window() {
@@ -321,6 +332,7 @@ mod tests {
             severity: IncidentSeverity::Major,
             urgency: IncidentUrgency::High,
             origin: IncidentOrigin::Monitor,
+            source: None,
             started_at: Utc.with_ymd_and_hms(2026, 8, 17, 12, 41, 0).unwrap(),
             ended_at: None,
             error_sample: Some("no response".into()),
@@ -411,6 +423,27 @@ mod tests {
             !render("Uptimepage", &alert(NotificationReason::Opened))
                 .html_body
                 .contains("Resolve</a>")
+        );
+    }
+
+    /// Another tool found it, so the mail says which tool rather than claiming
+    /// a check of ours failed.
+    #[test]
+    fn an_alert_names_the_source_that_sent_it() {
+        let mut a = alert(NotificationReason::Opened);
+        a.origin = IncidentOrigin::Alert;
+        a.source = Some("prom-prod".into());
+        a.error_sample = None;
+        a.regions_down = Vec::new();
+        a.regions_up = Vec::new();
+        let r = render("Uptimepage", &a);
+        for body in [&r.text_body, &r.html_body] {
+            assert!(body.contains("prom-prod"), "{body}");
+            assert!(!body.contains("Failing"), "{body}");
+        }
+        assert!(
+            r.html_body
+                .contains("Sent by prom-prod at 17 Aug 2026 12:41 UTC")
         );
     }
 

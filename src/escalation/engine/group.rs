@@ -10,13 +10,23 @@ use super::rules::{channel_targets, resolvable_channels};
 use super::{SWEEP_CONCURRENCY, Worker};
 
 impl Worker {
-    /// What `incident` pages about: its monitor, or for a group incident its
-    /// group. `None` once that is gone.
+    /// What `incident` pages about: its monitor, for a group incident its
+    /// group, for an alert incident its source. `None` once that is gone.
     pub(super) async fn subject(
         &self,
         org: OrgId,
         incident: &OpsIncident,
     ) -> Result<Option<Subject>> {
+        if incident.origin == IncidentOrigin::Alert {
+            let Some(source_id) = incident.alert.source_id() else {
+                return Ok(None);
+            };
+            return Ok(self
+                .sources
+                .get(org, source_id)
+                .await?
+                .map(|s| Subject::Source(Box::new(s))));
+        }
         if incident.origin == IncidentOrigin::Group {
             let Some(group_id) = incident.group.group_id() else {
                 return Ok(None);
@@ -34,7 +44,8 @@ impl Worker {
     }
 
     /// Whether `subject` is watched now: a monitor on and outside a window
-    /// that holds alerts, or a group with a watched member down.
+    /// that holds alerts, a group with a watched member down, or a source
+    /// neither paused nor held by the plan.
     pub(super) async fn watched(
         &self,
         org: OrgId,
@@ -46,6 +57,7 @@ impl Worker {
                 Ok(target.enabled && !self.alerts_suppressed(org, target.id).await)
             }
             Subject::Group(_) => self.ops.group_watched(org, incident.id).await,
+            Subject::Source(source) => Ok(source.enabled && source.plan_hold_at.is_none()),
         }
     }
 }

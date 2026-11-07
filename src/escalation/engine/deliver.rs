@@ -74,9 +74,9 @@ pub(super) enum Rebuilt {
     /// The notice to send, its channel, and where the incident stands now for
     /// the staleness check.
     Ready(Box<(IncidentNotice, crate::domain::NotificationChannel, Standing)>),
-    /// The incident's monitor was deleted. The incident was closed with it,
-    /// so there is nothing left to page about.
-    MonitorDeleted,
+    /// The incident's monitor, group or alert source was deleted. The
+    /// incident was closed with it, so there is nothing left to page about.
+    SubjectDeleted,
     /// The channel, monitor or incident is gone. The row exhausts by attempts.
     Gone,
 }
@@ -103,7 +103,7 @@ impl Worker {
             // A deleted group's incident is closed: only its closing notice is
             // still worth sending.
             if incident.group.group_id().is_none() && !reason.closes_incident() {
-                return Ok(Rebuilt::MonitorDeleted);
+                return Ok(Rebuilt::SubjectDeleted);
             }
             let Some(channel) = self.channels.get(org, channel_id).await? else {
                 return Ok(Rebuilt::Gone);
@@ -121,11 +121,26 @@ impl Worker {
                 standing(&incident),
             ))));
         }
+        if incident.origin == crate::domain::IncidentOrigin::Alert {
+            // Paging went with a deleted source; its closing notice still goes.
+            if incident.source_deleted() && !reason.closes_incident() {
+                return Ok(Rebuilt::SubjectDeleted);
+            }
+            let Some(channel) = self.channels.get(org, channel_id).await? else {
+                return Ok(Rebuilt::Gone);
+            };
+            let notice = self.notice(&incident, None, reason, None);
+            return Ok(Rebuilt::Ready(Box::new((
+                notice,
+                channel,
+                standing(&incident),
+            ))));
+        }
         if incident.monitor_deleted() {
             // Paging went with the monitor. A notice that the incident ended
             // still goes out, under the name the incident kept.
             if !reason.closes_incident() {
-                return Ok(Rebuilt::MonitorDeleted);
+                return Ok(Rebuilt::SubjectDeleted);
             }
             let Some(channel) = self.channels.get(org, channel_id).await? else {
                 return Ok(Rebuilt::Gone);
@@ -268,6 +283,7 @@ impl Worker {
             incident_id: inc.id,
             reason,
             monitor_name,
+            source: inc.alert.source_name(),
             title: inc.title.clone(),
             severity: inc.severity,
             urgency: inc.urgency,

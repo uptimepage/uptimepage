@@ -137,6 +137,18 @@ impl Worker {
         if incident.monitor_deleted() {
             return true;
         }
+        // The same for an alert source, and one paused or held by the plan
+        // stops the page as a monitor's does.
+        if incident.origin == crate::domain::IncidentOrigin::Alert {
+            let Some(source_id) = incident.alert.source_id() else {
+                return true;
+            };
+            return match self.sources.get(ack.org, source_id).await {
+                Ok(Some(s)) => !s.enabled || s.plan_hold_at.is_some(),
+                Ok(None) => true,
+                Err(_) => false,
+            };
+        }
         let Some(target_id) = incident.target_id else {
             return false;
         };

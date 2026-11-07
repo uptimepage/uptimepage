@@ -740,6 +740,43 @@ pub struct OpsIncident {
     pub updated_at: DateTime<Utc>,
     #[serde(flatten)]
     pub group: IncidentGroupLink,
+    #[serde(flatten)]
+    pub alert: IncidentAlertLink,
+}
+
+/// What an alert incident came from. Set only on `origin: "alert"`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct IncidentAlertLink {
+    /// The source that sent it, as it last was once deleted.
+    #[serde(default)]
+    #[schema(nullable = true)]
+    pub alert_source: Option<IncidentAlertSourceRef>,
+    /// The key the source's events for this incident share.
+    #[serde(default)]
+    #[schema(nullable = true)]
+    pub dedup_key: Option<String>,
+    /// Set when deleting the source closed the incident. Nothing was
+    /// resolved, so it counts toward neither MTTR nor who resolved what.
+    #[serde(default)]
+    pub closed_by_source_delete: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct IncidentAlertSourceRef {
+    /// Null once the source is deleted.
+    #[schema(nullable = true)]
+    pub id: Option<Uuid>,
+    pub name: String,
+}
+
+impl IncidentAlertLink {
+    pub fn source_id(&self) -> Option<Uuid> {
+        self.alert_source.as_ref().and_then(|s| s.id)
+    }
+
+    pub fn source_name(&self) -> Option<String> {
+        self.alert_source.as_ref().map(|s| s.name.clone())
+    }
 }
 
 /// An incident's place in a group that alerts as one.
@@ -795,11 +832,17 @@ impl OpsIncident {
         self.origin == IncidentOrigin::Monitor && self.monitor_deleted()
     }
 
-    /// Reopened, an incident that ended with its monitor would have nothing to
-    /// watch or close it, and a group incident or one of its members would
-    /// leave the group's members out of step.
+    /// An alert incident whose source has since been deleted.
+    pub fn source_deleted(&self) -> bool {
+        self.origin == IncidentOrigin::Alert && self.alert.source_id().is_none()
+    }
+
+    /// Reopened, an incident that ended with its monitor or its alert source
+    /// would have nothing to watch or close it, and a group incident or one of
+    /// its members would leave the group's members out of step.
     pub fn reopenable(&self) -> bool {
         !self.ended_with_monitor()
+            && !self.source_deleted()
             && self.origin != IncidentOrigin::Group
             && self.group.group_incident_id.is_none()
     }
@@ -817,11 +860,13 @@ impl OpsIncident {
     }
 
     /// May page at all: paging is on and it has a monitor, or it is a group
-    /// incident whose group still exists. `MAY_PAGE_PREDICATE` in SQL.
+    /// incident whose group still exists, or an alert incident whose source
+    /// still exists. `may_page_predicate!` in SQL.
     pub fn may_page(&self) -> bool {
         self.paging_enabled
             && (self.target_id.is_some()
-                || (self.origin == IncidentOrigin::Group && self.group.group_id().is_some()))
+                || (self.origin == IncidentOrigin::Group && self.group.group_id().is_some())
+                || (self.origin == IncidentOrigin::Alert && self.alert.source_id().is_some()))
     }
 }
 

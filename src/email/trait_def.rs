@@ -677,6 +677,7 @@ mod tests {
             severity: crate::domain::IncidentSeverity::Major,
             urgency: crate::domain::IncidentUrgency::High,
             origin: crate::domain::IncidentOrigin::Monitor,
+            source: None,
             started_at: Utc::now(),
             ended_at: None,
             error_sample: None,

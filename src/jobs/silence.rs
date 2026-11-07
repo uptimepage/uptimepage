@@ -84,6 +84,7 @@ fn silence_notice(
         incident_id: key,
         reason,
         monitor_name: Some(name),
+        source: None,
         title: None,
         severity: IncidentSeverity::default(),
         urgency: IncidentUrgency::default(),

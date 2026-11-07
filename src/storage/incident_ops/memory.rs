@@ -156,6 +156,17 @@ impl InMemoryIncidentOpsStore {
         g.incidents.push(incident);
     }
 
+    /// Test helper: the incident as stored.
+    #[cfg(test)]
+    pub fn snapshot(&self, id: Uuid) -> OpsIncident {
+        let g = self.inner.lock();
+        g.incidents
+            .iter()
+            .find(|i| i.id == id)
+            .cloned()
+            .expect("seeded incident")
+    }
+
     /// Test helper: whether the incident's episode still owes its first page.
     #[cfg(test)]
     pub fn owes_page(&self, id: Uuid) -> bool {
@@ -564,8 +575,11 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             .copied()
             .filter(|i| i.group.group_incident_id.is_none())
             .collect();
-        let deleted_with =
-            |i: &OpsIncident| i.closed_by_monitor_delete || i.group.closed_by_group_delete;
+        let deleted_with = |i: &OpsIncident| {
+            i.closed_by_monitor_delete
+                || i.group.closed_by_group_delete
+                || i.alert.closed_by_source_delete
+        };
         let mtta: Vec<f64> = counted
             .iter()
             .filter_map(|i| {
@@ -666,6 +680,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             target_kind: monitor.as_ref().map(|t| t.check.kind().to_string()),
             closed_by_monitor_delete: false,
             group: Default::default(),
+            alert: Default::default(),
             title: Some(new.title),
             state: IncidentState::Triggered,
             severity: new.severity,
@@ -797,6 +812,15 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             .any(|i| i.id == id && i.ended_with_monitor());
         if ended_with_monitor {
             return Err(super::monitor_deleted());
+        }
+        let source_deleted = self
+            .inner
+            .lock()
+            .incidents
+            .iter()
+            .any(|i| i.id == id && i.source_deleted());
+        if source_deleted {
+            return Err(super::alert_source_deleted());
         }
         let outcome = self
             .apply(
@@ -1156,6 +1180,7 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
                         }),
                         ..Default::default()
                     },
+                    alert: Default::default(),
                     title: None,
                     state: IncidentState::Triggered,
                     severity: Default::default(),
@@ -1678,6 +1703,27 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
             .filter(|(_, n)| *n >= min_opens)
             .map(|(t, _)| t)
             .collect())
+    }
+
+    async fn alert_opens_since(
+        &self,
+        _org: OrgId,
+        source_ref: Uuid,
+        dedup_key: &str,
+        since: DateTime<Utc>,
+    ) -> Result<u32> {
+        let g = self.inner.lock();
+        let n = g
+            .incidents
+            .iter()
+            .filter(|i| {
+                i.origin == IncidentOrigin::Alert
+                    && i.alert.source_id() == Some(source_ref)
+                    && i.alert.dedup_key.as_deref() == Some(dedup_key)
+                    && i.started_at >= since
+            })
+            .count();
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
 
     async fn opens_since(&self, _org: OrgId, target_id: Uuid, since: DateTime<Utc>) -> Result<u32> {

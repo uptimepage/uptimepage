@@ -300,7 +300,7 @@ impl Worker {
         };
         let notice = self.notice(
             &incident,
-            Some(subject.name().to_string()),
+            subject.page_name(),
             NotificationReason::Reminder,
             None,
         );
@@ -392,7 +392,7 @@ impl Worker {
                 }
                 let notice = self.notice(
                     &incident,
-                    Some(subject.name().to_string()),
+                    subject.page_name(),
                     NotificationReason::Escalated,
                     None,
                 );
@@ -763,7 +763,7 @@ impl Worker {
             }
             None => Rebuilt::Gone,
         };
-        if matches!(rebuilt, Rebuilt::MonitorDeleted) {
+        if matches!(rebuilt, Rebuilt::SubjectDeleted) {
             // Not a delivery failure: a page caught mid-flight by the delete
             // has nothing left to say.
             self.ops

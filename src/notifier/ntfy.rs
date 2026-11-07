@@ -154,6 +154,7 @@ mod tests {
             regions_down: Vec::new(),
             regions_up: Vec::new(),
             url: Some("https://app.uptimepage.dev/i/7".into()),
+            source: None,
             note: None,
         }
     }

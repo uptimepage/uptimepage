@@ -16,6 +16,9 @@ pub struct IncidentNotice {
     pub reason: NotificationReason,
     /// Monitor name; `None` for a manual incident not tied to a monitor.
     pub monitor_name: Option<String>,
+    /// The alert source that sent it in, for an alert incident.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     pub title: Option<String>,
     pub severity: IncidentSeverity,
     pub urgency: IncidentUrgency,
@@ -196,6 +199,7 @@ mod tests {
             regions_down: Vec::new(),
             regions_up: Vec::new(),
             url: None,
+            source: None,
             note: None,
         }
     }
