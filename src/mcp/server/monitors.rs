@@ -760,7 +760,7 @@ impl McpServer {
             .await
             .map_err(|e| McpToolError::internal(format!("update monitor: {e}")))?
             .ok_or_else(|| McpToolError::not_found("monitor not found"))?;
-        self.state.publishing().invalidate_page_ids(&left).await;
+        self.state.publishing().invalidate_pages(left).await;
         self.state
             .publishing()
             .invalidate_targets(auth.org, &[id])

@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::domain::{
     ActorType, GroupChoice, IncidentEventKind, MAX_GROUP_NAME_LEN, MonitorGroup,
-    MonitorGroupUpdate, NewMonitorGroup, OrgId, TargetAlerts, UserId, WriteSource,
+    MonitorGroupUpdate, NewMonitorGroup, OrgId, StatusPageId, TargetAlerts, UserId, WriteSource,
     group_deleted_message, normalize_group_name,
 };
 use crate::error::{AppError, Result, codes, validation};
@@ -25,6 +25,7 @@ use crate::storage::channel_bindings::{
     ALERT_CHANNEL_FIELD, BindingOwner, group_alerts_column, insert_bindings, lock_bound_channels,
     set_bindings,
 };
+use crate::storage::group_incidents::{lock_group, lock_incident};
 use crate::storage::incident_ops::may_page_predicate;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock, incident_lock_key};
 use crate::storage::orgs::record_audit_tx;
@@ -86,7 +87,7 @@ pub struct DeletedGroup {
     /// Member incidents still down, now paging on their own as a new episode.
     pub detached: Vec<Uuid>,
     /// Pages whose section for the group went with it.
-    pub pages: Vec<Uuid>,
+    pub pages: Vec<StatusPageId>,
 }
 
 /// What a group holds now.
@@ -174,24 +175,6 @@ fn actor_type(actor: Option<UserId>) -> ActorType {
         Some(_) => ActorType::User,
         None => ActorType::System,
     }
-}
-
-/// Takes the group row that attach and close serialise on. False when the
-/// group is gone.
-pub(crate) async fn lock_group(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: OrgId,
-    id: Uuid,
-) -> Result<bool> {
-    let found: Option<i32> = sqlx::query_scalar(
-        "SELECT 1 FROM monitor_groups WHERE id = $1 AND org_id = $2 FOR NO KEY UPDATE",
-    )
-    .bind(id)
-    .bind(org.0)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(db("lock group"))?;
-    Ok(found.is_some())
 }
 
 /// The group a monitor write joins, held against a rename, delete or attach
@@ -599,6 +582,7 @@ impl MonitorGroupStore for PgMonitorGroupStore {
             .await?
             .pages
             .into_iter()
+            .map(StatusPageId)
             .collect();
         sqlx::query("DELETE FROM monitor_groups WHERE id = $1 AND org_id = $2")
             .bind(id)
@@ -652,7 +636,7 @@ async fn close_group_incident(
     let Some(incident) = open else {
         return Ok((None, Vec::new()));
     };
-    if !crate::storage::group_incidents::lock_incident(tx, org, incident).await? {
+    if !lock_incident(tx, org, incident).await? {
         return Ok((None, Vec::new()));
     }
 

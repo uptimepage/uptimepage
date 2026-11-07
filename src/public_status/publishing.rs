@@ -12,6 +12,14 @@ use crate::storage::{
     Actor, CreateShareOutcome, IncidentOpsStore, MonitorShareStore, StatusPageStore,
 };
 
+/// A lost clear waits out the cache TTL, so a failed lookup only warns.
+fn resolved<T>(pages: Result<Vec<T>>) -> Vec<T> {
+    pages.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "could not resolve pages for cache invalidation");
+        Vec::new()
+    })
+}
+
 /// Borrowed view over the stores a page-visible change touches.
 pub struct Publishing<'a> {
     pub pages: &'a dyn StatusPageStore,
@@ -28,17 +36,12 @@ impl Publishing<'_> {
         if incident.target_id.is_some() {
             self.invalidate_targets(org, incident.target_id.as_slice())
                 .await;
-            return match self.incidents.kept_on_pages(org, incident.id).await {
-                Ok(pages) => self.invalidate_pages(&pages).await,
-                Err(e) => {
-                    tracing::warn!(error = %e, "could not resolve pages for cache invalidation")
-                }
-            };
+            let kept = resolved(self.incidents.kept_on_pages(org, incident.id).await);
+            return self.invalidate_pages(kept).await;
         }
-        match self.incidents.status_pages(org, incident.id).await {
-            Ok(pages) => self.invalidate_pages(&pages).await,
-            Err(e) => tracing::warn!(error = %e, "could not resolve pages for cache invalidation"),
-        }
+        let pages = resolved(self.incidents.status_pages(org, incident.id).await);
+        self.invalidate_pages(pages.into_iter().map(StatusPageId))
+            .await;
     }
 
     /// The pages that show any of `ids` now, read before a group change so
@@ -47,40 +50,26 @@ impl Publishing<'_> {
         if ids.is_empty() {
             return Vec::new();
         }
-        self.pages
-            .pages_for_targets(org, ids)
-            .await
-            .unwrap_or_else(|e| {
-                tracing::warn!(error = %e, "could not resolve pages for cache invalidation");
-                Vec::new()
-            })
+        resolved(self.pages.pages_for_targets(org, ids).await)
     }
 
-    pub async fn invalidate_page_ids(&self, pages: &[StatusPageId]) {
+    pub async fn invalidate_pages(&self, pages: impl IntoIterator<Item = StatusPageId>) {
         for page in pages {
-            self.source.invalidate(*page).await;
+            self.source.invalidate(page).await;
         }
     }
 
     /// Bust cached public status pages that surface any of `ids`.
     pub async fn invalidate_targets(&self, org: OrgId, ids: &[Uuid]) {
-        if ids.is_empty() {
-            return;
-        }
-        match self.pages.pages_for_targets(org, ids).await {
-            Ok(pages) => {
-                for page in pages {
-                    self.source.invalidate(page).await;
-                }
-            }
-            Err(e) => tracing::warn!(error = %e, "could not resolve pages for cache invalidation"),
-        }
+        let pages = self.pages_showing(org, ids).await;
+        self.invalidate_pages(pages).await;
     }
 
-    async fn invalidate_pages(&self, pages: &[Uuid]) {
-        for page in pages {
-            self.source.invalidate(StatusPageId(*page)).await;
-        }
+    /// A section without its own heading shows the group's name, so a group
+    /// edit clears the pages that show it.
+    pub async fn invalidate_group(&self, org: OrgId, group: Uuid) {
+        let pages = resolved(self.pages.pages_for_group(org, group).await);
+        self.invalidate_pages(pages).await;
     }
 
     /// Publish, then bust every page the incident shows on, and the pages a new
@@ -113,7 +102,8 @@ impl Publishing<'_> {
             return Ok(None);
         };
         self.invalidate_incident(org, &incident).await;
-        self.invalidate_pages(&before).await;
+        self.invalidate_pages(before.into_iter().map(StatusPageId))
+            .await;
         Ok(Some(incident))
     }
 

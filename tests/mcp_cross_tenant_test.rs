@@ -1847,6 +1847,54 @@ async fn groups_are_listed_retuned_and_shown_on_monitors_and_incidents() {
 
 #[tokio::test]
 #[ignore]
+async fn a_group_edit_clears_the_pages_showing_it() {
+    use uptimepage::domain::NewMonitorGroup;
+    use uptimepage::storage::{MonitorGroupStore, page_sections};
+
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let source = std::sync::Arc::new(common::Invalidations::default());
+    let seen = source.clone();
+    let app = common::build_saas_router_with_pg_tweaked(
+        pool.clone(),
+        |cfg| cfg.mcp.enabled = true,
+        move |mut state| {
+            state.public_source = source;
+            state
+        },
+    )
+    .await;
+    let (org, user) = seed_org(&pool, "mcpclear").await;
+    let mcp = connector(app, &pool, user, org, &["full_access"]).await;
+    let page = seed_page(&pool, org, &unique_slug("mcpclear")).await;
+    let group = uptimepage::storage::PgMonitorGroupStore::new(pool.clone())
+        .create(
+            org,
+            NewMonitorGroup::named("DNS"),
+            WriteSource::Ui,
+            None,
+            i64::MAX,
+        )
+        .await
+        .unwrap()
+        .id;
+    page_sections::add(&pool, org, page.0, group, None, i64::MAX, None)
+        .await
+        .unwrap();
+
+    let updated = mcp
+        .call(
+            "update_monitor_group",
+            json!({ "id": group, "name": "Name servers" }),
+        )
+        .await;
+    assert_eq!(error_code(&updated), None, "{updated}");
+    assert_eq!(*seen.0.lock(), vec![page]);
+}
+
+#[tokio::test]
+#[ignore]
 async fn a_group_is_added_to_a_page_as_a_section() {
     use uptimepage::domain::NewMonitorGroup;
     use uptimepage::storage::MonitorGroupStore;

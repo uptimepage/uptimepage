@@ -3,6 +3,8 @@
 
 use crate::common;
 
+use std::sync::Arc;
+
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -12,9 +14,11 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+use uptimepage::app::AppState;
 use uptimepage::domain::{
     ChannelConfig, CheckStatus, EscalationTargetType, NewEscalationPolicy, NewEscalationStep,
-    NewEscalationTarget, NewNotificationChannel, OrgId, UserId, WebhookConfig, WriteSource,
+    NewEscalationTarget, NewNotificationChannel, OrgId, StatusPageId, UserId, WebhookConfig,
+    WriteSource,
 };
 use uptimepage::public_status::{IncidentStore, NewOpenIncident, PgIncidentStore};
 use uptimepage::storage::{
@@ -31,6 +35,13 @@ struct Api {
 
 impl Api {
     async fn new(mutate: impl FnOnce(&mut uptimepage::config::AppConfig)) -> Option<Self> {
+        Self::tweaked(mutate, |state| state).await
+    }
+
+    async fn tweaked(
+        mutate: impl FnOnce(&mut uptimepage::config::AppConfig),
+        tweak: impl FnOnce(AppState) -> AppState,
+    ) -> Option<Self> {
         let pool = common::pg_pool_from_env().await?;
         let user = common::make_user(&pool, "grp-api").await;
         let org = create_org_with_owner(&pool, user, &common::unique_slug("grp-api"), "O")
@@ -39,7 +50,7 @@ impl Api {
             .expect("org")
             .id;
         let app = common::with_session(
-            common::build_saas_router_with_pg_cfg(pool.clone(), mutate).await,
+            common::build_saas_router_with_pg_tweaked(pool.clone(), mutate, tweak).await,
             user,
             Some(org),
             Some("grp-api-session"),
@@ -839,6 +850,68 @@ async fn an_account_holds_as_many_groups_as_its_plan_allows_monitors() {
         .await
         .unwrap();
     assert_eq!(groups, 2);
+}
+
+#[tokio::test]
+#[ignore = "needs DATABASE_URL"]
+async fn a_group_edit_or_delete_clears_only_the_pages_showing_it() {
+    let source = Arc::new(common::Invalidations::default());
+    let seen = source.clone();
+    let Some(api) = Api::tweaked(
+        |_| {},
+        move |mut state| {
+            state.public_source = source;
+            state
+        },
+    )
+    .await
+    else {
+        return;
+    };
+    let slug = common::unique_slug("secclear");
+    let (status, page) = api
+        .send(
+            "POST",
+            "/api/v1/status-pages",
+            Some(json!({ "slug": slug, "name": "Status" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{page}");
+    let pid = id(&page);
+    let shown = id(&api.group(json!({ "name": "DNS" })).await);
+    let unshown = id(&api.group(json!({ "name": "Web" })).await);
+    api.monitor(json!({ "group_id": shown })).await;
+    let (status, section) = api
+        .send(
+            "POST",
+            &format!("/api/v1/status-pages/{pid}/sections"),
+            Some(json!({ "group_id": shown })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{section}");
+    let page = StatusPageId(pid.parse().unwrap());
+    seen.0.lock().clear();
+
+    let rename = Some(json!({ "name": "Other" }));
+    let (status, body) = api
+        .send("PATCH", &format!("/api/v1/groups/{unshown}"), rename)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(seen.0.lock().is_empty(), "no page shows that group");
+
+    let rename = Some(json!({ "name": "Name servers" }));
+    let (status, body) = api
+        .send("PATCH", &format!("/api/v1/groups/{shown}"), rename)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(*seen.0.lock(), vec![page]);
+    seen.0.lock().clear();
+
+    let (status, body) = api
+        .send("DELETE", &format!("/api/v1/groups/{shown}"), None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(*seen.0.lock(), vec![page]);
 }
 
 #[tokio::test]

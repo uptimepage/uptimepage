@@ -12,8 +12,7 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::{
-    MonitorGroup, MonitorGroupUpdate, NewMonitorGroup, OrgId, StatusPageId, TargetAlerts,
-    WriteSource,
+    MonitorGroup, MonitorGroupUpdate, NewMonitorGroup, OrgId, TargetAlerts, WriteSource,
 };
 use crate::error::ApiError;
 use crate::error::codes;
@@ -197,7 +196,7 @@ pub async fn update(
         .update(org, id, update, source, Some(user))
         .await?
         .ok_or_else(not_found)?;
-    clear_section_pages(&state, org, id).await;
+    state.publishing().invalidate_group(org, id).await;
     Ok(Json(view(&state, org, group).await?))
 }
 
@@ -219,24 +218,6 @@ pub async fn delete(
         .delete(org, id, Some(user))
         .await?
         .ok_or_else(not_found)?;
-    for page in deleted.pages {
-        state.public_source.invalidate(StatusPageId(page)).await;
-    }
+    state.publishing().invalidate_pages(deleted.pages).await;
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// A section without its own heading shows the group's name, so a group edit
-/// clears the pages that show it. Soft: a lost clear waits out the cache TTL.
-pub(crate) async fn clear_section_pages(state: &AppState, org: OrgId, group: Uuid) {
-    let Some(pool) = state.db.as_ref() else {
-        return;
-    };
-    match crate::storage::page_sections::pages_for_group(pool, org, group).await {
-        Ok(pages) => {
-            for page in pages {
-                state.public_source.invalidate(StatusPageId(page)).await;
-            }
-        }
-        Err(e) => tracing::warn!(error = %e, "could not resolve pages for cache invalidation"),
-    }
 }

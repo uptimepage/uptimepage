@@ -288,12 +288,45 @@ async fn deleting_the_group_takes_its_rows_off_every_page() {
     assert!(on_page(&f.rows().await, ns));
 
     let deleted = f.groups.delete(f.org, dns, None).await.unwrap().unwrap();
-    assert_eq!(deleted.pages, vec![f.page.0]);
+    assert_eq!(deleted.pages, vec![f.page]);
     let rows = f.rows().await;
     assert!(!on_page(&rows, ns));
     assert!(on_page(&rows, other), "rows outside the section stay");
     assert!(
         page_sections::list(&f.pool, f.org, f.page.0)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs DATABASE_URL"]
+async fn only_the_pages_showing_a_group_are_found_for_it() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let dns = f.group("DNS").await;
+    let web = f.group("Web").await;
+    page_sections::add(&f.pool, f.org, f.page.0, dns, None, i64::MAX, None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        f.pages.pages_for_group(f.org, dns).await.unwrap(),
+        vec![f.page]
+    );
+    assert!(
+        f.pages
+            .pages_for_group(f.org, web)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let stranger = OrgId(Uuid::now_v7());
+    assert!(
+        f.pages
+            .pages_for_group(stranger, dns)
             .await
             .unwrap()
             .is_empty()

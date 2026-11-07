@@ -354,7 +354,7 @@ pub async fn update(
         .await?
     {
         Some(t) => {
-            state.publishing().invalidate_page_ids(&left).await;
+            state.publishing().invalidate_pages(left).await;
             state.publishing().invalidate_targets(org, &[id]).await;
             Ok(Redacted::new(t))
         }
@@ -1013,7 +1013,7 @@ pub async fn bulk_action(
                 .target_store
                 .set_group(org, &req.ids, group.as_deref(), Some(user), caps)
                 .await?;
-            state.publishing().invalidate_page_ids(&left).await;
+            state.publishing().invalidate_pages(left).await;
             state.publishing().invalidate_targets(org, &moved).await;
             moved
         }

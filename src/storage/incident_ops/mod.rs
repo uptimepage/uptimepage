@@ -22,7 +22,7 @@ use crate::domain::{
     ActorType, ExternalId, IncidentAcknowledgement, IncidentEvent, IncidentEventKind,
     IncidentMetrics, IncidentNotification, IncidentSeverity, IncidentState, LinkedApp,
     NewIncidentNotification, NewManualIncident, NotificationOutcome, NotificationReason,
-    OpsIncident, OrgId, TransitionError, UserId,
+    OpsIncident, OrgId, StatusPageId, TransitionError, UserId,
 };
 use crate::error::Result;
 pub use crate::storage::group_incidents::Attach;
@@ -592,7 +592,7 @@ pub trait IncidentOpsStore: Send + Sync {
     async fn status_pages(&self, org: OrgId, id: Uuid) -> Result<Vec<Uuid>>;
     /// Pages that kept a monitor's incident in their history after the
     /// monitor left them; they show it too, so a change to it must reach them.
-    async fn kept_on_pages(&self, org: OrgId, id: Uuid) -> Result<Vec<Uuid>>;
+    async fn kept_on_pages(&self, org: OrgId, id: Uuid) -> Result<Vec<StatusPageId>>;
     /// Incidents closed by deleting these monitors, whose responders are told
     /// it closed.
     async fn closed_with_monitors(&self, org: OrgId, monitors: &[Uuid]) -> Result<Vec<Uuid>>;

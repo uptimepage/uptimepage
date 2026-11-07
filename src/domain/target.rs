@@ -8,7 +8,7 @@ use uuid::Uuid;
 use super::WriteSource;
 use super::alert::TargetAlerts;
 use super::check::CheckSpec;
-use super::monitor_group::{GroupChoice, normalize_group_name};
+use super::group_choice::{GroupChoice, normalize_group_name};
 use super::result::CheckStatus;
 use super::user::UserId;
 

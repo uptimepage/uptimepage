@@ -1152,84 +1152,6 @@ async fn deleting_a_monitor_while_a_page_removes_it_lets_both_finish() {
     .await;
 }
 
-/// Records which pages were invalidated; answers nothing else.
-#[derive(Default)]
-struct Invalidations(parking_lot::Mutex<Vec<uptimepage::domain::StatusPageId>>);
-
-#[async_trait::async_trait]
-impl PublicSource for Invalidations {
-    async fn page(
-        &self,
-        page: PageRef,
-    ) -> Result<Arc<uptimepage::domain::PublicStatusPage>, uptimepage::error::PublicAppError> {
-        uptimepage::public_status::NoopPublicSource.page(page).await
-    }
-    async fn component_history(
-        &self,
-        page: PageRef,
-        id: Uuid,
-        days: u32,
-    ) -> Result<uptimepage::domain::ComponentHistoryResponse, uptimepage::error::PublicAppError>
-    {
-        uptimepage::public_status::NoopPublicSource
-            .component_history(page, id, days)
-            .await
-    }
-    async fn list_incidents(
-        &self,
-        page: PageRef,
-        q: IncidentListQuery,
-    ) -> Result<
-        uptimepage::pagination::page::CursorPage<uptimepage::domain::PublicIncident>,
-        uptimepage::error::PublicAppError,
-    > {
-        uptimepage::public_status::NoopPublicSource
-            .list_incidents(page, q)
-            .await
-    }
-    async fn incident_by_id(
-        &self,
-        page: PageRef,
-        id: Uuid,
-    ) -> Result<uptimepage::domain::PublicIncident, uptimepage::error::PublicAppError> {
-        uptimepage::public_status::NoopPublicSource
-            .incident_by_id(page, id)
-            .await
-    }
-    async fn maintenance(
-        &self,
-        page: PageRef,
-    ) -> Result<uptimepage::domain::PublicMaintenanceList, uptimepage::error::PublicAppError> {
-        uptimepage::public_status::NoopPublicSource
-            .maintenance(page)
-            .await
-    }
-    async fn list_maintenance(
-        &self,
-        page: PageRef,
-        q: MaintenanceListQuery,
-    ) -> Result<
-        uptimepage::pagination::page::CursorPage<uptimepage::domain::PublicMaintenance>,
-        uptimepage::error::PublicAppError,
-    > {
-        uptimepage::public_status::NoopPublicSource
-            .list_maintenance(page, q)
-            .await
-    }
-    async fn incidents_rss(
-        &self,
-        page: PageRef,
-        links: uptimepage::public_status::source::FeedLinks<'_>,
-    ) -> Result<String, uptimepage::error::PublicAppError> {
-        uptimepage::public_status::NoopPublicSource
-            .incidents_rss(page, links)
-            .await
-    }
-    async fn invalidate(&self, page: uptimepage::domain::StatusPageId) {
-        self.0.lock().push(page);
-    }
-}
-
 #[tokio::test]
 #[ignore = "requires DATABASE_URL + CLICKHOUSE_URL"]
 async fn a_change_to_a_kept_incident_reaches_the_page_that_kept_it() {
@@ -1249,7 +1171,7 @@ async fn a_change_to_a_kept_incident_reaches_the_page_that_kept_it() {
         let pages = PgStatusPageStore::new(pool.clone());
         let shares = uptimepage::storage::PgMonitorShareStore::new(pool.clone(), None);
         let incidents = uptimepage::storage::PgIncidentOpsStore::new(pool.clone());
-        let source = Invalidations::default();
+        let source = common::Invalidations::default();
         let ops = incidents.get(org, incident).await.unwrap().unwrap();
         uptimepage::public_status::publishing::Publishing {
             pages: &pages,

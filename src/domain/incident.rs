@@ -4,6 +4,7 @@ use serde_json::Value;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use super::actor::ActorType;
 use super::org::OrgId;
 use super::public::{
     Downtime, IncidentImpact, IncidentSeverity, IncidentStatusPhase, Paused, PublicIncidentUpdate,
@@ -419,83 +420,6 @@ impl IncidentVisibility {
         match s {
             "public" => Self::Public,
             _ => Self::Internal,
-        }
-    }
-}
-
-/// Who caused an `IncidentEvent`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum ActorType {
-    System,
-    User,
-    Mcp,
-    /// A person acting through a signed link. Possession of the notification
-    /// is the whole proof, so there is no user to name.
-    Link,
-    /// Pressed in Telegram. Names the member who linked that Telegram account,
-    /// and nobody when it is not linked.
-    Telegram,
-    /// Acknowledged in Pushover, named the same way as [`Self::Telegram`].
-    Pushover,
-    /// Pressed in Slack, named the same way as [`Self::Telegram`].
-    Slack,
-    /// Pressed in Discord, named the same way as [`Self::Telegram`].
-    Discord,
-}
-
-impl ActorType {
-    pub const ALL: &'static [Self] = &[
-        Self::System,
-        Self::User,
-        Self::Mcp,
-        Self::Link,
-        Self::Telegram,
-        Self::Pushover,
-        Self::Slack,
-        Self::Discord,
-    ];
-    pub fn as_db_str(self) -> &'static str {
-        match self {
-            Self::System => "system",
-            Self::User => "user",
-            Self::Mcp => "mcp",
-            Self::Link => "link",
-            Self::Telegram => "telegram",
-            Self::Pushover => "pushover",
-            Self::Slack => "slack",
-            Self::Discord => "discord",
-        }
-    }
-    pub fn from_db_str(s: &str) -> Self {
-        match s {
-            "user" => Self::User,
-            "mcp" => Self::Mcp,
-            "link" => Self::Link,
-            "telegram" => Self::Telegram,
-            "pushover" => Self::Pushover,
-            "slack" => Self::Slack,
-            "discord" => Self::Discord,
-            _ => Self::System,
-        }
-    }
-    /// The app whose own control this actor pressed, which names a member
-    /// only through an account they linked there.
-    pub const fn linked_app(self) -> Option<super::LinkedApp> {
-        match self {
-            Self::Telegram => Some(super::LinkedApp::Telegram),
-            Self::Pushover => Some(super::LinkedApp::Pushover),
-            Self::Slack => Some(super::LinkedApp::Slack),
-            Self::Discord => Some(super::LinkedApp::Discord),
-            Self::System | Self::User | Self::Mcp | Self::Link => None,
-        }
-    }
-
-    /// Where a member acted when it was not the web app itself.
-    pub fn via(self) -> Option<&'static str> {
-        match self {
-            Self::Mcp => Some("MCP"),
-            other => other.linked_app().map(super::LinkedApp::label),
         }
     }
 }
@@ -1302,9 +1226,6 @@ mod transition_tests {
         }
         for v in IncidentVisibility::ALL {
             assert_eq!(IncidentVisibility::from_db_str(v.as_db_str()), *v);
-        }
-        for a in ActorType::ALL {
-            assert_eq!(ActorType::from_db_str(a.as_db_str()), *a);
         }
         for k in IncidentEventKind::ALL {
             assert_eq!(IncidentEventKind::from_db_str(k.as_db_str()), *k);

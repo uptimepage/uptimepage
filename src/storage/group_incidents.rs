@@ -13,7 +13,6 @@ use uuid::Uuid;
 use crate::domain::{IncidentEventKind, OrgId};
 use crate::error::{AppError, Result};
 use crate::storage::locks::{advisory_xact_lock, incident_lock_key};
-use crate::storage::monitor_groups::lock_group;
 
 /// What attaching a member incident did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +40,24 @@ struct PendingMember {
 
 fn db(context: &'static str) -> impl FnOnce(sqlx::Error) -> AppError {
     move |e| AppError::Other(anyhow!("{context}: {e}"))
+}
+
+/// Takes the group row that attach, close and membership writes serialise on.
+/// False when the group is gone.
+pub(crate) async fn lock_group(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+    id: Uuid,
+) -> Result<bool> {
+    let found: Option<i32> = sqlx::query_scalar(
+        "SELECT 1 FROM monitor_groups WHERE id = $1 AND org_id = $2 FOR NO KEY UPDATE",
+    )
+    .bind(id)
+    .bind(org.0)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(db("lock group"))?;
+    Ok(found.is_some())
 }
 
 pub(crate) async fn lock_incident(

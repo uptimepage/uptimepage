@@ -20,8 +20,8 @@ use uuid::Uuid;
 use crate::domain::{OrgId, UserId};
 use crate::error::{AppError, Result, codes};
 use crate::storage::accounts::{self, live_orgs};
+use crate::storage::group_incidents::lock_group;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock};
-use crate::storage::monitor_groups::lock_group;
 use crate::storage::orgs::record_audit_tx;
 
 type Tx<'a> = sqlx::Transaction<'a, sqlx::Postgres>;
@@ -611,17 +611,4 @@ pub async fn pages_per_group(
     .await
     .map_err(db("pages per group"))?;
     Ok(rows.into_iter().collect())
-}
-
-/// The pages that show `group` as a section, for the cache clear after a
-/// group change their heading or rows read.
-pub async fn pages_for_group(pool: &PgPool, org: OrgId, group: Uuid) -> Result<Vec<Uuid>> {
-    sqlx::query_scalar(
-        "SELECT status_page_id FROM status_page_sections WHERE org_id = $1 AND group_id = $2",
-    )
-    .bind(org.0)
-    .bind(group)
-    .fetch_all(pool)
-    .await
-    .map_err(db("pages for group"))
 }

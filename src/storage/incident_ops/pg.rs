@@ -15,7 +15,7 @@ use crate::domain::{
     IncidentGroupRef, IncidentMetrics, IncidentNotification, IncidentOrigin, IncidentSeverity,
     IncidentState, IncidentTransition, IncidentUrgency, IncidentVisibility, MetricBucket,
     MonitorIncidentCount, NewIncidentNotification, NewManualIncident, NotificationOutcome,
-    NotificationReason, NotificationStatus, OpsIncident, OrgId, UserId, next_state,
+    NotificationReason, NotificationStatus, OpsIncident, OrgId, StatusPageId, UserId, next_state,
 };
 use crate::error::Result;
 use crate::storage::admin::NOT_HELD_PREDICATE;
@@ -1549,7 +1549,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         status_pages_tx(&mut conn, org, id).await
     }
 
-    async fn kept_on_pages(&self, org: OrgId, id: Uuid) -> Result<Vec<Uuid>> {
+    async fn kept_on_pages(&self, org: OrgId, id: Uuid) -> Result<Vec<StatusPageId>> {
         sqlx::query_scalar(
             "SELECT status_page_id FROM incident_status_pages \
              WHERE org_id = $1 AND incident_id = $2 ORDER BY status_page_id",

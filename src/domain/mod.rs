@@ -1,3 +1,4 @@
+pub mod actor;
 pub mod agent_wire;
 pub mod alert;
 pub mod check;
@@ -9,6 +10,7 @@ pub mod credential;
 pub mod dns_record;
 pub mod email_norm;
 pub mod escalation_policy;
+pub mod group_choice;
 pub mod heartbeat;
 pub mod hostname;
 pub mod incident;
@@ -46,6 +48,7 @@ pub mod variable;
 pub mod word_lists;
 pub mod write_source;
 
+pub use actor::{ActorType, LinkedApp};
 pub use alert::{AlertBinding, TargetAlerts};
 pub use check::{
     CheckSpec, DnsCheck, DnsRecordType, DomainExpiryCheck, ExpectedStatus, FAST_INTERVAL_PRESETS,
@@ -68,9 +71,10 @@ pub use escalation_policy::{
     EscalationTarget, EscalationTargetType, NewEscalationPolicy, NewEscalationStep,
     NewEscalationTarget, next_step, wait_after,
 };
+pub use group_choice::{GroupChoice, normalize_group_name};
 pub use heartbeat::{CadenceAdvice, HeartbeatPingRecord, ObservedCadence, Ping, PingSignal};
 pub use incident::{
-    ActionItem, ActorType, GROUP_DELETED_MESSAGE, Incident, IncidentAcknowledgement, IncidentEvent,
+    ActionItem, GROUP_DELETED_MESSAGE, Incident, IncidentAcknowledgement, IncidentEvent,
     IncidentEventKind, IncidentGroupLink, IncidentGroupRef, IncidentMetrics,
     IncidentNarrationUpdate, IncidentNotification, IncidentOrigin, IncidentPostmortem,
     IncidentState, IncidentTransition, IncidentUrgency, IncidentVisibility,
@@ -79,7 +83,7 @@ pub use incident::{
     NotificationStatus, OpsIncident, PostmortemUpsert, TransitionError, coalesce_incidents,
     confirmed_downtime_secs, elapsed_at, next_state, uptime_pct_from_downtime,
 };
-pub use linked_app::{ExternalId, Linked, LinkedApp, LinkedAppAccount};
+pub use linked_app::{ExternalId, Linked, LinkedAppAccount};
 pub use locale::Locale;
 pub use maintenance::{
     MaintenanceFilter, MaintenanceUpdate, MaintenanceUpdatePhase, MaintenanceWindow,
@@ -88,8 +92,8 @@ pub use maintenance::{
 pub use manual::{MAX_MANUAL_NOTE_CHARS, ManualState, ManualStatus};
 pub use membership::{Membership, Role};
 pub use monitor_group::{
-    GroupChoice, MAX_GROUP_NAME_LEN, MonitorGroup, MonitorGroupUpdate, NewMonitorGroup, Subject,
-    group_deleted_message, member_list, members_note, normalize_group_name,
+    MAX_GROUP_NAME_LEN, MonitorGroup, MonitorGroupUpdate, NewMonitorGroup, Subject,
+    group_deleted_message, member_list, members_note,
 };
 pub use monitor_share::{
     CreatedShare, MonitorShare, MonitorShareId, NewMonitorShare, ResolvedShare, SharePageUse,

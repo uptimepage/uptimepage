@@ -491,7 +491,7 @@ async fn close_incidents_of_deleted_targets(
     .await
     .context("delete target: member groups")?;
     for group in &groups {
-        crate::storage::monitor_groups::lock_group(tx, org, *group).await?;
+        crate::storage::group_incidents::lock_group(tx, org, *group).await?;
     }
     sqlx::query("SELECT id FROM targets WHERE id = ANY($1) AND org_id = $2 ORDER BY id FOR UPDATE")
         .bind(ids)
@@ -1015,7 +1015,7 @@ impl TargetStore for PostgresTargetStore {
                 )
                 .await?;
                 if let Some(from) = left.filter(|g| Some(*g) != joined) {
-                    crate::storage::monitor_groups::lock_group(tx, org, from).await?;
+                    crate::storage::group_incidents::lock_group(tx, org, from).await?;
                 }
                 Some(joined)
             }
@@ -1730,7 +1730,7 @@ impl TargetStore for PostgresTargetStore {
         .await
         .context("bulk set_group: groups left")?;
         for from in left.into_iter().filter(|g| Some(*g) != group_id) {
-            crate::storage::monitor_groups::lock_group(&mut tx, org, from).await?;
+            crate::storage::group_incidents::lock_group(&mut tx, org, from).await?;
         }
         let rows: Vec<(Uuid, String, Option<Uuid>)> = sqlx::query_as(
             r#"WITH locked AS (

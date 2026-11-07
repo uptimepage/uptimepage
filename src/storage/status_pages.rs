@@ -135,6 +135,8 @@ pub trait StatusPageStore: Send + Sync {
     async fn pages_for_targets(&self, org: OrgId, target_ids: &[Uuid])
     -> Result<Vec<StatusPageId>>;
 
+    async fn pages_for_group(&self, org: OrgId, group: Uuid) -> Result<Vec<StatusPageId>>;
+
     /// Targets a live public page shows: on an enabled page the plan still
     /// covers, and not held themselves.
     async fn published_target_ids(&self, org: OrgId) -> Result<HashSet<Uuid>>;
@@ -734,6 +736,18 @@ impl StatusPageStore for PgStatusPageStore {
         Ok(rows.into_iter().map(|(id,)| StatusPageId(id)).collect())
     }
 
+    async fn pages_for_group(&self, org: OrgId, group: Uuid) -> Result<Vec<StatusPageId>> {
+        let rows: Vec<(Uuid,)> = sqlx::query_as(
+            "SELECT status_page_id FROM status_page_sections WHERE org_id = $1 AND group_id = $2",
+        )
+        .bind(org.0)
+        .bind(group)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(rows.into_iter().map(|(id,)| StatusPageId(id)).collect())
+    }
+
     async fn published_target_ids(&self, org: OrgId) -> Result<HashSet<Uuid>> {
         let rows: Vec<(Uuid,)> = sqlx::query_as(&format!(
             r#"SELECT DISTINCT spc.target_id
@@ -1166,6 +1180,11 @@ impl StatusPageStore for InMemoryStatusPageStore {
         pages.sort_by_key(|p| p.0);
         pages.dedup();
         Ok(pages)
+    }
+
+    /// Sections live in Postgres alone.
+    async fn pages_for_group(&self, _org: OrgId, _group: Uuid) -> Result<Vec<StatusPageId>> {
+        Ok(Vec::new())
     }
 
     /// No target store here, so a monitor held by the plan is not excluded.

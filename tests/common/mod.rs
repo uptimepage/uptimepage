@@ -1757,3 +1757,69 @@ pub async fn link_offered_account(
     assert_eq!(linked_up.status(), StatusCode::NO_CONTENT);
     member
 }
+
+/// Records which pages were invalidated; answers nothing else.
+#[derive(Default)]
+pub struct Invalidations(pub parking_lot::Mutex<Vec<uptimepage::domain::StatusPageId>>);
+
+#[async_trait::async_trait]
+impl PublicSource for Invalidations {
+    async fn page(
+        &self,
+        page: PageRef,
+    ) -> Result<Arc<uptimepage::domain::PublicStatusPage>, uptimepage::error::PublicAppError> {
+        NoopPublicSource.page(page).await
+    }
+    async fn component_history(
+        &self,
+        page: PageRef,
+        id: Uuid,
+        days: u32,
+    ) -> Result<uptimepage::domain::ComponentHistoryResponse, uptimepage::error::PublicAppError>
+    {
+        NoopPublicSource.component_history(page, id, days).await
+    }
+    async fn list_incidents(
+        &self,
+        page: PageRef,
+        q: uptimepage::public_status::IncidentListQuery,
+    ) -> Result<
+        uptimepage::pagination::page::CursorPage<uptimepage::domain::PublicIncident>,
+        uptimepage::error::PublicAppError,
+    > {
+        NoopPublicSource.list_incidents(page, q).await
+    }
+    async fn incident_by_id(
+        &self,
+        page: PageRef,
+        id: Uuid,
+    ) -> Result<uptimepage::domain::PublicIncident, uptimepage::error::PublicAppError> {
+        NoopPublicSource.incident_by_id(page, id).await
+    }
+    async fn maintenance(
+        &self,
+        page: PageRef,
+    ) -> Result<uptimepage::domain::PublicMaintenanceList, uptimepage::error::PublicAppError> {
+        NoopPublicSource.maintenance(page).await
+    }
+    async fn list_maintenance(
+        &self,
+        page: PageRef,
+        q: uptimepage::public_status::MaintenanceListQuery,
+    ) -> Result<
+        uptimepage::pagination::page::CursorPage<uptimepage::domain::PublicMaintenance>,
+        uptimepage::error::PublicAppError,
+    > {
+        NoopPublicSource.list_maintenance(page, q).await
+    }
+    async fn incidents_rss(
+        &self,
+        page: PageRef,
+        links: FeedLinks<'_>,
+    ) -> Result<String, uptimepage::error::PublicAppError> {
+        NoopPublicSource.incidents_rss(page, links).await
+    }
+    async fn invalidate(&self, page: uptimepage::domain::StatusPageId) {
+        self.0.lock().push(page);
+    }
+}

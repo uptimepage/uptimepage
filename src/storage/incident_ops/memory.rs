@@ -14,7 +14,7 @@ use crate::domain::{
     IncidentGroupRef, IncidentMetrics, IncidentNotification, IncidentOrigin, IncidentSeverity,
     IncidentState, IncidentTransition, IncidentVisibility, MetricBucket, MonitorIncidentCount,
     NewIncidentNotification, NewManualIncident, NotificationOutcome, NotificationStatus,
-    OpsIncident, OrgId, UserId, next_state,
+    OpsIncident, OrgId, StatusPageId, UserId, next_state,
 };
 use crate::error::Result;
 
@@ -902,14 +902,10 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         Ok(g.status_pages.get(&id).cloned().unwrap_or_default())
     }
 
-    async fn kept_on_pages(&self, _org: OrgId, id: Uuid) -> Result<Vec<Uuid>> {
-        Ok(self
-            .inner
-            .lock()
-            .status_pages
-            .get(&id)
-            .cloned()
-            .unwrap_or_default())
+    async fn kept_on_pages(&self, _org: OrgId, id: Uuid) -> Result<Vec<StatusPageId>> {
+        let g = self.inner.lock();
+        let pages = g.status_pages.get(&id).into_iter().flatten();
+        Ok(pages.copied().map(StatusPageId).collect())
     }
 
     async fn closed_with_monitors(&self, _org: OrgId, monitors: &[Uuid]) -> Result<Vec<Uuid>> {
