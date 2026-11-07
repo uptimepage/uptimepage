@@ -4,14 +4,16 @@
 
 # uptimepage
 
-**Uptime monitoring, status pages and on-call. Open source, free to start. Live in 5 minutes.**
+**Uptime monitoring, status pages and on-call. One flat price per plan, seats included. Open source, free to start. Live in 5 minutes.**
 
 Monitor HTTP, TCP, ICMP ping, cron-job heartbeats, DNS, TLS-certificate and
 domain expiry, plus scripted browser login flows, from multiple regions — then
 turn green and red into a polished
 public status page your customers can subscribe to, and page whoever is on
 call through rotations and escalation policies. Drive it by click, REST
-API, or Terraform. Self-host the single binary or use the hosted service.
+API, or Terraform. Use the hosted service, free to start with
+[flat-priced plans](https://uptimepage.dev/pricing) above that, or self-host it
+under the AGPL.
 
 [![Terraform Registry](https://img.shields.io/badge/terraform-registry-7B42BC?logo=terraform&logoColor=white)](https://registry.terraform.io/providers/uptimepage/uptimepage)
 [![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/uptimepage)](https://artifacthub.io/packages/search?repo=uptimepage)
@@ -37,15 +39,15 @@ Prefer code? Drive the same account by [REST API](docs/api.md), [Terraform](#ter
 
 ## Why uptimepage
 
-Monitoring with a built-in status page isn't new — the bet here is doing it
-free, self-hostable, and fully as code:
+Monitoring with a built-in status page isn't new. The bet here is a flat price,
+self-hosting, and everything as code:
 
-- **Free hosted tier, no card** — and AGPL if you'd rather run it yourself.
-- **One self-contained binary** — `docker compose up` and you're live, not a Kubernetes platform to operate.
-- **Everything as code** — REST API, scoped tokens, an official Terraform provider, and an MCP server your LLM can query.
-- **Probes you own** — run multi-region agents wherever your users are, on your own boxes.
+- **One flat price per plan** — seats included, no per-seat add-ons. Free hosted tier with no card, [paid plans](https://uptimepage.dev/pricing) above it, AGPL if you'd rather run it yourself.
 - **Status page + incidents + on-call in one** — components, subscribers, on-call rotations and escalation, and multi-channel paging that repeats until acknowledged, no second tool.
 - **Core isn't paywalled** — checks, status pages, subscribers, the API and every alert channel are in the free tier.
+- **Everything as code** — REST API, scoped tokens, an official Terraform provider, and an MCP server your LLM can query.
+- **Probes you own** — run multi-region agents wherever your users are, on your own boxes.
+- **One self-contained binary** — run it with `docker compose up` or on Kubernetes with the Helm chart.
 
 ### Who it's for
 
