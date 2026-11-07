@@ -100,6 +100,15 @@ pub const INVALID_GROUP_NAME: &str = "INVALID_GROUP_NAME";
 pub const GROUP_NAME_TAKEN: &str = "GROUP_NAME_TAKEN";
 pub const GROUP_CHANGE_CONFLICT: &str = "GROUP_CHANGE_CONFLICT";
 pub const GROUP_ID_AND_NAME: &str = "GROUP_ID_AND_NAME";
+pub const INVALID_ALERT_SOURCE_NAME: &str = "INVALID_ALERT_SOURCE_NAME";
+pub const ALERT_SOURCE_NAME_TOO_LONG: &str = "ALERT_SOURCE_NAME_TOO_LONG";
+pub const ALERT_SOURCE_NAME_TAKEN: &str = "ALERT_SOURCE_NAME_TAKEN";
+/// A signing secret on a kind that does not sign, or one out of bounds.
+pub const INVALID_SIGNING_SECRET: &str = "INVALID_SIGNING_SECRET";
+/// The source has no policy of its own, no org default and no enabled channel.
+pub const ALERT_SOURCE_NO_ROUTE: &str = "ALERT_SOURCE_NO_ROUTE";
+/// Grouping changes the dedupe key, so it waits until nothing is open.
+pub const ALERT_SOURCE_GROUPING_LOCKED: &str = "ALERT_SOURCE_GROUPING_LOCKED";
 pub const GROUP_NOT_FOUND: &str = "GROUP_NOT_FOUND";
 pub const SECTION_NOT_FOUND: &str = "SECTION_NOT_FOUND";
 pub const SECTION_EXISTS: &str = "SECTION_EXISTS";
@@ -125,6 +134,8 @@ pub const INCIDENT_INVALID_STATE: &str = "INCIDENT_INVALID_STATE";
 pub const INCIDENT_DOWNTIME_NOT_EDITABLE: &str = "INCIDENT_DOWNTIME_NOT_EDITABLE";
 /// The incident's monitor was deleted; it keeps its history but cannot reopen.
 pub const INCIDENT_MONITOR_DELETED: &str = "INCIDENT_MONITOR_DELETED";
+/// The incident's alert source was deleted; it keeps its history but cannot reopen.
+pub const INCIDENT_ALERT_SOURCE_DELETED: &str = "INCIDENT_ALERT_SOURCE_DELETED";
 /// Publishing an incident with no monitor names no status page to show it on.
 pub const INCIDENT_STATUS_PAGE_REQUIRED: &str = "INCIDENT_STATUS_PAGE_REQUIRED";
 /// Status pages were chosen for an incident whose monitor already decides them.

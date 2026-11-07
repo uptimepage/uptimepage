@@ -130,6 +130,13 @@ pub fn incident_lock_key(incident_id: uuid::Uuid) -> String {
     format!("incident:{incident_id}")
 }
 
+/// Lock key for an alert source: held by ingest across an event, by a delete
+/// across closing its incidents, and by a reopen of one of its incidents.
+/// Always taken before any incident lock.
+pub fn alert_source_lock_key(source_id: uuid::Uuid) -> String {
+    format!("alert_source:{source_id}")
+}
+
 /// Run `body` only when the lock for `job` can be taken without waiting.
 ///
 /// Holds a session-scoped `pg_try_advisory_lock` on a dedicated pool

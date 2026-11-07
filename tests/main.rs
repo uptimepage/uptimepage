@@ -10,6 +10,7 @@ mod admin_repo_test;
 mod admin_variable_resolution_test;
 mod agent_auth_test;
 mod alert_channel_stop_test;
+mod alert_sources_test;
 mod api_test;
 mod api_token_scopes_test;
 mod api_variables_test;

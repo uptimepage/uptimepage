@@ -33,7 +33,7 @@ mod pg;
 mod tests;
 
 pub use memory::InMemoryIncidentOpsStore;
-pub use pg::{PgIncidentOpsStore, auto_resolve_in_tx};
+pub use pg::{PgIncidentOpsStore, auto_resolve_in_tx, resolve_in_tx};
 
 /// A `queued` row is a first attempt still in flight; the retry sweep takes it
 /// over only once it is older than any single delivery can run.
@@ -385,6 +385,15 @@ pub(crate) fn monitor_deleted() -> crate::error::AppError {
     crate::error::AppError::conflict(
         crate::error::codes::INCIDENT_MONITOR_DELETED,
         "this incident's monitor was deleted, so it cannot be reopened",
+    )
+}
+
+/// Reopening would leave an alert incident open that nothing can page about or
+/// close: its source is gone.
+pub(crate) fn alert_source_deleted() -> crate::error::AppError {
+    crate::error::AppError::conflict(
+        crate::error::codes::INCIDENT_ALERT_SOURCE_DELETED,
+        "this incident's alert source was deleted, so it cannot be reopened",
     )
 }
 

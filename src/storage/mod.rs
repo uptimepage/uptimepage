@@ -1,5 +1,6 @@
 pub mod accounts;
 pub mod admin;
+pub mod alert_sources;
 pub mod app_secrets;
 pub mod billing_events;
 pub mod capability_token;

@@ -427,18 +427,23 @@ impl AcceptedRow {
 }
 
 /// Index hygiene only; expiry is enforced by timestamp at resolution time.
+/// Sweeps heartbeats and alert sources, which rotate tokens the same way.
 pub async fn purge_expired_prev_tokens(pool: &PgPool) -> sqlx::Result<u64> {
-    let res = sqlx::query(
-        "UPDATE heartbeat_monitors SET \
-             /* SAFE: platform-wide sweep — expiry already fenced these tokens \
-                off at resolution, this only keeps the unique index small */ \
-             prev_token_hash = NULL, prev_token_expires_at = NULL, \
-             prev_token_last_used_at = NULL \
-         WHERE prev_token_expires_at < now()",
-    )
-    .execute(pool)
-    .await?;
-    Ok(res.rows_affected())
+    let mut purged = 0;
+    for table in ["heartbeat_monitors", "alert_sources"] {
+        let res = sqlx::query(&format!(
+            "UPDATE {table} SET \
+                 /* SAFE: platform-wide sweep — expiry already fenced these tokens \
+                    off at resolution, this only keeps the unique index small */ \
+                 prev_token_hash = NULL, prev_token_expires_at = NULL, \
+                 prev_token_last_used_at = NULL \
+             WHERE prev_token_expires_at < now()"
+        ))
+        .execute(pool)
+        .await?;
+        purged += res.rows_affected();
+    }
+    Ok(purged)
 }
 
 fn db_err(e: sqlx::Error) -> AppError {

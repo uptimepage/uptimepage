@@ -253,6 +253,7 @@ pub mod usage_keys {
     pub const ORGS: &str = "max_orgs";
     /// Not a `plans` column: an account holds as many groups as monitors.
     pub const GROUPS: &str = "max_groups";
+    pub const ALERT_SOURCES: &str = "max_alert_sources";
 }
 
 /// Every org's resolved plan, absent where resolution failed.

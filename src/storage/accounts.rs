@@ -16,6 +16,27 @@ use uuid::Uuid;
 use crate::domain::{AccountId, OrgId, UserId};
 use crate::error::{AppError, Result};
 
+/// Refuses one more of a pooled resource past `cap`. `count_sql` is its pooled
+/// count and `quota` the usage key the refusal names. The caller holds the
+/// account lock, so the count cannot move under it.
+pub(crate) async fn refuse_past_cap(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account: AccountId,
+    count_sql: &str,
+    quota: &'static str,
+    cap: i64,
+) -> Result<()> {
+    let current: i64 = sqlx::query_scalar(count_sql)
+        .bind(account.0)
+        .fetch_one(&mut **tx)
+        .await
+        .with_context(|| format!("count {quota}"))?;
+    if current + 1 > cap {
+        return Err(AppError::quota_exceeded(quota, current, cap, "current"));
+    }
+    Ok(())
+}
+
 /// SQL fragment expanding to an account's live orgs, with the account bound at
 /// placeholder `param` (`"$1"`, `"$7"`, …). Every pooled count is
 /// `... WHERE org_id IN (live_orgs(..))`, so the number a customer is blocked

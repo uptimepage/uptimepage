@@ -512,9 +512,11 @@ impl EscalationPolicyStore for PgEscalationPolicyStore {
         if result.rows_affected() == 0 {
             return Ok(false);
         }
-        // Clear dangling bindings so affected monitors and groups fall back to
-        // the org default (a soft-delete leaves the FK unenforced, unlike a
-        // hard one). Groups before monitors, the order every group path takes.
+        // Clear dangling bindings so affected monitors, groups and alert
+        // sources fall back to the org default (a soft-delete leaves the FK
+        // unenforced, unlike a hard one). Groups before monitors, the order
+        // every group path takes; a source write holds the policy before its
+        // own row, so sources may come last.
         sqlx::query(
             "UPDATE monitor_groups SET escalation_policy_id = NULL \
              WHERE org_id = $2 AND escalation_policy_id = $1",
@@ -533,6 +535,15 @@ impl EscalationPolicyStore for PgEscalationPolicyStore {
         .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Other(anyhow::anyhow!("clear target bindings: {e}")))?;
+        sqlx::query(
+            "UPDATE alert_sources SET escalation_policy_id = NULL \
+             WHERE org_id = $2 AND escalation_policy_id = $1",
+        )
+        .bind(id)
+        .bind(org.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::Other(anyhow::anyhow!("clear alert source bindings: {e}")))?;
         sqlx::query(
             "UPDATE organizations SET default_escalation_policy_id = NULL \
              /* SAFE: organizations is keyed by id, which is the tenant boundary */ \

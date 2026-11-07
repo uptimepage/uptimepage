@@ -379,21 +379,25 @@ pub enum IncidentOrigin {
     Manual,
     /// Opened by the first failing member of a group that alerts as one.
     Group,
+    /// Opened by an alert another tool sent in, with no monitor.
+    Alert,
 }
 
 impl IncidentOrigin {
-    pub const ALL: &'static [Self] = &[Self::Monitor, Self::Manual, Self::Group];
+    pub const ALL: &'static [Self] = &[Self::Monitor, Self::Manual, Self::Group, Self::Alert];
     pub fn as_db_str(self) -> &'static str {
         match self {
             Self::Monitor => "monitor",
             Self::Manual => "manual",
             Self::Group => "group",
+            Self::Alert => "alert",
         }
     }
     pub fn from_db_str(s: &str) -> Self {
         match s {
             "manual" => Self::Manual,
             "group" => Self::Group,
+            "alert" => Self::Alert,
             _ => Self::Monitor,
         }
     }

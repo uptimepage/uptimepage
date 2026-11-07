@@ -1,6 +1,7 @@
 pub mod actor;
 pub mod agent_wire;
 pub mod alert;
+pub mod alert_source;
 pub mod check;
 pub mod check_address;
 pub mod check_details;
@@ -50,6 +51,10 @@ pub mod write_source;
 
 pub use actor::{ActorType, LinkedApp};
 pub use alert::{AlertBinding, TargetAlerts};
+pub use alert_source::{
+    AlertGrouping, AlertSource, AlertSourceKind, AlertSourceUpdate, MAX_ALERT_SOURCE_NAME_LEN,
+    MAX_SIGNING_SECRET_LEN, MIN_SIGNING_SECRET_LEN, NewAlertSource,
+};
 pub use check::{
     CheckSpec, DnsCheck, DnsRecordType, DomainExpiryCheck, ExpectedStatus, FAST_INTERVAL_PRESETS,
     FlowCheck, FlowStep, HeartbeatCheck, HttpCheck, HttpMethod, IntervalHints, IpVersion,

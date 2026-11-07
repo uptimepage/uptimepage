@@ -1,5 +1,6 @@
-//! A monitor's notification channels live in `target_channels` and a group's in
-//! `group_channels`, whose foreign keys drop a binding in the transaction that
+//! A monitor's notification channels live in `target_channels`, a group's in
+//! `group_channels` and an alert source's in `alert_source_channels`, whose
+//! foreign keys drop a binding in the transaction that
 //! deletes its owner or its channel. A write that binds channels locks them
 //! here first, before any group, monitor or binding row. A statement that
 //! removes the bindings of several owners locks them first in key order, so
@@ -47,11 +48,26 @@ macro_rules! group_alerts_column {
 }
 pub(crate) use group_alerts_column;
 
+/// [`target_alerts_column`] for the alert_sources row the query names `$s`.
+macro_rules! source_alerts_column {
+    ($s:literal) => {
+        concat!(
+            "COALESCE((SELECT jsonb_agg(jsonb_build_object('channel_id', sc.channel_id) \
+                                        ORDER BY sc.position, sc.channel_id) \
+                         FROM alert_source_channels sc WHERE sc.source_id = ",
+            $s,
+            ".id), '[]'::jsonb) AS alerts"
+        )
+    };
+}
+pub(crate) use source_alerts_column;
+
 /// Whose bindings a write changes.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum BindingOwner {
     Target,
     Group,
+    AlertSource,
 }
 
 impl BindingOwner {
@@ -59,6 +75,7 @@ impl BindingOwner {
         match self {
             Self::Target => "target_channels",
             Self::Group => "group_channels",
+            Self::AlertSource => "alert_source_channels",
         }
     }
 
@@ -66,6 +83,7 @@ impl BindingOwner {
         match self {
             Self::Target => "target_id",
             Self::Group => "group_id",
+            Self::AlertSource => "source_id",
         }
     }
 }

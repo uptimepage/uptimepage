@@ -23,6 +23,10 @@ pooled!(
     "SELECT count(*) FROM monitor_groups WHERE org_id IN ({orgs})"
 );
 pooled!(
+    alert_sources,
+    "SELECT count(*) FROM alert_sources WHERE org_id IN ({orgs})"
+);
+pooled!(
     flow,
     "SELECT count(*) FROM targets WHERE org_id IN ({orgs}) AND kind = 'flow'"
 );

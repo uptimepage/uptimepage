@@ -196,30 +196,6 @@ pub(crate) async fn resolve_group(
     }
 }
 
-/// Refuses one more group past `cap`, counted across the account's orgs. The
-/// caller holds the account lock, so the count cannot move under it.
-async fn refuse_past_cap(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: OrgId,
-    cap: i64,
-) -> Result<()> {
-    let account = accounts::account_for_org(&mut **tx, org).await?;
-    let current: i64 = sqlx::query_scalar(&crate::storage::count_sql::groups())
-        .bind(account.0)
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(db("count groups"))?;
-    if current + 1 > cap {
-        return Err(AppError::quota_exceeded(
-            crate::domain::quota::usage_keys::GROUPS,
-            current,
-            cap,
-            "current",
-        ));
-    }
-    Ok(())
-}
-
 async fn join_by_id(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: OrgId,
@@ -273,7 +249,15 @@ async fn resolve_named(
             return Ok(found);
         }
         if let Some(cap) = cap {
-            refuse_past_cap(tx, org, cap).await?;
+            let account = accounts::account_for_org(&mut **tx, org).await?;
+            accounts::refuse_past_cap(
+                tx,
+                account,
+                &crate::storage::count_sql::groups(),
+                crate::domain::quota::usage_keys::GROUPS,
+                cap,
+            )
+            .await?;
         }
         let created: Option<Uuid> = sqlx::query_scalar(
             "INSERT INTO monitor_groups (org_id, name, write_source, created_by, updated_by) \
@@ -421,7 +405,14 @@ impl MonitorGroupStore for PgMonitorGroupStore {
         advisory_xact_lock(&mut *tx, &account_lock_key(account))
             .await
             .map_err(db("create group: account lock"))?;
-        refuse_past_cap(&mut tx, org, cap).await?;
+        accounts::refuse_past_cap(
+            &mut tx,
+            account,
+            &crate::storage::count_sql::groups(),
+            crate::domain::quota::usage_keys::GROUPS,
+            cap,
+        )
+        .await?;
         lock_bound_channels(&mut tx, org, &channels, ALERT_CHANNEL_FIELD).await?;
         let row: Option<GroupRow> = sqlx::query_as(&format!(
             "INSERT INTO monitor_groups AS g \

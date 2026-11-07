@@ -20,7 +20,7 @@ use crate::domain::{
 use crate::error::Result;
 use crate::storage::admin::NOT_HELD_PREDICATE;
 use crate::storage::group_incidents::{GroupLock, lock_group_of};
-use crate::storage::locks::{advisory_xact_lock, incident_lock_key};
+use crate::storage::locks::{advisory_xact_lock, alert_source_lock_key, incident_lock_key};
 
 use super::{
     AUTO_RESOLVED_MESSAGE, Acknowledged, Actor, ClaimedEscalation, ClosingNotice,
@@ -672,8 +672,10 @@ async fn incident_was_published(
 /// is committed here, and an error leaves the transaction for the caller to
 /// drop: a reopen refused by a unique index has already aborted it. Call it
 /// holding no incident or group lock: it takes the group row and then the
-/// incident's lock, the order attach and close use, so holding either first
-/// can deadlock against them. A lock on anything else may be held.
+/// incident's lock, the order attach and close use. A reopen of an alert
+/// incident takes its source's lock before both, so call a reopen holding no
+/// source lock either. Any other transition may run under one, as a source
+/// delete's resolves do.
 #[allow(clippy::too_many_arguments)]
 async fn transition_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -693,15 +695,35 @@ async fn transition_tx(
             listed: false,
         })
     };
+    // A reopen of an alert incident waits out a delete of its source, which
+    // closes that source's incidents under the source lock.
+    if transition == IncidentTransition::Reopen {
+        let source: Option<Uuid> = sqlx::query_scalar(
+            "SELECT alert_source_id FROM incidents \
+             WHERE id = $1 AND org_id = $2 AND origin = 'alert'",
+        )
+        .bind(id)
+        .bind(org.0)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(|e| anyhow::anyhow!("alert source of incident: {e}"))?
+        .flatten();
+        if let Some(source) = source {
+            advisory_xact_lock(&mut **tx, &alert_source_lock_key(source))
+                .await
+                .map_err(|e| anyhow::anyhow!("alert source lock: {e}"))?;
+        }
+    }
     // Resolving a group incident resolves its members.
     lock_group_of(tx, org, id).await?;
     advisory_xact_lock(&mut **tx, &incident_lock_key(id))
         .await
         .map_err(|e| anyhow::anyhow!("incident lock: {e}"))?;
 
-    let current: Option<(String, bool, Option<Uuid>, bool)> = sqlx::query_as(
+    let current: Option<(String, bool, Option<Uuid>, bool, bool)> = sqlx::query_as(
         "SELECT state, origin = 'monitor' AND target_id IS NULL AND target_name IS NOT NULL, \
-                    group_incident_id, origin = 'group' \
+                    group_incident_id, origin = 'group', \
+                    origin = 'alert' AND alert_source_id IS NULL \
              FROM incidents WHERE id = $1 AND org_id = $2 FOR UPDATE",
     )
     .bind(id)
@@ -709,7 +731,8 @@ async fn transition_tx(
     .fetch_optional(&mut **tx)
     .await
     .map_err(|e| anyhow::anyhow!("load incident state: {e}"))?;
-    let Some((state_str, ended_with_monitor, attached, is_group)) = current else {
+    let Some((state_str, ended_with_monitor, attached, is_group, ended_with_source)) = current
+    else {
         return unlisted(LifecycleOutcome::NotFound);
     };
     if let Some(group_incident) = attached {
@@ -722,6 +745,10 @@ async fn transition_tx(
     // cannot land on an incident the delete has just closed.
     if ended_with_monitor && transition == IncidentTransition::Reopen {
         return Err(super::monitor_deleted());
+    }
+    // Nothing would page about it or close it again.
+    if ended_with_source && transition == IncidentTransition::Reopen {
+        return Err(super::alert_source_deleted());
     }
     // Under the transition's own locks, so a reopen cannot slip between
     // this check and the update.
@@ -765,12 +792,20 @@ async fn transition_tx(
             Err(e)
                 if matches!(
                     e.as_database_error().and_then(|d| d.constraint()),
-                    Some("idx_incidents_org_open_monitor" | "idx_incidents_org_open_manual")
+                    Some(
+                        "idx_incidents_org_open_monitor"
+                            | "idx_incidents_org_open_manual"
+                            | "idx_incidents_org_open_alert"
+                    )
                 ) =>
             {
+                let what = match e.as_database_error().and_then(|d| d.constraint()) {
+                    Some("idx_incidents_org_open_alert") => "alert",
+                    _ => "monitor",
+                };
                 return Err(crate::error::AppError::conflict(
                     crate::error::codes::INCIDENT_ALREADY_OPEN,
-                    "another incident is already open for this monitor",
+                    format!("another incident is already open for this {what}"),
                 ));
             }
             Err(e) => return Err(anyhow::anyhow!("apply transition: {e}").into()),
@@ -834,6 +869,46 @@ async fn transition_tx(
     })
 }
 
+/// Ends an incident. `resolved_by` is the actor's user, bound as $3, and NULL
+/// for the system. One waiting out its recovery ended where the recovery began.
+fn resolve_sql() -> String {
+    format!(
+        "UPDATE incidents \
+         SET state = 'resolved', ended_at = COALESCE(ended_at, recovering_since, now()), \
+             duration_secs = COALESCE(duration_secs, GREATEST(0, EXTRACT(EPOCH FROM \
+                 (COALESCE(ended_at, recovering_since, now()) - started_at))::int)), \
+             resolved_by = $3, next_escalation_at = NULL, recovering_since = NULL, \
+             closing_notice_at = now(), resolved_at = now(), updated_at = now() \
+         WHERE id = $1 AND org_id = $2 RETURNING {OPS_COLS}"
+    )
+}
+
+/// Resolve `id` as `actor`, with `note` on the timeline and the default line
+/// for status page readers, inside the caller's transaction. Nothing is
+/// committed here, and the lock order of `transition_tx` applies.
+pub async fn resolve_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: OrgId,
+    id: Uuid,
+    actor: Actor,
+    note: String,
+) -> Result<LifecycleOutcome> {
+    transition_tx(
+        tx,
+        org,
+        id,
+        IncidentTransition::Resolve,
+        IncidentEventKind::Resolved,
+        actor,
+        Some(note),
+        &resolve_sql(),
+        Some(resolved_public_message(None)),
+        None,
+    )
+    .await
+    .map(|a| a.outcome)
+}
+
 /// Resolve `id` as the system, the way a recovery does, inside the caller's
 /// transaction. Nothing is committed here, and the lock order of
 /// `transition_tx` applies.
@@ -842,16 +917,6 @@ pub async fn auto_resolve_in_tx(
     org: OrgId,
     id: Uuid,
 ) -> Result<LifecycleOutcome> {
-    // System recovery: resolved_by stays NULL ($3 = system actor's NULL user).
-    let sql = format!(
-        "UPDATE incidents \
-         SET state = 'resolved', ended_at = COALESCE(ended_at, recovering_since, now()), \
-             duration_secs = COALESCE(duration_secs, GREATEST(0, EXTRACT(EPOCH FROM \
-                 (COALESCE(ended_at, recovering_since, now()) - started_at))::int)), \
-             resolved_by = $3, next_escalation_at = NULL, recovering_since = NULL, \
-             closing_notice_at = now(), resolved_at = now(), updated_at = now() \
-         WHERE id = $1 AND org_id = $2 RETURNING {OPS_COLS}"
-    );
     transition_tx(
         tx,
         org,
@@ -860,7 +925,7 @@ pub async fn auto_resolve_in_tx(
         IncidentEventKind::Resolved,
         Actor::System,
         None,
-        &sql,
+        &resolve_sql(),
         Some(UpdateText {
             message: AUTO_RESOLVED_MESSAGE.to_string(),
             generated: true,
@@ -919,17 +984,7 @@ impl PgIncidentOpsStore {
         note: Option<String>,
         expect_generation: Option<i64>,
     ) -> Result<LifecycleOutcome> {
-        // Manual resolve: resolved_by = actor's user (bound as $3). One waiting
-        // out its recovery ended where the recovery began.
-        let sql = format!(
-            "UPDATE incidents \
-             SET state = 'resolved', ended_at = COALESCE(ended_at, recovering_since, now()), \
-                 duration_secs = COALESCE(duration_secs, GREATEST(0, EXTRACT(EPOCH FROM \
-                     (COALESCE(ended_at, recovering_since, now()) - started_at))::int)), \
-                 resolved_by = $3, next_escalation_at = NULL, recovering_since = NULL, \
-                 closing_notice_at = now(), resolved_at = now(), updated_at = now() \
-             WHERE id = $1 AND org_id = $2 RETURNING {OPS_COLS}"
-        );
+        let sql = resolve_sql();
         let public_resolution = Some(resolved_public_message(note.as_deref()));
         self.transition(
             org,
