@@ -44,8 +44,8 @@ impl Publishing<'_> {
             .await;
     }
 
-    /// The pages that show any of `ids` now, read before a group change so
-    /// the pages they leave are cleared too.
+    /// The pages carrying any of `ids` as a component now, read before a group
+    /// change or a delete so the pages they leave are cleared too.
     pub async fn pages_showing(&self, org: OrgId, ids: &[Uuid]) -> Vec<StatusPageId> {
         if ids.is_empty() {
             return Vec::new();

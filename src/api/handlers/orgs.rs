@@ -308,9 +308,8 @@ pub async fn update_org(
     if new_name.is_some() {
         match state.status_page_store.list(org_id).await {
             Ok(pages) => {
-                for page in pages {
-                    state.public_source.invalidate(page.id).await;
-                }
+                let ids = pages.into_iter().map(|page| page.id);
+                state.publishing().invalidate_pages(ids).await;
             }
             Err(e) => tracing::warn!(
                 error = %e,

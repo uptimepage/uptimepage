@@ -916,6 +916,79 @@ async fn a_group_edit_or_delete_clears_only_the_pages_showing_it() {
 
 #[tokio::test]
 #[ignore = "needs DATABASE_URL"]
+async fn section_and_monitor_changes_clear_the_page_showing_them() {
+    let source = Arc::new(common::Invalidations::default());
+    let seen = source.clone();
+    let Some(api) = Api::tweaked(
+        |_| {},
+        move |mut state| {
+            state.public_source = source;
+            state
+        },
+    )
+    .await
+    else {
+        return;
+    };
+    let slug = common::unique_slug("delclear");
+    let (status, page) = api
+        .send(
+            "POST",
+            "/api/v1/status-pages",
+            Some(json!({ "slug": slug, "name": "Status" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{page}");
+    let pid = id(&page);
+    let group = id(&api.group(json!({ "name": "DNS" })).await);
+    let alone = id(&api.monitor(json!({ "group_id": group })).await);
+    let bulked = id(&api.monitor(json!({ "group_id": group })).await);
+    api.monitor(json!({ "group_id": group })).await;
+    let page = StatusPageId(pid.parse().unwrap());
+    seen.0.lock().clear();
+
+    let (status, section) = api
+        .send(
+            "POST",
+            &format!("/api/v1/status-pages/{pid}/sections"),
+            Some(json!({ "group_id": group })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{section}");
+    assert_eq!(*seen.0.lock(), vec![page]);
+    seen.0.lock().clear();
+
+    let (status, body) = api
+        .send("DELETE", &format!("/api/v1/targets/{alone}"), None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(*seen.0.lock(), vec![page]);
+    seen.0.lock().clear();
+
+    let (status, body) = api
+        .send(
+            "POST",
+            "/api/v1/targets/bulk-action",
+            Some(json!({ "ids": [bulked], "action": { "type": "delete" } })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(*seen.0.lock(), vec![page]);
+    seen.0.lock().clear();
+
+    let (status, body) = api
+        .send(
+            "DELETE",
+            &format!("/api/v1/status-pages/{pid}/sections/{}", id(&section)),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(*seen.0.lock(), vec![page]);
+}
+
+#[tokio::test]
+#[ignore = "needs DATABASE_URL"]
 async fn a_group_section_round_trips_over_the_api() {
     let Some(api) = Api::new(|_| {}).await else {
         return;

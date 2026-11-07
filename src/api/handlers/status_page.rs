@@ -322,7 +322,10 @@ pub async fn update_page(
         )
         .await?
         .ok_or_else(page_not_found)?;
-    state.public_source.invalidate(StatusPageId(id)).await;
+    state
+        .publishing()
+        .invalidate_pages([StatusPageId(id)])
+        .await;
     state.page_gate.invalidate(StatusPageId(id)).await;
     // A page held because its plan lost private pages comes back once public.
     if opened && let Ok(pool) = state.require_db() {
@@ -397,7 +400,10 @@ pub async fn delete_page(
     {
         return Err(page_not_found());
     }
-    state.public_source.invalidate(StatusPageId(id)).await;
+    state
+        .publishing()
+        .invalidate_pages([StatusPageId(id)])
+        .await;
     if let Ok(pool) = state.require_db() {
         crate::quotas::holds::release_after_delete(pool, &state.quotas, org).await;
     }
@@ -464,7 +470,10 @@ pub async fn add_component(
                     .ensure_detail_share(org, StatusPageId(id), target_id, user)
                     .await?;
             }
-            state.public_source.invalidate(StatusPageId(id)).await;
+            state
+                .publishing()
+                .invalidate_pages([StatusPageId(id)])
+                .await;
             Ok(StatusCode::NO_CONTENT)
         }
         AddComponentOutcome::AlreadyOnPage => Err(AppError::conflict(
@@ -516,7 +525,10 @@ pub async fn update_component(
             .ensure_detail_share(org, StatusPageId(id), target_id, user)
             .await?;
     }
-    state.public_source.invalidate(StatusPageId(id)).await;
+    state
+        .publishing()
+        .invalidate_pages([StatusPageId(id)])
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -543,7 +555,10 @@ pub async fn remove_component(
     {
         return Err(component_not_found());
     }
-    state.public_source.invalidate(StatusPageId(id)).await;
+    state
+        .publishing()
+        .invalidate_pages([StatusPageId(id)])
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -808,7 +823,10 @@ pub async fn reorder_components(
         .status_page_store
         .reorder_components(org, StatusPageId(id), &req.target_ids)
         .await?;
-    state.public_source.invalidate(StatusPageId(id)).await;
+    state
+        .publishing()
+        .invalidate_pages([StatusPageId(id)])
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -865,7 +883,10 @@ pub async fn upload_logo(
             Some(user),
         )
         .await?;
-    state.public_source.invalidate(StatusPageId(id)).await;
+    state
+        .publishing()
+        .invalidate_pages([StatusPageId(id)])
+        .await;
 
     let base = public_base(&state.cfg, &page.slug);
     let url = public_logo_url(base.as_deref(), &meta.content_hash)
@@ -892,7 +913,10 @@ pub async fn delete_logo(
         .delete(org, StatusPageId(id), AssetSlot::Logo, Some(user))
         .await?
     {
-        state.public_source.invalidate(StatusPageId(id)).await;
+        state
+            .publishing()
+            .invalidate_pages([StatusPageId(id)])
+            .await;
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1162,9 +1186,10 @@ pub async fn add_section(
         Some(user),
     )
     .await?;
-    for page in change.pages {
-        state.public_source.invalidate(StatusPageId(page)).await;
-    }
+    state
+        .publishing()
+        .invalidate_pages(change.pages.into_iter().map(StatusPageId))
+        .await;
     let view = crate::storage::page_sections::list(pool, org, id)
         .await?
         .into_iter()
@@ -1190,7 +1215,10 @@ pub async fn update_section(
     let heading = clean_heading(upd.heading)?;
     let pool = state.require_db()?;
     crate::storage::page_sections::update(pool, org, id, section, heading, Some(user)).await?;
-    state.public_source.invalidate(StatusPageId(id)).await;
+    state
+        .publishing()
+        .invalidate_pages([StatusPageId(id)])
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1209,8 +1237,9 @@ pub async fn remove_section(
 ) -> Result<StatusCode> {
     let pool = state.require_db()?;
     let change = crate::storage::page_sections::remove(pool, org, id, section, Some(user)).await?;
-    for page in change.pages {
-        state.public_source.invalidate(StatusPageId(page)).await;
-    }
+    state
+        .publishing()
+        .invalidate_pages(change.pages.into_iter().map(StatusPageId))
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -365,7 +365,7 @@ impl McpServer {
             .map_err(config_error)?
             .ok_or_else(|| McpToolError::not_found("status page not found"))?;
 
-        self.state.public_source.invalidate(page.id).await;
+        self.state.publishing().invalidate_pages([page.id]).await;
         self.state.page_gate.invalidate(page.id).await;
         if was_private && args.access.as_ref().is_some_and(|a| !a.protected) {
             crate::quotas::holds::release_after_delete(
@@ -538,7 +538,7 @@ impl McpServer {
         }
 
         if added > 0 {
-            self.state.public_source.invalidate(page.id).await;
+            self.state.publishing().invalidate_pages([page.id]).await;
         }
         Ok(Json(ComponentsAdded {
             slug: page.slug,
@@ -696,7 +696,7 @@ impl McpServer {
             return Err(McpToolError::not_found("monitor is not on this page"));
         }
 
-        self.state.public_source.invalidate(page.id).await;
+        self.state.publishing().invalidate_pages([page.id]).await;
         Ok(Json(ComponentUpdated {
             slug: page.slug,
             monitor_id: Some(target_id.to_string()),
@@ -754,7 +754,7 @@ impl McpServer {
             } => McpToolError::not_found("section is not on this page"),
             other => config_error(other),
         })?;
-        self.state.public_source.invalidate(page.id).await;
+        self.state.publishing().invalidate_pages([page.id]).await;
         Ok(Json(ComponentUpdated {
             slug: page.slug.clone(),
             monitor_id: None,

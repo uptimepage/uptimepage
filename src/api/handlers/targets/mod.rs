@@ -701,15 +701,9 @@ pub async fn delete(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode> {
     // Resolve curated pages before the FK cascade clears the join rows.
-    let pages = state
-        .status_page_store
-        .pages_for_targets(org, &[id])
-        .await
-        .unwrap_or_default();
+    let pages = state.publishing().pages_showing(org, &[id]).await;
     if state.target_store.delete(org, id, Some(user)).await? {
-        for page in pages {
-            state.public_source.invalidate(page).await;
-        }
+        state.publishing().invalidate_pages(pages).await;
         // The delete closed the monitor's open incidents.
         state.nav_pill_cache.invalidate(&org);
         tell_responders_closed(&state, org, &[id]).await;
@@ -947,18 +941,12 @@ pub async fn bulk_action(
         }
         BulkAction::Delete {} => {
             // Capture curated pages before the cascade drops the join rows.
-            let pages = state
-                .status_page_store
-                .pages_for_targets(org, &req.ids)
-                .await
-                .unwrap_or_default();
+            let pages = state.publishing().pages_showing(org, &req.ids).await;
             let succeeded = state
                 .target_store
                 .delete_bulk(org, &req.ids, Some(user))
                 .await?;
-            for page in pages {
-                state.public_source.invalidate(page).await;
-            }
+            state.publishing().invalidate_pages(pages).await;
             // The delete closed the monitors' open incidents.
             state.nav_pill_cache.invalidate(&org);
             tell_responders_closed(&state, org, &succeeded).await;
