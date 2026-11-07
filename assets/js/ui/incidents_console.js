@@ -132,6 +132,20 @@
     return Array.from(picker.querySelectorAll("[data-incident-page]:checked")).map((c) => c.value);
   }
 
+  const DECLARE_TARGET = "[data-incident-declare-form] select[name=target_id]";
+
+  // Paging goes through the monitor, so it is offered only once one is
+  // picked, and the page picker only while none is.
+  function syncDeclareTarget(target) {
+    const picker = target.form.querySelector("[data-incident-pages]");
+    if (picker) picker.hidden = !!target.value;
+    const page = target.form.querySelector("input[name=notify][value='1']");
+    page.disabled = !target.value;
+    if (page.disabled && page.checked) {
+      target.form.querySelector("input[name=notify][value='0']").checked = true;
+    }
+  }
+
   function syncAllPages(picker) {
     const all = picker.querySelector("[data-incident-page-all]");
     if (!all) return;
@@ -321,14 +335,13 @@
     }
     const one = ev.target.closest("[data-incident-page]");
     if (one) return syncAllPages(one.closest("[data-incident-pages]"));
-    const target = ev.target.closest("[data-incident-declare-form] select[name=target_id]");
-    if (target) {
-      const picker = target.form.querySelector("[data-incident-pages]");
-      if (picker) picker.hidden = !!target.value;
-    }
+    const target = ev.target.closest(DECLARE_TARGET);
+    if (target) syncDeclareTarget(target);
   });
 
   root.querySelectorAll("[data-incident-pages]").forEach(syncAllPages);
+  root.querySelectorAll(DECLARE_TARGET).forEach(syncDeclareTarget);
+  window.addEventListener("pageshow", () => root.querySelectorAll(DECLARE_TARGET).forEach(syncDeclareTarget));
 
   root.addEventListener("submit", function (ev) {
     const declare = ev.target.closest("[data-incident-declare-form]");

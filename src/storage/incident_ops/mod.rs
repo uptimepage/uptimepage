@@ -370,6 +370,15 @@ pub(crate) fn pages_with_monitor() -> crate::error::AppError {
     )
 }
 
+/// A declared incident pages through its monitor's policy and channels, so
+/// with no monitor an alert would reach nobody.
+pub(crate) fn notify_needs_monitor() -> crate::error::AppError {
+    crate::error::AppError::unprocessable(
+        crate::error::codes::INCIDENT_NOTIFY_NEEDS_MONITOR,
+        "alerting needs a monitor: its escalation policy and channels decide who is paged",
+    )
+}
+
 /// Reopening would leave an incident open that nothing can page about or
 /// close: its monitor is gone.
 pub(crate) fn monitor_deleted() -> crate::error::AppError {

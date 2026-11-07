@@ -846,8 +846,9 @@ pub struct NewManualIncident {
     /// Publish to the incident's status pages as it opens.
     #[serde(default)]
     pub visibility: IncidentVisibility,
-    /// Alert the org's channels. Off by default: an unasked-for page reads as
-    /// the product misfiring.
+    /// Page through the monitor's escalation policy and channels, so it needs
+    /// `target_id`. Off by default: an unasked-for page reads as the product
+    /// misfiring.
     #[serde(default)]
     pub notify: bool,
     /// Off by default: a declaration has no failing check behind it.

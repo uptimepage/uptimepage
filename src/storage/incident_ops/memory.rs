@@ -22,7 +22,7 @@ use super::{
     Acknowledged, Actor, Attach, ClaimedEscalation, ClosingNotice, DueClosingNotices, DueIncident,
     EmergencyAck, FanOut, FanOutKind, INCIDENT_DETAIL_ROW_CAP, IncidentOpsFilter, IncidentOpsStore,
     IncidentSort, IncidentStateCounts, LifecycleOutcome, OwedPage, PendingNotification,
-    QUEUED_TAKEOVER_SECS, pages_with_monitor, status_page_required,
+    QUEUED_TAKEOVER_SECS, notify_needs_monitor, pages_with_monitor, status_page_required,
 };
 
 #[derive(Default)]
@@ -649,6 +649,9 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
     ) -> Result<OpsIncident> {
         if new.target_id.is_some() && !new.status_page_ids.is_empty() {
             return Err(pages_with_monitor());
+        }
+        if new.notify && new.target_id.is_none() {
+            return Err(notify_needs_monitor());
         }
         let monitor = match (&self.targets, new.target_id) {
             (Some(targets), Some(id)) => targets.get(org, id).await?,

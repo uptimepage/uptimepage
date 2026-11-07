@@ -127,7 +127,7 @@ Alerts can carry a second button, **Resolve**, next to **acknowledge** in the sa
 
 Gotify has no action buttons, so its notifications keep their one tap-through to the incident instead.
 
-Scheduled maintenance windows repaint the public status page and notify status-page subscribers. By default a window also holds paging for the monitors it covers: a monitor that fails during the window still opens an incident, but its channels stay quiet, and an incident still open when the window ends pages then. Switch **hold paging** off on a window to keep paging live through it. An incident you declare by hand always pages. See [Incident management](incidents.md#paging-and-escalation).
+Scheduled maintenance windows repaint the public status page and notify status-page subscribers. By default a window also holds paging for the monitors it covers: a monitor that fails during the window still opens an incident, but its channels stay quiet, and an incident still open when the window ends pages then. Switch **hold paging** off on a window to keep paging live through it. An incident you declare by hand with paging on pages through a window too. See [Incident management](incidents.md#paging-and-escalation).
 
 ## On-call
 

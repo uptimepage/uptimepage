@@ -1087,10 +1087,24 @@ async fn only_an_episode_that_may_page_owes_its_first_page() {
     };
     let loud = declare(true, Some(Uuid::now_v7())).await;
     let quiet = declare(false, Some(Uuid::now_v7())).await;
-    let nowhere = declare(true, None).await;
+    let nowhere = store
+        .declare(
+            org(),
+            crate::domain::NewManualIncident {
+                notify: true,
+                ..Default::default()
+            },
+            Actor::User(user()),
+        )
+        .await
+        .unwrap_err();
     assert!(store.owes_page(loud));
     assert!(!store.owes_page(quiet), "asked for no alerts");
-    assert!(!store.owes_page(nowhere), "no monitor to page through");
+    assert!(
+        matches!(nowhere, crate::error::AppError::Unprocessable { code, .. }
+            if code == crate::error::codes::INCIDENT_NOTIFY_NEEDS_MONITOR),
+        "no monitor to page through: {nowhere:?}"
+    );
 }
 
 #[tokio::test]

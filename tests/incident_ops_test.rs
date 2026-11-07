@@ -226,7 +226,8 @@ async fn an_incident_can_be_amended_after_it_is_declared_pg() {
 }
 
 /// Only an episode that may page owes one: a declare that asked for no alerts
-/// stays quiet, and one with no monitor has nothing to page through.
+/// stays quiet, and one with no monitor is refused, having nothing to page
+/// through.
 #[tokio::test]
 #[ignore]
 async fn only_a_declare_that_may_page_owes_a_page_pg() {
@@ -261,7 +262,17 @@ async fn only_a_declare_that_may_page_owes_a_page_pg() {
         .await
         .unwrap();
     let loud = declare(true, Some(target)).await;
-    let nowhere = declare(true, None).await;
+    let nowhere = store
+        .declare(
+            org,
+            NewManualIncident {
+                notify: true,
+                ..Default::default()
+            },
+            Actor::User(user),
+        )
+        .await
+        .unwrap_err();
 
     assert!(!owes_page(&pool, quiet).await, "asked for no alerts");
     assert!(
@@ -269,8 +280,9 @@ async fn only_a_declare_that_may_page_owes_a_page_pg() {
         "asked for alerts on a monitor"
     );
     assert!(
-        !owes_page(&pool, nowhere).await,
-        "no monitor to page through"
+        matches!(nowhere, uptimepage::error::AppError::Unprocessable { code, .. }
+            if code == uptimepage::error::codes::INCIDENT_NOTIFY_NEEDS_MONITOR),
+        "no monitor to page through: {nowhere:?}"
     );
     store.resolve(org, loud, Actor::System, None).await.unwrap();
     store

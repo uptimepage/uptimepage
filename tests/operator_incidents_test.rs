@@ -357,6 +357,23 @@ async fn a_declared_incident_stays_internal_unless_it_asks_to_be_public() {
         "INCIDENT_STATUS_PAGE_REQUIRED"
     );
 
+    // Alerts page through a monitor's policy and channels; with none they
+    // would reach nobody while answering success.
+    let resp = app
+        .clone()
+        .oneshot(owner_json(
+            "POST",
+            "/api/v1/incidents",
+            json!({ "title": "partner API down", "notify": true }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        body_json(resp).await["error"]["code"],
+        "INCIDENT_NOTIFY_NEEDS_MONITOR"
+    );
+
     let page = Uuid::now_v7();
     let resp = app
         .clone()

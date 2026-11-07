@@ -59,7 +59,7 @@ blurb = "Acknowledgement, ownership, on-call, escalation, and the retrospective 
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-29
+lastmod = 2026-11-07
 
 [[page]]
 slug = "monitor-types"
@@ -79,7 +79,7 @@ blurb = "Alert channels, how a monitor binds them, and what decides when an aler
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-26
+lastmod = 2026-11-07
 
 [[page]]
 slug = "groups"

@@ -129,6 +129,8 @@ pub const INCIDENT_MONITOR_DELETED: &str = "INCIDENT_MONITOR_DELETED";
 pub const INCIDENT_STATUS_PAGE_REQUIRED: &str = "INCIDENT_STATUS_PAGE_REQUIRED";
 /// Status pages were chosen for an incident whose monitor already decides them.
 pub const INCIDENT_STATUS_PAGES_WITH_MONITOR: &str = "INCIDENT_STATUS_PAGES_WITH_MONITOR";
+/// Alerts were asked for on an incident with no monitor to page through.
+pub const INCIDENT_NOTIFY_NEEDS_MONITOR: &str = "INCIDENT_NOTIFY_NEEDS_MONITOR";
 pub const INVALID_STATUS_PAGE_ID: &str = "INVALID_STATUS_PAGE_ID";
 pub const POSTMORTEM_NOT_FOUND: &str = "POSTMORTEM_NOT_FOUND";
 pub const ASSIGNEE_NOT_MEMBER: &str = "ASSIGNEE_NOT_MEMBER";

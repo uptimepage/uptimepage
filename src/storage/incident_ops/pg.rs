@@ -27,8 +27,8 @@ use super::{
     DueClosingNotices, DueIncident, EPISODE_EVENT_KINDS, EmergencyAck, FanOut, FanOutKind,
     INCIDENT_DETAIL_ROW_CAP, IncidentOpsFilter, IncidentOpsStore, IncidentStateCounts,
     LifecycleOutcome, OwedPage, PendingNotification, QUEUED_TAKEOVER_SECS, UpdateText,
-    may_page_predicate, opening_update_message, pages_with_monitor, status_page_required,
-    unnamed_sender,
+    may_page_predicate, notify_needs_monitor, opening_update_message, pages_with_monitor,
+    status_page_required, unnamed_sender,
 };
 
 pub struct PgIncidentOpsStore {
@@ -1134,6 +1134,9 @@ impl IncidentOpsStore for PgIncidentOpsStore {
     ) -> Result<OpsIncident> {
         if new.target_id.is_some() && !new.status_page_ids.is_empty() {
             return Err(pages_with_monitor());
+        }
+        if new.notify && new.target_id.is_none() {
+            return Err(notify_needs_monitor());
         }
         let mut tx = self
             .pool
