@@ -124,6 +124,7 @@ pub(super) fn parse(body: &[u8]) -> Result<Vec<AlertEvent>, Unparsed> {
         severity,
         firing: u32::from(action == EventAction::Fire),
         truncated: 0,
+        may_open: true,
         at,
         labels,
         annotations: Default::default(),

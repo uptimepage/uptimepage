@@ -6,12 +6,12 @@
 //! row. Attach and close both start at the group row, so neither can slip
 //! past the other.
 
-use anyhow::anyhow;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::domain::{IncidentEventKind, OrgId};
-use crate::error::{AppError, Result};
+use crate::error::Result;
+use crate::storage::db;
 use crate::storage::locks::{advisory_xact_lock, incident_lock_key};
 
 /// What attaching a member incident did.
@@ -36,10 +36,6 @@ struct PendingMember {
     status_at_start: String,
     target_id: Option<Uuid>,
     target_name: Option<String>,
-}
-
-fn db(context: &'static str) -> impl FnOnce(sqlx::Error) -> AppError {
-    move |e| AppError::Other(anyhow!("{context}: {e}"))
 }
 
 /// Takes the group row that attach, close and membership writes serialise on.

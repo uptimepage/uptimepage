@@ -1,5 +1,6 @@
 pub mod accounts;
 pub mod admin;
+pub mod alert_ingest;
 pub mod alert_sources;
 pub mod app_secrets;
 pub mod billing_events;
@@ -136,3 +137,9 @@ pub use traits::{
     TargetStore, TimeRange, UptimeStats, rollup_bucket_secs,
 };
 pub use variables::{CreateVariableOutcome, InMemoryVariableStore, PgVariableStore, VariableStore};
+
+/// Turns a database error into an [`crate::error::AppError`] naming what was
+/// being done.
+pub(crate) fn db(context: &'static str) -> impl FnOnce(sqlx::Error) -> crate::error::AppError {
+    move |e| crate::error::AppError::Other(anyhow::anyhow!("{context}: {e}"))
+}

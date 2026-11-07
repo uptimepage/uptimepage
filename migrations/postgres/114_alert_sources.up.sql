@@ -143,8 +143,16 @@ CREATE TABLE incident_alert_state (
     last_event_at TIMESTAMPTZ NOT NULL,
     repeat_count  INTEGER NOT NULL DEFAULT 0 CHECK (repeat_count >= 0),
     firing_count  INTEGER NOT NULL DEFAULT 1 CHECK (firing_count >= 0),
+    -- The worst the tool has said, so a person's downgrade is undone only by
+    -- the tool getting worse, not by it repeating itself.
+    reported_severity TEXT NOT NULL DEFAULT 'major'
+        CHECK (reported_severity IN ('minor', 'major', 'critical')),
     -- The sender's clock: the latest firing seen, NULL when it sent none.
     fired_at      TIMESTAMPTZ,
+    -- The sender's clock: every dated resolve that closed it, kept across
+    -- reopens. A later copy of one compares against these, never against when
+    -- we happened to process it.
+    resolved_ats  TIMESTAMPTZ[] NOT NULL DEFAULT '{}',
     labels        JSONB NOT NULL DEFAULT '{}',
     annotations   JSONB NOT NULL DEFAULT '{}',
     links         JSONB NOT NULL DEFAULT '[]'

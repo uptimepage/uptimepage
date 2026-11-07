@@ -25,6 +25,7 @@ use crate::storage::channel_bindings::{
     ALERT_CHANNEL_FIELD, BindingOwner, group_alerts_column, insert_bindings, lock_bound_channels,
     set_bindings,
 };
+use crate::storage::db;
 use crate::storage::group_incidents::{lock_group, lock_incident};
 use crate::storage::incident_ops::may_page_predicate;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock, incident_lock_key};
@@ -143,10 +144,6 @@ impl PgMonitorGroupStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
-}
-
-fn db(context: &'static str) -> impl FnOnce(sqlx::Error) -> AppError {
-    move |e| AppError::Other(anyhow!("{context}: {e}"))
 }
 
 fn name_taken(e: &sqlx::Error) -> bool {

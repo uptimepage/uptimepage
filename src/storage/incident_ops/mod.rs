@@ -33,6 +33,7 @@ mod pg;
 mod tests;
 
 pub use memory::InMemoryIncidentOpsStore;
+pub(crate) use pg::insert_event_tx;
 pub use pg::{PgIncidentOpsStore, auto_resolve_in_tx, resolve_in_tx};
 
 /// A `queued` row is a first attempt still in flight; the retry sweep takes it

@@ -29,6 +29,7 @@ use crate::storage::channel_bindings::{
     ALERT_CHANNEL_FIELD, BindingOwner, insert_bindings, lock_bound_channels, set_bindings,
     source_alerts_column,
 };
+use crate::storage::db;
 use crate::storage::heartbeats::PREV_TOKEN_OVERLAP;
 use crate::storage::incident_ops::{Actor, LifecycleOutcome, resolve_in_tx};
 use crate::storage::locks::{account_lock_key, advisory_xact_lock, alert_source_lock_key};
@@ -203,10 +204,6 @@ pub trait AlertSourceStore: Send + Sync {
     /// The source `raw` opens, in a live org. A superseded token inside its
     /// overlap matches and has its last use stamped.
     async fn find_by_token(&self, raw: &str) -> Result<Option<TokenMatch>>;
-}
-
-fn db(context: &'static str) -> impl FnOnce(sqlx::Error) -> AppError {
-    move |e| AppError::Other(anyhow!("{context}: {e}"))
 }
 
 fn name_taken(e: &sqlx::Error) -> bool {

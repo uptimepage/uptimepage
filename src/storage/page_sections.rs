@@ -10,7 +10,6 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use anyhow::anyhow;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
@@ -20,6 +19,7 @@ use uuid::Uuid;
 use crate::domain::{OrgId, UserId};
 use crate::error::{AppError, Result, codes};
 use crate::storage::accounts::{self, live_orgs};
+use crate::storage::db;
 use crate::storage::group_incidents::lock_group;
 use crate::storage::locks::{account_lock_key, advisory_xact_lock};
 use crate::storage::orgs::record_audit_tx;
@@ -58,10 +58,6 @@ pub struct PageRowChange {
     pub pages: BTreeSet<Uuid>,
     /// Rows the public component limit left off.
     pub left_off: usize,
-}
-
-fn db(context: &'static str) -> impl FnOnce(sqlx::Error) -> AppError {
-    move |e| AppError::Other(anyhow!("{context}: {e}"))
 }
 
 /// The rows the monitors in `moves` gain and lose on pages with a section for

@@ -54,9 +54,11 @@ pub struct AlertEvent {
     /// Alerts firing under this key, cut ones included. Capped at what the
     /// database column holds.
     pub firing: u32,
-    /// Alerts the sender cut from the payload. A resolve with any cut is not
-    /// trusted to mean everything recovered.
+    /// Alerts the sender cut from the payload.
     pub truncated: u64,
+    /// False for a resolve we cannot trust, read as a repeat: it keeps an
+    /// open incident open and never opens one.
+    pub may_open: bool,
     /// The sender's own time: the latest start among firing alerts for a
     /// fire, the latest end for a resolve. `None` when it sent none.
     pub at: Option<DateTime<Utc>>,
@@ -102,6 +104,14 @@ pub fn parse(
         }
         AlertSourceKind::Datadog => datadog::parse(body),
     }
+}
+
+/// Whether [`parse`] reads a `kind`'s body differently under each grouping.
+pub fn parses_by_grouping(kind: AlertSourceKind) -> bool {
+    matches!(
+        kind,
+        AlertSourceKind::Alertmanager | AlertSourceKind::Grafana
+    )
 }
 
 /// The stored form of a sender's key: as sent when it fits and is not one the

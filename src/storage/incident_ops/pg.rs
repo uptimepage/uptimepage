@@ -329,7 +329,7 @@ fn row_to_notif(r: NotifRow) -> IncidentNotification {
 /// Insert one internal timeline entry inside an open transaction. Assumes the
 /// caller already proved the incident exists in `org` (e.g. via the locking
 /// `SELECT ... FOR UPDATE`), so it binds `org.0` directly.
-async fn insert_event_tx(
+pub(crate) async fn insert_event_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: OrgId,
     incident_id: Uuid,

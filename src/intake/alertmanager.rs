@@ -133,9 +133,10 @@ pub(super) fn parse(grouping: AlertGrouping, body: &[u8]) -> Result<Vec<AlertEve
 fn group_event(body: Body, group_status: EventAction) -> Result<AlertEvent, Unparsed> {
     let key = stored_key(&body.group_key).ok_or_else(|| Unparsed::new("groupKey is empty"))?;
     let firing: Vec<&Alert> = body.alerts.iter().filter(|a| a.firing()).collect();
-    let action = match (group_status, body.truncated_alerts) {
-        (EventAction::Resolve, cut) if cut > 0 => EventAction::Fire,
-        (status, _) => status,
+    let distrusted = group_status == EventAction::Resolve && body.truncated_alerts > 0;
+    let action = match distrusted {
+        true => EventAction::Fire,
+        false => group_status,
     };
     let at = match action {
         EventAction::Fire => firing.iter().filter_map(|a| a.started()).max(),
@@ -188,6 +189,7 @@ fn group_event(body: Body, group_status: EventAction) -> Result<AlertEvent, Unpa
         severity,
         firing: firing_count,
         truncated: body.truncated_alerts,
+        may_open: !distrusted,
         at,
         labels: clean_labels(pairs(labels)),
         annotations: clean_annotations(pairs(annotations)),
@@ -227,6 +229,7 @@ fn alert_event(
         severity: label_severity(alert.labels.get("severity").map(String::as_str)),
         firing: u32::from(action == EventAction::Fire),
         truncated,
+        may_open: true,
         at: match action {
             EventAction::Fire => alert.started(),
             EventAction::Resolve => alert.ended(),
@@ -298,6 +301,10 @@ mod tests {
         assert_eq!(e.action, EventAction::Fire);
         assert_eq!(e.truncated, 1);
         assert_eq!(e.firing, 1, "the cut alert counts as firing");
+        assert!(
+            !e.may_open,
+            "it never opens an incident for a recovered group"
+        );
     }
 
     #[test]

@@ -120,6 +120,7 @@ pub(super) fn parse(body: &[u8]) -> Result<Vec<AlertEvent>, Unparsed> {
         severity,
         firing: u32::from(action == EventAction::Fire),
         truncated: 0,
+        may_open: true,
         at,
         labels: clean_labels(tags.iter().map(|(k, v)| (k.as_str(), v.as_str()))),
         annotations: Default::default(),

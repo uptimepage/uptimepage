@@ -13,6 +13,7 @@ use uuid::Uuid;
 use crate::domain::{ExternalId, Linked, LinkedApp, LinkedAppAccount, OrgId, UserId};
 use crate::error::{AppError, Result};
 use crate::security::app_link::{OfferTerms, offer_terms};
+use crate::storage::db;
 use crate::storage::locks::{advisory_xact_lock, app_account_lock_key, app_link_user_lock_key};
 
 /// The side of a link that whoever spends a code proves.
@@ -94,10 +95,6 @@ fn clean_label(label: Option<&str>) -> Option<String> {
         .map(|l| l.chars().take(MAX_LABEL_CHARS).collect())
 }
 
-fn db_err(what: &'static str) -> impl FnOnce(sqlx::Error) -> AppError {
-    move |e| AppError::Other(anyhow::anyhow!("{what}: {e}"))
-}
-
 fn terms(app: LinkedApp) -> Result<OfferTerms> {
     offer_terms(app).ok_or_else(|| {
         AppError::Other(anyhow::anyhow!(
@@ -129,7 +126,7 @@ pub async fn purge_dead_codes(pool: &PgPool) -> Result<u64> {
     .bind(now)
     .execute(pool)
     .await
-    .map_err(db_err("purge app link codes"))?;
+    .map_err(db("purge app link codes"))?;
     Ok(done.rows_affected())
 }
 
@@ -153,7 +150,7 @@ impl LinkedAppStore for PgLinkedAppStore {
         .bind(user.0)
         .fetch_all(&self.pool)
         .await
-        .map_err(db_err("linked app accounts"))?;
+        .map_err(db("linked app accounts"))?;
         Ok(rows
             .into_iter()
             .filter_map(|(id, app, label, linked_at)| {
@@ -174,7 +171,7 @@ impl LinkedAppStore for PgLinkedAppStore {
             .bind(user.0)
             .execute(&self.pool)
             .await
-            .map_err(db_err("unlink app account"))?;
+            .map_err(db("unlink app account"))?;
         Ok(done.rows_affected() > 0)
     }
 
@@ -185,7 +182,7 @@ impl LinkedAppStore for PgLinkedAppStore {
                 .bind(account.hex())
                 .execute(&self.pool)
                 .await
-                .map_err(db_err("release app account"))?;
+                .map_err(db("release app account"))?;
         Ok(done.rows_affected() > 0)
     }
 
@@ -201,7 +198,7 @@ impl LinkedAppStore for PgLinkedAppStore {
         .bind(account.hex())
         .fetch_optional(&self.pool)
         .await
-        .map_err(db_err("resolve linked app"))?;
+        .map_err(db("resolve linked app"))?;
         Ok(match row {
             Some((user, true)) => Linked::Member(UserId(user)),
             Some((_, false)) => Linked::Outsider,
@@ -215,10 +212,10 @@ impl LinkedAppStore for PgLinkedAppStore {
         code_hash: &str,
         expires_at: DateTime<Utc>,
     ) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db_err("begin"))?;
+        let mut tx = self.pool.begin().await.map_err(db("begin"))?;
         advisory_xact_lock(&mut *tx, &app_link_user_lock_key(user))
             .await
-            .map_err(db_err("app link user lock"))?;
+            .map_err(db("app link user lock"))?;
         sqlx::query(
             "DELETE FROM app_link_challenges \
              WHERE app = 'telegram' AND user_id = $1 AND consumed_at IS NULL",
@@ -226,7 +223,7 @@ impl LinkedAppStore for PgLinkedAppStore {
         .bind(user.0)
         .execute(&mut *tx)
         .await
-        .map_err(db_err("void telegram link codes"))?;
+        .map_err(db("void telegram link codes"))?;
         sqlx::query(
             "INSERT INTO app_link_challenges (code_hash, app, user_id, expires_at) \
              VALUES ($1, 'telegram', $2, $3)",
@@ -236,8 +233,8 @@ impl LinkedAppStore for PgLinkedAppStore {
         .bind(expires_at)
         .execute(&mut *tx)
         .await
-        .map_err(db_err("mint telegram link code"))?;
-        tx.commit().await.map_err(db_err("commit"))?;
+        .map_err(db("mint telegram link code"))?;
+        tx.commit().await.map_err(db("commit"))?;
         Ok(())
     }
 
@@ -251,11 +248,11 @@ impl LinkedAppStore for PgLinkedAppStore {
     ) -> Result<bool> {
         let terms = terms(app)?;
         let account = account.hex();
-        let mut tx = self.pool.begin().await.map_err(db_err("begin"))?;
+        let mut tx = self.pool.begin().await.map_err(db("begin"))?;
         if let Some(cooldown) = terms.cooldown {
             advisory_xact_lock(&mut *tx, &app_account_lock_key(app.as_db_str(), &account))
                 .await
-                .map_err(db_err("app account lock"))?;
+                .map_err(db("app account lock"))?;
             let recent: bool = sqlx::query_scalar(
                 "SELECT EXISTS (SELECT 1 FROM app_link_challenges \
                                 WHERE app = $1 AND external_hash = $2 AND created_at > $3)",
@@ -265,7 +262,7 @@ impl LinkedAppStore for PgLinkedAppStore {
             .bind(now - cooldown)
             .fetch_one(&mut *tx)
             .await
-            .map_err(db_err("recent link offer"))?;
+            .map_err(db("recent link offer"))?;
             if recent {
                 return Ok(false);
             }
@@ -283,8 +280,8 @@ impl LinkedAppStore for PgLinkedAppStore {
         .bind(now + terms.ttl)
         .execute(&mut *tx)
         .await
-        .map_err(db_err("mint link offer"))?;
-        tx.commit().await.map_err(db_err("commit"))?;
+        .map_err(db("mint link offer"))?;
+        tx.commit().await.map_err(db("commit"))?;
         Ok(true)
     }
 
@@ -298,7 +295,7 @@ impl LinkedAppStore for PgLinkedAppStore {
         .bind(app.as_db_str())
         .execute(&self.pool)
         .await
-        .map_err(db_err("withdraw link offer"))?;
+        .map_err(db("withdraw link offer"))?;
         Ok(())
     }
 
@@ -312,7 +309,7 @@ impl LinkedAppStore for PgLinkedAppStore {
         .bind(app.as_db_str())
         .fetch_optional(&self.pool)
         .await
-        .map_err(db_err("link offer"))?;
+        .map_err(db("link offer"))?;
         Ok(row.map(|(label,)| label))
     }
 
@@ -322,7 +319,7 @@ impl LinkedAppStore for PgLinkedAppStore {
         code_hash: &str,
         claimant: Claimant<'_>,
     ) -> Result<LinkOutcome> {
-        let mut tx = self.pool.begin().await.map_err(db_err("begin"))?;
+        let mut tx = self.pool.begin().await.map_err(db("begin"))?;
         let code: Option<(Option<Uuid>, Option<String>, Option<String>)> = sqlx::query_as(
             "UPDATE app_link_challenges SET consumed_at = now() \
              WHERE code_hash = $1 AND app = $2 AND consumed_at IS NULL AND expires_at > now() \
@@ -332,7 +329,7 @@ impl LinkedAppStore for PgLinkedAppStore {
         .bind(app.as_db_str())
         .fetch_optional(&mut *tx)
         .await
-        .map_err(db_err("spend app link code"))?;
+        .map_err(db("spend app link code"))?;
         // Returning drops the transaction, so a refusal leaves the code live.
         let (user, account, label) = match (claimant, code) {
             (Claimant::Account { id, label }, Some((Some(user), None, _))) => {
@@ -351,7 +348,7 @@ impl LinkedAppStore for PgLinkedAppStore {
         .bind(label)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(db_err("link app account"))?;
+        .map_err(db("link app account"))?;
         let outcome = if inserted.is_some() {
             LinkOutcome::Linked(user)
         } else {
@@ -362,13 +359,13 @@ impl LinkedAppStore for PgLinkedAppStore {
             .bind(&account)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(db_err("app account holder"))?;
+            .map_err(db("app account holder"))?;
             if holder != Some(user.0) {
                 return Ok(LinkOutcome::Taken);
             }
             LinkOutcome::AlreadyYours(user)
         };
-        tx.commit().await.map_err(db_err("commit"))?;
+        tx.commit().await.map_err(db("commit"))?;
         Ok(outcome)
     }
 }
