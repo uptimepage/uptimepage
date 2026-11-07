@@ -96,13 +96,18 @@ async fn access_log(req: Request, next: Next) -> Response {
     resp
 }
 
+/// Paths whose first segment is a credential. `deployment/Caddyfile` redacts
+/// the same list from the edge logs.
+const CAPABILITY_PATH_PREFIXES: [&str; 4] = ["/m/", "/ping/", "/ical/", "/c/"];
+
 /// Replace a path-segment capability token (`/m/{token}` share links,
-/// `/ping/{token}` heartbeat pings, `/ical/{token}.ics` on-call feeds) with a
-/// placeholder so the secret never reaches stdout logs or the exported span.
+/// `/ping/{token}` heartbeat pings, `/ical/{token}.ics` on-call feeds,
+/// `/c/{code}` delegated connect links) with a placeholder so the secret never
+/// reaches stdout logs or the exported span.
 /// It's a path segment, not a query param, so the access path's
 /// query-stripping would miss it.
 fn scrub_capability_token(path: &str) -> std::borrow::Cow<'_, str> {
-    for prefix in ["/m/", "/ping/", "/ical/"] {
+    for prefix in CAPABILITY_PATH_PREFIXES {
         if let Some(rest) = path.strip_prefix(prefix) {
             let tail = rest
                 .split_once('/')
@@ -1155,7 +1160,31 @@ async fn wait_for_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::scrub_capability_token;
+    use super::{CAPABILITY_PATH_PREFIXES, scrub_capability_token};
+
+    #[test]
+    fn the_edge_redacts_the_prefixes_the_app_scrubs() {
+        let caddy =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/deployment/Caddyfile"))
+                .expect("read Caddyfile");
+        let mut want: Vec<&str> = CAPABILITY_PATH_PREFIXES
+            .iter()
+            .map(|p| p.trim_matches('/'))
+            .collect();
+        want.sort_unstable();
+        let rules: Vec<&str> = caddy.lines().filter(|l| l.contains("/{token}`")).collect();
+        assert!(!rules.is_empty(), "no token redaction in the Caddyfile");
+        for rule in rules {
+            let alternation = rule
+                .split_once(")/(")
+                .and_then(|(_, rest)| rest.split_once(')'))
+                .map(|(alt, _)| alt)
+                .expect("a prefix alternation");
+            let mut got: Vec<&str> = alternation.split('|').collect();
+            got.sort_unstable();
+            assert_eq!(got, want, "{rule}");
+        }
+    }
 
     #[test]
     fn scrub_capability_token_masks_the_capability_segment() {
@@ -1177,6 +1206,10 @@ mod tests {
             scrub_capability_token("/ical/abc123secret.ics"),
             "/ical/{token}"
         );
+        assert_eq!(
+            scrub_capability_token("/c/abc123secret/slack/start"),
+            "/c/{token}/slack/start"
+        );
     }
 
     #[test]
@@ -1185,5 +1218,6 @@ mod tests {
         assert_eq!(scrub_capability_token("/"), "/");
         // A path that merely starts with /m but isn't the share surface.
         assert_eq!(scrub_capability_token("/metrics"), "/metrics");
+        assert_eq!(scrub_capability_token("/channels"), "/channels");
     }
 }

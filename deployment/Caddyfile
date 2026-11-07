@@ -31,7 +31,8 @@
 #   - Hides /metrics from the public internet (still scrapeable internally)
 #   - Per-IP rate limit on the public status surface
 #   - Security headers (HSTS, X-Frame-Options, CSP, etc.)
-#   - JSON access logs with rotation
+#   - JSON access logs with rotation, capability tokens and query strings
+#     redacted
 #
 # Required environment variables (see .env.example):
 #   UPTIMEPAGE_DOMAIN       — base domain, e.g. example.com
@@ -42,8 +43,41 @@
 #
 # Required only for the *.{domain} wildcard surface (SaaS):
 #   HETZNER_DNS_API_TOKEN       — zone-edit token for the DNS-01 challenge
+# Log format for every host that serves a credential in its URL: the path
+# tokens of /ping/, /m/, /ical/ and /c/ become {token}, as the app writes them
+# in its own logs, and the query string is dropped whole so a new route that
+# carries a token in it cannot be missed. Referer gets the same, since a
+# same-origin request from one of those pages carries its full URL, and so
+# does Location, since an OAuth start redirects with its state in it. Defined
+# before the global options because the default logger below imports it, and
+# Caddy expands an import where it reads it.
+(redacted_url) {
+	{args[0]} multi_regexp {
+		regexp `^((?:https?://[^/]+)?)/(ping|m|ical|c)/[^/?#]+` `$1/$2/{token}`
+		regexp `\?.*$` ""
+	}
+}
+
+(redacted_format) {
+	format filter {
+		wrap json
+		fields {
+			import redacted_url request>uri
+			import redacted_url request>headers>Referer
+			import redacted_url resp_headers>Location
+		}
+	}
+}
+
 {
 	email {$UPTIMEPAGE_ACME_EMAIL}
+
+	# Error entries carry the request too, and go to the default logger
+	# rather than a site's access log.
+	log default {
+		output stderr
+		import redacted_format
+	}
 
 	# `invoke app_upstream` ends a route the way a terminal `reverse_proxy`
 	# does, so it must sort after every handle and respond in a site.
@@ -660,7 +694,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 			roll_keep 5
 			roll_keep_for 336h
 		}
-		format json
+		import redacted_format
 	}
 
 	# ─── Reverse proxy to the Rust service ──────────────────────────────
@@ -715,7 +749,7 @@ mcp.{$UPTIMEPAGE_DOMAIN} {
 			roll_keep 5
 			roll_keep_for 336h
 		}
-		format json
+		import redacted_format
 	}
 }
 
@@ -782,7 +816,7 @@ mcp.{$UPTIMEPAGE_DOMAIN} {
 			roll_keep 5
 			roll_keep_for 336h
 		}
-		format json
+		import redacted_format
 	}
 
 	# The app reads the original Host to map slug → org; Caddy forwards it
@@ -948,7 +982,7 @@ https:// {
 			roll_keep 5
 			roll_keep_for 336h
 		}
-		format json
+		import redacted_format
 	}
 
 	invoke app_upstream
