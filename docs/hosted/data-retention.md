@@ -36,6 +36,8 @@ Uptime over a window that has no data at all is reported as unknown rather than 
 | Server access and error logs | 30 days |
 | Heartbeat pings (when each signal arrived, exit status, run duration) | 30 days |
 | Output your job posts with a heartbeat ping | 7 days |
+| Alert deliveries (when each alert arrived from an alert source, its key, what it did) | 30 days |
+| The start of each alert body an alert source sends, except one that only repeats an alert already open and changes nothing | 7 days |
 | Browser flow runs (which steps ran, how long each took) | 30 days |
 | Browser flow failure evidence (page URL, title, visible text, console) | 7 days |
 

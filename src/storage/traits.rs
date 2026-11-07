@@ -89,6 +89,13 @@ pub trait HeartbeatPingSink: Send + Sync {
     async fn write_ping(&self, ping: &HeartbeatPingRecord);
 }
 
+/// Infallible by signature for the same reason: the events already did what
+/// they did, so a failed write costs the delivery log, never an incident.
+#[async_trait]
+pub trait AlertEventSink: Send + Sync {
+    async fn write_deliveries(&self, rows: &[crate::storage::alert_ingest::Delivery]);
+}
+
 /// One stored flow run. `evidence` is `None` both once its shorter window has
 /// passed and when the run never captured a page — `evidence_expired` is what
 /// tells the two apart, decided by the table that applied the window.

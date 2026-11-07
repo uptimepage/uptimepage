@@ -50,6 +50,9 @@ pub enum Status {
     Capped,
     /// The body could not be read and went to the unparsed incident.
     Unparsed,
+    /// Not applied: the database failed or did not keep up. The sender is
+    /// answered 503 and sends the body again.
+    Unavailable,
     /// The source was deleted since its token was checked.
     Gone,
 }
@@ -65,9 +68,27 @@ impl Status {
             Self::Held => "held",
             Self::Capped => "capped",
             Self::Unparsed => "unparsed",
+            Self::Unavailable => "unavailable",
             Self::Gone => "gone",
         }
     }
+}
+
+/// One line of a source's delivery log: one event of one request, or the
+/// request itself when it carried none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Delivery {
+    pub org_id: Uuid,
+    pub source_id: Uuid,
+    /// When the request arrived, shared by every event in it.
+    pub received_at: DateTime<Utc>,
+    pub status: Status,
+    pub dedup_key: String,
+    pub incident_id: Option<Uuid>,
+    pub note: String,
+    /// The start of the request's body, on its first line only, and empty
+    /// when every event in it was a repeat.
+    pub body: String,
 }
 
 /// An event's result: what it did, the incident it touched, and what to tell
@@ -80,6 +101,9 @@ pub struct Applied {
     pub signals: Vec<(Uuid, NotificationReason)>,
     /// Why it was ignored, for the delivery log.
     pub note: Option<&'static str>,
+    /// What the event changed beyond its status: a repeat's severity, firing
+    /// count, labels, annotations, links or start, or a summary it closed.
+    pub changed: bool,
 }
 
 impl Applied {
@@ -89,6 +113,7 @@ impl Applied {
             incident: None,
             signals: Vec::new(),
             note: None,
+            changed: false,
         }
     }
 
@@ -216,6 +241,14 @@ impl AlertIngest {
         stamp_event(&mut tx, org, live.id).await?;
         tx.commit().await.map_err(db("ingest: commit"))?;
         Ok(Ingested::Applied(applied))
+    }
+
+    /// Notes that `source` sent something that named no alert, so it still
+    /// reads as alive.
+    pub async fn heard(&self, org: OrgId, source: &AlertSource) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(db("ingest: begin"))?;
+        stamp_event(&mut tx, org, source.id).await?;
+        tx.commit().await.map_err(db("ingest: commit"))
     }
 
     /// A body from `source` that could not be read: one incident holds every
@@ -509,7 +542,7 @@ async fn repeat(
         )
         .await?;
     }
-    sqlx::query(
+    let changed: Option<bool> = sqlx::query_scalar(
         "UPDATE incident_alert_state SET \
              last_event_at = now(), repeat_count = repeat_count + 1, firing_count = $3, \
              fired_at = GREATEST(fired_at, $4), labels = $5, annotations = $6, links = $7, \
@@ -518,7 +551,11 @@ async fn repeat(
            AND (firing_count <> $3 OR fired_at IS DISTINCT FROM GREATEST(fired_at, $4) \
                 OR labels IS DISTINCT FROM $5 OR annotations IS DISTINCT FROM $6 \
                 OR links IS DISTINCT FROM $7 OR reported_severity <> $9 \
-                OR last_event_at < now() - make_interval(secs => $8))",
+                OR last_event_at < now() - make_interval(secs => $8)) \
+         RETURNING (old.firing_count, old.fired_at, old.labels, old.annotations, old.links, \
+                    old.reported_severity) \
+               IS DISTINCT FROM (new.firing_count, new.fired_at, new.labels, \
+                    new.annotations, new.links, new.reported_severity)",
     )
     .bind(open.id)
     .bind(org.0)
@@ -529,10 +566,13 @@ async fn repeat(
     .bind(serde_json::json!(event.links))
     .bind(COALESCE_SECS)
     .bind(event.severity.max(reported).as_db_str())
-    .execute(&mut **tx)
+    .fetch_optional(&mut **tx)
     .await
     .map_err(db("ingest: repeat"))?;
-    Ok(Applied::on(Status::Repeat, open.id))
+    Ok(Applied {
+        changed: raised || changed.unwrap_or(false),
+        ..Applied::on(Status::Repeat, open.id)
+    })
 }
 
 /// Counts a refused key on the source's summary incident, opening it the
@@ -581,9 +621,10 @@ async fn close_summary_if_room(
     };
     let note = format!("{} is back under its limit of open alerts", live.name);
     match resolve_in_tx(tx, org, summary.id, Actor::System, note).await? {
-        LifecycleOutcome::Updated(_) => {
-            Ok(applied.signalling(summary.id, NotificationReason::Resolved))
-        }
+        LifecycleOutcome::Updated(_) => Ok(Applied {
+            changed: true,
+            ..applied.signalling(summary.id, NotificationReason::Resolved)
+        }),
         _ => Ok(applied),
     }
 }

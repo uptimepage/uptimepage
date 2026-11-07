@@ -333,6 +333,19 @@ fn windows_match_the_shipped_config_and_clickhouse_ttl() {
         )) && m4.contains("TTL received_at + toIntervalDay(evidence_days)"),
         "job output must expire on its own per-column TTL = FLOW_EVIDENCE_DAYS"
     );
+    let m8 = include_str!("../migrations/clickhouse/008_alert_events.sql");
+    assert!(
+        m8.contains(&format!(
+            "ttl_days      UInt16 DEFAULT {CHECK_RESULTS_RAW_DAYS}"
+        )) && m8.contains("TTL toDateTime(received_at) + toIntervalDay(ttl_days)"),
+        "alert_events row retention must be the per-row ttl_days DEFAULT = CHECK_RESULTS_RAW_DAYS"
+    );
+    assert!(
+        m8.contains(&format!(
+            "evidence_days UInt16 DEFAULT {FLOW_EVIDENCE_DAYS}"
+        )) && m8.contains("TTL toDateTime(received_at) + toIntervalDay(evidence_days)"),
+        "an alert body must expire on its own per-column TTL = FLOW_EVIDENCE_DAYS"
+    );
     let pg = include_str!("../migrations/postgres/034_flow_plan_limits.up.sql");
     assert!(
         pg.contains(&format!(

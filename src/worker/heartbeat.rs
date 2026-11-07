@@ -7,37 +7,30 @@
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
-use governor::clock::DefaultClock;
-use governor::state::keyed::DashMapStateStore;
-use governor::{Quota, RateLimiter};
 use std::collections::HashMap;
-use std::num::NonZeroU32;
 use uuid::Uuid;
 
 use crate::domain::heartbeat::PingState;
 use crate::domain::{CheckResult, CheckStatus, HeartbeatCheck, PingSignal};
+use crate::security::token_limiter::TokenLimiter;
 
 /// Per-token accepted-ping rate + burst; extra pings 429. Keyed pre-resolve so
 /// rejected pings never reach Postgres.
 const PING_PER_SEC: u32 = 1;
 const PING_BURST: u32 = 10;
 
-type PingLimiter = RateLimiter<u128, DashMapStateStore<u128>, DefaultClock>;
-
 /// Shared main↔worker state: the cache the executor reads, plus the ingest
 /// rate limiter.
 pub struct HeartbeatRuntime {
     states: DashMap<Uuid, PingState>,
-    ping_limiter: PingLimiter,
+    ping_limiter: TokenLimiter,
 }
 
 impl Default for HeartbeatRuntime {
     fn default() -> Self {
-        let quota = Quota::per_second(NonZeroU32::new(PING_PER_SEC).expect("nonzero"))
-            .allow_burst(NonZeroU32::new(PING_BURST).expect("nonzero"));
         Self {
             states: DashMap::new(),
-            ping_limiter: RateLimiter::dashmap(quota),
+            ping_limiter: TokenLimiter::new(PING_PER_SEC, PING_BURST),
         }
     }
 }
@@ -63,12 +56,12 @@ impl HeartbeatRuntime {
         for (id, state) in fresh {
             self.record(id, state);
         }
-        self.ping_limiter.retain_recent();
+        self.ping_limiter.sweep();
     }
 
     /// Keyed on the presented token's hash. A rejected ping reserves nothing.
     pub fn allow_ping(&self, token_key: u128) -> bool {
-        self.ping_limiter.check_key(&token_key).is_ok()
+        self.ping_limiter.check(token_key).is_ok()
     }
 }
 

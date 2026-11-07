@@ -44,16 +44,16 @@
 # Required only for the *.{domain} wildcard surface (SaaS):
 #   HETZNER_DNS_API_TOKEN       — zone-edit token for the DNS-01 challenge
 # Log format for every host that serves a credential in its URL: the path
-# tokens of /ping/, /m/, /ical/ and /c/ become {token}, as the app writes them
-# in its own logs, and the query string is dropped whole so a new route that
-# carries a token in it cannot be missed. Referer gets the same, since a
+# tokens of /ping/, /m/, /ical/, /c/ and /hooks/alerts/ become {token}, as
+# the app writes them in its own logs, and the query string is dropped whole
+# so a new route that carries a token in it cannot be missed. Referer gets the same, since a
 # same-origin request from one of those pages carries its full URL, and so
 # does Location, since an OAuth start redirects with its state in it. Defined
 # before the global options because the default logger below imports it, and
 # Caddy expands an import where it reads it.
 (redacted_url) {
 	{args[0]} multi_regexp {
-		regexp `^((?:https?://[^/]+)?)/(ping|m|ical|c)/[^/?#]+` `$1/$2/{token}`
+		regexp `^((?:https?://[^/]+)?)/(ping|m|ical|c|hooks/alerts)/[^/?#]+` `$1/$2/{token}`
 		regexp `\?.*$` ""
 	}
 }
@@ -653,6 +653,39 @@ app.{$UPTIMEPAGE_DOMAIN} {
 			}
 		}
 		invoke app_upstream
+	}
+
+	# ─── Alert ingest — capability token, per-IP edge cap ───────────────
+	# Other tools page people through here. The token, in the path or a
+	# Bearer header, is checked in-app with its own per-token limit, so this
+	# cap only bounds lookups of made-up tokens. It is set high because
+	# Datadog and Grafana Cloud send every customer's alerts from shared
+	# egress, so customers behind one address share it. The body bound is
+	# the app's own, room for a group of thousands of alerts; a larger body
+	# is refused here and pages nobody.
+	@alert_hook path /hooks/alerts /hooks/alerts/*
+	handle @alert_hook {
+		request_body {
+			max_size 8MiB
+		}
+		rate_limit {
+			zone alert_hook {
+				key {remote_host}
+				ipv6_prefix 64
+				events 6000
+				window 1m
+			}
+		}
+		invoke app_upstream
+	}
+
+	# Alertmanager and Datadog drop an alert answered 429 but retry a 5xx,
+	# so the alert hook's throttle answers 503. Every other 429 is left as
+	# it is.
+	handle_errors 429 {
+		@alert_hook_throttled path /hooks/alerts /hooks/alerts/*
+		header @alert_hook_throttled ?Retry-After 60
+		respond @alert_hook_throttled "Too many alerts from this address; send again shortly." 503
 	}
 
 	# ─── Operator surface: app-enforced session auth (SaaS) ─────────────

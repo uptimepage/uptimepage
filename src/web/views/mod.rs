@@ -1,4 +1,5 @@
 pub mod alert_channel_stop;
+pub mod alert_hook;
 mod app_press;
 pub mod auth;
 pub mod billing;

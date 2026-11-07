@@ -20,11 +20,15 @@ mod sinks;
 
 pub use results::ClickhouseResultsStore;
 pub use schema::migrate;
-pub use sinks::{ClickhouseFlowRunSink, ClickhouseHeartbeatPingSink, ClickhouseResultSink};
+pub use sinks::{
+    ClickhouseAlertEventSink, ClickhouseFlowRunSink, ClickhouseHeartbeatPingSink,
+    ClickhouseResultSink,
+};
 
 const TABLE: &str = "check_results";
 const FLOW_TABLE: &str = "flow_runs";
 const HEARTBEAT_PING_TABLE: &str = "heartbeat_pings";
+const ALERT_EVENT_TABLE: &str = "alert_events";
 
 /// Seconds bound for the matview `minute` column (`DateTime`).
 #[derive(Serialize)]

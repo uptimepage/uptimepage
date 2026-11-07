@@ -109,6 +109,14 @@ pub const INVALID_SIGNING_SECRET: &str = "INVALID_SIGNING_SECRET";
 pub const ALERT_SOURCE_NO_ROUTE: &str = "ALERT_SOURCE_NO_ROUTE";
 /// Grouping changes the dedupe key, so it waits until nothing is open.
 pub const ALERT_SOURCE_GROUPING_LOCKED: &str = "ALERT_SOURCE_GROUPING_LOCKED";
+/// The ingest route's answers a sender reads in its own log.
+pub const ALERT_TOKEN_UNKNOWN: &str = "ALERT_TOKEN_UNKNOWN";
+pub const ALERT_SIGNATURE_INVALID: &str = "ALERT_SIGNATURE_INVALID";
+pub const ALERT_SOURCE_HELD: &str = "ALERT_SOURCE_HELD";
+pub const ALERT_BODY_TOO_LARGE: &str = "ALERT_BODY_TOO_LARGE";
+pub const ALERT_BODY_STALLED: &str = "ALERT_BODY_STALLED";
+pub const ALERT_BODY_INCOMPLETE: &str = "ALERT_BODY_INCOMPLETE";
+pub const ALERT_INGEST_UNAVAILABLE: &str = "ALERT_INGEST_UNAVAILABLE";
 pub const GROUP_NOT_FOUND: &str = "GROUP_NOT_FOUND";
 pub const SECTION_NOT_FOUND: &str = "SECTION_NOT_FOUND";
 pub const SECTION_EXISTS: &str = "SECTION_EXISTS";

@@ -98,11 +98,12 @@ async fn access_log(req: Request, next: Next) -> Response {
 
 /// Paths whose first segment is a credential. `deployment/Caddyfile` redacts
 /// the same list from the edge logs.
-const CAPABILITY_PATH_PREFIXES: [&str; 4] = ["/m/", "/ping/", "/ical/", "/c/"];
+const CAPABILITY_PATH_PREFIXES: [&str; 5] = ["/m/", "/ping/", "/ical/", "/c/", "/hooks/alerts/"];
 
 /// Replace a path-segment capability token (`/m/{token}` share links,
 /// `/ping/{token}` heartbeat pings, `/ical/{token}.ics` on-call feeds,
-/// `/c/{code}` delegated connect links) with a placeholder so the secret never
+/// `/c/{code}` delegated connect links, `/hooks/alerts/{token}` alert
+/// ingest) with a placeholder so the secret never
 /// reaches stdout logs or the exported span.
 /// It's a path segment, not a query param, so the access path's
 /// query-stripping would miss it.
@@ -257,6 +258,11 @@ async fn main() -> Result<()> {
     let heartbeat_ping_sink: Arc<dyn uptimepage::storage::traits::HeartbeatPingSink> = Arc::new(
         ClickhouseHeartbeatPingSink::new(clickhouse_client.clone(), org_ttl.clone()),
     );
+    let alert_event_sink: Arc<dyn uptimepage::storage::traits::AlertEventSink> =
+        Arc::new(uptimepage::storage::ClickhouseAlertEventSink::new(
+            clickhouse_client.clone(),
+            org_ttl.clone(),
+        ));
     let ch_client_for_public = clickhouse_client.clone();
     let ch_client_for_purge = clickhouse_client.clone();
     let ch_client_for_region = clickhouse_client.clone();
@@ -879,6 +885,7 @@ async fn main() -> Result<()> {
     let state = state
         .with_flow_run_sink(flow_run_sink_for_state)
         .with_heartbeat_ping_sink(heartbeat_ping_sink)
+        .with_alert_event_sink(alert_event_sink)
         .with_telegram_send_budget(telegram_send_budget)
         .with_incident_signals(incident_signal_tx)
         .with_subscription_unsubscribe_secret(unsubscribe_secret)
@@ -1214,6 +1221,10 @@ mod tests {
             scrub_capability_token("/c/abc123secret/slack/start"),
             "/c/{token}/slack/start"
         );
+        assert_eq!(
+            scrub_capability_token("/hooks/alerts/abc123secret"),
+            "/hooks/alerts/{token}"
+        );
     }
 
     #[test]
@@ -1223,5 +1234,6 @@ mod tests {
         // A path that merely starts with /m but isn't the share surface.
         assert_eq!(scrub_capability_token("/metrics"), "/metrics");
         assert_eq!(scrub_capability_token("/channels"), "/channels");
+        assert_eq!(scrub_capability_token("/hooks/alerts"), "/hooks/alerts");
     }
 }

@@ -97,6 +97,13 @@ pub fn routes(state: AppState) -> Router {
             "/ping/{token}/{signal}",
             get(views::heartbeat::ping_signal).post(views::heartbeat::ping_signal),
         )
+        // Alerts other tools send in, token-authenticated like the pings: in
+        // the path, or as a Bearer header where the tool can send one.
+        .route("/hooks/alerts", post(views::alert_hook::receive_bearer))
+        .route(
+            "/hooks/alerts/{token}",
+            post(views::alert_hook::receive_path),
+        )
         // A member's on-call shifts as a calendar feed, token-authenticated
         // like the share links so a calendar app can fetch it.
         .route("/ical/{file}", get(views::on_call_shifts::feed))

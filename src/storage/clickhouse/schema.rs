@@ -81,6 +81,13 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "007_check_details.sql",
         include_str!("../../../migrations/clickhouse/007_check_details.sql"),
     ),
+    // 008 `alert_events`: each alert source's delivery log, one row per event.
+    // The body sample takes the shorter `evidence_days` window, as in
+    // `heartbeat_pings`. Org erasure must clear it too.
+    (
+        "008_alert_events.sql",
+        include_str!("../../../migrations/clickhouse/008_alert_events.sql"),
+    ),
 ];
 
 pub async fn migrate(client: &Client) -> Result<()> {

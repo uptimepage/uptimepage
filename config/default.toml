@@ -486,6 +486,14 @@ oauth_enabled = false
 # Default 1 hour.
 access_token_ttl_secs = 3600
 
+[alert_intake]
+# How much of each alert body the delivery log keeps. 0 keeps none.
+body_sample_bytes = 4096
+
+# Keep the body of a request that only repeats alerts already open and
+# changes nothing. Off: repeats are most of the traffic.
+keep_repeat_bodies = false
+
 [escalation]
 # How often failed pages are re-attempted.
 tick_interval_secs = 15

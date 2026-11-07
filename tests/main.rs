@@ -10,6 +10,8 @@ mod admin_repo_test;
 mod admin_variable_resolution_test;
 mod agent_auth_test;
 mod alert_channel_stop_test;
+mod alert_events_ch_test;
+mod alert_hook_test;
 mod alert_ingest_test;
 mod alert_paging_pg_test;
 mod alert_sources_test;

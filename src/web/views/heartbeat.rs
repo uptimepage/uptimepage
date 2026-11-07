@@ -12,7 +12,7 @@ use futures::StreamExt;
 
 use crate::app::AppState;
 use crate::domain::{CheckResult, HeartbeatPingRecord, Ping};
-use crate::security::sha256_hex;
+use crate::storage::capability_token;
 use crate::storage::heartbeats::PingAccepted;
 
 /// Excess is drained and dropped, never refused: a 413 on a success ping would
@@ -25,12 +25,6 @@ const BODY_DRAIN_LIMIT: usize = 256 * 1024;
 /// Without this a trickled body is a slowloris on an unauthenticated route.
 /// The verdict is already written, so a dropped tail costs output only.
 const BODY_READ_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// First half of the token's SHA-256, so GCRA runs before any database work.
-fn token_key(raw: &str) -> u128 {
-    let hex = sha256_hex(raw);
-    u128::from_str_radix(&hex[..32], 16).unwrap_or(0)
-}
 
 pub async fn ping(
     State(state): State<AppState>,
@@ -52,7 +46,10 @@ pub async fn ping_signal(
 }
 
 async fn record(state: &AppState, token: String, ping: Ping, body: Body) -> Response {
-    if !state.heartbeat_runtime.allow_ping(token_key(&token)) {
+    if !state
+        .heartbeat_runtime
+        .allow_ping(capability_token::rate_key(&token))
+    {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             [(axum::http::header::RETRY_AFTER, "1")],

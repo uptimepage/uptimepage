@@ -112,6 +112,9 @@ pub struct AppState {
     /// `None` without ClickHouse, where pings still move the verdict but leave
     /// no run log.
     pub heartbeat_ping_sink: Option<Arc<dyn crate::storage::traits::HeartbeatPingSink>>,
+    /// `None` without ClickHouse, where alerts still open incidents but leave
+    /// no delivery log.
+    pub alert_event_sink: Option<Arc<dyn crate::storage::traits::AlertEventSink>>,
     pub http_clients: Arc<HttpClients>,
     pub server_names: Arc<crate::net::server_names::ServerNames>,
     pub worker_pool: Arc<WorkerPool>,
@@ -136,6 +139,14 @@ pub struct AppState {
     /// In-memory heartbeat anchors + ping rate state, taken from the worker
     /// pool's executor so the two can never diverge.
     pub heartbeat_runtime: Arc<crate::worker::heartbeat::HeartbeatRuntime>,
+    /// Alert sources and their ingest tokens (`/hooks/alerts`). Built from
+    /// `db` like the heartbeat store.
+    pub alert_source_store: Arc<dyn crate::storage::alert_sources::AlertSourceStore>,
+    /// What an alert event does to incidents. `None` without Postgres, where
+    /// the ingest route answers as it does for an unknown token.
+    pub alert_ingest: Option<Arc<crate::storage::alert_ingest::AlertIngest>>,
+    /// Per-token rate and body-read bounds of the ingest route.
+    pub alert_gate: Arc<crate::intake::gate::IntakeGate>,
     /// Manual monitor states. Built from `db` so `AppState::new`'s signature
     /// stays unchanged.
     pub manual_store: Arc<dyn crate::storage::ManualStore>,
@@ -421,6 +432,18 @@ impl AppState {
             None => Arc::new(crate::storage::InMemoryHeartbeatStore::new()),
         };
         let heartbeat_runtime = worker_pool.heartbeat_runtime();
+        let alert_source_store: Arc<dyn crate::storage::alert_sources::AlertSourceStore> = match db
+            .clone()
+        {
+            Some(pool) => Arc::new(crate::storage::alert_sources::PgAlertSourceStore::new(
+                pool,
+                cipher.clone(),
+            )),
+            None => Arc::new(crate::storage::alert_sources::InMemoryAlertSourceStore::default()),
+        };
+        let alert_ingest = db
+            .clone()
+            .map(|pool| Arc::new(crate::storage::alert_ingest::AlertIngest::new(pool)));
         let manual_store: Arc<dyn crate::storage::ManualStore> = match db.clone() {
             Some(pool) => Arc::new(crate::storage::PgManualStore::new(pool)),
             None => Arc::new(crate::storage::InMemoryManualStore::new()),
@@ -488,6 +511,7 @@ impl AppState {
             result_sink,
             flow_run_sink: None,
             heartbeat_ping_sink: None,
+            alert_event_sink: None,
             server_names: Arc::new(crate::net::server_names::ServerNames::new(Arc::new(
                 http_clients.resolver().inner().clone(),
             ))),
@@ -505,6 +529,9 @@ impl AppState {
             monitor_share_store,
             heartbeat_store,
             heartbeat_runtime,
+            alert_source_store,
+            alert_ingest,
+            alert_gate: Arc::new(crate::intake::gate::IntakeGate::default()),
             manual_store,
             manual_runtime,
             variable_store,
@@ -618,6 +645,14 @@ impl AppState {
         sink: Arc<dyn crate::storage::traits::HeartbeatPingSink>,
     ) -> Self {
         self.heartbeat_ping_sink = Some(sink);
+        self
+    }
+
+    pub fn with_alert_event_sink(
+        mut self,
+        sink: Arc<dyn crate::storage::traits::AlertEventSink>,
+    ) -> Self {
+        self.alert_event_sink = Some(sink);
         self
     }
 

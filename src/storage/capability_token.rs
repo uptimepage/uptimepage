@@ -30,6 +30,13 @@ pub fn hash(raw: &str) -> String {
     sha256_hex(raw)
 }
 
+/// Rate-limit key for a presented raw token: the first half of its SHA-256,
+/// so a limiter can run before any database work.
+pub fn rate_key(raw: &str) -> u128 {
+    let hex = sha256_hex(raw);
+    u128::from_str_radix(&hex[..32], 16).unwrap_or(0)
+}
+
 /// Recover the raw token from its sealed copy. `None` when it is an envelope
 /// but no KEK is available (e.g. the key was rotated out).
 pub fn open(sealed: &str, cipher: Option<&Cipher>) -> Option<String> {

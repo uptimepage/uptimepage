@@ -63,6 +63,24 @@ fn prime_event_counters() {
     for reason in ["signature", "malformed", "failed", "stalled"] {
         metrics::counter!(metric_names::BILLING_WEBHOOK_REJECTED, "reason" => reason).increment(0);
     }
+    for outcome in [
+        "accepted",
+        "held",
+        "unknown_token",
+        "throttled",
+        "too_large",
+        "stalled",
+        "incomplete",
+        "bad_signature",
+        "unavailable",
+    ] {
+        metrics::counter!(metric_names::ALERT_REQUESTS, "outcome" => outcome).increment(0);
+    }
+    for status in [
+        "opened", "repeat", "resolved", "ignored", "paused", "held", "capped", "unparsed", "gone",
+    ] {
+        metrics::counter!(metric_names::ALERT_EVENTS, "status" => status).increment(0);
+    }
     metrics::counter!(metric_names::LONG_DOWN_SLOWED).increment(0);
     for reason in ["incident", "maintenance", "check_now"] {
         metrics::counter!(metric_names::LONG_DOWN_RESTORED, "reason" => reason).increment(0);
@@ -80,6 +98,8 @@ fn prime_event_counters() {
         "flow_run_buffer_full",
         "flow_run_write_failed",
         "heartbeat_ping_write_failed",
+        "alert_event_write_failed",
+        "alert_event_buffer_full",
     ] {
         metrics::counter!(metric_names::STORAGE_DROPPED, "reason" => reason).increment(0);
     }
@@ -95,6 +115,14 @@ fn register_descriptions() {
     describe_counter!(
         "uptimepage_alerts_damped_total",
         "Incident alerts held because the monitor is flapping"
+    );
+    describe_counter!(
+        "uptimepage_alert_requests_total",
+        "Requests to the alert ingest route, labelled by outcome"
+    );
+    describe_counter!(
+        "uptimepage_alert_events_total",
+        "Alert events applied to incidents, labelled by what each did"
     );
     describe_counter!(
         "uptimepage_alerts_held_maintenance_total",

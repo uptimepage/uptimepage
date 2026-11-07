@@ -15,6 +15,7 @@ pub mod redaction;
 pub mod sign_in_code;
 pub mod ssrf;
 pub mod token_hash;
+pub mod token_limiter;
 
 pub use abuse::{AbuseGuard, AbuseHit, AbuseKind};
 pub use cert_probe::{CertFacts, CertProbeError};

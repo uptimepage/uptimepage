@@ -11,10 +11,13 @@ use crate::domain::quota::RetentionDays;
 use crate::domain::{CheckDetails, CheckResult, HeartbeatPingRecord};
 use crate::error::Result;
 use crate::metric_names;
+use crate::storage::alert_ingest::{Delivery, Status};
 use crate::storage::org_ttl::OrgTtlDays;
-use crate::storage::traits::{FlowRunSink, HeartbeatPingSink, ResultSink};
+use crate::storage::traits::{AlertEventSink, FlowRunSink, HeartbeatPingSink, ResultSink};
 
-use super::{FLOW_TABLE, HEARTBEAT_PING_TABLE, TABLE, insert_backoff, to_unix_secs};
+use super::{
+    ALERT_EVENT_TABLE, FLOW_TABLE, HEARTBEAT_PING_TABLE, TABLE, insert_backoff, to_unix_secs,
+};
 
 pub struct ClickhouseResultSink {
     client: Client,
@@ -399,5 +402,97 @@ impl<'a> HeartbeatPingRow<'a> {
             evidence_days: ttl.evidence,
             ttl_days: ttl.row,
         }
+    }
+}
+
+/// One insert per request, unbatched: a request is already a batch.
+pub struct ClickhouseAlertEventSink {
+    client: Client,
+    org_ttl: OrgTtlDays,
+}
+
+impl ClickhouseAlertEventSink {
+    pub fn new(client: Client, org_ttl: OrgTtlDays) -> Self {
+        Self { client, org_ttl }
+    }
+}
+
+#[async_trait]
+impl AlertEventSink for ClickhouseAlertEventSink {
+    async fn write_deliveries(&self, rows: &[Delivery]) {
+        let Some(first) = rows.first() else {
+            return;
+        };
+        let ttl = self.org_ttl.days_for(first.org_id);
+        let rows: Vec<AlertEventRow<'_>> = rows
+            .iter()
+            .filter_map(|r| AlertEventRow::from_delivery(r, ttl))
+            .collect();
+        let backoff = insert_backoff();
+        let op = || async {
+            let mut insert = self
+                .client
+                .insert::<AlertEventRow>(ALERT_EVENT_TABLE)
+                .await
+                .map_err(backoff::Error::transient)?;
+            for row in &rows {
+                insert.write(row).await.map_err(backoff::Error::transient)?;
+            }
+            insert.end().await.map_err(backoff::Error::transient)
+        };
+        if let Err(err) = backoff::future::retry(backoff, op).await {
+            tracing::error!(?err, "alert event insert failed after retries");
+            counter!(metric_names::STORAGE_DROPPED, "reason" => "alert_event_write_failed")
+                .increment(rows.len() as u64);
+        }
+    }
+}
+
+#[derive(Debug, Row, Serialize)]
+struct AlertEventRow<'a> {
+    #[serde(with = "clickhouse::serde::uuid")]
+    org_id: Uuid,
+    #[serde(with = "clickhouse::serde::uuid")]
+    source_id: Uuid,
+    #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
+    received_at: chrono::DateTime<chrono::Utc>,
+    outcome: i8,
+    dedup_key: &'a str,
+    #[serde(with = "clickhouse::serde::uuid::option")]
+    incident_id: Option<Uuid>,
+    note: &'a str,
+    body: &'a str,
+    evidence_days: u16,
+    ttl_days: u16,
+}
+
+impl<'a> AlertEventRow<'a> {
+    /// `None` for an event whose source was deleted mid-request: nobody
+    /// reads its log.
+    fn from_delivery(r: &'a Delivery, ttl: RetentionDays) -> Option<Self> {
+        let outcome = match r.status {
+            Status::Opened => 1,
+            Status::Repeat => 2,
+            Status::Resolved => 3,
+            Status::Ignored => 4,
+            Status::Paused => 5,
+            Status::Held => 6,
+            Status::Capped => 7,
+            Status::Unparsed => 8,
+            Status::Unavailable => 9,
+            Status::Gone => return None,
+        };
+        Some(Self {
+            org_id: r.org_id,
+            source_id: r.source_id,
+            received_at: r.received_at,
+            outcome,
+            dedup_key: &r.dedup_key,
+            incident_id: r.incident_id,
+            note: &r.note,
+            body: &r.body,
+            evidence_days: ttl.evidence,
+            ttl_days: ttl.row,
+        })
     }
 }

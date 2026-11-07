@@ -63,8 +63,8 @@ pub use channel_link_codes::{
     LinkCodeStatus, LinkPurpose, MintOutcome, PgChannelLinkCodeStore,
 };
 pub use clickhouse::{
-    ClickhouseFlowRunSink, ClickhouseHeartbeatPingSink, ClickhouseResultSink,
-    ClickhouseResultsStore, build_client, migrate,
+    ClickhouseAlertEventSink, ClickhouseFlowRunSink, ClickhouseHeartbeatPingSink,
+    ClickhouseResultSink, ClickhouseResultsStore, build_client, migrate,
 };
 pub use contacts::{ContactStore, InMemoryContactStore, PgContactStore};
 pub use domain_expiry_state::{

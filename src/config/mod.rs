@@ -43,7 +43,9 @@ pub use notify::{
     SlackInteractivityConfig, TelegramBotConfig, TransactionalEmailConfig, WhatsAppAppBotConfig,
 };
 pub use observability::{GrafanaConfig, HeartbeatConfig, LogFormat, ObservabilityConfig};
-pub use ops::{AgentConfig, EscalationConfig, FlowConfig, McpConfig, OperatorConfig};
+pub use ops::{
+    AgentConfig, AlertIntakeConfig, EscalationConfig, FlowConfig, McpConfig, OperatorConfig,
+};
 pub use public::{
     CHECK_RESULTS_HISTORY_MONTHS, CHECK_RESULTS_RAW_DAYS, FLOW_EVIDENCE_DAYS, LegalConfig,
     PublicStatusConfig, RetentionConfig, SiteConfig, TenancyConfig,
@@ -195,6 +197,8 @@ pub struct AppConfig {
     pub mcp: McpConfig,
     #[serde(default)]
     pub escalation: EscalationConfig,
+    #[serde(default)]
+    pub alert_intake: AlertIntakeConfig,
     #[serde(default)]
     pub agent: AgentConfig,
 

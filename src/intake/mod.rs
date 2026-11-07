@@ -4,6 +4,7 @@
 
 mod alertmanager;
 mod datadog;
+pub mod gate;
 mod generic;
 pub mod signature;
 

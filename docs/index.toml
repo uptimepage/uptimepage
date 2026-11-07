@@ -239,7 +239,7 @@ blurb = "How long raw checks, rollups, incidents, and audit records are kept on 
 section = "hosted"
 scope = "hosted"
 created = 2026-07-22
-lastmod = 2026-09-10
+lastmod = 2026-11-08
 
 [[page]]
 slug = "hosted/support"
@@ -259,7 +259,7 @@ blurb = "Every configuration key, its default, and the environment variable that
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-07-22
-lastmod = 2026-11-03
+lastmod = 2026-11-08
 
 [[page]]
 slug = "bot"
@@ -309,7 +309,7 @@ blurb = "The Prometheus series the service exposes and how to ship traces off th
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-07-22
-lastmod = 2026-11-06
+lastmod = 2026-11-08
 
 [[page]]
 slug = "troubleshooting"

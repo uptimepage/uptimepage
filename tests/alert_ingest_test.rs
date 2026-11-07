@@ -707,6 +707,7 @@ async fn freed_room_closes_the_summary_on(prefix: &str, next: AlertEvent, status
             .signals
             .contains(&(summary, NotificationReason::Resolved))
     );
+    assert!(applied.changed, "closing the summary is a change");
     assert_eq!(f.row(summary).await.0, "resolved");
 }
 
@@ -727,6 +728,34 @@ async fn an_ignored_resolve_closes_a_summary_once_people_freed_room_pg() {
         Status::Ignored,
     )
     .await;
+}
+
+/// The delivery log keeps a repeat's body only when it changed something.
+#[tokio::test]
+#[ignore]
+async fn a_repeat_says_whether_it_changed_the_incident_pg() {
+    let Some(f) = fx("ingestchanged").await else {
+        return;
+    };
+    let fire = event("c1", EventAction::Fire);
+    assert_eq!(f.apply(&fire).await.status, Status::Opened);
+    let same = f.apply(&fire).await;
+    assert_eq!((same.status, same.changed), (Status::Repeat, false));
+    let more = f
+        .apply(&AlertEvent {
+            firing: 5,
+            ..fire.clone()
+        })
+        .await;
+    assert_eq!((more.status, more.changed), (Status::Repeat, true));
+    let worse = f
+        .apply(&AlertEvent {
+            firing: 5,
+            severity: IncidentSeverity::Critical,
+            ..fire.clone()
+        })
+        .await;
+    assert!(worse.changed, "a raise is a change");
 }
 
 /// A body read under one grouping, applied after the grouping changed, would

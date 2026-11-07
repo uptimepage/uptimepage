@@ -74,12 +74,13 @@ const DRAIN_ROW_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Every ClickHouse table carrying per-org data. Erasure must clear all of them
 /// before a queue row may settle.
-const CH_TENANT_TABLES: [&str; 5] = [
+const CH_TENANT_TABLES: [&str; 6] = [
     "check_results",
     "check_results_1m",
     "check_results_1h",
     "flow_runs",
     "heartbeat_pings",
+    "alert_events",
 ];
 
 /// Run one full purge cycle: cascade PG-side deletes for past-grace orgs,

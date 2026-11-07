@@ -76,6 +76,27 @@ impl Default for FlowConfig {
     }
 }
 
+/// `[alert_intake]`. Alerts other tools send to `/hooks/alerts`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct AlertIntakeConfig {
+    /// How much of a request's body the delivery log keeps. 0 keeps none.
+    pub body_sample_bytes: usize,
+    /// Keep the body sample for a request that only repeated alerts already
+    /// open. Off by default: repeats are most of the traffic, and the body
+    /// that opened the incident is kept either way.
+    pub keep_repeat_bodies: bool,
+}
+
+impl Default for AlertIntakeConfig {
+    fn default() -> Self {
+        Self {
+            body_sample_bytes: 4096,
+            keep_repeat_bodies: false,
+        }
+    }
+}
+
 /// `[agent]`. Turns this process into a stateless regional probe: it pulls its
 /// region's monitor config from a control plane and ships results back, running
 /// no web/Postgres/ClickHouse/alerting of its own. Off by default (the process
