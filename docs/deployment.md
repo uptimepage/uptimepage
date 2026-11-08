@@ -22,6 +22,59 @@ docker compose up -d
 
 `deployment/README.md` is the authoritative source for setup, signing in, backups, and troubleshooting.
 
+### ClickHouse system logs
+
+If you bring your own ClickHouse, apply the same system-log settings as the
+shipped [`deployment/clickhouse-config.xml`](../deployment/clickhouse-config.xml).
+ClickHouse's system-log tables are written continuously and are unbounded by
+default, so they can grow much larger than the uptimepage data and consume
+CPU on an otherwise idle server. The bundled config disables the diagnostic
+logs, keeps `query_log` and `part_log` for short-term debugging, and samples
+asynchronous metrics every 60 seconds instead of every second.
+
+For a self-managed instance, save this as a file such as
+`/etc/clickhouse-server/config.d/uptimepage-system-logs.xml`:
+
+```xml
+<clickhouse>
+    <asynchronous_metrics_update_period_s>60</asynchronous_metrics_update_period_s>
+
+    <asynchronous_metric_log remove="1"/>
+    <asynchronous_insert_log remove="1"/>
+    <backup_log remove="1"/>
+    <error_log remove="1"/>
+    <crash_log remove="1"/>
+    <metric_log remove="1"/>
+    <query_metric_log remove="1"/>
+    <query_thread_log remove="1"/>
+    <query_views_log remove="1"/>
+    <session_log remove="1"/>
+    <text_log remove="1"/>
+    <trace_log remove="1"/>
+    <opentelemetry_span_log remove="1"/>
+    <zookeeper_log remove="1"/>
+    <zookeeper_connection_log remove="1"/>
+    <aggregated_zookeeper_log remove="1"/>
+    <processors_profile_log remove="1"/>
+    <latency_log remove="1"/>
+    <background_schedule_pool_log remove="1"/>
+
+    <query_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+        <max_size_rows>1048576</max_size_rows>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </query_log>
+    <part_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+        <max_size_rows>1048576</max_size_rows>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </part_log>
+</clickhouse>
+```
+
+Restart ClickHouse after adding the file. `remove="1"` is safe when a log is
+not present; it disables that system log rather than failing configuration.
+
 ### Authentication boundary
 
 The Rust service ships an in-binary auth stack (GitHub, Google, Microsoft and GitLab OAuth, opaque API tokens, and magic-link sign-in, all enabled by default and each individually configurable). The native auth is the boundary; a basic-auth layer in front of Caddy would double-prompt. Single-tenant deploys behave the same way. Note that OAuth sign-up provisions an org for any identity that completes the flow, so an internet-facing instance that should not accept strangers needs a network or edge restriction of its own.
