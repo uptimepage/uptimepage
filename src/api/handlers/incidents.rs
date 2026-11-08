@@ -227,12 +227,17 @@ pub struct IncidentDetail {
     /// A group incident's member incidents, in the order they joined. Empty
     /// for any other incident.
     pub members: Vec<OpsIncident>,
+    /// What the tool last said, on an incident an alert source opened.
+    #[schema(nullable = true)]
+    pub alert_state: Option<crate::domain::IncidentAlertState>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ListIncidentsQuery {
     /// Filter by operational state: `triggered`, `acknowledged`, `resolved`.
     pub state: Option<String>,
+    /// Only incidents this alert source opened, including after its delete.
+    pub source: Option<Uuid>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
 }
@@ -324,6 +329,7 @@ fn lifecycle_response(outcome: LifecycleOutcome) -> Result<Json<OpsIncident>> {
     summary = "List operational incidents (newest first)",
     params(
         ("state" = Option<String>, Query, description = "triggered | acknowledged | resolved"),
+        ("source" = Option<Uuid>, Query, description = "Only incidents this alert source opened"),
         ("limit" = Option<usize>, Query),
     ),
     responses((status = 200, body = [OpsIncident]), (status = 400, body = ApiError)),
@@ -335,6 +341,7 @@ pub async fn list_incidents(
 ) -> Result<Json<Vec<OpsIncident>>> {
     let filter = IncidentOpsFilter {
         state: parse_state_filter(q.state.as_deref())?,
+        alert_source: q.source,
         limit: q.limit,
         offset: q.offset.unwrap_or(0),
         ..Default::default()
@@ -370,11 +377,16 @@ pub async fn get_incident(
         }
         _ => Vec::new(),
     };
+    let alert_state = match (incident.origin, state.alert_ingest.as_ref()) {
+        (IncidentOrigin::Alert, Some(ingest)) => ingest.state_of(org, id).await?,
+        _ => None,
+    };
     Ok(Json(IncidentDetail {
         incident,
         timeline,
         status_page_ids,
         members,
+        alert_state,
     }))
 }
 

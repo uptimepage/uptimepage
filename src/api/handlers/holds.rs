@@ -48,6 +48,10 @@ pub struct HoldsResponse {
     pub targets: Vec<HeldItem>,
     /// Status pages the plan is not covering right now.
     pub status_pages: Vec<HeldItem>,
+    /// Alert sources the plan is not covering right now: a firing for a new
+    /// key answers 403, and resolves still close. Held newest first, with no
+    /// pick.
+    pub alert_sources: Vec<HeldItem>,
 }
 
 /// The ids to keep, one list per resource. Anything the plan cannot cover
@@ -83,11 +87,7 @@ pub async fn list_holds(
 ) -> Result<Json<HoldsResponse>> {
     let account = owned_account(&state, org, user).await?;
     let pool = state.require_db()?;
-    let (targets, status_pages) = crate::quotas::holds::list_held(pool, account).await?;
-    Ok(Json(HoldsResponse {
-        targets: targets.into_iter().map(HeldItem::from).collect(),
-        status_pages: status_pages.into_iter().map(HeldItem::from).collect(),
-    }))
+    Ok(Json(held(pool, account).await?))
 }
 
 #[utoipa::path(
@@ -127,11 +127,19 @@ pub async fn set_holds(
         Some(actor),
     )
     .await?;
+    Ok(Json(held(pool, account).await?))
+}
+
+async fn held(pool: &sqlx::PgPool, account: crate::domain::AccountId) -> Result<HoldsResponse> {
     let (targets, status_pages) = crate::quotas::holds::list_held(pool, account).await?;
-    Ok(Json(HoldsResponse {
-        targets: targets.into_iter().map(HeldItem::from).collect(),
-        status_pages: status_pages.into_iter().map(HeldItem::from).collect(),
-    }))
+    let alert_sources = crate::quotas::holds::list_held_alert_sources(pool, account).await?;
+    let items =
+        |rows: Vec<crate::quotas::holds::Held>| rows.into_iter().map(HeldItem::from).collect();
+    Ok(HoldsResponse {
+        targets: items(targets),
+        status_pages: items(status_pages),
+        alert_sources: items(alert_sources),
+    })
 }
 
 impl From<crate::quotas::holds::Held> for HeldItem {

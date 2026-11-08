@@ -258,11 +258,10 @@ async fn main() -> Result<()> {
     let heartbeat_ping_sink: Arc<dyn uptimepage::storage::traits::HeartbeatPingSink> = Arc::new(
         ClickhouseHeartbeatPingSink::new(clickhouse_client.clone(), org_ttl.clone()),
     );
-    let alert_event_sink: Arc<dyn uptimepage::storage::traits::AlertEventSink> =
-        Arc::new(uptimepage::storage::ClickhouseAlertEventSink::new(
-            clickhouse_client.clone(),
-            org_ttl.clone(),
-        ));
+    let alert_events = Arc::new(uptimepage::storage::ClickhouseAlertEventSink::new(
+        clickhouse_client.clone(),
+        org_ttl.clone(),
+    ));
     let ch_client_for_public = clickhouse_client.clone();
     let ch_client_for_purge = clickhouse_client.clone();
     let ch_client_for_region = clickhouse_client.clone();
@@ -885,7 +884,8 @@ async fn main() -> Result<()> {
     let state = state
         .with_flow_run_sink(flow_run_sink_for_state)
         .with_heartbeat_ping_sink(heartbeat_ping_sink)
-        .with_alert_event_sink(alert_event_sink)
+        .with_alert_event_sink(alert_events.clone())
+        .with_alert_event_log(alert_events)
         .with_telegram_send_budget(telegram_send_budget)
         .with_incident_signals(incident_signal_tx)
         .with_subscription_unsubscribe_secret(unsubscribe_secret)

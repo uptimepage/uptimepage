@@ -59,6 +59,9 @@ scope_marker!(StatusPageWrite => Scope::StatusPageWrite);
 scope_marker!(StatusPageDelete => Scope::StatusPageDelete);
 scope_marker!(VariablesRead => Scope::VariablesRead);
 scope_marker!(VariablesWrite => Scope::VariablesWrite);
+scope_marker!(AlertSourcesRead => Scope::AlertSourcesRead);
+scope_marker!(AlertSourcesWrite => Scope::AlertSourcesWrite);
+scope_marker!(AlertSourcesDelete => Scope::AlertSourcesDelete);
 
 /// The single place the `INSUFFICIENT_SCOPE` 403 is minted.
 fn insufficient_scope(required: Scope) -> AppError {

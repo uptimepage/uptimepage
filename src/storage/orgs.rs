@@ -931,6 +931,7 @@ struct PooledCounts {
     on_call_schedules: i64,
     maintenance_windows: i64,
     members: i64,
+    alert_sources: i64,
 }
 
 impl PooledCounts {
@@ -967,6 +968,7 @@ impl PooledCounts {
                 plan.max_maintenance_windows,
             ),
             (k::MEMBERS, self.members, plan.max_members),
+            (k::ALERT_SOURCES, self.alert_sources, plan.max_alert_sources),
         ]
         .into_iter()
         .map(|(name, current, limit)| (name, current, i64::from(limit)))
@@ -982,7 +984,7 @@ fn pooled_counts_sql() -> String {
         "SELECT ({}) AS targets, ({}) AS flow, ({}) AS status_pages, \
          ({}) AS public_components, ({}) AS notification_channels, \
          ({}) AS escalation_policies, ({}) AS on_call_schedules, \
-         ({}) AS maintenance_windows, ({}) AS members",
+         ({}) AS maintenance_windows, ({}) AS members, ({}) AS alert_sources",
         c::targets(),
         c::flow(),
         c::status_pages(),
@@ -992,6 +994,7 @@ fn pooled_counts_sql() -> String {
         c::on_call_schedules(),
         c::maintenance_windows(),
         c::members(),
+        c::alert_sources(),
     )
 }
 

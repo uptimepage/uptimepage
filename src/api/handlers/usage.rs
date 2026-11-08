@@ -57,6 +57,8 @@ pub struct OrgQuotas {
     /// Counts windows that have not ended (upcoming and active). Completed windows are history and do not count.
     pub max_maintenance_windows: QuotaUsage,
     pub max_notification_channels: QuotaUsage,
+    /// A limit of 0 means the plan has no alert sources.
+    pub max_alert_sources: QuotaUsage,
 }
 
 /// Non-counted policy values (floors / ceilings, not "x of y").
@@ -78,6 +80,8 @@ pub struct UsageRateLimits {
     pub bulk_ops_per_minute: i32,
     pub test_now_per_minute: i32,
     pub check_now_per_minute: i32,
+    /// Events alert sources may send in, counted per event in each request.
+    pub alert_events_per_minute: i32,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -163,6 +167,7 @@ pub async fn get_org_usage(
                 u.notification_channels,
                 p.max_notification_channels,
             ),
+            max_alert_sources: QuotaUsage::new(u.alert_sources, p.max_alert_sources),
         },
         policy: UsagePolicy {
             min_check_interval_secs: p.min_check_interval_secs,
@@ -177,6 +182,7 @@ pub async fn get_org_usage(
             bulk_ops_per_minute: p.bulk_ops_per_minute,
             test_now_per_minute: p.test_now_per_minute,
             check_now_per_minute: p.check_now_per_minute,
+            alert_events_per_minute: p.alert_events_per_minute,
         },
         features: UsageFeatures {
             custom_domain_enabled: p.custom_domain_enabled,

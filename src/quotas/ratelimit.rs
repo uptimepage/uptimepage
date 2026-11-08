@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use governor::clock::{Clock, DefaultClock};
+use governor::state::keyed::DashMapStateStore;
 use governor::state::{InMemoryState, NotKeyed};
 use governor::{Quota, RateLimiter};
 use tokio::time::{MissedTickBehavior, interval};
@@ -22,6 +23,9 @@ use crate::domain::quota::Plan;
 use crate::domain::{AccountId, UserId};
 
 type DirectLimiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock>;
+/// Keyed by org, user (when there is one) and the refusal's scope.
+type RecordKey = (Option<uuid::Uuid>, Option<uuid::Uuid>, String);
+type RecordLimiter = RateLimiter<RecordKey, DashMapStateStore<RecordKey>, DefaultClock>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RateLimitCategory {
@@ -31,6 +35,8 @@ pub enum RateLimitCategory {
     TestNow,
     CheckNow,
     Support,
+    /// Events from alert sources, counted after their token is looked up.
+    AlertEvents,
 }
 
 /// Spends the operator's mail budget, not a tenant resource, so paying more
@@ -49,6 +55,7 @@ impl RateLimitCategory {
             Self::TestNow => plan.test_now_per_minute,
             Self::CheckNow => plan.check_now_per_minute,
             Self::Support => SUPPORT_PER_MINUTE,
+            Self::AlertEvents => plan.alert_events_per_minute,
         };
         let clamped = u32::try_from(raw).unwrap_or(u32::MAX).max(1);
         NonZeroU32::new(clamped).expect("clamped to >= 1")
@@ -62,6 +69,7 @@ impl RateLimitCategory {
             Self::TestNow => "test_now",
             Self::CheckNow => "check_now",
             Self::Support => "support",
+            Self::AlertEvents => "alert_events",
         };
         format!("{tier}_{c}")
     }
@@ -78,6 +86,8 @@ pub enum RateLimitKey {
 
 struct Entry {
     limiter: DirectLimiter,
+    /// The quota it was built with: what one spend may take at most.
+    burst: NonZeroU32,
     /// Unix-millis of the last `check`. The janitor evicts entries idle
     /// longer than the threshold so the map stays bounded.
     last_seen: AtomicI64,
@@ -92,6 +102,8 @@ pub struct Denied {
 pub struct RateLimitService {
     limiters: DashMap<RateLimitKey, Arc<Entry>>,
     clock: DefaultClock,
+    /// One quota event a minute per org, user and scope refused.
+    recorded: RecordLimiter,
 }
 
 impl RateLimitService {
@@ -99,6 +111,7 @@ impl RateLimitService {
         Self {
             limiters: DashMap::new(),
             clock: DefaultClock::default(),
+            recorded: RateLimiter::dashmap(Quota::per_minute(NonZeroU32::MIN)),
         }
     }
 
@@ -108,6 +121,19 @@ impl RateLimitService {
 
     /// Check one tier. `Ok(())` = allowed; `Err(Denied)` = 429.
     pub fn check(&self, key: RateLimitKey, tier: &'static str, plan: &Plan) -> Result<(), Denied> {
+        self.check_n(key, tier, plan, 1)
+    }
+
+    /// Spend `n` from one tier at once. More than a whole minute's budget
+    /// spends just that, so one large request waits for a full bucket rather
+    /// than being refused for ever.
+    pub fn check_n(
+        &self,
+        key: RateLimitKey,
+        tier: &'static str,
+        plan: &Plan,
+        n: u32,
+    ) -> Result<(), Denied> {
         let category = match &key {
             RateLimitKey::Account(_, c) | RateLimitKey::User(_, c) => *c,
         };
@@ -115,16 +141,22 @@ impl RateLimitService {
             .limiters
             .entry(key)
             .or_insert_with(|| {
-                let quota = Quota::per_minute(category.per_minute(plan));
+                let burst = category.per_minute(plan);
                 Arc::new(Entry {
-                    limiter: RateLimiter::direct(quota),
+                    limiter: RateLimiter::direct(Quota::per_minute(burst)),
+                    burst,
                     last_seen: AtomicI64::new(Self::now_millis()),
                 })
             })
             .clone();
         entry.last_seen.store(Self::now_millis(), Ordering::Relaxed);
 
-        match entry.limiter.check() {
+        let n = NonZeroU32::new(n.clamp(1, entry.burst.get())).expect("clamped to >= 1");
+        let checked = entry
+            .limiter
+            .check_n(n)
+            .expect("n is within the burst it was built with");
+        match checked {
             Ok(()) => Ok(()),
             Err(not_until) => {
                 let wait = not_until.wait_time_from(self.clock.now());
@@ -136,9 +168,24 @@ impl RateLimitService {
         }
     }
 
+    /// Whether a refusal in `scope` for `org` and `user` is worth a quota
+    /// event now: at most one a minute each, so a storm past a budget adds no
+    /// writes of its own.
+    pub fn records_denial(
+        &self,
+        org: Option<crate::domain::OrgId>,
+        user: Option<crate::domain::UserId>,
+        scope: &str,
+    ) -> bool {
+        self.recorded
+            .check_key(&(org.map(|o| o.0), user.map(|u| u.0), scope.to_owned()))
+            .is_ok()
+    }
+
     /// Evict entries untouched for `idle`. Returns how many were removed.
     /// One indexed pass; called by the janitor only.
     pub fn sweep(&self, idle: Duration) -> usize {
+        self.recorded.retain_recent();
         let cutoff = Self::now_millis() - idle.as_millis() as i64;
         let stale: Vec<RateLimitKey> = self
             .limiters
@@ -193,5 +240,81 @@ impl RateLimitService {
 impl Default for RateLimitService {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_spend_past_the_budget_takes_the_whole_minute_and_no_more() {
+        let plan = Plan {
+            alert_events_per_minute: 3,
+            ..crate::quotas::service::unlimited_plan()
+        };
+        let limits = RateLimitService::new();
+        let key = || {
+            RateLimitKey::Account(
+                AccountId(uuid::Uuid::now_v7()),
+                RateLimitCategory::AlertEvents,
+            )
+        };
+        let account = key();
+        assert!(
+            limits
+                .check_n(account.clone(), "per_account", &plan, 10)
+                .is_ok()
+        );
+        let denied = limits
+            .check_n(account, "per_account", &plan, 1)
+            .expect_err("the bucket is empty");
+        assert_eq!(denied.scope, "per_account_alert_events");
+        assert!(limits.check_n(key(), "per_account", &plan, 3).is_ok());
+    }
+
+    #[test]
+    fn a_refusal_is_recorded_once_a_minute_per_org_and_scope() {
+        let limits = RateLimitService::new();
+        let (a, b) = (
+            Some(crate::domain::OrgId(uuid::Uuid::now_v7())),
+            Some(crate::domain::OrgId(uuid::Uuid::now_v7())),
+        );
+        assert!(limits.records_denial(a, None, "per_account_alert_events"));
+        assert!(
+            !limits.records_denial(a, None, "per_account_alert_events"),
+            "once a minute"
+        );
+        assert!(
+            limits.records_denial(a, None, "per_account_api_writes"),
+            "each scope its own"
+        );
+        assert!(
+            limits.records_denial(b, None, "per_account_alert_events"),
+            "each org its own"
+        );
+    }
+
+    /// The bucket refills continuously, so another source's small spends
+    /// leave room again within one interval, and a body worth the whole
+    /// budget is not kept out by them.
+    #[test]
+    fn small_spends_do_not_keep_a_whole_budget_body_out() {
+        let plan = Plan {
+            alert_events_per_minute: 1200,
+            ..crate::quotas::service::unlimited_plan()
+        };
+        let limits = RateLimitService::new();
+        let account = RateLimitKey::Account(
+            AccountId(uuid::Uuid::now_v7()),
+            RateLimitCategory::AlertEvents,
+        );
+        assert!(
+            limits
+                .check_n(account.clone(), "per_account", &plan, 1)
+                .is_ok()
+        );
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(limits.check_n(account, "per_account", &plan, 5000).is_ok());
     }
 }

@@ -68,6 +68,7 @@ fn prime_event_counters() {
         "held",
         "unknown_token",
         "throttled",
+        "over_budget",
         "too_large",
         "stalled",
         "incomplete",

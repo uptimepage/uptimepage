@@ -180,6 +180,28 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
                 .delete(handlers::groups::delete),
         )
         .route(
+            "/alert-sources",
+            get(handlers::alert_sources::list).post(handlers::alert_sources::create),
+        )
+        .route(
+            "/alert-sources/{id}",
+            get(handlers::alert_sources::get)
+                .patch(handlers::alert_sources::update)
+                .delete(handlers::alert_sources::delete),
+        )
+        .route(
+            "/alert-sources/{id}/rotate",
+            axum::routing::post(handlers::alert_sources::rotate),
+        )
+        .route(
+            "/alert-sources/{id}/previous-token",
+            axum::routing::delete(handlers::alert_sources::revoke_previous),
+        )
+        .route(
+            "/alert-sources/{id}/events",
+            get(handlers::alert_sources::events),
+        )
+        .route(
             "/dashboard/summary",
             get(handlers::dashboard::dashboard_summary)
                 .layer(Extension(handlers::dashboard::summary_cache())),

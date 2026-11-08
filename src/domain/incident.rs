@@ -761,6 +761,33 @@ pub struct IncidentAlertLink {
     pub closed_by_source_delete: bool,
 }
 
+/// What the tool last said about an alert incident.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct IncidentAlertState {
+    /// Alerts firing in it at the last event.
+    pub firing_count: u32,
+    /// Repeats recorded. One that changes nothing is recorded at most once a
+    /// minute.
+    pub repeat_count: u32,
+    pub last_event_at: DateTime<Utc>,
+    /// The latest firing time the tool sent, on its own clock.
+    #[schema(nullable = true)]
+    pub fired_at: Option<DateTime<Utc>>,
+    pub labels: std::collections::BTreeMap<String, String>,
+    pub annotations: std::collections::BTreeMap<String, String>,
+    pub links: Vec<AlertSourceLink>,
+    /// The worst severity the tool has reported for it. A person's change
+    /// sticks until the tool reports worse.
+    pub reported_severity: IncidentSeverity,
+}
+
+/// A link an alert's sender attached. Only `http` and `https` are kept.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AlertSourceLink {
+    pub href: String,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct IncidentAlertSourceRef {
     /// Null once the source is deleted.

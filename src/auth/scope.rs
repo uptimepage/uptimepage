@@ -38,6 +38,10 @@ pub enum Scope {
     /// Reusable org variables + the secret credential store.
     VariablesRead,
     VariablesWrite,
+    /// The tools that send alerts in. `write` can read their ingest URLs.
+    AlertSourcesRead,
+    AlertSourcesWrite,
+    AlertSourcesDelete,
     /// Superset of every other scope.
     FullAccess,
 }
@@ -66,6 +70,9 @@ impl Scope {
             Scope::StatusPageDelete => "status_page:delete",
             Scope::VariablesRead => "variables:read",
             Scope::VariablesWrite => "variables:write",
+            Scope::AlertSourcesRead => "alert_sources:read",
+            Scope::AlertSourcesWrite => "alert_sources:write",
+            Scope::AlertSourcesDelete => "alert_sources:delete",
             Scope::FullAccess => "full_access",
         }
     }
@@ -93,6 +100,9 @@ impl Scope {
             "status_page:delete" => Scope::StatusPageDelete,
             "variables:read" => Scope::VariablesRead,
             "variables:write" => Scope::VariablesWrite,
+            "alert_sources:read" => Scope::AlertSourcesRead,
+            "alert_sources:write" => Scope::AlertSourcesWrite,
+            "alert_sources:delete" => Scope::AlertSourcesDelete,
             "full_access" => Scope::FullAccess,
             _ => return None,
         })
@@ -109,6 +119,7 @@ impl Scope {
             Scope::MaintenanceRead => Scope::MaintenanceWrite,
             Scope::StatusPageRead => Scope::StatusPageWrite,
             Scope::VariablesRead => Scope::VariablesWrite,
+            Scope::AlertSourcesRead => Scope::AlertSourcesWrite,
             _ => return None,
         })
     }
@@ -213,6 +224,9 @@ mod tests {
             "status_page:delete",
             "variables:read",
             "variables:write",
+            "alert_sources:read",
+            "alert_sources:write",
+            "alert_sources:delete",
             "full_access",
         ] {
             assert_eq!(Scope::parse(raw).unwrap().as_str(), raw);

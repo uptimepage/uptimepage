@@ -122,12 +122,18 @@ pub async fn reconcile_account(
 
     let targets = reconcile_targets(&mut tx, account, plan).await?;
     let pages = reconcile_status_pages(&mut tx, account, plan).await?;
+    let sources = reconcile_alert_sources(&mut tx, account, plan).await?;
     forget_spent_pick(&mut tx, account, plan).await?;
 
     let mut out = Reconciled::default();
     for (moved, held_action, release_action) in [
         (targets, "target.plan_hold", "target.plan_release"),
         (pages, "status_page.plan_hold", "status_page.plan_release"),
+        (
+            sources,
+            "alert_source.plan_hold",
+            "alert_source.plan_release",
+        ),
     ] {
         for row in &moved {
             if row.held {
@@ -267,6 +273,39 @@ async fn reconcile_status_pages(
         .map_err(AppError::from)
 }
 
+/// Alert sources, oldest kept first and live ones before paused. There is no
+/// pick: a held source keeps its URL and its slot, refuses firings for new
+/// keys and still closes what it opened, and the same statement releases it
+/// once the plan covers it again.
+async fn reconcile_alert_sources(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account: AccountId,
+    plan: &Plan,
+) -> Result<Vec<Moved>> {
+    let sql = format!(
+        r#"WITH ranked AS (
+               SELECT id, org_id, name,
+                      row_number() OVER (ORDER BY enabled DESC, created_at ASC, id ASC) AS rank
+               FROM alert_sources
+               WHERE org_id IN ({orgs})
+           )
+           UPDATE alert_sources s
+           SET plan_hold_at = CASE WHEN r.rank > $2 THEN now() ELSE NULL END,
+               updated_at   = now()
+           FROM ranked r
+           WHERE s.id = r.id AND (r.rank > $2) <> (s.plan_hold_at IS NOT NULL)
+           RETURNING s.id, s.org_id, r.name, r.rank > $2 AS held"#,
+        orgs = live_orgs("$1"),
+    );
+    sqlx::query_as(&sql)
+        .bind(account.0)
+        .bind(i64::from(plan.max_alert_sources))
+        .fetch_all(&mut **tx)
+        .await
+        .context("reconcile_account: alert sources")
+        .map_err(AppError::from)
+}
+
 /// Drops a pick once its plan covers the whole pool again.
 ///
 /// A pick answers one question — which rows lose their slots — and that
@@ -358,25 +397,30 @@ async fn audit_moves(
 ///
 /// Two ways in: the account already holds something, which the partial indexes
 /// answer for nothing on an install that holds nothing, or it is over one of
-/// the three caps a hold can act on. Anything else has no work to do, and
+/// the caps a hold can act on. Anything else has no work to do, and
 /// reconciling it would take a lock and write an audit row for a no-op.
 pub async fn accounts_needing_reconcile(pool: &PgPool) -> Result<Vec<(AccountId, OrgId)>> {
-    // Built here rather than inline so the three caps cannot drift apart.
+    // Built here rather than inline so the caps cannot drift apart.
     //
     // CASE, not `guard AND cast`. Postgres does not promise to evaluate the
     // arms of an AND left to right, so a guard beside the cast can be reordered
     // behind it and the malformed value reaches the cast anyway. Only CASE
     // orders the test before the branch. A test can pass on this either way,
     // since whether it breaks depends on the plan the planner happens to pick.
-    let lowered = ["max_targets", "max_flow_checks", "max_status_pages"]
-        .map(|f| {
-            format!(
-                "CASE WHEN jsonb_typeof(po.override_json->'{f}') = 'number' \
+    let lowered = [
+        "max_targets",
+        "max_flow_checks",
+        "max_status_pages",
+        "max_alert_sources",
+    ]
+    .map(|f| {
+        format!(
+            "CASE WHEN jsonb_typeof(po.override_json->'{f}') = 'number' \
                       THEN (po.override_json->>'{f}')::numeric < p.{f} \
                       ELSE false END"
-            )
-        })
-        .join(" OR ");
+        )
+    })
+    .join(" OR ");
     let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(&format!(
         r#"/* SAFE: the sweep is account-wide by definition; it reconciles every
               tenant's holds against its own plan and returns no tenant data */
@@ -409,8 +453,15 @@ pub async fn accounts_needing_reconcile(pool: &PgPool) -> Result<Vec<(AccountId,
                LEFT JOIN status_page_access spa
                     ON spa.status_page_id = sp.id AND spa.org_id = sp.org_id
            ) pc
+           CROSS JOIN LATERAL (
+               SELECT count(*) AS n, bool_or(s.plan_hold_at IS NOT NULL) AS holds
+               FROM alert_sources s
+               JOIN live ls ON ls.id = s.org_id AND ls.account_id = a.id
+           ) ac
            WHERE coalesce(tc.holds, false) OR coalesce(pc.holds, false)
+              OR coalesce(ac.holds, false)
               OR tc.n > p.max_targets
+              OR ac.n > p.max_alert_sources
               OR tc.flows > p.max_flow_checks
               OR pc.n > p.max_status_pages
               OR (coalesce(pc.private, false) AND NOT p.private_pages_enabled)
@@ -493,26 +544,29 @@ pub struct Held {
 /// Everything one account currently has held, monitors then status pages,
 /// oldest hold first so the list reads in the order the plan gave them up.
 pub async fn list_held(pool: &PgPool, account: AccountId) -> Result<(Vec<Held>, Vec<Held>)> {
+    Ok((
+        held_in(pool, account, "targets").await?,
+        held_in(pool, account, "status_pages").await?,
+    ))
+}
+
+/// The account's held alert sources. No pick chooses among them, so they
+/// stay out of [`list_held`] and the picker it feeds.
+pub async fn list_held_alert_sources(pool: &PgPool, account: AccountId) -> Result<Vec<Held>> {
+    held_in(pool, account, "alert_sources").await
+}
+
+async fn held_in(pool: &PgPool, account: AccountId, table: &'static str) -> Result<Vec<Held>> {
     let orgs = live_orgs("$1");
-    let targets = sqlx::query_as(&format!(
-        "SELECT id, org_id, name, plan_hold_at AS held_at FROM targets \
+    Ok(sqlx::query_as(&format!(
+        "SELECT id, org_id, name, plan_hold_at AS held_at FROM {table} \
          WHERE org_id IN ({orgs}) AND plan_hold_at IS NOT NULL \
          ORDER BY plan_hold_at ASC, created_at ASC, id ASC"
     ))
     .bind(account.0)
     .fetch_all(pool)
     .await
-    .context("list_held: targets")?;
-    let pages = sqlx::query_as(&format!(
-        "SELECT id, org_id, name, plan_hold_at AS held_at FROM status_pages \
-         WHERE org_id IN ({orgs}) AND plan_hold_at IS NOT NULL \
-         ORDER BY plan_hold_at ASC, created_at ASC, id ASC"
-    ))
-    .bind(account.0)
-    .fetch_all(pool)
-    .await
-    .context("list_held: status pages")?;
-    Ok((targets, pages))
+    .with_context(|| format!("list_held: {table}"))?)
 }
 
 /// Records which of the account's rows the customer wants kept, replacing any
@@ -558,6 +612,8 @@ pub async fn holds_anything(pool: &PgPool, account: AccountId) -> Result<bool> {
         "SELECT EXISTS (SELECT 1 FROM targets \
                         WHERE org_id IN ({orgs}) AND plan_hold_at IS NOT NULL) \
              OR EXISTS (SELECT 1 FROM status_pages \
+                        WHERE org_id IN ({orgs}) AND plan_hold_at IS NOT NULL) \
+             OR EXISTS (SELECT 1 FROM alert_sources \
                         WHERE org_id IN ({orgs}) AND plan_hold_at IS NOT NULL)"
     ))
     .bind(account.0)

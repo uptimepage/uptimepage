@@ -52,6 +52,9 @@ pub struct Plan {
     pub bulk_ops_per_minute: i32,
     pub test_now_per_minute: i32,
     pub check_now_per_minute: i32,
+    /// Alert events one account may send in, the same on every plan, so a
+    /// held source's resolves still close.
+    pub alert_events_per_minute: i32,
 
     // Feature toggles
     pub custom_domain_enabled: bool,
@@ -65,6 +68,9 @@ pub struct Plan {
     pub max_flow_checks: i32,
     /// Steps one flow monitor may declare, clamped to the engine ceiling.
     pub max_flow_steps: i32,
+    /// Alert sources across the account's orgs; 0 both disables them and
+    /// gates them.
+    pub max_alert_sources: i32,
 
     // Metadata
     pub is_listed: bool,

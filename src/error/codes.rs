@@ -103,6 +103,8 @@ pub const GROUP_ID_AND_NAME: &str = "GROUP_ID_AND_NAME";
 pub const INVALID_ALERT_SOURCE_NAME: &str = "INVALID_ALERT_SOURCE_NAME";
 pub const ALERT_SOURCE_NAME_TOO_LONG: &str = "ALERT_SOURCE_NAME_TOO_LONG";
 pub const ALERT_SOURCE_NAME_TAKEN: &str = "ALERT_SOURCE_NAME_TAKEN";
+pub const ALERT_SOURCE_NOT_FOUND: &str = "ALERT_SOURCE_NOT_FOUND";
+pub const ALERT_SOURCES_DISABLED: &str = "ALERT_SOURCES_DISABLED";
 /// A signing secret on a kind that does not sign, or one out of bounds.
 pub const INVALID_SIGNING_SECRET: &str = "INVALID_SIGNING_SECRET";
 /// The source has no policy of its own, no org default and no enabled channel.

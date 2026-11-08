@@ -1,5 +1,6 @@
 pub mod account;
 pub mod agents;
+pub mod alert_sources;
 pub mod api_tokens;
 pub mod auth;
 pub mod billing;

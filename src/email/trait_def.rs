@@ -329,15 +329,17 @@ pub enum EmailTemplate {
         at: DateTime<Utc>,
         over_monitors: i64,
         over_pages: i64,
+        over_alert_sources: i64,
         keep_url: String,
     },
-    /// The account is now on `plan_name`, with `held_monitors` and
-    /// `held_pages` parked, not deleted; `landing` says why.
+    /// The account is now on `plan_name`, with what it held parked, not
+    /// deleted; `landing` says why.
     DowngradeApplied {
         plan_name: String,
         landing: Landing,
         held_monitors: usize,
         held_pages: usize,
+        held_alert_sources: usize,
         keep_url: String,
     },
     /// The cancel is booked: paid service ends at `ends_at`, and the account
@@ -526,6 +528,7 @@ impl EmailTemplate {
                 at,
                 over_monitors,
                 over_pages,
+                over_alert_sources,
                 keep_url,
             } => templates::billing::downgrade_scheduled(
                 site_name,
@@ -534,6 +537,7 @@ impl EmailTemplate {
                 templates::billing::Excess {
                     monitors: *over_monitors,
                     pages: *over_pages,
+                    alert_sources: *over_alert_sources,
                 },
                 keep_url,
             ),
@@ -542,6 +546,7 @@ impl EmailTemplate {
                 landing,
                 held_monitors,
                 held_pages,
+                held_alert_sources,
                 keep_url,
             } => templates::billing::downgrade_applied(
                 site_name,
@@ -550,6 +555,7 @@ impl EmailTemplate {
                 templates::billing::Excess {
                     monitors: *held_monitors as i64,
                     pages: *held_pages as i64,
+                    alert_sources: *held_alert_sources as i64,
                 },
                 keep_url,
             ),

@@ -96,6 +96,31 @@ pub trait AlertEventSink: Send + Sync {
     async fn write_deliveries(&self, rows: &[crate::storage::alert_ingest::Delivery]);
 }
 
+/// One line of a source's delivery log, read back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlertEventView {
+    pub received_at: DateTime<Utc>,
+    pub outcome: crate::storage::alert_ingest::Status,
+    pub dedup_key: String,
+    pub incident_id: Option<Uuid>,
+    pub note: String,
+    /// Empty once the evidence window has passed.
+    pub body: String,
+}
+
+#[async_trait]
+pub trait AlertEventLog: Send + Sync {
+    /// Newest first, then by key, and only those past `after` (an event's
+    /// `received_at` and `dedup_key`) when it is set.
+    async fn recent(
+        &self,
+        org: OrgId,
+        source: Uuid,
+        after: Option<(DateTime<Utc>, &str)>,
+        limit: usize,
+    ) -> Result<Vec<AlertEventView>>;
+}
+
 /// One stored flow run. `evidence` is `None` both once its shorter window has
 /// passed and when the run never captured a page — `evidence_expired` is what
 /// tells the two apart, decided by the table that applied the window.

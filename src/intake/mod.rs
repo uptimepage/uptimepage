@@ -11,7 +11,6 @@ pub mod signature;
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
 
 use crate::domain::{AlertGrouping, AlertSourceKind, IncidentSeverity};
 use crate::security::sha256_hex;
@@ -36,12 +35,7 @@ pub enum EventAction {
     Resolve,
 }
 
-/// A link the sender attached. Only `http` and `https` survive parsing.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct AlertLink {
-    pub href: String,
-    pub text: String,
-}
+pub use crate::domain::AlertSourceLink as AlertLink;
 
 /// One thing a tool said about one alert key.
 #[derive(Debug, Clone, PartialEq)]

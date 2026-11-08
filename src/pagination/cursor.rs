@@ -28,8 +28,7 @@ pub struct HistoryCursor {
 
 impl HistoryCursor {
     pub fn encode(&self) -> String {
-        let json = serde_json::to_vec(self).expect("HistoryCursor JSON-serialisable");
-        URL_SAFE_NO_PAD.encode(json)
+        encode(self)
     }
 
     /// Decode an operator- or user-supplied cursor string. Surface a 400
@@ -37,12 +36,39 @@ impl HistoryCursor {
     /// almost always a client bug (truncated URL, manual edit), not a
     /// server failure.
     pub fn decode(raw: &str) -> Result<Self, AppError> {
-        let bytes = URL_SAFE_NO_PAD
-            .decode(raw)
-            .map_err(|_| invalid_cursor("cursor is not valid base64-url"))?;
-        serde_json::from_slice(&bytes)
-            .map_err(|_| invalid_cursor("cursor payload is not the expected schema"))
+        decode(raw)
     }
+}
+
+/// Cursor for an alert source's delivery log, ordered by
+/// `(received_at DESC, dedup_key ASC)`. Every event of one request shares its
+/// `received_at`, so the key is what lets a page end inside a request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AlertEventCursor {
+    pub received_at: DateTime<Utc>,
+    pub dedup_key: String,
+}
+
+impl AlertEventCursor {
+    pub fn encode(&self) -> String {
+        encode(self)
+    }
+
+    pub fn decode(raw: &str) -> Result<Self, AppError> {
+        decode(raw)
+    }
+}
+
+fn encode<T: Serialize>(cursor: &T) -> String {
+    URL_SAFE_NO_PAD.encode(serde_json::to_vec(cursor).expect("a cursor is JSON-serialisable"))
+}
+
+fn decode<T: serde::de::DeserializeOwned>(raw: &str) -> Result<T, AppError> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(raw)
+        .map_err(|_| invalid_cursor("cursor is not valid base64-url"))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|_| invalid_cursor("cursor payload is not the expected schema"))
 }
 
 fn invalid_cursor(msg: &'static str) -> AppError {

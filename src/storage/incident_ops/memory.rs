@@ -447,7 +447,10 @@ fn in_mem_matches_query(inc: &OpsIncident, needle: Option<&str>) -> bool {
 }
 
 fn in_mem_listed(filter: &IncidentOpsFilter, inc: &OpsIncident) -> bool {
-    !filter.top_level || inc.group.group_incident_id.is_none()
+    (!filter.top_level || inc.group.group_incident_id.is_none())
+        && filter
+            .alert_source
+            .is_none_or(|source| inc.alert.source_id() == Some(source))
 }
 
 #[async_trait]

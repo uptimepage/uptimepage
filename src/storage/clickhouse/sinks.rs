@@ -3,17 +3,19 @@ use std::net::{IpAddr, Ipv6Addr};
 use async_trait::async_trait;
 use clickhouse::{Client, Row};
 use metrics::counter;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::domain::agent_wire::{FlowRunRecord, StepOutcome};
 use crate::domain::quota::RetentionDays;
-use crate::domain::{CheckDetails, CheckResult, HeartbeatPingRecord};
+use crate::domain::{CheckDetails, CheckResult, HeartbeatPingRecord, OrgId};
 use crate::error::Result;
 use crate::metric_names;
 use crate::storage::alert_ingest::{Delivery, Status};
 use crate::storage::org_ttl::OrgTtlDays;
-use crate::storage::traits::{AlertEventSink, FlowRunSink, HeartbeatPingSink, ResultSink};
+use crate::storage::traits::{
+    AlertEventLog, AlertEventSink, AlertEventView, FlowRunSink, HeartbeatPingSink, ResultSink,
+};
 
 use super::{
     ALERT_EVENT_TABLE, FLOW_TABLE, HEARTBEAT_PING_TABLE, TABLE, insert_backoff, to_unix_secs,
@@ -405,7 +407,22 @@ impl<'a> HeartbeatPingRow<'a> {
     }
 }
 
-/// One insert per request, unbatched: a request is already a batch.
+/// The delivery log's outcome column, as its `Enum8` stores it. A deleted
+/// source's events are not logged, so `Gone` has no value.
+const OUTCOMES: [(Status, i8); 9] = [
+    (Status::Opened, 1),
+    (Status::Repeat, 2),
+    (Status::Resolved, 3),
+    (Status::Ignored, 4),
+    (Status::Paused, 5),
+    (Status::Held, 6),
+    (Status::Capped, 7),
+    (Status::Unparsed, 8),
+    (Status::Unavailable, 9),
+];
+
+/// One insert per request, unbatched: a request is already a batch. Reads
+/// the log back too.
 pub struct ClickhouseAlertEventSink {
     client: Client,
     org_ttl: OrgTtlDays,
@@ -448,6 +465,80 @@ impl AlertEventSink for ClickhouseAlertEventSink {
     }
 }
 
+#[async_trait]
+impl AlertEventLog for ClickhouseAlertEventSink {
+    async fn recent(
+        &self,
+        org: OrgId,
+        source: Uuid,
+        after: Option<(chrono::DateTime<chrono::Utc>, &str)>,
+        limit: usize,
+    ) -> Result<Vec<AlertEventView>> {
+        let after_clause = if after.is_some() {
+            "AND (received_at < fromUnixTimestamp64Milli(?) \
+                  OR (received_at = fromUnixTimestamp64Milli(?) AND dedup_key > ?)) "
+        } else {
+            ""
+        };
+        // TTL drops rows and bodies only when a merge runs, so both windows
+        // are applied here too: a row past its retention reads as gone, a
+        // body past its evidence window as empty.
+        let mut q = self
+            .client
+            .query(&format!(
+                "SELECT received_at, toInt8(outcome) AS outcome, dedup_key, incident_id, note, \
+                     if(received_at < now() - toIntervalDay(evidence_days), '', body) AS body \
+                 FROM {ALERT_EVENT_TABLE} \
+                 WHERE org_id = ? AND source_id = ? \
+                   AND received_at >= now() - toIntervalDay(ttl_days) {after_clause}\
+                 ORDER BY received_at DESC, dedup_key ASC LIMIT {limit}"
+            ))
+            .bind(org.0)
+            .bind(source);
+        if let Some((at, key)) = after {
+            q = q
+                .bind(at.timestamp_millis())
+                .bind(at.timestamp_millis())
+                .bind(key);
+        }
+        let rows = q
+            .fetch_all::<AlertEventReadRow>()
+            .await
+            .map_err(|e| anyhow::anyhow!("clickhouse alert events: {e}"))?;
+        // An outcome this build does not know is a schema drift, not a row to
+        // drop: dropping it would shorten the page and end the log early.
+        rows.into_iter()
+            .map(|r| {
+                let outcome = OUTCOMES
+                    .iter()
+                    .find(|(_, code)| *code == r.outcome)
+                    .ok_or_else(|| anyhow::anyhow!("alert event outcome {} unknown", r.outcome))?
+                    .0;
+                Ok(AlertEventView {
+                    received_at: r.received_at,
+                    outcome,
+                    dedup_key: r.dedup_key,
+                    incident_id: r.incident_id,
+                    note: r.note,
+                    body: r.body,
+                })
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Row, Deserialize)]
+struct AlertEventReadRow {
+    #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
+    received_at: chrono::DateTime<chrono::Utc>,
+    outcome: i8,
+    dedup_key: String,
+    #[serde(with = "clickhouse::serde::uuid::option")]
+    incident_id: Option<Uuid>,
+    note: String,
+    body: String,
+}
+
 #[derive(Debug, Row, Serialize)]
 struct AlertEventRow<'a> {
     #[serde(with = "clickhouse::serde::uuid")]
@@ -470,18 +561,7 @@ impl<'a> AlertEventRow<'a> {
     /// `None` for an event whose source was deleted mid-request: nobody
     /// reads its log.
     fn from_delivery(r: &'a Delivery, ttl: RetentionDays) -> Option<Self> {
-        let outcome = match r.status {
-            Status::Opened => 1,
-            Status::Repeat => 2,
-            Status::Resolved => 3,
-            Status::Ignored => 4,
-            Status::Paused => 5,
-            Status::Held => 6,
-            Status::Capped => 7,
-            Status::Unparsed => 8,
-            Status::Unavailable => 9,
-            Status::Gone => return None,
-        };
+        let outcome = OUTCOMES.iter().find(|(s, _)| *s == r.status)?.1;
         Some(Self {
             org_id: r.org_id,
             source_id: r.source_id,

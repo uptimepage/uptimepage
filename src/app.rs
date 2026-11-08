@@ -115,6 +115,9 @@ pub struct AppState {
     /// `None` without ClickHouse, where alerts still open incidents but leave
     /// no delivery log.
     pub alert_event_sink: Option<Arc<dyn crate::storage::traits::AlertEventSink>>,
+    /// The same log read back. `None` without ClickHouse, where a source's
+    /// delivery log reads empty.
+    pub alert_event_log: Option<Arc<dyn crate::storage::traits::AlertEventLog>>,
     pub http_clients: Arc<HttpClients>,
     pub server_names: Arc<crate::net::server_names::ServerNames>,
     pub worker_pool: Arc<WorkerPool>,
@@ -512,6 +515,7 @@ impl AppState {
             flow_run_sink: None,
             heartbeat_ping_sink: None,
             alert_event_sink: None,
+            alert_event_log: None,
             server_names: Arc::new(crate::net::server_names::ServerNames::new(Arc::new(
                 http_clients.resolver().inner().clone(),
             ))),
@@ -653,6 +657,14 @@ impl AppState {
         sink: Arc<dyn crate::storage::traits::AlertEventSink>,
     ) -> Self {
         self.alert_event_sink = Some(sink);
+        self
+    }
+
+    pub fn with_alert_event_log(
+        mut self,
+        log: Arc<dyn crate::storage::traits::AlertEventLog>,
+    ) -> Self {
+        self.alert_event_log = Some(log);
         self
     }
 

@@ -27,7 +27,7 @@ use uuid::Uuid;
 use crate::config::AppConfig;
 use crate::domain::quota::{Plan, usage_keys};
 use crate::domain::{AccountId, OrgId, UserId};
-use crate::error::{AppError, Result};
+use crate::error::{AppError, Result, codes};
 use crate::storage::count_sql;
 use crate::storage::{ClampedRange, TimeRange};
 
@@ -66,6 +66,7 @@ struct PlanRow {
     bulk_ops_per_minute: i32,
     test_now_per_minute: i32,
     check_now_per_minute: i32,
+    alert_events_per_minute: i32,
     custom_domain_enabled: bool,
     white_label_enabled: bool,
     sms_alerts_enabled: bool,
@@ -74,6 +75,7 @@ struct PlanRow {
     private_pages_enabled: bool,
     max_flow_checks: i32,
     max_flow_steps: i32,
+    max_alert_sources: i32,
     is_listed: bool,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
@@ -109,6 +111,7 @@ impl From<PlanRow> for Plan {
             bulk_ops_per_minute: r.bulk_ops_per_minute,
             test_now_per_minute: r.test_now_per_minute,
             check_now_per_minute: r.check_now_per_minute,
+            alert_events_per_minute: r.alert_events_per_minute,
             custom_domain_enabled: r.custom_domain_enabled,
             white_label_enabled: r.white_label_enabled,
             sms_alerts_enabled: r.sms_alerts_enabled,
@@ -117,6 +120,7 @@ impl From<PlanRow> for Plan {
             private_pages_enabled: r.private_pages_enabled,
             max_flow_checks: r.max_flow_checks,
             max_flow_steps: r.max_flow_steps,
+            max_alert_sources: r.max_alert_sources,
             is_listed: r.is_listed,
             created_at: r.created_at,
             updated_at: r.updated_at,
@@ -173,6 +177,7 @@ pub struct AccountUsage {
     pub status_pages: i64,
     pub maintenance_windows: i64,
     pub notification_channels: i64,
+    pub alert_sources: i64,
 }
 
 impl QuotaService {
@@ -214,6 +219,11 @@ impl QuotaService {
     /// DB-less fixture case, where nothing is enforced.
     pub async fn account_for_org(&self, org: OrgId) -> Result<Option<AccountId>> {
         Ok(self.resolve(org).await?.map(|r| r.account))
+    }
+
+    /// The account and its plan in one resolution. `None` without a DB.
+    pub async fn account_and_plan(&self, org: OrgId) -> Result<Option<(AccountId, Arc<Plan>)>> {
+        Ok(self.resolve(org).await?.map(|r| (r.account, r.plan)))
     }
 
     /// Drops every cached resolution for the account, so a change lands on the
@@ -422,6 +432,29 @@ impl QuotaService {
         .await
     }
 
+    /// The account's alert-source cap, after a friendly pre-check for one
+    /// more. The store holds the same cap under the account lock. `0` is the
+    /// gate: the plan has none.
+    pub async fn alert_source_cap(&self, org: OrgId, user: Option<UserId>) -> Result<i64> {
+        let plan = self.limit_for_org(org).await?;
+        if plan.max_alert_sources <= 0 {
+            return Err(AppError::forbidden_code(
+                codes::ALERT_SOURCES_DISABLED,
+                "alert sources are not available on your plan",
+            ));
+        }
+        self.check_pooled(
+            org,
+            user,
+            usage_keys::ALERT_SOURCES,
+            |p| p.max_alert_sources,
+            count_sql::alert_sources(),
+            1,
+        )
+        .await?;
+        Ok(i64::from(plan.max_alert_sources))
+    }
+
     /// Region-assignment cap. `requested` is the size of the region set the
     /// caller wants for one monitor (assignment replaces the set, so this is the
     /// whole count, not an increment). Audits a block like every other cap.
@@ -597,6 +630,7 @@ impl QuotaService {
                 status_pages: 0,
                 maintenance_windows: 0,
                 notification_channels: 0,
+                alert_sources: 0,
             });
         };
         let Some(db) = &self.db else {
@@ -610,6 +644,7 @@ impl QuotaService {
                 status_pages: 0,
                 maintenance_windows: 0,
                 notification_channels: 0,
+                alert_sources: 0,
             });
         };
         let account = r.account;
@@ -667,6 +702,13 @@ impl QuotaService {
                 self.count(&count_sql::notification_channels(), account),
             )
             .await?;
+        let alert_sources = self
+            .cached_count(
+                account,
+                usage_keys::ALERT_SOURCES,
+                self.count(&count_sql::alert_sources(), account),
+            )
+            .await?;
         Ok(AccountUsage {
             plan: r.plan,
             orgs,
@@ -677,6 +719,7 @@ impl QuotaService {
             status_pages,
             maintenance_windows,
             notification_channels,
+            alert_sources,
         })
     }
 
@@ -785,11 +828,11 @@ async fn load(
          p.max_logo_size_bytes, p.max_regions, p.max_orgs, \
          p.api_writes_per_minute, \
          p.api_reads_per_minute, p.bulk_ops_per_minute, \
-         p.test_now_per_minute, p.check_now_per_minute, \
+         p.test_now_per_minute, p.check_now_per_minute, p.alert_events_per_minute, \
          p.custom_domain_enabled, p.white_label_enabled, \
          p.sms_alerts_enabled, p.incident_narration_enabled, \
          p.on_call_enabled, p.private_pages_enabled, p.max_flow_checks, p.max_flow_steps, \
-         p.is_listed, p.created_at, p.updated_at \
+         p.max_alert_sources, p.is_listed, p.created_at, p.updated_at \
          FROM organizations o \
          JOIN accounts a ON a.id = o.account_id \
          JOIN plans p ON p.id = a.plan_id \
@@ -865,6 +908,7 @@ override_caps!(
     max_regions,
     max_logo_size_bytes,
     max_orgs,
+    max_alert_sources,
 );
 
 fn apply_overrides(base: &Plan, ov: &PlanOverrides) -> Plan {
@@ -893,6 +937,7 @@ fn apply_overrides(base: &Plan, ov: &PlanOverrides) -> Plan {
     p.max_regions = take(ov.max_regions, p.max_regions);
     p.max_logo_size_bytes = take(ov.max_logo_size_bytes, p.max_logo_size_bytes);
     p.max_orgs = take(ov.max_orgs, p.max_orgs);
+    p.max_alert_sources = take(ov.max_alert_sources, p.max_alert_sources);
     p
 }
 
@@ -1011,6 +1056,7 @@ pub(crate) fn unlimited_plan() -> Plan {
         bulk_ops_per_minute: i32::MAX,
         test_now_per_minute: i32::MAX,
         check_now_per_minute: i32::MAX,
+        alert_events_per_minute: i32::MAX,
         custom_domain_enabled: false,
         white_label_enabled: false,
         sms_alerts_enabled: true,
@@ -1020,6 +1066,7 @@ pub(crate) fn unlimited_plan() -> Plan {
         // A flow needs an engine behind it, so grant no cap the fixture cannot run.
         max_flow_checks: 0,
         max_flow_steps: 30,
+        max_alert_sources: i32::MAX,
         is_listed: false,
         created_at: now,
         updated_at: now,

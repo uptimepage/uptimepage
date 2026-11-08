@@ -23,7 +23,9 @@ use crate::intake::gate::ReadError;
 use crate::intake::signature::{SIGNATURE_HEADER, TIMESTAMP_HEADER, verify_grafana};
 use crate::intake::{self, AlertEvent, Unparsed};
 use crate::metric_names;
+use crate::quotas::ratelimit::{RateLimitCategory, RateLimitKey};
 use crate::request::auth::bearer_from_headers;
+use crate::request::rate_limit::note_denied;
 use crate::storage::alert_ingest::{Applied, Delivery, Ingested, MAX_OPEN_PER_SOURCE, Status};
 use crate::storage::alert_sources::TokenMatch;
 use crate::storage::capability_token;
@@ -55,6 +57,8 @@ pub async fn receive_bearer(
 enum Refusal {
     UnknownToken,
     Throttled(Duration),
+    /// The account's plan budget of events a minute is spent.
+    OverBudget(Duration),
     TooLarge,
     Stalled,
     Incomplete,
@@ -68,6 +72,7 @@ impl Refusal {
         match self {
             Self::UnknownToken => "unknown_token",
             Self::Throttled(_) => "throttled",
+            Self::OverBudget(_) => "over_budget",
             Self::TooLarge => "too_large",
             Self::Stalled => "stalled",
             Self::Incomplete => "incomplete",
@@ -109,6 +114,13 @@ impl Refusal {
                 StatusCode::SERVICE_UNAVAILABLE,
                 codes::RATE_LIMITED,
                 "too many alerts on this token; send again after the delay",
+                Some(wait.as_secs_f64().ceil().max(1.0) as u64),
+            ),
+            Self::OverBudget(wait) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                codes::RATE_LIMITED,
+                "this account sent more alerts this minute than its plan allows; nothing \
+                 was applied, send again after the delay",
                 Some(wait.as_secs_f64().ceil().max(1.0) as u64),
             ),
             Self::TooLarge => (
@@ -223,6 +235,11 @@ async fn receive(state: &AppState, token: &str, headers: &HeaderMap, body: Body)
                 return;
             }
         };
+        let events = parsed.as_ref().map_or(1, Vec::len);
+        if let Err(wait) = spend_account_budget(&state, found.org, events).await {
+            let _ = answer.send(Refusal::OverBudget(wait).into_response());
+            return;
+        }
         let (mut lines, failed) = match apply(&state, found.org, &found.source, parsed).await {
             Applying::Done(lines, failed) => (lines, failed),
             Applying::Regrouped(mut lines, grouping) => {
@@ -267,6 +284,31 @@ async fn receive(state: &AppState, token: &str, headers: &HeaderMap, body: Body)
     answered
         .await
         .unwrap_or_else(|_| Refusal::Unavailable.into_response())
+}
+
+/// The account's event budget, spent per event once the body is parsed, so
+/// a body of many alerts costs what it carries. Over it, the sender sends the
+/// whole body again later. A plan that cannot be read lets the request
+/// through: applying it fails the same way, and answers for itself.
+async fn spend_account_budget(state: &AppState, org: OrgId, events: usize) -> Result<(), Duration> {
+    let Ok(Some((account, plan))) = state.quotas.account_and_plan(org).await else {
+        return Ok(());
+    };
+    let key = RateLimitKey::Account(account, RateLimitCategory::AlertEvents);
+    let n = u32::try_from(events).unwrap_or(u32::MAX);
+    state
+        .rate_limits
+        .check_n(key, "per_account", &plan, n)
+        .map_err(|denied| {
+            note_denied(
+                state.db.clone(),
+                &state.rate_limits,
+                Some(org),
+                None,
+                &denied,
+            );
+            Duration::from_secs(denied.retry_after_secs.into())
+        })
 }
 
 /// The line a request leaves in its delivery log when it could not be applied

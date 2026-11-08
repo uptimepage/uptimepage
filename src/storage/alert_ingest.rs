@@ -11,8 +11,8 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::domain::{
-    AlertGrouping, AlertSource, IncidentEventKind, IncidentSeverity, IncidentUrgency,
-    NotificationReason, OrgId,
+    AlertGrouping, AlertSource, AlertSourceLink, IncidentAlertState, IncidentEventKind,
+    IncidentSeverity, IncidentUrgency, NotificationReason, OrgId,
 };
 use crate::error::Result;
 use crate::intake::{AlertEvent, EventAction, MAX_DETAIL_CHARS, clean_block};
@@ -168,6 +168,18 @@ struct Open {
     reported_severity: Option<String>,
 }
 
+#[derive(sqlx::FromRow)]
+struct StateRow {
+    firing_count: i32,
+    repeat_count: i32,
+    last_event_at: DateTime<Utc>,
+    fired_at: Option<DateTime<Utc>>,
+    labels: sqlx::types::Json<std::collections::BTreeMap<String, String>>,
+    annotations: sqlx::types::Json<std::collections::BTreeMap<String, String>>,
+    links: sqlx::types::Json<Vec<AlertSourceLink>>,
+    reported_severity: String,
+}
+
 /// The source as it stands under its lock.
 #[derive(sqlx::FromRow)]
 struct Live {
@@ -241,6 +253,30 @@ impl AlertIngest {
         stamp_event(&mut tx, org, live.id).await?;
         tx.commit().await.map_err(db("ingest: commit"))?;
         Ok(Ingested::Applied(applied))
+    }
+
+    /// What the tool last said about an alert incident. `None` for any other.
+    pub async fn state_of(&self, org: OrgId, incident: Uuid) -> Result<Option<IncidentAlertState>> {
+        let row: Option<StateRow> = sqlx::query_as(
+            "SELECT firing_count, repeat_count, last_event_at, fired_at, labels, annotations, \
+                    links, reported_severity \
+             FROM incident_alert_state WHERE incident_id = $1 AND org_id = $2",
+        )
+        .bind(incident)
+        .bind(org.0)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db("ingest: read state"))?;
+        Ok(row.map(|r| IncidentAlertState {
+            firing_count: r.firing_count.max(0) as u32,
+            repeat_count: r.repeat_count.max(0) as u32,
+            last_event_at: r.last_event_at,
+            fired_at: r.fired_at,
+            labels: r.labels.0,
+            annotations: r.annotations.0,
+            links: r.links.0,
+            reported_severity: IncidentSeverity::from_db_str(&r.reported_severity),
+        }))
     }
 
     /// Notes that `source` sent something that named no alert, so it still

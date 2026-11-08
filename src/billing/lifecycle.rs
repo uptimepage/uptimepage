@@ -1004,6 +1004,7 @@ impl Billing {
         fx.mail(EmailTemplate::DowngradeScheduled {
             over_monitors: counts.monitors_over(&brief),
             over_pages: (counts.status_pages - i64::from(brief.max_status_pages)).max(0),
+            over_alert_sources: (counts.alert_sources - i64::from(brief.max_alert_sources)).max(0),
             plan_name: brief.name,
             at,
             keep_url: self.mailer.keep_url(),
@@ -1248,11 +1249,18 @@ impl Billing {
                             (Vec::new(), Vec::new())
                         }
                     };
+                    let sources = holds::list_held_alert_sources(pool, sub.account)
+                        .await
+                        .unwrap_or_else(|err| {
+                            tracing::warn!(account = %sub.account, error = %err, "billing: held alert sources");
+                            Vec::new()
+                        });
                     EmailTemplate::DowngradeApplied {
                         plan_name,
                         landing,
                         held_monitors: targets.len(),
                         held_pages: pages.len(),
+                        held_alert_sources: sources.len(),
                         keep_url: self.mailer.keep_url(),
                     }
                 }
@@ -1447,7 +1455,8 @@ pub(super) async fn smaller(
     };
     Ok(t.max_targets < c.max_targets
         || t.max_flow_checks < c.max_flow_checks
-        || t.max_status_pages < c.max_status_pages)
+        || t.max_status_pages < c.max_status_pages
+        || t.max_alert_sources < c.max_alert_sources)
 }
 
 #[derive(Debug, Clone, Copy, sqlx::FromRow)]
@@ -1455,6 +1464,7 @@ struct PooledCounts {
     targets: i64,
     flows: i64,
     status_pages: i64,
+    alert_sources: i64,
 }
 
 impl PooledCounts {
@@ -1469,10 +1479,11 @@ impl PooledCounts {
 async fn pooled_counts(conn: &mut sqlx::PgConnection, account: AccountId) -> Result<PooledCounts> {
     use crate::storage::count_sql as c;
     sqlx::query_as(&format!(
-        "SELECT ({}) AS targets, ({}) AS flows, ({}) AS status_pages",
+        "SELECT ({}) AS targets, ({}) AS flows, ({}) AS status_pages, ({}) AS alert_sources",
         c::targets(),
         c::flow(),
-        c::status_pages()
+        c::status_pages(),
+        c::alert_sources()
     ))
     .bind(account.0)
     .fetch_one(conn)
@@ -1571,23 +1582,27 @@ mod tests {
             max_targets: 50,
             max_flow_checks: 3,
             max_status_pages: 5,
+            max_alert_sources: 0,
         };
         let counts = PooledCounts {
             targets: 52,
             flows: 10,
             status_pages: 1,
+            alert_sources: 0,
         };
         assert_eq!(counts.monitors_over(&pro), 7);
         let counts = PooledCounts {
             targets: 60,
             flows: 10,
             status_pages: 1,
+            alert_sources: 0,
         };
         assert_eq!(counts.monitors_over(&pro), 7 + 3);
         let counts = PooledCounts {
             targets: 10,
             flows: 1,
             status_pages: 1,
+            alert_sources: 0,
         };
         assert_eq!(counts.monitors_over(&pro), 0);
     }

@@ -290,16 +290,17 @@ fn walk(
 #[test]
 fn every_request_body_resolves_its_refs_without_the_doc() {
     use uptimepage::api::handlers::{
-        api_tokens, billing, escalation_policies, holds, incidents, linked_apps,
+        alert_sources, api_tokens, billing, escalation_policies, holds, incidents, linked_apps,
         notification_channels, on_call, orgs, status_page, targets, variables,
     };
     use uptimepage::api::types::{BulkActionRequest, TestRequest};
     use uptimepage::domain::{
-        IncidentNarrationUpdate, MaintenanceWindowUpdate, MonitorGroupUpdate, NewEscalationPolicy,
-        NewIncidentUpdate, NewMaintenanceUpdate, NewMaintenanceWindow, NewManualIncident,
-        NewMonitorGroup, NewMonitorShare, NewNotificationChannel, NewOnCallOverride,
-        NewOnCallSchedule, NewStatusPageComponent, NewTarget, NewVariable,
-        NotificationChannelUpdate, PostmortemUpsert, StatusPageComponentUpdate, TargetUpdate,
+        AlertSourceUpdate, IncidentNarrationUpdate, MaintenanceWindowUpdate, MonitorGroupUpdate,
+        NewAlertSource, NewEscalationPolicy, NewIncidentUpdate, NewMaintenanceUpdate,
+        NewMaintenanceWindow, NewManualIncident, NewMonitorGroup, NewMonitorShare,
+        NewNotificationChannel, NewOnCallOverride, NewOnCallSchedule, NewStatusPageComponent,
+        NewTarget, NewVariable, NotificationChannelUpdate, PostmortemUpsert,
+        StatusPageComponentUpdate, TargetUpdate,
     };
     use uptimepage::target_ops::SetManualState;
 
@@ -317,6 +318,9 @@ fn every_request_body_resolves_its_refs_without_the_doc() {
         body::<NewMaintenanceUpdate>(),
         body::<NewMonitorGroup>(),
         body::<MonitorGroupUpdate>(),
+        body::<NewAlertSource>(),
+        body::<AlertSourceUpdate>(),
+        body::<alert_sources::RotateAlertSourceRequest>(),
         body::<NewVariable>(),
         body::<variables::VariableValueUpdate>(),
         body::<NewNotificationChannel>(),

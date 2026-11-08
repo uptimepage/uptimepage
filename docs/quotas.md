@@ -40,6 +40,7 @@ Four plans ship seeded: `free`, `founding` (a more generous free tier granted to
 | `max_notification_channels` | 20 | 30 | 30 | 50 | Notification channels (Slack/webhook/Telegram/WhatsApp/SMS/…) across the account's orgs |
 | `max_escalation_policies` | 0 | 0 | 0 | 50 | Escalation policies. On-call and escalation are a `team` feature |
 | `max_on_call_schedules` | 0 | 0 | 0 | 25 | On-call schedules |
+| `max_alert_sources` | 0 | 0 | 0 | 5 | Alert sources (tools such as Alertmanager or Datadog that send alerts in) across the account's orgs; 0 doubles as the feature gate, so a create returns `403 ALERT_SOURCES_DISABLED` rather than a quota error |
 | `max_logo_size_bytes` | 1048576 | 1048576 | 1048576 | 1048576 | Status-page logo upload ceiling (1 MiB) |
 
 [Monitor groups](groups.md) have no column of their own: an account holds as many as its `max_targets`, counted across its orgs, and going past it is `422 QUOTA_EXCEEDED` with `quota: max_groups`. An override of `max_targets` moves it too.
@@ -71,6 +72,7 @@ link on any plan, and a page with `public_hide_from_search` set follows nothing.
 | `bulk_ops_per_minute` | 30 | 45 | 60 | 90 | `/api/v1/targets/bulk*`, `/api/v1/targets/{id}/duplicate` |
 | `test_now_per_minute` | 60 | 90 | 120 | 180 | `POST /api/v1/targets/test` + the notification-channel test endpoints |
 | `check_now_per_minute` | 60 | 90 | 120 | 180 | `POST /api/v1/targets/{id}/check-now` |
+| `alert_events_per_minute` | 1200 | 1200 | 1200 | 1200 | Events alert sources send to `/hooks/alerts`, counted per event once a body is read; the same on every plan, so a source held on a smaller plan still closes what it opened |
 
 One category sits outside the plan: `support` (`POST /api/v1/support`, the
 in-app help form) is capped at a fixed 2 per minute on every tier. It spends the
@@ -181,6 +183,15 @@ request category is derived from the path and method:
 - path ends `/support` → `support`
 - any path under `/mcp` → `api_reads`, whatever the method (the JSON-RPC body hides the tool name from the middleware; probe-spawning and write tools re-check the stricter category inside the tool)
 - otherwise `GET`/`HEAD`/`OPTIONS` → `api_reads`, else → `api_writes`
+
+`alert_events` is the one category the path does not decide. The ingest route
+carries no session or API token, so it spends the account's budget itself, per
+event, after it has looked up the token and read the body. A body carrying more
+events than a whole minute's budget spends that budget and no more, so it is
+retried until it fits rather than refused for ever. Over the budget it answers
+**503**, not 429, with the same `RATE_LIMITED` code and `Retry-After`:
+Alertmanager and Datadog retry a 5xx and drop a 429, and a dropped alert is a
+lost page.
 
 Exceeding a budget returns **429** with a `Retry-After` header:
 
@@ -335,6 +346,7 @@ untouched.
 |---|---|
 | Monitors | Not probed, no alerting, drops off public pages and share links |
 | Status pages | 404 publicly, no subscriber mail |
+| Alert sources | A firing for a key with nothing open answers `403 ALERT_SOURCE_HELD`; an alert already open still repeats, and a resolve still closes. The URL stays the same |
 
 `enabled` is the customer's own switch and is never written, so a monitor that
 was paused before the hold comes back paused. Held rows still count against the
@@ -345,7 +357,8 @@ By default the oldest rows keep the slots and the newest are held, on the
 grounds that the oldest are what the account was built around. `PUT
 /api/v1/account/holds` replaces that guess with `keep_monitors` and
 `keep_status_pages`, a list of ids each; `GET` on the same path lists what is
-currently held.
+currently held, alert sources included. Alert sources have no pick: the oldest
+live ones keep the slots, then the oldest paused ones.
 
 A list is authoritative both ways: what it names runs, and what it leaves out
 is held even when a slot is free. Refilling a spare slot from the rows the
@@ -370,10 +383,10 @@ the picker on **Settings → Usage**. The pool spans every organization the
 account owns, so an ordinary member of one of them is shown how much is held
 but not the rows, which would name a sibling organization's monitors. Every hold and release
 writes an org audit row (`target.plan_hold` / `target.plan_release`, and the
-`status_page.` pair).
+`status_page.` and `alert_source.` pairs).
 
-Reconciliation runs when the plan or an override changes, when a monitor or
-page is deleted, when the customer picks, at startup, and once a day for every
+Reconciliation runs when the plan or an override changes, when a monitor,
+page or alert source is deleted, when the customer picks, at startup, and once a day for every
 account that is over a cap or holding something. The last two are the backstop
 for a plan moved by hand, which notifies nothing on its own.
 

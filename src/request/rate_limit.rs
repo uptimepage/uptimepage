@@ -94,15 +94,7 @@ pub async fn rate_limit_middleware(
                 .rate_limits
                 .check(RateLimitKey::Account(a, category), "per_account", &plan)
     {
-        record_quota_event(
-            state.db.clone(),
-            org,
-            user,
-            "rate_limited",
-            None,
-            serde_json::json!({ "scope": d.scope }),
-            None,
-        );
+        note_denied(state.db.clone(), &state.rate_limits, org, user, &d);
         return denied_response(d);
     }
     if let Some(u) = user
@@ -110,27 +102,41 @@ pub async fn rate_limit_middleware(
             .rate_limits
             .check(RateLimitKey::User(u, category), "per_user", &plan)
     {
-        record_quota_event(
-            state.db.clone(),
-            org,
-            Some(u),
-            "rate_limited",
-            None,
-            serde_json::json!({ "scope": d.scope }),
-            None,
-        );
+        note_denied(state.db.clone(), &state.rate_limits, org, Some(u), &d);
         return denied_response(d);
     }
 
     next.run(Request::from_parts(parts, body)).await
 }
 
-/// Wraps a `Denied` into a 429 response and increments the rate-limit
-/// drop counter on the way out. Counter is labelled by the same `scope`
-/// string carried in the error body so a dashboard can join the two —
-/// label set is bounded (2 tiers × 6 categories = 12 series).
-fn denied_response(d: Denied) -> Response {
+/// Counts a refusal, wherever it is answered, and records it as a quota event
+/// at most once a minute per org, user and scope. The counter is labelled by the same `scope` string the error
+/// body carries so a dashboard can join the two; the label set is bounded
+/// by tiers times categories.
+pub(crate) fn note_denied(
+    db: Option<sqlx::PgPool>,
+    limits: &crate::quotas::ratelimit::RateLimitService,
+    org: Option<crate::domain::OrgId>,
+    user: Option<crate::domain::UserId>,
+    d: &Denied,
+) {
     counter!(metric_names::RATELIMIT_DROPS, "scope" => d.scope.clone()).increment(1);
+    if !limits.records_denial(org, user, &d.scope) {
+        return;
+    }
+    record_quota_event(
+        db,
+        org,
+        user,
+        "rate_limited",
+        None,
+        serde_json::json!({ "scope": d.scope }),
+        None,
+    );
+}
+
+/// Wraps a `Denied` into a 429 response.
+fn denied_response(d: Denied) -> Response {
     crate::error::AppError::RateLimited {
         scope: d.scope,
         retry_after_secs: d.retry_after_secs,

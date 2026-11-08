@@ -383,6 +383,7 @@ pub struct PlanBrief {
     pub max_targets: i32,
     pub max_flow_checks: i32,
     pub max_status_pages: i32,
+    pub max_alert_sources: i32,
 }
 
 pub async fn plan_brief<'e, E: PgExecutor<'e>>(
@@ -390,7 +391,8 @@ pub async fn plan_brief<'e, E: PgExecutor<'e>>(
     plan_id: &str,
 ) -> Result<Option<PlanBrief>> {
     sqlx::query_as(
-        "SELECT id, name, max_targets, max_flow_checks, max_status_pages FROM plans WHERE id = $1",
+        "SELECT id, name, max_targets, max_flow_checks, max_status_pages, max_alert_sources \
+         FROM plans WHERE id = $1",
     )
     .bind(plan_id)
     .fetch_optional(exec)

@@ -161,6 +161,8 @@ pub struct IncidentOpsFilter {
     pub query: Option<String>,
     /// Leave out member incidents of a group; they are listed under it.
     pub top_level: bool,
+    /// Only incidents this alert source opened, including after its delete.
+    pub alert_source: Option<Uuid>,
     pub sort: IncidentSort,
     pub limit: Option<usize>,
     pub offset: usize,

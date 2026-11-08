@@ -26,11 +26,12 @@ pub mod time_format;
 pub use auth::agent::AgentIdentity;
 pub use auth::api_token::{BrowserUser, VerifiedBrowserUser};
 pub use auth::authz::{
-    Authorized, ChannelsDelete, ChannelsExecute, ChannelsRead, ChannelsWrite, IncidentsRead,
-    IncidentsWrite, LadderBinding, MaintenanceDelete, MaintenanceRead, MaintenanceWrite,
-    OnCallRead, OnCallWrite, OwnerAuthorized, RequestSource, StatusPageDelete, StatusPageRead,
-    StatusPageWrite, TargetsDelete, TargetsExecute, TargetsRead, TargetsWrite, TokenScopes,
-    VariablesRead, VariablesWrite, ladder_binding,
+    AlertSourcesDelete, AlertSourcesRead, AlertSourcesWrite, Authorized, ChannelsDelete,
+    ChannelsExecute, ChannelsRead, ChannelsWrite, IncidentsRead, IncidentsWrite, LadderBinding,
+    MaintenanceDelete, MaintenanceRead, MaintenanceWrite, OnCallRead, OnCallWrite, OwnerAuthorized,
+    RequestSource, StatusPageDelete, StatusPageRead, StatusPageWrite, TargetsDelete,
+    TargetsExecute, TargetsRead, TargetsWrite, TokenScopes, VariablesRead, VariablesWrite,
+    ladder_binding,
 };
 pub use auth::operator::OperatorAuth;
 pub use auth::{AuthedBrowser, CurrentOrg, CurrentUser, PendingDeletionUser, Session, User};

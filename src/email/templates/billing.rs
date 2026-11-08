@@ -12,14 +12,21 @@ use crate::email::templates::{RenderedEmail, html_escape, utc_stamp};
 pub struct Excess {
     pub monitors: i64,
     pub pages: i64,
+    pub alert_sources: i64,
 }
 
 impl Excess {
     fn is_empty(self) -> bool {
-        self.monitors <= 0 && self.pages <= 0
+        self.monitors <= 0 && self.pages <= 0 && self.alert_sources <= 0
     }
 
-    /// "3 monitors and 1 status page", or an empty string when nothing is over.
+    /// Monitors and pages, which the owner picks among. Alert sources have
+    /// no pick.
+    fn pickable(self) -> bool {
+        self.monitors > 0 || self.pages > 0
+    }
+
+    /// "3 monitors and 1 status page": what the picker covers.
     fn words(self) -> String {
         let mut parts = Vec::new();
         if self.monitors > 0 {
@@ -30,7 +37,13 @@ impl Excess {
         }
         parts.join(" and ")
     }
+
+    fn sources(self) -> String {
+        plural(self.alert_sources, "alert source")
+    }
 }
+
+const HELD_SOURCE: &str = "A held source refuses new alerts and still closes the ones it opened.";
 
 fn plural(n: i64, noun: &str) -> String {
     if n == 1 {
@@ -140,6 +153,23 @@ pub fn payment_recovered(site_name: &str, plan_name: &str) -> RenderedEmail {
     }
 }
 
+fn scheduled_sources(over: Excess) -> String {
+    format!(
+        "{} past the new plan are held from that date, paused ones first, then the newest. \
+         {HELD_SOURCE}",
+        over.sources()
+    )
+}
+
+fn applied_sources(held: Excess) -> String {
+    let lead = if held.pickable() {
+        "Also held"
+    } else {
+        "Now held"
+    };
+    format!("{lead}: {}. {HELD_SOURCE}", held.sources())
+}
+
 pub fn downgrade_scheduled(
     site_name: &str,
     plan_name: &str,
@@ -150,15 +180,21 @@ pub fn downgrade_scheduled(
     let when = utc_stamp(at);
     let subject = format!("Your {site_name} plan moves to {plan_name} on {when}");
 
-    let excess_text = if over.is_empty() {
-        "Everything you have fits the new plan, so nothing is held.".to_string()
-    } else {
-        format!(
+    let mut excess = Vec::new();
+    if over.is_empty() {
+        excess.push("Everything you have fits the new plan, so nothing is held.".to_string());
+    }
+    if over.pickable() {
+        excess.push(format!(
             "The new plan does not cover {}. Unless you choose, the newest ones are held \
              from that date. Choose what to keep: {keep_url}",
             over.words()
-        )
-    };
+        ));
+    }
+    if over.alert_sources > 0 {
+        excess.push(scheduled_sources(over));
+    }
+    let excess_text = excess.join("\n\n");
     let text_body = format!(
         "Your plan changes to {plan_name} on {when}. Until then nothing changes;\n\
          you keep what you paid for.\n\
@@ -179,7 +215,8 @@ pub fn downgrade_scheduled(
         body.push_str(&layout::paragraph(
             "Everything you have fits the new plan, so nothing is held.",
         ));
-    } else {
+    }
+    if over.pickable() {
         body.push_str(&layout::callout(&format!(
             "The new plan does not cover {}. Unless you choose, the newest ones are held from \
              that date.",
@@ -190,6 +227,9 @@ pub fn downgrade_scheduled(
             "Choose what to keep",
             ButtonStyle::Solid,
         ));
+    }
+    if over.alert_sources > 0 {
+        body.push_str(&layout::callout(&scheduled_sources(over)));
     }
     body.push_str(&layout::fine_print(HELD_NOT_DELETED));
 
@@ -238,14 +278,20 @@ pub fn downgrade_applied(
              account has moved to the plan it had before paying."
         }
     };
-    let held_text = if held.is_empty() {
-        "Everything you have fits this plan, so nothing is held.".to_string()
-    } else {
-        format!(
+    let mut held_lines = Vec::new();
+    if held.is_empty() {
+        held_lines.push("Everything you have fits this plan, so nothing is held.".to_string());
+    }
+    if held.pickable() {
+        held_lines.push(format!(
             "Now held: {}. Choose different ones to keep: {keep_url}",
             held.words()
-        )
-    };
+        ));
+    }
+    if held.alert_sources > 0 {
+        held_lines.push(applied_sources(held));
+    }
+    let held_text = held_lines.join("\n\n");
     let text_body = format!("{why}\n\n{held_text}\n\n{HELD_NOT_DELETED}\n");
 
     let mut body = layout::facts(&[("Plan", plan_name.to_string())]);
@@ -254,13 +300,17 @@ pub fn downgrade_applied(
         body.push_str(&layout::paragraph(
             "Everything you have fits this plan, so nothing is held.",
         ));
-    } else {
+    }
+    if held.pickable() {
         body.push_str(&layout::callout(&format!("Now held: {}.", held.words())));
         body.push_str(&layout::button(
             keep_url,
             "Choose what to keep",
             ButtonStyle::Outline,
         ));
+    }
+    if held.alert_sources > 0 {
+        body.push_str(&layout::callout(&applied_sources(held)));
     }
     body.push_str(&layout::fine_print(HELD_NOT_DELETED));
 
@@ -371,6 +421,7 @@ mod tests {
             Excess {
                 monitors: 0,
                 pages: 0,
+                alert_sources: 0,
             },
             "https://app/settings/usage",
         );
@@ -387,6 +438,7 @@ mod tests {
             Excess {
                 monitors: 3,
                 pages: 1,
+                alert_sources: 0,
             },
             "https://app/settings/usage",
         );
@@ -396,10 +448,43 @@ mod tests {
     }
 
     #[test]
+    fn held_alert_sources_get_their_own_line_and_no_picker() {
+        let only_sources = Excess {
+            monitors: 0,
+            pages: 0,
+            alert_sources: 2,
+        };
+        let r = downgrade_scheduled("Uptimepage", "Pro", at(), only_sources, "https://app/u");
+        assert!(
+            r.text_body
+                .contains("2 alert sources past the new plan are held")
+        );
+        assert!(
+            !r.html_body.contains("Choose what to keep"),
+            "sources have no pick"
+        );
+        let both = Excess {
+            monitors: 1,
+            ..only_sources
+        };
+        let r = downgrade_applied(
+            "Uptimepage",
+            "Pro",
+            Landing::Scheduled,
+            both,
+            "https://app/u",
+        );
+        assert!(r.text_body.contains("Now held: 1 monitor."));
+        assert!(r.text_body.contains("Also held: 2 alert sources."));
+        assert!(r.html_body.contains("Choose what to keep"));
+    }
+
+    #[test]
     fn each_landing_explains_itself() {
         let held = Excess {
             monitors: 1,
             pages: 0,
+            alert_sources: 0,
         };
         let text = |landing| {
             downgrade_applied(

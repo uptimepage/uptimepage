@@ -14,6 +14,7 @@ mod alert_events_ch_test;
 mod alert_hook_test;
 mod alert_ingest_test;
 mod alert_paging_pg_test;
+mod alert_sources_api_test;
 mod alert_sources_test;
 mod api_test;
 mod api_token_scopes_test;

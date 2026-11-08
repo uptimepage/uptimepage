@@ -1079,6 +1079,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                  AND ($7::text IS NULL OR title ILIKE $7 OR target_name ILIKE $7 \
                       OR group_name ILIKE $7 OR {named_7}) \
                  AND (NOT $8 OR group_incident_id IS NULL) \
+                 AND ($9::uuid IS NULL OR alert_source_ref = $9) \
              ORDER BY {} LIMIT $5 OFFSET $6",
             filter.sort.order_sql(),
             named_7 = member_named("$7"),
@@ -1092,6 +1093,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
             .bind(off)
             .bind(query)
             .bind(filter.top_level)
+            .bind(filter.alert_source)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| anyhow::anyhow!("list ops incidents: {e}"))?;
@@ -1114,7 +1116,8 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                  AND ($4::uuid IS NULL OR assigned_to = $4) \
                  AND ($5::text IS NULL OR title ILIKE $5 OR target_name ILIKE $5 \
                       OR group_name ILIKE $5 OR {named_5}) \
-                 AND (NOT $6 OR group_incident_id IS NULL)",
+                 AND (NOT $6 OR group_incident_id IS NULL) \
+                 AND ($7::uuid IS NULL OR alert_source_ref = $7)",
             named_5 = member_named("$5"),
         ))
         .bind(org.0)
@@ -1123,6 +1126,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         .bind(assignee)
         .bind(query)
         .bind(filter.top_level)
+        .bind(filter.alert_source)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| anyhow::anyhow!("count ops incidents: {e}"))?;
@@ -1148,6 +1152,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
                  AND ($4::text IS NULL OR title ILIKE $4 OR target_name ILIKE $4 \
                       OR group_name ILIKE $4 OR {named_4}) \
                  AND (NOT $5 OR group_incident_id IS NULL) \
+                 AND ($6::uuid IS NULL OR alert_source_ref = $6) \
              GROUP BY state",
             named_4 = member_named("$4"),
         ))
@@ -1156,6 +1161,7 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         .bind(assignee)
         .bind(query)
         .bind(filter.top_level)
+        .bind(filter.alert_source)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| anyhow::anyhow!("counts_by_state: {e}"))?;

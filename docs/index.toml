@@ -199,7 +199,7 @@ blurb = "How plans bound resources and request budgets, and how each limit is en
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-29
+lastmod = 2026-11-08
 
 [[page]]
 slug = "multi-tenancy"
