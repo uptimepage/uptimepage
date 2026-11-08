@@ -196,6 +196,8 @@ async fn a_row_past_its_retention_reads_as_gone_before_any_merge() {
                 .expect("ttl merges switch")
         }
     };
+    // Started first, so a run killed while they were stopped heals here.
+    system("START").await;
     system("STOP").await;
     let log = ClickhouseAlertEventSink::new(client.clone(), uptimepage::storage::OrgTtlDays::new());
     log.write_deliveries(&[Delivery {
@@ -203,20 +205,17 @@ async fn a_row_past_its_retention_reads_as_gone_before_any_merge() {
         ..delivery(org_id, source_id, Status::Opened)
     }])
     .await;
-    let read = log
-        .recent(OrgId(org_id), source_id, None, 10)
-        .await
-        .unwrap();
-    let stored: u64 = client
+    // Restarted before anything can fail.
+    let read = log.recent(OrgId(org_id), source_id, None, 10).await;
+    let stored = client
         .query("SELECT count() FROM alert_events WHERE org_id = ? AND source_id = ?")
         .bind(org_id)
         .bind(source_id)
-        .fetch_one()
-        .await
-        .unwrap();
+        .fetch_one::<u64>()
+        .await;
     system("START").await;
-    assert_eq!(stored, 1, "the expired row is still stored");
-    assert!(read.is_empty(), "and reads as gone");
+    assert_eq!(stored.unwrap(), 1, "the expired row is still stored");
+    assert!(read.unwrap().is_empty(), "and reads as gone");
 }
 
 /// Every outcome survives the round trip, so the Enum8 in the table and the

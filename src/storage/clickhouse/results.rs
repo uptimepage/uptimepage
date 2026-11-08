@@ -27,7 +27,7 @@ use crate::storage::traits::{
 
 use super::{
     FLOW_TABLE, HEARTBEAT_PING_TABLE, MINUTE_WINDOW, TABLE, bind_minute_window, fetch_first,
-    fetch_single, from_unix_secs, rollup_source, to_unix_secs,
+    fetch_single, from_unix_secs, past_evidence, rollup_source, to_unix_secs,
 };
 
 /// Org-scoped read side of the ClickHouse results table. Holds no ambient
@@ -402,8 +402,7 @@ impl ResultsStore for ClickhouseResultsStore {
         let cols = "timestamp, region, status, duration_ms, stopped_step, error, \
              step_op, step_outcome, step_ms, final_url, title, text_snippet, \
              console_level, console_text";
-        let branch_cols =
-            format!("{cols}, timestamp < now() - toIntervalDay(evidence_days) AS evidence_expired");
+        let branch_cols = format!("{cols}, {} AS evidence_expired", past_evidence("timestamp"));
         let outer_cols = format!("{cols}, evidence_expired");
         let scope = format!(
             "org_id = ? AND target_id = ? \
@@ -533,9 +532,11 @@ impl ResultsStore for ClickhouseResultsStore {
         let body: Vec<String> = self
             .client
             .query(&format!(
-                "SELECT body FROM {HEARTBEAT_PING_TABLE} \
+                "SELECT if({expired}, '', body) \
+                 FROM {HEARTBEAT_PING_TABLE} \
                  WHERE org_id = ? AND target_id = ? AND signal = 'fail' \
-                   AND received_at = fromUnixTimestamp(?) LIMIT 1"
+                   AND received_at = fromUnixTimestamp(?) LIMIT 1",
+                expired = past_evidence("received_at"),
             ))
             .bind(org.0)
             .bind(target_id)
@@ -543,7 +544,7 @@ impl ResultsStore for ClickhouseResultsStore {
             .fetch_all::<String>()
             .await
             .context("clickhouse heartbeat failure output")?;
-        // An expired `body` reads empty, same as a ping that carried none.
+        // Past its window it reads empty, the same as a ping that carried none.
         Ok(body.into_iter().next().filter(|b| !b.is_empty()))
     }
 

@@ -40,6 +40,13 @@ impl MinuteBound {
     }
 }
 
+/// SQL for a row stamped at `ts` being past the evidence window it carries.
+/// A column TTL acts only when a merge runs, so every reader of evidence
+/// applies the window itself.
+fn past_evidence(ts: &'static str) -> String {
+    format!("{ts} < now() - toIntervalDay(evidence_days)")
+}
+
 /// `timestamp`/`ingested_at` are `DateTime` (UInt32 seconds on the wire).
 fn to_unix_secs(dt: DateTime<Utc>) -> u32 {
     dt.timestamp().clamp(0, i64::from(u32::MAX)) as u32

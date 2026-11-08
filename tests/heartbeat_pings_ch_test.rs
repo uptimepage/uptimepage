@@ -261,3 +261,51 @@ async fn the_ping_count_holds_its_window_its_tenant_and_skips_starts() {
         "one success and one fail, no start, no neighbour"
     );
 }
+
+/// TTL drops a ping's output only when a merge runs. Past its evidence window
+/// it reads as gone, whether or not a merge has dropped it yet.
+#[tokio::test]
+#[ignore]
+async fn failure_output_past_its_evidence_window_reads_as_gone_before_any_merge() {
+    let Some(client) = common::ch_client_from_env().await else {
+        eprintln!("CLICKHOUSE_URL unset; skipping");
+        return;
+    };
+    let org = uptimepage::domain::OrgId(Uuid::new_v4());
+    let target = Uuid::new_v4();
+    let system = |verb: &'static str| {
+        let client = client.clone();
+        async move {
+            client
+                .query(&format!("SYSTEM {verb} TTL MERGES heartbeat_pings"))
+                .execute()
+                .await
+                .expect("ttl merges switch")
+        }
+    };
+    // Started first, so a run killed while they were stopped heals here.
+    system("START").await;
+    system("STOP").await;
+    let sink =
+        ClickhouseHeartbeatPingSink::new(client.clone(), uptimepage::storage::OrgTtlDays::new());
+    let store = uptimepage::storage::ClickhouseResultsStore::from_client(client.clone());
+    // Past the default 7-day evidence window, inside the 30-day row window.
+    let failed = chrono::Utc::now() - chrono::Duration::days(8);
+    sink.write_ping(&HeartbeatPingRecord {
+        received_at: failed,
+        exit_code: Some(1),
+        body: "disk full".into(),
+        ..ping(org.0, target, PingSignal::Fail)
+    })
+    .await;
+    // Restarted before anything can fail.
+    let read = store.heartbeat_failure_output(org, target, failed).await;
+    let stored = client
+        .query("SELECT body FROM heartbeat_pings WHERE org_id = ?")
+        .bind(org.0)
+        .fetch_all::<String>()
+        .await;
+    system("START").await;
+    assert_eq!(stored.unwrap(), ["disk full"], "the output is still stored");
+    assert_eq!(read.unwrap(), None, "and reads as gone past its window");
+}

@@ -18,7 +18,8 @@ use crate::storage::traits::{
 };
 
 use super::{
-    ALERT_EVENT_TABLE, FLOW_TABLE, HEARTBEAT_PING_TABLE, TABLE, insert_backoff, to_unix_secs,
+    ALERT_EVENT_TABLE, FLOW_TABLE, HEARTBEAT_PING_TABLE, TABLE, insert_backoff, past_evidence,
+    to_unix_secs,
 };
 
 pub struct ClickhouseResultSink {
@@ -487,11 +488,12 @@ impl AlertEventLog for ClickhouseAlertEventSink {
             .client
             .query(&format!(
                 "SELECT received_at, toInt8(outcome) AS outcome, dedup_key, incident_id, note, \
-                     if(received_at < now() - toIntervalDay(evidence_days), '', body) AS body \
+                     if({expired}, '', body) AS body \
                  FROM {ALERT_EVENT_TABLE} \
                  WHERE org_id = ? AND source_id = ? \
                    AND received_at >= now() - toIntervalDay(ttl_days) {after_clause}\
-                 ORDER BY received_at DESC, dedup_key ASC LIMIT {limit}"
+                 ORDER BY received_at DESC, dedup_key ASC LIMIT {limit}",
+                expired = past_evidence("toDateTime(received_at)"),
             ))
             .bind(org.0)
             .bind(source);
