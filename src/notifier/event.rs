@@ -48,6 +48,9 @@ pub struct IncidentNotice {
 /// push everything after it — including the flapping note — past the
 /// transports' truncation.
 const MAX_ERROR_CHARS: usize = 200;
+/// Room for a source's name on its own line, so a long name cannot crowd a
+/// short message.
+const MAX_SOURCE_CHARS: usize = 60;
 
 impl IncidentNotice {
     /// Human label: monitor name, else title, else a generic fallback.
@@ -161,21 +164,22 @@ impl IncidentNotice {
 
     fn body(&self) -> String {
         let mut out = self.summary();
+        let open = self.reason.awaits_acknowledgement();
         // Only an open incident names its regions; a resolved one is up everywhere.
-        if matches!(
-            self.reason,
-            NotificationReason::Opened
-                | NotificationReason::Escalated
-                | NotificationReason::Reopened
-                | NotificationReason::Reminder
-        ) && let Some(regions) = self.region_summary(|r| r.to_string(), " · ")
-        {
+        if open && let Some(regions) = self.region_summary(|r| r.to_string(), " · ") {
             out.push('\n');
             out.push_str(&regions);
         }
         if let Some(url) = self.url.as_deref() {
             out.push('\n');
             out.push_str(url);
+        }
+        // Another tool's alert, not a detection of ours: say which source sent
+        // it, as the cards and the email do. After the link, so a message cut
+        // to fit an SMS loses this line before the link.
+        if open && let Some(source) = self.source.as_deref() {
+            out.push_str("\nsent by ");
+            out.push_str(&truncate_chars(&single_line(source), MAX_SOURCE_CHARS));
         }
         out
     }
@@ -212,6 +216,39 @@ mod tests {
         assert!(text.contains("REOPENED"), "{text}");
         assert!(text.contains("exit 137"), "{text}");
         assert!(text.contains("major"), "{text}");
+    }
+
+    #[test]
+    fn an_alert_names_the_source_that_sent_it() {
+        let mut n = notice(NotificationReason::Opened);
+        n.monitor_name = None;
+        n.origin = IncidentOrigin::Alert;
+        n.title = Some("Pod is crash looping".into());
+        n.source = Some("prom-prod\nfake line".into());
+        n.url = Some("https://app.test/i/7".into());
+        let text = n.plain_text();
+        assert!(text.ends_with("\nsent by prom-prod fake line"), "{text}");
+        assert!(
+            text.find("https://app.test/i/7").unwrap() < text.find("sent by").unwrap(),
+            "the link comes first, so a cut message keeps it: {text}"
+        );
+
+        n.source = Some("x".repeat(100));
+        let long = n.plain_text();
+        let line = long.lines().last().unwrap();
+        assert!(line.chars().count() <= "sent by ".len() + 60, "{line}");
+
+        n.reason = NotificationReason::Resolved;
+        assert!(
+            !n.plain_text().contains("sent by"),
+            "an all-clear leaves it off"
+        );
+
+        let monitor = notice(NotificationReason::Opened).plain_text();
+        assert!(
+            !monitor.contains("sent by"),
+            "a monitor's own detection: {monitor}"
+        );
     }
 
     #[test]
