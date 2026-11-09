@@ -204,8 +204,8 @@ receivers:
 
 Give the heartbeat a period of a few minutes. When the pings stop, Alertmanager or the path to it is down, and the heartbeat's own incident pages.
 
-## API and MCP
+## API, Terraform and MCP
 
-Sources are managed over [`/api/v1/alert-sources`](api.md#operator-endpoints-alert-sources) with the `alert_sources:read`, `alert_sources:write` and `alert_sources:delete` scopes. The URL and token come back only with `alert_sources:write`. Incidents carry `origin`, the source and what the tool sent; `GET /api/v1/incidents?source={id}` lists one source's incidents, a deleted source's included.
+Sources are managed over [`/api/v1/alert-sources`](api.md#operator-endpoints-alert-sources), or with the Terraform provider's [`uptimepage_alert_source`](terraform.md#alert-sources), with the `alert_sources:read`, `alert_sources:write` and `alert_sources:delete` scopes. The URL and token come back only with `alert_sources:write`. Incidents carry `origin`, the source and what the tool sent; `GET /api/v1/incidents?source={id}` lists one source's incidents, a deleted source's included.
 
 The [MCP server](mcp.md) reads sources with `list_alert_sources`, never with their URL or token, and shows what a tool sent on `get_incident`. There is no tool to create one: a source is one-time setup, and its token does not belong in a transcript.

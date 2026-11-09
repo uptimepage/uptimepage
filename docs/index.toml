@@ -189,7 +189,7 @@ blurb = "Managing monitors, channels, and status pages as code with the official
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-11-05
+lastmod = 2026-11-09
 
 [[page]]
 slug = "mcp"

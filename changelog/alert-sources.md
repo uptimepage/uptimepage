@@ -12,6 +12,8 @@ By default one alert group is one incident, so a two hundred pod failure pages o
 
 Alert incidents carry the source and what the tool sent: labels, annotations, links and the worst severity it reported. The incidents list filters by source, and the REST API and MCP server read them too.
 
+Terraform provider 0.22.0 manages sources as code and reads back each URL for the tool's own configuration.
+
 Alert sources are on the Team plan, five per account.
 
 Docs: [alert sources](/docs/alert-sources).

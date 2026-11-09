@@ -1,6 +1,6 @@
 # Terraform
 
-Manage your monitors, notification channels and public status pages as code
+Manage your monitors, notification channels, alert sources and public status pages as code
 with the official Terraform provider,
 **[`uptimepage/uptimepage`](https://registry.terraform.io/providers/uptimepage/uptimepage)**.
 
@@ -46,8 +46,7 @@ resource "uptimepage_target" "api" {
   Grant the **least scope** the provider needs: `targets:write` +
   `channels:write` covers monitors and channels, and `status_page:write` covers
   status pages and their components (`write` implies `read`, and Terraform only
-  deletes during `terraform destroy`). Add the matching `:delete` scopes only if
-  you run `destroy`. Status-page writes are **owner-only**, so that token has to
+  deletes during `terraform destroy` or when a plan replaces a resource, such as a monitor's `check.type` or an alert source's `kind`). Add the matching `:delete` scopes if you run either. `alert_sources:write` covers [alert sources](#alert-sources), and binding one to an escalation policy takes an org owner's token with `oncall:write`. Status-page writes are **owner-only**, so that token has to
   belong to an org owner; a member's token gets `403` on page changes. For defence in depth, **bind the
   token to the org** you manage so a leak can't reach your other orgs.
 - **Org** — API tokens are user-scoped, so every request must name an
@@ -69,6 +68,7 @@ resource "uptimepage_target" "api" {
 | `uptimepage_status_page_component` | resource | What a page publishes — one monitor placed on one page, with its public name, description, group and sort order. The public name is separate from the monitor's internal one. On a monitor a section shows (provider 0.19.0 and later), it adopts the section's row and manages only its settings |
 | `uptimepage_monitor_group` | resource | [Monitor groups](#monitor-groups) (provider 0.19.0 and later): a label, or with `alert_as_one` one incident and one page for all its monitors, with its own channels, reminder and tags. Monitors join with `group_id` |
 | `uptimepage_status_page_section` | resource | A monitor group shown on a status page as a live section whose members follow the group (provider 0.19.0 and later) |
+| `uptimepage_alert_source` | resource | [Alert sources](#alert-sources) (provider 0.22.0 and later): the URL Prometheus Alertmanager, Grafana, Datadog or a script posts alerts to, and who it pages. A new `kind` replaces the source and its URL |
 | `uptimepage_target` | data source | Look up an existing target by id |
 | `uptimepage_monitor_group` | data source | Look up a monitor group by name (provider 0.19.0 and later) |
 | `uptimepage_heartbeat` | data source | The ping URL of a heartbeat monitor, for the job that reports in. The API mints it at creation, so it is read back rather than configured. Reading it needs `targets:write`, since the URL is itself a write capability. Any other check kind reads as not found |
@@ -114,6 +114,25 @@ resource "uptimepage_status_page_section" "dns" {
 ```
 
 Its members follow the group onto and off the page, so they need no `uptimepage_status_page_component`. Add one only to set a member's public name, description or order: it adopts the row the section made, and destroying it clears those settings and leaves the monitor on the page. A section imports by `status_page_id:section_id`, as a component imports by `status_page_id:target_id`. Group writes need `targets:write`, and destroying one `targets:delete`; a section, like the rest of a page, needs an owner's `status_page:write`.
+
+## Alert sources
+
+Provider 0.22.0 adds `uptimepage_alert_source`, so the [alert source](alert-sources.md) and the tool that posts to it can live in the same configuration:
+
+```hcl
+resource "uptimepage_alert_source" "prometheus" {
+  name   = "prod alertmanager"
+  kind   = "alertmanager"
+  alerts = [{ channel_id = uptimepage_notification_channel.ops.id }]
+}
+
+output "alertmanager_webhook_url" {
+  value     = uptimepage_alert_source.prometheus.ingest_url
+  sensitive = true
+}
+```
+
+`ingest_url` and `ingest_token` are read back and sensitive: each is the source's credential, so pass it straight into the tool's own configuration. A rotation in the app changes them, and the next refresh with an `alert_sources:write` token reads the new ones. The source pages its `escalation_policy_id`, else the org default policy, else its `alerts`; one that would page nobody is refused with `422 ALERT_SOURCE_NO_ROUTE`. Leave `escalation_policy_id` out to bind the policy in the app. Removing the line keeps the binding it set, so unbind it in the app. `alerts` belongs to Terraform, as on a monitor, so a channel bound in the app is removed on the next apply. `enabled = false` pauses the source, and `grouping` changes only while it holds no open incident (`409 ALERT_SOURCE_GROUPING_LOCKED`). A new `kind` replaces the source: its URL stops at once and the incidents it holds open are resolved, so change it between outages and update the tool's configuration in the same apply. A `grafana` source signs with `signing_secret_wo` and `signing_secret_wo_version` (Terraform 1.11 and later, never in plan or state) or `signing_secret`, which is kept in state. Leaving the secret out leaves it to the app. The API never returns it, so a secret removed in the app is sent again on the next apply, but one replaced in the app is not detected. Alert sources need the Team plan, five per account; without it a create is `403 ALERT_SOURCES_DISABLED`. A source imports by the id in its page URL in the app.
 
 ## Managed-by badge
 
