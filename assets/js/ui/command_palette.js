@@ -13,6 +13,7 @@
         { group: "go", label: "maintenance", href: "/maintenance", meta: "g w", icon: "i-calendar" },
         { group: "go", label: "status pages", href: "/settings/pages", meta: "g p", icon: "i-www" },
         { group: "go", label: "notifications", href: "/settings/notifications", meta: "g n", icon: "i-mail" },
+        { group: "go", label: "alert sources", href: "/settings/alert-sources", meta: "", icon: "i-pulse" },
         { group: "go", label: "variables", href: "/settings/variables", meta: "g v", icon: "i-variable" },
         { group: "go", label: "team", href: "/settings/team", meta: "g t", icon: "i-users" },
         { group: "go", label: "usage & billing", href: "/settings/usage", meta: "g u", icon: "i-gauge" },

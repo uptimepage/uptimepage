@@ -16,6 +16,7 @@ mod alert_ingest_test;
 mod alert_paging_pg_test;
 mod alert_sources_api_test;
 mod alert_sources_test;
+mod alert_sources_web_test;
 mod api_test;
 mod api_token_scopes_test;
 mod api_variables_test;

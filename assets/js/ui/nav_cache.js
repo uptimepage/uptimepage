@@ -5,6 +5,7 @@
     const KEY = "sm_nav";
     const root = document.querySelector("[data-nav-root]");
     const replaced = [];
+    const filled = [];
     let cleared = false;
     let shown = null;
 
@@ -42,6 +43,18 @@
         const tpl = document.createElement("template");
         tpl.innerHTML = html;
         for (const oob of tpl.content.querySelectorAll("[hx-swap-oob]")) {
+            // `innerHTML:<selector>`, as htmx reads it: every match takes the
+            // element's children.
+            const spec = oob.getAttribute("hx-swap-oob");
+            const at = spec.indexOf(":");
+            if (at > 0) {
+                for (const live of document.querySelectorAll(spec.slice(at + 1))) {
+                    filled.push([live, live.innerHTML]);
+                    live.innerHTML = oob.innerHTML;
+                }
+                oob.remove();
+                continue;
+            }
             const live = document.getElementById(oob.id);
             if (!live) {
                 oob.remove();
@@ -59,6 +72,8 @@
     function revert() {
         for (const [oob, live] of replaced) oob.replaceWith(live);
         replaced.length = 0;
+        for (const [live, html] of filled) live.innerHTML = html;
+        filled.length = 0;
         root.replaceChildren();
         shown = null;
     }

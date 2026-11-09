@@ -58,6 +58,15 @@ pub enum Status {
 }
 
 impl Status {
+    /// What the tool sent did not take effect as it asked.
+    pub const NOT_APPLIED: [Status; 5] = [
+        Status::Paused,
+        Status::Held,
+        Status::Capped,
+        Status::Unparsed,
+        Status::Unavailable,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Opened => "opened",

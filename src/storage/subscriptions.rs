@@ -292,6 +292,7 @@ pub struct PlanCard {
     pub custom_domain_enabled: bool,
     pub on_call_enabled: bool,
     pub private_pages_enabled: bool,
+    pub max_alert_sources: i32,
 }
 
 impl PlanCard {
@@ -316,7 +317,7 @@ pub async fn plan_cards(pool: &PgPool, provider: &str, current: &str) -> Result<
                 p.max_regions, p.retention_days, p.max_members, p.max_status_pages, \
                 p.max_public_components, p.max_share_links_per_monitor, \
                 p.sms_alerts_enabled, p.white_label_enabled, p.custom_domain_enabled, \
-                p.on_call_enabled, p.private_pages_enabled \
+                p.on_call_enabled, p.private_pages_enabled, p.max_alert_sources \
          FROM plans p \
          LEFT JOIN plan_prices m \
            ON m.plan_id = p.id AND m.provider = $1 AND m.interval = 'month' \

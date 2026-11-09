@@ -370,6 +370,11 @@ const COMPARE: &[(&str, Read)] = &[
     ("on-call and escalation", |c| {
         Metric::Flag(c.on_call_enabled)
     }),
+    // A plan without them reads like any missing feature, not as a cap of 0.
+    ("alert sources", |c| match c.max_alert_sources {
+        n if n > 0 => Metric::Count(n),
+        _ => Metric::Flag(false),
+    }),
     ("private status pages", |c| {
         Metric::Flag(c.private_pages_enabled)
     }),
@@ -459,6 +464,13 @@ fn card_lines(c: &PlanCard) -> Vec<String> {
     }
     if c.on_call_enabled {
         lines.push("on-call and escalation".into());
+    }
+    if c.max_alert_sources > 0 {
+        lines.push(format!(
+            "{} alert source{}",
+            c.max_alert_sources,
+            if c.max_alert_sources == 1 { "" } else { "s" }
+        ));
     }
     if c.private_pages_enabled {
         lines.push("private status pages".into());
@@ -590,6 +602,7 @@ mod tests {
             custom_domain_enabled: false,
             on_call_enabled: false,
             private_pages_enabled: false,
+            max_alert_sources: 0,
         }
     }
 

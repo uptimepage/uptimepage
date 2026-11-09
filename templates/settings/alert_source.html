@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% import "_register.html" as reg %}
+{% block title %}{{ name }} · Alert sources · Uptimepage{% endblock %}
+{% block content %}
+<section class="mx-auto w-full max-w-7xl">
+<div class="form-grid grid grid-cols-1 gap-6 lg:grid-cols-[17rem_1fr] lg:items-start lg:gap-8 xl:grid-cols-[17rem_1fr_15rem]">
+
+  <aside class="type-rail order-last lg:sticky lg:top-6 lg:order-none">
+    <span class="form-legend">tool</span>
+    <div class="check-type-cards check-type-cards--rail mt-3">
+      {% for k in kinds %}
+      {% call reg::chooser_card_static(k.selected, k.label, k.desc) %}{% endcall %}
+      {% endfor %}
+    </div>
+
+    <span class="form-legend mt-6">who it pages</span>
+    {% if routes_to_nobody %}
+    <p class="mt-2 font-mono text-xs text-quiet"># nobody</p>
+    {% else if let Some(p) = route.policy %}
+    <p class="mt-2 break-words font-mono text-sm">{{ p.name }}</p>
+    <p class="mt-1 font-mono text-xs text-quiet"># {% if p.inherited %}the org default policy{% else %}its own policy{% endif %}</p>
+    {% else %}
+    <ul class="mt-2 space-y-1 font-mono text-sm">
+      {% for c in route.channels %}<li class="break-words">{{ c }}</li>{% endfor %}
+    </ul>
+    <p class="mt-1 font-mono text-xs text-quiet"># its channels, no ladder</p>
+    {% endif %}
+  </aside>
+
+  <div class="min-w-0 space-y-6">
+  <header class="space-y-2">
+    <a href="/settings/alert-sources" class="inline-block text-sm text-muted hover:text-body">← alert sources</a>
+    <div class="flex flex-wrap items-center gap-3">
+      <h1 class="page-title"><span class="page-title__prefix" aria-hidden="true">$</span>{{ name }}</h1>
+      <span class="status-badge status-badge--tag">{{ kind }}</span>
+      <span class="status-badge status-badge--{{ tone }}">{{ standing }}</span>
+    </div>
+  </header>
+
+  {% if held %}
+  <div class="alert-card alert-card--warn text-sm">The plan holds this source: a firing for a new alert is refused, and alerts already open still close. It comes back with the same URL when the plan covers it.</div>
+  {% else if !enabled %}
+  <div class="alert-card alert-card--muted text-sm">Paused: firings open nothing and resolves still close. The tool is answered as usual, so it stops retrying.</div>
+  {% else if routes_to_nobody %}
+  <div class="alert-card alert-card--warn text-sm">This source pages nobody: its policy, the org default and its channels are all gone or off. An alert still opens an incident. <a href="/settings/alert-sources/{{ id }}/edit" class="underline">Give it a route</a>.</div>
+  {% endif %}
+
+  <section class="sticker-card dashboard-rail" aria-label="Source at a glance">
+    <div class="dashboard-rail__cell col-span-2 sm:col-span-1">
+      <p class="dashboard-rail__label">
+        <span class="dashboard-dot dashboard-dot--{% if last_event_at.is_some() %}up{% else %}muted{% endif %}" aria-hidden="true"></span>
+        last event
+      </p>
+      {% if let Some(at) = last_event_at %}
+      <p class="dashboard-rail__value"><time datetime="{{ at|iso_ts }}" data-tz>{{ at|human_ts }}</time></p>
+      {% else %}
+      <p class="dashboard-rail__value dashboard-rail__value--muted">never</p>
+      {% endif %}
+    </div>
+    <div class="dashboard-rail__cell">
+      <p class="dashboard-rail__label">
+        <span class="dashboard-dot dashboard-dot--muted" aria-hidden="true"></span>
+        events 24h
+      </p>
+      {% if let Some(day) = summary.day %}
+      <p class="dashboard-rail__value{% if day.events == 0 %} dashboard-rail__value--muted{% endif %}">{{ day.events }}</p>
+      {% else %}
+      <p class="dashboard-rail__value dashboard-rail__value--muted">—</p>
+      {% endif %}
+    </div>
+    <div class="dashboard-rail__cell">
+      <p class="dashboard-rail__label">
+        <span class="dashboard-dot dashboard-dot--{% if summary.open_incidents > 0 %}down{% else %}muted{% endif %}" aria-hidden="true"></span>
+        open incidents
+      </p>
+      <p class="dashboard-rail__value{% if summary.open_incidents == 0 %} dashboard-rail__value--muted{% endif %}">{{ summary.open_incidents }}</p>
+    </div>
+    <div class="dashboard-rail__cell">
+      {% if let Some(day) = summary.day %}
+      <p class="dashboard-rail__label">
+        <span class="dashboard-dot dashboard-dot--{% if day.not_applied > 0 %}degraded{% else %}muted{% endif %}" aria-hidden="true"></span>
+        not applied 24h
+      </p>
+      <p class="dashboard-rail__value{% if day.not_applied == 0 %} dashboard-rail__value--muted{% endif %}">{{ day.not_applied }}</p>
+      {% else %}
+      <p class="dashboard-rail__label"><span class="dashboard-dot dashboard-dot--muted" aria-hidden="true"></span>not applied 24h</p>
+      <p class="dashboard-rail__value dashboard-rail__value--muted">—</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <div>
+    <div class="-mb-px flex items-center gap-1 border-b border-[color:var(--theme-line)] text-sm" role="tablist" aria-label="Source view">
+      <button type="button" role="tab" id="tab-log" data-src-tab="log" aria-controls="panel-log" aria-selected="{% if connecting() %}false{% else %}true{% endif %}"
+              class="sub-tab">delivery log</button>
+      <button type="button" role="tab" id="tab-connection" data-src-tab="connection" aria-controls="panel-connection" aria-selected="{% if connecting() %}true{% else %}false{% endif %}"
+              class="sub-tab">connection</button>
+    </div>
+
+    <div id="panel-log" role="tabpanel" aria-labelledby="tab-log" class="pt-4"{% if connecting() %} hidden{% endif %}>
+      <section class="sticker-card overflow-hidden">
+        <header class="card-band flex flex-wrap items-center justify-between gap-3">
+          <h2 class="panel-label">delivery log</h2>
+          <nav class="sm-rail" aria-label="Filter by outcome">
+            {% for (key, label, _) in self.filters() %}
+            <button type="button" data-src-filter
+                    hx-get="/web/partials/settings/alert-sources/{{ id }}/events?show={{ key }}"
+                    hx-target="#src-events" hx-swap="innerHTML"
+                    aria-pressed="{% if loop.first %}true{% else %}false{% endif %}"
+                    class="sm-rail__seg{% if loop.first %} sm-rail__seg--active{% endif %}">{{ label }}</button>
+            {% endfor %}
+          </nav>
+        </header>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm">
+            <thead class="table-head bg-[color:var(--theme-surface-sunk)]">
+              <tr>
+                <th class="w-6 py-2 pl-5"><span class="sr-only">details</span></th>
+                <th class="px-3 py-2">time</th>
+                <th class="px-3 py-2">outcome</th>
+                <th class="w-full px-3 py-2">key</th>
+                <th class="hidden px-5 py-2 sm:table-cell">incident</th>
+              </tr>
+            </thead>
+            <tbody id="src-events">
+              {{ events|safe }}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <div id="panel-connection" role="tabpanel" aria-labelledby="tab-connection" class="pt-4"{% if !connecting() %} hidden{% endif %}>
+      <section class="sticker-card overflow-hidden">
+        <header class="card-band flex flex-wrap items-center justify-between gap-3">
+          <h2 class="panel-label">connection</h2>
+          <span class="font-mono text-xs text-quiet">
+            {% if kind == "alertmanager" || kind == "grafana" %}<span class="cli-brackets">grouping:{{ grouping }}</span>{% endif %}
+            <span class="cli-brackets">{% if signed %}signed{% else %}unsigned{% endif %}</span>
+          </span>
+        </header>
+        <div class="space-y-4 p-5">
+          {% if let Some(url) = ingest_url %}
+          <div class="grid gap-x-3 gap-y-1.5 sm:grid-cols-[5.5rem_minmax(0,1fr)] sm:items-start">
+            <span class="flag-label sm:pt-2">url</span>
+            {% call reg::secret_field("src-url", "URL", url) %}{% endcall %}
+          </div>
+          {% endif %}
+          {% if let Some(t) = token %}
+          <div class="grid gap-x-3 gap-y-1.5 sm:grid-cols-[5.5rem_minmax(0,1fr)] sm:items-start">
+            <span class="flag-label sm:pt-2">token</span>
+            {% call reg::secret_field("src-token", "token", t) %}{% endcall %}
+          </div>
+          <p class="font-mono text-xs text-quiet"># the token alone goes in Authorization: Bearer to /hooks/alerts, where the tool supports it, and keeps it out of URLs the tool shows in plain text</p>
+          {% else %}
+          <p class="font-mono text-xs text-quiet"># the stored token can't be opened any more: rotate to mint a new one</p>
+          {% endif %}
+          {% if let Some(prev_exp) = previous_expires_at %}
+          <div class="space-y-1.5 border-l-2 border-[color:var(--theme-state-warn-line)] pl-3">
+            <p class="text-xs">
+              The token from before the last rotation still works until
+              <time class="font-mono" datetime="{{ prev_exp|iso_ts }}" data-tz="exact">{{ prev_exp|human_ts }}</time>.
+              {% if let Some(used) = previous_last_used_at %}
+              It was last used <time class="font-mono" datetime="{{ used|iso_ts }}" data-tz="exact">{{ used|human_ts }}</time>, so a tool still sends it.
+              {% else %}
+              Nothing has sent it since the rotation. Confirm the tool uses the new one before cutting the old one off.
+              {% endif %}
+            </p>
+            <button type="button" data-src-revoke-prev data-source-id="{{ id }}"
+                    class="btn-ghost btn-ghost--danger px-3 py-1.5 text-xs font-medium">cut off the old token now</button>
+          </div>
+          {% endif %}
+        </div>
+        {% if !setup.is_empty() %}
+        <details class="border-t border-[color:var(--theme-line)]"{% if connecting() %} open{% endif %}>
+          <summary class="sm-help-summary card-band flex cursor-pointer flex-wrap items-center justify-between gap-3 border-b-0">
+            <span class="panel-label"><span class="sm-help-tri" aria-hidden="true">▸</span> setup · {{ setup.len() }} {% if setup.len() == 1 %}step{% else %}steps{% endif %}</span>
+            <span class="font-mono text-xs text-quiet">{% for s in setup %}{{ s.title }}{% if !loop.last %} · {% endif %}{% endfor %}</span>
+          </summary>
+          <div class="space-y-5 border-t border-[color:var(--theme-line)] p-5 [counter-reset:formsec]">
+            {% for s in setup %}
+            <div class="space-y-1.5">
+              <div class="flex items-center justify-between gap-2">
+                <span class="form-legend">{{ s.title }}</span>
+                <button type="button" data-copy="#setup-{{ loop.index }}" aria-label="Copy {{ s.title }}" class="sticker-btn px-2 py-1 font-mono text-xs">copy</button>
+              </div>
+              <div data-secret>
+                <pre data-secret-masked class="max-h-72 overflow-auto rounded-sm bg-[color:var(--theme-surface-sunk)] px-3 py-2 font-mono text-xs whitespace-pre-wrap break-all">{{ s.body.masked }}</pre>
+                <pre id="setup-{{ loop.index }}" data-secret-full hidden class="max-h-72 overflow-auto rounded-sm bg-[color:var(--theme-surface-sunk)] px-3 py-2 font-mono text-xs whitespace-pre-wrap break-all">{{ s.body.full }}</pre>
+              </div>
+              <p class="text-xs text-muted">{{ s.note }}</p>
+            </div>
+            {% endfor %}
+          </div>
+        </details>
+        {% endif %}
+      </section>
+    </div>
+  </div>
+  </div>
+
+  <aside class="action-rail xl:sticky xl:top-6">
+    <div class="flex flex-wrap items-center gap-3 xl:flex-col xl:items-stretch">
+      <a href="/settings/alert-sources/{{ id }}/edit"
+         class="sticker-btn sticker-btn--primary inline-flex min-h-10 items-center justify-center px-4 py-2 text-sm font-medium">edit</a>
+      <a href="/incidents?source={{ id }}"
+         class="sticker-btn inline-flex min-h-10 items-center justify-center px-4 py-2 text-sm font-medium">its incidents</a>
+      <button type="button" data-src-pause data-source-id="{{ id }}" data-enabled="{{ enabled }}"
+              class="sticker-btn sticker-btn--accent min-h-10 px-4 py-2 text-sm font-medium">{% if enabled %}pause{% else %}resume{% endif %}</button>
+      <button type="button" data-src-rotate data-source-id="{{ id }}"
+              class="sticker-btn sticker-btn--highlight inline-flex min-h-10 items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium">
+        <svg class="mp-icon" aria-hidden="true"><use href="#i-rotate" /></svg>rotate token</button>
+      <button type="button"
+              hx-delete="/api/v1/alert-sources/{{ id }}"
+              hx-headers='{"X-Requested-With":"uptimepage"}'
+              data-on-ok-href="/settings/alert-sources"
+              data-on-fail-toast
+              data-confirm-modal
+              data-confirm-title="Delete {{ name }}?"
+              data-confirm-body="Its URL stops working at once, and the incidents it holds open are resolved. The incidents and their history stay."
+              data-confirm-label="delete source"
+              data-confirm-danger
+              class="btn-ghost btn-ghost--danger inline-flex min-h-10 items-center justify-center px-4 py-2 text-sm">delete</button>
+    </div>
+  </aside>
+
+</div>
+</section>
+
+<script defer src="{{ "js/public/copy.js"|asset }}"></script>
+<script defer src="{{ "js/ui/alert_sources.js"|asset }}"></script>
+{% endblock %}

@@ -9,7 +9,7 @@ use uuid::Uuid;
 use uptimepage::domain::OrgId;
 use uptimepage::storage::ClickhouseAlertEventSink;
 use uptimepage::storage::alert_ingest::{Delivery, Status};
-use uptimepage::storage::traits::{AlertEventLog, AlertEventSink};
+use uptimepage::storage::traits::{AlertEventCounts, AlertEventLog, AlertEventSink};
 
 #[derive(Debug, Row, Deserialize)]
 struct Stored {
@@ -116,13 +116,17 @@ async fn the_log_reads_back_newest_first_a_page_at_a_time_and_only_its_own() {
     log.write_deliveries(&[delivery(org_id, Uuid::new_v4(), Status::Opened)])
         .await;
 
-    let page = log.recent(OrgId(org_id), source_id, None, 2).await.unwrap();
+    let page = log
+        .recent(OrgId(org_id), source_id, &[], None, 2)
+        .await
+        .unwrap();
     let outcomes: Vec<Status> = page.iter().map(|e| e.outcome).collect();
     assert_eq!(outcomes, [Status::Resolved, Status::Repeat]);
     let next = log
         .recent(
             OrgId(org_id),
             source_id,
+            &[],
             Some((page[1].received_at, &page[1].dedup_key)),
             2,
         )
@@ -132,7 +136,7 @@ async fn the_log_reads_back_newest_first_a_page_at_a_time_and_only_its_own() {
     assert_eq!(next[0].outcome, Status::Opened);
     assert_eq!(next[0].body, "{\"event_action\":\"trigger\"}");
     assert!(
-        log.recent(OrgId(Uuid::new_v4()), source_id, None, 10)
+        log.recent(OrgId(Uuid::new_v4()), source_id, &[], None, 10)
             .await
             .unwrap()
             .is_empty(),
@@ -160,13 +164,17 @@ async fn a_page_can_end_inside_a_request_without_losing_its_other_events() {
         .collect();
     log.write_deliveries(&rows).await;
 
-    let first = log.recent(OrgId(org_id), source_id, None, 2).await.unwrap();
+    let first = log
+        .recent(OrgId(org_id), source_id, &[], None, 2)
+        .await
+        .unwrap();
     let keys: Vec<&str> = first.iter().map(|e| e.dedup_key.as_str()).collect();
     assert_eq!(keys, ["a", "b"]);
     let rest = log
         .recent(
             OrgId(org_id),
             source_id,
+            &[],
             Some((first[1].received_at, "b")),
             2,
         )
@@ -206,7 +214,7 @@ async fn a_row_past_its_retention_reads_as_gone_before_any_merge() {
     }])
     .await;
     // Restarted before anything can fail.
-    let read = log.recent(OrgId(org_id), source_id, None, 10).await;
+    let read = log.recent(OrgId(org_id), source_id, &[], None, 10).await;
     let stored = client
         .query("SELECT count() FROM alert_events WHERE org_id = ? AND source_id = ?")
         .bind(org_id)
@@ -249,7 +257,7 @@ async fn every_outcome_reads_back_as_written() {
         .await;
     }
     let mut read: Vec<Status> = log
-        .recent(OrgId(org_id), source_id, None, 20)
+        .recent(OrgId(org_id), source_id, &[], None, 20)
         .await
         .unwrap()
         .into_iter()
@@ -257,4 +265,92 @@ async fn every_outcome_reads_back_as_written() {
         .collect();
     read.reverse();
     assert_eq!(read, all);
+}
+
+#[tokio::test]
+#[ignore]
+async fn the_log_filters_by_outcome_and_counts_what_did_not_apply() {
+    let Some(client) = common::ch_client_from_env().await else {
+        eprintln!("CLICKHOUSE_URL unset; skipping");
+        return;
+    };
+    let (org_id, source_id) = (Uuid::new_v4(), Uuid::new_v4());
+    let log = ClickhouseAlertEventSink::new(client, uptimepage::storage::OrgTtlDays::new());
+    let now = chrono::Utc::now();
+    let written = [
+        (Status::Opened, 50),
+        (Status::Repeat, 40),
+        (Status::Held, 30),
+        (Status::Unparsed, 20),
+        (Status::Resolved, 10),
+    ];
+    for (status, mins_ago) in written {
+        log.write_deliveries(&[Delivery {
+            received_at: now - chrono::Duration::minutes(mins_ago),
+            ..delivery(org_id, source_id, status)
+        }])
+        .await;
+    }
+    log.write_deliveries(&[Delivery {
+        received_at: now - chrono::Duration::hours(30),
+        ..delivery(org_id, source_id, Status::Capped)
+    }])
+    .await;
+
+    let outcomes = |page: Vec<uptimepage::storage::traits::AlertEventView>| {
+        page.into_iter().map(|e| e.outcome).collect::<Vec<_>>()
+    };
+    let opened = log
+        .recent(OrgId(org_id), source_id, &[Status::Opened], None, 10)
+        .await
+        .unwrap();
+    assert_eq!(outcomes(opened), [Status::Opened]);
+    let not_applied = log
+        .recent(OrgId(org_id), source_id, &Status::NOT_APPLIED, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        outcomes(not_applied),
+        [Status::Unparsed, Status::Held, Status::Capped]
+    );
+
+    let neighbour = Uuid::new_v4();
+    log.write_deliveries(&[delivery(org_id, neighbour, Status::Opened)])
+        .await;
+
+    let since = now - chrono::Duration::hours(24);
+    let hours = log.hourly(OrgId(org_id), None, since).await.unwrap();
+    let of = |source: Uuid| -> AlertEventCounts {
+        hours
+            .iter()
+            .filter(|h| h.source == source)
+            .map(|h| h.counts)
+            .sum()
+    };
+    let mine = of(source_id);
+    assert_eq!(
+        (mine.events, mine.not_applied),
+        (5, 2),
+        "the capped row is older than the window"
+    );
+    assert_eq!(of(neighbour).events, 1, "each source counts its own");
+    assert!(
+        hours
+            .iter()
+            .all(|h| h.hour.timestamp() % 3600 == 0 && h.hour <= now),
+        "each count is keyed by its clock hour"
+    );
+    let only = log
+        .hourly(OrgId(org_id), Some(neighbour), since)
+        .await
+        .unwrap();
+    assert!(
+        only.iter().all(|h| h.source == neighbour) && !only.is_empty(),
+        "one source reads only its own hours"
+    );
+    let other = log
+        .hourly(OrgId(Uuid::new_v4()), None, since)
+        .await
+        .unwrap();
+    assert!(other.is_empty(), "another org counts nothing of it");
 }

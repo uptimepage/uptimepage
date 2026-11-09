@@ -996,6 +996,15 @@ impl IncidentOpsStore for InMemoryIncidentOpsStore {
         Ok(out)
     }
 
+    async fn states(&self, _org: OrgId, ids: &[Uuid]) -> Result<HashMap<Uuid, IncidentState>> {
+        let g = self.inner.lock();
+        Ok(g.incidents
+            .iter()
+            .filter(|i| ids.contains(&i.id))
+            .map(|i| (i.id, i.state))
+            .collect())
+    }
+
     async fn acknowledgements(
         &self,
         _org: OrgId,

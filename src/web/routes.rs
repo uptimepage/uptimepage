@@ -211,6 +211,27 @@ pub fn routes(state: AppState) -> Router {
             "/web/partials/settings/notifications",
             get(views::notification_channels::list_partial),
         )
+        .route("/settings/alert-sources", get(views::alert_sources::index))
+        .route(
+            "/settings/alert-sources/new",
+            get(views::alert_sources::new_form),
+        )
+        .route(
+            "/settings/alert-sources/{id}",
+            get(views::alert_sources::detail),
+        )
+        .route(
+            "/settings/alert-sources/{id}/edit",
+            get(views::alert_sources::edit_form),
+        )
+        .route(
+            "/web/partials/settings/alert-sources",
+            get(views::alert_sources::list_partial),
+        )
+        .route(
+            "/web/partials/settings/alert-sources/{id}/events",
+            get(views::alert_sources::events_partial),
+        )
         .route("/settings/variables", get(views::variables::index))
         .route(
             "/web/partials/settings/variables",

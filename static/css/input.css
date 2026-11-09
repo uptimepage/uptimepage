@@ -1679,6 +1679,11 @@
     @media (max-width: 639.98px) {
         nav:has(.nav-org) .nav-brand__word { display: none; }
     }
+    /* The narrowest phones: the word and a rail carrying "65 open" no longer
+       fit side by side, switcher or not. */
+    @media (max-width: 379.98px) {
+        .nav-brand__word { display: none; }
+    }
 
     /* Account avatar: initials in a circular chip, image-ready (a future
        <img> clips to the round via overflow). Hover/open feedback lives on
@@ -2964,6 +2969,14 @@
         border-color: var(--theme-line);
         color: var(--theme-text-quiet);
     }
+    /* A paid feature on a plan without it, in the account menu and its pitch:
+       the corner badge's mark, inline. */
+    .team-tag {
+        @apply rounded-sm border px-1.5 py-0.5 font-mono text-[10px] font-medium leading-none tracking-tight normal-case;
+        border-color: var(--theme-state-warn-line);
+        color: var(--theme-state-warn-fg);
+    }
+    .nav-team-slot:not(:empty) { margin-left: auto; }
     /* A checked card inverts to ink, where the state ramp stops reading. */
     .check-type-card:has(input:checked) .card-badge,
     .check-type-card--on .card-badge {
@@ -3318,7 +3331,7 @@
     .dashboard-table {
         display: grid;
         grid-template-columns:
-            1.25rem
+            1.75rem
             minmax(0, 1fr)
             4.5rem
             5.5rem
@@ -3359,12 +3372,18 @@
     .dashboard-row:last-child > * {
         border-bottom: 0;
     }
+    /* The dot column: padded on both sides it would leave the dot no width. */
+    .dashboard-head > :first-child,
+    .dashboard-row > :first-child {
+        padding-right: 0;
+    }
     .dashboard-row:hover > * {
         background: var(--sm-dashboard-row-hover-bg);
     }
 
     .dashboard-dot {
         display: inline-block;
+        flex: none;
         width: var(--sm-dashboard-dot-size);
         height: var(--sm-dashboard-dot-size);
         border-radius: 9999px;
@@ -3384,7 +3403,21 @@
         color: var(--theme-text-muted);
         transition: transform 120ms ease;
     }
-    [data-result-row][aria-expanded="true"] .result-row__chev { transform: rotate(90deg); }
+    [data-result-row][aria-expanded="true"] .result-row__chev,
+    [data-src-event][aria-expanded="true"] .result-row__chev { transform: rotate(90deg); }
+    /* A tab switched in the page; the selected one lifts out of the strip's
+       line in ink, as the linked monitor tabs do. */
+    .sub-tab {
+        @apply inline-flex items-center gap-2 border-b-2 px-3 py-2;
+        border-color: transparent;
+        color: var(--theme-text-muted);
+    }
+    .sub-tab:hover { color: var(--theme-text); }
+    .sub-tab[aria-selected="true"] {
+        @apply font-medium;
+        border-color: var(--theme-ink);
+        color: var(--theme-text);
+    }
     @media (prefers-reduced-motion: reduce) {
         .result-row__chev { transition: none; }
     }
@@ -3442,6 +3475,49 @@
     }
     .dashboard-num--bad {
         color: var(--theme-state-bad-fg);
+    }
+    .dashboard-num--warn {
+        color: var(--theme-state-warn-fg);
+    }
+
+    /* Alert sources in the dashboard's grid: dot · source · pages · a day
+       of alerts · events · not applied · last event. Group lines span it. */
+    .source-table {
+        grid-template-columns:
+            1.75rem
+            minmax(12rem, 1.3fr)
+            minmax(10rem, 1fr)
+            10rem
+            4.5rem
+            7rem
+            11rem;
+        min-width: 62rem;
+    }
+    .source-table .dashboard-head > *,
+    .source-table .dashboard-num { white-space: nowrap; }
+    .source-table [data-src-row] > * { cursor: pointer; }
+    .source-table__group {
+        grid-column: 1 / -1;
+        padding: 0.75rem var(--sm-dashboard-row-pad-x) 0.375rem;
+        border-bottom: 1px solid var(--sm-dashboard-hairline);
+        font-family: var(--font-mono);
+        font-size: 0.75rem;
+        color: var(--theme-text-quiet);
+    }
+    .source-table__group--attention { color: var(--theme-state-warn-fg); }
+    .source-table__row--paused > * { opacity: 0.6; }
+    .source-table__standing--down     { color: var(--theme-state-bad-fg); }
+    .source-table__standing--held     { color: var(--theme-state-warn-fg); }
+    .source-table__nobody {
+        @apply font-mono text-xs font-medium;
+        color: var(--theme-state-bad-fg);
+    }
+    .source-table__fix,
+    .source-table__fix:hover { color: var(--theme-state-bad-fg); text-decoration: underline dotted; }
+    .source-table__connect {
+        color: var(--theme-accent);
+        text-decoration: underline dotted;
+        text-underline-offset: 2px;
     }
 
     .dashboard-spark {
@@ -3800,8 +3876,10 @@
     .page-card__add.check-type-card--static .check-type-card__desc { opacity: 1; }
 
     /* ── V2 ─ BigMetric KPI cards ─────────────────────────────────── */
+    /* One column of minmax(0, 1fr) below sm: an implicit track grows to its
+       widest card and pushes the page sideways. */
     .dashboard-kpis {
-        @apply grid gap-3 sm:grid-cols-3;
+        @apply grid grid-cols-1 gap-3 sm:grid-cols-3;
     }
     /* Layout only — composes with `.sticker-card` at the call site. Side
        border drops to transparent so the .corner-frame crop marks are the
@@ -3860,6 +3938,8 @@
     .dashboard-kpi-card__spark--ink  .dashboard-spark__fill { fill: var(--theme-text); }
     .dashboard-kpi-card__spark--info .dashboard-spark__line { stroke: var(--color-sky-500); }
     .dashboard-kpi-card__spark--info .dashboard-spark__fill { fill: var(--color-sky-500); }
+    .dashboard-kpi-card__spark--warn .dashboard-spark__line { stroke: var(--theme-state-warn-strong); }
+    .dashboard-kpi-card__spark--warn .dashboard-spark__fill { fill: var(--theme-state-warn-strong); }
 
     /* ── V2 ─ active incident banner ──────────────────────────────── */
     .dashboard-incident-banner {
@@ -4604,15 +4684,15 @@
         border: 1px solid var(--theme-state-warn-line-soft);
     }
 
-    /* The keep picker on /settings/usage. Its own section head rather than
-       .form-legend: that one numbers its sections for a walk-through form, and
-       a counted step is meaningless on two independent budgets. */
-    .holds-legend {
+    /* A section head with its rule but no number: .form-legend numbers the
+       steps of a walk-through form, and sections that are not steps (the keep
+       picker's two budgets, what an alert carried) must not read as one. */
+    .section-legend {
         @apply mb-2 flex w-full items-center gap-2.5 font-mono;
         font-size: 0.8125rem;
         color: var(--theme-text-muted);
     }
-    .holds-legend::after {
+    .section-legend::after {
         content: "";
         @apply h-px flex-1;
         background: var(--theme-line);

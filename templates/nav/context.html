@@ -21,6 +21,8 @@
     <a href="/incidents" class="nav-rail__seg nav-rail__seg--alert" title="Open incidents"><span class="nav-rail__led nav-rail__led--alert" aria-hidden="true"></span><span class="nav-rail__label">{{ open_incidents }} open</span></a>
     {% endif %}
 </span>
+<span hx-swap-oob="innerHTML:.nav-team-slot--alerts">{% if alerts_locked %}<span class="team-tag" title="On the Team plan">team</span>{% endif %}</span>
+<span hx-swap-oob="innerHTML:.nav-team-slot--on-call">{% if on_call_locked %}<span class="team-tag" title="On the Team plan">team</span>{% endif %}</span>
 <span id="nav-avatar" hx-swap-oob="true" class="nav-avatar__initials" aria-hidden="true">{{ initials }}</span>
 <div id="nav-identity" hx-swap-oob="true" class="nav-identity">
     <div class="nav-identity__email">{{ email }}</div>

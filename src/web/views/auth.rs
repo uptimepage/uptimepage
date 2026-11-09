@@ -750,7 +750,8 @@ pub mod settings {
     /// proportional `CELL_CAP`-wide meter once the limit exceeds the cap.
     fn quota_cells(current: i64, limit: i64, pct: i64) -> Vec<bool> {
         if limit <= 0 {
-            Vec::new()
+            // One full cell says over, where none would read as empty.
+            if current > 0 { vec![true] } else { Vec::new() }
         } else if limit <= CELL_CAP {
             let on = current.clamp(0, limit);
             (0..limit).map(|i| i < on).collect()
@@ -779,8 +780,11 @@ pub mod settings {
         fn new(label: &'static str, current: i64, limit: i32) -> Self {
             let unlimited = limit == i32::MAX;
             let limit = i64::from(limit);
-            let pct = if unlimited || limit <= 0 {
+            let pct = if unlimited {
                 0
+            } else if limit <= 0 {
+                // Anything at all is over a limit of none.
+                if current > 0 { 100 } else { 0 }
             } else {
                 (current * 100 / limit).clamp(0, 100)
             };
@@ -858,6 +862,9 @@ pub mod settings {
         /// Too many rows to render a checkbox each. A cut list cannot express
         /// a pick, since every row it left out would read as declined.
         pub holds_too_large: bool,
+        /// Alert sources the plan holds, newest first. No pick chooses among
+        /// them, so they are listed rather than offered.
+        pub held_sources: Vec<String>,
         pub bars: Vec<UsageBar>,
         pub min_check_interval_secs: i32,
         pub retention_days: i32,
@@ -868,6 +875,7 @@ pub mod settings {
         pub bulk_ops_per_minute: i32,
         pub test_now_per_minute: i32,
         pub check_now_per_minute: i32,
+        pub alert_events_per_minute: i32,
     }
 
     /// `GET /settings/usage`. Auth/redirect behaviour mirrors
@@ -896,6 +904,7 @@ pub mod settings {
             holds: holds.sets,
             holds_locked: holds.locked,
             holds_too_large: holds.too_large,
+            held_sources: holds.sources,
             bars: vec![
                 UsageBar::new("organisations", u.orgs, p.max_orgs),
                 UsageBar::new("targets", u.targets, p.max_targets),
@@ -920,7 +929,14 @@ pub mod settings {
                     u.notification_channels,
                     p.max_notification_channels,
                 ),
-            ],
+            ]
+            .into_iter()
+            // A plan without alert sources has nothing to show a bar for.
+            .chain(
+                (p.max_alert_sources > 0 || u.alert_sources > 0)
+                    .then(|| UsageBar::new("alert-sources", u.alert_sources, p.max_alert_sources)),
+            )
+            .collect(),
             min_check_interval_secs: p.min_check_interval_secs,
             retention_days: p.retention_days,
             max_logo_size_label: human_bytes(u64::try_from(p.max_logo_size_bytes).unwrap_or(0)),
@@ -930,6 +946,7 @@ pub mod settings {
             bulk_ops_per_minute: p.bulk_ops_per_minute,
             test_now_per_minute: p.test_now_per_minute,
             check_now_per_minute: p.check_now_per_minute,
+            alert_events_per_minute: p.alert_events_per_minute,
         }
         .into_response())
     }
@@ -938,6 +955,7 @@ pub mod settings {
     struct HoldsPanel {
         held_total: usize,
         sets: Vec<HoldSet>,
+        sources: Vec<String>,
         locked: bool,
         too_large: bool,
     }
@@ -966,8 +984,10 @@ pub mod settings {
             None => false,
         };
         let (targets, pages) = crate::quotas::holds::list_pool(pool, account).await?;
-        let held_total =
-            targets.iter().filter(|r| r.held).count() + pages.iter().filter(|r| r.held).count();
+        let sources = crate::quotas::holds::list_held_alert_sources(pool, account).await?;
+        let held_total = targets.iter().filter(|r| r.held).count()
+            + pages.iter().filter(|r| r.held).count()
+            + sources.len();
         if !owner {
             return Ok(HoldsPanel {
                 held_total,
@@ -975,11 +995,13 @@ pub mod settings {
                 ..HoldsPanel::default()
             });
         }
+        let sources: Vec<String> = sources.into_iter().rev().map(|h| h.name).collect();
         if targets.len() > crate::quotas::holds::MAX_PICKER_ROWS
             || pages.len() > crate::quotas::holds::MAX_PICKER_ROWS
         {
             return Ok(HoldsPanel {
                 held_total,
+                sources,
                 too_large: true,
                 ..HoldsPanel::default()
             });
@@ -1013,6 +1035,7 @@ pub mod settings {
         Ok(HoldsPanel {
             held_total,
             sets,
+            sources,
             ..HoldsPanel::default()
         })
     }
@@ -1097,6 +1120,7 @@ pub mod settings {
                 holds: sets,
                 holds_locked: false,
                 holds_too_large: false,
+                held_sources: Vec::new(),
                 bars: vec![UsageBar::new("Targets", 7, 10)],
                 min_check_interval_secs: 60,
                 retention_days: 90,
@@ -1107,6 +1131,7 @@ pub mod settings {
                 bulk_ops_per_minute: 30,
                 test_now_per_minute: 60,
                 check_now_per_minute: 60,
+                alert_events_per_minute: 1200,
             }
             .render()
             .expect("render")
@@ -1182,14 +1207,15 @@ pub mod settings {
         }
 
         #[test]
-        fn a_member_who_does_not_own_the_account_is_told_rather_than_shown() {
+        fn held_alert_sources_show_even_when_the_picker_is_too_large() {
             let html = UsagePage {
                 active_tab: super::super::TAB_USAGE,
                 plan_name: "Free".into(),
                 held_total: 3,
                 holds: Vec::new(),
-                holds_locked: true,
-                holds_too_large: false,
+                holds_locked: false,
+                holds_too_large: true,
+                held_sources: vec!["Prod Alertmanager".into()],
                 bars: vec![UsageBar::new("Targets", 7, 10)],
                 min_check_interval_secs: 60,
                 retention_days: 90,
@@ -1200,6 +1226,38 @@ pub mod settings {
                 bulk_ops_per_minute: 30,
                 test_now_per_minute: 60,
                 check_now_per_minute: 60,
+                alert_events_per_minute: 1200,
+            }
+            .render()
+            .expect("render");
+            assert!(html.contains("too many to choose from here"), "{html}");
+            assert!(
+                html.contains("Prod Alertmanager"),
+                "sources have no picker, so they are listed either way: {html}"
+            );
+        }
+
+        #[test]
+        fn a_member_who_does_not_own_the_account_is_told_rather_than_shown() {
+            let html = UsagePage {
+                active_tab: super::super::TAB_USAGE,
+                plan_name: "Free".into(),
+                held_total: 3,
+                holds: Vec::new(),
+                holds_locked: true,
+                holds_too_large: false,
+                held_sources: Vec::new(),
+                bars: vec![UsageBar::new("Targets", 7, 10)],
+                min_check_interval_secs: 60,
+                retention_days: 90,
+                max_logo_size_label: "1 MB".into(),
+                max_api_tokens_per_user: 5,
+                api_writes_per_minute: 600,
+                api_reads_per_minute: 6000,
+                bulk_ops_per_minute: 30,
+                test_now_per_minute: 60,
+                check_now_per_minute: 60,
+                alert_events_per_minute: 1200,
             }
             .render()
             .expect("render");
@@ -1219,6 +1277,7 @@ pub mod settings {
                 holds: Vec::new(),
                 holds_locked: false,
                 holds_too_large: false,
+                held_sources: Vec::new(),
                 bars: vec![
                     UsageBar::new("Targets", 7, 10),
                     UsageBar::new("Members", 1, i32::MAX),
@@ -1232,6 +1291,7 @@ pub mod settings {
                 bulk_ops_per_minute: 30,
                 test_now_per_minute: 60,
                 check_now_per_minute: 60,
+                alert_events_per_minute: 1200,
             }
             .render()
             .unwrap();

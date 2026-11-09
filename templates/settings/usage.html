@@ -40,10 +40,23 @@
       <p class="max-w-prose text-sm text-muted">
         Your plan does not cover everything on this account, so {{ held_total }} of your
         things are <em class="not-italic text-body">held</em>. Nothing was deleted: held
-        monitors are not checked, held pages return 404. Move up a plan and every one of
+        monitors are not checked, held pages return 404, and a held alert source refuses
+        new alerts but still closes the ones it opened. Move up a plan and every one of
         them comes back exactly as it was.
       </p>
 
+      {# Alert sources have no picker, so the owner sees which are held whatever the picker shows. #}
+      {% if !held_sources.is_empty() %}
+      <div class="space-y-2">
+        <p class="section-legend"><span>alert sources</span><span class="cli-brackets">{{ held_sources.len() }} held</span></p>
+        <ul class="holds-list" aria-label="held alert sources">
+          {% for name in held_sources %}
+          <li class="holds-item holds-item--held"><span class="holds-item__name">{{ name }}</span><span class="held-chip">held</span></li>
+          {% endfor %}
+        </ul>
+        <p class="font-mono text-xs text-quiet"># the newest are held; the oldest keep their place. Their URLs stay the same.</p>
+      </div>
+      {% endif %}
       {% if holds_locked %}
       <p class="max-w-prose text-sm text-muted">
         Which ones run is the account owner's to choose, and the pool is shared with
@@ -55,6 +68,7 @@
         <code>/api/v1/account/holds</code> take the same choice as a list of ids.
       </p>
       {% else %}
+      {% if !holds.is_empty() %}
       <p class="max-w-prose text-sm text-muted">
         Until then you choose which ones run. Tick what you want checked, up to what the
         plan covers; anything you leave unticked is held, even if a place is free. Tick
@@ -67,7 +81,7 @@
                   data-holds-label="{{ set.label }}"
                   data-holds-seats="{{ set.seats }}"
                   {% if set.has_flows %}data-holds-flow-seats="{{ set.flow_seats }}"{% endif %}>
-          <legend class="holds-legend">
+          <legend class="section-legend">
             <span>{{ set.label }}</span>
             <span class="cli-brackets" data-holds-count>{{ set.kept }} of {{ set.seats }} kept</span>
             {% if set.has_flows %}
@@ -91,6 +105,7 @@
           <span data-holds-msg class="font-mono text-xs text-quiet" role="status"></span>
         </div>
       </form>
+      {% endif %}
       {% endif %}
     </div>
   </div>
@@ -119,6 +134,7 @@
         <div class="usage-def"><dt>bulk-ops</dt><dd>{{ bulk_ops_per_minute }}</dd></div>
         <div class="usage-def"><dt>test-now</dt><dd>{{ test_now_per_minute }}</dd></div>
         <div class="usage-def"><dt>check-now</dt><dd>{{ check_now_per_minute }}</dd></div>
+        <div class="usage-def"><dt>alert-events</dt><dd>{{ alert_events_per_minute }}</dd></div>
       </dl>
     </div>
   </div>
@@ -128,7 +144,7 @@
     <p># cells ...... one per unit; filled = used, hatched = free</p>
     <p># color ...... green ok · amber ≥80% · red at the limit</p>
     <p># ∞ .......... no ceiling on your plan</p>
-    <p># limits ..... rate limits are per-minute, per API token</p>
+    <p># limits ..... rate limits are per-minute, per API token; alert-events per account</p>
     <p># held ....... over a cap; nothing deleted, and it returns when the plan covers it</p>
     <p># raise ...... need a higher cap? <a class="underline decoration-dotted hover:text-body" href="mailto:support@uptimepage.dev">email us</a></p>
   </div>

@@ -34,6 +34,18 @@
 </span>
 {% endmacro %}
 
+{# A value carrying a secret: masked until shown, copied whole. #}
+{% macro secret_field(id, what, secret) %}
+<div class="flex items-start gap-2" data-secret>
+  <code data-secret-masked class="field block min-w-0 flex-1 overflow-x-auto whitespace-nowrap py-2">{{ secret.masked }}</code>
+  <code id="{{ id }}" data-secret-full hidden class="field block min-w-0 flex-1 break-all py-2">{{ secret.full }}</code>
+  <button type="button" data-reveal aria-pressed="false" aria-label="Show the {{ what }}" data-what="{{ what }}"
+          class="sticker-btn shrink-0 px-3 py-1.5 text-sm font-medium">show</button>
+  <button type="button" data-copy="#{{ id }}" aria-label="Copy the {{ what }}"
+          class="sticker-btn shrink-0 px-3 py-1.5 text-sm font-medium"><span data-copy-label>copy</span></button>
+</div>
+{% endmacro %}
+
 {# A choice already made: nothing to focus, click, or submit. #}
 {% macro chooser_card_static(checked, label, desc) %}
 <span class="check-type-card check-type-card--static{% if checked %} check-type-card--on{% endif %}"{% if checked %} aria-current="true"{% endif %}>

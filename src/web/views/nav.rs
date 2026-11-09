@@ -24,6 +24,10 @@ pub struct NavContext {
     pub show_switcher: bool,
     pub orgs: Vec<NavOrg>,
     pub billing: Option<BillingNotice>,
+    /// The plan has no alert sources, so the menu marks the item as Team's.
+    pub alerts_locked: bool,
+    /// The plan has no on-call, so escalation and on-call are marked too.
+    pub on_call_locked: bool,
 }
 
 pub struct NavOrg {
@@ -48,12 +52,15 @@ pub async fn context(State(state): State<AppState>, session: Session) -> WebResu
     let slug = current.map_or_else(|| "—".to_string(), |r| r.org.slug.clone());
     let role = current.map_or("", |r| r.role.as_db_str()).to_string();
     // Meaningful only for a resolvable active org; a wedged session gets 0.
-    let (open_incidents, billing) = match current {
+    let (open_incidents, billing, plan) = match current {
         Some(_) => (
             state.open_incident_count(active).await,
             notice_for(&state, active, user.id).await,
+            // Only the Team tags hang on it: a failed lookup drops them, not
+            // the chrome.
+            state.quotas.limit_for_org(active).await.ok(),
         ),
-        None => (0, None),
+        None => (0, None, None),
     };
     Ok(NavContext {
         initials: initials_of(&user.email),
@@ -71,6 +78,10 @@ pub async fn context(State(state): State<AppState>, session: Session) -> WebResu
             })
             .collect(),
         billing,
+        alerts_locked: plan.as_ref().is_some_and(|p| p.max_alert_sources <= 0),
+        on_call_locked: plan
+            .as_ref()
+            .is_some_and(|p| !state.cfg.on_call_available(p)),
     }
     .into_response())
 }
@@ -111,6 +122,8 @@ mod tests {
                 },
             ],
             billing: None,
+            alerts_locked: false,
+            on_call_locked: false,
         }
     }
 
@@ -208,5 +221,21 @@ mod tests {
         let html = ctx(0, false).render().unwrap();
         assert!(html.contains(r#"id="billing-notice""#));
         assert!(!html.contains("alert-card--warn"));
+    }
+
+    #[test]
+    fn a_plan_without_a_feature_marks_its_menu_items_as_team() {
+        let open = ctx(0, false).render().unwrap();
+        assert!(
+            open.contains(r#"hx-swap-oob="innerHTML:.nav-team-slot--alerts""#),
+            "the slots are always set, so an upgrade clears a stale mark"
+        );
+        assert!(!open.contains("team-tag"), "a plan with both marks nothing");
+
+        let mut locked = ctx(0, false);
+        locked.alerts_locked = true;
+        locked.on_call_locked = true;
+        let html = locked.render().unwrap();
+        assert_eq!(html.matches(r#"class="team-tag""#).count(), 2, "{html}");
     }
 }

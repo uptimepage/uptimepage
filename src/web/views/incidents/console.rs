@@ -10,8 +10,11 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::app::AppState;
-use crate::domain::{IncidentSeverity, IncidentState, OpsIncident, OrgId, UserId};
+use crate::domain::{
+    AlertSourceKind, IncidentOrigin, IncidentSeverity, IncidentState, OpsIncident, OrgId, UserId,
+};
 use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser};
+use crate::storage::alert_sources::SourceName;
 use crate::storage::{IncidentOpsFilter, IncidentSort};
 use crate::templates::filters;
 use crate::web::error::WebResult;
@@ -41,6 +44,8 @@ pub struct ListParams {
     /// Free-text search over incident title + monitor name.
     pub q: Option<String>,
     pub sort: Option<String>,
+    /// An alert source's id: only the incidents it opened.
+    pub source: Option<String>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
 }
@@ -70,7 +75,8 @@ pub struct ConsoleRow {
     pub label: String,
     pub state: &'static str,
     pub state_label: &'static str,
-    /// Monitor check type; `None` for a manual incident (no monitor).
+    /// Monitor check type, or the tool an alert came from; `None` for a
+    /// manual incident.
     pub kind: Option<&'static str>,
     /// The incident's monitor has since been deleted.
     pub monitor_deleted: bool,
@@ -79,6 +85,10 @@ pub struct ConsoleRow {
     pub severity: &'static str,
     pub urgency: &'static str,
     pub origin: &'static str,
+    /// The alert source an alert incident came from, named even after its
+    /// delete.
+    pub source: Option<String>,
+    pub source_deleted: bool,
     pub visibility: &'static str,
     pub acks: AckList,
     /// Manual resolver; `None` on a resolved incident = writer auto-close.
@@ -135,6 +145,8 @@ pub struct IncidentsConsolePage {
     pub severity_chips: Vec<SeverityChip>,
     pub sort_options: Vec<SortOption>,
     pub owner_options: Vec<OwnerOption>,
+    /// Empty when the org has no alert sources, which hides the filter.
+    pub source_options: Vec<OwnerOption>,
     pub search: String,
     /// Active state/severity, carried as hidden form fields so the search/sort/
     /// owner controls preserve them on submit.
@@ -190,6 +202,12 @@ pub(super) fn row_from(
         severity: inc.severity.as_db_str(),
         urgency: inc.urgency.as_db_str(),
         origin: inc.origin.as_db_str(),
+        source: inc.alert.source_name(),
+        source_deleted: inc
+            .alert
+            .alert_source
+            .as_ref()
+            .is_some_and(|s| s.id.is_none()),
         visibility: inc.visibility.as_db_str(),
         acks,
         resolved_by,
@@ -240,6 +258,8 @@ struct Resolved {
     assignee: Option<String>,
     query: Option<String>,
     sort: &'static str,
+    /// A malformed id maps to the nil sentinel, which matches nothing.
+    source: Option<Uuid>,
     limit: usize,
 }
 
@@ -290,6 +310,11 @@ fn resolve(params: &ListParams) -> Resolved {
             .filter(|s| !s.is_empty())
             .map(str::to_owned),
         sort,
+        source: params
+            .source
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|s| Uuid::parse_str(s).unwrap_or(Uuid::nil())),
         limit: params
             .limit
             .filter(|n| PAGE_SIZES.contains(n))
@@ -333,6 +358,9 @@ fn build_query(
     if r.sort != "recent" {
         push_param(&mut q, "sort", r.sort);
     }
+    if let Some(source) = r.source {
+        push_param(&mut q, "source", &source.to_string());
+    }
     if offset > 0 {
         push_param(&mut q, "offset", &offset.to_string());
     }
@@ -346,6 +374,7 @@ async fn console_data(
     uid: UserId,
     params: &ListParams,
     members: &HashMap<UserId, String>,
+    sources: &[SourceName],
 ) -> WebResult<ConsoleData> {
     let r = resolve(params);
     let base = IncidentOpsFilter {
@@ -355,6 +384,7 @@ async fn console_data(
         query: r.query.clone(),
         sort: IncidentSort::from_key(r.sort),
         top_level: true,
+        alert_source: r.source,
         ..Default::default()
     };
     let total = state.incident_ops_store.count(org, &base).await?;
@@ -379,6 +409,7 @@ async fn console_data(
         )
         .await?;
     let ids: Vec<Uuid> = incidents.iter().map(|i| i.id).collect();
+    let kinds: HashMap<Uuid, AlertSourceKind> = sources.iter().map(|s| (s.id, s.kind)).collect();
     let mut acks = state.incident_ops_store.acknowledgements(org, &ids).await?;
     let group_ids: Vec<Uuid> = incidents
         .iter()
@@ -407,9 +438,16 @@ async fn console_data(
             let avatar_of = |u: UserId| member_avatar(u, members);
             // The incident carries its monitor's or group's name and kind, so
             // a deleted one's incident still reads as it did.
-            let name = i.target_name.clone().or_else(|| group_label(&i));
+            let name = i
+                .target_name
+                .clone()
+                .or_else(|| group_label(&i))
+                .or_else(|| i.alert.source_name());
             let lines = nested.remove(&i.id).unwrap_or_default();
-            let kind = i.target_kind.as_deref().map(kind_label);
+            let kind =
+                i.target_kind.as_deref().map(kind_label).or_else(|| {
+                    (i.origin == IncidentOrigin::Alert).then(|| alert_tool(&i, &kinds))
+                });
             let incident_acks = acks.remove(&i.id).unwrap_or_default();
             let resolved = i.resolved_by.and_then(avatar_of);
             let assignee = i.assigned_to.and_then(avatar_of);
@@ -470,6 +508,18 @@ async fn console_data(
     })
 }
 
+/// The tool an alert incident came from, or plain `alert` once its source is
+/// deleted.
+pub(super) fn alert_tool(
+    inc: &OpsIncident,
+    kinds: &HashMap<Uuid, AlertSourceKind>,
+) -> &'static str {
+    inc.alert
+        .source_id()
+        .and_then(|id| kinds.get(&id))
+        .map_or("alert", |k| k.as_db_str())
+}
+
 pub async fn list(
     _auth: AuthedBrowser,
     CurrentOrg(org): CurrentOrg,
@@ -479,7 +529,8 @@ pub async fn list(
 ) -> WebResult<IncidentsConsolePage> {
     let r = resolve(&params);
     let members = members_map(&state, org).await?;
-    let data = console_data(&state, org, uid, &params, &members).await?;
+    let sources = state.alert_source_store.names(org).await?;
+    let data = console_data(&state, org, uid, &params, &members, &sources).await?;
 
     // Tab counts honour the active severity + assignee + search, across states.
     let count_filter = IncidentOpsFilter {
@@ -487,6 +538,7 @@ pub async fn list(
         assignee: assignee_filter(&r, uid),
         query: r.query.clone(),
         top_level: true,
+        alert_source: r.source,
         ..Default::default()
     };
     let counts = state
@@ -551,12 +603,37 @@ pub async fn list(
         label: format!("owner:{email}"),
     }));
 
+    // A filter on a source that is gone, or an id that names none, still
+    // filters, so it stays on screen where it can be cleared.
+    let unknown = r.source.filter(|id| !sources.iter().any(|s| s.id == *id));
+    let source_options = if sources.is_empty() && unknown.is_none() {
+        Vec::new()
+    } else {
+        std::iter::once(OwnerOption {
+            value: String::new(),
+            label: "source:any".into(),
+            selected: r.source.is_none(),
+        })
+        .chain(sources.iter().map(|s| OwnerOption {
+            selected: r.source == Some(s.id),
+            value: s.id.to_string(),
+            label: format!("source:{}", s.name),
+        }))
+        .chain(unknown.map(|id| OwnerOption {
+            selected: true,
+            value: id.to_string(),
+            label: "source:deleted".into(),
+        }))
+        .collect()
+    };
+
     Ok(IncidentsConsolePage {
         active_tab: "incidents",
         state_tabs,
         severity_chips,
         sort_options,
         owner_options,
+        source_options,
         search: r.query.clone().unwrap_or_default(),
         state_value: r.active,
         severity_value: r.severity_key,
@@ -573,7 +650,8 @@ pub async fn list_partial(
     Query(params): Query<ListParams>,
 ) -> WebResult<IncidentsConsoleTable> {
     let members = members_map(&state, org).await?;
+    let sources = state.alert_source_store.names(org).await?;
     Ok(IncidentsConsoleTable {
-        data: console_data(&state, org, uid, &params, &members).await?,
+        data: console_data(&state, org, uid, &params, &members, &sources).await?,
     })
 }

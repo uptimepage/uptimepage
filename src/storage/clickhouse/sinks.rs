@@ -14,7 +14,8 @@ use crate::metric_names;
 use crate::storage::alert_ingest::{Delivery, Status};
 use crate::storage::org_ttl::OrgTtlDays;
 use crate::storage::traits::{
-    AlertEventLog, AlertEventSink, AlertEventView, FlowRunSink, HeartbeatPingSink, ResultSink,
+    AlertEventCounts, AlertEventHour, AlertEventLog, AlertEventSink, AlertEventView, FlowRunSink,
+    HeartbeatPingSink, ResultSink,
 };
 
 use super::{
@@ -472,9 +473,15 @@ impl AlertEventLog for ClickhouseAlertEventSink {
         &self,
         org: OrgId,
         source: Uuid,
+        outcomes: &[Status],
         after: Option<(chrono::DateTime<chrono::Utc>, &str)>,
         limit: usize,
     ) -> Result<Vec<AlertEventView>> {
+        let outcome_clause = if outcomes.is_empty() {
+            String::new()
+        } else {
+            format!("AND toInt8(outcome) IN ({}) ", outcome_codes(outcomes))
+        };
         let after_clause = if after.is_some() {
             "AND (received_at < fromUnixTimestamp64Milli(?) \
                   OR (received_at = fromUnixTimestamp64Milli(?) AND dedup_key > ?)) "
@@ -491,7 +498,7 @@ impl AlertEventLog for ClickhouseAlertEventSink {
                      if({expired}, '', body) AS body \
                  FROM {ALERT_EVENT_TABLE} \
                  WHERE org_id = ? AND source_id = ? \
-                   AND received_at >= now() - toIntervalDay(ttl_days) {after_clause}\
+                   AND received_at >= now() - toIntervalDay(ttl_days) {outcome_clause}{after_clause}\
                  ORDER BY received_at DESC, dedup_key ASC LIMIT {limit}",
                 expired = past_evidence("toDateTime(received_at)"),
             ))
@@ -527,6 +534,69 @@ impl AlertEventLog for ClickhouseAlertEventSink {
             })
             .collect()
     }
+
+    async fn hourly(
+        &self,
+        org: OrgId,
+        source: Option<Uuid>,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<AlertEventHour>> {
+        #[derive(Row, Deserialize)]
+        struct HourRow {
+            #[serde(with = "clickhouse::serde::uuid")]
+            source_id: Uuid,
+            hour: u32,
+            events: u64,
+            not_applied: u64,
+        }
+        let source_clause = if source.is_some() {
+            "AND source_id = ? "
+        } else {
+            ""
+        };
+        let mut q = self
+            .client
+            .query(&format!(
+                "SELECT source_id, toUnixTimestamp(toStartOfHour(received_at)) AS hour, \
+                     count() AS events, \
+                     countIf(toInt8(outcome) IN ({})) AS not_applied \
+                 FROM {ALERT_EVENT_TABLE} \
+                 WHERE org_id = ? {source_clause}AND received_at >= fromUnixTimestamp64Milli(?) \
+                 GROUP BY source_id, hour",
+                outcome_codes(&Status::NOT_APPLIED),
+            ))
+            .bind(org.0);
+        if let Some(source) = source {
+            q = q.bind(source);
+        }
+        let rows = q
+            .bind(since.timestamp_millis())
+            .fetch_all::<HourRow>()
+            .await
+            .map_err(|e| anyhow::anyhow!("clickhouse alert event hours: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| AlertEventHour {
+                source: r.source_id,
+                hour: chrono::DateTime::from_timestamp(i64::from(r.hour), 0).unwrap_or_default(),
+                counts: AlertEventCounts {
+                    events: r.events,
+                    not_applied: r.not_applied,
+                },
+            })
+            .collect())
+    }
+}
+
+/// The stored codes of `outcomes`, for an `IN (…)` list. Integers from a
+/// fixed table, so nothing caller-written reaches the query.
+fn outcome_codes(outcomes: &[Status]) -> String {
+    OUTCOMES
+        .iter()
+        .filter(|(status, _)| outcomes.contains(status))
+        .map(|(_, code)| code.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 #[derive(Debug, Row, Deserialize)]

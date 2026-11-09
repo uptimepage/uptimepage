@@ -108,17 +108,64 @@ pub struct AlertEventView {
     pub body: String,
 }
 
+/// A source's delivery log counted over a window.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AlertEventCounts {
+    pub events: u64,
+    /// Events whose outcome is in [`Status::NOT_APPLIED`].
+    ///
+    /// [`Status::NOT_APPLIED`]: crate::storage::alert_ingest::Status::NOT_APPLIED
+    pub not_applied: u64,
+}
+
+impl std::ops::Add for AlertEventCounts {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            events: self.events + other.events,
+            not_applied: self.not_applied + other.not_applied,
+        }
+    }
+}
+
+impl std::iter::Sum for AlertEventCounts {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::default(), |a, b| a + b)
+    }
+}
+
+/// One source's delivery log counted over one clock hour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlertEventHour {
+    pub source: Uuid,
+    /// The hour's start.
+    pub hour: DateTime<Utc>,
+    pub counts: AlertEventCounts,
+}
+
 #[async_trait]
 pub trait AlertEventLog: Send + Sync {
     /// Newest first, then by key, and only those past `after` (an event's
-    /// `received_at` and `dedup_key`) when it is set.
+    /// `received_at` and `dedup_key`) when it is set. An empty `outcomes`
+    /// reads every outcome.
     async fn recent(
         &self,
         org: OrgId,
         source: Uuid,
+        outcomes: &[crate::storage::alert_ingest::Status],
         after: Option<(DateTime<Utc>, &str)>,
         limit: usize,
     ) -> Result<Vec<AlertEventView>>;
+
+    /// The log counted per source and clock hour since `since`, for one
+    /// source or every one; an hour with no events has no entry.
+    async fn hourly(
+        &self,
+        org: OrgId,
+        source: Option<Uuid>,
+        since: DateTime<Utc>,
+    ) -> Result<Vec<AlertEventHour>>;
 }
 
 /// One stored flow run. `evidence` is `None` both once its shorter window has

@@ -292,6 +292,14 @@ seed-latency-demo:
 seed-heartbeats:
     bash scripts/seed-heartbeats.sh
 
+# Seed eight alert sources covering every state their pages render: each tool,
+# signed and rotated tokens, paused, held, an alert storm past the open cap that
+# pages nobody, and one never used. Their delivery logs fill through the real
+# /hooks/alerts route from the captured fixtures. Needs `just up-app` + `just
+# dev-login` first. Idempotent: seeded sources, incidents and log rows wiped.
+seed-alert-sources:
+    bash scripts/seed-alert-sources.sh
+
 # Seed a monitor that fails ~1 check in 5 from every region, always in single
 # checks, plus a clean twin to compare it against. No incident ever opens, so
 # this is the state where uptime falls and the incidents tab stays empty.

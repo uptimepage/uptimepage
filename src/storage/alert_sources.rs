@@ -159,9 +159,20 @@ pub struct DeletedSource {
     pub closed: Vec<Uuid>,
 }
 
+/// A source's name and tool, without its token or route: what a filter or a
+/// label needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceName {
+    pub id: Uuid,
+    pub name: String,
+    pub kind: AlertSourceKind,
+}
+
 #[async_trait]
 pub trait AlertSourceStore: Send + Sync {
     async fn list(&self, org: OrgId) -> Result<Vec<AlertSource>>;
+    /// Every source's name and tool, by name. Opens no token.
+    async fn names(&self, org: OrgId) -> Result<Vec<SourceName>>;
     async fn get(&self, org: OrgId, id: Uuid) -> Result<Option<AlertSource>>;
     /// Refused past `cap` sources across the account's orgs, and when the
     /// source would page nobody.
@@ -400,6 +411,24 @@ impl AlertSourceStore for PgAlertSourceStore {
         .await
         .map_err(db("list alert sources"))?;
         rows.into_iter().map(|r| self.decode(r)).collect()
+    }
+
+    async fn names(&self, org: OrgId) -> Result<Vec<SourceName>> {
+        let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
+            "SELECT id, name, kind FROM alert_sources WHERE org_id = $1 ORDER BY name",
+        )
+        .bind(org.0)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db("list alert source names"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, kind)| SourceName {
+                id,
+                name,
+                kind: AlertSourceKind::from_db(&kind),
+            })
+            .collect())
     }
 
     async fn get(&self, org: OrgId, id: Uuid) -> Result<Option<AlertSource>> {
@@ -869,6 +898,19 @@ impl AlertSourceStore for InMemoryAlertSourceStore {
             .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(out)
+    }
+
+    async fn names(&self, org: OrgId) -> Result<Vec<SourceName>> {
+        Ok(self
+            .list(org)
+            .await?
+            .into_iter()
+            .map(|s| SourceName {
+                id: s.id,
+                name: s.name,
+                kind: s.kind,
+            })
+            .collect())
     }
 
     async fn get(&self, org: OrgId, id: Uuid) -> Result<Option<AlertSource>> {

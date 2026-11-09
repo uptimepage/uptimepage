@@ -58,8 +58,8 @@
 
     <div id="access-hint"
          class="border-t border-[color:var(--theme-line)] pt-3 font-mono text-xs text-muted">
-      <p data-access-hint="read">› grants <span class="cli-brackets">targets channels incidents maintenance status_page</span> :read — inspect everything, change nothing.</p>
-      <p data-access-hint="write" hidden>› grants <span class="cli-brackets">targets channels incidents maintenance status_page</span> :write — create &amp; update (write implies read); no delete, no run.</p>
+      <p data-access-hint="read">› grants <span class="cli-brackets">targets channels incidents maintenance status_page alert_sources</span> :read — inspect everything, change nothing.</p>
+      <p data-access-hint="write" hidden>› grants <span class="cli-brackets">targets channels incidents maintenance status_page alert_sources</span> :write — create &amp; update (write implies read); no delete, no run.</p>
     </div>
 
     <div id="advanced-scopes" hidden
@@ -94,10 +94,16 @@
       <label class="scope-token"><input type="checkbox" class="scope-box sr-only" value="status_page:write" aria-label="status page write">write</label>
       <label class="scope-token"><input type="checkbox" class="scope-box sr-only" value="status_page:delete" aria-label="status page delete">delete</label>
       <span></span>
+
+      <span class="scope-grid__res">alert_sources</span>
+      <label class="scope-token"><input type="checkbox" class="scope-box sr-only" value="alert_sources:read" aria-label="alert sources read">read</label>
+      <label class="scope-token" title="write also reads the ingest URL"><input type="checkbox" class="scope-box sr-only" value="alert_sources:write" aria-label="alert sources write">write</label>
+      <label class="scope-token"><input type="checkbox" class="scope-box sr-only" value="alert_sources:delete" aria-label="alert sources delete">delete</label>
+      <span></span>
       </div>
 
       <p id="scope-preview" class="scope-grid__note break-words" aria-live="polite"></p>
-      <p class="scope-grid__note">run = run checks (targets) · send test (channels)</p>
+      <p class="scope-grid__note">run = run checks (targets) · send test (channels) · alert_sources write also reads ingest URLs</p>
     </div>
 
     <div class="flex justify-end">
@@ -123,7 +129,7 @@
   <script defer src="{{ "js/ui/api_form.js"|asset }}"></script>
   <script>
     (() => {
-      const RESOURCES = ['targets', 'channels', 'incidents', 'maintenance', 'status_page'];
+      const RESOURCES = ['targets', 'channels', 'incidents', 'maintenance', 'status_page', 'alert_sources'];
       const form = document.getElementById('new-token-form');
       const adv = document.getElementById('advanced-scopes');
       const result = document.getElementById('token-result');

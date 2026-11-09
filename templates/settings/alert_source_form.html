@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% import "_register.html" as reg %}
+{% block title %}{% if mode == "create" %}New alert source{% else %}Edit alert source{% endif %} · Uptimepage{% endblock %}
+{% block content %}
+<section class="space-y-6">
+  <form id="source-form"
+        data-action="{{ action }}"
+        data-method="{{ method }}"
+        data-mode="{{ mode }}"
+        {% if let Some(id) = id %}data-id="{{ id }}"{% endif %}
+        novalidate
+        class="mx-auto w-full max-w-7xl">
+
+    <div class="form-grid grid grid-cols-1 gap-6 lg:grid-cols-[17rem_1fr] lg:items-start lg:gap-8 xl:grid-cols-[17rem_1fr_15rem]">
+
+    <aside class="type-rail lg:sticky lg:top-6">
+      <span class="form-legend">tool</span>
+      <div class="check-type-cards check-type-cards--rail mt-3" data-kind-chooser>
+        {% for k in kinds %}
+        {% if mode == "create" %}
+        {% call reg::chooser_card("data-kind-card", "kind", k.value, k.selected, k.label, k.desc) %}{% endcall %}
+        {% else %}
+        {% call reg::chooser_card_static(k.selected, k.label, k.desc) %}{% endcall %}
+        {% endif %}
+        {% endfor %}
+      </div>
+      <p class="mt-2 font-mono text-xs text-quiet"># {% if mode == "create" %}fixed once created: another tool is another source{% else %}fixed: another tool is another source{% endif %}</p>
+    </aside>
+
+    <div class="space-y-6">
+
+    <header class="space-y-1">
+      <a href="/settings/alert-sources" class="inline-block text-sm text-muted hover:text-body">← alert sources</a>
+      <h1 class="page-title">
+        <span class="page-title__prefix" aria-hidden="true">$</span><input
+          name="name" type="text" required maxlength="100" value="{{ name }}"
+          autocomplete="off" spellcheck="false"
+          placeholder="{% for k in kinds %}{% if k.selected %}{{ k.hint }}{% endif %}{% endfor %}"
+          {% for k in kinds %}data-hint-{{ k.value }}="{{ k.hint }}" {% endfor %}
+          aria-label="Source name" class="page-title__input">
+      </h1>
+      <p class="text-sm text-muted">The name shows on every incident it opens and in every page it sends.</p>
+    </header>
+
+    <div id="form-errors" role="alert" aria-live="polite"
+         class="hidden alert-card alert-card--error"></div>
+
+    <fieldset data-grouping{% if kind != "alertmanager" && kind != "grafana" %} hidden{% endif %}>
+      <legend class="float-left mb-3 w-full"><span class="form-legend">grouping</span></legend>
+      <div class="clear-both space-y-2">
+        <div class="sm-rail sm-rail--wide" role="radiogroup" aria-label="Grouping">
+          <label class="sm-rail__seg"><input type="radio" name="grouping" value="group" class="sr-only"{% if grouping == "group" %} checked{% endif %}>one incident per group</label>
+          <label class="sm-rail__seg"><input type="radio" name="grouping" value="alert" class="sr-only"{% if grouping == "alert" %} checked{% endif %}>one per alert</label>
+        </div>
+        <span class="block text-xs text-muted">A group is what the tool sends together: alerts sharing its group_by labels. Grouping can change only while nothing from this source is open.</span>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend class="float-left mb-3 w-full"><span class="form-legend">who it pages</span></legend>
+      <div class="clear-both space-y-5">
+        {% if let Some(choices) = policies %}
+        <label class="field-outline w-72 max-w-full">
+          <span class="field-outline__label">Escalation policy</span>
+          <select name="escalation_policy_id" data-sm-combobox aria-label="Escalation policy" class="w-full field">
+            <option value="">inherit org default</option>
+            {% for c in choices %}
+            <option value="{{ c.id }}"{% if c.selected %} selected{% endif %}>{{ c.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {% if !policy_hint.is_empty() %}<p class="text-xs text-muted">{{ policy_hint }}</p>{% endif %}
+        <p class="text-xs text-muted">Changing the policy takes the org owner, as putting a monitor on a ladder does.</p>
+        {% endif %}
+
+        <div>
+          {% if channels.is_empty() && escalating %}
+          <p class="font-mono text-xs text-quiet"># no channels configured: the policy pages for it</p>
+          {% else if channels.is_empty() %}
+          <div class="alert-card alert-card--warn flex flex-wrap items-center justify-between gap-3" role="note">
+            <span>No channels yet, so this source would page nobody. Add one{% if policies.is_some() %}, or pick an escalation policy above{% endif %}.</span>
+            <a href="/settings/notifications/new"
+               class="sticker-btn sticker-btn--primary inline-flex min-h-9 items-center px-3 py-1.5 text-sm font-medium">+ channel</a>
+          </div>
+          {% else %}
+          <span class="mb-1.5 block text-xs text-muted">Channels to notify</span>
+          <div class="flex flex-wrap gap-1.5">
+            {% for c in channels %}
+            <label class="scope-token">
+              <input type="checkbox" data-channel-select value="{{ c.id }}" class="sr-only"{% if c.selected %} checked{% endif %}>
+              {{ c.kind }}:{{ c.name }}
+            </label>
+            {% endfor %}
+          </div>
+          <span class="mt-1 block text-xs text-muted">Used when no escalation policy applies. A source must reach someone: its own policy, the org default, or a channel.</span>
+          {% endif %}
+        </div>
+
+        <div>
+          <span class="mb-1.5 block text-xs text-muted">Remind while open</span>
+          <div class="sm-rail sm-rail--wide" role="radiogroup" aria-label="Remind while open">
+            {% for o in renotify %}
+            <label class="sm-rail__seg">
+              <input type="radio" name="renotify_interval_secs" value="{{ o.secs }}" class="sr-only"{% if o.selected %} checked{% endif %}>
+              {{ o.label }}
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="notify_recovery"{% if notify_recovery %} checked{% endif %}>
+          Tell the channels when the tool says it recovered
+        </label>
+      </div>
+    </fieldset>
+
+    <fieldset data-signing{% if kind != "grafana" %} hidden{% endif %}>
+      <legend class="float-left mb-3 w-full"><span class="form-legend">signature</span></legend>
+      <div class="clear-both space-y-2">
+        <label class="field-outline w-96 max-w-full">
+          <span class="field-outline__label">HMAC secret (optional)</span>
+          <input name="signing_secret" type="password" minlength="16" maxlength="256" autocomplete="new-password"
+                 placeholder="{% if signed %}set — leave blank to keep it{% else %}16 to 256 characters{% endif %}"
+                 class="w-full field font-mono">
+        </label>
+        <span class="block text-xs text-muted">Set the same secret on the Grafana contact point. With one set, an unsigned or stale request is refused.</span>
+        {% if signed %}
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="clear_secret"> stop checking signatures
+        </label>
+        {% endif %}
+      </div>
+    </fieldset>
+
+    </div>
+
+    <aside class="action-rail xl:sticky xl:top-6">
+      <div class="flex flex-wrap items-center gap-3 xl:flex-col xl:items-stretch">
+        <button type="submit"
+                class="sticker-btn sticker-btn--primary min-h-10 px-4 py-2 text-sm font-medium motion-safe:hover:-translate-y-0.5">
+          {% if mode == "create" %}create{% else %}save changes{% endif %}
+        </button>
+        <a href="{% if let Some(id) = id %}/settings/alert-sources/{{ id }}{% else %}/settings/alert-sources{% endif %}"
+           class="btn-ghost inline-flex min-h-10 items-center justify-center px-4 py-2 text-center text-sm">cancel</a>
+        <span class="text-xs text-quiet xl:text-center">
+          tip: <kbd class="rounded border px-1.5 py-0.5">⌘/Ctrl</kbd> +
+               <kbd class="rounded border px-1.5 py-0.5">Enter</kbd> to save
+        </span>
+      </div>
+    </aside>
+
+    </div>
+  </form>
+</section>
+
+<script defer src="{{ "js/ui/api_form.js"|asset }}"></script>
+<script defer src="{{ "js/ui/alert_sources.js"|asset }}"></script>
+{% endblock %}

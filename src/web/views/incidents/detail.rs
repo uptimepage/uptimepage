@@ -143,6 +143,11 @@ pub struct IncidentDetailPage {
     pub part_of: Option<(String, String)>,
     /// A group incident's members, in the order they joined.
     pub members: Vec<super::console::MemberLine>,
+    /// An alert incident's source: `None` id once deleted.
+    pub alert_source: Option<(Option<String>, String)>,
+    pub dedup_key: Option<String>,
+    /// What the tool last said, on an alert incident.
+    pub alert_state: Option<crate::domain::IncidentAlertState>,
 }
 
 /// One paging-delivery row for the incident's notifications section.
@@ -243,6 +248,16 @@ pub async fn detail(
         .group
         .as_ref()
         .map(|g| (g.id.map(|i| i.to_string()), g.name.clone()));
+    let alert_source = inc
+        .alert
+        .alert_source
+        .as_ref()
+        .map(|s| (s.id.map(|i| i.to_string()), s.name.clone()));
+    let dedup_key = inc.alert.dedup_key.clone();
+    let alert_state = match (inc.origin, state.alert_ingest.as_ref()) {
+        (crate::domain::IncidentOrigin::Alert, Some(ingest)) => ingest.state_of(org, id).await?,
+        _ => None,
+    };
     let lines = match &group {
         Some(_) => state
             .incident_ops_store
@@ -366,6 +381,9 @@ pub async fn detail(
     page.pages = pages;
     page.servers = servers;
     page.group = group;
+    page.alert_source = alert_source;
+    page.dedup_key = dedup_key;
+    page.alert_state = alert_state;
     page.part_of = part_of;
     page.members = lines;
     Ok(page)
@@ -419,6 +437,9 @@ pub(super) fn make_detail_page(
         pages: Vec::new(),
         servers: Vec::new(),
         group: None,
+        alert_source: None,
+        dedup_key: None,
+        alert_state: None,
         part_of: None,
         members: Vec::new(),
     }

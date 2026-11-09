@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% import "_register.html" as reg %}
+{% block title %}Alert sources · Uptimepage{% endblock %}
+{% block content %}
+<section class="space-y-6">
+  <header class="flex flex-wrap items-end justify-between gap-3">
+    <div class="space-y-1">
+      <div class="flex items-center gap-3">
+        <h1 class="page-title"><span class="page-title__prefix" aria-hidden="true">$</span>alert sources</h1>
+        {% if !self.teaser() %}<span class="dashboard-chip dashboard-chip--flat">refresh · 60s</span>{% endif %}
+      </div>
+      <p class="text-sm text-muted">Tools that already watch your systems send their alerts here, and each alert pages through your rotations.</p>
+      <p class="font-mono text-xs text-quiet"># one source per route: give each team's receiver, contact point or webhook its own</p>
+    </div>
+    {% if lock.is_none() %}
+    <a href="/settings/alert-sources/new"
+       class="sticker-btn sticker-btn--primary px-3 py-1.5 text-sm font-medium">+ source</a>
+    {% endif %}
+  </header>
+
+  {% if let Some(lock) = lock %}
+  {% if lock.teaser %}
+  <section class="sticker-card overflow-hidden">
+    <h2 class="card-band panel-label flex items-center justify-between gap-3">on the Team plan <span class="team-tag">team</span></h2>
+    <div class="grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:items-start">
+      <div class="space-y-4">
+        <ul class="list-inside list-disc space-y-1 text-sm">
+          <li>Alertmanager, Grafana, Datadog or your own scripts open and close incidents here.</li>
+          <li>Each alert pages through the source's escalation policy or channels, and closes when the tool says it recovered.</li>
+          <li>A delivery log shows what every request did.</li>
+        </ul>
+        {% include "settings/_team_cta.html" %}
+      </div>
+      <div class="check-type-cards sm:grid-cols-2">
+        {% for k in kinds %}
+        {% call reg::chooser_card_locked(k.label, k.desc, "team", "warn") %}{% endcall %}
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+  <p class="section-legend">what it looks like, with example sources</p>
+  <div class="space-y-4 opacity-50" aria-hidden="true" inert>{{ example|safe }}</div>
+  {% else %}
+  <div class="alert-card alert-card--warn flex flex-wrap items-center justify-between gap-3 text-sm">
+    <p class="max-w-prose">Alert sources are part of the Team plan. These sources are held: a firing for a new alert is refused, and alerts already open still close. They come back with the same URL on Team.</p>
+    {% include "settings/_team_cta.html" %}
+  </div>
+  {% endif %}
+  {% endif %}
+
+  {% if !self.teaser() %}
+  <div id="sources-list" data-hx-loader
+       hx-get="/web/partials/settings/alert-sources"
+       hx-trigger="load, every 60s, sources:refresh from:body, sm:poll-resume from:body"
+       data-poll-pause
+       hx-swap="innerHTML"
+       class="space-y-4">
+    <div class="sticker-card overflow-hidden">{% call reg::loading("loading…", "") %}{% endcall %}</div>
+  </div>
+  {% endif %}
+</section>
+<script defer src="{{ "js/ui/ribbon_tip.js"|asset }}"></script>
+<script defer src="{{ "js/ui/alert_sources.js"|asset }}"></script>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% if events.is_empty() && next_cursor.is_none() %}
+<tr>
+  <td colspan="5" class="px-5 py-4 font-mono text-xs text-quiet">
+    {% if show == "all" %}# nothing received yet: send the test alert from the connection tab, or wait for the tool's next alert{% else %}# nothing in this filter{% endif %}
+  </td>
+</tr>
+{% endif %}
+{% for e in events %}
+<tr data-src-event tabindex="0" aria-expanded="false" class="cursor-pointer border-t border-[color:var(--theme-line)] first:border-t-0 hover:bg-[color:var(--theme-surface-sunk)]">
+  <td class="w-6 py-2 pl-5 font-mono text-xs"><span class="result-row__chev" aria-hidden="true">▸</span></td>
+  <td class="whitespace-nowrap px-3 py-2 font-mono text-xs tabular-nums text-quiet">
+    <time datetime="{{ e.received_at|iso_ts }}" data-tz="exact" class="hidden sm:inline">{{ e.received_at|human_ts }}</time>
+    <time datetime="{{ e.received_at|iso_ts }}" data-tz="day-time" class="sm:hidden">{{ e.received_at|human_ts }}</time>
+  </td>
+  <td class="px-3 py-2"><span class="status-badge status-badge--{{ self.tone(e.outcome.as_str()) }}">{{ e.outcome }}</span></td>
+  <td class="w-full max-w-0 px-3 py-2 font-mono text-xs">
+    <span class="block truncate">{% if e.dedup_key.is_empty() %}<span class="text-quiet">no key</span>{% else %}<span class="text-body">{{ e.dedup_key }}</span>{% endif %}{% if !e.note.is_empty() %}<span class="ml-2 text-quiet"># {{ e.note }}</span>{% endif %}</span>
+  </td>
+  <td class="hidden whitespace-nowrap px-5 py-2 font-mono text-xs sm:table-cell">{% if let Some(inc) = e.incident_id %}<a href="/incidents/{{ inc }}" title="open the incident">{% if let Some((label, tone)) = self.incident(inc) %}<span class="status-badge status-badge--{{ tone }} underline decoration-dotted underline-offset-2">{{ label }}</span>{% else %}<span class="underline decoration-dotted underline-offset-2">incident</span>{% endif %}</a>{% else %}<span class="text-quiet">—</span>{% endif %}</td>
+</tr>
+<tr data-src-event-detail hidden>
+  <td colspan="5" class="px-5 pt-1 pb-4 pl-11">
+    <dl class="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-1 font-mono text-xs">
+      <dt class="text-quiet">received</dt>
+      <dd><time datetime="{{ e.received_at|iso_ts }}" data-tz="exact">{{ e.received_at|human_ts }}</time></dd>
+      {% if !e.dedup_key.is_empty() %}<dt class="text-quiet">key</dt><dd class="break-all">{{ e.dedup_key }}</dd>{% endif %}
+      {% if !e.note.is_empty() %}<dt class="text-quiet">why</dt><dd>{{ e.note }}</dd>{% endif %}
+      {% if let Some(inc) = e.incident_id %}<dt class="text-quiet sm:hidden">incident</dt><dd class="sm:hidden">{% if let Some((label, tone)) = self.incident(inc) %}<span class="status-badge status-badge--{{ tone }}">{{ label }}</span> {% endif %}<a href="/incidents/{{ inc }}" class="underline decoration-dotted underline-offset-2 hover:text-body">open it →</a></dd>{% endif %}
+    </dl>
+    {% if e.body.is_empty() %}
+    <p class="mt-2 font-mono text-xs text-quiet"># no body kept for this event: only a request's first event keeps one, for the evidence window</p>
+    {% else %}
+    <pre class="mt-2 max-h-72 overflow-auto rounded-sm bg-[color:var(--theme-surface-sunk)] px-3 py-2 font-mono text-xs whitespace-pre-wrap break-all">{{ e.body }}</pre>
+    {% endif %}
+  </td>
+</tr>
+{% endfor %}
+{% if let Some(c) = next_cursor %}
+<tr>
+  <td colspan="5" class="border-t border-[color:var(--theme-line)] px-5 py-2.5">
+    <button type="button"
+            hx-get="/web/partials/settings/alert-sources/{{ id }}/events?show={{ show }}&cursor={{ c }}"
+            hx-target="closest tr" hx-swap="outerHTML"
+            class="btn-ghost px-3 py-1.5 text-xs font-medium">older</button>
+  </td>
+</tr>
+{% endif %}

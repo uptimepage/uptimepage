@@ -120,6 +120,7 @@ fn page(rows: Vec<ConsoleRow>) -> IncidentsConsolePage {
             label: "Owner: any".into(),
             selected: true,
         }],
+        source_options: Vec::new(),
         search: String::new(),
         state_value: "all",
         severity_value: None,
@@ -418,6 +419,40 @@ fn console_row_shows_monitor_kind() {
         false,
     );
     assert!(page(vec![manual]).render().unwrap().contains("—"));
+}
+
+#[test]
+fn an_alert_row_names_its_source_and_tool_and_survives_the_delete() {
+    let source = Uuid::now_v7();
+    let mut inc = ops(IncidentState::Triggered);
+    inc.target_id = None;
+    inc.origin = crate::domain::IncidentOrigin::Alert;
+    inc.alert.alert_source = Some(crate::domain::IncidentAlertSourceRef {
+        id: Some(source),
+        name: "Prod Alertmanager".into(),
+    });
+    let kinds = HashMap::from([(source, crate::domain::AlertSourceKind::Grafana)]);
+    assert_eq!(alert_tool(&inc, &kinds), "grafana");
+    assert_eq!(
+        alert_tool(&inc, &HashMap::new()),
+        "alert",
+        "its source deleted"
+    );
+
+    let mut row = row_from(inc.clone(), None, AckList::default(), None, None, false);
+    row.kind = Some("grafana");
+    let html = page(vec![row]).render().unwrap();
+    assert!(html.contains(">Prod Alertmanager<"), "{html}");
+    assert!(html.contains(">grafana<"), "{html}");
+    assert!(!html.contains("source deleted"), "{html}");
+
+    inc.alert.alert_source.as_mut().unwrap().id = None;
+    let gone = row_from(inc, None, AckList::default(), None, None, false);
+    let html = page(vec![gone]).render().unwrap();
+    assert!(
+        html.contains(">Prod Alertmanager<") && html.contains("source deleted"),
+        "{html}"
+    );
 }
 
 #[test]

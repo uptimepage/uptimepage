@@ -44,6 +44,14 @@
         {% endfor %}
       </select></span>
 
+      {% if !source_options.is_empty() %}
+      <span class="sm-filter sm-filter--seg"><select name="source" data-sm-combobox class="monitors-toolbar__select" aria-label="Alert source">
+        {% for o in source_options %}
+        <option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>
+        {% endfor %}
+      </select></span>
+      {% endif %}
+
       <span class="sm-filter sm-filter--seg"><select name="sort" data-sm-combobox class="monitors-toolbar__select" aria-label="Sort">
         {% for s in sort_options %}
         <option value="{{ s.key }}"{% if s.selected %} selected{% endif %}>{{ s.label }}</option>

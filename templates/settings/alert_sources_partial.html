@@ -1,0 +1,126 @@
+{% if groups.is_empty() %}
+<section class="sticker-card overflow-hidden">
+  <h2 class="card-band panel-label">connect your first tool</h2>
+  <div class="check-type-cards p-5 sm:grid-cols-2 lg:grid-cols-4">
+    {% for k in kinds %}
+    <a href="/settings/alert-sources/new?kind={{ k.value }}" class="check-type-card">
+      <span class="check-type-card__name">{{ k.label }}</span>
+      <span class="check-type-card__desc">{{ k.desc }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% else %}
+<p class="dashboard-subhead">
+  <span class="dashboard-subhead__count">{{ total }}</span> sources
+  {% if attention > 0 %}
+  <span class="mx-1">·</span>
+  <span class="dashboard-subhead__active"><span class="dashboard-dot dashboard-dot--down dashboard-dot--pulse"></span>{{ attention }} need attention</span>
+  {% endif %}
+</p>
+
+<section class="dashboard-kpis">
+  {% include "dashboard/_kpi_card.html" %}
+  <article class="sticker-card dashboard-kpi-card corner-frame">
+    <p class="dashboard-kpi-card__label">Last event</p>
+    {% if let Some(last) = last_event %}
+    <p class="dashboard-kpi-card__value"><time datetime="{{ last.at|iso_ts }}" data-tz>{{ last.at|human_ts }}</time></p>
+    <p class="dashboard-kpi-card__hint">from {{ last.source }}</p>
+    {% else %}
+    <p class="dashboard-kpi-card__value dashboard-kpi-card__value--quiet">never</p>
+    <p class="dashboard-kpi-card__hint">no source has sent an alert yet</p>
+    {% endif %}
+  </article>
+</section>
+
+<section class="sticker-card dashboard-rail sm:grid-cols-3" aria-label="Sources by state">
+  <div class="dashboard-rail__cell">
+    <p class="dashboard-rail__label"><span class="dashboard-dot dashboard-dot--up"></span>live</p>
+    <p class="dashboard-rail__value{% if live == 0 %} dashboard-rail__value--muted{% endif %}">{{ live }}</p>
+  </div>
+  <div class="dashboard-rail__cell">
+    <p class="dashboard-rail__label"><span class="dashboard-dot dashboard-dot--down"></span>need attention</p>
+    <p class="dashboard-rail__value{% if attention == 0 %} dashboard-rail__value--muted{% endif %}">{{ attention }}</p>
+  </div>
+  <div class="dashboard-rail__cell">
+    <p class="dashboard-rail__label"><span class="dashboard-dot dashboard-dot--muted"></span>paused</p>
+    <p class="dashboard-rail__value{% if paused == 0 %} dashboard-rail__value--muted{% endif %}">{{ paused }}</p>
+  </div>
+  {% if let Some(d) = day %}
+  <div class="col-span-2 sm:col-span-3">
+    <div class="dashboard-ribbon" role="img" aria-label="Alerts received each hour over the last 24 hours">
+      {% for seg in ribbon %}
+      <span class="dashboard-ribbon__seg dashboard-ribbon__seg--{{ seg.class }}" data-tip-time="{{ seg.time }}" data-tip-ts="{{ seg.from|iso_ts }}" data-tip-to="{{ seg.to|iso_ts }}" data-tip-stat="{{ seg.stat }}"></span>
+      {% endfor %}
+    </div>
+    <div class="dashboard-ribbon-meta">
+      <span class="cli-brackets">24h ago</span>
+      <span class="dashboard-ribbon-meta__value">{{ d.events }} events{% if d.not_applied > 0 %} · {{ d.not_applied }} not applied{% endif %}</span>
+      <span class="cli-brackets">now</span>
+    </div>
+  </div>
+  {% endif %}
+</section>
+
+<div class="sticker-card dashboard-card overflow-x-auto">
+  <div class="dashboard-table source-table" role="table" aria-label="Alert sources with their route and the last day of alerts">
+    <div class="dashboard-head" role="row">
+      <span aria-label="state"></span>
+      <span>source</span>
+      <span>pages</span>
+      <span>alerts · 24h</span>
+      <span class="text-right">events</span>
+      <span class="text-right">not applied</span>
+      <span class="text-right">last event</span>
+    </div>
+    {% for g in groups %}
+    <div class="source-table__group{% if g.attention %} source-table__group--attention{% endif %}" role="row"><span role="cell"># {{ g.label }} · {{ g.rows.len() }}</span></div>
+    {% for s in g.rows %}
+    <div class="dashboard-row{% if g.paused %} source-table__row--paused{% endif %}" role="row" data-src-row data-status="{{ s.dot }}">
+      <span aria-hidden="true"><span class="dashboard-dot dashboard-dot--{{ s.dot }}"></span></span>
+      <span class="dashboard-cell-monitor">
+        <a href="/settings/alert-sources/{{ s.id }}" data-src-open class="dashboard-name">{{ s.name }}</a>
+        <span class="dashboard-host">{{ s.kind }}{% if s.tone != "up" %} · <span class="source-table__standing source-table__standing--{{ s.tone }}">{{ s.standing }}</span>{% endif %}</span>
+      </span>
+      <span class="dashboard-cell-monitor">
+        {% if s.routes_to_nobody %}
+        <span class="source-table__nobody">nobody</span>
+        <a href="/settings/alert-sources/{{ s.id }}/edit" class="dashboard-host source-table__fix">fix route →</a>
+        {% else if let Some(p) = s.route.policy %}
+        <span class="truncate font-mono text-xs text-body">{{ p.name }}</span>
+        <span class="dashboard-host"># {% if p.inherited %}the org default policy{% else %}its own policy{% endif %}</span>
+        {% else %}
+        <span class="truncate font-mono text-xs text-body" title="{{ s.route.channels|join(", ") }}">{{ s.route.channels|join(" · ") }}</span>
+        <span class="dashboard-host"># its channels, no ladder</span>
+        {% endif %}
+      </span>
+      <span>
+        <svg class="dashboard-spark" viewBox="0 0 160 22" preserveAspectRatio="none" aria-hidden="true">
+          {% if s.spark_path == "" %}
+          <line class="dashboard-spark__baseline" x1="0" x2="160" y1="21" y2="21" />
+          {% else %}
+          <path class="dashboard-spark__fill" d="{{ s.spark_fill }}" />
+          <path class="dashboard-spark__line" d="{{ s.spark_path }}" />
+          {% endif %}
+        </svg>
+      </span>
+      {% if let Some(d) = s.day %}
+      <span class="dashboard-num{% if d.events == 0 %} dashboard-num--muted{% endif %}">{{ d.events }}</span>
+      <span class="dashboard-num{% if d.not_applied > 0 %} dashboard-num--warn{% else %} dashboard-num--muted{% endif %}">{{ d.not_applied }}</span>
+      {% else %}
+      <span class="dashboard-num dashboard-num--muted">—</span>
+      <span class="dashboard-num dashboard-num--muted">—</span>
+      {% endif %}
+      <span class="dashboard-num">
+        {% if let Some(at) = s.last_event_at %}
+        <time datetime="{{ at|iso_ts }}" data-tz>{{ at|human_ts }}</time>
+        {% else %}
+        <a href="/settings/alert-sources/{{ s.id }}#connection" class="source-table__connect">waiting · connect →</a>
+        {% endif %}
+      </span>
+    </div>
+    {% endfor %}
+    {% endfor %}
+  </div>
+</div>
+{% endif %}

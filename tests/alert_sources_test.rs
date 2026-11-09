@@ -5,8 +5,8 @@ use crate::common;
 use common::{make_user, unique_slug};
 use sqlx::PgPool;
 use uptimepage::domain::{
-    AlertBinding, AlertGrouping, AlertSourceKind, AlertSourceUpdate, NewAlertSource, OrgId,
-    TargetAlerts, UserId, WriteSource,
+    AlertBinding, AlertGrouping, AlertSourceKind, AlertSourceUpdate, IncidentState, NewAlertSource,
+    OrgId, TargetAlerts, UserId, WriteSource,
 };
 use uptimepage::error::{AppError, codes};
 use uptimepage::storage::alert_sources::{
@@ -750,4 +750,50 @@ async fn the_in_memory_store_keeps_the_same_rules() {
             .is_none()
     );
     assert!(store.delete(org, created.id, None).await.unwrap().is_some());
+}
+
+#[tokio::test]
+#[ignore]
+async fn the_delivery_log_reads_each_linked_incidents_state_in_one_go_pg() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (org, user) = seed(&pool, "asstates").await;
+    let store = PgAlertSourceStore::new(pool.clone(), None);
+    let channel = seed_channel(&pool, org, "ops").await;
+    let source = store
+        .create(
+            org,
+            routed("prom", AlertSourceKind::Alertmanager, channel),
+            WriteSource::Api,
+            Some(user),
+            CAP,
+        )
+        .await
+        .unwrap();
+    let open = seed_alert_incident(&pool, org, source.id, "open").await;
+    let closed = seed_alert_incident(&pool, org, source.id, "closed").await;
+    sqlx::query("UPDATE incidents SET state = 'resolved', ended_at = now() WHERE id = $1")
+        .bind(closed)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (other_org, _) = seed(&pool, "asstates-other").await;
+
+    let incidents = PgIncidentOpsStore::new(pool.clone());
+    let states = incidents
+        .states(org, &[open, closed, Uuid::new_v4()])
+        .await
+        .unwrap();
+    assert_eq!(states.len(), 2, "an unknown id is absent");
+    assert_eq!(states[&open], IncidentState::Triggered);
+    assert_eq!(states[&closed], IncidentState::Resolved);
+    assert!(
+        incidents
+            .states(other_org, &[open])
+            .await
+            .unwrap()
+            .is_empty(),
+        "another org reads none of them"
+    );
 }

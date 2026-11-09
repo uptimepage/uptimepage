@@ -3,6 +3,7 @@
 //! policy; holds on a smaller plan; the account's event budget; and what an
 //! alert incident shows on the incidents API.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::common;
@@ -10,6 +11,7 @@ use async_trait::async_trait;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
+use chrono::DurationRound;
 use common::{body_json, make_user, unique_slug};
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -24,7 +26,9 @@ use uptimepage::escalation::IncidentSignal;
 use uptimepage::quotas::holds::reconcile_after_change;
 use uptimepage::storage::alert_ingest::Status;
 use uptimepage::storage::create_org_with_owner;
-use uptimepage::storage::traits::{AlertEventLog, AlertEventView};
+use uptimepage::storage::traits::{
+    AlertEventCounts, AlertEventHour, AlertEventLog, AlertEventView,
+};
 use uuid::Uuid;
 
 struct Fx {
@@ -657,8 +661,11 @@ async fn an_alert_incident_shows_what_the_tool_said_and_filters_by_source() {
     assert_eq!(detail["alert_state"]["reported_severity"], "critical");
 }
 
-/// A delivery log held in memory, in the order the real one reads.
-struct Log(Vec<AlertEventView>);
+/// One source's delivery log held in memory, in the order the real one reads.
+struct Log {
+    source: Uuid,
+    rows: Vec<AlertEventView>,
+}
 
 #[async_trait]
 impl AlertEventLog for Log {
@@ -666,10 +673,11 @@ impl AlertEventLog for Log {
         &self,
         _org: OrgId,
         _source: Uuid,
+        outcomes: &[Status],
         after: Option<(chrono::DateTime<chrono::Utc>, &str)>,
         limit: usize,
     ) -> uptimepage::error::Result<Vec<AlertEventView>> {
-        let mut rows = self.0.clone();
+        let mut rows = self.rows.clone();
         rows.sort_by(|a, b| {
             b.received_at
                 .cmp(&a.received_at)
@@ -677,12 +685,45 @@ impl AlertEventLog for Log {
         });
         Ok(rows
             .into_iter()
+            .filter(|e| outcomes.is_empty() || outcomes.contains(&e.outcome))
             .filter(|e| {
                 after.is_none_or(|(at, key)| {
                     e.received_at < at || (e.received_at == at && e.dedup_key.as_str() > key)
                 })
             })
             .take(limit)
+            .collect())
+    }
+
+    async fn hourly(
+        &self,
+        _org: OrgId,
+        source: Option<Uuid>,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> uptimepage::error::Result<Vec<AlertEventHour>> {
+        if source.is_some_and(|s| s != self.source) {
+            return Ok(Vec::new());
+        }
+        let mut hours: BTreeMap<chrono::DateTime<chrono::Utc>, AlertEventCounts> = BTreeMap::new();
+        for e in self.rows.iter().filter(|e| e.received_at >= since) {
+            let hour = e
+                .received_at
+                .duration_trunc(chrono::TimeDelta::hours(1))
+                .unwrap();
+            let slot = hours.entry(hour).or_default();
+            *slot = *slot
+                + AlertEventCounts {
+                    events: 1,
+                    not_applied: u64::from(Status::NOT_APPLIED.contains(&e.outcome)),
+                };
+        }
+        Ok(hours
+            .into_iter()
+            .map(|(hour, counts)| AlertEventHour {
+                source: self.source,
+                hour,
+                counts,
+            })
             .collect())
     }
 }
@@ -708,7 +749,11 @@ async fn the_delivery_log_pages_through_one_request_without_losing_an_event() {
             body: String::new(),
         })
         .to_vec();
-    let state = fx.state.clone().with_alert_event_log(Arc::new(Log(rows)));
+    let log = Log {
+        source: id.parse().unwrap(),
+        rows,
+    };
+    let state = fx.state.clone().with_alert_event_log(Arc::new(log));
     fx.router = uptimepage::build_app_router(state, CancellationToken::new());
 
     let path = format!("/api/v1/alert-sources/{id}/events?limit=2");

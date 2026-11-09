@@ -1,14 +1,16 @@
 <div class="monitors-popover__label">workspace</div>
 <a href="/settings/notifications" role="menuitem"
    class="monitors-popover__item"{% if active_tab == "notifications" %} aria-current="page"{% endif %}><svg class="mp-icon" aria-hidden="true"><use href="#i-mail" /></svg>notifications</a>
+<a href="/settings/alert-sources" role="menuitem"
+   class="monitors-popover__item"{% if active_tab == "alert-sources" %} aria-current="page"{% endif %}><svg class="mp-icon" aria-hidden="true"><use href="#i-pulse" /></svg>alert sources<span class="nav-team-slot nav-team-slot--alerts"></span></a>
 <a href="/settings/variables" role="menuitem"
    class="monitors-popover__item"{% if active_tab == "variables" %} aria-current="page"{% endif %}><svg class="mp-icon" aria-hidden="true"><use href="#i-variable" /></svg>variables</a>
 <a href="/settings/team" role="menuitem"
    class="monitors-popover__item"{% if active_tab == "team" %} aria-current="page"{% endif %}><svg class="mp-icon" aria-hidden="true"><use href="#i-users" /></svg>team</a>
 <a href="/settings/escalation" role="menuitem"
-   class="monitors-popover__item"{% if active_tab == "escalation" %} aria-current="page"{% endif %}><svg class="mp-icon" aria-hidden="true"><use href="#i-alert" /></svg>escalation</a>
+   class="monitors-popover__item"{% if active_tab == "escalation" %} aria-current="page"{% endif %}><svg class="mp-icon" aria-hidden="true"><use href="#i-alert" /></svg>escalation<span class="nav-team-slot nav-team-slot--on-call"></span></a>
 <a href="/settings/on-call" role="menuitem"
-   class="monitors-popover__item"{% if active_tab == "on-call" %} aria-current="page"{% endif %}><svg class="mp-icon" aria-hidden="true"><use href="#i-users" /></svg>on-call</a>
+   class="monitors-popover__item"{% if active_tab == "on-call" %} aria-current="page"{% endif %}><svg class="mp-icon" aria-hidden="true"><use href="#i-users" /></svg>on-call<span class="nav-team-slot nav-team-slot--on-call"></span></a>
 <div class="monitors-popover__sep"></div>
 <div class="monitors-popover__label">account</div>
 <a href="/settings/organizations" role="menuitem"

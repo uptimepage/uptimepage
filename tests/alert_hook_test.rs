@@ -635,6 +635,12 @@ impl AlertSourceStore for StaleGrouping {
     async fn list(&self, org: OrgId) -> uptimepage::error::Result<Vec<AlertSource>> {
         self.0.list(org).await
     }
+    async fn names(
+        &self,
+        org: OrgId,
+    ) -> uptimepage::error::Result<Vec<uptimepage::storage::alert_sources::SourceName>> {
+        self.0.names(org).await
+    }
     async fn get(&self, org: OrgId, id: Uuid) -> uptimepage::error::Result<Option<AlertSource>> {
         self.0.get(org, id).await
     }

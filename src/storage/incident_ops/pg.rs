@@ -1804,6 +1804,23 @@ impl IncidentOpsStore for PgIncidentOpsStore {
         Ok(rows.into_iter().map(row_to_event).collect())
     }
 
+    async fn states(&self, org: OrgId, ids: &[Uuid]) -> Result<HashMap<Uuid, IncidentState>> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let rows: Vec<(Uuid, String)> =
+            sqlx::query_as("SELECT id, state FROM incidents WHERE org_id = $1 AND id = ANY($2)")
+                .bind(org.0)
+                .bind(ids)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| anyhow::anyhow!("incident states: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, state)| (id, IncidentState::from_db_str(&state)))
+            .collect())
+    }
+
     async fn acknowledgements(
         &self,
         org: OrgId,

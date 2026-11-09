@@ -639,6 +639,8 @@ pub trait IncidentOpsStore: Send + Sync {
         org: OrgId,
         ids: &[Uuid],
     ) -> Result<HashMap<Uuid, Vec<IncidentAcknowledgement>>>;
+    /// Each incident's state, keyed by id. Ids the org does not own are absent.
+    async fn states(&self, org: OrgId, ids: &[Uuid]) -> Result<HashMap<Uuid, IncidentState>>;
     /// Append one internal timeline entry outside a lifecycle transition (e.g.
     /// the escalation engine logging a `notified`/`escalated` event).
     async fn append_event(

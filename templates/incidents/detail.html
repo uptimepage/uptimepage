@@ -14,7 +14,7 @@
     {% call reg::incident_state_rail(state) %}{% endcall %}
 
     <p class="mt-2 font-mono text-xs text-quiet">
-      # {% if origin == "manual" %}declared by hand{% else %}opened by the monitor{% endif %}
+      # {% if origin == "manual" %}declared by hand{% else if origin == "alert" %}opened by an alert{% else %}opened by the monitor{% endif %}
     </p>
   </aside>
 
@@ -37,6 +37,14 @@
       <span class="font-mono text-quiet" title="The monitor was deleted. The incident keeps its history.">{{ n }} (deleted)</span>
       {% endif %}
       {% when None %}
+      {% if let Some((sid, sname)) = alert_source %}
+      {% if let Some(s) = sid %}
+      <a href="/settings/alert-sources/{{ s }}" class="font-mono text-body underline decoration-dotted underline-offset-2 hover:text-body">{{ sname }}</a>
+      {% else %}
+      <span class="font-mono text-quiet" title="The alert source was deleted. The incident keeps its history.">{{ sname }} (deleted)</span>
+      {% endif %}
+      <span class="cli-brackets ml-2">alert source</span>
+      {% else %}
       {% if let Some((gid, gname)) = group %}
       {% if let Some(g) = gid %}
       <a href="/groups/{{ g }}?from=incident:{{ id }}" class="font-mono text-body underline decoration-dotted underline-offset-2 hover:text-body">{{ gname }}</a>
@@ -46,6 +54,7 @@
       <span class="cli-brackets ml-2">group alert</span>
       {% else %}
       <span class="font-mono text-quiet">no monitor</span>
+      {% endif %}
       {% endif %}
       {% endmatch %}
       <span class="cli-brackets ml-2">urgency:{{ urgency }}</span>
@@ -172,6 +181,45 @@
     {% endif %}
   </section>
   {% when None %}{% endmatch %}
+
+  {% if let Some(a) = alert_state %}
+  <section class="sticker-card p-5">
+    <h2 class="panel-label">what the tool sent</h2>
+    <dl class="mt-3 space-y-1 font-mono text-xs">
+      {% if let Some(k) = dedup_key %}
+      <div class="flex flex-wrap gap-x-3"><dt class="text-muted">key</dt><dd class="min-w-0 break-all text-body">{{ k }}</dd></div>
+      {% endif %}
+      <div class="flex flex-wrap gap-x-3"><dt class="text-muted">firing</dt><dd class="text-body">{{ a.firing_count }}</dd></div>
+      <div class="flex flex-wrap gap-x-3"><dt class="text-muted">repeats</dt><dd class="text-body">{{ a.repeat_count }}</dd></div>
+      <div class="flex flex-wrap gap-x-3"><dt class="text-muted">worst severity sent</dt><dd class="text-body">{{ a.reported_severity.as_db_str() }}</dd></div>
+      <div class="flex flex-wrap gap-x-3"><dt class="text-muted">last event</dt><dd class="text-body"><time datetime="{{ a.last_event_at|iso_ts }}" data-tz="exact">{{ a.last_event_at|human_ts }}</time></dd></div>
+    </dl>
+    {% if !a.labels.is_empty() %}
+    <h3 class="section-legend mt-5">labels</h3>
+    <dl class="mt-2 space-y-1 font-mono text-xs">
+      {% for (k, v) in a.labels.iter() %}
+      <div class="flex flex-wrap gap-x-3"><dt class="text-muted">{{ k }}</dt><dd class="min-w-0 break-all text-body">{{ v }}</dd></div>
+      {% endfor %}
+    </dl>
+    {% endif %}
+    {% if !a.annotations.is_empty() %}
+    <h3 class="section-legend mt-5">annotations</h3>
+    <dl class="mt-2 space-y-2 text-sm">
+      {% for (k, v) in a.annotations.iter() %}
+      <div><dt class="font-mono text-xs text-muted">{{ k }}</dt><dd class="whitespace-pre-wrap break-words text-body">{{ v }}</dd></div>
+      {% endfor %}
+    </dl>
+    {% endif %}
+    {% if !a.links.is_empty() %}
+    <h3 class="section-legend mt-5">links</h3>
+    <ul class="mt-2 space-y-1 text-sm">
+      {% for l in a.links %}
+      <li><a href="{{ l.href }}" rel="noopener noreferrer nofollow" target="_blank" class="break-all underline decoration-dotted underline-offset-2 hover:text-body">{% if l.text.is_empty() %}{{ l.href }}{% else %}{{ l.text }}{% endif %}</a></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+  {% endif %}
 
   <section class="sticker-card overflow-hidden">
     <div class="flex items-baseline justify-between px-5 pt-5 pb-3">

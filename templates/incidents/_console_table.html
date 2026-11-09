@@ -28,8 +28,15 @@
           <a href="/incidents/{{ row.id }}" title="{{ row.label }}"
              class="block max-w-[22rem] truncate text-sm font-medium text-body hover:underline">{{ row.label }}</a>
           <div class="mt-0.5 flex flex-wrap gap-1">
+            {% if let Some(src) = row.source %}
+            <span class="dashboard-chip dashboard-chip--flat" title="alert source">{{ src }}</span>
+            {% else %}
             <span class="dashboard-chip dashboard-chip--flat">{{ row.origin }}</span>
+            {% endif %}
             <span class="dashboard-chip dashboard-chip--flat">{{ row.visibility }}</span>
+            {% if row.source_deleted %}
+            <span class="dashboard-chip dashboard-chip--flat" title="The alert source was deleted. The incident keeps its history.">source deleted</span>
+            {% endif %}
             {% if row.monitor_deleted %}
             <span class="dashboard-chip dashboard-chip--flat" title="The monitor was deleted. The incident keeps its history.">monitor deleted</span>
             {% endif %}
@@ -54,7 +61,7 @@
         </td>
         <td class="px-3 py-2 align-top">
           {% match row.kind %}{% when Some with (k) %}
-          <span class="dashboard-chip dashboard-chip--flat" title="monitor check type">{{ k }}</span>
+          <span class="dashboard-chip dashboard-chip--flat" title="{% if row.origin == "alert" %}the tool that sent the alert{% else %}monitor check type{% endif %}">{{ k }}</span>
           {% when None %}<span class="text-quiet">—</span>{% endmatch %}
         </td>
         <td class="px-3 py-2 align-top">
