@@ -56,6 +56,13 @@ ignore = [
     # through crypto-glue 0.2, unreleased. Revisit on the next webauthn-rs
     # publish.
     "RUSTSEC-2026-0387",
+    # `rmcp` 1.7: its Streamable HTTP clients buffer a response body without
+    # limit. We build rmcp server-only (the client transports are banned
+    # below), so the flaw is not compiled in. 3.9 fixes it but serves MCP
+    # 2026-07-28, which forbids the elicitation prompt our write tools confirm
+    # through: a plain bump fails every write for those clients. Revisit when
+    # issue #250 lands InputRequiredResult confirmation for them.
+    "RUSTSEC-2026-0462",
 ]
 
 # ── Licenses: explicit allow-list. Anything outside the list fails CI. ──────
@@ -99,6 +106,15 @@ deny = []
 # real ones surface. Each entry should carry a comment explaining why.
 skip = []
 skip-tree = []
+
+# The rmcp advisory ignore above holds only while no client transport is built.
+# Drop this together with the RUSTSEC-2026-0462 ignore.
+[[bans.features]]
+crate = "rmcp"
+deny = [
+    "transport-streamable-http-client-reqwest",
+    "transport-streamable-http-client-unix-socket",
+]
 
 # ── Sources: only crates.io + the listed git remotes. ───────────────────────
 [sources]
