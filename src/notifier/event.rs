@@ -98,9 +98,11 @@ impl IncidentNotice {
         Some(parts.join(sep))
     }
 
-    /// Plain-text one-liner for chat-style transports (Telegram, WhatsApp):
-    /// no markup, optional error sample, region breakdown and link on their
-    /// own lines.
+    /// Plain text for chat-style transports: no markup of ours, with the
+    /// optional error sample, region breakdown and link on their own lines.
+    /// The customer text in it is raw, and an alert's can quote a third
+    /// party, so a transport whose renderer reads markup in text (Google
+    /// Chat, Mattermost) defuses it for its own dialect.
     pub fn plain_text(&self) -> String {
         match &self.note {
             Some(note) => format!("{}\n\n{note}", self.body()),

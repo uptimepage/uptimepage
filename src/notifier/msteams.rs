@@ -299,6 +299,26 @@ mod tests {
     }
 
     #[test]
+    fn an_alert_title_cannot_format_or_link_itself() {
+        let mut n = notice(NotificationReason::Opened);
+        n.monitor_name = None;
+        n.origin = crate::domain::IncidentOrigin::Alert;
+        n.title = Some("[Dashboard](https://evil.example) *now* {{DATE(x)}}".into());
+        n.source = Some("[Prod](https://evil.example)".into());
+        let v = card(&n);
+        let whole = v.to_string();
+        assert!(
+            !whole.contains("[Prod](https"),
+            "the source fact too: {whole}"
+        );
+        let header = v["body"][0]["text"].as_str().unwrap().to_string();
+        assert!(!header.contains("[Dashboard](https"), "{header}");
+        assert!(!header.contains("*now*"), "{header}");
+        assert!(!header.contains("{{DATE"), "{header}");
+        assert!(header.contains("Dashboard"), "the words stay: {header}");
+    }
+
+    #[test]
     fn a_resolved_incident_reads_as_recovery() {
         let mut n = notice(NotificationReason::Resolved);
         n.ended_at = Some(n.started_at + chrono::Duration::minutes(95));

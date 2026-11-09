@@ -369,6 +369,22 @@ mod tests {
     }
 
     #[test]
+    /// The title takes the label's path, covered by
+    /// `a_monitor_name_cannot_inject_markup`; the source is the new text.
+    fn an_alert_source_name_cannot_inject_markup() {
+        let mut a = alert(NotificationReason::Opened);
+        a.origin = IncidentOrigin::Alert;
+        a.source = Some("<i>Prod</i> <img src=x onerror=alert(1)>".into());
+        let r = render("Uptimepage", &a);
+        assert!(!r.html_body.contains("<i>Prod</i>"), "{}", r.html_body);
+        assert!(!r.html_body.contains("<img src=x"), "{}", r.html_body);
+        assert!(
+            r.html_body.contains("&lt;i&gt;Prod&lt;/i&gt;"),
+            "the words stay"
+        );
+    }
+
+    #[test]
     fn state_timing_and_regions_reach_both_bodies() {
         let r = render("Uptimepage", &alert(NotificationReason::Opened));
         for body in [&r.text_body, &r.html_body] {

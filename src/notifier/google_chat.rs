@@ -135,10 +135,20 @@ impl GoogleChatNotifier {
     }
 }
 
+/// Google Chat reads `<…>` in message text as markup: `<users/all>` mentions
+/// everyone in the space, and `<url|label>` shows a link under any label. An
+/// alert's title can quote a third party, so every `<` becomes the lookalike
+/// `‹`, which no markup starts with. An invisible character after it would
+/// read better, but would hold only while Chat does not strip such
+/// characters before parsing.
+fn text(notice: &IncidentNotice) -> String {
+    truncate_chars(&notice.plain_text().replace('<', "‹"), MAX_TEXT_CHARS)
+}
+
 #[async_trait]
 impl Notifier for GoogleChatNotifier {
     async fn notify_incident(&self, notice: &IncidentNotice) -> Result<()> {
-        let text = truncate_chars(&notice.plain_text(), MAX_TEXT_CHARS);
+        let text = text(notice);
         post_json(
             &self.client,
             &self.webhook_url,
@@ -165,6 +175,22 @@ mod tests {
                 .unwrap(),
         )
         .with_ack_link(Some(ack_page()))
+    }
+
+    #[test]
+    fn an_alert_title_cannot_mention_the_space_or_disguise_a_link() {
+        let mut n = notice(NotificationReason::Opened);
+        n.monitor_name = None;
+        n.origin = crate::domain::IncidentOrigin::Alert;
+        n.title = Some("<users/all> disk full, see <https://evil.example|Dashboard>".into());
+        let sent = text(&n);
+        assert!(!sent.contains("<users/all>"), "{sent}");
+        assert!(!sent.contains("<https://evil.example|"), "{sent}");
+        assert!(!sent.contains('<'), "{sent}");
+        assert!(
+            sent.contains("‹users/all> disk full"),
+            "the words stay: {sent}"
+        );
     }
 
     #[test]
