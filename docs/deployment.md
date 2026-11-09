@@ -10,6 +10,7 @@ For real-world operation, use the production stack under `deployment/` in the re
 - The app's own sign-in guarding the UI and API; the edge adds no second credential
 - Postgres and ClickHouse on the internal docker network — **no published ports**
 - ClickHouse memory-capped at ~2 GB (see `deployment/clickhouse-config.xml`)
+- Caddy memory-capped at 1 GiB with no swap; past the cap it is restarted (exit 137)
 
 Setup:
 

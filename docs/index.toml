@@ -289,7 +289,7 @@ blurb = "Running the production stack: Caddy, TLS, the public status surface, an
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-07-22
-lastmod = 2026-11-03
+lastmod = 2026-11-09
 
 [[page]]
 slug = "kubernetes"

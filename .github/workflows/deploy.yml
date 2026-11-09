@@ -462,8 +462,7 @@ jobs:
           # Single-file bind mounts pin the inode at container-create time:
           # a rewritten (new-inode) config is invisible to the running
           # container, and a plain `restart` re-reads the same stale inode.
-          # Hash host vs in-container to tell when a recreate is due (same
-          # pattern as the Caddyfile block below).
+          # Hash host vs in-container to tell when a recreate is due.
           config_drifted() {
             local svc=$1 pair hf cf host_h ctr_h ctr_line drifted=1
             shift
@@ -1485,25 +1484,8 @@ jobs:
           printf '%s\n' "$target" > .active_color
           chmod 600 .active_color
 
-          # Caddy: bind-mounted Caddyfile. A `git checkout` of a deploy
-          # that edits the file leaves the running container reading the
-          # OLD inode (single-file bind mounts pin at mount time, and a
-          # `caddy reload` then sees "config is unchanged"). Detect drift
-          # by hashing the file on disk vs inside the container; recreate
-          # only when they differ. Quiet on no-op deploys; fixes the file
-          # without manual `docker compose restart caddy` when it changed.
-          host_hash=$(sha256sum Caddyfile 2>/dev/null | awk '{print $1}')
-          # Capture the container read's real exit status — don't pipe straight
-          # into awk (awk exits 0 and would mask a failed exec) — and keep stderr
-          # off the captured stdout (a compose warning would corrupt the hash).
-          # On failure, warn and fall through with an empty hash → forces a
-          # recreate (safe default) instead of silently skipping it.
-          if ctr_line=$(docker compose exec -T caddy sha256sum /etc/caddy/Caddyfile 2>/dev/null); then
-            ctr_hash=$(printf '%s' "$ctr_line" | awk '{print $1}')
-          else
-            echo "::warning::could not read Caddyfile from caddy container; recreating to be safe"
-            ctr_hash=""
-          fi
+          # Caddy: the bind-mounted Caddyfile pins its inode like the configs
+          # above, and a `caddy reload` then sees "config is unchanged".
           # Every compose call here is --no-build, so a bumped tag (plugin pin
           # moved) would resolve to no image at all. Compare what the container
           # actually runs against the tag, not merely whether the tag exists —
@@ -1515,7 +1497,7 @@ jobs:
           esac
           want_id=$(docker image inspect -f '{{ .Id }}' "$caddy_image" 2>/dev/null || echo "")
           run_id=$(docker inspect -f '{{ .Image }}' "$(docker compose ps -q caddy)" 2>/dev/null || echo "")
-          caddy_recreated=""
+          force=""
           if [ -z "$want_id" ] || [ "$want_id" != "$run_id" ]; then
             echo "caddy image $caddy_image not the running one; building"
             # --pull: the bases are floating tags and the prune step wipes them,
@@ -1526,14 +1508,18 @@ jobs:
             # plugins or directives this one introduces.
             docker compose run --rm --no-deps --entrypoint caddy caddy \
               validate --config /etc/caddy/Caddyfile --adapter caddyfile
-            docker compose up -d --no-build caddy
-            caddy_recreated=1
+          elif config_drifted caddy "Caddyfile:/etc/caddy/Caddyfile"; then
+            force=1
           fi
-
-          if [ -z "$caddy_recreated" ] && [ -n "$host_hash" ] && [ "$host_hash" != "$ctr_hash" ]; then
-            echo "Caddyfile drift (host=${host_hash:0:12} ctr=${ctr_hash:0:12}); recreating caddy"
-            docker compose up -d --no-build --force-recreate caddy
-          fi
+          # Recreates when the image or the service definition (limits, env,
+          # ports) changed, or on Caddyfile drift; a no-op otherwise. --wait
+          # because the health gate above has already run.
+          docker compose up -d --no-build ${force:+--force-recreate} \
+            --wait --wait-timeout 120 caddy || {
+            echo "::error::caddy did not turn healthy; every public host is behind it"
+            docker compose logs --tail 50 caddy || true
+            exit 1
+          }
 
           # Metrics+logs sidecar + host-metrics exporter: profile-gated,
           # scoped by service so the app / postgres / caddy are never

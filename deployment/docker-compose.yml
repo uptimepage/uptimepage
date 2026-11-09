@@ -36,6 +36,11 @@ services:
     image: uptimepage-caddy:3
     restart: unless-stopped
     logging: *logging
+    # Every request enters here, so unbounded growth swaps the whole box to a
+    # stall. No swap allowance: past the cap Caddy is OOM-killed and restarted
+    # in seconds. Caddy sets GOMEMLIMIT to 90% of this cap at boot.
+    mem_limit: 1g
+    memswap_limit: 1g
     ports:
       - "80:80"
       - "443:443"
