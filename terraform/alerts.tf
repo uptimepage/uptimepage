@@ -786,6 +786,133 @@ resource "grafana_rule_group" "pipeline" {
     }
   }
 
+  # The box reading swapped memory back steadily. Swap merely in use is
+  # harmless; a sustained swap-in rate means working memory no longer fits and
+  # every request stalls behind the disk. 1024 pages/s is 4 MiB/s for 10m:
+  # nightly backups peak near 50 pages/s, a real stall runs in the thousands.
+  # The 10m rate window rides out scrapes the stalled box itself delays.
+  # Critical: by the time this holds, the edge is already timing out.
+  rule {
+    name           = "UptimepageHostSwapThrashing"
+    condition      = "C"
+    for            = "10m"
+    no_data_state  = "OK"
+    exec_err_state = "Error"
+    labels = {
+      severity = "critical"
+      service  = "uptimepage"
+    }
+    annotations = {
+      summary     = "uptimepage: host swapping"
+      description = "host swap-in above 4 MiB/s for 10m; working memory no longer fits and requests stall. Find the process that grew (Caddy first) and restart it. Runbook: runbooks/grafana-cloud.md."
+    }
+    data {
+      ref_id         = "A"
+      datasource_uid = data.grafana_data_source.prometheus.uid
+      relative_time_range {
+        from = 600
+        to   = 0
+      }
+      model = jsonencode({
+        refId   = "A"
+        instant = true
+        expr    = "sum(rate(node_vmstat_pswpin[10m])) > 1024"
+      })
+    }
+    data {
+      ref_id         = "C"
+      datasource_uid = "__expr__"
+      relative_time_range {
+        from = 0
+        to   = 0
+      }
+      model = local.threshold_c
+    }
+  }
+
+  # Any OOM kill on the host. The kernel counter includes kills inside a
+  # container's memory cap, so a capped service that Docker quietly restarts
+  # still shows up here. Fires once per kill and clears after 15m.
+  rule {
+    name           = "UptimepageHostOomKill"
+    condition      = "C"
+    for            = "0s"
+    no_data_state  = "OK"
+    exec_err_state = "Error"
+    labels = {
+      severity = "warning"
+      service  = "uptimepage"
+    }
+    annotations = {
+      summary     = "uptimepage: OOM kill on host"
+      description = "the kernel OOM-killed a process in the last 15m. Check which container restarted: Caddy at its cap drops in-flight requests for a few seconds; anything else means the host itself ran out. Runbook: runbooks/grafana-cloud.md."
+    }
+    data {
+      ref_id         = "A"
+      datasource_uid = data.grafana_data_source.prometheus.uid
+      relative_time_range {
+        from = 900
+        to   = 0
+      }
+      model = jsonencode({
+        refId   = "A"
+        instant = true
+        expr    = "sum(increase(node_vmstat_oom_kill[15m])) > 0"
+      })
+    }
+    data {
+      ref_id         = "C"
+      datasource_uid = "__expr__"
+      relative_time_range {
+        from = 0
+        to   = 0
+      }
+      model = local.threshold_c
+    }
+  }
+
+  # Caddy's resident memory nearing its 1 GiB container cap. Caddy's GC starts
+  # fighting at 90% of the cap and the kernel kills it at 100%, dropping every
+  # in-flight request on every host. 700 MiB leaves time to take a heap
+  # profile and restart it at a quiet hour instead.
+  rule {
+    name           = "UptimepageCaddyMemoryHigh"
+    condition      = "C"
+    for            = "30m"
+    no_data_state  = "OK"
+    exec_err_state = "Error"
+    labels = {
+      severity = "warning"
+      service  = "uptimepage"
+    }
+    annotations = {
+      summary     = "uptimepage: Caddy memory high"
+      description = "Caddy above 700 MiB resident for 30m against its 1 GiB cap; take a heap profile, then restart it at a quiet hour. Runbook: runbooks/grafana-cloud.md."
+    }
+    data {
+      ref_id         = "A"
+      datasource_uid = data.grafana_data_source.prometheus.uid
+      relative_time_range {
+        from = 600
+        to   = 0
+      }
+      model = jsonencode({
+        refId   = "A"
+        instant = true
+        expr    = "max(process_resident_memory_bytes{job=\"caddy\"}) / 1048576 > 700"
+      })
+    }
+    data {
+      ref_id         = "C"
+      datasource_uid = "__expr__"
+      relative_time_range {
+        from = 0
+        to   = 0
+      }
+      model = local.threshold_c
+    }
+  }
+
   # Root filesystem inodes running out. A filesystem can hit 100% inodes with
   # bytes still free (many tiny files) and writes fail exactly like a full disk.
   # Mirrors DiskSpaceLow at 80% used; same filesystem collector feeds both.
@@ -1077,6 +1204,46 @@ resource "grafana_rule_group" "pipeline" {
         refId   = "A"
         instant = true
         expr    = "absent(ClickHouseAsyncMetrics_MaxPartCountForPartition)"
+      })
+    }
+    data {
+      ref_id         = "C"
+      datasource_uid = "__expr__"
+      relative_time_range {
+        from = 0
+        to   = 0
+      }
+      model = local.threshold_c
+    }
+  }
+
+  # Same guard for UptimepageCaddyMemoryHigh: a dropped :9180 site or a broken
+  # caddy scrape would otherwise leave it reading OK while memory grows.
+  rule {
+    name           = "UptimepageCaddyMetricsMissing"
+    condition      = "C"
+    for            = "10m"
+    no_data_state  = "OK"
+    exec_err_state = "Error"
+    labels = {
+      severity = "warning"
+      service  = "uptimepage"
+    }
+    annotations = {
+      summary     = "uptimepage: Caddy metrics missing"
+      description = "process_resident_memory_bytes{job=\"caddy\"} has not reached Grafana Cloud for 10m, so UptimepageCaddyMemoryHigh cannot fire. Check the caddy scrape job in deployment/config.alloy and the :9180 site in deployment/Caddyfile. Runbook: runbooks/grafana-cloud.md."
+    }
+    data {
+      ref_id         = "A"
+      datasource_uid = data.grafana_data_source.prometheus.uid
+      relative_time_range {
+        from = 600
+        to   = 0
+      }
+      model = jsonencode({
+        refId   = "A"
+        instant = true
+        expr    = "absent(process_resident_memory_bytes{job=\"caddy\"})"
       })
     }
     data {

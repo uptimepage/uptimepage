@@ -17,6 +17,8 @@ State + secrets live in **HCP Terraform Cloud** — never in this repo.
   `UptimepageStorageWriteLatencyHigh`, `UptimepageClickHousePartsHigh`,
   `UptimepageIngestBufferOverflow`, `UptimepageDiskSpaceLow`/`Critical`,
   `UptimepageHostMemoryLow`, `UptimepageHostCpuHigh`,
+  `UptimepageHostSwapThrashing`, `UptimepageHostOomKill`,
+  `UptimepageCaddyMemoryHigh`, `UptimepageCaddyMetricsMissing`,
   `UptimepageInodesLow`/`Critical`), `uptimepage-availability`
   (is it up at all, all critical: `UptimepageMetricsPipelineDown`,
   `UptimepageControlPlaneDown`, `UptimepageRegionalAgentDown`) and

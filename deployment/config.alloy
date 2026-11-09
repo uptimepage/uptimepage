@@ -68,6 +68,17 @@ prometheus.scrape "node" {
   scrape_interval = "30s"
 }
 
+// Caddy's process metrics from its internal :9180 site (see the Caddyfile).
+// The only ingress, so its resident memory feeds UptimepageCaddyMemoryHigh.
+prometheus.scrape "caddy" {
+  targets = [
+    { __address__ = "caddy:9180" },
+  ]
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+  job_name        = "caddy"
+  scrape_interval = "30s"
+}
+
 // ClickHouse's built-in Prometheus endpoint (enabled in clickhouse-config.xml).
 // Surfaces datastore internals the app can't see from outside: part counts,
 // merge activity, async-insert flushes, memory and background pool depth.

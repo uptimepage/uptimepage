@@ -45,6 +45,8 @@ services:
       - "80:80"
       - "443:443"
       - "443:443/udp"   # HTTP/3
+    expose:
+      - "9180"   # Caddy process metrics (Alloy scrape, internal only)
     environment:
       UPTIMEPAGE_DOMAIN: ${UPTIMEPAGE_DOMAIN}
       UPTIMEPAGE_ACME_EMAIL: ${UPTIMEPAGE_ACME_EMAIL}
@@ -427,10 +429,11 @@ services:
 
   # Host metrics for Grafana Cloud. A full disk once stalled ClickHouse writes
   # with no early signal; node_filesystem_avail_bytes feeds the disk-space
-  # alerts. Filesystem, memory, and CPU collectors only (disable-defaults keeps
-  # the rest off) so ingest stays small; the filesystem collector also carries
-  # inode metrics. Reads the host rootfs read-only. Metrics profile, like alloy;
-  # internal port, not published.
+  # alerts. Filesystem, memory, CPU and vmstat collectors only (disable-defaults
+  # keeps the rest off) so ingest stays small; the filesystem collector also
+  # carries inode metrics, vmstat the OOM-kill and swap-in counters. Reads the
+  # host rootfs read-only. Metrics profile, like alloy; internal port, not
+  # published.
   node-exporter:
     image: prom/node-exporter:v1.11.1
     restart: unless-stopped
@@ -443,6 +446,7 @@ services:
       - --collector.filesystem
       - --collector.meminfo
       - --collector.cpu
+      - --collector.vmstat
     volumes:
       - /proc:/host/proc:ro
       - /:/rootfs:ro

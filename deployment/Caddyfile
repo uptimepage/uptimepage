@@ -29,6 +29,7 @@
 #   - Operator UI + API behind the app's GitHub OAuth session (no edge auth)
 #   - Public health probes (no auth) at /healthz and /readyz
 #   - Hides /metrics from the public internet (still scrapeable internally)
+#   - Serves its own process metrics on :9180, internal network only
 #   - Per-IP rate limit on the public status surface
 #   - Security headers (HSTS, X-Frame-Options, CSP, etc.)
 #   - JSON access logs with rotation, capability tokens and query strings
@@ -220,6 +221,11 @@
 	# No `log`: the directive enables access logging rather than redirecting
 	# it, and one line per handshake is the last thing an SNI flood needs.
 	# Outcomes are counted as uptimepage_custom_domain_ask_total.
+}
+
+# No global `metrics` option: it would add per-request series to this scrape.
+:9180 {
+	metrics
 }
 
 # Edge policy shared by both public status surfaces, the `*.{domain}` wildcard
