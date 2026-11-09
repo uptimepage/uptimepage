@@ -30,6 +30,7 @@
       "get_org_health",
       "get_org_usage",
       "get_status_page",
+      "list_alert_sources",
       "list_incidents",
       "list_maintenance",
       "list_monitor_groups",

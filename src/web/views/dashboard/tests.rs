@@ -1280,6 +1280,9 @@ fn brief(now: DateTime<Utc>) -> IncidentBrief {
         recovering_since: None,
         group: None,
         group_incident_id: None,
+        origin: crate::domain::IncidentOrigin::Monitor,
+        title: None,
+        alert_source: None,
     }
 }
 

@@ -6,7 +6,9 @@ use uuid::Uuid;
 use crate::domain::IncidentVisibility;
 use crate::domain::REDACTED;
 use crate::domain::TargetAlerts;
-use crate::domain::incident::{Incident, IncidentGroupLink, IncidentGroupRef, OpsIncident};
+use crate::domain::incident::{
+    Incident, IncidentAlertSourceRef, IncidentAlertState, IncidentGroupRef, OpsIncident,
+};
 use crate::domain::metrics::DashboardMetrics;
 use crate::domain::notification_channel::NotificationChannel;
 use crate::domain::result::{CheckResult, CheckStatus};
@@ -18,10 +20,11 @@ use crate::storage::incidents::IncidentBrief;
 use crate::mcp::schema::{
     CheckConfig, CheckDiagnosticView, CheckTiming, DnsAnswerView, DnsCheckConfig,
     DomainExpiryCheckConfig, FlowCheckConfig, FlowRunEvidence, FlowRunItem, FlowStepConfig,
-    FlowStepRun, FlowStepTrendItem, HeartbeatCheckConfig, HttpCheckConfig, IncidentDetail,
-    IncidentGroup, IncidentMember, IncidentSummary, IncidentUpdateItem, IncidentVisibilityResult,
-    ManualCheckConfig, NetworkPathView, PingCheckConfig, RegionHealth, RegionItem, RegionPolicyArg,
-    RegionPolicyMode, TcpCheckConfig, TlsCertCheckConfig,
+    FlowStepRun, FlowStepTrendItem, HeartbeatCheckConfig, HttpCheckConfig, IncidentAlertLinkItem,
+    IncidentAlertSourceItem, IncidentAlertView, IncidentDetail, IncidentGroup, IncidentMember,
+    IncidentSummary, IncidentUpdateItem, IncidentVisibilityResult, ManualCheckConfig,
+    NetworkPathView, PingCheckConfig, RegionHealth, RegionItem, RegionPolicyArg, RegionPolicyMode,
+    TcpCheckConfig, TlsCertCheckConfig,
 };
 
 pub(super) fn network_path(result: &CheckResult) -> Option<NetworkPathView> {
@@ -366,6 +369,9 @@ pub(super) fn incident_summary(i: &IncidentBrief, members: &[OpsIncident]) -> In
         monitor_id: i.target_id.map(|t| t.to_string()).unwrap_or_default(),
         monitor_deleted: i.monitor_deleted(),
         monitor_name: sanitize_data(&i.target_name),
+        origin: i.origin.as_db_str().to_string(),
+        title: i.title.as_deref().map(sanitize_data),
+        alert_source: i.alert_source.as_ref().map(alert_source_item),
         severity: i.severity.as_db_str().to_string(),
         opened_at: i.started_at.to_rfc3339(),
         resolved_at: i.ended_at.map(|t| t.to_rfc3339()),
@@ -381,18 +387,25 @@ pub(super) fn incident_summary(i: &IncidentBrief, members: &[OpsIncident]) -> In
 }
 
 /// Callers pass the raw incident; error text is humanized and scrubbed here.
-/// `group` is its place in a group, `members` a group incident's members.
+/// `place` is the incident's lifecycle row: its group, its title and the
+/// alert source behind it. `members` are a group incident's members, `alert`
+/// what the tool last sent for an alert incident.
 pub(super) fn incident_detail(
     i: &Incident,
     status_page_ids: &[Uuid],
-    group: &IncidentGroupLink,
+    place: &OpsIncident,
     members: &[OpsIncident],
+    alert: Option<&IncidentAlertState>,
 ) -> IncidentDetail {
     IncidentDetail {
         id: i.id.to_string(),
         monitor_id: i.target_id.map(|t| t.to_string()).unwrap_or_default(),
         monitor_deleted: i.monitor_deleted(),
         monitor_name: i.target_name.as_deref().map(sanitize_data),
+        origin: i.origin.as_db_str().to_string(),
+        title: place.title.as_deref().map(sanitize_data),
+        alert_source: place.alert.alert_source.as_ref().map(alert_source_item),
+        alert: alert.map(|a| alert_view(place.alert.dedup_key.as_deref(), a)),
         state: i.status.as_str().to_string(),
         severity: i.severity.as_db_str().to_string(),
         opened_at: i.started_at.to_rfc3339(),
@@ -410,9 +423,58 @@ pub(super) fn incident_detail(
             })
             .collect(),
         status_page_ids: status_page_ids.iter().map(Uuid::to_string).collect(),
-        group: group.group.as_ref().map(incident_group),
-        group_incident_id: group.group_incident_id.map(|g| g.to_string()),
+        group: place.group.group.as_ref().map(incident_group),
+        group_incident_id: place.group.group_incident_id.map(|g| g.to_string()),
         members: incident_members(members),
+    }
+}
+
+fn alert_source_item(s: &IncidentAlertSourceRef) -> IncidentAlertSourceItem {
+    IncidentAlertSourceItem {
+        id: s.id.map(|id| id.to_string()),
+        name: sanitize_data(&s.name),
+    }
+}
+
+/// Every string came from another tool, and from whatever it quoted.
+pub(super) fn alert_view(dedup_key: Option<&str>, a: &IncidentAlertState) -> IncidentAlertView {
+    // Two keys can clean to the same name, as `env` and `env` with a hidden
+    // character. The one that was already clean keeps the name, so a crafted
+    // twin cannot replace the value a responder reads.
+    let clean = |m: &std::collections::BTreeMap<String, String>| {
+        let mut out = std::collections::BTreeMap::new();
+        let cleaned: Vec<(bool, String, String)> = m
+            .iter()
+            .map(|(k, v)| {
+                let key = sanitize_data(k);
+                (key == *k, key, sanitize_data(v))
+            })
+            .collect();
+        for (_, key, value) in cleaned.iter().filter(|(was_clean, ..)| *was_clean) {
+            out.insert(key.clone(), value.clone());
+        }
+        for (_, key, value) in cleaned.into_iter().filter(|(was_clean, ..)| !was_clean) {
+            out.entry(key).or_insert(value);
+        }
+        out
+    };
+    IncidentAlertView {
+        dedup_key: dedup_key.map(sanitize_data),
+        firing_count: a.firing_count,
+        repeat_count: a.repeat_count,
+        last_event_at: a.last_event_at.to_rfc3339(),
+        fired_at: a.fired_at.map(|t| t.to_rfc3339()),
+        reported_severity: a.reported_severity.as_db_str().to_string(),
+        labels: clean(&a.labels),
+        annotations: clean(&a.annotations),
+        links: a
+            .links
+            .iter()
+            .map(|l| IncidentAlertLinkItem {
+                href: sanitize_data(&l.href),
+                text: sanitize_data(&l.text),
+            })
+            .collect(),
     }
 }
 

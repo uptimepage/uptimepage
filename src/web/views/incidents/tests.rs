@@ -26,41 +26,7 @@ fn every_check_kind_has_console_label() {
 }
 
 pub(super) fn ops(state: IncidentState) -> OpsIncident {
-    OpsIncident {
-        alert: Default::default(),
-        id: Uuid::now_v7(),
-        target_id: Some(Uuid::now_v7()),
-        target_ref: None,
-        target_name: None,
-        target_kind: None,
-        closed_by_monitor_delete: false,
-        group: Default::default(),
-        title: None,
-        state,
-        severity: crate::domain::IncidentSeverity::Major,
-        urgency: crate::domain::IncidentUrgency::High,
-        origin: crate::domain::IncidentOrigin::Monitor,
-        visibility: crate::domain::IncidentVisibility::Internal,
-        paging_enabled: true,
-        counts_as_downtime: true,
-        started_at: Utc::now(),
-        ended_at: None,
-        acknowledged_at: None,
-        acknowledged_by: None,
-        assigned_to: None,
-        resolved_by: None,
-        escalation_policy_id: None,
-        escalation_level: 0,
-        escalation_round: 0,
-        next_escalation_at: None,
-        check_count: 2,
-        error_sample: None,
-        regions_down: Vec::new(),
-        regions_up: Vec::new(),
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
-        recovering_since: None,
-    }
+    OpsIncident::sample(state)
 }
 
 fn data(rows: Vec<ConsoleRow>) -> ConsoleData {

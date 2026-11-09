@@ -53,7 +53,7 @@ On the website, documentation pages, blog posts and the homepage also answer `Ac
 | `POST` | `/api/v1/targets/{id}/shares` | mint a read-only share link; returns the share (token included) |
 | `GET` | `/api/v1/targets/{id}/shares` | list a monitor's live share links (token included, re-copyable) |
 | `DELETE` | `/api/v1/targets/{id}/shares/{share_id}` | revoke a share link |
-| `GET` | `/api/v1/account/holds` | list monitors and status pages the plan is holding |
+| `GET` | `/api/v1/account/holds` | list monitors, status pages and alert sources the plan is holding |
 | `PUT` | `/api/v1/account/holds` | choose what the plan keeps (`keep_monitors`, `keep_status_pages`) |
 | `GET` | `/api/v1/account/billing` | subscription status, plan, period end, the cadence it bills on (`interval`), a booked move and the cadence it lands on (`pending_plan_id`, `plan_change_at`, `pending_interval`), and the plans on sale with their price (`amount_minor`, `currency`) per cadence (session only) |
 | `POST` | `/api/v1/account/billing/checkout` | start a checkout for a plan (`plan_id`, `interval`, `accept_terms: true`); returns a provider URL |
@@ -230,6 +230,29 @@ A variable is a reusable named value an org's monitors reference as `{{key}}` in
 | `DELETE` | `/api/v1/variables/{id}` | delete; `409 VARIABLE_IN_USE` while a monitor still references it |
 
 A key must match `^[a-z][a-z0-9_]{0,62}$` or the create is `400 INVALID_VARIABLE_KEY`; a duplicate key in the org is `409 VARIABLE_KEY_EXISTS`. The `is_secret` flag is fixed at create. A plain variable returns its `value`; a secret returns `value: null` on every read, including the create and rotate responses. A monitor whose `{{key}}` references do not all resolve (unknown key, or a secret used in a field that forbids it) is rejected at save with `422 UNRESOLVED_VARIABLE`.
+
+### Operator endpoints (alert sources)
+
+An alert source lets another tool, such as Prometheus Alertmanager, Grafana or Datadog, open and close incidents. How each tool is set up, what an alert becomes and what the ingest route answers are in [Alert sources](alert-sources.md). Endpoints are gated on `alert_sources:read`, `alert_sources:write` and `alert_sources:delete`, scoped to the caller's active org, and need a plan with alert sources (`403 ALERT_SOURCES_DISABLED` otherwise).
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/v1/alert-sources` | list the org's sources |
+| `POST` | `/api/v1/alert-sources` | create one; `201` with `Location` |
+| `GET` | `/api/v1/alert-sources/{id}` | get one |
+| `PATCH` | `/api/v1/alert-sources/{id}` | change `name`, `enabled`, `grouping`, `escalation_policy_id`, `alerts`, `notify_recovery`, `renotify_interval_secs` or `signing_secret` |
+| `DELETE` | `/api/v1/alert-sources/{id}` | delete it; the incidents it held open close (`closed_by_source_delete`) and its URL stops working |
+| `POST` | `/api/v1/alert-sources/{id}/rotate` | mint a new token; the old one works for 24 h more unless `revoke_previous_immediately` |
+| `DELETE` | `/api/v1/alert-sources/{id}/previous-token` | end a rotation's overlap early (idempotent) |
+| `GET` | `/api/v1/alert-sources/{id}/events` | the delivery log, newest first, `cursor` and `limit` (default 50, at most 200) |
+
+A create takes `name` (at most 100 characters), `kind` (`alertmanager`, `grafana`, `datadog` or `generic`, fixed afterwards), and optionally `grouping` (`group` or `alert`), `escalation_policy_id`, `alerts` (`[{ "channel_id" }]`, the shape monitors use), `notify_recovery`, `renotify_interval_secs` and `signing_secret` (Grafana only, 16 to 256 characters). The source must reach someone: with no policy of its own, no org default policy and no enabled channel, a create or a change to its route is `422 ALERT_SOURCE_NO_ROUTE`. A source that loses its route from elsewhere carries `routes_to_nobody: true` instead. Changing `grouping` while the source holds an open incident is `409 ALERT_SOURCE_GROUPING_LOCKED`, since it moves every key. Binding or changing `escalation_policy_id` takes the org owner, `oncall:write` and a plan with on-call; clearing it does not.
+
+`ingest_url` and `ingest_token` come back only to a caller with `alert_sources:write` (a session always); with `read` they are `null`, as a heartbeat's ping URL is. Each source also reports `plan_hold_at`, `last_event_at`, `routes_to_nobody`, `signed`, and its rotation state: `token_rotated_at`, `previous_token_expires_at` and `previous_token_last_used_at`.
+
+The tools post to `POST /hooks/alerts/{token}`, or to `POST /hooks/alerts` with `Authorization: Bearer {token}`. That route sits outside `/api/v1`, reads any content type, and ignores unknown keys on purpose, since vendors add fields.
+
+Incidents: an alert incident has `origin: "alert"`, no monitor, `alert_source: { id, name }` (where `id` turns `null` once the source is deleted and `name` keeps its last name) and `dedup_key`; `GET /api/v1/incidents/{id}` adds `alert_state`, what the tool last sent (firing and repeat counts, last event, `fired_at`, labels, annotations, links and the worst severity it reported). `GET /api/v1/incidents?source={id}` lists one source's incidents, a deleted source's included.
 
 ### Subscriptions
 

@@ -29,16 +29,16 @@ use crate::mcp::auth::McpAuth;
 use crate::mcp::cursor;
 use crate::mcp::error::McpToolError;
 use crate::mcp::schema::{
-    ChannelItem, ChannelList, Failure, FlowRunList, FlowStepTrendSummary, FlowWindowArgs,
-    GetIncidentMetricsArgs, GetMonitorArgs, GetMonitorHistoryArgs, GetStatusPageArgs, HealthTotals,
-    IncidentDetail, IncidentIdArg, IncidentList, IncidentMetricsResult, IncidentWindow,
-    LatencyPoint, ListIncidentsArgs, ListMaintenanceArgs, ListMonitorsArgs, ListStatusPagesArgs,
-    MaintenanceIdArg, MaintenanceList, MaintenanceWindowView, MetricCount, MonitorDetail,
-    MonitorGroupList, MonitorHistory, MonitorList, MonitorListItem, NoisyMonitor, OrgHealth,
-    OrgUsage, PagePasswordUse, PageViewerItem, PageViewerList, PausedStretch, Quota,
-    RecoveredStretch, RegionList, StatusPageComponent as McpComponent, StatusPageDetail,
-    StatusPageList, StatusPageSection, StatusPageSummary, TagItem, TagList, VariableList,
-    VariableSummary, WorstMonitor,
+    AlertSourceItem, AlertSourceList, ChannelItem, ChannelList, Failure, FlowRunList,
+    FlowStepTrendSummary, FlowWindowArgs, GetIncidentMetricsArgs, GetMonitorArgs,
+    GetMonitorHistoryArgs, GetStatusPageArgs, HealthTotals, IncidentDetail, IncidentIdArg,
+    IncidentList, IncidentMetricsResult, IncidentWindow, LatencyPoint, ListIncidentsArgs,
+    ListMaintenanceArgs, ListMonitorsArgs, ListStatusPagesArgs, MaintenanceIdArg, MaintenanceList,
+    MaintenanceWindowView, MetricCount, MonitorDetail, MonitorGroupList, MonitorHistory,
+    MonitorList, MonitorListItem, NoisyMonitor, OrgHealth, OrgUsage, PagePasswordUse,
+    PageViewerItem, PageViewerList, PausedStretch, Quota, RecoveredStretch, RegionList,
+    StatusPageComponent as McpComponent, StatusPageDetail, StatusPageList, StatusPageSection,
+    StatusPageSummary, TagItem, TagList, VariableList, VariableSummary, WorstMonitor,
 };
 
 use super::McpServer;
@@ -701,6 +701,45 @@ impl McpServer {
         }))
     }
 
+    /// The alert source inventory. A source is set up in the app, where its
+    /// URL is shown; the URL carries its token, so it never comes through here.
+    #[tool(
+        description = "The org's alert sources: tools such as Prometheus Alertmanager, Grafana and Datadog, or a script, that send their alerts here so they open incidents and page through the org's rotations. Per source: id, operator-set name, kind (alertmanager, grafana, datadog, generic), whether it is enabled (paused when not) or held by the plan, routes_to_nobody when its policy, the org default and its channels all reach no one, its escalation policy and channels, and when its last event arrived. The ingest URL and token are withheld: sources are set up in the Uptimepage app. Read-only.",
+        title = "List alert sources",
+        annotations(read_only_hint = true)
+    )]
+    async fn list_alert_sources(
+        &self,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<Json<AlertSourceList>, McpToolError> {
+        let auth = McpAuth::from_ctx(&ctx)?;
+        auth.require(Scope::AlertSourcesRead)?;
+        let sources = self
+            .state
+            .alert_source_store
+            .list(auth.org)
+            .await
+            .map_err(|e| McpToolError::internal(format!("list alert sources: {e}")))?;
+        Ok(Json(AlertSourceList {
+            items: sources
+                .into_iter()
+                .map(|s| AlertSourceItem {
+                    id: s.id.to_string(),
+                    name: sanitize_data(&s.name),
+                    kind: s.kind.as_db_str().to_string(),
+                    enabled: s.enabled,
+                    held: s.plan_hold_at.is_some(),
+                    routes_to_nobody: s.routes_to_nobody,
+                    grouping: s.grouping.as_db_str().to_string(),
+                    escalation_policy_id: s.escalation_policy_id.map(|id| id.to_string()),
+                    channel_ids: s.alerts.iter().map(|b| b.channel_id.to_string()).collect(),
+                    signed: s.signed,
+                    last_event_at: s.last_event_at.map(|t| t.to_rfc3339()),
+                })
+                .collect(),
+        }))
+    }
+
     #[tool(
         description = "A browser flow monitor's recent runs over a window (1h/24h/7d/30d): every declared step with its outcome and duration, the step a failure stopped on, and the page the browser saw. Use this to answer why a login check failed. Read-only.",
         title = "Browser flow runs",
@@ -962,7 +1001,7 @@ impl McpServer {
     /// open?", "what broke last week", and for obtaining an incident id to read
     /// or acknowledge.
     #[tool(
-        description = "List the org's incidents: incident id, affected monitor, severity, open/resolved times, and latest update phase. Defaults to currently-open ones; pass state=\"all\" with an optional from/to window (default: last 30 days) for resolved history, and monitor_id to narrow to one monitor. Read-only.",
+        description = "List the org's incidents: incident id, affected monitor, what opened it (origin, with the alert source for an incident another tool's alert opened), severity, open/resolved times, and latest update phase. Defaults to currently-open ones; pass state=\"all\" with an optional from/to window (default: last 30 days) for resolved history, and monitor_id to narrow to one monitor. Read-only.",
         title = "List incidents",
         annotations(read_only_hint = true)
     )]
@@ -1006,7 +1045,7 @@ impl McpServer {
                     target_id,
                     open_only,
                     // Narrowed to one monitor, its incidents stand alone.
-                    with_groups: target_id.is_none(),
+                    every_origin: target_id.is_none(),
                     oldest_first: false,
                     limit: PAGE_SIZE + 1,
                     offset,
@@ -1090,7 +1129,7 @@ impl McpServer {
     /// `list_incidents`/`get_org_health` to read what's been posted before
     /// acknowledging.
     #[tool(
-        description = "One incident: affected monitor, severity, open/resolved times, error sample, the full operator-update timeline, and the status pages an incident with no monitor is posted to. Read-only.",
+        description = "One incident: affected monitor, what opened it, severity, open/resolved times, error sample, the full operator-update timeline, and the status pages an incident with no monitor is posted to. For an incident another tool's alert opened, also the source and what the tool sent: labels, annotations, links and the worst severity it reported. Read-only.",
         title = "Incident details",
         annotations(read_only_hint = true)
     )]
@@ -1114,8 +1153,16 @@ impl McpServer {
 
         let ops = &self.state.incident_ops_store;
         let to_err = |e| McpToolError::internal(format!("incident detail: {e}"));
-        let (pages, place) =
-            tokio::try_join!(ops.status_pages(org, id), ops.get(org, id)).map_err(to_err)?;
+        // Only an alert incident has a state row; any other finds none.
+        let alert_state = async {
+            match self.state.alert_ingest.as_ref() {
+                Some(ingest) => ingest.state_of(org, id).await,
+                None => Ok(None),
+            }
+        };
+        let (pages, place, alert) =
+            tokio::try_join!(ops.status_pages(org, id), ops.get(org, id), alert_state)
+                .map_err(to_err)?;
         let place = place.ok_or_else(|| McpToolError::not_found("incident not found"))?;
         let members = match place.group.group {
             Some(_) => ops
@@ -1128,8 +1175,9 @@ impl McpServer {
         Ok(Json(incident_detail(
             &incident,
             &pages,
-            &place.group,
+            &place,
             &members,
+            alert.as_ref(),
         )))
     }
 
@@ -1232,7 +1280,7 @@ impl McpServer {
     /// Usage against plan limits, and the cheapest answer to "which org is this
     /// connector bound to?", which the client cannot see for itself.
     #[tool(
-        description = "Which org this connector is bound to, and the account's resource usage against plan limits: monitors, status pages, members, components, and key policy values. Caps are pooled across every org the account owns, so the counts can exceed what this one org holds. Read-only.",
+        description = "Which org this connector is bound to, and the account's resource usage against plan limits: monitors, status pages, members, components, channels, alert sources, and key policy values. Caps are pooled across every org the account owns, so the counts can exceed what this one org holds. Read-only.",
         title = "Usage against plan",
         annotations(read_only_hint = true)
     )]
@@ -1285,6 +1333,10 @@ impl McpServer {
             notification_channels: Quota {
                 used: u.notification_channels,
                 cap: p.max_notification_channels.into(),
+            },
+            alert_sources: Quota {
+                used: u.alert_sources,
+                cap: p.max_alert_sources.into(),
             },
             min_check_interval_secs: p.min_check_interval_secs.into(),
             retention_days: p.retention_days.into(),

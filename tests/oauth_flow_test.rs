@@ -758,15 +758,15 @@ async fn consent_grants_the_level_and_org_the_user_picks() {
     );
     assert!(html.contains("Second Org"), "{html}");
     assert!(
-        html.contains(r#"value="read" data-scope="targets:read status_page:read incidents:read maintenance:read channels:read variables:read""#)
+        html.contains(r#"value="read" data-scope="targets:read status_page:read incidents:read maintenance:read channels:read alert_sources:read variables:read""#)
     );
-    assert!(html.contains(r#"value="monitors" data-scope="targets:read status_page:read incidents:read maintenance:read channels:read variables:read targets:write targets:execute maintenance:write maintenance:delete""#));
+    assert!(html.contains(r#"value="monitors" data-scope="targets:read status_page:read incidents:read maintenance:read channels:read alert_sources:read variables:read targets:write targets:execute maintenance:write maintenance:delete""#));
 
     let resp = decide(
         &app,
         &client_id,
         serde_json::json!({
-            "scope": "targets:read status_page:read incidents:read maintenance:read channels:read variables:read targets:write targets:execute maintenance:write maintenance:delete",
+            "scope": "targets:read status_page:read incidents:read maintenance:read channels:read alert_sources:read variables:read targets:write targets:execute maintenance:write maintenance:delete",
             "org_id": org_b.0,
         }),
     )

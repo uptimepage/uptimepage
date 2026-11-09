@@ -12,8 +12,8 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::domain::{
-    CheckStatus, Downtime, ImpactSpan, Incident, IncidentGroupRef, IncidentImpact,
-    IncidentNarrationUpdate, IncidentOrigin, IncidentSeverity, IncidentStatusPhase,
+    CheckStatus, Downtime, ImpactSpan, Incident, IncidentAlertSourceRef, IncidentGroupRef,
+    IncidentImpact, IncidentNarrationUpdate, IncidentOrigin, IncidentSeverity, IncidentStatusPhase,
     NewIncidentUpdate, OrgId, Paused, PublicIncidentUpdate, Recovered, outage_parts,
     stored_incident_impact,
 };
@@ -41,13 +41,18 @@ pub struct IncidentBrief {
     pub group: Option<IncidentGroupRef>,
     /// The group incident a member incident is part of.
     pub group_incident_id: Option<Uuid>,
+    pub origin: IncidentOrigin,
+    /// An alert incident's title, as the tool sent it.
+    pub title: Option<String>,
+    /// The source an alert incident came from, named even once deleted.
+    pub alert_source: Option<IncidentAlertSourceRef>,
 }
 
 impl IncidentBrief {
-    /// A brief has a monitor or a group, so a missing monitor id on a
-    /// monitor's incident means it was deleted.
+    /// A brief has a monitor, a group or an alert source, so a missing monitor
+    /// id on a monitor's incident means it was deleted.
     pub fn monitor_deleted(&self) -> bool {
-        self.target_id.is_none() && self.group.is_none()
+        self.target_id.is_none() && self.group.is_none() && self.origin != IncidentOrigin::Alert
     }
 }
 
@@ -138,9 +143,10 @@ pub struct IncidentBriefFilter {
     pub range: Option<TimeRange>,
     pub target_id: Option<Uuid>,
     pub open_only: bool,
-    /// Group incidents too, with their members left out: they are listed
-    /// under them.
-    pub with_groups: bool,
+    /// Group incidents and the ones another tool's alert opened too, not
+    /// only monitors' own. Group members are left out: they are listed under
+    /// their group incident.
+    pub every_origin: bool,
     pub oldest_first: bool,
     pub limit: usize,
     pub offset: usize,
@@ -152,7 +158,7 @@ impl Default for IncidentBriefFilter {
             range: None,
             target_id: None,
             open_only: true,
-            with_groups: false,
+            every_origin: false,
             oldest_first: false,
             limit: 50,
             offset: 0,
@@ -507,8 +513,9 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
         } else {
             ""
         };
-        let subject_clause = if filter.with_groups {
-            "AND (i.target_name IS NOT NULL OR i.origin = 'group') AND i.group_incident_id IS NULL"
+        let subject_clause = if filter.every_origin {
+            "AND (i.target_name IS NOT NULL OR i.origin IN ('group', 'alert')) \
+             AND i.group_incident_id IS NULL"
         } else {
             "AND i.target_name IS NOT NULL"
         };
@@ -516,6 +523,7 @@ impl IncidentNarrationStore for PgIncidentNarrationStore {
             r#"SELECT i.id, i.target_id, COALESCE(i.target_name, '') AS target_name,
                       i.group_id, i.group_name, i.group_incident_id,
                       i.severity, i.started_at, i.ended_at, i.recovering_since, i.public_title,
+                      i.origin, i.title, i.alert_source_id, i.alert_source_name,
                       u.posted_at AS update_posted_at,
                       u.phase     AS update_phase,
                       u.message   AS update_message,
@@ -737,6 +745,10 @@ struct IncidentBriefRow {
     ended_at: Option<DateTime<Utc>>,
     recovering_since: Option<DateTime<Utc>>,
     public_title: Option<String>,
+    origin: String,
+    title: Option<String>,
+    alert_source_id: Option<Uuid>,
+    alert_source_name: Option<String>,
     update_posted_at: Option<DateTime<Utc>>,
     update_phase: Option<String>,
     update_message: Option<String>,
@@ -768,6 +780,12 @@ fn row_to_brief(r: IncidentBriefRow) -> IncidentBrief {
             name,
         }),
         group_incident_id: r.group_incident_id,
+        origin: IncidentOrigin::from_db_str(&r.origin),
+        title: r.title,
+        alert_source: r.alert_source_name.map(|name| IncidentAlertSourceRef {
+            id: r.alert_source_id,
+            name,
+        }),
     }
 }
 
@@ -884,7 +902,11 @@ impl IncidentNarrationStore for InMemoryIncidentNarrationStore {
             })
             // A brief names a monitor, so a declared incident without one has
             // no place in this list; one whose monitor was deleted still does.
-            .filter(|i| i.target_id.is_some() || i.target_name.is_some())
+            .filter(|i| {
+                i.target_id.is_some()
+                    || i.target_name.is_some()
+                    || (filter.every_origin && i.origin == IncidentOrigin::Alert)
+            })
             .map(|i| IncidentBrief {
                 id: i.id,
                 target_id: i.target_id,
@@ -897,6 +919,9 @@ impl IncidentNarrationStore for InMemoryIncidentNarrationStore {
                 latest_update: i.updates.last().cloned(),
                 group: None,
                 group_incident_id: None,
+                origin: i.origin,
+                title: None,
+                alert_source: None,
             })
             .collect();
         out.sort_by_key(|a| (a.started_at, a.id));

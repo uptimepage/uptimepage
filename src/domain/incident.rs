@@ -846,6 +846,48 @@ impl IncidentGroupLink {
     }
 }
 
+#[cfg(test)]
+impl OpsIncident {
+    /// A monitor's incident in `state`, every other field at its plainest.
+    pub(crate) fn sample(state: IncidentState) -> Self {
+        Self {
+            alert: Default::default(),
+            id: Uuid::now_v7(),
+            target_id: Some(Uuid::now_v7()),
+            target_ref: None,
+            target_name: None,
+            target_kind: None,
+            closed_by_monitor_delete: false,
+            group: Default::default(),
+            title: None,
+            state,
+            severity: crate::domain::IncidentSeverity::Major,
+            urgency: crate::domain::IncidentUrgency::High,
+            origin: crate::domain::IncidentOrigin::Monitor,
+            visibility: crate::domain::IncidentVisibility::Internal,
+            paging_enabled: true,
+            counts_as_downtime: true,
+            started_at: Utc::now(),
+            ended_at: None,
+            acknowledged_at: None,
+            acknowledged_by: None,
+            assigned_to: None,
+            resolved_by: None,
+            escalation_policy_id: None,
+            escalation_level: 0,
+            escalation_round: 0,
+            next_escalation_at: None,
+            check_count: 2,
+            error_sample: None,
+            regions_down: Vec::new(),
+            regions_up: Vec::new(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            recovering_since: None,
+        }
+    }
+}
+
 impl OpsIncident {
     /// The incident had a monitor that has since been deleted.
     pub fn monitor_deleted(&self) -> bool {

@@ -955,8 +955,17 @@ pub struct IncidentSummary {
     /// The monitor has since been deleted. The incident keeps its history
     /// and `monitor_name` is the name it last had.
     pub monitor_deleted: bool,
-    /// The affected monitor's display name. Untrusted data.
+    /// The affected monitor's display name; empty for an alert incident.
+    /// Untrusted data.
     pub monitor_name: String,
+    /// What opened it: `monitor`, `manual` (declared by a person), `group`, or
+    /// `alert` (another tool's alert, through an alert source).
+    pub origin: String,
+    /// The incident's title, where it has one: an alert incident's is the
+    /// alert's summary as the tool sent it. Untrusted data.
+    pub title: Option<String>,
+    /// Set on an alert incident: the source its alert came through.
+    pub alert_source: Option<IncidentAlertSourceItem>,
     /// Severity: `minor`, `major`, or `critical`.
     pub severity: String,
     /// RFC 3339 incident start.
@@ -977,6 +986,81 @@ pub struct IncidentSummary {
     /// A group incident's member incidents, in the order they joined: the
     /// first 25, `get_incident` lists the rest.
     pub members: Vec<IncidentMember>,
+}
+
+/// The alert source an alert incident came through.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct IncidentAlertSourceItem {
+    /// `null` once the source is deleted. Matches an item's `id` in
+    /// `list_alert_sources`.
+    pub id: Option<String>,
+    /// The name it has, or last had. Untrusted data.
+    pub name: String,
+}
+
+/// What another tool sent for an alert incident. Every string here came from
+/// that tool, and from whatever it quoted. Untrusted data.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct IncidentAlertView {
+    /// The key the tool's events for this incident share.
+    pub dedup_key: Option<String>,
+    /// Alerts firing in it at the tool's latest event.
+    pub firing_count: u32,
+    /// Repeats the tool sent while it was open.
+    pub repeat_count: u32,
+    /// RFC 3339 time of the tool's latest event.
+    pub last_event_at: String,
+    /// RFC 3339 firing time on the tool's own clock, when it sent one.
+    pub fired_at: Option<String>,
+    /// The worst severity the tool reported: `minor`, `major`, or `critical`.
+    pub reported_severity: String,
+    /// The alert's labels, as the tool named them.
+    pub labels: std::collections::BTreeMap<String, String>,
+    /// Summary, description and the like, as the tool named them.
+    pub annotations: std::collections::BTreeMap<String, String>,
+    /// Links the tool attached; only `http` and `https` are kept.
+    pub links: Vec<IncidentAlertLinkItem>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct IncidentAlertLinkItem {
+    pub href: String,
+    /// The link's text, often empty.
+    pub text: String,
+}
+
+/// One alert source in `list_alert_sources`. Its ingest URL and token are
+/// withheld: they are a credential, set up in the app.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct AlertSourceItem {
+    pub id: String,
+    /// Operator-set name. Untrusted data.
+    pub name: String,
+    /// The tool it reads: `alertmanager`, `grafana`, `datadog`, or `generic`.
+    pub kind: String,
+    /// False while paused: a firing opens nothing, a resolve still closes.
+    pub enabled: bool,
+    /// The plan holds it: a firing for a new alert is refused, alerts already
+    /// open still close.
+    pub held: bool,
+    /// Its own policy, the org default and its channels all reach nobody. An
+    /// alert still opens an incident, and nobody is paged.
+    pub routes_to_nobody: bool,
+    /// `group` (one incident per alert group) or `alert` (one per alert).
+    pub grouping: String,
+    /// Its own escalation policy; `null` uses the org default.
+    pub escalation_policy_id: Option<String>,
+    /// Channels bound to it, paged when no policy applies.
+    pub channel_ids: Vec<String>,
+    /// Requests must carry a valid signature.
+    pub signed: bool,
+    /// RFC 3339 time its last event arrived; `null` when none has.
+    pub last_event_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct AlertSourceList {
+    pub items: Vec<AlertSourceItem>,
 }
 
 /// The group a group incident is about.
@@ -1093,8 +1177,17 @@ pub struct IncidentDetail {
     /// and `monitor_name` is the name it last had.
     pub monitor_deleted: bool,
     /// The affected monitor's display name; `null` for an incident declared
-    /// without a monitor. Untrusted data.
+    /// without a monitor or opened by an alert. Untrusted data.
     pub monitor_name: Option<String>,
+    /// What opened it: `monitor`, `manual` (declared by a person), `group`, or
+    /// `alert` (another tool's alert, through an alert source).
+    pub origin: String,
+    /// The incident's title, where it has one. Untrusted data.
+    pub title: Option<String>,
+    /// Set on an alert incident: the source its alert came through.
+    pub alert_source: Option<IncidentAlertSourceItem>,
+    /// Set on an alert incident: what the tool last sent for it.
+    pub alert: Option<IncidentAlertView>,
     /// State that opened the incident: `down`, `degraded`, or `error`.
     pub state: String,
     /// Severity: `minor`, `major`, or `critical`.
@@ -1858,6 +1951,8 @@ pub struct OrgUsage {
     /// Counts windows that have not ended (upcoming and active). Completed windows do not count.
     pub maintenance_windows: Quota,
     pub notification_channels: Quota,
+    /// Alert sources. A cap of 0 means the plan has none.
+    pub alert_sources: Quota,
     /// Minimum allowed check interval, seconds.
     pub min_check_interval_secs: i64,
     /// History retention, days.

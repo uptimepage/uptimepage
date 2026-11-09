@@ -48,9 +48,13 @@ Each incident carries a **severity** (`minor` / `major` / `critical`) and an **u
 
 A monitor in a [group](groups.md) that alerts as one still opens its own incident, so its uptime and history stay its own, but the incident is attached to one **group incident** that does the paging: the group's channels and escalation policy, reminders on the group's interval, and one message a minute at most about other members going down. Acknowledge and resolve the group incident; resolving it resolves its members. A member incident refuses acknowledge, resolve and reopen with the group incident's id, a group incident cannot be reopened, and it stays internal: status pages show the members, so publish a member's incident instead. The console lists the group incident with its members nested under it.
 
+### An alert from another tool
+
+On the Team plan, an [alert source](alert-sources.md) lets Prometheus Alertmanager, Grafana, Datadog or a script open incidents. A firing alert opens one with `origin: alert` and no monitor, titled from the alert, and pages through the source's escalation policy or channels; the tool's recovery closes it. Acknowledging, escalation, reminders and flap damping work as they do for a monitor's incident. It moves no monitor's uptime and stays internal unless you publish it. The incident page shows the source and what the tool sent: its labels, annotations, links and the worst severity it reported.
+
 ## The console
 
-`/incidents` is the operator console — a management surface distinct from the dashboard's at-a-glance banner. It lists incidents with severity, state, monitor, assignee, and age, filterable by state. `/incidents/{id}` is the detail view: header, the action bar, the trigger sample, and the activity log.
+`/incidents` is the operator console — a management surface distinct from the dashboard's at-a-glance banner. It lists incidents with severity, state, monitor, assignee, and age, filterable by state, owner and, when the org has alert sources, by source. An alert incident shows its source's name and its tool in place of a monitor. `/incidents/{id}` is the detail view: header, the action bar, the trigger sample, and the activity log.
 
 The action bar drives the lifecycle:
 
@@ -145,7 +149,7 @@ The same numbers are available to automation through the MCP `get_incident_metri
 
 ## MCP tools
 
-An LLM connected through the [MCP server](mcp.md) can triage and operate incidents within its granted scopes: read the incident list (open ones, or resolved history in a window) and detail, read metrics, and — with write scope — acknowledge, resolve, publish or unpublish, and post public updates. Customer-supplied incident text is always returned as labelled data, never as instructions. See [MCP server](mcp.md) for the full tool table and scopes.
+An LLM connected through the [MCP server](mcp.md) can triage and operate incidents within its granted scopes: read the incident list (open ones, or resolved history in a window) and detail, including what a tool sent for an alert incident, read metrics, and — with write scope — acknowledge, resolve, publish or unpublish, and post public updates. Customer-supplied incident text is always returned as labelled data, never as instructions. See [MCP server](mcp.md) for the full tool table and scopes.
 
 ## Auth and scopes
 

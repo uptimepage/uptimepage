@@ -122,6 +122,8 @@ The optional note, one line of at most 200 characters, becomes the incident's ca
 
 A manual monitor that is paused, or that your plan no longer covers, keeps a state you set and reports it once it runs again. Test and check-now do not apply, and it never runs on regional probes.
 
+A manual monitor is for a state a person sets. When another tool already decides the state, such as Alertmanager, Grafana or Datadog, send its alerts to an [alert source](alert-sources.md) instead: its alerts open and close incidents directly, without a monitor in between.
+
 ## TLS certificate
 
 Connects, reads the certificate, and reports how many days remain.

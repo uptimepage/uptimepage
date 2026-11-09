@@ -1974,3 +1974,110 @@ async fn a_group_is_added_to_a_page_as_a_section() {
         "already_on_page"
     );
 }
+
+/// An alert source in `org` with one open incident its alert opened, and what
+/// the tool sent for it. Returns the source id, its token and the incident id.
+async fn seed_alert_incident(pool: &PgPool, org: OrgId, tag: &str) -> (Uuid, String, Uuid) {
+    use uptimepage::domain::{
+        AlertBinding, AlertGrouping, AlertSourceKind, NewAlertSource, TargetAlerts,
+    };
+    use uptimepage::storage::alert_sources::{AlertSourceStore, PgAlertSourceStore};
+    let channel = seed_channel(pool, org, "ops").await;
+    let source = PgAlertSourceStore::new(pool.clone(), None)
+        .create(
+            org,
+            NewAlertSource {
+                name: format!("prom {tag}"),
+                kind: AlertSourceKind::Alertmanager,
+                grouping: AlertGrouping::Group,
+                escalation_policy_id: None,
+                alerts: TargetAlerts(vec![AlertBinding {
+                    channel_id: channel,
+                }]),
+                notify_recovery: true,
+                renotify_interval_secs: 3600,
+                signing_secret: None,
+            },
+            WriteSource::Ui,
+            None,
+            25,
+        )
+        .await
+        .expect("alert source");
+    let incident: Uuid = sqlx::query_scalar(
+        "INSERT INTO incidents \
+             (org_id, started_at, status_at_start, origin, title, alert_source_id, dedup_key) \
+         VALUES ($1, now(), 'down', 'alert', 'Pod is crash looping', $2, $3) RETURNING id",
+    )
+    .bind(org.0)
+    .bind(source.id)
+    .bind(format!("pod-{tag}"))
+    .fetch_one(pool)
+    .await
+    .expect("alert incident");
+    sqlx::query(
+        "INSERT INTO incident_alert_state (incident_id, org_id, last_event_at, labels) \
+         VALUES ($1, $2, now(), '{\"namespace\": \"prod\"}')",
+    )
+    .bind(incident)
+    .bind(org.0)
+    .execute(pool)
+    .await
+    .expect("alert state");
+    (source.id, source.token.expect("token"), incident)
+}
+
+#[tokio::test]
+#[ignore]
+async fn alert_sources_and_their_incidents_stay_in_their_org() {
+    let Some(pool) = common::pg_pool_from_env().await else {
+        return;
+    };
+    let (mcp, org_a, org_b) = connect(&pool).await;
+    let (a_source, a_token, a_incident) = seed_alert_incident(&pool, org_a, "a").await;
+    let (_, _, b_incident) = seed_alert_incident(&pool, org_b, "b").await;
+
+    let sources = mcp.call("list_alert_sources", json!({})).await;
+    let listed = sources["result"]["structuredContent"]["items"]
+        .as_array()
+        .expect("items");
+    assert_eq!(listed.len(), 1, "only the token's own org: {sources}");
+    assert_eq!(listed[0]["id"], a_source.to_string());
+    assert_eq!(listed[0]["kind"], "alertmanager");
+    let text = sources.to_string();
+    assert!(
+        !text.contains(&a_token),
+        "the token stays out of the transcript"
+    );
+    assert!(!text.contains("/hooks/alerts"), "and so does the URL");
+
+    let incidents = mcp.call("list_incidents", json!({})).await;
+    let items = incidents["result"]["structuredContent"]["items"]
+        .as_array()
+        .expect("items");
+    let mine = items
+        .iter()
+        .find(|i| i["id"] == a_incident.to_string())
+        .expect("an alert incident is listed");
+    assert_eq!(mine["origin"], "alert");
+    assert_eq!(mine["title"], "Pod is crash looping");
+    assert_eq!(mine["alert_source"]["name"], "prom a");
+    assert_eq!(mine["monitor_deleted"], false, "it never had a monitor");
+    assert!(!incidents.to_string().contains(&b_incident.to_string()));
+
+    let detail = mcp.call("get_incident", json!({ "id": a_incident })).await;
+    let d = &detail["result"]["structuredContent"];
+    assert_eq!(d["origin"], "alert", "{detail}");
+    assert_eq!(d["alert"]["dedup_key"], "pod-a");
+    assert_eq!(d["alert"]["labels"]["namespace"], "prod");
+    assert_eq!(
+        error_code(&mcp.call("get_incident", json!({ "id": b_incident })).await).as_deref(),
+        Some("not_found")
+    );
+
+    let usage = mcp.call("get_org_usage", json!({})).await;
+    assert_eq!(
+        usage["result"]["structuredContent"]["alert_sources"]["used"], 1,
+        "{usage}"
+    );
+}

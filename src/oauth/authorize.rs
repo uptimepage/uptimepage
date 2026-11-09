@@ -108,6 +108,7 @@ fn scope_label(scope: &str) -> &'static str {
         "incidents:write" => "Post updates to your incidents (shown publicly)",
         "status_page:write" => "Create and edit your status pages, including their public address",
         "variables:read" => "Read the names of your variables, never their values",
+        "alert_sources:read" => "Read the names and state of your alert sources, never their URLs",
         _ => "Access your data",
     }
 }

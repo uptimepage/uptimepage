@@ -108,6 +108,9 @@ fn active_incident(latest: Option<PublicIncidentUpdate>) -> IncidentBrief {
         recovering_since: None,
         group: None,
         group_incident_id: None,
+        origin: crate::domain::IncidentOrigin::Monitor,
+        title: None,
+        alert_source: None,
     }
 }
 
@@ -1711,7 +1714,8 @@ fn incident_detail_maps_state_severity_and_updates() {
         paused: Default::default(),
     };
     let page = Uuid::now_v7();
-    let d = incident_detail(&inc, &[page], &Default::default(), &[]);
+    let place = crate::domain::OpsIncident::sample(crate::domain::IncidentState::Triggered);
+    let d = incident_detail(&inc, &[page], &place, &[], None);
     assert_eq!(d.state, "down");
     assert_eq!(d.severity, "major");
     assert_eq!(d.monitor_name.as_deref(), Some("api"));
@@ -1751,7 +1755,8 @@ fn incident_detail_names_a_deleted_monitor() {
         recovered: Vec::new(),
         paused: Default::default(),
     };
-    let d = incident_detail(&inc, &[], &Default::default(), &[]);
+    let place = crate::domain::OpsIncident::sample(crate::domain::IncidentState::Resolved);
+    let d = incident_detail(&inc, &[], &place, &[], None);
     assert!(d.monitor_deleted);
     assert_eq!(d.monitor_id, "");
     assert_eq!(d.monitor_name.as_deref(), Some("api"));
@@ -2322,4 +2327,27 @@ fn the_manual_prompt_states_the_real_effect() {
     };
     let text = effect(&both, Up, Down);
     assert!(text.contains("plan covers it and it is enabled"), "{text}");
+}
+
+#[test]
+fn an_alert_label_with_a_hidden_twin_keeps_the_clean_value() {
+    let labels = std::collections::BTreeMap::from([
+        ("\u{7}env".to_string(), "attacker text".to_string()),
+        ("env".to_string(), "prod".to_string()),
+        ("team".to_string(), "pay\u{200b}ments".to_string()),
+    ]);
+    let state = crate::domain::IncidentAlertState {
+        firing_count: 1,
+        repeat_count: 0,
+        last_event_at: Utc::now(),
+        fired_at: None,
+        labels,
+        annotations: Default::default(),
+        links: Vec::new(),
+        reported_severity: crate::domain::IncidentSeverity::Major,
+    };
+    let view = super::view::alert_view(Some("k"), &state);
+    assert_eq!(view.labels["env"], "prod", "{:?}", view.labels);
+    assert_eq!(view.labels["team"], "payments", "values are cleaned too");
+    assert_eq!(view.labels.len(), 2);
 }

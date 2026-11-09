@@ -62,8 +62,9 @@ const GRANTABLE_SCOPES: &[Scope] = &[
     Scope::IncidentsRead,
     Scope::MaintenanceRead,
     // Not in the defaults: a connector that never touches alerting should not
-    // be handed the channel inventory.
+    // be handed the channel inventory, or the alert sources.
     Scope::ChannelsRead,
+    Scope::AlertSourcesRead,
     Scope::TargetsWrite,
     Scope::TargetsExecute,
     Scope::MaintenanceWrite,
@@ -87,13 +88,14 @@ pub(super) const ACCESS_LEVELS: &[AccessLevel] = &[
     AccessLevel {
         id: "read",
         label: "Read only",
-        summary: "See monitors, incidents, maintenance, status pages, channel names and variable keys. Changes nothing.",
+        summary: "See monitors, incidents, maintenance, status pages, channel and alert source names, and variable keys. Changes nothing.",
         scopes: &[
             Scope::TargetsRead,
             Scope::StatusPageRead,
             Scope::IncidentsRead,
             Scope::MaintenanceRead,
             Scope::ChannelsRead,
+            Scope::AlertSourcesRead,
             Scope::VariablesRead,
         ],
     },
@@ -107,6 +109,7 @@ pub(super) const ACCESS_LEVELS: &[AccessLevel] = &[
             Scope::IncidentsRead,
             Scope::MaintenanceRead,
             Scope::ChannelsRead,
+            Scope::AlertSourcesRead,
             Scope::VariablesRead,
             Scope::TargetsWrite,
             Scope::TargetsExecute,
