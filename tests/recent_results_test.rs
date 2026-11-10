@@ -645,3 +645,132 @@ async fn latest_details_are_each_regions_newest_reading() {
         .expect("other org");
     assert!(other_org.is_empty(), "details stay inside their org");
 }
+
+/// A bare `argMax` over the nullable error column skips NULLs, so a region
+/// whose newest check passed would report an older failure's error.
+#[tokio::test]
+#[ignore = "requires ClickHouse (CLICKHOUSE_URL)"]
+async fn newest_by_region_reads_each_regions_state_and_whether_it_passed() {
+    let Some(ch) = common::ch_client_from_env().await else {
+        eprintln!("skipped: CLICKHOUSE_URL not set");
+        return;
+    };
+    let sink = |region: &str| {
+        ClickhouseResultSink::new(
+            ch.clone(),
+            region.into(),
+            format!("agent-{region}"),
+            OrgTtlDays::new(),
+        )
+    };
+    let store = ClickhouseResultsStore::from_client(ch.clone());
+
+    let org = Uuid::now_v7();
+    let target = Uuid::now_v7();
+    let now = Utc::now();
+    let ago = |s: i64| now - Duration::seconds(s);
+    let failed = |secs: i64, status: CheckStatus, error: &str| CheckResult {
+        status,
+        response_code: None,
+        error: Some(error.into()),
+        ..result(target, org, ago(secs))
+    };
+
+    sink("eu")
+        .write_batch(&[
+            failed(90, CheckStatus::Down, "connect timeout"),
+            result(target, org, ago(60)),
+        ])
+        .await
+        .expect("seed eu");
+    sink("us")
+        .write_batch(&[
+            failed(80, CheckStatus::Down, "connection refused"),
+            failed(20, CheckStatus::Down, "connect timeout"),
+        ])
+        .await
+        .expect("seed us");
+    sink("ap")
+        .write_batch(&[
+            failed(70, CheckStatus::Degraded, "rate-limited 429"),
+            CheckResult {
+                diagnostic: Some(CheckDiagnostic::access_interference(
+                    DiagnosticConfidence::High,
+                    Some(EdgeProvider::Cloudflare),
+                    vec![DiagnosticEvidence::BlockPage],
+                )),
+                ..failed(10, CheckStatus::Down, "unexpected status 403")
+            },
+        ])
+        .await
+        .expect("seed ap");
+
+    let window = |from_secs: i64| {
+        ClampedRange::unclamped(TimeRange {
+            from: ago(from_secs),
+            to: now + Duration::seconds(60),
+        })
+    };
+    let rows = store
+        .newest_by_region(OrgId(org), target, window(3600))
+        .await
+        .expect("newest by region");
+    let read: Vec<(&str, CheckStatus, Option<&str>, bool, bool)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.region.as_str(),
+                r.status,
+                r.error.as_deref(),
+                r.diagnostic.is_some(),
+                r.passed,
+            )
+        })
+        .collect();
+    assert_eq!(
+        read,
+        [
+            (
+                "ap",
+                CheckStatus::Down,
+                Some("unexpected status 403"),
+                true,
+                true
+            ),
+            ("eu", CheckStatus::Up, None, false, true),
+            (
+                "us",
+                CheckStatus::Down,
+                Some("connect timeout"),
+                false,
+                false
+            ),
+        ]
+    );
+    // Enough of the diagnostic to say what it says and advise what it advises.
+    let diagnostic = rows[0].diagnostic.as_ref().expect("ap is diagnosed");
+    assert_eq!(
+        diagnostic.summary(),
+        "access-policy block detected at the Cloudflare edge"
+    );
+    assert_eq!(diagnostic.kind, CheckDiagnosticKind::AccessInterference);
+    let us = &rows[2];
+    assert!(us.at > ago(25) && us.at <= now, "newest at {}", us.at);
+
+    // Narrowed to after eu's pass and ap's degraded run: neither counts.
+    let recent = store
+        .newest_by_region(OrgId(org), target, window(30))
+        .await
+        .expect("recent window");
+    let recent: Vec<(&str, bool)> = recent
+        .iter()
+        .map(|r| (r.region.as_str(), r.passed))
+        .collect();
+    assert_eq!(recent, [("ap", false), ("us", false)]);
+
+    let other_org = store
+        .newest_by_region(OrgId(Uuid::now_v7()), target, window(3600))
+        .await
+        .expect("other org");
+    assert!(other_org.is_empty(), "results stay inside their org");
+}

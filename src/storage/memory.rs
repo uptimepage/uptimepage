@@ -18,8 +18,8 @@ use crate::domain::{
 use crate::error::Result;
 use crate::storage::traits::{
     ChannelEdit, ClampedRange, FailingServer, IntervalOutcome, PassMarks, RegionFlaps,
-    RegionLatestStatus, RegionOption, ResultSink, ResultsStore, TagAddOutcome, TargetFilter,
-    TargetStore, TimeRange, UptimeStats, rollup_bucket_secs,
+    RegionLatestStatus, RegionNewest, RegionOption, ResultSink, ResultsStore, TagAddOutcome,
+    TargetFilter, TargetStore, TimeRange, UptimeStats, rollup_bucket_secs,
 };
 
 #[derive(Default)]
@@ -551,6 +551,32 @@ impl ResultsStore for InMemorySink {
             region: "default".to_string(),
             failures,
             transitions,
+        }])
+    }
+
+    async fn newest_by_region(
+        &self,
+        _org: OrgId,
+        target_id: Uuid,
+        range: ClampedRange,
+    ) -> Result<Vec<RegionNewest>> {
+        // No region dimension in memory; the whole series reads as one region.
+        let guard = self.results.lock();
+        let series = || {
+            guard.iter().filter(|r| {
+                r.target_id == target_id && r.timestamp >= range.from && r.timestamp < range.to
+            })
+        };
+        let Some(newest) = series().max_by_key(|r| r.timestamp) else {
+            return Ok(Vec::new());
+        };
+        Ok(vec![RegionNewest {
+            region: "default".to_string(),
+            at: newest.timestamp,
+            status: newest.status,
+            error: newest.error.clone(),
+            diagnostic: newest.diagnostic.clone(),
+            passed: series().any(|r| matches!(r.status, CheckStatus::Up | CheckStatus::Degraded)),
         }])
     }
 

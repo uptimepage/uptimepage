@@ -869,7 +869,7 @@ import { parseDuration } from "./_duration.js";
     // `resultEl` via the shared .test-result renderers.
     // `state` folds the expectation match into the status: ok / warn / bad.
     async function runTest(resultEl, check, region) {
-        const failed = () => ({ result: null, steps: [], state: "bad" });
+        const failed = () => ({ result: null, steps: [], state: "bad", advice: null });
         let res;
         try {
             res = await fetch("/api/v1/targets/test", {
@@ -911,6 +911,7 @@ import { parseDuration } from "./_duration.js";
         const result = body.result || {};
         window.smRenderCheckResult(resultEl, result, {
             matched: body.matched_expectations,
+            errorText: body.error_text || null,
             headers: body.response_headers_preview || [],
             body: body.response_body_snippet || null,
             evidence: body.flow_evidence || null,
@@ -919,13 +920,34 @@ import { parseDuration } from "./_duration.js";
         const state = !matched || result.status === "down"
             ? "bad"
             : result.status === "degraded" ? "warn" : "ok";
-        return { result, steps: body.flow_steps || [], state };
+        return { result, steps: body.flow_steps || [], state, advice: body.advice || null };
     }
 
     const sheet = form.querySelector("[data-test-sheet]");
     const sheetBody = form.querySelector("#test-sheet-body");
     const sheetVerdict = form.querySelector("[data-test-verdict]");
     const sheetExpand = form.querySelector("[data-test-expand]");
+    const sheetAdvice = form.querySelector("[data-test-advice]");
+
+    function showAdvice(advice) {
+        if (!sheetAdvice) return;
+        sheetAdvice.replaceChildren();
+        sheetAdvice.hidden = !advice;
+        if (!advice) return;
+        const label = document.createElement("span");
+        label.className = "flag-label";
+        label.textContent = advice.source === "diagnostic" ? "recommended" : "hint";
+        sheetAdvice.append(label, ` ${advice.text}`);
+        if (advice.docs_url) {
+            const why = document.createElement("a");
+            why.href = advice.docs_url;
+            why.target = "_blank";
+            why.rel = "noopener";
+            why.className = "underline decoration-dotted underline-offset-2";
+            why.textContent = "why";
+            sheetAdvice.append(" ", why);
+        }
+    }
 
     function expandSheet(on) {
         if (!sheetBody) return;
@@ -1002,6 +1024,7 @@ import { parseDuration } from "./_duration.js";
         // choice; don't silently probe the default region.
         if (allBoxes.length > 0 && regions.length === 0) {
             window.smRenderCheckError(resultEl, "Select at least one region to test.");
+            showAdvice(null);
             showSheet("bad", "no regions selected", true);
             return;
         }
@@ -1009,6 +1032,7 @@ import { parseDuration } from "./_duration.js";
         btn.setAttribute("aria-busy", "true");
         const btnLabel = btn.innerHTML;
         btn.innerHTML = "testing…";
+        showAdvice(null);
         showSheet("", "testing…", false);
         // Per-step playback only makes sense for a single verdict; a multi-region
         // fan-out keeps its per-region banners.
@@ -1023,6 +1047,7 @@ import { parseDuration } from "./_duration.js";
                 const outcome = await runTest(resultEl, built.check, null);
                 if (paintFlow) window.smFlowTestResult?.(outcome.result, outcome.steps);
                 const { state, label } = summarize([outcome], regions);
+                showAdvice(window.smAgreedAdvice([outcome]));
                 // A clean pass needs no reading; anything else opens itself.
                 showSheet(state, label, state !== "ok");
                 return;
@@ -1031,6 +1056,7 @@ import { parseDuration } from "./_duration.js";
             const outcomes = await Promise.all(regions.map((r) => runTest(rows[r.id], built.check, r.id)));
             if (paintFlow) window.smFlowTestResult?.(outcomes[0].result, outcomes[0].steps);
             const { state, label } = summarize(outcomes, regions);
+            showAdvice(window.smAgreedAdvice(outcomes));
             showSheet(state, label, state !== "ok");
         } finally {
             btn.disabled = false;

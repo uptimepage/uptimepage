@@ -10,7 +10,7 @@ use crate::storage::{ResultsStore, TimeRange};
 /// How far back the region fold reads. Long enough for every check interval to
 /// have reported, short enough that a region dropped from a monitor stops
 /// voting quickly.
-const FOLD_LOOKBACK_HOURS: i64 = 24;
+pub(super) const FOLD_LOOKBACK_HOURS: i64 = 24;
 
 /// Fold inputs for [`folded_status`]. Heartbeats are inbound-only, so
 /// a quorum over probe regions describes nothing.

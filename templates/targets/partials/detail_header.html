@@ -1,8 +1,9 @@
 {# Shared header for the Monitor and Incidents sub-tabs. Inputs (all
    fields exist on both `DetailPage` and `IncidentsPage`): id, name,
    kind, address, interval_s, slowed, enabled, tags, managed_by, last_status,
-   last_at_iso, alerts_nobody. Kept in sync because both views populate the
-   same shape from `target_store.get` + the most-recent check row. #}
+   last_at_iso, alerts_nobody, failure, failure_oob. Kept in sync because both
+   views populate the same shape from `target_store.get` + the most-recent
+   check row. #}
 {% import "targets/partials/_status_badge.html" as sb %}
 <a href="/targets" class="inline-block text-sm text-muted hover:text-body">← monitors</a>
 <div class="flex flex-wrap items-center gap-3">
@@ -98,6 +99,7 @@
 </div>
 {% endif %}
 {% include "targets/partials/_status_banner.html" %}
+{% include "targets/partials/_failure_note.html" %}
 {% if let Some(s) = slowed %}
 <div class="alert-card alert-card--muted" role="note" data-slowed-notice>
   Down from every region for {{ s.after }}, so checked every {{ s.interval_s|exact_dur }} since

@@ -36,7 +36,11 @@
                     window.smRenderCheckError(resultEl, `${code}: ${message}`);
                     return;
                 }
-                window.smRenderCheckResult(resultEl, r.body || {}, {
+                // The reply carries its own cause: the page below reads a
+                // status that can be seconds behind this check.
+                const body = r.body || {};
+                window.smRenderCheckResult(resultEl, body, {
+                    errorText: body.error_text || null,
                     footnote: "Metrics and charts update automatically.",
                 });
                 refreshLive();

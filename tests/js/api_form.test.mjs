@@ -37,3 +37,58 @@ test("any other refusal shows the server's message", () => {
     });
     assert.match(html, /<strong>INVALID_DNS_PARAMS<\/strong>: dns resolver must be an IP or ip:port/);
 });
+
+function api() {
+    const window = {};
+    vm.runInNewContext(source, { window, document: {} });
+    return window;
+}
+
+function panel() {
+    return { className: "", innerHTML: "", classList: { remove() {} } };
+}
+
+test("a result shows the error in plain words, never its terse code", () => {
+    const el = panel();
+    api().smRenderCheckResult(el, { status: "error", duration_ms: 12, error: "tls handshake reset" }, {
+        errorText: "TLS handshake reset",
+    });
+    assert.match(el.innerHTML, /TLS handshake reset/);
+    assert.doesNotMatch(el.innerHTML, /tls handshake reset/);
+});
+
+const ran = advice => ({ result: { status: advice ? "down" : "up" }, advice });
+const unreached = { result: null, advice: null };
+
+test("regions that fail the same way share their advice", () => {
+    const ping = { source: "hint", code: "icmp_no_reply", text: "No reply to ping." };
+    const agreed = api().smAgreedAdvice;
+    assert.equal(agreed([ran(ping), ran({ ...ping })]), ping);
+    assert.equal(agreed([ran(ping)]), ping);
+});
+
+test("one region passing or failing its own way leaves no advice", () => {
+    const ping = { source: "hint", code: "icmp_no_reply", text: "No reply to ping." };
+    const slow = { source: "hint", code: "no_answer", text: "The connection never completed." };
+    const agreed = api().smAgreedAdvice;
+    assert.equal(agreed([ran(ping), ran(null)]), null);
+    assert.equal(agreed([ran(null), ran(ping)]), null);
+    assert.equal(agreed([ran(ping), ran(slow)]), null);
+    assert.equal(agreed([]), null);
+});
+
+test("a diagnosed block and a bare status are not the same advice", () => {
+    const blocked = { source: "diagnostic", code: "access_interference", text: "use an authenticated health endpoint" };
+    const refused = { source: "hint", code: "access_refused", text: "The server answered and refused the request." };
+    const agreed = api().smAgreedAdvice;
+    assert.equal(agreed([ran(blocked), ran(refused)]), null);
+    assert.equal(agreed([ran(blocked), ran({ ...blocked })]), blocked);
+});
+
+test("a region whose request produced no result does not vote", () => {
+    const ping = { source: "hint", code: "icmp_no_reply", text: "No reply to ping." };
+    const agreed = api().smAgreedAdvice;
+    assert.equal(agreed([unreached, ran(ping), ran({ ...ping })]), ping);
+    assert.equal(agreed([ran(ping), unreached, ran(null)]), null);
+    assert.equal(agreed([unreached, unreached]), null);
+});

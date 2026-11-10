@@ -75,6 +75,11 @@ pub(super) fn create_prompt_lines(
                  first ping"
             .to_string(),
     });
+    // Its own line: on the trial run's it would share that line's cap, and a
+    // long error would cut it off.
+    if let Some(hint) = probe.and_then(|(_, p)| p.hint.as_deref()) {
+        lines.push(format!("hint: {hint}"));
+    }
     if !new.tags.is_empty() {
         lines.push(format!("tags: {}", sanitize_prompt(&tag_list(&new.tags))));
     }

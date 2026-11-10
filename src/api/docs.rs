@@ -6,9 +6,9 @@ use crate::api::handlers::orgs::{
     SwitchActiveOrgRequest, UpdateMemberRoleRequest, UpdateOrgRequest,
 };
 use crate::api::types::{
-    BulkAction, BulkActionFailure, BulkActionRequest, BulkActionResponse, DashboardSummary,
-    FlowStepSeries, Last24hSummary, LatencySeriesByRegion, StatusBreakdown, SystemSummary,
-    TestRequest, TestResponse,
+    BulkAction, BulkActionFailure, BulkActionRequest, BulkActionResponse, CheckAdviceView,
+    CheckNowResponse, DashboardSummary, FlowStepSeries, Last24hSummary, LatencySeriesByRegion,
+    StatusBreakdown, SystemSummary, TestRequest, TestResponse,
 };
 use crate::domain::Role;
 use crate::domain::metrics::{
@@ -289,6 +289,8 @@ use crate::storage::UptimeStats;
             BulkActionFailure,
             TestRequest,
             TestResponse,
+            CheckNowResponse,
+            CheckAdviceView,
             PageEnvelope<Target>,
             PageEnvelope<CheckResult>,
             PageEnvelope<Incident>,

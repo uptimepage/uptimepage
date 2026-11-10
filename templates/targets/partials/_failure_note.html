@@ -1,0 +1,17 @@
+{#- The errors a failing monitor's regions report, and what to try when they
+   agree: a diagnostic's guidance, or a hint while the failure still looks like
+   setup. Owner pages only. Always rendered, hidden when there is nothing to
+   say, so the live poll can raise it and clear it. -#}
+<div id="failure-note"{% if failure_oob %} hx-swap-oob="true"{% endif %}{% if failure.is_none() %} hidden{% endif %} class="alert-card alert-card--muted space-y-1" role="note">
+  {%- if let Some(f) = failure %}
+  <p><span class="flag-label">cause</span>
+    {% for c in f.causes %}<span class="text-body">{{ c.text }}</span>{% if f.region_count > 1 %} <span class="text-quiet">{{ c.regions }}/{{ f.region_count }} regions</span>{% endif %}{% if !loop.last %} · {% endif %}{% endfor %}{% if f.more_causes > 0 %} · +{{ f.more_causes }} more{% endif %}
+  </p>
+  {% if let Some(a) = f.advice %}
+  <p class="text-pretty"><span class="flag-label">{{ a.label() }}</span>
+    <span class="text-body">{{ a.text() }}</span>{% if let Some(path) = a.docs_path() %}
+    <a href="{{ path|docs_url }}" target="_blank" rel="noopener" class="underline decoration-dotted underline-offset-2 hover:text-body">why</a>{% endif %}
+  </p>
+  {% endif %}
+  {% endif -%}
+</div>

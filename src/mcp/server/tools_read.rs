@@ -381,6 +381,21 @@ impl McpServer {
         .copied();
 
         let last = latest.first();
+        let state = match (last, folded) {
+            (Some(_), Some(f)) => f.as_str(),
+            (Some(r), None) => r.status.as_str(),
+            (None, _) => "no_data",
+        };
+        let last_hint = crate::targets::failure_note(
+            self.state.results_store.as_ref(),
+            org,
+            &target,
+            state,
+            None,
+        )
+        .await
+        .and_then(|note| note.advice?.hint())
+        .map(|hint| hint.text().to_string());
         let (_, address) = target.check.describe();
         Ok(Json(MonitorDetail {
             id: target.id.to_string(),
@@ -421,15 +436,11 @@ impl McpServer {
                 .iter()
                 .map(|t| sanitize_data(t))
                 .collect(),
-            state: match (last, folded) {
-                (Some(_), Some(f)) => f.as_str(),
-                (Some(r), None) => r.status.as_str(),
-                (None, _) => "no_data",
-            }
-            .to_string(),
+            state: state.to_string(),
             last_checked_at: last.map(|r| r.timestamp.to_rfc3339()),
             last_error: last.and_then(|r| r.error.as_deref()).map(present_error),
             last_diagnostic: last.and_then(super::view::check_diagnostic),
+            last_hint,
             last_http_status: last.and_then(|r| r.response_code),
             last_timing: last.map(check_timing).unwrap_or_default(),
             last_response_size: last.and_then(|r| r.response_size),

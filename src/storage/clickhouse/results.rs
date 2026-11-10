@@ -22,7 +22,7 @@ use crate::domain::{
 use crate::error::Result;
 use crate::storage::traits::{
     ClampedRange, FailingServer, FlowRunView, PassMarks, RegionFlaps, RegionLatestStatus,
-    ResultsStore, TimeRange, UptimeStats, rollup_bucket_secs,
+    RegionNewest, ResultsStore, TimeRange, UptimeStats, rollup_bucket_secs,
 };
 
 use super::{
@@ -317,30 +317,35 @@ fn network_from(row: &OwnedResultRow) -> Option<NetworkPath> {
     Some(path).filter(|p| !p.is_empty())
 }
 
+fn diagnostic_from(
+    kind: Option<&str>,
+    confidence: Option<&str>,
+    provider: Option<&str>,
+    evidence: &[String],
+) -> Option<CheckDiagnostic> {
+    let kind = CheckDiagnosticKind::parse(kind?)?;
+    Some(CheckDiagnostic {
+        kind,
+        confidence: confidence
+            .and_then(DiagnosticConfidence::parse)
+            .unwrap_or(DiagnosticConfidence::Medium),
+        provider: provider.and_then(EdgeProvider::parse),
+        evidence: evidence
+            .iter()
+            .filter_map(|item| DiagnosticEvidence::parse(item))
+            .collect(),
+        // Derived so an old row cannot keep advice the product dropped.
+        remediations: kind.remediations(),
+    })
+}
+
 fn row_to_result(row: OwnedResultRow, org_id: Uuid) -> CheckResult {
-    let diagnostic = row
-        .diagnostic_kind
-        .as_deref()
-        .and_then(CheckDiagnosticKind::parse)
-        .map(|kind| CheckDiagnostic {
-            kind,
-            confidence: row
-                .diagnostic_confidence
-                .as_deref()
-                .and_then(DiagnosticConfidence::parse)
-                .unwrap_or(DiagnosticConfidence::Medium),
-            provider: row
-                .diagnostic_provider
-                .as_deref()
-                .and_then(EdgeProvider::parse),
-            evidence: row
-                .diagnostic_evidence
-                .iter()
-                .filter_map(|item| DiagnosticEvidence::parse(item))
-                .collect(),
-            // Derived so an old row cannot keep advice the product dropped.
-            remediations: kind.remediations(),
-        });
+    let diagnostic = diagnostic_from(
+        row.diagnostic_kind.as_deref(),
+        row.diagnostic_confidence.as_deref(),
+        row.diagnostic_provider.as_deref(),
+        &row.diagnostic_evidence,
+    );
     CheckResult {
         target_id: row.target_id,
         org_id,
@@ -1415,6 +1420,71 @@ impl ResultsStore for ClickhouseResultsStore {
                 region: r.region,
                 failures: r.failures,
                 transitions: r.transitions,
+            })
+            .collect())
+    }
+
+    async fn newest_by_region(
+        &self,
+        org: OrgId,
+        target_id: Uuid,
+        range: ClampedRange,
+    ) -> Result<Vec<RegionNewest>> {
+        #[derive(Row, Deserialize)]
+        struct N {
+            region: String,
+            newest_at: u32,
+            newest_status: i8,
+            newest_error: String,
+            diagnostic_kind: String,
+            diagnostic_confidence: String,
+            diagnostic_provider: String,
+            passed: u8,
+        }
+        // `argMax` skips a NULL argument, so a bare nullable column would reach
+        // past the newest row to an older one that had a value.
+        let rows: Vec<N> = self
+            .client
+            .query(&format!(
+                "SELECT region, \
+                   toUInt32(max(timestamp)) AS newest_at, \
+                   argMax(status, timestamp) AS newest_status, \
+                   toString(argMax(ifNull(error, ''), timestamp)) AS newest_error, \
+                   toString(argMax(ifNull(diagnostic_kind, ''), timestamp)) AS diagnostic_kind, \
+                   toString(argMax(ifNull(diagnostic_confidence, ''), timestamp)) \
+                     AS diagnostic_confidence, \
+                   toString(argMax(ifNull(diagnostic_provider, ''), timestamp)) \
+                     AS diagnostic_provider, \
+                   countIf(status IN ({up}, {degraded})) > 0 AS passed \
+                 FROM {TABLE} \
+                 WHERE org_id = ? AND target_id = ? \
+                   AND timestamp >= fromUnixTimestamp(?) \
+                   AND timestamp < fromUnixTimestamp(?) \
+                 GROUP BY region ORDER BY region",
+                up = CheckStatus::Up.as_enum8(),
+                degraded = CheckStatus::Degraded.as_enum8(),
+            ))
+            .bind(org.0)
+            .bind(target_id)
+            .bind(range.from.timestamp())
+            .bind(range.to.timestamp())
+            .fetch_all::<N>()
+            .await
+            .context("clickhouse newest_by_region")?;
+        Ok(rows
+            .into_iter()
+            .map(|r| RegionNewest {
+                region: r.region,
+                at: from_unix_secs(r.newest_at),
+                status: CheckStatus::from_enum8(r.newest_status),
+                diagnostic: diagnostic_from(
+                    Some(&r.diagnostic_kind),
+                    Some(&r.diagnostic_confidence),
+                    Some(&r.diagnostic_provider),
+                    &[],
+                ),
+                error: (!r.newest_error.is_empty()).then_some(r.newest_error),
+                passed: r.passed != 0,
             })
             .collect())
     }

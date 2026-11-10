@@ -68,7 +68,8 @@ pub use check_details::{
     expiry_words,
 };
 pub use check_error::{
-    ErrorClass, ErrorFamily, classify_check_error, humanize_check_error, is_timeout_error,
+    CheckAdvice, CheckHint, ErrorClass, ErrorFamily, classify_check_error, explain_check_error,
+    humanize_check_error, is_timeout_error,
 };
 pub use credential::{CredentialAction, CredentialOrigin, LinkedIdentity, OauthProvider, WaysIn};
 pub use escalation_policy::{

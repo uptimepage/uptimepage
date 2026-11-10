@@ -16,6 +16,7 @@ use crate::error::AppError;
 use crate::error::codes;
 use crate::request::{AuthedBrowser, CurrentOrg};
 use crate::storage::{HeartbeatMonitor, TimeRange};
+use crate::targets::FailureNote;
 use crate::templates::filters;
 use crate::web::error::WebResult;
 use crate::web::views::coverage;
@@ -113,6 +114,9 @@ pub struct IncidentsPage {
     /// detects outages and tells no one. Drives the header warning.
     pub alerts_nobody: bool,
     pub last_status: &'static str,
+    pub failure: Option<FailureNote>,
+    /// Rendered once here: this tab has no live poll to swap it.
+    pub failure_oob: bool,
     pub last_at_iso: String,
     pub incidents: Vec<IncidentRow>,
     pub incidents_has_more: bool,
@@ -166,6 +170,9 @@ pub struct DetailPage {
     /// Minutes an outage must last before a held alert pages anyway.
     pub flap_hold_minutes: u64,
     pub last_status: &'static str,
+    pub failure: Option<FailureNote>,
+    /// The note renders in place here, not as an OOB swap.
+    pub failure_oob: bool,
     /// ISO 8601 timestamp of the most recent check, "" when none. Drives
     /// the client-side "checked Ns ago · next in Ns" ticker.
     pub last_at_iso: Arc<str>,
@@ -402,6 +409,14 @@ pub async fn index(
         .then(|| fold_breakdown(&region_breakdown, target.region_policy))
         .flatten();
     let last_status = badge_status(folded.unwrap_or(live.last_status), liveness.as_ref());
+    let failure = crate::targets::failure_note(
+        state.results_store.as_ref(),
+        org,
+        &target,
+        last_status,
+        selected_region.as_deref(),
+    )
+    .await;
 
     let slowed = SlowedView::of(&target);
     Ok(DetailPage {
@@ -423,6 +438,8 @@ pub async fn index(
         flapping_opens,
         flap_hold_minutes: state.cfg.escalation.flap_hold_secs.div_ceil(60),
         last_status,
+        failure,
+        failure_oob: false,
         last_at_iso: Arc::clone(&live.last_at_iso),
         uptime: Arc::clone(&live.uptime),
         kpi: Arc::clone(&live.kpi),
@@ -613,6 +630,14 @@ pub async fn live_partial(
     let liveness = read_liveness(&state, org, &target).await;
     let last_status = badge_status(live.last_status, liveness.as_ref());
     let facts = facts::load(&state, org, &target, selected_region.as_deref()).await;
+    let failure = crate::targets::failure_note(
+        state.results_store.as_ref(),
+        org,
+        &target,
+        last_status,
+        selected_region.as_deref(),
+    )
+    .await;
 
     let page = DetailLive {
         id: target.id.to_string(),
@@ -620,6 +645,8 @@ pub async fn live_partial(
         range: range_key,
         enabled: target.enabled,
         last_status,
+        failure,
+        failure_oob: true,
         uptime: Arc::clone(&live.uptime),
         kpi: Arc::clone(&live.kpi),
         pings: live.pings,
@@ -731,6 +758,15 @@ pub async fn incidents(
         read_liveness(&state, org, &target).await.as_ref(),
     );
 
+    let failure = crate::targets::failure_note(
+        state.results_store.as_ref(),
+        org,
+        &target,
+        last_status,
+        None,
+    )
+    .await;
+
     let slowed = SlowedView::of(&target);
     Ok(IncidentsPage {
         active_tab: "targets",
@@ -748,6 +784,8 @@ pub async fn incidents(
         share_count,
         alerts_nobody: reaches_nobody,
         last_status,
+        failure,
+        failure_oob: false,
         last_at_iso: data.last_at_iso,
         incidents: data.rows,
         incidents_has_more: data.has_more,

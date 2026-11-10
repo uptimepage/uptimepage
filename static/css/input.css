@@ -3238,7 +3238,44 @@
     .test-sheet__bar   { @apply flex flex-wrap items-center gap-3; }
     .test-sheet__label { @apply font-mono text-xs; color: var(--theme-text-quiet); }
     .test-sheet__verdict { @apply px-2.5 py-1 text-sm tabular-nums; }
+    /* What to try is the one tinted block on the sheet. The rows under it
+       keep their state on the pill alone: filled, a run of failing regions is
+       a wall of red that buries it. */
+    .test-sheet__advice {
+        @apply mt-3 rounded-sm border px-3.5 py-3 text-sm text-pretty;
+        background: var(--theme-state-warn-bg);
+        border-color: var(--theme-state-warn-line);
+        color: var(--theme-state-warn-fg-onsoft);
+    }
+    .test-sheet__advice .flag-label,
+    .test-sheet__advice .flag-label::before,
+    .test-sheet__advice .flag-label::after { color: inherit; }
+    .test-sheet__advice .flag-label { opacity: 0.8; }
     .test-sheet__body  { @apply mt-2 overflow-y-auto; max-height: 45vh; }
+    .test-sheet__body .test-result {
+        background: transparent;
+        border-color: var(--theme-line);
+        color: var(--theme-text);
+    }
+    .test-sheet__body .test-result--ok .test-result__pill {
+        background: var(--theme-state-ok-bg);
+        border-color: var(--theme-state-ok-line);
+        color: var(--theme-state-ok-fg-strong);
+    }
+    .test-sheet__body .test-result--bad .test-result__pill {
+        background: var(--theme-state-bad-bg);
+        border-color: var(--theme-state-bad-line);
+        color: var(--theme-state-bad-fg-strong);
+    }
+    .test-sheet__body .test-result--warn .test-result__pill {
+        background: var(--theme-state-warn-bg);
+        border-color: var(--theme-state-warn-line);
+        color: var(--theme-state-warn-fg-strong);
+    }
+    /* A request that never produced a result has no pill to carry its state. */
+    .test-sheet__body .test-result--bad:not(:has(.test-result__pill)) {
+        color: var(--theme-state-bad-fg-strong);
+    }
     /* Hit area out to 40px without changing how the chips look. */
     .test-sheet__bar .scope-token { position: relative; }
     .test-sheet__bar .scope-token::after {

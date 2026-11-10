@@ -310,16 +310,17 @@ impl CheckDiagnostic {
     }
 
     pub fn guidance(&self) -> &'static str {
-        match self.kind {
-            CheckDiagnosticKind::AccessInterference => {
-                "use an authenticated health endpoint, or allow this monitor through the edge's access rules"
-            }
-            CheckDiagnosticKind::OriginUnreachable => {
-                "check the origin is up and reachable from the edge"
-            }
-            CheckDiagnosticKind::OriginTunnelDown => {
-                "restart the tunnel daemon on the origin, then check the origin is up"
-            }
+        self.kind.guidance()
+    }
+
+    /// The error with what this attributes it to:
+    /// `unexpected status 403 · access-policy block detected at the Cloudflare edge`.
+    pub fn attributed(&self, error: &str) -> String {
+        let summary = self.summary();
+        if error.is_empty() {
+            summary
+        } else {
+            format!("{error} · {summary}")
         }
     }
 }
@@ -349,6 +350,18 @@ impl CheckDiagnosticKind {
             "origin_unreachable" => Some(Self::OriginUnreachable),
             "origin_tunnel_down" => Some(Self::OriginTunnelDown),
             _ => None,
+        }
+    }
+
+    pub const fn guidance(self) -> &'static str {
+        match self {
+            Self::AccessInterference => {
+                "use an authenticated health endpoint, or allow this monitor through the edge's access rules"
+            }
+            Self::OriginUnreachable => "check the origin is up and reachable from the edge",
+            Self::OriginTunnelDown => {
+                "restart the tunnel daemon on the origin, then check the origin is up"
+            }
         }
     }
 

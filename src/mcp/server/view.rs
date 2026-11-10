@@ -41,6 +41,13 @@ pub(super) fn network_path(result: &CheckResult) -> Option<NetworkPathView> {
     })
 }
 
+pub(super) fn check_hint(result: &CheckResult) -> Option<String> {
+    // A diagnosed result already carries its guidance in `diagnostic`.
+    crate::domain::CheckAdvice::for_result(result)?
+        .hint()
+        .map(|hint| hint.text().to_string())
+}
+
 pub(super) fn check_diagnostic(result: &CheckResult) -> Option<CheckDiagnosticView> {
     result
         .diagnostic

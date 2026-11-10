@@ -354,6 +354,11 @@ pub struct MonitorDetail {
     pub last_error: Option<String>,
     /// Structured edge-access diagnosis for the last failed HTTP check.
     pub last_diagnostic: Option<CheckDiagnosticView>,
+    /// What the failure most likely means and what to try, in plain words.
+    /// Set only while every region fails the same way and the monitor has not
+    /// passed since it was created or last edited; relay it to the user.
+    /// Absent beside a diagnostic, whose `guidance` is the advice then.
+    pub last_hint: Option<String>,
     /// HTTP status code of the last check, for `http` monitors. `null` for
     /// non-HTTP checks or when the last probe never got a response.
     pub last_http_status: Option<u16>,
@@ -772,6 +777,11 @@ pub struct ProbeOutcome {
     pub error: Option<String>,
     /// Structured edge-access diagnosis, when a supported signature matched.
     pub diagnostic: Option<CheckDiagnosticView>,
+    /// What the failure most likely means and what to try, in plain words,
+    /// when the error is one a different check or target would fix. Relay it
+    /// to the user. Absent beside a `diagnostic`, whose `guidance` is the
+    /// advice then.
+    pub hint: Option<String>,
 }
 
 /// `create_monitor` result.

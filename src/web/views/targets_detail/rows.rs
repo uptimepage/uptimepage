@@ -248,6 +248,9 @@ pub struct DetailLive {
     pub facts: Option<super::facts::CheckFacts>,
     /// Always out of band here, like the liveness notice.
     pub facts_oob: bool,
+    pub failure: Option<crate::targets::FailureNote>,
+    /// Always out of band here: the note lives in the header.
+    pub failure_oob: bool,
 }
 
 /// Rows for the ribbon drill drawer: a page of raw checks over a bucket window,
@@ -516,7 +519,6 @@ impl WindowLabels {
 
 impl From<CheckResult> for ResultRow {
     fn from(r: CheckResult) -> Self {
-        let diagnostic = r.diagnostic.as_ref().map(|item| item.summary());
         let diagnostic_guidance = r
             .diagnostic
             .as_ref()
@@ -529,13 +531,8 @@ impl From<CheckResult> for ResultRow {
             },
             None => (None, String::new()),
         };
-        if let Some(summary) = diagnostic {
-            if error.is_empty() {
-                error = summary;
-            } else {
-                error.push_str(" · ");
-                error.push_str(&summary);
-            }
+        if let Some(diagnostic) = &r.diagnostic {
+            error = diagnostic.attributed(&error);
         }
         Self {
             timestamp: r.timestamp,

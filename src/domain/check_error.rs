@@ -2,7 +2,10 @@
 //! shared by the web views, the JSON API, and MCP, plus the bounded
 //! classification of that same code for operator metrics.
 
-use crate::domain::{DnsDetails, expiry_words, is_breaker_skip, strip_served_stale};
+use crate::domain::{
+    CheckDiagnostic, CheckDiagnosticKind, CheckResult, DnsDetails, expiry_words, is_breaker_skip,
+    strip_served_stale,
+};
 
 pub fn humanize_check_error(raw: &str) -> String {
     let raw = match strip_served_stale(raw) {
@@ -43,6 +46,7 @@ pub fn humanize_check_error(raw: &str) -> String {
         }
         "certificate self-signed" => "self-signed certificate".into(),
         "connect" => "connection failed".into(),
+        "address not allowed" => PRIVATE_ADDRESS.into(),
         "transport" => "transport error".into(),
         "reset before response" => "server reset the connection before responding".into(),
         "closed before response" => "server closed the connection before responding".into(),
@@ -65,9 +69,15 @@ pub fn humanize_check_error(raw: &str) -> String {
     }
 }
 
+const PRIVATE_ADDRESS: &str = "resolves to a private or reserved address";
+
 /// The request-phase fallbacks carry the peer's own text after a stable
 /// prefix; only the prefix is reworded.
 fn humanize_prefixed(raw: &str) -> String {
+    // The host is already on the page beside the error.
+    if raw.starts_with("no allowed addresses for ") {
+        return PRIVATE_ADDRESS.into();
+    }
     if let Some(rest) = raw.strip_prefix("transport: ") {
         return format!("transport error: {rest}");
     }
@@ -482,6 +492,197 @@ fn classify_json(raw: &str) -> ErrorClass {
         return ErrorClass::DomainExpiry;
     }
     ErrorClass::Other
+}
+
+/// What a failed check most likely means to whoever is setting the monitor up,
+/// and what to try. Read off the error when it is shown and never stored, so an
+/// old row cannot outlive the advice it was written with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CheckHint {
+    IcmpNoReply,
+    PrivateAddress,
+    HandshakeDropped,
+    NameNotPublic,
+    NoAnswer,
+    AccessRefused,
+    NotFound,
+}
+
+impl CheckHint {
+    /// Stable for API and MCP clients; the text is free to be reworded.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::IcmpNoReply => "icmp_no_reply",
+            Self::PrivateAddress => "private_address",
+            Self::HandshakeDropped => "handshake_dropped",
+            Self::NameNotPublic => "name_not_public",
+            Self::NoAnswer => "no_answer",
+            Self::AccessRefused => "access_refused",
+            Self::NotFound => "not_found",
+        }
+    }
+
+    pub const fn text(self) -> &'static str {
+        match self {
+            Self::IcmpNoReply => {
+                "No reply to ping. Many firewalls drop ICMP, so a host can be up and still fail this check. A TCP or HTTP check on a port the service listens on tells you more."
+            }
+            Self::PrivateAddress => {
+                "This host resolves to a private or reserved address. Probes run outside your network and do not connect to those."
+            }
+            Self::HandshakeDropped => {
+                "The server accepted the connection, then dropped it before TLS finished. A firewall or allowlist that refuses clients from outside looks like this."
+            }
+            Self::NameNotPublic => {
+                "Public DNS has no address for this name. A name that resolves only inside your network cannot be checked from outside."
+            }
+            Self::NoAnswer => {
+                "The connection never completed. A firewall that silently drops traffic from outside looks like this, so check the port is open to the internet."
+            }
+            Self::AccessRefused => {
+                "The server answered and refused the request. If the page needs a sign-in or blocks automated clients, check a public health endpoint, send credentials in a header, or expect this status."
+            }
+            Self::NotFound => "The server answered, but nothing is at this path. Check the URL.",
+        }
+    }
+
+    /// Docs path, under the docs root, for the hints that come down to a
+    /// target the probes cannot reach from outside.
+    pub const fn docs_path(self) -> Option<&'static str> {
+        match self {
+            Self::IcmpNoReply
+            | Self::PrivateAddress
+            | Self::HandshakeDropped
+            | Self::NameNotPublic
+            | Self::NoAnswer => Some(UNREACHABLE_DOCS_PATH),
+            Self::AccessRefused | Self::NotFound => None,
+        }
+    }
+}
+
+const UNREACHABLE_DOCS_PATH: &str =
+    "/monitor-types#a-new-monitor-fails-but-the-service-works-for-you";
+
+/// Narrows inside the class where the class is wider than the advice: a class
+/// is a metric label, so it cannot be split to fit a sentence.
+fn hint_for_check_error(raw: &str) -> Option<CheckHint> {
+    // A check the breaker skipped repeats a timeout, and gets that timeout's hint.
+    let raw = strip_served_stale(raw)?;
+    match classify_check_error(raw) {
+        // `echo to <ip> failed` is the probe failing to send, not a silent host.
+        ErrorClass::PingFailed if is_timeout_error(raw) => Some(CheckHint::IcmpNoReply),
+        ErrorClass::AddressNotAllowed if raw != crate::domain::check::MAIL_PORT_REFUSED => {
+            Some(CheckHint::PrivateAddress)
+        }
+        ErrorClass::Tls if matches!(raw, "tls handshake reset" | "tls handshake closed early") => {
+            Some(CheckHint::HandshakeDropped)
+        }
+        // A DNS check reports a document instead, and an empty answer there is
+        // the thing it was asked to watch. A name missing in one forced family
+        // still resolves.
+        ErrorClass::DnsNoRecord
+            if matches!(raw, "dns: domain not found" | "dns: no address records") =>
+        {
+            Some(CheckHint::NameNotPublic)
+        }
+        ErrorClass::ConnectTimeout => Some(CheckHint::NoAnswer),
+        ErrorClass::UnexpectedStatus => match raw.strip_prefix("unexpected status ")? {
+            "401" | "403" => Some(CheckHint::AccessRefused),
+            "404" => Some(CheckHint::NotFound),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// What to try about a failed result. A diagnostic rests on evidence the probe
+/// saw, so its guidance takes the place of a hint, which has only the error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckAdvice {
+    Diagnosed(CheckDiagnosticKind),
+    Hint(CheckHint),
+}
+
+impl CheckAdvice {
+    pub fn of(error: Option<&str>, diagnostic: Option<CheckDiagnosticKind>) -> Option<Self> {
+        match diagnostic {
+            Some(kind) => Some(Self::Diagnosed(kind)),
+            None => hint_for_check_error(error?).map(Self::Hint),
+        }
+    }
+
+    pub fn for_result(result: &CheckResult) -> Option<Self> {
+        Self::of(
+            result.error.as_deref(),
+            result.diagnostic.as_ref().map(|d| d.kind),
+        )
+    }
+
+    /// Where it came from, for API clients.
+    pub const fn source(self) -> &'static str {
+        match self {
+            Self::Diagnosed(_) => "diagnostic",
+            Self::Hint(_) => "hint",
+        }
+    }
+
+    /// How a page labels it: the drawer already calls a diagnostic's guidance
+    /// `recommended`.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Diagnosed(_) => "recommended",
+            Self::Hint(_) => "hint",
+        }
+    }
+
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Diagnosed(kind) => kind.as_str(),
+            Self::Hint(hint) => hint.code(),
+        }
+    }
+
+    pub const fn text(self) -> &'static str {
+        match self {
+            Self::Diagnosed(kind) => kind.guidance(),
+            Self::Hint(hint) => hint.text(),
+        }
+    }
+
+    pub const fn docs_path(self) -> Option<&'static str> {
+        match self {
+            Self::Diagnosed(_) => None,
+            Self::Hint(hint) => hint.docs_path(),
+        }
+    }
+
+    pub const fn hint(self) -> Option<CheckHint> {
+        match self {
+            Self::Diagnosed(_) => None,
+            Self::Hint(hint) => Some(hint),
+        }
+    }
+
+    /// The advice every region agrees on. One region failing its own way, or
+    /// passing, makes the failure a matter of the path there, not of the
+    /// monitor.
+    pub fn agreed(per_region: impl IntoIterator<Item = Option<Self>>) -> Option<Self> {
+        let mut advice = per_region.into_iter();
+        let first = advice.next()??;
+        advice.all(|other| other == Some(first)).then_some(first)
+    }
+}
+
+/// The error in a reader's words, with what a diagnostic attributes it to.
+pub fn explain_check_error(
+    error: Option<&str>,
+    diagnostic: Option<&CheckDiagnostic>,
+) -> Option<String> {
+    let text = error.map(humanize_check_error);
+    match diagnostic {
+        Some(diagnostic) => Some(diagnostic.attributed(text.as_deref().unwrap_or_default())),
+        None => text,
+    }
 }
 
 // Counts, not values: the share page shows this line, and answers stay off
@@ -912,6 +1113,182 @@ mod tests {
             );
         }
         assert!(ErrorClass::ALL.contains(&ErrorClass::Other));
+    }
+
+    /// Samples copied from the emitters, like `EMITTED`. The status codes are
+    /// `worker::http_check`'s `unexpected status {code}`.
+    const HINTED: &[(&str, CheckHint)] = &[
+        (
+            "no echo reply from 2a01:116f:4013:3c00::1 within 3000ms",
+            CheckHint::IcmpNoReply,
+        ),
+        ("address not allowed", CheckHint::PrivateAddress),
+        (
+            "no allowed addresses for 127.0.0.1",
+            CheckHint::PrivateAddress,
+        ),
+        ("no allowed addresses for host", CheckHint::PrivateAddress),
+        ("tls handshake reset", CheckHint::HandshakeDropped),
+        ("tls handshake closed early", CheckHint::HandshakeDropped),
+        ("dns: domain not found", CheckHint::NameNotPublic),
+        ("dns: no address records", CheckHint::NameNotPublic),
+        ("connect timeout", CheckHint::NoAnswer),
+        ("unexpected status 401", CheckHint::AccessRefused),
+        ("unexpected status 403", CheckHint::AccessRefused),
+        ("unexpected status 404", CheckHint::NotFound),
+    ];
+
+    #[test]
+    fn hinted_errors_get_their_hint() {
+        for (raw, want) in HINTED {
+            assert_eq!(hint_for_check_error(raw), Some(*want), "{raw}");
+        }
+    }
+
+    /// Guards the narrowing: a class's other errors must not borrow its hint.
+    #[test]
+    fn every_other_emitted_error_gets_none() {
+        for (raw, _) in EMITTED {
+            if HINTED.iter().any(|(hinted, _)| hinted == raw) {
+                continue;
+            }
+            assert_eq!(hint_for_check_error(raw), None, "{raw}");
+        }
+        assert_eq!(hint_for_check_error("unexpected status 500"), None);
+    }
+
+    #[test]
+    fn a_skipped_check_gets_the_hint_of_the_timeout_it_repeats() {
+        let raw = "served_stale: refresh_failed=circuit_open; connect timeout";
+        assert_eq!(hint_for_check_error(raw), Some(CheckHint::NoAnswer));
+        assert_eq!(hint_for_check_error(SERVED_STALE_PREFIX), None);
+    }
+
+    /// A plain 403 gets the generic hint; one with an edge block behind it
+    /// must get the diagnostic's guidance, not less than the plain one.
+    #[test]
+    fn a_diagnosed_result_is_advised_by_its_diagnostic() {
+        use crate::domain::{DiagnosticConfidence, EdgeProvider};
+        let mut result = CheckResult::error(
+            uuid::Uuid::nil(),
+            uuid::Uuid::nil(),
+            "unexpected status 403",
+        );
+        let plain = CheckAdvice::for_result(&result).unwrap();
+        assert_eq!(plain, CheckAdvice::Hint(CheckHint::AccessRefused));
+        assert_eq!(plain.label(), "hint");
+
+        let diagnostic = CheckDiagnostic::access_interference(
+            DiagnosticConfidence::High,
+            Some(EdgeProvider::Cloudflare),
+            Vec::new(),
+        );
+        result.diagnostic = Some(diagnostic.clone());
+        let advice = CheckAdvice::for_result(&result).unwrap();
+        assert_eq!(
+            advice,
+            CheckAdvice::Diagnosed(CheckDiagnosticKind::AccessInterference)
+        );
+        assert_eq!(advice.text(), diagnostic.guidance());
+        assert_eq!(advice.code(), "access_interference");
+        assert_eq!(advice.label(), "recommended");
+        assert_eq!(advice.hint(), None);
+        assert_eq!(
+            explain_check_error(result.error.as_deref(), result.diagnostic.as_ref()).as_deref(),
+            Some("unexpected status 403 · access-policy block detected at the Cloudflare edge")
+        );
+
+        result.diagnostic = None;
+        result.error = None;
+        assert_eq!(CheckAdvice::for_result(&result), None);
+        assert_eq!(explain_check_error(None, None), None);
+    }
+
+    #[test]
+    fn regions_must_agree_on_the_advice() {
+        let ping = Some(CheckAdvice::Hint(CheckHint::IcmpNoReply));
+        let blocked = Some(CheckAdvice::Diagnosed(
+            CheckDiagnosticKind::AccessInterference,
+        ));
+        let refused = Some(CheckAdvice::Hint(CheckHint::AccessRefused));
+        assert_eq!(CheckAdvice::agreed([ping]), ping);
+        assert_eq!(CheckAdvice::agreed([ping, ping, ping]), ping);
+        assert_eq!(CheckAdvice::agreed([blocked, blocked]), blocked);
+        assert_eq!(CheckAdvice::agreed([ping, None]), None);
+        assert_eq!(CheckAdvice::agreed([None, ping]), None);
+        assert_eq!(
+            CheckAdvice::agreed([ping, Some(CheckAdvice::Hint(CheckHint::NoAnswer))]),
+            None
+        );
+        // One region saw the block page, another only the status.
+        assert_eq!(CheckAdvice::agreed([blocked, refused]), None);
+        assert_eq!(CheckAdvice::agreed([]), None);
+    }
+
+    const ALL_HINTS: &[CheckHint] = &[
+        CheckHint::IcmpNoReply,
+        CheckHint::PrivateAddress,
+        CheckHint::HandshakeDropped,
+        CheckHint::NameNotPublic,
+        CheckHint::NoAnswer,
+        CheckHint::AccessRefused,
+        CheckHint::NotFound,
+    ];
+
+    #[test]
+    fn hint_codes_are_unique_and_every_hint_is_reachable() {
+        let mut codes: Vec<&str> = ALL_HINTS.iter().map(|h| h.code()).collect();
+        codes.sort_unstable();
+        codes.dedup();
+        assert_eq!(codes.len(), ALL_HINTS.len(), "two hints share a code");
+        for hint in ALL_HINTS {
+            assert!(
+                HINTED.iter().any(|(_, h)| h == hint),
+                "no emitted error leads to {}",
+                hint.code()
+            );
+        }
+    }
+
+    /// The docs site slugs a heading by lowercasing it and dashing its spaces.
+    #[test]
+    fn hint_docs_link_lands_on_a_heading_that_exists() {
+        let docs = include_str!("../../docs/monitor-types.md");
+        for hint in ALL_HINTS {
+            let Some(path) = hint.docs_path() else {
+                continue;
+            };
+            let (page, anchor) = path.split_once('#').expect("anchored link");
+            assert_eq!(page, "/monitor-types");
+            let found = docs
+                .lines()
+                .filter_map(|line| line.strip_prefix("## "))
+                .any(|heading| {
+                    let slug: String = heading
+                        .chars()
+                        .filter_map(|c| match c {
+                            c if c.is_alphanumeric() => Some(c.to_ascii_lowercase()),
+                            ' ' | '-' | '_' => Some('-'),
+                            _ => None,
+                        })
+                        .collect();
+                    slug == anchor
+                });
+            assert!(found, "no heading for #{anchor}");
+        }
+    }
+
+    #[test]
+    fn a_refused_address_reads_the_same_from_every_kind() {
+        for raw in [
+            "address not allowed",
+            "no allowed addresses for intranet.example.com",
+        ] {
+            assert_eq!(
+                humanize_check_error(raw),
+                "resolves to a private or reserved address"
+            );
+        }
     }
 
     #[test]

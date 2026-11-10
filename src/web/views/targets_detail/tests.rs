@@ -160,6 +160,8 @@ fn sample_page() -> DetailPage {
         manual_set_by: None,
         facts: None,
         facts_oob: false,
+        failure: None,
+        failure_oob: false,
     }
 }
 
@@ -1144,6 +1146,8 @@ fn sample_live() -> DetailLive {
         liveness_oob: true,
         facts: None,
         facts_oob: true,
+        failure: None,
+        failure_oob: true,
     }
 }
 
@@ -1167,7 +1171,7 @@ fn live_partial_renders_kpi_swap_target_plus_oob_ribbon() {
     assert!(html.starts_with("<section id=\"detail-live-kpi\""));
     assert!(html.contains("</section><div id=\"detail-ribbon\""));
     assert!(html.contains("</div><span id=\"detail-status-badge\""));
-    assert!(html.ends_with("</span>"));
+    assert!(html.ends_with("</span><div id=\"failure-note\" hx-swap-oob=\"true\" hidden class=\"alert-card alert-card--muted space-y-1\" role=\"note\"></div>"));
     // The ribbon rides along as an out-of-band swap so the newest cell stays
     // current without a full-page reload; the recent-results table is gone.
     assert!(html.contains(r#"id="detail-ribbon""#));
@@ -1194,7 +1198,7 @@ fn live_partial_seams_stay_bare_for_a_heartbeat_monitor() {
     assert!(html.contains("</section><div id=\"detail-ribbon\""));
     assert!(html.contains("</div><div id=\"hb-liveness\""));
     assert!(html.contains("</div><span id=\"detail-status-badge\""));
-    assert!(html.ends_with("</span>"));
+    assert!(html.ends_with("</span><div id=\"failure-note\" hx-swap-oob=\"true\" hidden class=\"alert-card alert-card--muted space-y-1\" role=\"note\"></div>"));
 }
 
 #[test]
@@ -1667,6 +1671,8 @@ fn sample_incidents_page(incidents: Vec<IncidentRow>, ongoing_count: usize) -> I
         managed_by: None,
         share_count: 0,
         last_status: "down",
+        failure: None,
+        failure_oob: false,
         last_at_iso: "2026-05-13T12:00:00Z".into(),
         incidents,
         incidents_has_more: false,
@@ -2417,7 +2423,7 @@ fn live_partial_seams_stay_bare_with_a_facts_card() {
         "{html}"
     );
     assert!(html.contains("</section><span id=\"detail-status-badge\""));
-    assert!(html.ends_with("</span>"));
+    assert!(html.ends_with("</span><div id=\"failure-note\" hx-swap-oob=\"true\" hidden class=\"alert-card alert-card--muted space-y-1\" role=\"note\"></div>"));
 }
 
 #[test]
@@ -2437,4 +2443,97 @@ fn a_degraded_expiry_monitor_names_its_warning_window() {
     let http = banner("HTTP");
     assert!(http.contains("Response times are elevated"));
     assert!(!http.contains("warning window"));
+}
+
+fn silent_ping_note(regions: usize, advice: Option<crate::domain::CheckAdvice>) -> FailureNote {
+    FailureNote {
+        causes: vec![crate::targets::FailureCause {
+            text: "no echo reply from 192.0.2.1 within 3000ms".into(),
+            regions,
+        }],
+        more_causes: 0,
+        region_count: regions,
+        advice,
+    }
+}
+
+const SILENT_HOST: crate::domain::CheckAdvice =
+    crate::domain::CheckAdvice::Hint(crate::domain::CheckHint::IcmpNoReply);
+
+#[test]
+fn a_failing_monitor_names_its_cause_and_hint_under_the_banner() {
+    let mut page = sample_page();
+    page.last_status = "down";
+    page.failure = Some(silent_ping_note(2, Some(SILENT_HOST)));
+    let html = page.render().unwrap();
+    assert!(html.contains(r#"<div id="failure-note" class="alert-card"#));
+    assert!(html.contains("no echo reply from 192.0.2.1 within 3000ms"));
+    assert!(html.contains("2/2 regions"));
+    assert!(html.contains("Many firewalls drop ICMP"));
+    assert!(html.contains(
+        "https://uptimepage.dev/docs/monitor-types#a-new-monitor-fails-but-the-service-works-for-you"
+    ));
+}
+
+#[test]
+fn a_single_region_cause_needs_no_count_and_no_hint_line() {
+    let mut page = sample_page();
+    page.last_status = "down";
+    page.failure = Some(silent_ping_note(1, None));
+    let html = page.render().unwrap();
+    assert!(html.contains("no echo reply from 192.0.2.1 within 3000ms"));
+    assert!(!html.contains("1/1 regions"));
+    assert!(!html.contains(r#"<span class="flag-label">hint</span>"#));
+}
+
+#[test]
+fn a_diagnosed_block_reads_as_recommended_with_no_generic_hint() {
+    use crate::domain::{CheckAdvice, CheckDiagnosticKind, CheckHint};
+    let mut page = sample_page();
+    page.last_status = "down";
+    page.failure = Some(FailureNote {
+        causes: vec![crate::targets::FailureCause {
+            text: "unexpected status 403 · access-policy block detected at the Cloudflare edge"
+                .into(),
+            regions: 1,
+        }],
+        more_causes: 0,
+        region_count: 1,
+        advice: Some(CheckAdvice::Diagnosed(
+            CheckDiagnosticKind::AccessInterference,
+        )),
+    });
+    let html = page.render().unwrap();
+    assert!(html.contains("access-policy block detected at the Cloudflare edge"));
+    assert!(html.contains(r#"<span class="flag-label">recommended</span>"#));
+    assert!(html.contains("use an authenticated health endpoint"));
+    assert!(!html.contains(r#"<span class="flag-label">hint</span>"#));
+    assert!(!html.contains(CheckHint::AccessRefused.text()));
+}
+
+/// The poll can only swap an element that is already on the page.
+#[test]
+fn a_healthy_monitor_keeps_an_empty_note_for_the_poll_to_fill() {
+    let html = sample_page().render().unwrap();
+    assert!(html.contains(r#"<div id="failure-note" hidden class="#));
+    assert!(!html.contains(r#"<span class="flag-label">cause</span>"#));
+}
+
+#[test]
+fn the_live_poll_swaps_the_note_in() {
+    let mut live = sample_live();
+    live.last_status = "down";
+    live.failure = Some(silent_ping_note(1, Some(SILENT_HOST)));
+    let html = live.render().unwrap();
+    assert!(html.contains(r#"</span><div id="failure-note" hx-swap-oob="true" class="#));
+    assert!(html.contains("Many firewalls drop ICMP"));
+    assert!(html.ends_with("</div>"));
+}
+
+#[test]
+fn the_incidents_tab_header_carries_the_note() {
+    let mut page = sample_incidents_page(Vec::new(), 0);
+    page.failure = Some(silent_ping_note(1, None));
+    let html = page.render().unwrap();
+    assert!(html.contains("no echo reply from 192.0.2.1 within 3000ms"));
 }

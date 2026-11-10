@@ -947,6 +947,34 @@ fn a_creation_prompt_states_every_setting_it_would_apply() {
     }
     let lines = create_prompt_lines(&new, &regions, None, None).join("\n");
     assert!(lines.contains("dials IPv6 only"), "{lines}");
+
+    // An error long enough to be cut must not take the hint with it.
+    let hint = crate::domain::CheckHint::IcmpNoReply.text();
+    let noisy = ProbeOutcome {
+        state: "down".into(),
+        duration_ms: 3_000,
+        http_status: None,
+        error: Some("x".repeat(400)),
+        diagnostic: None,
+        hint: Some(hint.into()),
+    };
+    let lines = create_prompt_lines(&new, &regions, Some(("eu-helsinki", &noisy)), None);
+    let trial = lines.iter().find(|l| l.starts_with("trial run")).unwrap();
+    assert!(trial.ends_with("... (truncated)"), "{trial}");
+    assert!(lines.contains(&format!("hint: {hint}")), "{lines:?}");
+}
+
+#[test]
+fn a_setup_shaped_failure_reaches_mcp_with_its_hint() {
+    let mut r = check_result(None, None, None);
+    r.status = CheckStatus::Down;
+    r.error = Some("no echo reply from 192.0.2.1 within 3000ms".into());
+    assert_eq!(
+        super::view::check_hint(&r).as_deref(),
+        Some(crate::domain::CheckHint::IcmpNoReply.text())
+    );
+    r.error = Some("connection refused".into());
+    assert_eq!(super::view::check_hint(&r), None);
 }
 
 #[test]
@@ -1450,6 +1478,7 @@ fn a_trial_run_reads_as_one_line() {
         http_status: http,
         error: err.map(str::to_string),
         diagnostic: None,
+        hint: None,
     };
     assert_eq!(
         probe_line(&outcome("up", Some(200), None)),

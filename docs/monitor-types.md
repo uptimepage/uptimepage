@@ -20,6 +20,26 @@ The exact payload for each is in [REST API](api.md#check-specs). This page is ab
 
 Most orgs run mostly HTTP monitors, one TLS and one domain-expiry per property, a heartbeat per scheduled job, and a flow for the login path that would cost them the most.
 
+## A new monitor fails but the service works for you
+
+Checks run from probes on the public internet. A service you reach from your office or VPN can still be closed to them, and the monitor then fails from every region from its first check. The error says which wall it hit:
+
+| Error | What it means | What to try |
+|---|---|---|
+| `no echo reply from <ip>` | The host did not answer ping. Many firewalls drop ICMP, so the host can be up. | A TCP or HTTP monitor on a port the service listens on. |
+| `resolves to a private or reserved address` | The name points at an address inside a private network, such as `10.0.0.0/8` or `192.168.0.0/16`. Probes do not connect to those. | Monitor an address that is reachable from the internet. On your own instance, [`security.allow_private_targets`](configuration.md) lifts the block. |
+| `TLS handshake reset`, `server closed the TLS handshake early` | The server took the connection and dropped it before TLS finished. A firewall or allowlist that refuses outside clients does this. | Monitor a public endpoint of the service. Before allowlisting probes by address, read [regions](hosted/regions.md). |
+| `domain not found (DNS)`, `no DNS address records` | Public DNS has no address for the name. It may resolve only inside your network. | Publish the name, or monitor one that is public. |
+| `couldn't connect (timed out)` | The connection never completed. A firewall that silently drops outside traffic looks like this. | Check the port is open to the internet. |
+
+The monitor form shows the matching hint under a failed test when every region you tested fails the same way. The monitor page shows it under the cause while every region still fails that way and the monitor has not passed since you created or last edited it, looking back up to 7 days. Once it has passed, the same error means the target changed, not that the check does not fit.
+
+Two more hints cover a server that answers but not with what the check expects: `unexpected status 401` or `403` (the page needs a sign-in or blocks automated clients: check a public health endpoint, send credentials in a header, or expect that status) and `unexpected status 404` (check the URL).
+
+When the probe recognises what answered, for example a block page from an edge network, the error names it and the same line reads `recommended` instead of `hint`. That advice rests on what the probe saw, so it shows on a monitor that has passed before as well.
+
+A DNS monitor answers a different question: it passes when the name resolves to what you expect, whether or not the host behind it is up.
+
 ## HTTP
 
 The default. Requests a URL and decides up or down from the response.

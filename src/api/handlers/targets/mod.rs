@@ -10,15 +10,16 @@ use uuid::Uuid;
 
 use crate::api::redaction::Redacted;
 use crate::api::types::{
-    BulkAction, BulkActionFailure, BulkActionRequest, BulkActionResponse, TestRequest, TestResponse,
+    BulkAction, BulkActionFailure, BulkActionRequest, BulkActionResponse, CheckNowResponse,
+    TestRequest, TestResponse,
 };
 use crate::app::AppState;
 use crate::auth::scope::Scope;
 use crate::domain::agent_wire::DispatchKind;
 use crate::domain::target::BULK_MAX;
 use crate::domain::{
-    CheckResult, CheckSpec, NewTarget, NotificationReason, OrgId, PlacedTarget, Target,
-    TargetUpdate, min_interval_secs_for_kind,
+    CheckSpec, NewTarget, NotificationReason, OrgId, PlacedTarget, Target, TargetUpdate,
+    min_interval_secs_for_kind,
 };
 use crate::duration::exact_duration;
 use crate::error::ApiError;
@@ -1182,20 +1183,10 @@ pub async fn test_check(
     } else {
         requested.unwrap_or_else(|| state.cfg.scheduler.effective_default_region().to_string())
     };
-    let view = ops
+    let delivered = ops
         .run_ad_hoc(org, &region, DispatchKind::Test, None, req.check)
         .await?;
-    let matched_expectations = matches!(view.result.status, crate::domain::CheckStatus::Up);
-    Ok(Json(TestResponse {
-        matched_expectations,
-        result: view.result,
-        warnings: Vec::new(),
-        response_headers_preview: view.response_headers_preview,
-        response_body_snippet: view.response_body_snippet,
-        flow_evidence: view.flow_evidence,
-        flow_steps: view.flow_steps,
-        region: Some(region),
-    }))
+    Ok(Json(TestResponse::new(delivered, region)))
 }
 
 #[utoipa::path(
@@ -1203,12 +1194,12 @@ pub async fn test_check(
     path = "/api/v1/targets/{id}/check-now",
     tag = "targets",
     summary = "Run an immediate check against an existing target",
-    description = "Dispatches a one-off check to an agent in the target's region and waits for the result. Uses the target's stored (un-redacted) credentials; the result IS persisted, same as a scheduled check. Returns 503 if no agent is available to run it.",
+    description = "Dispatches a one-off check to an agent in the target's region and waits for the result. Uses the target's stored (un-redacted) credentials; the result IS persisted, same as a scheduled check. The reply is the result's own fields plus `error_text`, its error in plain words. Returns 503 if no agent is available to run it.",
     params(
         ("id" = Uuid, Path),
     ),
     responses(
-        (status = 200, body = CheckResult, example = json!({
+        (status = 200, body = CheckNowResponse, example = json!({
             "target_id": "01h7m8z4n6v0e1m7v7y6x8x8x8",
             "timestamp": "2026-05-13T12:00:00.000Z",
             "status": "up",
@@ -1223,12 +1214,12 @@ pub async fn check_now(
     State(state): State<AppState>,
     Authorized(org, _): Authorized<TargetsExecute>,
     Path(id): Path<Uuid>,
-) -> Result<Json<CheckResult>> {
+) -> Result<Json<CheckNowResponse>> {
     let ops = state.target_ops();
     let target = state
         .target_store
         .get(org, id)
         .await?
         .ok_or_else(|| AppError::not_found(codes::TARGET_NOT_FOUND, "target not found"))?;
-    Ok(Json(ops.check_now_via_dispatch(org, &target).await?))
+    Ok(Json(ops.check_now_via_dispatch(org, &target).await?.into()))
 }

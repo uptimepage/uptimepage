@@ -1242,3 +1242,264 @@ async fn the_check_drawer_shows_the_network_path_of_a_failed_check() {
     assert!(html.contains("dns 192.0.2.53:"), "{html}");
     assert!(html.contains("cached until"), "{html}");
 }
+
+/// A monitor that has not passed since it was created says why under its
+/// banner and what to try; the first pass retires the advice, not the cause.
+#[tokio::test]
+async fn a_monitor_that_never_passed_explains_itself_on_its_page() {
+    let state = common::build_test_app_state(|_| {});
+    let sink = state.result_sink.clone();
+    let router = common::with_session(
+        uptimepage::build_app_router(state, tokio_util::sync::CancellationToken::new()),
+        common::test_user_id(),
+        Some(common::test_org_id()),
+        Some("test-owner-session"),
+    );
+    let id = create_http_target(&router, "wrong-path").await;
+    let target_id: uuid::Uuid = id.parse().expect("target id");
+    let org_id = common::test_org_id().0;
+    let seeded = chrono::Utc::now();
+    let not_found = |secs: i64| uptimepage::domain::CheckResult {
+        status: uptimepage::domain::CheckStatus::Down,
+        response_code: Some(404),
+        timestamp: seeded + chrono::Duration::seconds(secs),
+        ..uptimepage::domain::CheckResult::error(target_id, org_id, "unexpected status 404")
+    };
+    let page = |uri: String| {
+        let router = router.clone();
+        async move {
+            let resp = router
+                .oneshot(Request::get(uri.clone()).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "{uri}");
+            body_text(resp).await
+        }
+    };
+    const HINT: &str = "nothing is at this path";
+
+    sink.write_batch(&[not_found(0)])
+        .await
+        .expect("seed a failure");
+    let html = page(format!("/targets/{id}")).await;
+    assert!(html.contains(r#"<div id="failure-note" class="#), "{html}");
+    assert!(html.contains("unexpected status 404"));
+    assert!(html.contains(HINT));
+
+    let live = page(format!("/web/partials/targets/{id}/live")).await;
+    assert!(
+        live.contains(r#"<div id="failure-note" hx-swap-oob="true" class="#),
+        "{live}"
+    );
+    assert!(live.contains(HINT));
+
+    let incidents = page(format!("/targets/{id}/incidents")).await;
+    assert!(incidents.contains(HINT));
+
+    let passed = uptimepage::domain::CheckResult {
+        status: uptimepage::domain::CheckStatus::Up,
+        response_code: Some(200),
+        error: None,
+        ..not_found(1)
+    };
+    sink.write_batch(&[passed, not_found(2)])
+        .await
+        .expect("seed a pass, then a failure");
+    let html = page(format!("/targets/{id}")).await;
+    assert!(html.contains("unexpected status 404"), "{html}");
+    assert!(
+        !html.contains(HINT),
+        "a check that has passed fits its target"
+    );
+}
+
+/// "Run check now" answers before its result is stored, and the page under it
+/// reads a status cached for seconds. With a healthy monitor and both of those
+/// against it, the reply still has to say why the check failed.
+#[tokio::test]
+async fn a_failed_check_now_explains_itself_before_the_page_can() {
+    use uptimepage::ad_hoc_dispatch::DeliveredResult;
+    use uptimepage::domain::agent_wire::DispatchKind;
+    use uptimepage::domain::{CheckResult, CheckStatus};
+
+    let state = common::build_test_app_state(|_| {});
+    let sink = state.result_sink.clone();
+    let ad_hoc = state.ad_hoc.clone();
+    let targets = state.target_store.clone();
+    let default_region = state.cfg.scheduler.effective_default_region().to_string();
+    let router = common::with_session(
+        uptimepage::build_app_router(state, tokio_util::sync::CancellationToken::new()),
+        common::test_user_id(),
+        Some(common::test_org_id()),
+        Some("test-owner-session"),
+    );
+    let id = create_http_target(&router, "was-healthy").await;
+    let target_id: uuid::Uuid = id.parse().expect("target id");
+    let org = common::test_org_id();
+    let empty_note = r#"<div id="failure-note" hx-swap-oob="true" hidden"#;
+    let live = || {
+        let router = router.clone();
+        let uri = format!("/web/partials/targets/{id}/live");
+        async move {
+            let resp = router
+                .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            body_text(resp).await
+        }
+    };
+
+    let healthy = CheckResult {
+        status: CheckStatus::Up,
+        response_code: Some(200),
+        error: None,
+        ..CheckResult::error(target_id, org.0, "")
+    };
+    sink.write_batch(&[healthy]).await.expect("seed a pass");
+    assert!(
+        live().await.contains(empty_note),
+        "the live cache is warm and healthy"
+    );
+
+    let region = targets
+        .regions_for_target(org, target_id)
+        .await
+        .expect("regions")
+        .and_then(|regions| regions.into_iter().next())
+        .unwrap_or(default_region);
+    // An agent that reports the failure and gets no further: the result is
+    // delivered and never stored.
+    let agent = tokio::spawn({
+        let ad_hoc = ad_hoc.clone();
+        let region = region.clone();
+        async move {
+            loop {
+                for check in ad_hoc.claim(&region, 1).await {
+                    if check.kind != DispatchKind::CheckNow {
+                        continue;
+                    }
+                    let delivered = DeliveredResult {
+                        result: CheckResult::error(target_id, org.0, "tls handshake reset"),
+                        response_headers_preview: Vec::new(),
+                        response_body_snippet: None,
+                        flow_evidence: None,
+                        flow_steps: Vec::new(),
+                    };
+                    ad_hoc.deliver(check.id, delivered);
+                    return;
+                }
+            }
+        }
+    });
+    for _ in 0..200 {
+        if ad_hoc.region_live(&region) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert!(ad_hoc.region_live(&region), "the agent holds {region}");
+
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/targets/{id}/check-now"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = serde_json::from_str(&body_text(resp).await).expect("json");
+    agent.await.expect("agent");
+    assert_eq!(body["status"], "error", "{body}");
+    assert_eq!(body["error"], "tls handshake reset");
+    assert_eq!(body["error_text"], "TLS handshake reset");
+    assert_eq!(body["target_id"], id, "result fields stay at the top level");
+    assert!(body.get("result").is_none(), "{body}");
+
+    assert!(
+        live().await.contains(empty_note),
+        "the page still reads healthy, so the reply was the only place to say why"
+    );
+}
+
+/// An edge block the probe has evidence for must not get less help than a
+/// bare 403, which gets the generic hint.
+#[tokio::test]
+async fn a_diagnosed_block_shows_its_guidance_and_no_generic_hint() {
+    use uptimepage::domain::{
+        CheckDiagnostic, CheckResult, CheckStatus, DiagnosticConfidence, EdgeProvider,
+    };
+
+    let state = common::build_test_app_state(|_| {});
+    let sink = state.result_sink.clone();
+    let router = common::with_session(
+        uptimepage::build_app_router(state, tokio_util::sync::CancellationToken::new()),
+        common::test_user_id(),
+        Some(common::test_org_id()),
+        Some("test-owner-session"),
+    );
+    let id = create_http_target(&router, "behind-an-edge").await;
+    let target_id: uuid::Uuid = id.parse().expect("target id");
+    let org_id = common::test_org_id().0;
+    let seeded = chrono::Utc::now();
+    let refused = |secs: i64, diagnosed: bool| CheckResult {
+        status: CheckStatus::Down,
+        response_code: Some(403),
+        timestamp: seeded + chrono::Duration::seconds(secs),
+        diagnostic: diagnosed.then(|| {
+            CheckDiagnostic::access_interference(
+                DiagnosticConfidence::High,
+                Some(EdgeProvider::Cloudflare),
+                Vec::new(),
+            )
+        }),
+        ..CheckResult::error(target_id, org_id, "unexpected status 403")
+    };
+    let page = || {
+        let router = router.clone();
+        let uri = format!("/targets/{id}");
+        async move {
+            let resp = router
+                .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            body_text(resp).await
+        }
+    };
+    const GENERIC: &str = "The server answered and refused the request";
+    const GUIDANCE: &str = "use an authenticated health endpoint";
+    const RECOMMENDED: &str = r#"<span class="flag-label">recommended</span>"#;
+
+    sink.write_batch(&[refused(0, false)]).await.expect("seed");
+    let html = page().await;
+    assert!(html.contains(GENERIC), "a bare 403 gets the hint: {html}");
+    assert!(!html.contains(RECOMMENDED));
+
+    sink.write_batch(&[refused(1, true)]).await.expect("seed");
+    let html = page().await;
+    assert!(
+        html.contains("access-policy block detected at the Cloudflare edge"),
+        "{html}"
+    );
+    assert!(html.contains(RECOMMENDED));
+    assert!(html.contains(GUIDANCE));
+    assert!(!html.contains(GENERIC));
+
+    // Evidence holds on a monitor that has passed; setup advice would not.
+    let passed = CheckResult {
+        status: CheckStatus::Up,
+        response_code: Some(200),
+        error: None,
+        diagnostic: None,
+        ..refused(2, false)
+    };
+    sink.write_batch(&[passed, refused(3, true)])
+        .await
+        .expect("seed");
+    let html = page().await;
+    assert!(html.contains(RECOMMENDED), "{html}");
+    assert!(html.contains(GUIDANCE));
+}

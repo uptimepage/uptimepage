@@ -56,8 +56,9 @@ window.smRunCheckNow = async function (id) {
 
 // Render a CheckResult-shaped object into an element using the
 // .test-result* CSS classes. `extra.matched` (bool) adjusts the pill
-// label; `extra.headers` (Vec) + `extra.body` (str) append HTTP-only
-// detail sections. Returns nothing.
+// label; `extra.errorText` (str) is the error in plain words, shown in
+// place of the result's own terse code; `extra.headers` (Vec) +
+// `extra.body` (str) append HTTP-only detail sections. Returns nothing.
 window.smRenderCheckResult = function (el, result, extra) {
     if (!el) return;
     extra = extra || {};
@@ -82,8 +83,8 @@ window.smRenderCheckResult = function (el, result, extra) {
             <span class="test-result__meta">${window.smEscapeHtml(meta)}</span>
         </div>
     `;
-    if (result.error) {
-        html += `<div class="test-result__meta mt-1">${window.smEscapeHtml(result.error)}</div>`;
+    if (extra.errorText) {
+        html += `<div class="test-result__meta mt-1">${window.smEscapeHtml(extra.errorText)}</div>`;
     }
     const section = (label, text) =>
         `<details class="mt-2"><summary class="cursor-pointer text-xs">${window.smEscapeHtml(label)}</summary><pre class="test-result__body">${window.smEscapeHtml(text)}</pre></details>`;
@@ -121,6 +122,20 @@ window.smRenderCheckResult = function (el, result, extra) {
     }
     el.innerHTML = html;
     el.classList.remove("hidden");
+};
+
+// The advice every region that ran carries, or null. One region failing its
+// own way, or passing, makes it a problem with the path there, so advice is
+// shown only when they all returned the same one. A region whose request
+// produced no result (rate limited, no probe) says nothing either way.
+// `outcomes` = [{ result, advice }], where `advice` is the API's
+// { source, code, text, docs_url? } or null.
+window.smAgreedAdvice = function (outcomes) {
+    const ran = outcomes.filter(o => o.result);
+    const first = ran[0]?.advice;
+    if (!first) return null;
+    const same = (a) => a && a.source === first.source && a.code === first.code;
+    return ran.every(o => same(o.advice)) ? first : null;
 };
 
 // Build a per-region test widget inside `el`: one row per region (label +

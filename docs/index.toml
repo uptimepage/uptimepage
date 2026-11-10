@@ -69,7 +69,7 @@ blurb = "The nine monitor kinds, what each one actually proves, and which to rea
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-11-09
+lastmod = 2026-11-10
 
 [[page]]
 slug = "notifications"
@@ -179,7 +179,7 @@ blurb = "The /api/v1 surface: monitors, incidents, channels, status pages, and t
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-11-09
+lastmod = 2026-11-10
 
 [[page]]
 slug = "terraform"
@@ -199,7 +199,7 @@ blurb = "Letting an LLM client answer operational questions and take guarded act
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-11-09
+lastmod = 2026-11-10
 
 [[page]]
 slug = "quotas"

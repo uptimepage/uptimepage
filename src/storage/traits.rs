@@ -10,8 +10,8 @@ use crate::domain::metrics::{
     PriorPeriodSummary, RegionLatencySeries, RegionRollup, TagCount, TargetsSummary,
 };
 use crate::domain::{
-    CheckResult, CheckStatus, HeartbeatPingRecord, NewTarget, ObservedCadence, OrgId, PlacedTarget,
-    Target, TargetUpdate, UserId, WriteCaps, WriteSource,
+    CheckDiagnostic, CheckResult, CheckStatus, HeartbeatPingRecord, NewTarget, ObservedCadence,
+    OrgId, PlacedTarget, Target, TargetUpdate, UserId, WriteCaps, WriteSource,
 };
 use crate::error::Result;
 
@@ -514,6 +514,20 @@ pub struct RegionFlaps {
     pub transitions: u64,
 }
 
+/// One region's newest result over a window, cut down to what explains a
+/// failure, and whether the region saw an up or degraded check in that window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegionNewest {
+    pub region: String,
+    pub at: DateTime<Utc>,
+    pub status: CheckStatus,
+    pub error: Option<String>,
+    /// Without its evidence: nothing that reads this needs more than what the
+    /// diagnostic says and advises.
+    pub diagnostic: Option<CheckDiagnostic>,
+    pub passed: bool,
+}
+
 /// A server address that answered failing checks, with the regions that
 /// reached it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -792,6 +806,13 @@ pub trait ResultsStore: Send + Sync {
         target_id: Uuid,
         range: ClampedRange,
     ) -> Result<Vec<RegionFlaps>>;
+    /// Where one target stands in each region that reported over `range`.
+    async fn newest_by_region(
+        &self,
+        org: OrgId,
+        target_id: Uuid,
+        range: ClampedRange,
+    ) -> Result<Vec<RegionNewest>>;
     /// Server addresses behind one target's down and error results over
     /// `range`, most failures first, at most `limit` of them. Degraded results
     /// passed their assertions, so they are left out.

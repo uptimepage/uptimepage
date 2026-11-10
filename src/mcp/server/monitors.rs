@@ -34,7 +34,7 @@ use super::args::{
 use super::text::{
     change_lines, create_prompt_lines, present_error, sanitize_data, sanitize_prompt,
 };
-use super::view::{channel_names, check_diagnostic, check_timing};
+use super::view::{channel_names, check_diagnostic, check_hint, check_timing};
 
 /// Past this a batch costs more probes than the per-minute budget allows, so it
 /// would spend them all and still fail whole.
@@ -642,6 +642,7 @@ impl McpServer {
                 http_status: r.response_code,
                 error: r.error.as_deref().map(present_error),
                 diagnostic: check_diagnostic(&r),
+                hint: check_hint(&r),
             },
         ))
     }

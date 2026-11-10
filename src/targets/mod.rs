@@ -1,11 +1,13 @@
 //! Monitor read models and defaults shared by every surface that shows or
 //! creates one, so the JSON API and the HTML forms cannot answer differently.
 
+pub mod failure;
 pub mod heartbeat;
 pub mod regions;
 pub mod status;
 pub mod validate;
 
+pub use failure::{FailureCause, FailureNote, failure_note};
 pub use heartbeat::{
     CadenceAdviceView, HeartbeatInfo, heartbeat_info, heartbeat_info_from, observed_cadence,
 };
