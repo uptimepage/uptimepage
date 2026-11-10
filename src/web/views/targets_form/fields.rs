@@ -1,6 +1,7 @@
 //! Per-check-kind field groups: what the form renders for an http, tcp, ping,
 //! heartbeat, dns, tls_cert, domain_expiry or flow monitor.
 
+use super::domain_note::DomainNote;
 use crate::domain::IpVersion;
 use crate::duration::exact_duration;
 
@@ -221,6 +222,7 @@ pub struct DomainExpiryFields {
     pub warn_days: u32,
     pub critical_days: u32,
     pub timeout_ms: u64,
+    pub note: DomainNote,
 }
 
 impl Default for DomainExpiryFields {
@@ -230,13 +232,8 @@ impl Default for DomainExpiryFields {
             warn_days: 30,
             critical_days: 7,
             timeout_ms: ROUND_TRIP_TIMEOUT_MS,
+            note: DomainNote::default(),
         }
-    }
-}
-
-impl DomainExpiryFields {
-    pub fn registered_domain_hint(&self) -> Option<String> {
-        crate::domain::reduced_domain_hint(&self.domain)
     }
 }
 

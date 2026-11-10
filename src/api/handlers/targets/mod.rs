@@ -188,7 +188,8 @@ pub async fn get(
         (status = 400, description = "Validation error", body = ApiError, example = json!({
             "error": {"code": "INVALID_URL_SCHEME", "message": "url scheme 'ftp' not allowed", "field": "check.url", "details": null, "trace_id": null}
         })),
-        (status = 409, description = "Duplicate (if uniqueness constraint exists)", body = ApiError),
+        (status = 409, body = ApiError,
+            description = "The monitor's group changed while saving (`GROUP_CHANGE_CONFLICT`); send the request again"),
         (status = 503, body = ApiError),
     ),
 )]

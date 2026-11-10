@@ -12,6 +12,7 @@ use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser};
 use crate::templates::filters;
 use crate::web::error::WebResult;
 
+mod domain_note;
 mod fields;
 mod from_target;
 mod model;
@@ -20,6 +21,7 @@ mod prefill;
 #[cfg(test)]
 mod tests;
 
+pub use domain_note::{DomainNote, DomainWatcher, domain_note_partial};
 pub use fields::{
     CadenceHint, DnsFields, DomainExpiryFields, DurationChoice, FlowFields, FlowStepFields,
     HeaderPair, HeartbeatFields, HttpFields, PingFields, TcpFields, TlsCertFields,
@@ -32,6 +34,7 @@ pub use model::{
 pub(crate) use options::channel_choices;
 pub use prefill::NewParams;
 
+use domain_note::domain_note;
 pub(crate) use from_target::http_fields_from;
 use from_target::{empty_create_form, form_from_target};
 use model::{EscalationOffer, region_groups, region_threshold_choices};
@@ -73,6 +76,7 @@ pub async fn new_form(
             prefill_url(&mut form, url);
         }
     }
+    form.domain_expiry.note = domain_note(&state, org, &form.domain_expiry.domain, None).await?;
     let owner_id = form.owner_user_id.clone();
     let (channels, owner_options, group_options, tag_options, plan, available) =
         form_options(&state, org, &TargetAlerts::default(), &owner_id).await?;
@@ -172,6 +176,8 @@ pub async fn edit_form(
     };
     let mut form = form_from_target(target)?;
     form.group_alert = group_alert;
+    form.domain_expiry.note =
+        domain_note(&state, org, &form.domain_expiry.domain, Some(id)).await?;
     let owner_id = form.owner_user_id.clone();
     let (channels, owner_options, group_options, tag_options, plan, available) =
         form_options(&state, org, &alerts, &owner_id).await?;

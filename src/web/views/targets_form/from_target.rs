@@ -124,6 +124,7 @@ pub(super) fn form_from_target(t: Target) -> Result<FormModel, AppError> {
                 warn_days: d.warn_days,
                 critical_days: d.critical_days,
                 timeout_ms: d.timeout.as_millis() as u64,
+                note: Default::default(),
             };
             "domain_expiry"
         }

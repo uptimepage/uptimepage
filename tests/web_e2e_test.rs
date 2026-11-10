@@ -517,6 +517,122 @@ async fn create_form_prefills_from_a_coverage_link() {
 }
 
 #[tokio::test]
+async fn the_domain_expiry_form_names_the_monitor_already_on_the_registration() {
+    let router = app();
+    let expiry_monitor = async |name: &str, domain: &str| {
+        let body = json!({
+            "name": name,
+            "interval": 86400,
+            "enabled": true,
+            "check": {
+                "type": "domain_expiry",
+                "domain": domain,
+                "warn_days": 30,
+                "critical_days": 7,
+                "timeout": 10000
+            }
+        });
+        let resp = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/targets")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED, "create {name}");
+        let created: Value =
+            serde_json::from_slice(&to_bytes(resp.into_body(), 1 << 20).await.unwrap()).unwrap();
+        created["id"].as_str().expect("id").to_string()
+    };
+    let page = async |uri: String| {
+        let resp = router
+            .clone()
+            .oneshot(Request::get(uri.clone()).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "{uri}");
+        body_text(resp).await
+    };
+    let note = async |query: &str| page(format!("/web/partials/targets/domain-note?{query}")).await;
+    let link_to = |id: &str| format!(r#"href="/targets/{id}""#);
+
+    let id = expiry_monitor("apex expiry", "example.com").await;
+    let link = link_to(&id);
+
+    let html = note("domain_expiry_domain=app.example.com").await;
+    assert!(html.contains("example.com is already watched."));
+    assert!(html.contains("no registration of its own"));
+    assert!(
+        html.contains(&link),
+        "links the monitor on the registration"
+    );
+    assert!(html.contains(r#"aria-label="Open apex expiry in a new tab""#));
+    assert!(!html.contains(r#"id="domain-note" hidden"#));
+    assert!(
+        !html.contains("data-use-domain"),
+        "switching to the registered domain would duplicate its monitor"
+    );
+
+    let html = note("domain_expiry_domain=example.com").await;
+    assert!(
+        html.contains(&link),
+        "the apex itself is the same registration"
+    );
+    assert!(html.contains("spends a slot on the same answer"));
+    assert!(!html.contains("no registration of its own"));
+
+    let html = note("domain_expiry_domain=app.example.org").await;
+    assert!(html.contains("Subdomains do not expire on their own."));
+    assert!(
+        html.contains(r#"data-use-domain="example.org""#),
+        "offers the registered domain"
+    );
+    assert!(!html.contains("is already watched"));
+    assert!(!html.contains(r#"id="domain-note" hidden"#));
+
+    for quiet in [
+        "domain_expiry_domain=example.org".to_string(),
+        "domain_expiry_domain=".to_string(),
+        format!("domain_expiry_domain=example.com&editing={id}"),
+        // A save would refuse these, so nothing is offered for what they reduce to.
+        "domain_expiry_domain=https%3A%2F%2Fapp.example.com".to_string(),
+        "domain_expiry_domain=app.example.com%3A8443".to_string(),
+        "domain_expiry_domain=www.example.org%2F".to_string(),
+        "domain_expiry_domain=203.0.113.5".to_string(),
+        "domain_expiry_domain=www.example.de".to_string(),
+    ] {
+        let html = note(&quiet).await;
+        assert!(html.contains(r#"id="domain-note" hidden"#), "{quiet}");
+    }
+
+    let html = page("/targets/new?kind=domain_expiry&host=www.example.com".into()).await;
+    assert!(html.contains(&link), "a prefilled form opens with the note");
+    assert!(html.contains(r#"hx-get="/web/partials/targets/domain-note""#));
+
+    let html = page(format!("/targets/{id}/edit")).await;
+    assert!(html.contains(r#"id="domain-note" hidden"#), "not itself");
+    assert!(html.contains(&format!(
+        r#"hx-get="/web/partials/targets/domain-note?editing={id}""#
+    )));
+
+    let newer = expiry_monitor("www expiry", "www.example.com").await;
+
+    let html = note("domain_expiry_domain=app.example.com").await;
+    assert!(html.contains(&link), "the older monitor is the one named");
+    assert!(!html.contains(&link_to(&newer)));
+
+    let html = page(format!("/targets/{id}/edit")).await;
+    assert!(
+        html.contains(&link_to(&newer)),
+        "an edit form opens naming the other monitor on its registration"
+    );
+    assert!(!html.contains(r#"id="domain-note" hidden"#));
+}
+
+#[tokio::test]
 async fn nonexistent_target_detail_returns_html_404() {
     let resp = app()
         .oneshot(
@@ -705,6 +821,7 @@ async fn operator_pages_redirect_to_login_when_unauthenticated_saas() {
         "/maintenance/new",
         "/maintenance/00000000-0000-0000-0000-000000000000/edit",
         "/web/targets/list",
+        "/web/partials/targets/domain-note?domain_expiry_domain=example.com",
         "/web/partials/dashboard",
     ] {
         let resp = app

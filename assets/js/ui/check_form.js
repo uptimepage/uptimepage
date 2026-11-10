@@ -239,15 +239,27 @@ import { parseDuration } from "./_duration.js";
         if (applyPeriod) {
             const field = form.querySelector("[name='heartbeat_period_s']");
             if (field) {
-                setDuration(field, applyPeriod.dataset.applyPeriod);
+                setField(field, applyPeriod.dataset.applyPeriod);
                 field.focus();
             }
             applyPeriod.closest("[data-cadence-hint]")?.remove();
         }
+        const useDomain = evt.target.closest("[data-use-domain]");
+        if (useDomain) {
+            const field = form.querySelector("[name='domain_expiry_domain']");
+            if (field) {
+                // An answer for the old text would bring this note back.
+                window.htmx.trigger(field, "htmx:abort");
+                setField(field, useDomain.dataset.useDomain);
+                field.focus();
+            }
+            // The note is the lookup's swap target, so it is hidden, not removed.
+            useDomain.closest("#domain-note").hidden = true;
+        }
     });
 
     // `input` clears a stuck aria-invalid, `change` marks the form dirty.
-    function setDuration(field, value) {
+    function setField(field, value) {
         field.value = value;
         field.dispatchEvent(new Event("input", { bubbles: true }));
         field.dispatchEvent(new Event("change", { bubbles: true }));
@@ -267,7 +279,7 @@ import { parseDuration } from "./_duration.js";
         const preset = evt.target.closest("[data-duration-preset]");
         if (!preset) return;
         const input = preset.closest("[data-duration-picker]")?.querySelector("[data-duration-input]");
-        if (input) setDuration(input, preset.value);
+        if (input) setField(input, preset.value);
     });
 
     form.addEventListener("input", (evt) => {
@@ -345,6 +357,8 @@ import { parseDuration } from "./_duration.js";
     // Auto-fill Name from the primary input until the user types into Name.
     const nameInput = form.querySelector("[name='name']");
     if (nameInput) {
+        // A saved monitor's name is the user's, however its address changes.
+        if (form.dataset.mode === "edit") nameInput.dataset.userTouched = "1";
         nameInput.addEventListener("input", () => {
             nameInput.dataset.userTouched = nameInput.value.trim() ? "1" : "";
         });
@@ -426,7 +440,8 @@ import { parseDuration } from "./_duration.js";
     });
     form.addEventListener("change", () => { formDirty = true; });
     // In-form links (cancel, back) are intentional exits — don't guard them.
-    form.querySelectorAll("a[href]").forEach((a) => {
+    // One that opens another tab leaves nothing, so the guard stays armed.
+    form.querySelectorAll("a[href]:not([target='_blank'])").forEach((a) => {
         a.addEventListener("click", () => { formDirty = false; });
     });
     window.addEventListener("beforeunload", (evt) => {

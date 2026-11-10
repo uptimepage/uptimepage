@@ -68,6 +68,10 @@ pub fn routes(state: AppState) -> Router {
         )
         .route("/web/targets/list", get(views::targets_list::list_partial))
         .route(
+            "/web/partials/targets/domain-note",
+            get(views::targets_form::domain_note_partial),
+        )
+        .route(
             "/web/partials/targets/{id}/live",
             get(views::targets_detail::live_partial),
         )

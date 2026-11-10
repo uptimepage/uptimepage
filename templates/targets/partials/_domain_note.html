@@ -1,0 +1,32 @@
+{#- Under the domain expiry input, in the cadence hint's shape: the monitor
+   already watching the registration, or else that a subdomain is checked by
+   its registered domain. Always rendered, hidden when there is nothing to
+   say, so typing can raise it and clear it. -#}
+<div id="domain-note"{% if note.is_empty() %} hidden{% endif %} class="-mt-1">
+  {%- if let Some(w) = note.watcher %}
+  <div class="space-y-1.5 border-l-2 border-[color:var(--theme-state-warn-line)] pl-3">
+    <p class="text-xs text-pretty">
+      <span class="hl">{{ w.registered_domain }} is already watched.</span>
+      {% if note.queried.is_some() -%}
+      This name has no registration of its own, so this monitor would ask about <span class="font-mono">{{ w.registered_domain }}</span> too.
+      {%- else -%}
+      A second monitor here spends a slot on the same answer.
+      {%- endif %}
+    </p>
+    <p class="flex items-center gap-2 text-xs">
+      <span class="flag-label shrink-0">monitor</span>
+      <span class="min-w-0 truncate font-mono text-body" title="{{ w.name }}">{{ w.name }}</span>
+      <a href="/targets/{{ w.id }}" target="_blank" rel="noopener" aria-label="Open {{ w.name }} in a new tab"
+         class="sticker-btn sticker-btn--accent shrink-0 px-2 py-1 text-xs">open ↗</a>
+    </p>
+  </div>
+  {%- else if let Some(queried) = note.queried %}
+  <div class="space-y-1.5 border-l-2 border-[color:var(--theme-line)] pl-3">
+    <p class="text-xs text-pretty">
+      <span class="hl">Subdomains do not expire on their own.</span>
+      This check will ask about <span class="font-mono">{{ queried }}</span>, the registered domain.
+    </p>
+    <button type="button" data-use-domain="{{ queried }}" class="sticker-btn sticker-btn--accent px-2 py-1 text-xs">use {{ queried }}</button>
+  </div>
+  {%- endif %}
+</div>

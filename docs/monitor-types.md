@@ -158,6 +158,8 @@ Asks the registry how long is left on the domain registration itself, through RD
 
 Different failure from TLS and often worse: an expired certificate breaks HTTPS, an expired domain hands your name back to the market. Same warn and critical day thresholds. Worth one per domain you own, set to warn generously, since registrar transfers and renewal disputes take weeks rather than minutes.
 
+A subdomain has no registration of its own, so the check reduces the name you give it to the registered domain: `app.example.com` and `api.example.com` both ask about `example.com`. One monitor per registered domain covers every name under it. When you type a subdomain, the form says so and offers to use the registered domain. If another domain expiry monitor in the organization already watches that registration, the form names that monitor instead of making the offer. Either way it is a note and saving still works, since a second monitor with other thresholds or channels can be what you want.
+
 The floor here is twelve hours rather than one, and the form suggests daily. A registration changes about once a year, and RDAP rate-limits by source address, so polling faster risks the answers being refused rather than arriving sooner. That matters most when a script or a Terraform loop creates one monitor per domain.
 
 ## DNS

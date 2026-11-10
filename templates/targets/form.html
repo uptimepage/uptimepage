@@ -457,13 +457,16 @@
       <label class="field-outline">
         <span class="field-outline__label">Domain</span>
         <input name="domain_expiry_domain" type="text" value="{{ form.domain_expiry.domain }}"
-               placeholder="example.com" autocomplete="off" spellcheck="false" class="w-full field font-mono">
+               placeholder="example.com" autocomplete="off" spellcheck="false" class="w-full field font-mono"
+               hx-get="/web/partials/targets/domain-note{% if form.mode == "edit" %}?editing={{ form.id }}{% endif %}"
+               hx-trigger="input changed delay:400ms" hx-sync="this:replace"
+               hx-target="#domain-note" hx-swap="outerHTML">
       </label>
-      {% if let Some(registered_domain) = form.domain_expiry.registered_domain_hint() %}
-      <p class="-mt-2 text-xs text-muted">
-        registration queried for <span class="font-mono text-body">{{ registered_domain }}</span>
-      </p>
-      {% endif %}
+      {# The live region outlives the swaps inside it, or nothing is announced. #}
+      <div role="status">
+        {% let note = form.domain_expiry.note %}
+        {% include "targets/partials/_domain_note.html" %}
+      </div>
       <fieldset class="space-y-2 rounded-sm border border-[color:var(--theme-line)] p-3">
         <legend class="px-1 text-xs text-muted">expiry thresholds</legend>
         <div class="grid grid-cols-3 gap-3">

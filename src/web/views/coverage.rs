@@ -46,9 +46,15 @@ pub fn panel(check: &CheckSpec, covered: &CoveredHosts) -> Option<CoveragePanel>
 fn suggestions(check: &CheckSpec, host: &str, covered: &CoveredHosts) -> Vec<CoverageSuggestion> {
     let host = host.to_owned();
     let already = |kind: &str, h: &str| {
-        covered
-            .iter()
-            .any(|(k, c)| k == kind && c.trim_end_matches('.').eq_ignore_ascii_case(h))
+        covered.iter().any(|(k, c)| {
+            k == kind
+                && if kind == "domain_expiry" {
+                    // A monitor on any name under the registration already asks about it.
+                    registered_domain(c) == h
+                } else {
+                    c.trim_end_matches('.').eq_ignore_ascii_case(h)
+                }
+        })
     };
 
     let mut out = Vec::new();
@@ -178,6 +184,20 @@ mod tests {
             kinds(&http("https://app.acme.com/"), &covered),
             ["dns"],
             "case and trailing dot must not hide existing coverage"
+        );
+    }
+
+    #[test]
+    fn an_expiry_monitor_on_a_subdomain_covers_the_registration() {
+        let covered = [("domain_expiry".to_string(), "WWW.acme.co.uk.".to_string())];
+        assert_eq!(
+            kinds(&http("https://app.acme.co.uk/"), &covered),
+            ["tls_cert", "dns"]
+        );
+        let other = [("domain_expiry".to_string(), "www.other.co.uk".to_string())];
+        assert_eq!(
+            kinds(&http("https://app.acme.co.uk/"), &other),
+            ["tls_cert", "domain_expiry", "dns"]
         );
     }
 
