@@ -62,6 +62,12 @@ on_exit() {
 }
 trap on_exit EXIT
 
+# Yield the CPU to the app and the edge. Reaches only this shell's own
+# children; a process started by `docker exec` or `docker run` gets its
+# priority from the container, so those that do real work call nice there.
+# No ionice: the disk queue on the hosted box has no scheduler to honor it.
+renice -n 19 -p $$ >/dev/null
+
 cd "$COMPOSE_DIR"
 mkdir -p "$BACKUP_ROOT"/{postgres,clickhouse,caddy}
 chmod 700 "$BACKUP_ROOT" "$BACKUP_ROOT"/{postgres,clickhouse,caddy}
@@ -102,6 +108,8 @@ backup_clickhouse() {
   mkdir -p "$dir"; chmod 700 "$work" "$dir"
   # One schema file + one gzipped Native data file per table. Native is the
   # most faithful round-trip format; restore replays CREATE then INSERT.
+  # gzip -1: about a third of the CPU of the default level for ~15% more bytes,
+  # and this is the bulk of the nightly run.
   # `mapfile` (not a `while read` loop): the in-loop `docker compose exec -T`
   # inherits the loop's stdin and would swallow the remaining table list,
   # silently backing up only the first table.
@@ -115,8 +123,8 @@ backup_clickhouse() {
     [ -n "$t" ] || continue
     docker compose exec -T clickhouse clickhouse-client --password "$pw" \
       --query "SHOW CREATE TABLE monitor.\`$t\`" > "$dir/$t.schema.sql"
-    docker compose exec -T clickhouse clickhouse-client --password "$pw" \
-      --query "SELECT * FROM monitor.\`$t\` FORMAT Native" | gzip -c > "$dir/$t.native.gz"
+    docker compose exec -T clickhouse nice -n 19 clickhouse-client --password "$pw" \
+      --query "SELECT * FROM monitor.\`$t\` FORMAT Native" | gzip -1 -c > "$dir/$t.native.gz"
     log "clickhouse table $t ok ($(du -h "$dir/$t.native.gz" | cut -f1))"
   done
   tar -C "$work" -czf "$work/$(basename "$out")" "$(basename "$dir")"
