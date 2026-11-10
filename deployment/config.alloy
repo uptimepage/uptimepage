@@ -74,9 +74,23 @@ prometheus.scrape "caddy" {
   targets = [
     { __address__ = "caddy:9180" },
   ]
-  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+  forward_to      = [prometheus.relabel.caddy.receiver]
   job_name        = "caddy"
   scrape_interval = "30s"
+}
+
+// An allowlist, because the rate-limit plugin publishes a series set per
+// client address and never drops one: shipped whole, the scrape outgrows the
+// remote's active-series limit within hours and sends visitor addresses off
+// the box. `up` and `scrape_.*` pass through this stage too, so they are named.
+prometheus.relabel "caddy" {
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+  rule {
+    source_labels = ["__name__"]
+    regex         = "up|scrape_.*|process_.*|go_.*|caddy_reverse_proxy_upstreams_healthy"
+    action        = "keep"
+  }
 }
 
 // ClickHouse's built-in Prometheus endpoint (enabled in clickhouse-config.xml).
