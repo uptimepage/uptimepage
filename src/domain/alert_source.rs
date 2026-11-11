@@ -115,6 +115,16 @@ impl AlertSource {
     }
 }
 
+/// Where a tool posts when it sends the source's token as a bearer.
+pub fn hook_url(public_base_url: &str) -> String {
+    format!("{}/hooks/alerts", public_base_url.trim_end_matches('/'))
+}
+
+/// The URL a source's tool posts to, for a tool that sets no header.
+pub fn ingest_url(public_base_url: &str, token: &str) -> String {
+    format!("{}/{token}", hook_url(public_base_url))
+}
+
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NewAlertSource {

@@ -12,8 +12,8 @@ use chrono::{DateTime, DurationRound, Utc};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::api::handlers::alert_sources::{AlertEventItem, events_page, ingest_url};
 use crate::app::AppState;
+use crate::domain::alert_source::{hook_url, ingest_url};
 use crate::domain::{
     AlertGrouping, AlertSource, AlertSourceKind, IncidentState, OrgId, TargetAlerts, UserId,
 };
@@ -21,7 +21,7 @@ use crate::error::{AppError, codes};
 use crate::request::{CurrentOrg, CurrentUser};
 use crate::storage::alert_delivery::Status;
 use crate::storage::incident_ops::IncidentOpsFilter;
-use crate::storage::traits::AlertEventCounts;
+use crate::storage::traits::{AlertEventCounts, AlertEventView, alert_events_page};
 use crate::templates::filters;
 use crate::web::error::{WebError, WebResult};
 use crate::web::views::dashboard::{KpiCardSpec, render_spark_path_domain};
@@ -869,7 +869,7 @@ pub struct EventsPartial {
     pub id: String,
     /// The filter key, carried by the "older" link.
     pub show: &'static str,
-    pub events: Vec<AlertEventItem>,
+    pub events: Vec<AlertEventView>,
     pub next_cursor: Option<String>,
     /// The state of each incident the page links.
     pub incident_states: HashMap<Uuid, IncidentState>,
@@ -890,12 +890,17 @@ impl EventsPartial {
 
     /// Badge tone: what opened, what closed, what changed nothing, and what
     /// did not apply.
-    fn tone(&self, outcome: &str) -> &'static str {
+    fn tone(&self, outcome: &Status) -> &'static str {
         match outcome {
-            "opened" => "down",
-            "resolved" => "up",
-            "repeat" | "ignored" => "disabled",
-            _ => "degraded",
+            Status::Opened => "down",
+            Status::Resolved => "up",
+            Status::Repeat | Status::Ignored => "disabled",
+            Status::Paused
+            | Status::Held
+            | Status::Capped
+            | Status::Unparsed
+            | Status::Unavailable
+            | Status::Gone => "degraded",
         }
     }
 }
@@ -1023,14 +1028,22 @@ async fn log_page(
     cursor: Option<&str>,
 ) -> WebResult<EventsPartial> {
     let (show, _, outcomes) = *filter(show);
-    let page = events_page(state, org, id, outcomes, cursor, None).await?;
-    let mut ids: Vec<Uuid> = page.items.iter().filter_map(|e| e.incident_id).collect();
+    let page = alert_events_page(
+        state.alert_event_log.as_deref(),
+        org,
+        id,
+        outcomes,
+        cursor,
+        None,
+    )
+    .await?;
+    let mut ids: Vec<Uuid> = page.events.iter().filter_map(|e| e.incident_id).collect();
     ids.sort_unstable();
     ids.dedup();
     Ok(EventsPartial {
         id: id.to_string(),
         show,
-        events: page.items,
+        events: page.events,
         next_cursor: page.next_cursor,
         incident_states: state.incident_ops_store.states(org, &ids).await?,
     })
@@ -1039,8 +1052,8 @@ async fn log_page(
 /// What to configure in the tool, and a command that sends one test alert
 /// the source's parser reads, then its resolve.
 fn setup(kind: AlertSourceKind, base: &str, token: &str, signed: bool) -> Vec<Snippet> {
-    let hook = format!("{base}/hooks/alerts");
-    let url = format!("{hook}/{token}");
+    let hook = hook_url(base);
+    let url = ingest_url(base, token);
     let curl = |body: &str| {
         format!(
             "curl -sS -X POST {hook} \\\n  -H 'Authorization: Bearer {token}' \\\n  -H 'Content-Type: application/json' \\\n  -d '{body}'"

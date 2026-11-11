@@ -14,6 +14,7 @@ use crate::domain::{
     OrgId, PlacedTarget, Target, TargetUpdate, UserId, WriteCaps, WriteSource,
 };
 use crate::error::Result;
+use crate::pagination::AlertEventCursor;
 use crate::storage::alert_delivery::{Delivery, Status};
 
 /// Which targets a bulk tag add actually touched, and which were already full.
@@ -167,6 +168,53 @@ pub trait AlertEventLog: Send + Sync {
         source: Option<Uuid>,
         since: DateTime<Utc>,
     ) -> Result<Vec<AlertEventHour>>;
+}
+
+const DEFAULT_ALERT_EVENTS: usize = 50;
+const MAX_ALERT_EVENTS: usize = 200;
+
+/// A page of a source's delivery log and the cursor of the one after it.
+#[derive(Debug, Default)]
+pub struct AlertEventPage {
+    pub events: Vec<AlertEventView>,
+    pub next_cursor: Option<String>,
+}
+
+/// A page of a source's delivery log, newest first, after `cursor`, limited to
+/// `outcomes` when any are given. The caller has checked the source is the
+/// org's. Empty without a log.
+pub async fn alert_events_page(
+    log: Option<&dyn AlertEventLog>,
+    org: OrgId,
+    source: Uuid,
+    outcomes: &[Status],
+    cursor: Option<&str>,
+    limit: Option<usize>,
+) -> Result<AlertEventPage> {
+    let after = cursor.map(AlertEventCursor::decode).transpose()?;
+    let Some(log) = log else {
+        return Ok(AlertEventPage::default());
+    };
+    let limit = limit
+        .unwrap_or(DEFAULT_ALERT_EVENTS)
+        .clamp(1, MAX_ALERT_EVENTS);
+    let after = after
+        .as_ref()
+        .map(|c| (c.received_at, c.dedup_key.as_str()));
+    let mut events = log.recent(org, source, outcomes, after, limit + 1).await?;
+    let next_cursor = (events.len() > limit).then(|| {
+        events.truncate(limit);
+        let last = events.last().expect("a full page has a last row");
+        AlertEventCursor {
+            received_at: last.received_at,
+            dedup_key: last.dedup_key.clone(),
+        }
+        .encode()
+    });
+    Ok(AlertEventPage {
+        events,
+        next_cursor,
+    })
 }
 
 /// One stored flow run. `evidence` is `None` both once its shorter window has

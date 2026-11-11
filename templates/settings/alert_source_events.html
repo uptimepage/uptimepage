@@ -12,7 +12,7 @@
     <time datetime="{{ e.received_at|iso_ts }}" data-tz="exact" class="hidden sm:inline">{{ e.received_at|human_ts }}</time>
     <time datetime="{{ e.received_at|iso_ts }}" data-tz="day-time" class="sm:hidden">{{ e.received_at|human_ts }}</time>
   </td>
-  <td class="px-3 py-2"><span class="status-badge status-badge--{{ self.tone(e.outcome.as_str()) }}">{{ e.outcome }}</span></td>
+  <td class="px-3 py-2"><span class="status-badge status-badge--{{ self.tone(e.outcome) }}">{{ e.outcome.as_str() }}</span></td>
   <td class="w-full max-w-0 px-3 py-2 font-mono text-xs">
     <span class="block truncate">{% if e.dedup_key.is_empty() %}<span class="text-quiet">no key</span>{% else %}<span class="text-body">{{ e.dedup_key }}</span>{% endif %}{% if !e.note.is_empty() %}<span class="ml-2 text-quiet"># {{ e.note }}</span>{% endif %}</span>
   </td>

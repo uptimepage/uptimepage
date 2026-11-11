@@ -13,19 +13,18 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::auth::scope::Scope;
+use crate::domain::alert_source::ingest_url;
 use crate::domain::{
     AlertGrouping, AlertSource, AlertSourceKind, AlertSourceUpdate, NewAlertSource, OrgId,
     TargetAlerts, UserId, WriteSource,
 };
 use crate::error::{ApiError, AppError, Result, codes};
-use crate::pagination::AlertEventCursor;
 use crate::pagination::page::CursorPage;
 use crate::request::{
     AlertSourcesDelete, AlertSourcesRead, AlertSourcesWrite, Authorized, CurrentUser,
     RequestSource, TokenScopes,
 };
-use crate::storage::alert_delivery::Status;
-use crate::storage::traits::AlertEventView;
+use crate::storage::traits::{AlertEventView, alert_events_page};
 use crate::storage::{MembershipStatus, membership_status};
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -78,14 +77,6 @@ pub struct AlertSourceView {
     pub write_source: WriteSource,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-}
-
-/// The URL a source's tool posts to.
-pub(crate) fn ingest_url(public_base_url: &str, token: &str) -> String {
-    format!(
-        "{}/hooks/alerts/{token}",
-        public_base_url.trim_end_matches('/')
-    )
 }
 
 impl AlertSourceView {
@@ -372,9 +363,6 @@ pub async fn revoke_previous(
     Ok(StatusCode::NO_CONTENT)
 }
 
-const DEFAULT_EVENTS: usize = 50;
-pub const MAX_EVENTS: usize = 200;
-
 #[derive(Debug, Deserialize, IntoParams)]
 #[serde(deny_unknown_fields)]
 pub struct EventsQuery {
@@ -442,42 +430,17 @@ pub async fn events(
         .get(org, id)
         .await?
         .ok_or_else(not_found)?;
-    Ok(Json(
-        events_page(&state, org, id, &[], q.cursor.as_deref(), q.limit).await?,
-    ))
-}
-
-/// A page of a source's delivery log, newest first, after `cursor`, limited to
-/// `outcomes` when any are given. The caller has checked the source is the
-/// org's. Empty without ClickHouse.
-pub(crate) async fn events_page(
-    state: &AppState,
-    org: OrgId,
-    id: Uuid,
-    outcomes: &[Status],
-    cursor: Option<&str>,
-    limit: Option<usize>,
-) -> Result<CursorPage<AlertEventItem>> {
-    let after = cursor.map(AlertEventCursor::decode).transpose()?;
-    let Some(log) = state.alert_event_log.as_ref() else {
-        return Ok(CursorPage::new(Vec::new(), None));
-    };
-    let limit = limit.unwrap_or(DEFAULT_EVENTS).clamp(1, MAX_EVENTS);
-    let after = after
-        .as_ref()
-        .map(|c| (c.received_at, c.dedup_key.as_str()));
-    let mut rows = log.recent(org, id, outcomes, after, limit + 1).await?;
-    let next_cursor = (rows.len() > limit).then(|| {
-        rows.truncate(limit);
-        let last = rows.last().expect("a full page has a last row");
-        AlertEventCursor {
-            received_at: last.received_at,
-            dedup_key: last.dedup_key.clone(),
-        }
-        .encode()
-    });
-    Ok(CursorPage::new(
-        rows.into_iter().map(Into::into).collect(),
-        next_cursor,
-    ))
+    let page = alert_events_page(
+        state.alert_event_log.as_deref(),
+        org,
+        id,
+        &[],
+        q.cursor.as_deref(),
+        q.limit,
+    )
+    .await?;
+    Ok(Json(CursorPage::new(
+        page.events.into_iter().map(Into::into).collect(),
+        page.next_cursor,
+    )))
 }
