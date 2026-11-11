@@ -26,7 +26,8 @@ use crate::metric_names;
 use crate::quotas::ratelimit::{RateLimitCategory, RateLimitKey};
 use crate::request::auth::bearer_from_headers;
 use crate::request::rate_limit::note_denied;
-use crate::storage::alert_ingest::{Applied, Delivery, Ingested, MAX_OPEN_PER_SOURCE, Status};
+use crate::storage::alert_delivery::{Delivery, Status};
+use crate::storage::alert_ingest::{Applied, Ingested, MAX_OPEN_PER_SOURCE};
 use crate::storage::alert_sources::TokenMatch;
 use crate::storage::capability_token;
 

@@ -24,6 +24,7 @@ use crate::domain::{
 use crate::duration::exact_duration;
 use crate::error::ApiError;
 use crate::error::codes;
+use crate::error::validation::{validate_alerts, validate_renotify_interval};
 use crate::error::{AppError, Result};
 use crate::metric_names;
 use crate::pagination::page::{PageEnvelope, PageOfTarget};
@@ -47,9 +48,8 @@ const LIST_LIMIT_MAX: usize = 10_000;
 use crate::targets::validate::{
     canonicalize_check, carry_credentials, carry_flags, carry_flow_secrets, gate_flow,
     gate_flow_steps, normalize_tags, reject_passive_probe, take_cleared_credentials,
-    validate_alert_confirmations, validate_alerts, validate_check, validate_group_choice,
-    validate_group_name, validate_new_target, validate_recovery_period, validate_region_policy,
-    validate_renotify_interval,
+    validate_alert_confirmations, validate_check, validate_group_choice, validate_group_name,
+    validate_new_target, validate_recovery_period, validate_region_policy,
 };
 
 #[derive(Debug, Deserialize, IntoParams)]

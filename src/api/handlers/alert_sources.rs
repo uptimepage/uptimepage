@@ -24,7 +24,7 @@ use crate::request::{
     AlertSourcesDelete, AlertSourcesRead, AlertSourcesWrite, Authorized, CurrentUser,
     RequestSource, TokenScopes,
 };
-use crate::storage::alert_ingest::Status;
+use crate::storage::alert_delivery::Status;
 use crate::storage::traits::AlertEventView;
 use crate::storage::{MembershipStatus, membership_status};
 

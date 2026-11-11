@@ -10,11 +10,12 @@ use crate::auth::scope::Scope;
 use crate::domain::notification_channel::NotificationChannel;
 use crate::domain::target::{NewTarget, Target, TargetUpdate};
 use crate::domain::{CheckSpec, TargetAlerts, WriteSource};
+use crate::error::validation::validate_renotify_interval;
 use crate::quotas::ratelimit::RateLimitCategory;
 use crate::target_ops::vet_note;
 use crate::targets::validate::{
     validate_alert_confirmations, validate_group_name, validate_recovery_period,
-    validate_region_policy, validate_renotify_interval,
+    validate_region_policy,
 };
 
 use crate::mcp::auth::McpAuth;

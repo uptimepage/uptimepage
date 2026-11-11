@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use uptimepage::domain::OrgId;
 use uptimepage::storage::ClickhouseAlertEventSink;
-use uptimepage::storage::alert_ingest::{Delivery, Status};
+use uptimepage::storage::alert_delivery::{Delivery, Status};
 use uptimepage::storage::traits::{AlertEventCounts, AlertEventLog, AlertEventSink};
 
 #[derive(Debug, Row, Deserialize)]

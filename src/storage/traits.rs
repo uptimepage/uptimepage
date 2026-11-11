@@ -14,6 +14,7 @@ use crate::domain::{
     OrgId, PlacedTarget, Target, TargetUpdate, UserId, WriteCaps, WriteSource,
 };
 use crate::error::Result;
+use crate::storage::alert_delivery::{Delivery, Status};
 
 /// Which targets a bulk tag add actually touched, and which were already full.
 #[derive(Debug, Default)]
@@ -93,14 +94,14 @@ pub trait HeartbeatPingSink: Send + Sync {
 /// they did, so a failed write costs the delivery log, never an incident.
 #[async_trait]
 pub trait AlertEventSink: Send + Sync {
-    async fn write_deliveries(&self, rows: &[crate::storage::alert_ingest::Delivery]);
+    async fn write_deliveries(&self, rows: &[Delivery]);
 }
 
 /// One line of a source's delivery log, read back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlertEventView {
     pub received_at: DateTime<Utc>,
-    pub outcome: crate::storage::alert_ingest::Status,
+    pub outcome: Status,
     pub dedup_key: String,
     pub incident_id: Option<Uuid>,
     pub note: String,
@@ -114,7 +115,7 @@ pub struct AlertEventCounts {
     pub events: u64,
     /// Events whose outcome is in [`Status::NOT_APPLIED`].
     ///
-    /// [`Status::NOT_APPLIED`]: crate::storage::alert_ingest::Status::NOT_APPLIED
+    /// [`Status::NOT_APPLIED`]: crate::storage::alert_delivery::Status::NOT_APPLIED
     pub not_applied: u64,
 }
 
@@ -153,7 +154,7 @@ pub trait AlertEventLog: Send + Sync {
         &self,
         org: OrgId,
         source: Uuid,
-        outcomes: &[crate::storage::alert_ingest::Status],
+        outcomes: &[Status],
         after: Option<(DateTime<Utc>, &str)>,
         limit: usize,
     ) -> Result<Vec<AlertEventView>>;

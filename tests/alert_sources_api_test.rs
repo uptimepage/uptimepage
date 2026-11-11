@@ -24,7 +24,7 @@ use uptimepage::auth::scope::ScopeSet;
 use uptimepage::domain::{AccountId, NotificationReason, OrgId, UserId};
 use uptimepage::escalation::IncidentSignal;
 use uptimepage::quotas::holds::reconcile_after_change;
-use uptimepage::storage::alert_ingest::Status;
+use uptimepage::storage::alert_delivery::Status;
 use uptimepage::storage::create_org_with_owner;
 use uptimepage::storage::traits::{
     AlertEventCounts, AlertEventHour, AlertEventLog, AlertEventView,

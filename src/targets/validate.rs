@@ -8,9 +8,10 @@ use crate::config::AppConfig;
 use crate::domain::REDACTED;
 use crate::domain::check::{MANUAL_EVALUATION_SECS, is_mail_port};
 use crate::domain::{
-    CheckSpec, IpVersion, NewTarget, RegionIncidentPolicy, TargetAlerts, min_interval_secs_for_kind,
+    CheckSpec, IpVersion, NewTarget, RegionIncidentPolicy, min_interval_secs_for_kind,
 };
 use crate::error::codes;
+use crate::error::validation::{validate_alerts, validate_renotify_interval};
 use crate::error::{AppError, Result};
 use crate::security::SsrfGuard;
 use crate::storage::TargetStore;
@@ -257,20 +258,6 @@ pub(crate) fn validate_interval_fits(interval: std::time::Duration) -> Result<()
     Ok(())
 }
 
-/// The outage reminder cadence is either off (0) or no tighter than a minute —
-/// a sub-minute reminder would just spam responders.
-/// The column is an INTEGER, so the top is i32's.
-pub(crate) fn validate_renotify_interval(secs: Option<u32>) -> Result<()> {
-    if matches!(secs, Some(n) if (n > 0 && n < 60) || i32::try_from(n).is_err()) {
-        return Err(AppError::bad_request_field(
-            codes::INVALID_ALERT_CONFIG,
-            "renotify_interval_secs must be 0 (off) or from 60 to 2147483647",
-            "renotify_interval_secs",
-        ));
-    }
-    Ok(())
-}
-
 /// Bounded, since the incident writer reads back over the hold to date the
 /// recovery it waited out.
 pub(crate) fn validate_recovery_period(secs: Option<u32>) -> Result<()> {
@@ -383,29 +370,6 @@ pub(crate) fn validate_group_name(group: Option<&str>) -> Result<()> {
             crate::domain::MAX_GROUP_NAME_LEN,
             codes::GROUP_TOO_LONG,
         )?;
-    }
-    Ok(())
-}
-
-/// Structural-only (no I/O): reject duplicate channel bindings. The bound
-/// `channel_id` is checked to exist in the caller's org by the async
-/// `TargetOps::verify_alert_channels` — kept separate so the sync per-item path
-/// (`validate_new_target`, also used by bulk) stays sync.
-pub(crate) fn validate_alerts(alerts: &TargetAlerts) -> Result<()> {
-    let mut seen = std::collections::HashSet::new();
-    for (i, b) in alerts.iter().enumerate() {
-        // A monitor delivers each open/resolve once per bound channel; a
-        // duplicate binding would just double-page the same channel.
-        if !seen.insert(b.channel_id) {
-            return Err(AppError::bad_request_field(
-                codes::INVALID_ALERT_CONFIG,
-                format!(
-                    "alerts[{i}]: duplicate binding for channel {}",
-                    b.channel_id
-                ),
-                format!("alerts[{i}].channel_id"),
-            ));
-        }
     }
     Ok(())
 }

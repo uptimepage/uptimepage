@@ -1,9 +1,11 @@
-//! Tiny text-validation primitives reused by handlers that accept operator
-//! narration (titles, descriptions, update messages).
+//! Validators that answer with a field error: the text limits for operator
+//! narration (titles, descriptions, update messages), and the paging settings
+//! monitors, monitor groups and alert sources share.
 //!
 //! Constants live here so the limits are one source of truth across
 //! maintenance + incident endpoints.
 
+use crate::domain::TargetAlerts;
 use crate::error::codes;
 use crate::error::{AppError, Result};
 
@@ -97,6 +99,40 @@ pub fn validate_optional_description(
     validate_description(Some(d), field)
 }
 
+/// The outage reminder cadence is either off (0) or no tighter than a minute —
+/// a sub-minute reminder would just spam responders.
+/// The column is an INTEGER, so the top is i32's.
+pub(crate) fn validate_renotify_interval(secs: Option<u32>) -> Result<()> {
+    if matches!(secs, Some(n) if (n > 0 && n < 60) || i32::try_from(n).is_err()) {
+        return Err(AppError::bad_request_field(
+            codes::INVALID_ALERT_CONFIG,
+            "renotify_interval_secs must be 0 (off) or from 60 to 2147483647",
+            "renotify_interval_secs",
+        ));
+    }
+    Ok(())
+}
+
+/// Refuses a channel bound twice: each open and resolve goes out once per
+/// bound channel, so a duplicate would page it twice. Structural only, no I/O:
+/// that each channel belongs to the caller's org is checked by the write.
+pub(crate) fn validate_alerts(alerts: &TargetAlerts) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for (i, b) in alerts.iter().enumerate() {
+        if !seen.insert(b.channel_id) {
+            return Err(AppError::bad_request_field(
+                codes::INVALID_ALERT_CONFIG,
+                format!(
+                    "alerts[{i}]: duplicate binding for channel {}",
+                    b.channel_id
+                ),
+                format!("alerts[{i}].channel_id"),
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,5 +162,14 @@ mod tests {
             validate_message(&long, "message"),
             Err(AppError::BadRequest { code, .. }) if code == codes::MESSAGE_TOO_LONG
         ));
+    }
+
+    #[test]
+    fn renotify_interval_fits_the_column() {
+        assert!(validate_renotify_interval(Some(0)).is_ok());
+        assert!(validate_renotify_interval(Some(60)).is_ok());
+        assert!(validate_renotify_interval(Some(i32::MAX as u32)).is_ok());
+        assert!(validate_renotify_interval(Some(59)).is_err());
+        assert!(validate_renotify_interval(Some(i32::MAX as u32 + 1)).is_err());
     }
 }

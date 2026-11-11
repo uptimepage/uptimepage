@@ -271,8 +271,8 @@ fn checked_secret(kind: AlertSourceKind, secret: &str) -> Result<()> {
 
 /// What every write checks before it takes a lock.
 fn checked_shape(renotify: Option<u32>, alerts: Option<&TargetAlerts>) -> Result<()> {
-    crate::targets::validate::validate_renotify_interval(renotify)?;
-    alerts.map_or(Ok(()), crate::targets::validate::validate_alerts)
+    validation::validate_renotify_interval(renotify)?;
+    alerts.map_or(Ok(()), validation::validate_alerts)
 }
 
 fn no_route() -> AppError {

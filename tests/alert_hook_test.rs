@@ -27,7 +27,7 @@ use uptimepage::escalation::IncidentSignal;
 use uptimepage::intake::gate::{IntakeGate, MAX_BODY_BYTES};
 use uptimepage::intake::signature::{SIGNATURE_HEADER, TIMESTAMP_HEADER};
 use uptimepage::security::mac::hmac_sha256_hex;
-use uptimepage::storage::alert_ingest::{Delivery, Status};
+use uptimepage::storage::alert_delivery::{Delivery, Status};
 use uptimepage::storage::alert_sources::{AlertSourceStore, DeletedSource, TokenMatch};
 use uptimepage::storage::create_org_with_owner;
 use uptimepage::storage::traits::AlertEventSink;

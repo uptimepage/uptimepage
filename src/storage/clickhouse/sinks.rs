@@ -11,7 +11,7 @@ use crate::domain::quota::RetentionDays;
 use crate::domain::{CheckDetails, CheckResult, HeartbeatPingRecord, OrgId};
 use crate::error::Result;
 use crate::metric_names;
-use crate::storage::alert_ingest::{Delivery, Status};
+use crate::storage::alert_delivery::{Delivery, Status};
 use crate::storage::org_ttl::OrgTtlDays;
 use crate::storage::traits::{
     AlertEventCounts, AlertEventHour, AlertEventLog, AlertEventSink, AlertEventView, FlowRunSink,

@@ -19,7 +19,7 @@ use crate::domain::{
 };
 use crate::error::{AppError, codes};
 use crate::request::{CurrentOrg, CurrentUser};
-use crate::storage::alert_ingest::Status;
+use crate::storage::alert_delivery::Status;
 use crate::storage::incident_ops::IncidentOpsFilter;
 use crate::storage::traits::AlertEventCounts;
 use crate::templates::filters;

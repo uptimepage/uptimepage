@@ -1,5 +1,6 @@
 pub mod accounts;
 pub mod admin;
+pub mod alert_delivery;
 pub mod alert_ingest;
 pub mod alert_sources;
 pub mod app_secrets;

@@ -16,6 +16,7 @@ use crate::domain::{
 };
 use crate::error::Result;
 use crate::intake::{AlertEvent, EventAction, MAX_DETAIL_CHARS, clean_block};
+use crate::storage::alert_delivery::Status;
 use crate::storage::db;
 use crate::storage::incident_ops::{Actor, LifecycleOutcome, insert_event_tx, resolve_in_tx};
 use crate::storage::locks::{advisory_xact_lock, alert_source_lock_key, incident_lock_key};
@@ -31,74 +32,6 @@ pub const RESOLVE_SKEW_SECS: i64 = 60;
 /// A repeat that changes nothing, and the source's last-event stamp, write at
 /// most this often.
 const COALESCE_SECS: f64 = 60.0;
-
-/// What one event did, as the sender is told and the delivery log records.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Status {
-    Opened,
-    Repeat,
-    Resolved,
-    /// A resolve with nothing open, or one older than what it would close.
-    Ignored,
-    /// Paused: a firing that would open an incident opens nothing. A key
-    /// already open still repeats, and a resolve still closes.
-    Paused,
-    /// Held by the plan: a firing that would open an incident is refused. A
-    /// key already open still repeats, and a resolve still closes.
-    Held,
-    /// At the cap: counted on the source's summary incident instead.
-    Capped,
-    /// The body could not be read and went to the unparsed incident.
-    Unparsed,
-    /// Not applied: the database failed or did not keep up. The sender is
-    /// answered 503 and sends the body again.
-    Unavailable,
-    /// The source was deleted since its token was checked.
-    Gone,
-}
-
-impl Status {
-    /// What the tool sent did not take effect as it asked.
-    pub const NOT_APPLIED: [Status; 5] = [
-        Status::Paused,
-        Status::Held,
-        Status::Capped,
-        Status::Unparsed,
-        Status::Unavailable,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Opened => "opened",
-            Self::Repeat => "repeat",
-            Self::Resolved => "resolved",
-            Self::Ignored => "ignored",
-            Self::Paused => "paused",
-            Self::Held => "held",
-            Self::Capped => "capped",
-            Self::Unparsed => "unparsed",
-            Self::Unavailable => "unavailable",
-            Self::Gone => "gone",
-        }
-    }
-}
-
-/// One line of a source's delivery log: one event of one request, or the
-/// request itself when it carried none.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Delivery {
-    pub org_id: Uuid,
-    pub source_id: Uuid,
-    /// When the request arrived, shared by every event in it.
-    pub received_at: DateTime<Utc>,
-    pub status: Status,
-    pub dedup_key: String,
-    pub incident_id: Option<Uuid>,
-    pub note: String,
-    /// The start of the request's body, on its first line only, and empty
-    /// when every event in it was a repeat.
-    pub body: String,
-}
 
 /// An event's result: what it did, the incident it touched, and what to tell
 /// the engine once the transaction has committed.

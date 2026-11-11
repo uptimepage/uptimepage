@@ -13,7 +13,8 @@ use uptimepage::domain::{
     NewAlertSource, NotificationReason, OrgId, TargetAlerts, WriteSource,
 };
 use uptimepage::intake::{AlertEvent, EventAction};
-use uptimepage::storage::alert_ingest::{AlertIngest, Ingested, MAX_OPEN_PER_SOURCE, Status};
+use uptimepage::storage::alert_delivery::Status;
+use uptimepage::storage::alert_ingest::{AlertIngest, Ingested, MAX_OPEN_PER_SOURCE};
 use uptimepage::storage::alert_sources::{AlertSourceStore, PgAlertSourceStore};
 use uptimepage::storage::{IncidentOpsStore, create_org_with_owner};
 use uuid::Uuid;

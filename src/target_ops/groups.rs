@@ -4,8 +4,9 @@ use crate::domain::{
     MonitorGroupUpdate, NewMonitorGroup, OrgId, TargetAlerts, UserId, normalize_group_name,
 };
 use crate::error::Result;
+use crate::error::validation::{validate_alerts, validate_renotify_interval};
 use crate::storage::monitor_groups::required_name;
-use crate::targets::validate::{normalize_tags, validate_alerts, validate_renotify_interval};
+use crate::targets::validate::normalize_tags;
 
 use super::TargetOps;
 
