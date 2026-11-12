@@ -918,6 +918,32 @@ async fn a_refused_dns_value_names_the_field_at_fault() {
     }
 }
 
+#[tokio::test]
+async fn a_domain_expiry_check_refuses_an_ip_address() {
+    let app = app();
+    for domain in ["203.0.113.5", "[2001:db8::1]"] {
+        let check = json!({
+            "type": "domain_expiry",
+            "domain": domain,
+            "warn_days": 30,
+            "critical_days": 7,
+            "timeout": 5000
+        });
+        for (path, payload) in [
+            (
+                "/api/v1/targets",
+                json!({"name": "registration", "check": check, "interval": 86400}),
+            ),
+            ("/api/v1/targets/test", json!({"check": check})),
+        ] {
+            let (status, body) = common::send_json(app.clone(), "POST", path, payload).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{path} {domain}: {body}");
+            assert_eq!(body["error"]["code"], "INVALID_DOMAIN_PARAMS", "{body}");
+            assert_eq!(body["error"]["field"], "check.domain", "{body}");
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 struct CapturedLogs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
 

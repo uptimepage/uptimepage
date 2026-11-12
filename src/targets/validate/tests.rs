@@ -493,6 +493,39 @@ fn validate_check_rejects_domain_expiry_for_registry_without_public_expiry() {
 }
 
 #[test]
+fn validate_check_rejects_domain_expiry_on_an_ip_address() {
+    use crate::security::ssrf::SsrfGuard;
+    for typed in [
+        "203.0.113.5",
+        "2001:db8::1",
+        "[2001:db8::1]",
+        "::ffff:203.0.113.5",
+        "127.1",
+        "010.0.0.1",
+        "1.2.3.4.5",
+    ] {
+        let mut spec: crate::domain::CheckSpec = serde_json::from_str(&format!(
+                r#"{{"type":"domain_expiry","domain":"{typed}","warn_days":30,"critical_days":7,"timeout":5000}}"#
+            ))
+            .unwrap();
+        canonicalize_check(&mut spec).unwrap();
+        let err = validate_check(&spec, &SsrfGuard::strict()).expect_err(typed);
+        match err {
+            AppError::BadRequest {
+                code,
+                field,
+                message,
+            } => {
+                assert_eq!(code, codes::INVALID_DOMAIN_PARAMS, "{typed}");
+                assert_eq!(field.as_deref(), Some("check.domain"), "{typed}");
+                assert!(message.contains("not an IP address"), "{typed}: {message}");
+            }
+            other => panic!("{typed}: expected a bad request, got {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn validate_check_accepts_domain_expiry_for_whois_only_tld() {
     use crate::security::ssrf::SsrfGuard;
     let spec: crate::domain::CheckSpec = serde_json::from_str(

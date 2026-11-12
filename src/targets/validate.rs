@@ -827,6 +827,24 @@ pub(crate) fn validate_check(check: &crate::domain::CheckSpec, guard: &SsrfGuard
                     "check.domain",
                 ));
             }
+            // No registry has an all-numeric TLD, so `127.1` and `010.0.0.1` are
+            // addresses too.
+            let numeric_tld = d
+                .domain
+                .rsplit('.')
+                .next()
+                .is_some_and(|tld| !tld.is_empty() && tld.bytes().all(|b| b.is_ascii_digit()));
+            if numeric_tld
+                || crate::domain::check::unbracket(&d.domain)
+                    .parse::<IpAddr>()
+                    .is_ok()
+            {
+                return Err(AppError::bad_request_field(
+                    codes::INVALID_DOMAIN_PARAMS,
+                    "domain_expiry needs a domain name, not an IP address",
+                    "check.domain",
+                ));
+            }
             // Require at least one non-empty label on each side of the final
             // dot — rejects degenerate inputs like ".", ".a", "a." that would
             // pass a naive `.contains('.')` gate.
