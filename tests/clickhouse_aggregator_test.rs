@@ -1397,13 +1397,14 @@ async fn a_page_incident_shows_only_on_the_pages_it_names() {
             org_id,
             incident.id,
             Some("Network outage in Frankfurt".into()),
-            None,
+            Some(" Frankfurt is unreachable.\n".into()),
             None,
             Actor::System,
         )
         .await
         .expect("publish")
         .expect("incident exists");
+        let described = Some("Frankfurt is unreachable.");
 
         let cfg = uptimepage::config::PublicStatusConfig::default();
         let agg = Arc::new(OrgAggregator::new(
@@ -1421,6 +1422,12 @@ async fn a_page_incident_shows_only_on_the_pages_it_names() {
                 .expect("posted page shows the incident");
             assert_eq!(shown.component_id, None);
             assert_eq!(shown.title, "Network outage in Frankfurt");
+            assert_eq!(shown.description.as_deref(), described);
+            assert_eq!(
+                shown.description_beside(&shown.updates),
+                None,
+                "publishing posted the description as the opening update"
+            );
             assert_eq!(page.overall.state, OverallState::MajorOutage);
         }
         let (page, _, _, _) = agg.build(unposted, org_id).await.expect("build");
@@ -1442,10 +1449,12 @@ async fn a_page_incident_shows_only_on_the_pages_it_names() {
             ongoing_only: false,
         };
         let listed = source.list_incidents(on, q()).await.expect("list");
-        assert!(listed.items.iter().any(|i| i.id == incident.id));
+        let item = listed.items.iter().find(|i| i.id == incident.id);
+        assert_eq!(item.expect("listed").description.as_deref(), described);
         let listed = source.list_incidents(off, q()).await.expect("list");
         assert!(listed.items.iter().all(|i| i.id != incident.id));
-        assert!(source.incident_by_id(on, incident.id).await.is_ok());
+        let one = source.incident_by_id(on, incident.id).await.expect("read");
+        assert_eq!(one.description.as_deref(), described);
         assert!(matches!(
             source.incident_by_id(off, incident.id).await,
             Err(PublicAppError::NotFound)

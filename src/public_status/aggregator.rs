@@ -796,6 +796,7 @@ impl OrgAggregator {
                     component_id: r.target_id.filter(|t| name_by_id.contains_key(t)),
                     component_name,
                     title,
+                    description: PublicIncident::stored_description(r.public_description),
                     started_at: r.started_at,
                     ended_at: r.ended_at,
                     severity,
@@ -1140,7 +1141,6 @@ struct IncidentRow {
     paused_since: Option<DateTime<Utc>>,
     recovering_since: Option<DateTime<Utc>>,
     public_title: Option<String>,
-    #[allow(dead_code)]
     public_description: Option<String>,
     kept_component_name: Option<String>,
 }

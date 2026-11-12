@@ -431,6 +431,9 @@ pub struct PublicIncident {
     pub component_name: String,
     /// `public_title` if set; otherwise auto-generated like `"API major outage"`.
     pub title: String,
+    /// `public_description` as Markdown; `null` when none is set.
+    #[schema(nullable = true)]
+    pub description: Option<String>,
     pub started_at: DateTime<Utc>,
     #[schema(nullable = true)]
     pub ended_at: Option<DateTime<Utc>>,
@@ -459,6 +462,26 @@ pub struct PublicIncident {
     #[serde(default)]
     #[schema(nullable = true)]
     pub postmortem: Option<PublicPostmortem>,
+}
+
+impl PublicIncident {
+    /// A stored description as the page carries it: absent when blank.
+    pub fn stored_description(stored: Option<String>) -> Option<String> {
+        stored
+            .map(|d| d.trim().to_owned())
+            .filter(|d| !d.is_empty())
+    }
+
+    /// The description, unless one of `shown` already says it: a publish
+    /// posts it as the opening update too.
+    pub fn description_beside(&self, shown: &[PublicIncidentUpdate]) -> Option<&str> {
+        let description = self.description.as_deref()?;
+        let words = || description.split_whitespace();
+        shown
+            .iter()
+            .all(|u| !u.message.split_whitespace().eq(words()))
+            .then_some(description)
+    }
 }
 
 /// One published postmortem action item. The internal owner is deliberately
@@ -566,6 +589,19 @@ mod tests {
         for phase in [Monitoring, Resolved, Postmortem] {
             assert_eq!(phase.shown(true), phase);
         }
+    }
+
+    #[test]
+    fn a_blank_description_is_no_description() {
+        assert_eq!(PublicIncident::stored_description(None), None);
+        assert_eq!(
+            PublicIncident::stored_description(Some("  \n".into())),
+            None
+        );
+        assert_eq!(
+            PublicIncident::stored_description(Some(" EU checkout fails.\n".into())).as_deref(),
+            Some("EU checkout fails.")
+        );
     }
 
     #[test]

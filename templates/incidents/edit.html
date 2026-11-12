@@ -103,7 +103,7 @@
         </div>
         <div>
           <span class="mb-1.5 block text-xs text-muted">Public description</span>
-          <textarea name="public_description" rows="3" maxlength="2000"
+          <textarea name="public_description" rows="3" maxlength="{{ self.max_description() }}"
                     placeholder="one plain sentence about the impact"
                     aria-label="Public description" class="w-full field">{{ public_description }}</textarea>
         </div>

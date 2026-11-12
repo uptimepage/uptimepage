@@ -465,6 +465,7 @@ impl OrgPublicSource {
                     component_id: r.target_id.filter(|t| names.contains_key(t)),
                     component_name,
                     title,
+                    description: PublicIncident::stored_description(r.public_description),
                     started_at: r.started_at,
                     ended_at: r.ended_at,
                     severity,
@@ -555,7 +556,6 @@ struct IncidentRow {
     paused_since: Option<DateTime<Utc>>,
     recovering_since: Option<DateTime<Utc>>,
     public_title: Option<String>,
-    #[allow(dead_code)]
     public_description: Option<String>,
     kept_component_name: Option<String>,
 }
@@ -607,16 +607,18 @@ pub fn build_rss(
             .map(|u| u.posted_at)
             .unwrap_or(i.started_at)
             .to_rfc2822();
-        let body: String = i
-            .updates
-            .iter()
-            .map(|u| {
+        let description = i
+            .description_beside(&i.updates)
+            .map(crate::markdown::to_html);
+        let body: String = description
+            .into_iter()
+            .chain(i.updates.iter().map(|u| {
                 format!(
                     "<p>[{}]</p>\n{}",
                     xml_escape(&tr.t(phase_id(u.phase))),
                     crate::markdown::to_html(&u.message)
                 )
-            })
+            }))
             .collect();
         out.push_str("<item>");
         out.push_str(&format!("<title>{}</title>", xml_escape(&i.title)));
@@ -760,6 +762,7 @@ mod tests {
             component_id: Some(Uuid::nil()),
             component_name: "Edge".into(),
             title: "Edge proxy 5xx".into(),
+            description: None,
             started_at: started,
             ended_at: None,
             severity: crate::domain::IncidentSeverity::Major,
@@ -863,6 +866,38 @@ mod tests {
             ),
             "{xml}"
         );
+    }
+
+    #[test]
+    fn an_item_opens_with_the_description_unless_an_update_says_it() {
+        let mut inc = sample_incident(
+            0xc01,
+            vec![update(
+                0,
+                IncidentStatusPhase::Investigating,
+                "Rolling back.",
+            )],
+        );
+        inc.description = Some("Checkout fails for **EU** cards.".into());
+        let rss = |inc: &PublicIncident| {
+            build_rss(
+                "Site",
+                links("https://acme.example.com"),
+                Locale::En,
+                std::slice::from_ref(inc),
+            )
+        };
+        assert!(
+            rss(&inc).contains(
+                "<description>&lt;p&gt;Checkout fails for &lt;strong&gt;EU&lt;/strong&gt; \
+                 cards.&lt;/p&gt;\n&lt;p&gt;[investigating]&lt;/p&gt;"
+            ),
+            "{}",
+            rss(&inc)
+        );
+
+        inc.description = Some("Rolling back.".into());
+        assert_eq!(rss(&inc).matches("Rolling back.").count(), 1);
     }
 
     #[test]

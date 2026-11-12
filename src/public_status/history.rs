@@ -259,6 +259,7 @@ mod tests {
             component_id: None,
             component_name: String::new(),
             title: format!("incident {id}"),
+            description: None,
             started_at: at(minute),
             ended_at: Some(at(minute + 5)),
             severity: IncidentSeverity::Major,

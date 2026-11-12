@@ -306,6 +306,7 @@ fn active_incident_banner_renders_when_present() {
         component_id: Some(Uuid::nil()),
         component_name: "Gateway".into(),
         title: "Latency spike".into(),
+        description: None,
         started_at: Utc::now() - ChronoDuration::minutes(14),
         ended_at: None,
         severity: IncidentSeverity::Major,
@@ -336,6 +337,111 @@ fn active_incident_banner_renders_when_present() {
     assert!(html.contains("Latency spike"));
     assert!(html.contains("Identified"));
     assert!(html.contains("Rolling back the deploy."));
+}
+
+fn update(message: &str) -> PublicIncidentUpdate {
+    PublicIncidentUpdate {
+        posted_at: Utc::now(),
+        phase: IncidentStatusPhase::Investigating,
+        message: message.into(),
+        generated: false,
+    }
+}
+
+fn status_html(incident: PublicIncident) -> String {
+    let mut p = sample_page();
+    p.active_incidents.push(incident);
+    let view = build_view(&p, &[], &Default::default(), all_tab(), Tr::default());
+    StatusFullPage {
+        reader: Reader::default(),
+        tr: Tr::default(),
+        view,
+        branding: BrandingView::sample(PublicOrgBranding::default()),
+        og: OgMeta::default(),
+    }
+    .render()
+    .unwrap()
+}
+
+fn detail_html(incident: &PublicIncident) -> String {
+    IncidentDetailPage {
+        tr: Tr::default(),
+        branding: BrandingView::sample(PublicOrgBranding::default()),
+        incident: IncidentDetailView::from_incident(incident, Utc::now(), Tr::default()),
+        generated_at: Utc::now(),
+        reader: Reader::default(),
+        og: OgMeta::default(),
+    }
+    .render()
+    .unwrap()
+}
+
+#[test]
+fn an_incident_description_shows_under_its_title_on_the_card_and_its_page() {
+    let mut inc = fake_incident(Utc::now() - ChronoDuration::minutes(20), 7, "API down");
+    inc.ended_at = None;
+    inc.description = Some("Checkout fails for **EU** cards <b>now</b>.".into());
+    inc.updates.push(update("Rolling back the deploy."));
+
+    let card = status_html(inc.clone());
+    assert!(
+        card.contains("Checkout fails for EU cards &#60;b&#62;now&#60;/b&#62;."),
+        "plain words, escaped: {card}"
+    );
+    assert!(card.contains("Rolling back the deploy."));
+
+    let page = detail_html(&inc);
+    assert!(
+        page.contains("Checkout fails for <strong>EU</strong> cards &lt;b&gt;now&lt;/b&gt;."),
+        "{page}"
+    );
+}
+
+#[test]
+fn a_description_an_update_already_says_is_not_shown_twice() {
+    let mut inc = fake_incident(Utc::now() - ChronoDuration::minutes(20), 7, "API down");
+    inc.ended_at = None;
+    inc.description = Some("Checkout fails for EU cards.".into());
+    inc.updates.push(update("Checkout fails for EU cards."));
+    assert_eq!(
+        status_html(inc.clone())
+            .matches("Checkout fails for EU cards.")
+            .count(),
+        1,
+        "the card shows the opening update alone"
+    );
+    assert_eq!(
+        detail_html(&inc)
+            .matches("Checkout fails for EU cards.")
+            .count(),
+        1
+    );
+
+    inc.updates.push(update("Rolling back the deploy."));
+    let card = status_html(inc.clone());
+    assert!(
+        card.contains("Checkout fails for EU cards."),
+        "the card shows only the latest update, so the description stands: {card}"
+    );
+    assert_eq!(
+        detail_html(&inc)
+            .matches("Checkout fails for EU cards.")
+            .count(),
+        1,
+        "the page still lists the update that says it"
+    );
+}
+
+#[test]
+fn a_description_matches_an_update_whatever_its_line_endings() {
+    let mut inc = fake_incident(Utc::now(), 7, "API down");
+    inc.description = Some("EU cards fail.\n\nRefunds are safe.".into());
+    inc.updates
+        .push(update("EU cards fail.\r\n\r\nRefunds are safe.  "));
+    assert_eq!(inc.description_beside(&inc.updates), None);
+
+    inc.updates[0].message = "EU cards fail.".into();
+    assert!(inc.description_beside(&inc.updates).is_some());
 }
 
 #[test]
@@ -632,6 +738,7 @@ fn incident_detail_renders() {
         component_id: Some(Uuid::nil()),
         component_name: "Gateway".into(),
         title: "Latency spike".into(),
+        description: None,
         started_at: Utc::now() - ChronoDuration::minutes(30),
         ended_at: Some(Utc::now()),
         severity: IncidentSeverity::Major,
@@ -1078,6 +1185,7 @@ fn fake_incident(started_at: DateTime<Utc>, id_low: u8, title: &str) -> PublicIn
         component_id: Some(Uuid::nil()),
         component_name: "API".into(),
         title: title.into(),
+        description: None,
         started_at,
         ended_at: Some(started_at + ChronoDuration::minutes(15)),
         severity: IncidentSeverity::Minor,

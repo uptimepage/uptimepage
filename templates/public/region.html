@@ -51,6 +51,9 @@
                            class="min-w-0 break-words font-medium hover:underline text-state-warn-strong">{{ inc.header.title }}</a>
                         {% call chips::sevphase(inc.header) %}{% endcall %}
                     </div>
+                    {% if let Some(description) = inc.description %}
+                    <p class="whitespace-pre-line text-pretty text-sm text-body">{{ description }}</p>
+                    {% endif %}
                     <p class="text-pretty text-sm text-muted">
                         {{ tr.t("incident-started") }}
                         <time datetime="{{ inc.header.started_at|iso_ts }}" data-tz="exact">{{ inc.header.started_at|human_ts }}</time>

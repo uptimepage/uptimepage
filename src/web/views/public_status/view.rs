@@ -126,12 +126,14 @@ pub struct IncidentHeader {
 
 pub struct IncidentSummary {
     pub header: IncidentHeader,
+    pub description: Option<String>,
     pub latest_message: Option<String>,
     pub permalink: String,
 }
 
 pub struct IncidentDetailView {
     pub header: IncidentHeader,
+    pub description: Option<String>,
     pub ended_at: Option<DateTime<Utc>>,
     pub updates: Vec<IncidentUpdateView>,
     pub postmortem: Option<crate::domain::PublicPostmortem>,
@@ -632,13 +634,15 @@ pub(super) fn build_incident_summary(
     tr: Tr,
 ) -> IncidentSummary {
     let header = build_incident_header(i, now, tr);
-    let latest_message = i
-        .updates
-        .last()
-        .and_then(|u: &PublicIncidentUpdate| preview(&u.message));
+    let latest = i.updates.last();
+    let latest_message = latest.and_then(|u: &PublicIncidentUpdate| preview(&u.message));
+    let description = i
+        .description_beside(latest.map(std::slice::from_ref).unwrap_or_default())
+        .and_then(preview);
     IncidentSummary {
         permalink: format!("/status/incidents/{}", header.id),
         header,
+        description,
         latest_message,
     }
 }
@@ -661,6 +665,7 @@ impl IncidentDetailView {
             .collect();
         Self {
             header,
+            description: i.description_beside(&i.updates).map(str::to_owned),
             ended_at: i.ended_at,
             updates,
             postmortem: i.postmortem.clone(),

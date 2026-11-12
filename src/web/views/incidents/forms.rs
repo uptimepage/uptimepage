@@ -79,6 +79,12 @@ pub struct EditIncidentPage {
     pub counts_as_downtime: bool,
 }
 
+impl EditIncidentPage {
+    fn max_description(&self) -> usize {
+        crate::error::validation::MAX_DESCRIPTION
+    }
+}
+
 pub async fn edit_form(
     _auth: AuthedBrowser,
     CurrentOrg(org): CurrentOrg,

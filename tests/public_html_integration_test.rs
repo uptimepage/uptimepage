@@ -65,6 +65,7 @@ impl PublicSource for PublishedSource {
             component_id: Some(component.id),
             component_name: component.name.clone(),
             title: OPERATOR_TITLE.into(),
+            description: None,
             started_at: Utc::now() - chrono::Duration::minutes(8),
             ended_at: None,
             severity: IncidentSeverity::Major,

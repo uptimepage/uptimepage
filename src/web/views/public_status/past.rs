@@ -570,6 +570,7 @@ mod tests {
             component_id: Some(component),
             component_name: name.into(),
             title: format!("{name} error"),
+            description: None,
             started_at: start,
             ended_at: Some(start + ChronoDuration::minutes(minutes)),
             severity: IncidentSeverity::Major,
