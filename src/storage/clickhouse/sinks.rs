@@ -11,6 +11,7 @@ use crate::domain::quota::RetentionDays;
 use crate::domain::{CheckDetails, CheckResult, HeartbeatPingRecord, OrgId};
 use crate::error::Result;
 use crate::metric_names;
+use crate::pagination::AlertEventCursor;
 use crate::storage::alert_delivery::{Delivery, Status};
 use crate::storage::org_ttl::OrgTtlDays;
 use crate::storage::traits::{
@@ -474,7 +475,7 @@ impl AlertEventLog for ClickhouseAlertEventSink {
         org: OrgId,
         source: Uuid,
         outcomes: &[Status],
-        after: Option<(chrono::DateTime<chrono::Utc>, &str)>,
+        after: Option<&AlertEventCursor>,
         limit: usize,
     ) -> Result<Vec<AlertEventView>> {
         let outcome_clause = if outcomes.is_empty() {
@@ -484,7 +485,8 @@ impl AlertEventLog for ClickhouseAlertEventSink {
         };
         let after_clause = if after.is_some() {
             "AND (received_at < fromUnixTimestamp64Milli(?) \
-                  OR (received_at = fromUnixTimestamp64Milli(?) AND dedup_key > ?)) "
+                  OR (received_at = fromUnixTimestamp64Milli(?) \
+                      AND (dedup_key, event_id) > (?, toUUID(?)))) "
         } else {
             ""
         };
@@ -494,21 +496,23 @@ impl AlertEventLog for ClickhouseAlertEventSink {
         let mut q = self
             .client
             .query(&format!(
-                "SELECT received_at, toInt8(outcome) AS outcome, dedup_key, incident_id, note, \
-                     if({expired}, '', body) AS body \
+                "SELECT event_id, received_at, toInt8(outcome) AS outcome, dedup_key, incident_id, \
+                     note, if({expired}, '', body) AS body \
                  FROM {ALERT_EVENT_TABLE} \
                  WHERE org_id = ? AND source_id = ? \
                    AND received_at >= now() - toIntervalDay(ttl_days) {outcome_clause}{after_clause}\
-                 ORDER BY received_at DESC, dedup_key ASC LIMIT {limit}",
+                 ORDER BY received_at DESC, dedup_key ASC, event_id ASC LIMIT {limit}",
                 expired = past_evidence("toDateTime(received_at)"),
             ))
             .bind(org.0)
             .bind(source);
-        if let Some((at, key)) = after {
+        if let Some(after) = after {
+            let at = after.received_at.timestamp_millis();
             q = q
-                .bind(at.timestamp_millis())
-                .bind(at.timestamp_millis())
-                .bind(key);
+                .bind(at)
+                .bind(at)
+                .bind(after.dedup_key.as_str())
+                .bind(after.event_id);
         }
         let rows = q
             .fetch_all::<AlertEventReadRow>()
@@ -524,6 +528,7 @@ impl AlertEventLog for ClickhouseAlertEventSink {
                     .ok_or_else(|| anyhow::anyhow!("alert event outcome {} unknown", r.outcome))?
                     .0;
                 Ok(AlertEventView {
+                    id: r.event_id,
                     received_at: r.received_at,
                     outcome,
                     dedup_key: r.dedup_key,
@@ -601,6 +606,8 @@ fn outcome_codes(outcomes: &[Status]) -> String {
 
 #[derive(Debug, Row, Deserialize)]
 struct AlertEventReadRow {
+    #[serde(with = "clickhouse::serde::uuid")]
+    event_id: Uuid,
     #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
     received_at: chrono::DateTime<chrono::Utc>,
     outcome: i8,
@@ -621,6 +628,8 @@ struct AlertEventRow<'a> {
     received_at: chrono::DateTime<chrono::Utc>,
     outcome: i8,
     dedup_key: &'a str,
+    #[serde(with = "clickhouse::serde::uuid")]
+    event_id: Uuid,
     #[serde(with = "clickhouse::serde::uuid::option")]
     incident_id: Option<Uuid>,
     note: &'a str,
@@ -640,6 +649,7 @@ impl<'a> AlertEventRow<'a> {
             received_at: r.received_at,
             outcome,
             dedup_key: &r.dedup_key,
+            event_id: Uuid::now_v7(),
             incident_id: r.incident_id,
             note: &r.note,
             body: &r.body,

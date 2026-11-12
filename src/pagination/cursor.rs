@@ -41,12 +41,14 @@ impl HistoryCursor {
 }
 
 /// Cursor for an alert source's delivery log, ordered by
-/// `(received_at DESC, dedup_key ASC)`. Every event of one request shares its
-/// `received_at`, so the key is what lets a page end inside a request.
+/// `(received_at DESC, dedup_key ASC, event_id ASC)`. Every event of one
+/// request shares its `received_at` and may share its key, so the id is what
+/// lets a page end anywhere.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AlertEventCursor {
     pub received_at: DateTime<Utc>,
     pub dedup_key: String,
+    pub event_id: Uuid,
 }
 
 impl AlertEventCursor {
@@ -117,6 +119,17 @@ mod tests {
             }
             other => panic!("expected BadRequest(INVALID_CURSOR), got {other:?}"),
         }
+    }
+
+    #[test]
+    fn an_alert_event_cursor_without_its_event_id_is_refused() {
+        let before = URL_SAFE_NO_PAD
+            .encode(br#"{"received_at":"2026-05-22T10:15:30.456Z","dedup_key":"checkout-5xx"}"#);
+        let err = AlertEventCursor::decode(&before).expect_err("an older cursor must reject");
+        assert!(matches!(
+            err,
+            AppError::BadRequest { code, .. } if code == codes::INVALID_CURSOR
+        ));
     }
 
     #[test]

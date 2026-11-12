@@ -11,6 +11,8 @@ use async_trait::async_trait;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::DurationRound;
 use common::{body_json, make_user, unique_slug};
 use serde_json::{Value, json};
@@ -23,6 +25,7 @@ use uptimepage::auth::api_tokens;
 use uptimepage::auth::scope::ScopeSet;
 use uptimepage::domain::{AccountId, NotificationReason, OrgId, UserId};
 use uptimepage::escalation::IncidentSignal;
+use uptimepage::pagination::AlertEventCursor;
 use uptimepage::quotas::holds::reconcile_after_change;
 use uptimepage::storage::alert_delivery::Status;
 use uptimepage::storage::create_org_with_owner;
@@ -674,7 +677,7 @@ impl AlertEventLog for Log {
         _org: OrgId,
         _source: Uuid,
         outcomes: &[Status],
-        after: Option<(chrono::DateTime<chrono::Utc>, &str)>,
+        after: Option<&AlertEventCursor>,
         limit: usize,
     ) -> uptimepage::error::Result<Vec<AlertEventView>> {
         let mut rows = self.rows.clone();
@@ -682,13 +685,16 @@ impl AlertEventLog for Log {
             b.received_at
                 .cmp(&a.received_at)
                 .then(a.dedup_key.cmp(&b.dedup_key))
+                .then(a.id.cmp(&b.id))
         });
         Ok(rows
             .into_iter()
             .filter(|e| outcomes.is_empty() || outcomes.contains(&e.outcome))
             .filter(|e| {
-                after.is_none_or(|(at, key)| {
-                    e.received_at < at || (e.received_at == at && e.dedup_key.as_str() > key)
+                after.is_none_or(|c| {
+                    e.received_at < c.received_at
+                        || (e.received_at == c.received_at
+                            && (e.dedup_key.as_str(), e.id) > (c.dedup_key.as_str(), c.event_id))
                 })
             })
             .take(limit)
@@ -739,16 +745,23 @@ async fn the_delivery_log_pages_through_one_request_without_losing_an_event() {
         .unwrap()
         .to_owned();
     let at = chrono::Utc::now();
-    let rows = ["a", "b", "c"]
-        .map(|key| AlertEventView {
-            received_at: at,
-            outcome: Status::Opened,
-            dedup_key: key.into(),
-            incident_id: None,
-            note: String::new(),
-            body: String::new(),
-        })
-        .to_vec();
+    // The second and third lines are one alert firing and resolving in one
+    // request, so only the id tells them apart.
+    let rows = [
+        ("a", Status::Opened),
+        ("b", Status::Opened),
+        ("b", Status::Resolved),
+    ]
+    .map(|(key, outcome)| AlertEventView {
+        id: Uuid::now_v7(),
+        received_at: at,
+        outcome,
+        dedup_key: key.into(),
+        incident_id: None,
+        note: String::new(),
+        body: String::new(),
+    })
+    .to_vec();
     let log = Log {
         source: id.parse().unwrap(),
         rows,
@@ -766,10 +779,23 @@ async fn the_delivery_log_pages_through_one_request_without_losing_an_event() {
     let (_, rest) = fx
         .call("GET", &format!("{path}&cursor={cursor}"), &fx.token, None)
         .await;
-    assert_eq!(rest["items"][0]["dedup_key"], "c");
+    assert_eq!(rest["items"].as_array().unwrap().len(), 1, "{rest}");
+    assert_eq!(rest["items"][0]["dedup_key"], "b");
+    assert_ne!(
+        rest["items"][0]["outcome"], first["items"][1]["outcome"],
+        "the other event of the shared key"
+    );
     assert!(rest["next_cursor"].is_null());
-    let (status, _) = fx
-        .call("GET", &format!("{path}&cursor=nonsense"), &fx.token, None)
-        .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let before_the_id = URL_SAFE_NO_PAD.encode(
+        json!({"received_at": at, "dedup_key": "b"})
+            .to_string()
+            .as_bytes(),
+    );
+    for cursor in ["nonsense", before_the_id.as_str()] {
+        let (status, body) = fx
+            .call("GET", &format!("{path}&cursor={cursor}"), &fx.token, None)
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{cursor}");
+        assert_eq!(body["error"]["code"], "INVALID_CURSOR", "{body}");
+    }
 }

@@ -101,6 +101,7 @@ pub trait AlertEventSink: Send + Sync {
 /// One line of a source's delivery log, read back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlertEventView {
+    pub id: Uuid,
     pub received_at: DateTime<Utc>,
     pub outcome: Status,
     pub dedup_key: String,
@@ -148,15 +149,14 @@ pub struct AlertEventHour {
 
 #[async_trait]
 pub trait AlertEventLog: Send + Sync {
-    /// Newest first, then by key, and only those past `after` (an event's
-    /// `received_at` and `dedup_key`) when it is set. An empty `outcomes`
-    /// reads every outcome.
+    /// Newest first, then by key, then by id, and only those past `after`
+    /// when it is set. An empty `outcomes` reads every outcome.
     async fn recent(
         &self,
         org: OrgId,
         source: Uuid,
         outcomes: &[Status],
-        after: Option<(DateTime<Utc>, &str)>,
+        after: Option<&AlertEventCursor>,
         limit: usize,
     ) -> Result<Vec<AlertEventView>>;
 
@@ -198,16 +198,16 @@ pub async fn alert_events_page(
     let limit = limit
         .unwrap_or(DEFAULT_ALERT_EVENTS)
         .clamp(1, MAX_ALERT_EVENTS);
-    let after = after
-        .as_ref()
-        .map(|c| (c.received_at, c.dedup_key.as_str()));
-    let mut events = log.recent(org, source, outcomes, after, limit + 1).await?;
+    let mut events = log
+        .recent(org, source, outcomes, after.as_ref(), limit + 1)
+        .await?;
     let next_cursor = (events.len() > limit).then(|| {
         events.truncate(limit);
         let last = events.last().expect("a full page has a last row");
         AlertEventCursor {
             received_at: last.received_at,
             dedup_key: last.dedup_key.clone(),
+            event_id: last.id,
         }
         .encode()
     });

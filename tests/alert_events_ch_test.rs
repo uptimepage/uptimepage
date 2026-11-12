@@ -7,9 +7,12 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use uptimepage::domain::OrgId;
+use uptimepage::pagination::AlertEventCursor;
 use uptimepage::storage::ClickhouseAlertEventSink;
 use uptimepage::storage::alert_delivery::{Delivery, Status};
-use uptimepage::storage::traits::{AlertEventCounts, AlertEventLog, AlertEventSink};
+use uptimepage::storage::traits::{
+    AlertEventCounts, AlertEventLog, AlertEventSink, AlertEventView,
+};
 
 #[derive(Debug, Row, Deserialize)]
 struct Stored {
@@ -32,6 +35,36 @@ fn delivery(org_id: Uuid, source_id: Uuid, status: Status) -> Delivery {
         incident_id: None,
         note: String::new(),
         body: String::new(),
+    }
+}
+
+fn past(event: &AlertEventView) -> AlertEventCursor {
+    AlertEventCursor {
+        received_at: event.received_at,
+        dedup_key: event.dedup_key.clone(),
+        event_id: event.id,
+    }
+}
+
+/// Every event of the log, read `size` at a time.
+async fn paged(
+    log: &ClickhouseAlertEventSink,
+    org_id: Uuid,
+    source_id: Uuid,
+    size: usize,
+) -> Vec<AlertEventView> {
+    let mut all: Vec<AlertEventView> = Vec::new();
+    loop {
+        let after = all.last().map(past);
+        let page = log
+            .recent(OrgId(org_id), source_id, &[], after.as_ref(), size)
+            .await
+            .unwrap();
+        let last = page.len() < size;
+        all.extend(page);
+        if last {
+            return all;
+        }
     }
 }
 
@@ -123,13 +156,7 @@ async fn the_log_reads_back_newest_first_a_page_at_a_time_and_only_its_own() {
     let outcomes: Vec<Status> = page.iter().map(|e| e.outcome).collect();
     assert_eq!(outcomes, [Status::Resolved, Status::Repeat]);
     let next = log
-        .recent(
-            OrgId(org_id),
-            source_id,
-            &[],
-            Some((page[1].received_at, &page[1].dedup_key)),
-            2,
-        )
+        .recent(OrgId(org_id), source_id, &[], Some(&past(&page[1])), 2)
         .await
         .unwrap();
     assert_eq!(next.len(), 1);
@@ -171,17 +198,59 @@ async fn a_page_can_end_inside_a_request_without_losing_its_other_events() {
     let keys: Vec<&str> = first.iter().map(|e| e.dedup_key.as_str()).collect();
     assert_eq!(keys, ["a", "b"]);
     let rest = log
-        .recent(
-            OrgId(org_id),
-            source_id,
-            &[],
-            Some((first[1].received_at, "b")),
-            2,
-        )
+        .recent(OrgId(org_id), source_id, &[], Some(&past(&first[1])), 2)
         .await
         .unwrap();
     let keys: Vec<&str> = rest.iter().map(|e| e.dedup_key.as_str()).collect();
     assert_eq!(keys, ["c"], "the request's last event is on the next page");
+}
+
+#[tokio::test]
+#[ignore]
+async fn events_sharing_a_time_and_a_key_page_once_each_in_one_order() {
+    let Some(client) = common::ch_client_from_env().await else {
+        eprintln!("CLICKHOUSE_URL unset; skipping");
+        return;
+    };
+    let (org_id, source_id) = (Uuid::new_v4(), Uuid::new_v4());
+    let log = ClickhouseAlertEventSink::new(client, uptimepage::storage::OrgTtlDays::new());
+    let at = chrono::Utc::now() - chrono::Duration::minutes(1);
+    let line = |status, key: &str| Delivery {
+        received_at: at,
+        dedup_key: key.into(),
+        ..delivery(org_id, source_id, status)
+    };
+    // One request firing and resolving the same alert.
+    log.write_deliveries(&[
+        line(Status::Opened, "checkout-5xx"),
+        line(Status::Resolved, "checkout-5xx"),
+        line(Status::Ignored, "disk-full"),
+    ])
+    .await;
+    // Two keyless requests arriving in the same millisecond.
+    log.write_deliveries(&[line(Status::Unparsed, "")]).await;
+    log.write_deliveries(&[line(Status::Unavailable, "")]).await;
+
+    let whole = paged(&log, org_id, source_id, 10).await;
+    let mut read: Vec<(&str, Status)> = whole
+        .iter()
+        .map(|e| (e.dedup_key.as_str(), e.outcome))
+        .collect();
+    read.sort_by_key(|(key, outcome)| (*key, outcome.as_str()));
+    assert_eq!(
+        read,
+        [
+            ("", Status::Unavailable),
+            ("", Status::Unparsed),
+            ("checkout-5xx", Status::Opened),
+            ("checkout-5xx", Status::Resolved),
+            ("disk-full", Status::Ignored),
+        ]
+    );
+    for size in 1..=6 {
+        let read = paged(&log, org_id, source_id, size).await;
+        assert_eq!(read, whole, "page size {size}");
+    }
 }
 
 #[tokio::test]

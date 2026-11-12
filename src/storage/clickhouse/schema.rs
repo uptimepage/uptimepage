@@ -88,6 +88,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "008_alert_events.sql",
         include_str!("../../../migrations/clickhouse/008_alert_events.sql"),
     ),
+    (
+        "009_alert_event_id.sql",
+        include_str!("../../../migrations/clickhouse/009_alert_event_id.sql"),
+    ),
 ];
 
 pub async fn migrate(client: &Client) -> Result<()> {
