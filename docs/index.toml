@@ -39,7 +39,7 @@ blurb = "How checks are scheduled, executed, batched, and stored across Postgres
 section = "start"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-24
+lastmod = 2026-11-12
 
 [[page]]
 slug = "ui"

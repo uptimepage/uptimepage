@@ -30,6 +30,7 @@ src/
 ├── app.rs            AppState, the composition root (every store + engine as a field)
 ├── router.rs         router assembly + middleware layer order
 ├── bootstrap.rs      bootstrap-owner CLI mode + first-run owner seeding
+├── site_contract.rs  site-contract.json: product facts the website's tests check its pages against
 │
 │   leaves: know nothing about the app, importable from anywhere
 ├── domain/           core types: Target, CheckSpec, CheckResult, Incident, on_call,
@@ -46,9 +47,12 @@ src/
 ├── templates/        askama filters, fingerprinted assets, timestamp formats
 ├── pagination/       page envelopes + opaque cursors shared by every list surface
 ├── text.rs           one-line and length-capped text shaping for outbound channels
+├── markdown.rs       customer-written Markdown, rendered through an allow-list sanitizer
 ├── duration.rs       two-unit duration split shared by the console and status page formatters
 ├── robots.rs         X-Robots-Tag values + the no-store, noindex marking of private responses
 ├── i18n.rs           status page and subscriber email messages in each page language
+├── intake/           alerts other tools send in: the payload parsers, the signature check
+│                     and the limits ingest runs under
 │
 │   services and stores
 ├── storage/          Postgres + ClickHouse + in-memory stores behind traits;
