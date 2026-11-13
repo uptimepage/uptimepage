@@ -42,3 +42,18 @@ test("a referrer the browser sent beats the tag and loses its query", () => {
     const payload = send("/login?ref=devto", "https://accounts.google.com/o/oauth2?state=s");
     assert.equal(payload.referrer, "https://accounts.google.com/o/oauth2");
 });
+
+// The tracker runs the same hook on an error report, which carries a bare path
+// and no referrer.
+test("an error report goes out as the tracker built it", () => {
+    const window = {};
+    const location = { hostname: "app.uptimepage.test", origin: "https://app.uptimepage.test" };
+    vm.runInNewContext(source, { window, URL, tagSource, location });
+    const report = {
+        url: "/login",
+        name: "TypeError",
+        message: "credential is null",
+        stack: "at https://app.uptimepage.test/static/js/ui/login_passkey-AB12CD34.js:1:20",
+    };
+    assert.deepEqual(window.smScrubAuthUrl("error", { ...report }), report);
+});

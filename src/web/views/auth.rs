@@ -1741,6 +1741,8 @@ mod tests {
         let html = page.render().unwrap();
         assert!(html.contains(r#"data-website-id="website-id""#));
         assert!(html.contains(r#"data-domains="app.uptimepage.dev""#));
+        // A broken sign-in script loses signups without a sound otherwise.
+        assert!(html.contains(r#"data-errors="true""#));
         // /login?invitation=<token> must not reach the analytics database.
         assert!(html.contains(r#"data-before-send="smScrubAuthUrl""#));
     }

@@ -5,5 +5,5 @@
    installed before the tracker's first send. #}
 <script defer src="{{ "js/ui/auth_url_scrub.js"|asset }}"></script>
 <script defer src="{{ "js/ui/auth_analytics.js"|asset }}"></script>
-<script defer src="https://analytics.uptimepage.dev/script.js" data-website-id="{{ website_id }}" data-domains="app.uptimepage.dev" data-performance="true" data-before-send="smScrubAuthUrl"></script>
+<script defer src="https://analytics.uptimepage.dev/script.js" data-website-id="{{ website_id }}" data-domains="app.uptimepage.dev" data-performance="true" data-errors="true" data-before-send="smScrubAuthUrl"></script>
 {% endif %}
