@@ -314,13 +314,17 @@ impl ResultsStore for InMemorySink {
         &self,
         _org: OrgId,
         range: TimeRange,
+        target: Option<Uuid>,
     ) -> Result<Vec<RegionLatestStatus>> {
         // No region dimension in memory; tag every target one synthetic region.
         let guard = self.results.lock();
         let mut latest: std::collections::BTreeMap<Uuid, &CheckResult> =
             std::collections::BTreeMap::new();
         for r in guard.iter() {
-            if r.timestamp < range.from || r.timestamp >= range.to {
+            if r.timestamp < range.from
+                || r.timestamp >= range.to
+                || target.is_some_and(|t| t != r.target_id)
+            {
                 continue;
             }
             latest

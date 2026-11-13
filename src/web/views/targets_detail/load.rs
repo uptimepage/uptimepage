@@ -5,7 +5,7 @@ use moka::sync::Cache;
 use uuid::Uuid;
 
 use crate::app::AppState;
-use crate::domain::{Incident, OrgId, Target};
+use crate::domain::{CheckStatus, Incident, OrgId, Target};
 use crate::storage::{ClampedRange, TimeRange};
 use crate::templates::format::fmt_ts;
 use crate::web::error::{WebError, WebResult};
@@ -249,7 +249,6 @@ pub(crate) async fn load_live_data_cached(
         to: custom_to,
     } = custom;
     let target_id = target.id;
-    let passive = target.check.is_passive();
     // A region-filtered view skips the shared cache (selection is rare, not
     // worth widening the key) — same call as the custom-window path.
     let cacheable = custom_from.is_none() && custom_to.is_none() && region.is_none();
@@ -259,14 +258,13 @@ pub(crate) async fn load_live_data_cached(
             return Ok(data);
         }
         let (from, to) = resolve_window(range_key, custom_from, custom_to);
-        let data =
-            Arc::new(load_live_data(state, org, target_id, from, to, region, passive).await?);
+        let data = Arc::new(load_live_data(state, org, target, from, to, region).await?);
         cache.insert(key, data.clone());
         Ok(data)
     } else {
         let (from, to) = resolve_window(range_key, custom_from, custom_to);
         Ok(Arc::new(
-            load_live_data(state, org, target_id, from, to, region, passive).await?,
+            load_live_data(state, org, target, from, to, region).await?,
         ))
     }
 }
@@ -279,20 +277,12 @@ async fn latest_status_probe(
     state: &AppState,
     org: OrgId,
     target_id: Uuid,
+    window: TimeRange,
 ) -> WebResult<(&'static str, String)> {
-    let to = Utc::now();
-    let from = to - Duration::days(LAST_RESULT_WINDOW_DAYS);
     // Current-status badge, not history browsing — exempt from the plan clamp.
     let row = state
         .results_store
-        .list_results(
-            org,
-            target_id,
-            ClampedRange::unclamped(TimeRange { from, to }),
-            1,
-            0,
-            None,
-        )
+        .list_results(org, target_id, ClampedRange::unclamped(window), 1, 0, None)
         .await?
         .into_iter()
         .next();
@@ -310,12 +300,13 @@ async fn latest_status_probe(
 async fn load_live_data(
     state: &AppState,
     org: OrgId,
-    target_id: Uuid,
+    target: &Target,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
     region: Option<&str>,
-    passive: bool,
 ) -> WebResult<LiveData> {
+    let target_id = target.id;
+    let passive = target.check.is_passive();
     // Cap `to` at now: a monitor has no future samples, and an unbounded `to`
     // would let the span (hence the spark series length) grow without limit.
     let time_range = state
@@ -344,7 +335,7 @@ async fn load_live_data(
     // filter keeps the raw per-region sample rate and needs no incident reads.
     let confirmed = region.is_none();
 
-    let (mut uptime, mut results, avail, prior, cur_incidents, prior_incidents, pings) = tokio::try_join!(
+    let (mut uptime, mut results, avail, prior, cur_incidents, prior_incidents, pings, folded) = tokio::try_join!(
         state
             .results_store
             .uptime(org, target_id, time_range, region),
@@ -387,6 +378,10 @@ async fn load_live_data(
                     }
                 },
             ))
+        },
+        async {
+            let window = status_window(time_range.inner().to);
+            Ok(current_status(state, org, target, window, region).await)
         },
     )?;
     if confirmed && uptime.total > 0 {
@@ -439,7 +434,10 @@ async fn load_live_data(
         None
     };
     let latest_for_badge = results.first().or(latest_outside_window.as_ref());
-    let last_status = latest_for_badge.map(|r| r.status.as_str()).unwrap_or("");
+    let last_status = folded
+        .map(CheckStatus::as_str)
+        .or(latest_for_badge.map(|r| r.status.as_str()))
+        .unwrap_or("");
     let last_at_iso: Arc<str> = latest_for_badge
         .map(|r| fmt_ts(r.timestamp))
         .unwrap_or_default()
@@ -460,6 +458,30 @@ async fn load_live_data(
         segments,
         pings,
     })
+}
+
+/// The badge's window: current status as of `to`, whatever history range the
+/// page shows, so a region checked less often than the range still votes.
+fn status_window(to: DateTime<Utc>) -> TimeRange {
+    TimeRange {
+        from: to - Duration::days(LAST_RESULT_WINDOW_DAYS),
+        to,
+    }
+}
+
+/// A region-filtered view shows that region's own results, so the badge above
+/// them must not fold across the regions it is hiding.
+async fn current_status(
+    state: &AppState,
+    org: OrgId,
+    target: &Target,
+    range: TimeRange,
+    region: Option<&str>,
+) -> Option<CheckStatus> {
+    if region.is_some() {
+        return None;
+    }
+    crate::targets::folded_status_of(state.results_store.as_ref(), org, range, target).await
 }
 
 /// Confirmed incidents for the downtime read, or an empty vec (no DB hit) when
@@ -505,16 +527,19 @@ pub(crate) struct IncidentsData {
 pub(crate) async fn load_incidents_data(
     state: &AppState,
     org: OrgId,
-    target_id: Uuid,
+    target: &Target,
     time_range: TimeRange,
 ) -> WebResult<IncidentsData> {
+    let target_id = target.id;
     let range = state.quotas.clamp_raw(org, time_range).await?;
     // The incidents tab needs only the badge's `last_status` from the live
     // region — not the uptime stats or 60 recent rows. Probe one row instead of
     // running the full live loader; a 90d preset would otherwise scan the entire
     // window for the same single field.
-    let ((last_status, last_at_iso), mut incidents) =
-        tokio::try_join!(latest_status_probe(state, org, target_id), async {
+    let now_window = status_window(Utc::now());
+    let ((raw_status, last_at_iso), mut incidents, folded) = tokio::try_join!(
+        latest_status_probe(state, org, target_id, now_window),
+        async {
             state
                 .incident_narration_store
                 .list_for_target(
@@ -527,7 +552,10 @@ pub(crate) async fn load_incidents_data(
                 )
                 .await
                 .map_err(WebError::from)
-        },)?;
+        },
+        async { Ok(current_status(state, org, target, now_window, None).await) },
+    )?;
+    let last_status = folded.map_or(raw_status, CheckStatus::as_str);
 
     let has_more = incidents.len() > INCIDENTS_PAGE_LIMIT;
     if has_more {

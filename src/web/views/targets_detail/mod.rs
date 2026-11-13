@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::long_down::LONG_DOWN;
-use crate::domain::{CheckSpec, CheckStatus, Target};
+use crate::domain::{CheckSpec, Target};
 use crate::error::AppError;
 use crate::error::codes;
 use crate::request::{AuthedBrowser, CurrentOrg};
@@ -402,13 +402,7 @@ pub async fn index(
     let liveness = heartbeat
         .as_ref()
         .map(|h| HeartbeatLiveness::derive(h, Utc::now(), target.enabled));
-    // A region-filtered page shows that region's own results, so the badge
-    // above them must not fold across the regions it is hiding.
-    let folded = selected_region
-        .is_none()
-        .then(|| fold_breakdown(&region_breakdown, target.region_policy))
-        .flatten();
-    let last_status = badge_status(folded.unwrap_or(live.last_status), liveness.as_ref());
+    let last_status = badge_status(live.last_status, liveness.as_ref());
     let failure = crate::targets::failure_note(
         state.results_store.as_ref(),
         org,
@@ -730,7 +724,7 @@ pub async fn incidents(
     let (from, to) = resolve_incident_window(range_key, params.from, params.to);
     let time_range = TimeRange { from, to };
     let labels = WindowLabels::new(from, to);
-    let mut data = load_incidents_data(&state, org, target.id, time_range).await?;
+    let mut data = load_incidents_data(&state, org, &target, time_range).await?;
     attach_titles(&state, org, &mut data.rows).await;
     // Compared against the flap window, not the page range: an incident 29 days
     // ago explains nothing about failures from this morning.
@@ -840,21 +834,6 @@ pub(crate) async fn read_liveness(
         late: window.is_some_and(|(due, down)| now > due && now <= down),
         overdue: window.is_some_and(|(_, down)| now > down),
     })
-}
-
-/// Folds the per-region table below the badge, so the headline cannot
-/// contradict the breakdown it sits above. `None` leaves the raw last status.
-fn fold_breakdown(
-    breakdown: &[RegionBreakdownRow],
-    policy: crate::domain::RegionIncidentPolicy,
-) -> Option<&'static str> {
-    if breakdown.is_empty() {
-        return None;
-    }
-    let reported = breakdown
-        .iter()
-        .filter_map(|r| CheckStatus::from_label(&r.last_status));
-    policy.fold_regions(reported).map(CheckStatus::as_str)
 }
 
 /// Every other kind gets its stored status back untouched.

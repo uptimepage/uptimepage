@@ -133,6 +133,7 @@ mod purge_deleted_test;
 mod purge_deleted_users_test;
 mod quotas_test;
 mod recent_results_test;
+mod region_fold_test;
 mod region_health_test;
 mod regions_test;
 mod retention_test;

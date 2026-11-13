@@ -799,11 +799,12 @@ pub trait ResultsStore: Send + Sync {
     ) -> Result<HashMap<Uuid, PassMarks>>;
     /// Each region's latest verdict, to fold against the monitor's policy. A
     /// region with no samples in `range` is absent, and so out of the quorum
-    /// denominator.
+    /// denominator. `target` narrows the read to one monitor.
     async fn latest_status_by_region(
         &self,
         org: OrgId,
         range: TimeRange,
+        target: Option<Uuid>,
     ) -> Result<Vec<RegionLatestStatus>>;
     /// Minute-bucketed average duration for the last 60 minutes, every
     /// monitor in the org. Drives the per-row sparkline. Implementations

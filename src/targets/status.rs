@@ -31,6 +31,29 @@ pub async fn folded_status(
     range: TimeRange,
     policies: impl IntoIterator<Item = (uuid::Uuid, RegionIncidentPolicy)>,
 ) -> HashMap<uuid::Uuid, CheckStatus> {
+    fold(results, org, range, None, policies).await
+}
+
+/// [`folded_status`] for one monitor, read from its own rows.
+pub async fn folded_status_of(
+    results: &dyn ResultsStore,
+    org: OrgId,
+    range: TimeRange,
+    target: &Target,
+) -> Option<CheckStatus> {
+    let policies = folded_status_policies(std::slice::from_ref(target));
+    fold(results, org, range, Some(target.id), policies)
+        .await
+        .remove(&target.id)
+}
+
+async fn fold(
+    results: &dyn ResultsStore,
+    org: OrgId,
+    range: TimeRange,
+    target: Option<uuid::Uuid>,
+    policies: impl IntoIterator<Item = (uuid::Uuid, RegionIncidentPolicy)>,
+) -> HashMap<uuid::Uuid, CheckStatus> {
     // Current status needs the tail of the caller's window, not all of it: a
     // region dropped from a monitor mid-window must stop voting rather than
     // freeze its last verdict into a 90-day argMax.
@@ -44,7 +67,7 @@ pub async fn folded_status(
     // which is the rule the incident writer votes by. A region that stops
     // delivering drops out on its own; agent liveness is not consulted,
     // since the control plane's own region has no `agents` row to be live in.
-    let rows = match results.latest_status_by_region(org, recent).await {
+    let rows = match results.latest_status_by_region(org, recent, target).await {
         Ok(rows) => rows,
         Err(err) => {
             tracing::warn!(error = %err, "region statuses unavailable, showing last result");

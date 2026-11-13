@@ -1117,6 +1117,7 @@ impl ResultsStore for ClickhouseResultsStore {
         &self,
         org: OrgId,
         range: TimeRange,
+        target: Option<Uuid>,
     ) -> Result<Vec<RegionLatestStatus>> {
         // Unfiltered by region on purpose: the fold needs every region that
         // reported, and a single-region view reads raw status anyway.
@@ -1128,21 +1129,29 @@ impl ResultsStore for ClickhouseResultsStore {
             status: i8,
         }
         let (table, tcol) = rollup_source(range.from);
+        let target_filter = if target.is_some() {
+            "AND target_id = ?"
+        } else {
+            ""
+        };
         let query = format!(
             "SELECT \
                target_id, \
                region, \
                argMaxMerge(last_status_state) AS status \
              FROM {table} \
-             WHERE org_id = ? \
+             WHERE org_id = ? {target_filter} \
                AND {tcol} >= fromUnixTimestamp(?) AND {tcol} < fromUnixTimestamp(?) \
              GROUP BY target_id, region"
         );
-        let rows: Vec<StatusRow> =
-            bind_minute_window(self.client.query(&query).bind(org.0), range.from, range.to)
-                .fetch_all::<StatusRow>()
-                .await
-                .context("clickhouse latest_status_by_region")?;
+        let mut q = self.client.query(&query).bind(org.0);
+        if let Some(t) = target {
+            q = q.bind(t);
+        }
+        let rows: Vec<StatusRow> = bind_minute_window(q, range.from, range.to)
+            .fetch_all::<StatusRow>()
+            .await
+            .context("clickhouse latest_status_by_region")?;
         Ok(rows
             .into_iter()
             .map(|r| RegionLatestStatus {
