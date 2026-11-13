@@ -14,7 +14,7 @@
 (function () {
     document.body.addEventListener("htmx:afterRequest", (ev) => {
         const elt = ev.detail?.elt;
-        if (!elt?.getAttribute) return;
+        if (!elt?.getAttribute || window.smLeaving(ev.detail.xhr)) return;
 
         const done = elt.getAttribute("data-on-done-href");
         if (done) {

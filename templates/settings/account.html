@@ -566,7 +566,7 @@
 
     document.body.addEventListener('htmx:afterRequest', (ev) => {
       const elt = ev.detail.elt;
-      if (!elt) return;
+      if (!elt || window.smLeaving(ev.detail.xhr)) return;
 
       if (elt.id === 'confirm-delete') {
         const xhr = ev.detail.xhr;

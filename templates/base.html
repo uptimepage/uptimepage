@@ -37,13 +37,17 @@
       // Shared API-response readers for inline page scripts. Defined here
       // (not deferred) so they exist before any per-page content script
       // runs. smJson - parsed body or null; smErrMsg - error.message or the
-      // given fallback.
+      // given fallback; smLeaving - the answer sent the tab elsewhere, so a
+      // failure handler has nothing to report.
       window.smJson = function (xhr) {
         try { return JSON.parse(xhr.responseText); } catch (e) { return null; }
       };
       window.smErrMsg = function (xhr, fallback) {
         const b = window.smJson(xhr);
         return (b && b.error && b.error.message) || fallback;
+      };
+      window.smLeaving = function (xhr) {
+        return Boolean(xhr && xhr.getResponseHeader("HX-Redirect"));
       };
     </script>
     {% block head %}{% endblock %}

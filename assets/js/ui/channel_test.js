@@ -3,7 +3,7 @@
 (function () {
     document.body.addEventListener("htmx:afterRequest", (ev) => {
         const btn = ev.detail?.elt;
-        if (!btn?.matches?.("[data-channel-test]")) return;
+        if (!btn?.matches?.("[data-channel-test]") || window.smLeaving(ev.detail.xhr)) return;
         const cell = btn.parentElement.querySelector("[data-test-result]");
         if (!cell) return;
         if (ev.detail.successful) {
