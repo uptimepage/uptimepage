@@ -285,6 +285,86 @@ async fn region_filter_and_distinct_groups_are_org_wide() {
     common::drop_test_db(&name).await;
 }
 
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_create_saves_its_regions_with_the_monitor_or_neither() {
+    let Some((db, name)) = common::fresh_test_db("targets_create_regions").await else {
+        return;
+    };
+    let pool = common::open_test_pool(&db).await;
+    MIGRATOR.run(&pool).await.unwrap();
+
+    let user = common::make_user(&pool, "cr").await;
+    let org = create_org_with_owner(&pool, user, &common::unique_slug("cr"), "Co")
+        .await
+        .unwrap()
+        .unwrap();
+    let store = PostgresTargetStore::from_pool(pool.clone(), None);
+    sqlx::query(
+        "INSERT INTO regions (id, name) VALUES ('eu-west','eu-west'),('us-east','us-east')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let placed = |name: &str, regions: &[&str]| NewTarget {
+        name: name.into(),
+        check: CheckSpec::Http(common::default_http_check(
+            Url::parse("https://example.com/").unwrap(),
+            ExpectedStatus::Exact(200),
+        )),
+        interval: Duration::from_secs(30),
+        enabled: true,
+        tags: vec![],
+        alerts: Default::default(),
+        region_policy: Default::default(),
+        alert_confirmations: 2,
+        notify_recovery: true,
+        renotify_interval_secs: 3600,
+        recovery_period_secs: None,
+        group_name: None,
+        group_id: None,
+        owner_user_id: None,
+        regions: Some(regions.iter().map(|r| r.to_string()).collect()),
+    };
+    let create = |new: NewTarget| {
+        store.create(
+            org.id,
+            new,
+            WriteSource::Ui,
+            None,
+            uptimepage::domain::WriteCaps::UNLIMITED,
+        )
+    };
+
+    let made = create(placed("both", &["eu-west", "us-east"]))
+        .await
+        .unwrap();
+    let mut regions = store
+        .regions_for_target(org.id, made.id)
+        .await
+        .unwrap()
+        .unwrap();
+    regions.sort();
+    assert_eq!(regions, vec!["eu-west".to_string(), "us-east".to_string()]);
+
+    assert!(
+        create(placed("nowhere", &["eu-west", "mars-1"]))
+            .await
+            .is_err()
+    );
+    let names: Vec<String> = store
+        .list(org.id, TargetFilter::default())
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|t| t.name)
+        .collect();
+    assert_eq!(names, vec!["both".to_string()]);
+
+    common::drop_test_db(&name).await;
+}
+
 /// A `None` source leaves the `write_source` marker for the next writer to read.
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]

@@ -97,15 +97,14 @@ impl TargetOps<'_> {
         plan: &Plan,
         regions: Vec<String>,
     ) -> Result<Target> {
+        let new = NewTarget {
+            regions: Some(regions.clone()),
+            ..new
+        };
         let t = self
             .targets
             .create(org, new, source, actor, crate::domain::WriteCaps::of(plan))
             .await?;
-        // The store seeds the deployment's default region; only this write makes a
-        // set that seed does not contain stick.
-        if !regions.is_empty() {
-            self.targets.set_target_regions(org, t.id, &regions).await?;
-        }
         self.settle_created(org, std::slice::from_ref(&t), &regions)
             .await;
         Ok(t)

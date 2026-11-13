@@ -302,7 +302,10 @@ pub trait TargetStore: Send + Sync {
     /// guarded by `(count) + 1 <= max_targets` so the bound holds even
     /// against a concurrent create (no check-then-act). A flow monitor is
     /// additionally held to `max_flow_checks` under the same lock. Returns
-    /// `AppError::QuotaExceeded` when either cap is reached.
+    /// `AppError::QuotaExceeded` when either cap is reached. `new.regions` is
+    /// written as given, in the same transaction; none or empty takes the
+    /// deployment default. The caller validates them as for
+    /// [`Self::set_target_regions`].
     async fn create(
         &self,
         org: OrgId,

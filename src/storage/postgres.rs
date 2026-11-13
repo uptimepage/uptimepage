@@ -242,32 +242,44 @@ impl PostgresTargetStore {
         rows.into_iter().map(|r| self.decode_row(r)).collect()
     }
 
-    /// Assign freshly-created targets to the default region within the create
-    /// transaction. Ensures the region row exists first (idempotent) so a store
-    /// configured with a not-yet-reconciled region can't FK-violate.
-    async fn assign_default_region(
+    /// Writes each new target's region set inside the create transaction; an
+    /// empty set takes the default region. The default's row is ensured first
+    /// so a store configured with a not-yet-reconciled region can't FK-violate.
+    async fn assign_regions(
         &self,
         conn: &mut sqlx::PgConnection,
-        target_ids: &[Uuid],
+        sets: &[(Uuid, &[String])],
     ) -> Result<()> {
-        let region: &str = &self.default_region;
+        let default: &str = &self.default_region;
         sqlx::query(
             "INSERT INTO regions (id, name, city) VALUES ($1, $1, '') \
              ON CONFLICT (id) DO NOTHING",
         )
-        .bind(region)
+        .bind(default)
         .execute(&mut *conn)
         .await
-        .context("assign_default_region: ensure region")?;
+        .context("assign regions: ensure default region")?;
+        let mut target_ids: Vec<Uuid> = Vec::new();
+        let mut region_ids: Vec<&str> = Vec::new();
+        for (id, regions) in sets {
+            if regions.is_empty() {
+                target_ids.push(*id);
+                region_ids.push(default);
+            }
+            for region in *regions {
+                target_ids.push(*id);
+                region_ids.push(region);
+            }
+        }
         sqlx::query(
             "INSERT INTO target_regions (target_id, region) \
-             SELECT unnest($1::uuid[]), $2 ON CONFLICT DO NOTHING",
+             SELECT * FROM unnest($1::uuid[], $2::text[]) ON CONFLICT DO NOTHING",
         )
-        .bind(target_ids)
-        .bind(region)
+        .bind(&target_ids)
+        .bind(&region_ids)
         .execute(&mut *conn)
         .await
-        .context("assign_default_region: insert assignments")?;
+        .context("assign regions: insert")?;
         Ok(())
     }
 }
@@ -918,7 +930,8 @@ impl TargetStore for PostgresTargetStore {
             &positions,
         )
         .await?;
-        self.assign_default_region(&mut tx, &[row.id]).await?;
+        let regions = new.regions.as_deref().unwrap_or_default();
+        self.assign_regions(&mut tx, &[(row.id, regions)]).await?;
         let joined = GroupMove {
             target: row.id,
             from: None,
@@ -1407,32 +1420,12 @@ impl TargetStore for PostgresTargetStore {
         )
         .await?;
 
-        let mut target_ids: Vec<Uuid> = Vec::new();
-        let mut region_ids: Vec<&str> = Vec::new();
-        let mut unplaced: Vec<Uuid> = Vec::new();
-        for (id, regions) in ids.iter().zip(&region_sets) {
-            if regions.is_empty() {
-                unplaced.push(*id);
-            }
-            for region in regions {
-                target_ids.push(*id);
-                region_ids.push(region);
-            }
-        }
-        if !target_ids.is_empty() {
-            sqlx::query(
-                "INSERT INTO target_regions (target_id, region) \
-                 SELECT * FROM unnest($1::uuid[], $2::text[])",
-            )
-            .bind(&target_ids)
-            .bind(&region_ids)
-            .execute(&mut *tx)
-            .await
-            .context("bulk create: assign regions")?;
-        }
-        if !unplaced.is_empty() {
-            self.assign_default_region(&mut tx, &unplaced).await?;
-        }
+        let sets: Vec<(Uuid, &[String])> = ids
+            .iter()
+            .copied()
+            .zip(region_sets.iter().map(Vec::as_slice))
+            .collect();
+        self.assign_regions(&mut tx, &sets).await?;
         tx.commit().await.context("bulk create: commit")?;
         let position: HashMap<Uuid, usize> =
             ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
