@@ -370,15 +370,13 @@ impl McpServer {
         }
 
         // Folded like `list_monitors`, so the drill-down cannot contradict it.
-        let folded = crate::targets::folded_status(
+        let folded = crate::targets::folded_status_of(
             self.state.results_store.as_ref(),
             org,
             r24.inner(),
-            crate::targets::folded_status_policies(std::slice::from_ref(&target)),
+            &target,
         )
-        .await
-        .get(&id)
-        .copied();
+        .await;
 
         let last = latest.first();
         let state = match (last, folded) {
