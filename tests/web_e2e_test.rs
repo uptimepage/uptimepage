@@ -108,6 +108,46 @@ async fn dashboard_renders_with_kpi_cards_and_chart_anchors() {
     assert!(html.contains(r#"href="/targets/new""#));
 }
 
+#[tokio::test]
+async fn an_htmx_call_without_a_session_sends_the_tab_to_sign_in() {
+    let signed_out = common::build_test_app_with_web(|_| {});
+    let id = uuid::Uuid::nil();
+    for req in [
+        Request::get(format!("/web/partials/targets/{id}/live")),
+        Request::delete(format!("/api/v1/targets/{id}")).header("x-requested-with", "uptimepage"),
+    ] {
+        let resp = signed_out
+            .clone()
+            .oneshot(
+                req.header("hx-request", "true")
+                    .header("hx-current-url", format!("http://localhost/targets/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            resp.headers()["hx-redirect"],
+            format!("/login?redirect_after=%2Ftargets%2F{id}")
+        );
+    }
+
+    let api = signed_out
+        .oneshot(
+            Request::delete(format!("/api/v1/targets/{id}"))
+                .header("x-requested-with", "uptimepage")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(api.status(), StatusCode::UNAUTHORIZED);
+    assert!(api.headers().get("hx-redirect").is_none());
+    let body: Value = serde_json::from_str(&body_text(api).await).unwrap();
+    assert_eq!(body["error"]["code"], "UNAUTHORIZED");
+}
+
 /// Docs live on the site, which an app-only deployment does not
 /// run, so the app must link out absolutely rather than to its own `/docs`
 /// (that path is the Swagger UI here).

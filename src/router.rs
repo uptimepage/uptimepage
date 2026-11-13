@@ -53,11 +53,15 @@ fn apply_cross_cutting_layers(router: Router, state: AppState) -> Router {
     // Last `.layer()` is OUTERMOST in axum — http_metrics runs first
     // (observes every routed request, including ones the guards below
     // subsequently reject), then host_isolation, then CSRF, then
-    // fragment_sign_in, which reads the handler's redirect on the way out.
+    // fragment_sign_in, which turns the handler's sign-in redirect or 401 on
+    // an htmx request into a whole-tab sign-in on the way out.
     // 404ing a tenant-host operator route still beats running CSRF's
     // constant-time header compare; reordering reverses request semantics.
     router
-        .layer(from_fn(request::auth::fragment_sign_in::middleware))
+        .layer(from_fn_with_state(
+            state.request_state(),
+            request::auth::fragment_sign_in::middleware,
+        ))
         .layer(from_fn_with_state(
             state.request_state(),
             request::auth::csrf::middleware,

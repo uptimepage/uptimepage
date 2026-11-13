@@ -486,6 +486,19 @@ async fn every_surface_of_a_private_page_needs_a_session() {
 
 #[tokio::test]
 #[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_private_pages_refresh_poll_is_not_sent_to_the_operator_sign_in() {
+    let Some(rig) = rig().await else { return };
+    let poll = Request::get("/?fragment=1")
+        .header("hx-request", "true")
+        .header("hx-current-url", format!("https://{}/", rig.host));
+    let reply = rig.send(poll, Body::empty()).await;
+    assert_eq!(reply.status, StatusCode::UNAUTHORIZED);
+    assert!(reply.headers.get("hx-redirect").is_none());
+    rig.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
 async fn every_address_gets_the_same_answer_and_only_a_listed_one_gets_mail() {
     let Some(rig) = rig().await else { return };
     let listed = address("anna", "dealer.example");
