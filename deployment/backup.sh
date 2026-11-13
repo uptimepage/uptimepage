@@ -5,10 +5,10 @@
 #   backup.sh weekly   tar of the caddy_data volume (certs/keys)
 #
 # Backups land under $BACKUP_ROOT (default /opt/uptimepage/backups),
-# mode 0700 (they contain a full DB dump — treat as secret). Retention is
-# pruned at the end of each run. Designed to run as the `deploy` user from
-# the compose project directory; it shells into the running containers, so
-# the stack must be up.
+# mode 0700 (they contain a full DB dump — treat as secret). Each run keeps
+# the newest PG_KEEP, CH_KEEP or CADDY_KEEP copies of its kind. Designed to
+# run as the `deploy` user from the compose project directory; it shells into
+# the running containers, so the stack must be up.
 #
 # Restore is documented in BACKUP.md (same directory).
 set -euo pipefail
@@ -16,9 +16,9 @@ set -euo pipefail
 ACTION="${1:-}"
 COMPOSE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP_ROOT="${BACKUP_ROOT:-/opt/uptimepage/backups}"
-PG_KEEP_DAYS="${PG_KEEP_DAYS:-30}"
-CH_KEEP_DAYS="${CH_KEEP_DAYS:-3}"
-CADDY_KEEP_DAYS="${CADDY_KEEP_DAYS:-28}"
+PG_KEEP="${PG_KEEP:-30}"
+CH_KEEP="${CH_KEEP:-3}"
+CADDY_KEEP="${CADDY_KEEP:-4}"
 PROJECT="uptimepage"            # compose `name:` — used for the volume name
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 LOG="$BACKUP_ROOT/backup.log"
@@ -73,6 +73,10 @@ mkdir -p "$BACKUP_ROOT"/{postgres,clickhouse,caddy}
 chmod 700 "$BACKUP_ROOT" "$BACKUP_ROOT"/{postgres,clickhouse,caddy}
 LOG_START="$(wc -l 2>/dev/null < "$LOG" || echo 0)"
 heartbeat start
+
+for keep in PG_KEEP CH_KEEP CADDY_KEEP; do
+  [[ ${!keep} =~ ^[1-9][0-9]*$ ]] || die "$keep must be a positive number, got '${!keep}'"
+done
 
 publish() { # tmp, out
   chmod 600 "$1"
@@ -148,27 +152,29 @@ backup_caddy() {
   log "caddy ok ($(du -h "$out" | cut -f1))"
 }
 
-prune() { # dir, days
-  {
-    find "$1" -type f \( -name '*.gz' -o -name '*.tgz' \) ! -path '*.partial/*' -mtime "+$2" -print -delete
-    # A killed run never reaches its EXIT trap; the next day's run sweeps what it left.
-    find "$1" -mindepth 1 -maxdepth 1 -name '*.partial' -mmin +720 -print -exec rm -rf {} +
-  } | while read -r f; do
-    log "pruned $(basename "$f")"
-  done
+prune() { # dir, file glob, copies to keep
+  local f
+  # Names carry the run's UTC timestamp, so name order is age order.
+  find "$1" -maxdepth 1 -type f -name "$2" | LC_ALL=C sort -r | tail -n "+$(( $3 + 1 ))" |
+    while read -r f; do
+      if rm -f -- "$f"; then log "pruned ${f##*/}"; else log "ERROR: could not prune ${f##*/}"; fi
+    done
+  # A killed run never reaches its EXIT trap; the next day's run sweeps what it left.
+  find "$1" -mindepth 1 -maxdepth 1 -name '*.partial' -mmin +720 -print -exec rm -rf {} + |
+    while read -r f; do log "pruned ${f##*/}"; done
 }
 
 case "$ACTION" in
   daily)
     backup_postgres
     backup_clickhouse
-    prune "$BACKUP_ROOT/postgres"   "$PG_KEEP_DAYS"
-    prune "$BACKUP_ROOT/clickhouse" "$CH_KEEP_DAYS"
+    prune "$BACKUP_ROOT/postgres"   'monitor-*.sql.gz' "$PG_KEEP"
+    prune "$BACKUP_ROOT/clickhouse" 'monitor-*.tgz'    "$CH_KEEP"
     log "daily complete"
     ;;
   weekly)
     backup_caddy
-    prune "$BACKUP_ROOT/caddy" "$CADDY_KEEP_DAYS"
+    prune "$BACKUP_ROOT/caddy" 'caddy-data-*.tgz' "$CADDY_KEEP"
     log "weekly complete"
     ;;
   *)

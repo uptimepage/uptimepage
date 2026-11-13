@@ -6,14 +6,16 @@ dumps contain everything; treat them as secret).
 
 | What | When | Retention | File |
 |------|------|-----------|------|
-| PostgreSQL (`pg_dump`, gzip) | daily | 30 days | `postgres/monitor-<ts>.sql.gz` |
-| ClickHouse (schema + Native data per table, tarred) | daily | 3 days | `clickhouse/monitor-<ts>.tgz` |
-| Caddy data volume (certs/keys) | weekly | 28 days | `caddy/caddy-data-<ts>.tgz` |
+| PostgreSQL (`pg_dump`, gzip) | daily | 30 copies | `postgres/monitor-<ts>.sql.gz` |
+| ClickHouse (schema + Native data per table, tarred) | daily | 3 copies | `clickhouse/monitor-<ts>.tgz` |
+| Caddy data volume (certs/keys) | weekly | 4 copies | `caddy/caddy-data-<ts>.tgz` |
 
 PostgreSQL is the irreplaceable data (orgs, users, targets, sessions).
 ClickHouse is check-result history — large but self-healing as monitors keep
 running. Caddy certs re-issue automatically, but the volume backup avoids
 hitting Let's Encrypt rate limits on a full rebuild.
+
+Each run deletes all but the newest copies of its kind, so a night that failed never costs a good copy. A manual `backup.sh` run counts as a copy. Files under other names are never pruned, so a dump saved by hand stays until you delete it. Set `PG_KEEP`, `CH_KEEP` or `CADDY_KEEP` in the cron environment to change how many are kept.
 
 ## Cron (deploy user)
 
