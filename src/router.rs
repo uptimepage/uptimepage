@@ -8,6 +8,8 @@
 //!      the inner guards subsequently reject
 //!   2. host isolation — 404s the operator surface on tenant and MCP hosts
 //!   3. CSRF — rejects state-changing requests without the custom header
+//!   4. fragment sign-in — sends an htmx request's sign-in redirect to the
+//!      whole tab
 //!
 //! CSRF wraps the *merged* router so any future state-changing route
 //! added to `web::routes` is protected without a separate wiring step.
@@ -50,10 +52,12 @@ pub fn build_app_router_api_only(state: AppState, shutdown: CancellationToken) -
 fn apply_cross_cutting_layers(router: Router, state: AppState) -> Router {
     // Last `.layer()` is OUTERMOST in axum — http_metrics runs first
     // (observes every routed request, including ones the guards below
-    // subsequently reject), then host_isolation, then CSRF.
+    // subsequently reject), then host_isolation, then CSRF, then
+    // fragment_sign_in, which reads the handler's redirect on the way out.
     // 404ing a tenant-host operator route still beats running CSRF's
     // constant-time header compare; reordering reverses request semantics.
     router
+        .layer(from_fn(request::auth::fragment_sign_in::middleware))
         .layer(from_fn_with_state(
             state.request_state(),
             request::auth::csrf::middleware,

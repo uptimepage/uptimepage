@@ -20,6 +20,7 @@ pub mod agent;
 pub mod api_token;
 pub mod authz;
 pub mod csrf;
+pub mod fragment_sign_in;
 pub mod operator;
 
 /// `Authorization: Bearer <raw>` → trimmed `<raw>`, or `None` for anything
