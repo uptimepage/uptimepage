@@ -104,7 +104,7 @@ mime_guess = "2"
 # parser output is never trusted — every byte passes through the ammonia
 # allowlist before it reaches a template.
 pulldown-cmark = { version = "0.13.6", default-features = false, features = ["html"] }
-ammonia = "4.2.4"
+ammonia = "4.2.5"
 
 # Utilities
 uuid = { version = "1.23", features = ["v7", "serde"] }
