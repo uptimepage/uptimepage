@@ -496,6 +496,62 @@ mod tests {
 
     use super::*;
 
+    /// Drops each 202 unread, as a caller that ignores success bodies does,
+    /// over one fixed connection so a GOAWAY cannot hide behind a reconnect.
+    /// `split` ends the stream with an empty frame after the body instead of
+    /// on the body frame itself.
+    async fn drop_small_replies_on_one_connection(split: bool) {
+        const BODY: &[u8] = br#"{"accepted":1,"dropped":0,"duplicate":false}"#;
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let server = tokio::spawn(async move {
+            let mut conn = h2::server::handshake(server_io).await.unwrap();
+            while let Some(request) = conn.accept().await {
+                let (_, mut respond) = request.expect("connection stays open");
+                let response = hyper::Response::builder()
+                    .status(StatusCode::ACCEPTED)
+                    .body(())
+                    .unwrap();
+                let mut stream = respond.send_response(response, false).unwrap();
+                stream.send_data(Bytes::from_static(BODY), !split).unwrap();
+                if split {
+                    stream.send_data(Bytes::new(), true).unwrap();
+                }
+            }
+        });
+        let (mut client, connection) = hyper::client::conn::http2::handshake(
+            TokioExecutor::new(),
+            hyper_util::rt::TokioIo::new(client_io),
+        )
+        .await
+        .unwrap();
+        let driver = tokio::spawn(connection);
+
+        tokio::time::timeout(Duration::from_secs(30), async {
+            for _ in 0..5000 {
+                let request = Request::post("https://localhost/results")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap();
+                let response = client.send_request(request).await.expect("results POST");
+                assert_eq!(response.status(), StatusCode::ACCEPTED);
+            }
+        })
+        .await
+        .expect("small replies must keep working on the same connection");
+
+        driver.abort();
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn unread_replies_ending_on_the_body_frame_keep_the_connection() {
+        drop_small_replies_on_one_connection(false).await;
+    }
+
+    #[tokio::test]
+    async fn unread_replies_ending_on_an_empty_frame_keep_the_connection() {
+        drop_small_replies_on_one_connection(true).await;
+    }
+
     /// Answers the first connection's first request, then keeps that socket
     /// open unread, as a dead path would. Later connections are served. Speaks
     /// only HTTP/2 over TLS, so a client has to negotiate it.

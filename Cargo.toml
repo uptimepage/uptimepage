@@ -23,7 +23,8 @@ chromiumoxide = "0.9"
 # `server` gates `Error::is_parse_too_large`, which the probe reads.
 hyper = { version = "1.9", features = ["client", "http1", "http2", "server"] }
 # Direct so the probe can downcast hyper's source to the GOAWAY/RST_STREAM reason.
-h2 = "0.4"
+# 0.4.16 closed a client connection after about 120 unread small replies.
+h2 = "0.4.20"
 hyper-util = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"
 http-body = "1"
