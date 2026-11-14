@@ -20,6 +20,15 @@ pub struct BatcherConfig {
     pub batch_timeout: Duration,
 }
 
+/// The batch being written. A failed one is resent unchanged until it lands or
+/// is dropped: grown by the rows queued behind it, it would be another block,
+/// which insert deduplication cannot match to a copy that did commit.
+#[derive(Default)]
+struct Batch {
+    rows: Vec<CheckResult>,
+    attempts: u32,
+}
+
 pub struct ResultBatcher {
     rx: mpsc::Receiver<CheckResult>,
     sink: Arc<dyn ResultSink>,
@@ -38,7 +47,7 @@ impl ResultBatcher {
     pub async fn run(mut self, shutdown: CancellationToken) {
         let max_buffer = self.cfg.batch_size.saturating_mul(MAX_BUFFER_MULT);
         let mut buffer: VecDeque<CheckResult> = VecDeque::with_capacity(self.cfg.batch_size);
-        let mut retry_attempts: u32 = 0;
+        let mut batch = Batch::default();
         let mut ticker = interval(self.cfg.batch_timeout);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         ticker.tick().await;
@@ -47,27 +56,21 @@ impl ResultBatcher {
             tokio::select! {
                 _ = shutdown.cancelled() => {
                     drain(&mut self.rx, &mut buffer, max_buffer);
-                    if !buffer.is_empty() {
-                        flush(&self.sink, &mut buffer, &mut retry_attempts).await;
-                    }
+                    finish(&self.sink, &mut buffer, &mut batch, self.cfg.batch_size).await;
                     return;
                 }
                 maybe_result = self.rx.recv() => {
                     let Some(result) = maybe_result else {
-                        if !buffer.is_empty() {
-                            flush(&self.sink, &mut buffer, &mut retry_attempts).await;
-                        }
+                        finish(&self.sink, &mut buffer, &mut batch, self.cfg.batch_size).await;
                         return;
                     };
                     push_capped(&mut buffer, result, max_buffer);
-                    if buffer.len() >= self.cfg.batch_size {
-                        flush(&self.sink, &mut buffer, &mut retry_attempts).await;
+                    if batch.rows.is_empty() && buffer.len() >= self.cfg.batch_size {
+                        flush(&self.sink, &mut buffer, &mut batch, self.cfg.batch_size).await;
                     }
                 }
                 _ = ticker.tick() => {
-                    if !buffer.is_empty() {
-                        flush(&self.sink, &mut buffer, &mut retry_attempts).await;
-                    }
+                    flush_all(&self.sink, &mut buffer, &mut batch, self.cfg.batch_size).await;
                 }
             }
         }
@@ -92,45 +95,80 @@ fn push_capped(buffer: &mut VecDeque<CheckResult>, result: CheckResult, max_buff
     buffer.push_back(result);
 }
 
+/// The failed batch first, then what queued behind it, until a write fails.
+async fn flush_all(
+    sink: &Arc<dyn ResultSink>,
+    buffer: &mut VecDeque<CheckResult>,
+    batch: &mut Batch,
+    batch_size: usize,
+) {
+    while !(batch.rows.is_empty() && buffer.is_empty()) {
+        flush(sink, buffer, batch, batch_size).await;
+        if !batch.rows.is_empty() {
+            return;
+        }
+    }
+}
+
+async fn finish(
+    sink: &Arc<dyn ResultSink>,
+    buffer: &mut VecDeque<CheckResult>,
+    batch: &mut Batch,
+    batch_size: usize,
+) {
+    flush_all(sink, buffer, batch, batch_size).await;
+    let lost = batch.rows.len() + buffer.len();
+    if lost > 0 {
+        tracing::error!(lost, "batcher stopped with results it could not write");
+        counter!(metric_names::STORAGE_DROPPED, "reason" => "shutdown_unwritten")
+            .increment(lost as u64);
+    }
+}
+
 async fn flush(
     sink: &Arc<dyn ResultSink>,
     buffer: &mut VecDeque<CheckResult>,
-    retry_attempts: &mut u32,
+    batch: &mut Batch,
+    batch_size: usize,
 ) {
-    let count = buffer.len();
+    if batch.rows.is_empty() {
+        let take = buffer.len().min(batch_size);
+        batch.rows.extend(buffer.drain(..take));
+    }
+    if batch.rows.is_empty() {
+        return;
+    }
+    let count = batch.rows.len();
     histogram!(metric_names::STORAGE_BATCH_SIZE).record(count as f64);
     let start = Instant::now();
-    // VecDeque may be non-contiguous; make_contiguous slides into one slice
-    // (no realloc when capacity is enough) so the sink keeps its &[T] API.
-    let slice = buffer.make_contiguous();
-    match sink.write_batch(slice).await {
+    match sink.write_batch(&batch.rows).await {
         Ok(()) => {
             counter!(metric_names::STORAGE_WRITES, "store" => "sink", "result" => "success")
                 .increment(1);
-            buffer.clear();
-            *retry_attempts = 0;
+            batch.rows.clear();
+            batch.attempts = 0;
         }
         Err(err) => {
             counter!(metric_names::STORAGE_WRITES, "store" => "sink", "result" => "failure")
                 .increment(1);
-            *retry_attempts = retry_attempts.saturating_add(1);
-            if *retry_attempts >= MAX_FLUSH_RETRIES {
+            batch.attempts = batch.attempts.saturating_add(1);
+            if batch.attempts >= MAX_FLUSH_RETRIES {
                 tracing::error!(
                     ?err,
                     count,
-                    retries = *retry_attempts,
+                    retries = batch.attempts,
                     "batcher flush failed; dropping batch after exhausted retries"
                 );
                 counter!(metric_names::STORAGE_DROPPED, "reason" => "retries_exhausted")
                     .increment(count as u64);
-                buffer.clear();
-                *retry_attempts = 0;
+                batch.rows.clear();
+                batch.attempts = 0;
             } else {
                 tracing::warn!(
                     ?err,
                     count,
-                    attempt = *retry_attempts,
-                    "batcher flush failed; retrying on next tick"
+                    attempt = batch.attempts,
+                    "batcher flush failed; resending the same batch on next tick"
                 );
             }
         }

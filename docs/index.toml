@@ -319,7 +319,7 @@ blurb = "The Prometheus series the service exposes and how to ship traces off th
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-07-22
-lastmod = 2026-11-08
+lastmod = 2026-11-14
 
 [[page]]
 slug = "troubleshooting"

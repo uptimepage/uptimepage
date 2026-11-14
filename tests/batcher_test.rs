@@ -188,6 +188,39 @@ async fn flush_failure_retains_buffer_for_next_attempt() {
 }
 
 #[tokio::test]
+async fn a_failed_batch_is_resent_unchanged_while_new_results_wait() {
+    let (tx, rx) = mpsc::channel(64);
+    let sink = Arc::new(FlakySink::new(1));
+    let cfg = BatcherConfig {
+        batch_size: 2,
+        batch_timeout: Duration::from_millis(80),
+    };
+    let results: Vec<_> = (0..5).map(|_| sample_result()).collect();
+    for r in &results {
+        tx.send(r.clone()).await.unwrap();
+    }
+    let shutdown = CancellationToken::new();
+    let handle = tokio::spawn(ResultBatcher::new(rx, sink.clone(), cfg).run(shutdown.clone()));
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while sink.seen.lock().len() < 4 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "writes so far: {}",
+            sink.seen.lock().len()
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    shutdown.cancel();
+    handle.await.unwrap();
+
+    let ids = |batch: &[CheckResult]| batch.iter().map(|r| r.target_id).collect::<Vec<_>>();
+    let seen: Vec<_> = sink.seen.lock().iter().map(|batch| ids(batch)).collect();
+    let (ab, cd, e) = (ids(&results[..2]), ids(&results[2..4]), ids(&results[4..]));
+    assert_eq!(seen, [ab.clone(), ab, cd, e]);
+}
+
+#[tokio::test]
 async fn flushes_when_sender_dropped() {
     let (tx, rx) = mpsc::channel(64);
     let sink = Arc::new(InMemorySink::new());
