@@ -334,11 +334,10 @@ impl ResultSink for AgentResultSink {
         // Drained once, outside the retry, so every attempt re-sends the same
         // body and the batch stays deduplicable by its id.
         let flow_runs = self.flow_runs.take();
-        // One id for this batch, reused across the internal retries below so a
-        // lost ack (POST landed, response dropped) re-sends the SAME id and the
-        // dashboard dedups it instead of double-writing. Retrying here — not
-        // letting the batcher re-flush — is what keeps the id stable: the
-        // batcher reforms (supersets) the buffer between ticks.
+        // Reused across the retries below, so a lost ack (POST landed, reply
+        // dropped) resends the same id and the control plane skips it. Once
+        // they give up, the batcher resends the same results under a new id,
+        // and ClickHouse block dedup drops the copy that already landed.
         let batch_id = Uuid::new_v4();
         let body = IngestRequestRef {
             batch_id,
