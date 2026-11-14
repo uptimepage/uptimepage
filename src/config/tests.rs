@@ -198,6 +198,21 @@ fn opt_in_allows_shipped_credentials() {
 }
 
 #[test]
+fn an_insert_hold_outside_its_range_is_rejected() {
+    let mut cfg = AppConfig::load().expect("load");
+    cfg.validate_clickhouse_coalescing()
+        .expect("shipped hold passes");
+    for (ms, ok) in [(199, false), (200, true), (3_000, true), (3_001, false)] {
+        cfg.storage.clickhouse.coalesce_window_ms = ms;
+        let res = cfg.validate_clickhouse_coalescing();
+        assert_eq!(res.is_ok(), ok, "{ms}ms: {res:?}");
+    }
+    cfg.storage.clickhouse.async_insert = false;
+    cfg.validate_clickhouse_coalescing()
+        .expect("unused hold is not checked");
+}
+
+#[test]
 fn bootstrap_disabled_by_default_and_org_name_survives_a_partial_table() {
     let loaded = AppConfig::load().expect("load");
     assert!(loaded.bootstrap.email.is_empty());

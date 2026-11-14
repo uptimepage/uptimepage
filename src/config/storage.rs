@@ -37,8 +37,18 @@ pub struct ClickhouseConfig {
     /// stays on, so the durability ack the retry/dedup path relies on holds.
     #[serde(default = "default_async_insert")]
     pub async_insert: bool,
+    /// How long the server holds a small check-result insert to merge it with
+    /// others before writing. Every agent post is its own small insert, and
+    /// each flush writes a part to the table and to every rollup, so a short
+    /// window turns into merge load.
+    #[serde(default = "default_coalesce_window_ms")]
+    pub coalesce_window_ms: u64,
 }
 
 fn default_async_insert() -> bool {
     true
+}
+
+fn default_coalesce_window_ms() -> u64 {
+    2000
 }

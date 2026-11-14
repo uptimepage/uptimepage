@@ -269,7 +269,7 @@ blurb = "Every configuration key, its default, and the environment variable that
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-07-22
-lastmod = 2026-11-08
+lastmod = 2026-11-14
 
 [[page]]
 slug = "bot"

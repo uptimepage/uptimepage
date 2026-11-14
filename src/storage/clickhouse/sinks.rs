@@ -1,9 +1,11 @@
 use std::net::{IpAddr, Ipv6Addr};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use clickhouse::{Client, Row};
 use metrics::counter;
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::domain::agent_wire::{FlowRunRecord, StepOutcome};
@@ -32,6 +34,16 @@ pub struct ClickhouseResultSink {
     agent_id: String,
     /// Per-org physical retention, resolved from the org's account plan at write time.
     org_ttl: OrgTtlDays,
+    coalesce: Option<Coalesce>,
+}
+
+/// Big enough to be a decent part without company, whatever batch size the
+/// caller is configured with.
+const OWN_PART_ROWS: usize = 500;
+
+struct Coalesce {
+    window_ms: String,
+    until: CancellationToken,
 }
 
 impl ClickhouseResultSink {
@@ -41,14 +53,51 @@ impl ClickhouseResultSink {
             region,
             agent_id,
             org_ttl,
+            coalesce: None,
         }
+    }
+
+    /// Holds a batch under [`OWN_PART_ROWS`] on the server for `window`, so
+    /// posts from many agents share one part. A larger batch skips the wait,
+    /// which would otherwise cap a caller that waits on each flush at one
+    /// batch per window. Holding stops once `until` is cancelled, so the last
+    /// flush at shutdown lands inside the deadline.
+    ///
+    /// The sink's own retries are never held: each goes out in a flush of its own.
+    ///
+    /// Fixed, not adaptive: the adaptive window only grows when inserts land
+    /// within its minimum of each other, which posts arriving a few times a
+    /// second never do, so it stays at the minimum.
+    pub fn with_async_coalescing(mut self, window: Duration, until: CancellationToken) -> Self {
+        self.coalesce = Some(Coalesce {
+            window_ms: window.as_millis().to_string(),
+            until,
+        });
+        self
+    }
+
+    fn hold_for(&self, rows: usize) -> Option<&str> {
+        self.coalesce
+            .as_ref()
+            .filter(|c| rows < OWN_PART_ROWS && !c.until.is_cancelled())
+            .map(|c| c.window_ms.as_str())
     }
 
     async fn write_once(
         &self,
         rows: &[CheckResultRow<'_>],
+        first_attempt: bool,
     ) -> std::result::Result<(), clickhouse::error::Error> {
         let mut insert = self.client.insert::<CheckResultRow>(TABLE).await?;
+        if !first_attempt {
+            // ClickHouse 26.3 fails every insert in a flush that also carries a
+            // resent batch, and the inserts that failed together retry together.
+            insert = insert.with_setting("async_insert_max_query_number", "1");
+        } else if let Some(window_ms) = self.hold_for(rows.len()) {
+            insert = insert
+                .with_setting("async_insert_use_adaptive_busy_timeout", "0")
+                .with_setting("async_insert_busy_timeout_max_ms", window_ms);
+        }
         for row in rows {
             insert.write(row).await?;
         }
@@ -81,10 +130,15 @@ impl ClickhouseResultSink {
         // double-counting.
         // Don't checkpoint mid-batch here — a partial re-send changes the block
         // and defeats that dedup.
-        let op = || async {
-            self.write_once(&rows)
-                .await
-                .map_err(backoff::Error::transient)
+        let mut first_attempt = true;
+        let rows = &rows;
+        let op = || {
+            let first = std::mem::replace(&mut first_attempt, false);
+            async move {
+                self.write_once(rows, first)
+                    .await
+                    .map_err(backoff::Error::transient)
+            }
         };
 
         if let Err(err) = backoff::future::retry(backoff, op).await {

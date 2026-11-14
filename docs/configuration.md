@@ -33,6 +33,7 @@ Override `UPTIMEPAGE_CONFIG_PATH` to point at an alternate base config file.
 | `storage.postgres` | `url`, `max_connections`, `min_connections`, `acquire_timeout_secs` | target metadata store |
 | `storage.clickhouse` | `url`, `database`, `user`, `password`, `batch_size`, `batch_timeout_ms`, `buffer_size` | result sink and pipeline back-pressure |
 | `storage.clickhouse` | `async_insert` | coalesces the batcher's inserts into larger parts server-side. On by default; `wait_for_async_insert` stays on so the retry/dedup durability ack still holds |
+| `storage.clickhouse` | `coalesce_window_ms` | how long the server holds a check-result insert of under 500 rows to merge it with others before writing a part. Default `2000`, range `200` to `3000`, applies only with `async_insert` on. Each agent post is its own insert, so a short window means many tiny parts and heavy merging; a longer one delays results reaching storage by up to this much. Larger inserts and retries skip the wait |
 | `scheduler` | `enabled` | off = this process probes nothing in-process (pure dashboard/brain); on = the in-process scheduler probes `region`. Defaults to `true` |
 | `scheduler` | `target_refresh_interval_secs` | how often the registry is reconciled against Postgres |
 | `scheduler` | `region`, `default_region` | this control plane's own region id (a normal region row, default `"default"`) and the region new targets are assigned to (empty falls back to `region`). See [Multi-region probes](multi-region.md) |

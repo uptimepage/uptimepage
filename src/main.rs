@@ -187,6 +187,7 @@ async fn main() -> Result<()> {
 
     // Agents open no PG/CH, so the guard runs after the agent branch.
     cfg.validate_storage()?;
+    cfg.validate_clickhouse_coalescing()?;
 
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
@@ -232,12 +233,20 @@ async fn main() -> Result<()> {
     // below), so boot doesn't block on a PG round-trip; early rows default
     // until it lands.
     let org_ttl = storage::OrgTtlDays::new();
-    let result_sink: Arc<dyn ResultSink> = Arc::new(ClickhouseResultSink::new(
+    let root = CancellationToken::new();
+    let mut result_sink = ClickhouseResultSink::new(
         clickhouse_client.clone(),
         cfg.scheduler.region.clone(),
         "control-plane".to_string(),
         org_ttl.clone(),
-    ));
+    );
+    if cfg.storage.clickhouse.async_insert {
+        result_sink = result_sink.with_async_coalescing(
+            Duration::from_millis(cfg.storage.clickhouse.coalesce_window_ms),
+            root.clone(),
+        );
+    }
+    let result_sink: Arc<dyn ResultSink> = Arc::new(result_sink);
     let result_sink_for_state = result_sink.clone();
     // Flow runs bypass the result batcher: at the 300s interval floor they
     // arrive far too rarely to be worth buffering. Wrapped so no path can store
@@ -354,7 +363,6 @@ async fn main() -> Result<()> {
     };
     let batcher = ResultBatcher::new(result_rx, result_sink, batcher_cfg);
 
-    let root = CancellationToken::new();
     let flush = CancellationToken::new();
     // Always spawned: with probing off the source above narrows the schedule
     // to passive evaluation only.

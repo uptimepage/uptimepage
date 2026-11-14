@@ -92,6 +92,7 @@ batch_size = 1000
 batch_timeout_ms = 500
 buffer_size = 100000
 async_insert = true
+coalesce_window_ms = 2000
 
 [scheduler]
 # Off = no in-process probing (pure dashboard); a separate agent covers this

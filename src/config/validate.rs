@@ -669,6 +669,23 @@ impl AppConfig {
         Ok(())
     }
 
+    /// Below the server's own 200ms the hold merges less than it would unset.
+    /// Up to 3s, a held first attempt leaves a passive write time for its
+    /// unheld retries inside the worker's 10s `PASSIVE_RESULT_WRITE_TIMEOUT`.
+    pub fn validate_clickhouse_coalescing(&self) -> Result<()> {
+        const RANGE: std::ops::RangeInclusive<u64> = 200..=3_000;
+        let ch = &self.storage.clickhouse;
+        if ch.async_insert && !RANGE.contains(&ch.coalesce_window_ms) {
+            return Err(crate::error::AppError::Other(anyhow::anyhow!(
+                "storage.clickhouse.coalesce_window_ms must be within {}..={} (got {})",
+                RANGE.start(),
+                RANGE.end(),
+                ch.coalesce_window_ms
+            )));
+        }
+        Ok(())
+    }
+
     /// Reject the published `monitor` credentials; unoverridden they expose every tenant row.
     pub fn validate_storage(&self) -> Result<()> {
         const SHIPPED: &str = "monitor";
