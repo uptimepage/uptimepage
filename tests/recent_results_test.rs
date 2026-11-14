@@ -12,14 +12,17 @@
 use crate::common;
 
 use chrono::{Duration, Utc};
+use std::sync::Arc;
 use uptimepage::domain::{
     CheckDetails, CheckDiagnostic, CheckDiagnosticKind, CheckResult, CheckStatus,
     DiagnosticConfidence, DiagnosticEvidence, DiagnosticRemediation, DnsAnswer, DnsDetails,
     DnsRecordType, EdgeProvider, NetworkPath, OrgId,
 };
+
+use uptimepage::public_status::{InMemoryIncidentStore, IncidentWriter, IncidentWriterConfig};
 use uptimepage::storage::{
-    ClampedRange, ClickhouseResultSink, ClickhouseResultsStore, FailingServer, OrgTtlDays,
-    ResultSink, ResultsStore, TimeRange,
+    ClampedRange, ClickhouseResultSink, ClickhouseResultsStore, FailingServer, InMemoryTargetStore,
+    OrgTtlDays, RecentOutcomes, RegionOutcome, ResultSink, ResultsStore, TimeRange,
 };
 use uuid::Uuid;
 
@@ -117,24 +120,21 @@ async fn batched_read_caps_per_target_region_and_filters_pairs() {
         .await
         .expect("seed us");
 
-    let range = ClampedRange::unclamped(TimeRange {
-        from: ago(3600),
-        to: now + Duration::seconds(60),
-    });
+    let since = ago(3600);
 
     // One query for both targets, generous cap → every seeded row, region-tagged.
     let all = store
-        .recent_results_for_targets(&[(OrgId(org), t1), (OrgId(org), t2)], range, 100)
+        .recent_outcomes(&[(OrgId(org), t1), (OrgId(org), t2)], since, None, 100)
         .await
         .expect("batched read");
-    let t1_rows: Vec<_> = all.iter().filter(|(_, r)| r.target_id == t1).collect();
-    let t2_rows: Vec<_> = all.iter().filter(|(_, r)| r.target_id == t2).collect();
+    let t1_rows: Vec<_> = all.iter().filter(|r| r.outcome.target_id == t1).collect();
+    let t2_rows: Vec<_> = all.iter().filter(|r| r.outcome.target_id == t2).collect();
     assert_eq!(t1_rows.len(), 6, "t1: 5 eu + 1 us");
     assert_eq!(t2_rows.len(), 2, "t2: 2 eu");
     let stored_diagnostic = t1_rows
         .iter()
-        .find(|(_, result)| result.timestamp.timestamp() == diagnosed_at.timestamp())
-        .and_then(|(_, result)| result.diagnostic.as_ref())
+        .find(|r| r.outcome.timestamp.timestamp() == diagnosed_at.timestamp())
+        .and_then(|r| r.outcome.diagnostic.as_ref())
         .expect("diagnosis round-trips through ClickHouse");
     assert_eq!(stored_diagnostic.provider, Some(EdgeProvider::Akamai));
     assert_eq!(
@@ -146,8 +146,8 @@ async fn batched_read_caps_per_target_region_and_filters_pairs() {
     );
     let stored_origin = t1_rows
         .iter()
-        .find(|(_, result)| result.timestamp.timestamp() == origin_at.timestamp())
-        .and_then(|(_, result)| result.diagnostic.as_ref())
+        .find(|r| r.outcome.timestamp.timestamp() == origin_at.timestamp())
+        .and_then(|r| r.outcome.diagnostic.as_ref())
         .expect("origin diagnosis round-trips through ClickHouse");
     assert_eq!(stored_origin.kind, CheckDiagnosticKind::OriginTunnelDown);
     assert_eq!(stored_origin.provider, Some(EdgeProvider::Cloudflare));
@@ -168,20 +168,19 @@ async fn batched_read_caps_per_target_region_and_filters_pairs() {
         "remediations must survive a round trip that stores only the kind"
     );
     assert!(
-        t1_rows.iter().any(|(region, _)| region == "eu")
-            && t1_rows.iter().any(|(region, _)| region == "us"),
+        t1_rows.iter().any(|r| r.region == "eu") && t1_rows.iter().any(|r| r.region == "us"),
         "t1 carries both region tags"
     );
 
     // per-target cap = 2 keeps the 2 newest per (target, region).
     let capped = store
-        .recent_results_for_targets(&[(OrgId(org), t1)], range, 2)
+        .recent_outcomes(&[(OrgId(org), t1)], since, None, 2)
         .await
         .expect("capped read");
     let mut eu_ts: Vec<i64> = capped
         .iter()
-        .filter(|(region, r)| region == "eu" && r.target_id == t1)
-        .map(|(_, r)| r.timestamp.timestamp())
+        .filter(|r| r.region == "eu" && r.outcome.target_id == t1)
+        .map(|r| r.outcome.timestamp.timestamp())
         .collect();
     eu_ts.sort_unstable();
     assert_eq!(
@@ -192,7 +191,7 @@ async fn batched_read_caps_per_target_region_and_filters_pairs() {
     assert_eq!(
         capped
             .iter()
-            .filter(|(region, r)| region == "us" && r.target_id == t1)
+            .filter(|r| r.region == "us" && r.outcome.target_id == t1)
             .count(),
         1,
         "us has one row, under the cap"
@@ -200,7 +199,7 @@ async fn batched_read_caps_per_target_region_and_filters_pairs() {
 
     // Wrong org for t1 → pair filter yields nothing.
     let foreign = store
-        .recent_results_for_targets(&[(OrgId(Uuid::now_v7()), t1)], range, 100)
+        .recent_outcomes(&[(OrgId(Uuid::now_v7()), t1)], since, None, 100)
         .await
         .expect("foreign read");
     assert!(
@@ -210,10 +209,158 @@ async fn batched_read_caps_per_target_region_and_filters_pairs() {
 
     // Empty input is a no-op, not an error.
     let empty = store
-        .recent_results_for_targets(&[], range, 100)
+        .recent_outcomes(&[], since, None, 100)
         .await
         .expect("empty read");
     assert!(empty.is_empty());
+}
+
+/// A late result is new when it lands, whatever its own timestamp says, and
+/// one that landed long ago is not, however recent its timestamp.
+#[tokio::test]
+#[ignore = "requires ClickHouse (CLICKHOUSE_URL)"]
+async fn a_read_of_recent_arrivals_goes_by_when_a_row_landed() {
+    let Some(ch) = common::ch_client_from_env().await else {
+        eprintln!("skipped: CLICKHOUSE_URL not set");
+        return;
+    };
+    let sink = ClickhouseResultSink::new(
+        ch.clone(),
+        "eu".into(),
+        "agent-eu".into(),
+        OrgTtlDays::new(),
+    );
+    let store = ClickhouseResultsStore::from_client(ch.clone());
+
+    let org = Uuid::now_v7();
+    let target = Uuid::now_v7();
+    let now = Utc::now();
+    let ago = |s: i64| now - Duration::seconds(s);
+    sink.write_batch(&[result(target, org, ago(3000)), result(target, org, ago(10))])
+        .await
+        .expect("seed");
+    ch.query(
+        "INSERT INTO check_results \
+         (org_id, target_id, region, timestamp, ingested_at, agent_id, status, duration_ms) \
+         VALUES (?, ?, 'eu', fromUnixTimestamp(?), now() - INTERVAL 1 HOUR, 'agent-eu', 'down', 10)",
+    )
+    .bind(org)
+    .bind(target)
+    .bind(ago(5).timestamp())
+    .execute()
+    .await
+    .expect("seed a row that landed an hour ago");
+
+    let pairs = [(OrgId(org), target)];
+    let stamps = |rows: &[RegionOutcome]| {
+        let mut at: Vec<i64> = rows
+            .iter()
+            .map(|r| r.outcome.timestamp.timestamp())
+            .collect();
+        at.sort_unstable();
+        at
+    };
+    let arrived = store
+        .recent_outcomes(
+            &pairs,
+            ago(3600),
+            Some(std::time::Duration::from_secs(600)),
+            100,
+        )
+        .await
+        .expect("arrivals read");
+    assert_eq!(
+        stamps(&arrived),
+        vec![ago(3000).timestamp(), ago(10).timestamp()]
+    );
+
+    let newest_arrival = store
+        .recent_outcomes(
+            &pairs,
+            ago(3600),
+            Some(std::time::Duration::from_secs(600)),
+            1,
+        )
+        .await
+        .expect("capped arrivals read");
+    assert_eq!(
+        stamps(&newest_arrival),
+        vec![ago(10).timestamp()],
+        "the cap counts what arrived, not the row that landed before"
+    );
+
+    let whole = store
+        .recent_outcomes(&pairs, ago(3600), None, 100)
+        .await
+        .expect("whole read");
+    assert_eq!(
+        stamps(&whole),
+        vec![
+            ago(3000).timestamp(),
+            ago(10).timestamp(),
+            ago(5).timestamp()
+        ]
+    );
+    let arrival = |secs_ago: i64| {
+        whole
+            .iter()
+            .find(|r| r.outcome.timestamp.timestamp() == ago(secs_ago).timestamp())
+            .map(|r| r.arrival)
+            .expect("row")
+    };
+    assert!(
+        arrival(5) < arrival(10) && arrival(10) == arrival(3000),
+        "rows are ordered by when they landed"
+    );
+}
+
+/// The real store sends a row again on every read inside the overlap. One
+/// failure read three times is still one failure.
+#[tokio::test]
+#[ignore = "requires ClickHouse (CLICKHOUSE_URL)"]
+async fn the_writer_counts_a_stored_result_once_however_often_it_reads_it() {
+    let Some(ch) = common::ch_client_from_env().await else {
+        eprintln!("skipped: CLICKHOUSE_URL not set");
+        return;
+    };
+    let sink = ClickhouseResultSink::new(
+        ch.clone(),
+        "eu".into(),
+        "agent-eu".into(),
+        OrgTtlDays::new(),
+    );
+    let target = common::http_target("127.0.0.1:1".parse().unwrap(), "/", 30_000);
+    let target_id = target.id;
+    let incidents = Arc::new(InMemoryIncidentStore::new());
+    let writer = IncidentWriter::new(
+        Arc::new(InMemoryTargetStore::from_vec(vec![target])),
+        Arc::new(ClickhouseResultsStore::from_client(ch)),
+        incidents.clone(),
+        IncidentWriterConfig::default(),
+    );
+    let now = Utc::now();
+    let down = |secs_ago: i64| {
+        let mut r = result(target_id, Uuid::nil(), now - Duration::seconds(secs_ago));
+        r.status = CheckStatus::Down;
+        r
+    };
+
+    sink.write_batch(&[down(60)]).await.expect("seed");
+    for _ in 0..3 {
+        writer.tick_once().await.expect("tick");
+    }
+    assert_eq!(incidents.insert_count(), 0, "one failure does not confirm");
+
+    sink.write_batch(&[down(90)])
+        .await
+        .expect("seed the earlier");
+    writer.tick_once().await.expect("tick");
+    let all = incidents.all_for(target_id);
+    assert_eq!(all.len(), 1, "the failure that landed late confirms it");
+    assert_eq!(
+        all[0].started_at.timestamp(),
+        (now - Duration::seconds(90)).timestamp()
+    );
 }
 
 #[tokio::test]
@@ -455,13 +602,6 @@ async fn network_path_round_trips_through_every_raw_read() {
         .await
         .expect("list_results_by_region");
     let network: Vec<_> = by_region.iter().map(|(_, r)| r.network.clone()).collect();
-    assert_eq!(network, expected);
-
-    let batched = store
-        .recent_results_for_targets(&[(OrgId(org), target)], range, 10)
-        .await
-        .expect("recent_results_for_targets");
-    let network: Vec<_> = batched.iter().map(|(_, r)| r.network.clone()).collect();
     assert_eq!(network, expected);
 }
 

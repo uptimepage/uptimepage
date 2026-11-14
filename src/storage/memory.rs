@@ -17,9 +17,10 @@ use crate::domain::{
 };
 use crate::error::Result;
 use crate::storage::traits::{
-    ChannelEdit, ClampedRange, FailingServer, IntervalOutcome, PassMarks, RegionFlaps,
-    RegionLatestStatus, RegionNewest, RegionOption, ResultSink, ResultsStore, TagAddOutcome,
-    TargetFilter, TargetStore, TimeRange, UptimeStats, rollup_bucket_secs,
+    ChannelEdit, ClampedRange, FailingServer, IntervalOutcome, PassMarks, RecentOutcomes,
+    RegionFlaps, RegionLatestStatus, RegionNewest, RegionOption, RegionOutcome, ResultSink,
+    ResultsStore, TagAddOutcome, TargetFilter, TargetStore, TimeRange, UptimeStats,
+    rollup_bucket_secs,
 };
 
 #[derive(Default)]
@@ -50,6 +51,42 @@ impl ResultSink for InMemorySink {
     async fn write_batch(&self, results: &[CheckResult]) -> Result<()> {
         self.results.lock().extend_from_slice(results);
         Ok(())
+    }
+}
+
+#[async_trait]
+impl RecentOutcomes for InMemorySink {
+    /// Arrival times are not kept, so every pass gets the whole window, in
+    /// the order it was written.
+    async fn recent_outcomes(
+        &self,
+        targets: &[(OrgId, Uuid)],
+        since: DateTime<Utc>,
+        _arrived_within: Option<std::time::Duration>,
+        per_target_limit: usize,
+    ) -> Result<Vec<RegionOutcome>> {
+        let wanted: std::collections::HashSet<Uuid> = targets.iter().map(|(_, t)| *t).collect();
+        let guard = self.results.lock();
+        let mut by_target: HashMap<Uuid, Vec<RegionOutcome>> = HashMap::new();
+        for (written, r) in guard.iter().enumerate() {
+            if wanted.contains(&r.target_id) && r.timestamp >= since {
+                by_target
+                    .entry(r.target_id)
+                    .or_default()
+                    .push(RegionOutcome {
+                        region: "default".to_string(),
+                        outcome: r.into(),
+                        arrival: written as u64,
+                    });
+            }
+        }
+        let mut out = Vec::new();
+        for mut rows in by_target.into_values() {
+            rows.sort_by_key(|row| std::cmp::Reverse(row.outcome.timestamp));
+            rows.truncate(per_target_limit);
+            out.extend(rows);
+        }
+        Ok(out)
     }
 }
 
@@ -159,31 +196,6 @@ impl ResultsStore for InMemorySink {
             .map(|r| ("default".to_string(), r.clone()))
             .into_iter()
             .collect())
-    }
-
-    async fn recent_results_for_targets(
-        &self,
-        targets: &[(OrgId, Uuid)],
-        range: ClampedRange,
-        per_target_limit: usize,
-    ) -> Result<Vec<(String, CheckResult)>> {
-        let wanted: std::collections::HashSet<Uuid> = targets.iter().map(|(_, t)| *t).collect();
-        let guard = self.results.lock();
-        let mut by_target: std::collections::HashMap<Uuid, Vec<CheckResult>> =
-            std::collections::HashMap::new();
-        for r in guard.iter() {
-            if wanted.contains(&r.target_id) && r.timestamp >= range.from && r.timestamp < range.to
-            {
-                by_target.entry(r.target_id).or_default().push(r.clone());
-            }
-        }
-        let mut out = Vec::new();
-        for mut results in by_target.into_values() {
-            results.sort_by_key(|r| std::cmp::Reverse(r.timestamp));
-            results.truncate(per_target_limit);
-            out.extend(results.into_iter().map(|r| ("default".to_string(), r)));
-        }
-        Ok(out)
     }
 
     async fn uptime(

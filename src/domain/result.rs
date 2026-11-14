@@ -57,6 +57,29 @@ pub struct CheckResult {
     pub details: Option<CheckDetails>,
 }
 
+/// What one check concluded and why: the part of a [`CheckResult`] that opens
+/// and closes incidents.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckOutcome {
+    pub target_id: Uuid,
+    pub timestamp: DateTime<Utc>,
+    pub status: CheckStatus,
+    pub error: Option<String>,
+    pub diagnostic: Option<CheckDiagnostic>,
+}
+
+impl From<&CheckResult> for CheckOutcome {
+    fn from(result: &CheckResult) -> Self {
+        Self {
+            target_id: result.target_id,
+            timestamp: result.timestamp,
+            status: result.status,
+            error: result.error.clone(),
+            diagnostic: result.diagnostic.clone(),
+        }
+    }
+}
+
 impl CheckResult {
     pub fn error(target_id: Uuid, org_id: Uuid, reason: impl Into<String>) -> Self {
         Self::error_with_elapsed(target_id, org_id, Utc::now(), 0, reason)

@@ -4,10 +4,11 @@ use std::time::Duration as StdDuration;
 use chrono::TimeZone;
 
 use crate::domain::{
-    CheckDiagnostic, CheckSpec, DiagnosticConfidence, DiagnosticEvidence, EdgeProvider, Target,
+    CheckDiagnostic, CheckResult, CheckSpec, DiagnosticConfidence, DiagnosticEvidence,
+    EdgeProvider, Target,
 };
 use crate::storage::admin::EnabledTargetStream;
-use crate::storage::{InMemorySink, InMemoryTargetStore, ResultSink};
+use crate::storage::{InMemorySink, InMemoryTargetStore, RegionOutcome, ResultSink};
 
 use super::*;
 
@@ -15,12 +16,22 @@ fn ts(base: DateTime<Utc>, secs: i64) -> DateTime<Utc> {
     base + ChronoDuration::seconds(secs)
 }
 
-fn result(target_id: Uuid, when: DateTime<Utc>, status: CheckStatus) -> CheckResult {
-    CheckResult {
+fn result(target_id: Uuid, when: DateTime<Utc>, status: CheckStatus) -> CheckOutcome {
+    CheckOutcome {
         target_id,
-        org_id: Uuid::nil(),
         timestamp: when,
         status,
+        error: None,
+        diagnostic: None,
+    }
+}
+
+fn stored(outcome: CheckOutcome) -> CheckResult {
+    CheckResult {
+        target_id: outcome.target_id,
+        org_id: Uuid::nil(),
+        timestamp: outcome.timestamp,
+        status: outcome.status,
         duration_ms: 1,
         dns_ms: None,
         connect_ms: None,
@@ -29,13 +40,13 @@ fn result(target_id: Uuid, when: DateTime<Utc>, status: CheckStatus) -> CheckRes
         response_code: None,
         response_size: None,
         network: None,
-        diagnostic: None,
-        error: None,
+        diagnostic: outcome.diagnostic,
+        error: outcome.error,
         details: None,
     }
 }
 
-fn akamai_blocked(target_id: Uuid, when: DateTime<Utc>) -> CheckResult {
+fn akamai_blocked(target_id: Uuid, when: DateTime<Utc>) -> CheckOutcome {
     let mut blocked = result(target_id, when, CheckStatus::Down);
     blocked.error = Some("unexpected status 403".into());
     blocked.diagnostic = Some(CheckDiagnostic::access_interference(
@@ -46,10 +57,9 @@ fn akamai_blocked(target_id: Uuid, when: DateTime<Utc>) -> CheckResult {
     blocked
 }
 
-fn tunnel_down(target_id: Uuid, when: DateTime<Utc>) -> CheckResult {
+fn tunnel_down(target_id: Uuid, when: DateTime<Utc>) -> CheckOutcome {
     let mut dead = result(target_id, when, CheckStatus::Down);
     dead.error = Some("unexpected status 530".into());
-    dead.response_code = Some(530);
     dead.diagnostic = Some(CheckDiagnostic::origin_unreachable(
         vec![
             DiagnosticEvidence::EdgeServer,
@@ -179,7 +189,7 @@ fn cause_tally_counts_only_failing_regions() {
         ]
     };
     let healthy = || vec![result(target, base, CheckStatus::Up)];
-    let sample_for = |by_region: &[(String, Vec<CheckResult>)], quorum| match decide_multi(
+    let sample_for = |by_region: &[(String, Vec<CheckOutcome>)], quorum| match decide_multi(
         target,
         &[],
         by_region,
@@ -376,13 +386,13 @@ fn the_breakdown_only_grows_while_open() {
         recovering_since: None,
         recovered: Vec::new(),
     };
-    let down = |offsets: &[i64]| -> Vec<CheckResult> {
+    let down = |offsets: &[i64]| -> Vec<CheckOutcome> {
         offsets
             .iter()
             .map(|o| result(t, ts(base, *o), CheckStatus::Down))
             .collect()
     };
-    let region = |name: &str, results: Vec<CheckResult>| (name.to_string(), results);
+    let region = |name: &str, results: Vec<CheckOutcome>| (name.to_string(), results);
 
     // Helsinki still one check in: nothing to write.
     let by_region = vec![
@@ -932,7 +942,7 @@ fn open_since(target_id: Uuid, started_at: DateTime<Utc>, regions_down: &[&str])
     }
 }
 
-fn run(t: Uuid, base: DateTime<Utc>, from: i64, to: i64, status: CheckStatus) -> Vec<CheckResult> {
+fn run(t: Uuid, base: DateTime<Utc>, from: i64, to: i64, status: CheckStatus) -> Vec<CheckOutcome> {
     (from..=to)
         .step_by(30)
         .map(|o| result(t, ts(base, o), status))
@@ -941,7 +951,7 @@ fn run(t: Uuid, base: DateTime<Utc>, from: i64, to: i64, status: CheckStatus) ->
 
 /// The hold as the writer judges it at the newest result in view, for a
 /// monitor checking every 30 seconds.
-fn hold_at(period: ChronoDuration, by_region: &[(String, Vec<CheckResult>)]) -> Hold {
+fn hold_at(period: ChronoDuration, by_region: &[(String, Vec<CheckOutcome>)]) -> Hold {
     let now = by_region
         .iter()
         .filter_map(|(_, results)| results.last())
@@ -1734,7 +1744,8 @@ fn make_public_target(name: &str) -> Target {
     }
 }
 
-async fn seed_results(sink: &InMemorySink, results: Vec<CheckResult>) {
+async fn seed_results(sink: &InMemorySink, results: Vec<CheckOutcome>) {
+    let results: Vec<CheckResult> = results.into_iter().map(stored).collect();
     sink.write_batch(&results).await.expect("seed results");
 }
 
@@ -1748,12 +1759,13 @@ fn writer(
         lookback: ChronoDuration::days(1),
         flap_threshold: 2,
         max_results_per_tick: 10_000,
+        full_reload_every: StdDuration::from_secs(3600),
         page_size: 256,
         max_concurrency: 4,
     };
     IncidentWriter::new(
         targets as Arc<dyn EnabledTargetStream>,
-        sink as Arc<dyn crate::storage::ResultsStore>,
+        sink as Arc<dyn RecentOutcomes>,
         incidents as Arc<dyn IncidentStore>,
         cfg,
     )
@@ -1770,12 +1782,13 @@ fn writer_with_lookback(
         lookback,
         flap_threshold: 2,
         max_results_per_tick: 10_000,
+        full_reload_every: StdDuration::from_secs(3600),
         page_size: 256,
         max_concurrency: 4,
     };
     IncidentWriter::new(
         targets as Arc<dyn EnabledTargetStream>,
-        sink as Arc<dyn crate::storage::ResultsStore>,
+        sink as Arc<dyn RecentOutcomes>,
         incidents as Arc<dyn IncidentStore>,
         cfg,
     )
@@ -2526,7 +2539,7 @@ fn one_region_below_quorum_does_not_escalate() {
     let regions = ["eu-helsinki", "us-east", "apac-sg"];
     let mut open = open_at(t, base, CheckStatus::Degraded);
     open.regions_down = regions.iter().map(|r| r.to_string()).collect();
-    let down = |n: usize| -> Vec<(String, Vec<CheckResult>)> {
+    let down = |n: usize| -> Vec<(String, Vec<CheckOutcome>)> {
         regions
             .iter()
             .enumerate()
@@ -2678,4 +2691,429 @@ async fn a_manual_monitor_opens_on_its_first_bad_result() {
     seed_results(&sink, vec![result(target_id, now, CheckStatus::Up)]).await;
     w.tick_once().await.expect("tick");
     assert_eq!(incidents.close_count(), 1, "one up closes it");
+}
+
+// ── reading only what arrived since the last pass ───────────────────────
+
+/// Serves what a store that keeps arrival times would: a target's whole
+/// window when asked for it, otherwise only what was written since that
+/// target's read before.
+struct ArrivalsOnly {
+    sink: Arc<InMemorySink>,
+    served: parking_lot::Mutex<HashMap<Uuid, usize>>,
+    asked: parking_lot::Mutex<Vec<Option<StdDuration>>>,
+}
+
+impl ArrivalsOnly {
+    fn over(sink: Arc<InMemorySink>) -> Arc<Self> {
+        Arc::new(Self {
+            sink,
+            served: parking_lot::Mutex::new(HashMap::new()),
+            asked: parking_lot::Mutex::new(Vec::new()),
+        })
+    }
+
+    /// What is unread now never comes back as an arrival: the rows a pass
+    /// missed.
+    fn lose_unread(&self) {
+        let written = self.sink.len();
+        self.served
+            .lock()
+            .values_mut()
+            .for_each(|served| *served = written);
+    }
+}
+
+#[async_trait]
+impl RecentOutcomes for ArrivalsOnly {
+    async fn recent_outcomes(
+        &self,
+        targets: &[(OrgId, Uuid)],
+        since: DateTime<Utc>,
+        arrived_within: Option<StdDuration>,
+        _per_target_limit: usize,
+    ) -> Result<Vec<RegionOutcome>> {
+        self.asked.lock().push(arrived_within);
+        let all = self.sink.snapshot();
+        let mut served = self.served.lock();
+        let mut out = Vec::new();
+        for (_, target) in targets {
+            let unread = served.insert(*target, all.len()).unwrap_or(0);
+            let from = arrived_within.map_or(0, |_| unread);
+            out.extend(
+                all.iter()
+                    .enumerate()
+                    .skip(from)
+                    .filter(|(_, r)| r.target_id == *target && r.timestamp >= since)
+                    .map(|(written, r)| RegionOutcome {
+                        region: "default".to_string(),
+                        outcome: r.into(),
+                        arrival: written as u64,
+                    }),
+            );
+        }
+        Ok(out)
+    }
+}
+
+fn writer_over(
+    target: Target,
+    source: Arc<ArrivalsOnly>,
+    incidents: Arc<InMemoryIncidentStore>,
+) -> IncidentWriter {
+    IncidentWriter::new(
+        Arc::new(InMemoryTargetStore::from_vec(vec![target])) as Arc<dyn EnabledTargetStream>,
+        source as Arc<dyn RecentOutcomes>,
+        incidents as Arc<dyn IncidentStore>,
+        IncidentWriterConfig::default(),
+    )
+}
+
+#[tokio::test]
+async fn a_slow_monitor_opens_and_closes_on_time_reading_only_what_arrived() {
+    let mut target = make_public_target("cert");
+    target.interval = StdDuration::from_secs(6 * 3600);
+    target.alert_confirmations = 2;
+    target.recovery_period_secs = 0;
+    let target_id = target.id;
+    let now = Utc::now();
+    let at =
+        |hours_ago: i64, status| result(target_id, now - ChronoDuration::hours(hours_ago), status);
+    let sink = Arc::new(InMemorySink::new());
+    let source = ArrivalsOnly::over(sink.clone());
+    let incidents = Arc::new(InMemoryIncidentStore::new());
+    let w = writer_over(target, source.clone(), incidents.clone());
+
+    seed_results(&sink, vec![at(19, CheckStatus::Down)]).await;
+    w.tick_once().await.expect("one failure");
+    assert_eq!(incidents.insert_count(), 0);
+
+    seed_results(&sink, vec![at(13, CheckStatus::Down)]).await;
+    w.tick_once().await.expect("second failure");
+    let all = incidents.all_for(target_id);
+    assert_eq!(all.len(), 1, "the failure held from the first pass counts");
+    assert_eq!(all[0].started_at, now - ChronoDuration::hours(19));
+
+    seed_results(&sink, vec![at(7, CheckStatus::Up)]).await;
+    w.tick_once().await.expect("one pass");
+    assert!(incidents.all_for(target_id)[0].ended_at.is_none());
+
+    seed_results(&sink, vec![at(1, CheckStatus::Up)]).await;
+    w.tick_once().await.expect("second pass");
+    let all = incidents.all_for(target_id);
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].ended_at, Some(now - ChronoDuration::hours(7)));
+
+    w.tick_once().await.expect("nothing new");
+    assert_eq!(incidents.insert_count(), 1);
+    assert_eq!(incidents.close_count(), 1);
+
+    let asked = source.asked.lock().clone();
+    assert_eq!(asked[0], None, "the window is read whole once");
+    assert!(
+        asked[1..]
+            .iter()
+            .all(|within| within.is_some_and(|w| w >= ARRIVAL_OVERLAP)),
+        "every later pass asks only for what arrived: {asked:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_result_that_lands_late_is_counted_by_its_own_timestamp() {
+    let target = make_public_target("api");
+    let target_id = target.id;
+    let now = Utc::now();
+    let at = |secs_ago: i64| {
+        result(
+            target_id,
+            now - ChronoDuration::seconds(secs_ago),
+            CheckStatus::Down,
+        )
+    };
+    let sink = Arc::new(InMemorySink::new());
+    let incidents = Arc::new(InMemoryIncidentStore::new());
+    let w = writer_over(target, ArrivalsOnly::over(sink.clone()), incidents.clone());
+
+    seed_results(&sink, vec![at(60)]).await;
+    w.tick_once().await.expect("one failure");
+    assert_eq!(incidents.insert_count(), 0);
+
+    seed_results(&sink, vec![at(90)]).await;
+    w.tick_once().await.expect("the earlier failure lands");
+    let all = incidents.all_for(target_id);
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].started_at, now - ChronoDuration::seconds(90));
+}
+
+#[tokio::test]
+async fn the_reload_finds_a_result_a_pass_missed() {
+    let target = make_public_target("api");
+    let target_id = target.id;
+    let now = Utc::now();
+    let at = |secs_ago: i64| {
+        result(
+            target_id,
+            now - ChronoDuration::seconds(secs_ago),
+            CheckStatus::Down,
+        )
+    };
+    let sink = Arc::new(InMemorySink::new());
+    let source = ArrivalsOnly::over(sink.clone());
+    let incidents = Arc::new(InMemoryIncidentStore::new());
+    let mut w = writer_over(target, source.clone(), incidents.clone());
+
+    seed_results(&sink, vec![at(60)]).await;
+    w.tick_once().await.expect("one failure");
+
+    seed_results(&sink, vec![at(30)]).await;
+    source.lose_unread();
+    w.tick_once().await.expect("the arrival is missed");
+    assert!(
+        source.asked.lock().last().is_some_and(Option::is_some),
+        "that pass asked only for arrivals"
+    );
+    assert_eq!(incidents.insert_count(), 0, "one failure in view");
+
+    w.cfg.full_reload_every = StdDuration::ZERO;
+    w.tick_once().await.expect("the reload");
+    let all = incidents.all_for(target_id);
+    assert_eq!(all.len(), 1, "the whole window holds both");
+    assert_eq!(all[0].started_at, now - ChronoDuration::seconds(60));
+}
+
+#[tokio::test]
+async fn a_result_stamped_ahead_of_now_waits_for_its_time() {
+    let target = make_public_target("api");
+    let target_id = target.id;
+    let now = Utc::now();
+    let sink = Arc::new(InMemorySink::new());
+    let incidents = Arc::new(InMemoryIncidentStore::new());
+    seed_results(
+        &sink,
+        vec![
+            result(
+                target_id,
+                now - ChronoDuration::seconds(30),
+                CheckStatus::Down,
+            ),
+            result(target_id, now + ChronoDuration::hours(1), CheckStatus::Down),
+        ],
+    )
+    .await;
+    writer(
+        Arc::new(InMemoryTargetStore::from_vec(vec![target])),
+        sink,
+        incidents.clone(),
+    )
+    .tick_once()
+    .await
+    .expect("tick");
+    assert_eq!(
+        incidents.insert_count(),
+        0,
+        "one failure has happened so far"
+    );
+}
+
+#[tokio::test]
+async fn two_failures_in_one_second_are_two_confirmations() {
+    let target = make_public_target("api");
+    let target_id = target.id;
+    let at = Utc::now() - ChronoDuration::seconds(30);
+    let sink = Arc::new(InMemorySink::new());
+    let incidents = Arc::new(InMemoryIncidentStore::new());
+    seed_results(
+        &sink,
+        vec![
+            result(target_id, at, CheckStatus::Down),
+            result(target_id, at, CheckStatus::Down),
+        ],
+    )
+    .await;
+    let w = writer(
+        Arc::new(InMemoryTargetStore::from_vec(vec![target])),
+        sink,
+        incidents.clone(),
+    );
+    w.tick_once().await.expect("tick");
+    w.tick_once().await.expect("read again");
+    let all = incidents.all_for(target_id);
+    assert_eq!(all.len(), 1, "a scheduled check and a check-now both count");
+    assert_eq!(all[0].started_at, at);
+}
+
+fn read(whole: bool, now: DateTime<Utc>) -> Read {
+    Read {
+        whole,
+        at: Instant::now(),
+        now,
+    }
+}
+
+fn held_in(recent: &Recent, target: Uuid, base: DateTime<Utc>) -> Vec<(i64, CheckStatus)> {
+    recent.windows([target].into_iter())[&target]["eu"]
+        .iter()
+        .map(|o| ((o.timestamp - base).num_seconds(), o.status))
+        .collect()
+}
+
+#[test]
+fn a_window_is_read_whole_when_new_when_it_grows_and_when_the_reload_is_due() {
+    let recent = Recent::default();
+    let target = Uuid::now_v7();
+    let hour = StdDuration::from_secs(3600);
+    let held = ChronoDuration::minutes(15);
+    assert_eq!(recent.last_read(target, held, hour), None, "never read");
+
+    let began = read(true, Utc::now());
+    recent.absorb(&[(target, held)], vec![], began, 10);
+    assert_eq!(recent.last_read(target, held, hour), Some(began.at));
+    assert_eq!(
+        recent.last_read(target, ChronoDuration::minutes(16), hour),
+        None,
+        "a longer window"
+    );
+    assert_eq!(
+        recent.last_read(target, held, StdDuration::ZERO),
+        None,
+        "the reload is due"
+    );
+
+    recent.absorb(
+        &[(target, ChronoDuration::minutes(5))],
+        vec![],
+        read(false, Utc::now()),
+        10,
+    );
+    assert_eq!(
+        recent.last_read(target, held, hour),
+        None,
+        "shortened, then grown back past what is held"
+    );
+
+    recent.forget_idle(StdDuration::ZERO);
+    assert_eq!(
+        recent.last_read(target, ChronoDuration::minutes(5), hour),
+        None,
+        "forgotten"
+    );
+}
+
+#[test]
+fn a_read_of_arrivals_does_not_put_off_the_reload() {
+    let recent = Recent::default();
+    let target = Uuid::now_v7();
+    let held = ChronoDuration::minutes(15);
+    recent.absorb(&[(target, held)], vec![], read(true, Utc::now()), 10);
+    std::thread::sleep(StdDuration::from_millis(20));
+    recent.absorb(&[(target, held)], vec![], read(false, Utc::now()), 10);
+    assert_eq!(
+        recent.last_read(target, held, StdDuration::from_millis(10)),
+        None,
+        "the reload is due from the last whole read"
+    );
+}
+
+#[test]
+fn a_row_sent_again_is_held_once_and_a_second_keeps_both_its_rows() {
+    let recent = Recent::default();
+    let target = Uuid::now_v7();
+    let base = Utc::now();
+    let row = |secs: i64, status, arrival| RegionOutcome {
+        region: "eu".to_string(),
+        outcome: result(target, ts(base, secs), status),
+        arrival,
+    };
+    let window = [(target, ChronoDuration::minutes(15))];
+    let now = ts(base, 100);
+
+    recent.absorb(
+        &window,
+        vec![
+            row(30, CheckStatus::Up, 2),
+            row(0, CheckStatus::Up, 1),
+            row(60, CheckStatus::Up, 3),
+        ],
+        read(true, now),
+        10,
+    );
+    recent.absorb(
+        &window,
+        vec![
+            row(90, CheckStatus::Down, 5),
+            row(60, CheckStatus::Down, 4),
+            row(60, CheckStatus::Up, 3),
+        ],
+        read(false, now),
+        10,
+    );
+    assert_eq!(
+        held_in(&recent, target, base),
+        vec![
+            (0, CheckStatus::Up),
+            (30, CheckStatus::Up),
+            (60, CheckStatus::Up),
+            (60, CheckStatus::Down),
+            (90, CheckStatus::Down)
+        ],
+        "the tie is held in the order it arrived"
+    );
+}
+
+#[test]
+fn rows_that_arrived_together_in_one_second_hold_the_worst_last() {
+    let target = Uuid::now_v7();
+    let base = Utc::now();
+    let row = |status| RegionOutcome {
+        region: "eu".to_string(),
+        outcome: result(target, ts(base, 60), status),
+        arrival: 7,
+    };
+    let window = [(target, ChronoDuration::minutes(15))];
+    for rows in [
+        vec![row(CheckStatus::Down), row(CheckStatus::Up)],
+        vec![row(CheckStatus::Up), row(CheckStatus::Down)],
+    ] {
+        let recent = Recent::default();
+        recent.absorb(&window, rows, read(true, ts(base, 100)), 10);
+        assert_eq!(
+            held_in(&recent, target, base),
+            vec![(60, CheckStatus::Up), (60, CheckStatus::Down)],
+            "whatever order the store sends them in"
+        );
+    }
+}
+
+#[test]
+fn held_rows_leave_with_the_window_and_past_the_cap() {
+    let recent = Recent::default();
+    let target = Uuid::now_v7();
+    let base = Utc::now();
+    let rows = |arrivals: std::ops::Range<u64>| -> Vec<RegionOutcome> {
+        arrivals
+            .map(|n| RegionOutcome {
+                region: "eu".to_string(),
+                outcome: result(target, ts(base, 30 * n as i64), CheckStatus::Up),
+                arrival: n,
+            })
+            .collect()
+    };
+    let window = [(target, ChronoDuration::minutes(15))];
+    let seconds =
+        |held: Vec<(i64, CheckStatus)>| -> Vec<i64> { held.into_iter().map(|(s, _)| s).collect() };
+
+    recent.absorb(&window, rows(0..4), read(true, ts(base, 100)), 10);
+    recent.absorb(&window, vec![], read(false, ts(base, 900 + 30)), 10);
+    assert_eq!(
+        seconds(held_in(&recent, target, base)),
+        vec![30, 60, 90],
+        "the window moved on, under a cap that does not bind"
+    );
+
+    recent.absorb(&window, rows(4..5), read(false, ts(base, 900 + 30)), 2);
+    assert_eq!(
+        seconds(held_in(&recent, target, base)),
+        vec![90, 120],
+        "the cap keeps the newest"
+    );
 }

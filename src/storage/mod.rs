@@ -134,8 +134,9 @@ pub use status_pages::{
     AddComponentOutcome, InMemoryStatusPageStore, PgStatusPageStore, StatusPageStore,
 };
 pub use traits::{
-    ClampedRange, FailingServer, RegionOption, ResultSink, ResultsStore, TargetFilter, TargetSort,
-    TargetStore, TimeRange, UptimeStats, rollup_bucket_secs,
+    ClampedRange, FailingServer, RecentOutcomes, RegionOption, RegionOutcome, ResultSink,
+    ResultsStore, TargetFilter, TargetSort, TargetStore, TimeRange, UptimeStats,
+    rollup_bucket_secs,
 };
 pub use variables::{CreateVariableOutcome, InMemoryVariableStore, PgVariableStore, VariableStore};
 

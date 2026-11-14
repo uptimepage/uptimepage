@@ -19,9 +19,13 @@
 //! additional writes. The rules themselves are applied by [`decide_multi`],
 //! with no database and no clock; this file is the loop that feeds it and
 //! writes what it returns.
+//!
+//! Each pass decides over every target's whole window but reads only the
+//! results that arrived since the pass before; the rest it still holds.
 
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -31,16 +35,18 @@ use tokio::time::{MissedTickBehavior, interval};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::domain::{CheckResult, CheckStatus, NotificationReason, OrgId, Recovered, Target};
+use crate::domain::{CheckOutcome, CheckStatus, NotificationReason, OrgId, Recovered, Target};
 use crate::error::Result;
 use crate::escalation::IncidentSignal;
-use crate::storage::ResultsStore;
+use crate::storage::RecentOutcomes;
 use crate::storage::admin::{EnabledTargetStream, PublicTargetCursor};
-use crate::storage::traits::{ClampedRange, TimeRange};
+
+use recent::{ByRegion, Read, Recent};
 
 mod decide;
 mod memory;
 mod pg;
+mod recent;
 #[cfg(test)]
 mod tests;
 
@@ -61,7 +67,7 @@ pub trait IncidentStore: Send + Sync {
     async fn open_for_pairs(
         &self,
         pairs: &[(OrgId, Uuid)],
-    ) -> Result<std::collections::HashMap<(OrgId, Uuid), Vec<OpenIncident>>>;
+    ) -> Result<HashMap<(OrgId, Uuid), Vec<OpenIncident>>>;
     /// When each pair's latest monitor-origin incident ended. Results at or
     /// before that instant were already judged, or were what a human resolved,
     /// so only newer ones may open the next incident. Pairs with no closed
@@ -69,7 +75,7 @@ pub trait IncidentStore: Send + Sync {
     async fn last_closed_for_pairs(
         &self,
         pairs: &[(OrgId, Uuid)],
-    ) -> Result<std::collections::HashMap<(OrgId, Uuid), DateTime<Utc>>>;
+    ) -> Result<HashMap<(OrgId, Uuid), DateTime<Utc>>>;
     /// `None` = no row written: a concurrent writer already holds the open
     /// incident for this target (the DB unique index won the race), or an
     /// incident for it closed at or after `started_at`, so the evidence
@@ -159,12 +165,17 @@ pub struct IncidentWriterConfig {
     /// Minimum consecutive checks needed to confirm a transition. Default 2
     /// absorbs single-result flaps.
     pub flap_threshold: u32,
-    /// Max results fetched per component per tick. A safety cap so a hot
+    /// Max results held per component and region. A safety cap so a hot
     /// loop of high-frequency checks doesn't blow up memory.
     pub max_results_per_tick: usize,
+    /// How often a target's whole window is read again rather than only what
+    /// arrived. Bounds how long a row a pass missed, or one since deleted,
+    /// can keep the held window apart from the stored one.
+    pub full_reload_every: Duration,
     /// Number of `(org, target)` rows loaded per database round-trip during
-    /// the cross-tenant walk. Bounds peak writer-side RAM to roughly
-    /// `page_size * sizeof(Target)`; independent of total target count.
+    /// the cross-tenant walk. Bounds what the walk itself holds to roughly
+    /// `page_size * sizeof(Target)`; the results in each target's window are
+    /// held for every enabled target.
     pub page_size: usize,
     /// Max concurrent `process_target` futures per page. Keeps peak DB
     /// connection demand bounded so the writer can't starve foreground
@@ -179,6 +190,7 @@ impl Default for IncidentWriterConfig {
             lookback: ChronoDuration::minutes(10),
             flap_threshold: 2,
             max_results_per_tick: 1_000,
+            full_reload_every: Duration::from_secs(3600),
             page_size: 256,
             max_concurrency: 4,
         }
@@ -191,8 +203,9 @@ pub struct IncidentWriter {
     /// discovery, and it is keyset-paginated so the per-tick memory and
     /// database load stay bounded as the tenant count grows.
     targets: Arc<dyn EnabledTargetStream>,
-    results_store: Arc<dyn ResultsStore>,
+    results_store: Arc<dyn RecentOutcomes>,
     incident_store: Arc<dyn IncidentStore>,
+    recent: Recent,
     cfg: IncidentWriterConfig,
     /// Notifies the escalation engine when an incident opens or auto-resolves.
     /// `None` leaves the writer paging-agnostic (tests).
@@ -202,7 +215,7 @@ pub struct IncidentWriter {
 impl IncidentWriter {
     pub fn new(
         targets: Arc<dyn EnabledTargetStream>,
-        results_store: Arc<dyn ResultsStore>,
+        results_store: Arc<dyn RecentOutcomes>,
         incident_store: Arc<dyn IncidentStore>,
         cfg: IncidentWriterConfig,
     ) -> Self {
@@ -215,6 +228,7 @@ impl IncidentWriter {
             targets,
             results_store,
             incident_store,
+            recent: Recent::default(),
             cfg,
             signal_tx: None,
         }
@@ -274,11 +288,12 @@ impl IncidentWriter {
     /// sleeping.
     ///
     /// Walks the cross-tenant target set with keyset pagination so peak RAM
-    /// is `O(page_size)` regardless of org count. Per page the open incidents
-    /// and recent results are both resolved in batched reads (one round-trip
-    /// for opens, one per lookback tier for results, not one per target), then
-    /// per-target work runs concurrently up to `max_concurrency`. A per-target
-    /// error logs and continues so one tenant's failure can't stall the rest.
+    /// of the walk is `O(page_size)` regardless of org count. Per page the open
+    /// incidents and recent results are both resolved in batched reads (one
+    /// round-trip for opens, one per lookback tier for results, not one per
+    /// target), then per-target work runs concurrently up to
+    /// `max_concurrency`. A per-target error logs and continues so one
+    /// tenant's failure can't stall the rest.
     pub async fn tick_once(&self) -> Result<()> {
         let now = Utc::now();
         let concurrency = self.cfg.max_concurrency.max(1);
@@ -290,6 +305,7 @@ impl IncidentWriter {
                 .next_enabled_target_page(cursor, self.cfg.page_size)
                 .await?;
             let Some(last) = page.last() else {
+                self.recent.forget_idle(self.cfg.full_reload_every);
                 return Ok(());
             };
             cursor = Some(PublicTargetCursor::after(last.0, last.1.id));
@@ -300,19 +316,18 @@ impl IncidentWriter {
                 self.incident_store.last_closed_for_pairs(&pairs),
                 self.load_page_results(&page, now),
             )?;
-            let (open_map, closed_map, results) =
-                (Arc::new(open_map), Arc::new(closed_map), Arc::new(results));
+            let (open_map, closed_map) = (Arc::new(open_map), Arc::new(closed_map));
+            let mut results = results;
 
             stream::iter(page.into_iter().map(|(org, target)| {
                 let open_map = open_map.clone();
                 let closed_map = closed_map.clone();
-                let results = results.clone();
+                let window = results.remove(&target.id).unwrap_or_default();
                 async move {
                     let open = open_map.get(&(org, target.id)).cloned().unwrap_or_default();
                     let last_closed = closed_map.get(&(org, target.id)).copied();
-                    let tagged = results.get(&target.id).cloned().unwrap_or_default();
                     if let Err(err) = self
-                        .process_target(org, &target, open, last_closed, tagged, now)
+                        .process_target(org, &target, open, last_closed, window, now)
                         .await
                     {
                         tracing::warn!(
@@ -330,37 +345,58 @@ impl IncidentWriter {
         }
     }
 
-    /// One ClickHouse read per lookback tier instead of one per target, so a
-    /// slow monitor never widens a fast one's scan window. Each target is then
-    /// trimmed to its own window in [`process_target`](Self::process_target).
+    /// One read per lookback tier instead of one per target, so a slow monitor
+    /// never widens a fast one's scan window. A target read before is asked
+    /// only for what arrived since, by the store's clock rather than the
+    /// results' own, and its window is filled from what is held.
     async fn load_page_results(
         &self,
         page: &[(OrgId, Target)],
         now: DateTime<Utc>,
-    ) -> Result<std::collections::HashMap<Uuid, Vec<(String, CheckResult)>>> {
-        let mut tiers: std::collections::BTreeMap<i64, Vec<(OrgId, Uuid)>> =
-            std::collections::BTreeMap::new();
+    ) -> Result<HashMap<Uuid, ByRegion>> {
+        let mut reads: BTreeMap<(i64, bool), Pending> = BTreeMap::new();
         for (org, target) in page {
-            let tier = tier_seconds(self.lookback_for(target));
-            tiers.entry(tier).or_default().push((*org, target.id));
+            let lookback = self.lookback_for(target);
+            let last_read = self
+                .recent
+                .last_read(target.id, lookback, self.cfg.full_reload_every);
+            let pending = reads
+                .entry((tier_seconds(lookback), last_read.is_none()))
+                .or_default();
+            pending.pairs.push((*org, target.id));
+            pending.lookbacks.push((target.id, lookback));
+            pending.oldest_read = match (pending.oldest_read, last_read) {
+                (Some(oldest), Some(read)) => Some(oldest.min(read)),
+                (oldest, read) => oldest.or(read),
+            };
         }
 
-        let mut out: std::collections::HashMap<Uuid, Vec<(String, CheckResult)>> =
-            std::collections::HashMap::new();
-        for (tier_secs, targets) in tiers {
-            let range = ClampedRange::unclamped(TimeRange {
-                from: now - ChronoDuration::seconds(tier_secs),
-                to: now,
-            });
+        for ((tier_secs, whole), pending) in reads {
+            let read = Read {
+                whole,
+                at: Instant::now(),
+                now,
+            };
+            let arrived_within = pending
+                .oldest_read
+                .map(|at| read.at.duration_since(at) + ARRIVAL_OVERLAP);
             let rows = self
                 .results_store
-                .recent_results_for_targets(&targets, range, self.cfg.max_results_per_tick)
+                .recent_outcomes(
+                    &pending.pairs,
+                    now - ChronoDuration::seconds(tier_secs),
+                    arrived_within,
+                    self.cfg.max_results_per_tick,
+                )
                 .await?;
-            for (region, r) in rows {
-                out.entry(r.target_id).or_default().push((region, r));
-            }
+            self.recent.absorb(
+                &pending.lookbacks,
+                rows,
+                read,
+                self.cfg.max_results_per_tick,
+            );
         }
-        Ok(out)
+        Ok(self.recent.windows(page.iter().map(|(_, t)| t.id)))
     }
 
     /// Window sized to the target's cadence: confirming a transition needs
@@ -383,25 +419,23 @@ impl IncidentWriter {
         target: &Target,
         open: Vec<OpenIncident>,
         last_closed: Option<DateTime<Utc>>,
-        tagged: Vec<(String, CheckResult)>,
+        window: ByRegion,
         now: DateTime<Utc>,
     ) -> Result<()> {
-        // The tier read can be wider than this target's window; trim to its own.
-        let cutoff = now - self.lookback_for(target);
         // Each region evaluated on its own ASC run, never interleaved. A result
-        // from before the last incident closed was either judged already or
-        // resolved by hand; counting it again would reopen the same outage.
-        let mut by_region: std::collections::BTreeMap<String, Vec<CheckResult>> =
-            std::collections::BTreeMap::new();
-        for (region, r) in tagged {
-            if r.timestamp >= cutoff && last_closed.is_none_or(|closed| r.timestamp > closed) {
-                by_region.entry(region).or_default().push(r);
-            }
-        }
-        let mut by_region: Vec<(String, Vec<CheckResult>)> = by_region.into_iter().collect();
-        for (_, results) in by_region.iter_mut() {
-            results.sort_by_key(|r| r.timestamp);
-        }
+        // a skewed agent clock stamped ahead of now has not happened yet. A
+        // result from before the last incident closed was either judged
+        // already or resolved by hand; counting it again would reopen the
+        // same outage.
+        let by_region: Vec<(String, Vec<CheckOutcome>)> = window
+            .into_iter()
+            .filter_map(|(region, mut outcomes)| {
+                outcomes.retain(|r| {
+                    r.timestamp < now && last_closed.is_none_or(|closed| r.timestamp > closed)
+                });
+                (!outcomes.is_empty()).then_some((region, outcomes))
+            })
+            .collect();
 
         let confirmations = target.alert_confirmations.max(1);
         let quorum = target.region_policy.required(by_region.len());
@@ -469,6 +503,21 @@ impl IncidentWriter {
         }
         Ok(())
     }
+}
+
+/// How far back of a target's last read the next one reaches. A row is
+/// stamped with its arrival slightly before a read can see it (an async insert
+/// waits out its flush window, and the read itself may queue), and a row read
+/// twice costs nothing.
+const ARRIVAL_OVERLAP: Duration = Duration::from_secs(300);
+
+/// The targets of one read, each with its own lookback, and when the stalest
+/// of them was last read.
+#[derive(Default)]
+struct Pending {
+    pairs: Vec<(OrgId, Uuid)>,
+    lookbacks: Vec<(Uuid, ChronoDuration)>,
+    oldest_read: Option<Instant>,
 }
 
 /// Round a per-target lookback window up to a coarse tier so similar-cadence

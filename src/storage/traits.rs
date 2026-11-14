@@ -10,8 +10,8 @@ use crate::domain::metrics::{
     PriorPeriodSummary, RegionLatencySeries, RegionRollup, TagCount, TargetsSummary,
 };
 use crate::domain::{
-    CheckDiagnostic, CheckResult, CheckStatus, HeartbeatPingRecord, NewTarget, ObservedCadence,
-    OrgId, PlacedTarget, Target, TargetUpdate, UserId, WriteCaps, WriteSource,
+    CheckDiagnostic, CheckOutcome, CheckResult, CheckStatus, HeartbeatPingRecord, NewTarget,
+    ObservedCadence, OrgId, PlacedTarget, Target, TargetUpdate, UserId, WriteCaps, WriteSource,
 };
 use crate::error::Result;
 use crate::pagination::AlertEventCursor;
@@ -614,13 +614,46 @@ impl RegionLatestStatus {
     }
 }
 
+/// One stored outcome and the region that ran the check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegionOutcome {
+    pub region: String,
+    pub outcome: CheckOutcome,
+    /// Orders rows by when the store took them in. Rows taken in together
+    /// may share one.
+    pub arrival: u64,
+}
+
+/// The incident writer's read: what many targets' checks concluded, across
+/// tenants, in one query.
+#[async_trait]
+pub trait RecentOutcomes: Send + Sync {
+    /// Outcomes stamped at or after `since`, at most `per_target_limit`
+    /// newest per `(target, region)`. Rows are filtered to the caller's
+    /// `(org, target)` pairs, so a target id resolving to another org yields
+    /// nothing.
+    ///
+    /// `arrived_within` asks only for rows stored that recently, whatever
+    /// their own timestamp says: a late or clock-skewed result is new when it
+    /// lands. Older arrivals may come back too, but never with a gap: of a
+    /// `(target, region)`'s newest `per_target_limit`, every row from the
+    /// oldest returned `arrival` onward comes back.
+    async fn recent_outcomes(
+        &self,
+        targets: &[(OrgId, Uuid)],
+        since: DateTime<Utc>,
+        arrived_within: Option<std::time::Duration>,
+        per_target_limit: usize,
+    ) -> Result<Vec<RegionOutcome>>;
+}
+
 /// Operator-facing results repository. Org-scoped on every method for the
 /// same reason as [`TargetStore`]: the `org` is resolved from the request and
 /// the implementation never returns another tenant's check history. A bare
 /// `target_id` is not enough — a UUID guessed from another org must resolve to
 /// zero rows, not that org's data.
 #[async_trait]
-pub trait ResultsStore: Send + Sync {
+pub trait ResultsStore: RecentOutcomes {
     /// Liveness probe for `/readyz` — connection-level, not tenant data.
     async fn ping(&self) -> Result<()>;
     /// Newest first, within the range: up to `limit` most recent runs plus up
@@ -728,17 +761,6 @@ pub trait ResultsStore: Send + Sync {
         target_id: Uuid,
         range: ClampedRange,
         region: Option<&str>,
-    ) -> Result<Vec<(String, CheckResult)>>;
-    /// Recent results for many targets in one query, each row tagged with its
-    /// region (the `CheckResult` carries `target_id` and `org_id`). Returns at
-    /// most `per_target_limit` newest rows per `(target, region)`. Rows are
-    /// filtered to the caller's `(org, target)` pairs, so a target id resolving
-    /// to another org yields nothing.
-    async fn recent_results_for_targets(
-        &self,
-        targets: &[(OrgId, Uuid)],
-        range: ClampedRange,
-        per_target_limit: usize,
     ) -> Result<Vec<(String, CheckResult)>>;
     async fn uptime(
         &self,

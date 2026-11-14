@@ -143,9 +143,9 @@ pub use public::{
 pub use quota::{Plan, PlanLimits, QuotaEvent, WriteCaps};
 pub use reserved_slugs::is_reserved;
 pub use result::{
-    CheckDiagnostic, CheckDiagnosticKind, CheckResult, CheckStatus, DiagnosticConfidence,
-    DiagnosticEvidence, DiagnosticRemediation, DnsAnswer, EdgeProvider, NetworkPath,
-    SERVED_STALE_PREFIX, is_breaker_skip, strip_served_stale,
+    CheckDiagnostic, CheckDiagnosticKind, CheckOutcome, CheckResult, CheckStatus,
+    DiagnosticConfidence, DiagnosticEvidence, DiagnosticRemediation, DnsAnswer, EdgeProvider,
+    NetworkPath, SERVED_STALE_PREFIX, is_breaker_skip, strip_served_stale,
 };
 pub use status_page::{
     NewStatusPage, NewStatusPageComponent, PageRef, StatusPage, StatusPageComponent,

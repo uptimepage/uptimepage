@@ -9,8 +9,7 @@ use axum::http::{Request, StatusCode};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
-use uptimepage::domain::{CheckResult, CheckStatus, ManualStatus};
-use uptimepage::storage::{ClampedRange, TimeRange};
+use uptimepage::domain::{CheckOutcome, CheckStatus, ManualStatus};
 use uuid::Uuid;
 
 fn authed(state: &uptimepage::app::AppState) -> axum::Router {
@@ -228,20 +227,16 @@ async fn only_a_manual_monitor_has_a_state_and_it_has_nothing_to_probe() {
     );
 }
 
-async fn results_for(state: &uptimepage::app::AppState, id: Uuid) -> Vec<CheckResult> {
-    let now = chrono::Utc::now();
-    let range = ClampedRange::unclamped(TimeRange {
-        from: now - chrono::Duration::hours(1),
-        to: now + chrono::Duration::minutes(1),
-    });
+async fn results_for(state: &uptimepage::app::AppState, id: Uuid) -> Vec<CheckOutcome> {
+    let since = chrono::Utc::now() - chrono::Duration::hours(1);
     for _ in 0..50 {
         let rows = state
             .results_store
-            .recent_results_for_targets(&[(common::test_org_id(), id)], range, 10)
+            .recent_outcomes(&[(common::test_org_id(), id)], since, None, 10)
             .await
             .unwrap();
         if !rows.is_empty() {
-            return rows.into_iter().map(|(_, r)| r).collect();
+            return rows.into_iter().map(|row| row.outcome).collect();
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }

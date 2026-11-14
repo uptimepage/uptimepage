@@ -92,6 +92,11 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "009_alert_event_id.sql",
         include_str!("../../../migrations/clickhouse/009_alert_event_id.sql"),
     ),
+    // Raw table only: the rollups are never read by arrival time.
+    (
+        "010_check_results_ingested_index.sql",
+        include_str!("../../../migrations/clickhouse/010_check_results_ingested_index.sql"),
+    ),
 ];
 
 pub async fn migrate(client: &Client) -> Result<()> {

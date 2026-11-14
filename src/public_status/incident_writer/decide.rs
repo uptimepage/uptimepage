@@ -4,7 +4,7 @@
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use uuid::Uuid;
 
-use crate::domain::{CheckResult, CheckStatus, Recovered, strip_served_stale};
+use crate::domain::{CheckOutcome, CheckStatus, Recovered, strip_served_stale};
 
 use super::{NewOpenIncident, OpenIncident};
 
@@ -74,7 +74,7 @@ impl Hold {
 
 struct Verdict<'a> {
     region: &'a str,
-    bad: &'a [CheckResult],
+    bad: &'a [CheckOutcome],
 }
 
 /// Single-region convenience over [`decide_multi`]: one region, combined
@@ -84,7 +84,11 @@ struct Verdict<'a> {
 /// **Idempotency**: referentially transparent. Any `Action::Open` it returns
 /// assumes the caller has just verified there is no open incident — re-running
 /// after the write falls through to `Action::None`.
-pub fn decide(open: Option<&OpenIncident>, results: &[CheckResult], flap_threshold: u32) -> Action {
+pub fn decide(
+    open: Option<&OpenIncident>,
+    results: &[CheckOutcome],
+    flap_threshold: u32,
+) -> Action {
     let Some(target_id) = results.first().map(|r| r.target_id) else {
         return Action::None;
     };
@@ -106,7 +110,7 @@ pub fn decide(open: Option<&OpenIncident>, results: &[CheckResult], flap_thresho
 pub fn decide_multi(
     target_id: Uuid,
     opens: &[OpenIncident],
-    by_region: &[(String, Vec<CheckResult>)],
+    by_region: &[(String, Vec<CheckOutcome>)],
     confirmations: u32,
     quorum: usize,
     hold: Hold,
@@ -258,7 +262,7 @@ type DownSpan = (DateTime<Utc>, Option<DateTime<Utc>>);
 /// `down_at_start` is for a region the open incident already counts as down,
 /// whose failing run may have begun before the window.
 fn confirmed_down_spans(
-    results: &[CheckResult],
+    results: &[CheckOutcome],
     threshold: usize,
     down_at_start: bool,
 ) -> (Vec<DownSpan>, Confirmed) {
@@ -327,7 +331,7 @@ struct Tally {
 }
 
 impl Tally {
-    fn of(inc: &OpenIncident, by_region: &[(String, Vec<CheckResult>)], threshold: usize) -> Self {
+    fn of(inc: &OpenIncident, by_region: &[(String, Vec<CheckOutcome>)], threshold: usize) -> Self {
         let mut t = Self {
             events: Vec::new(),
             down_now: 0,
@@ -531,7 +535,7 @@ fn incident_error_sample(bad: &[&Verdict<'_>], quorum: usize) -> Option<String> 
     })
 }
 
-fn trailing_bad_run(results: &[CheckResult]) -> &[CheckResult] {
+fn trailing_bad_run(results: &[CheckOutcome]) -> &[CheckOutcome] {
     let split = results
         .iter()
         .rposition(|r| !r.status.is_bad())

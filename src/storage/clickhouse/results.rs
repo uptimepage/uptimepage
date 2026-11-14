@@ -15,14 +15,15 @@ use crate::domain::metrics::{
     FlowStepTrend, LatencyBucket, PriorPeriodSummary, RegionLatencySeries, RegionRollup,
 };
 use crate::domain::{
-    CheckDetails, CheckDiagnostic, CheckDiagnosticKind, CheckResult, CheckStatus,
+    CheckDetails, CheckDiagnostic, CheckDiagnosticKind, CheckOutcome, CheckResult, CheckStatus,
     DiagnosticConfidence, DiagnosticEvidence, DnsAnswer, EdgeProvider, Incident, NetworkPath,
     ObservedCadence, OrgId, coalesce_incidents,
 };
 use crate::error::Result;
 use crate::storage::traits::{
-    ClampedRange, FailingServer, FlowRunView, PassMarks, RegionFlaps, RegionLatestStatus,
-    RegionNewest, ResultsStore, TimeRange, UptimeStats, rollup_bucket_secs,
+    ClampedRange, FailingServer, FlowRunView, PassMarks, RecentOutcomes, RegionFlaps,
+    RegionLatestStatus, RegionNewest, RegionOutcome, ResultsStore, TimeRange, UptimeStats,
+    rollup_bucket_secs,
 };
 
 use super::{
@@ -237,30 +238,16 @@ impl RegionResultRow {
     }
 }
 
-/// No `details`: the incident writer reads many targets on a short loop and
-/// only needs the verdicts.
+/// The verdict and its cause only: the incident writer reads many targets on a
+/// short loop and uses nothing else.
 #[derive(Debug, Row, Deserialize)]
-struct MultiResultRow {
-    #[serde(with = "clickhouse::serde::uuid")]
-    org_id: Uuid,
+struct OutcomeRow {
     region: String,
     #[serde(with = "clickhouse::serde::uuid")]
     target_id: Uuid,
     timestamp: u32,
+    ingested_at: u32,
     status: i8,
-    duration_ms: u32,
-    dns_ms: Option<u16>,
-    connect_ms: Option<u16>,
-    tls_ms: Option<u16>,
-    ttfb_ms: Option<u16>,
-    response_code: Option<u16>,
-    response_size: Option<u32>,
-    remote_ip: Option<Ipv6Addr>,
-    tried_ips: Vec<Ipv6Addr>,
-    hop_url: Option<String>,
-    dns_resolver: Option<Ipv6Addr>,
-    dns_answer: Vec<Ipv6Addr>,
-    dns_ttl: Option<u32>,
     error: Option<String>,
     diagnostic_kind: Option<String>,
     diagnostic_confidence: Option<String>,
@@ -268,34 +255,26 @@ struct MultiResultRow {
     diagnostic_evidence: Vec<String>,
 }
 
-impl MultiResultRow {
-    fn split(self) -> (String, CheckResult) {
-        let org_id = self.org_id;
-        let inner = OwnedResultRow {
+impl OutcomeRow {
+    fn split(self) -> RegionOutcome {
+        let diagnostic = diagnostic_from(
+            self.diagnostic_kind.as_deref(),
+            self.diagnostic_confidence.as_deref(),
+            self.diagnostic_provider.as_deref(),
+            &self.diagnostic_evidence,
+        );
+        let outcome = CheckOutcome {
             target_id: self.target_id,
-            timestamp: self.timestamp,
-            status: self.status,
-            duration_ms: self.duration_ms,
-            dns_ms: self.dns_ms,
-            connect_ms: self.connect_ms,
-            tls_ms: self.tls_ms,
-            ttfb_ms: self.ttfb_ms,
-            response_code: self.response_code,
-            response_size: self.response_size,
-            remote_ip: self.remote_ip,
-            tried_ips: self.tried_ips,
-            hop_url: self.hop_url,
-            dns_resolver: self.dns_resolver,
-            dns_answer: self.dns_answer,
-            dns_ttl: self.dns_ttl,
+            timestamp: from_unix_secs(self.timestamp),
+            status: CheckStatus::from_enum8(self.status),
             error: self.error,
-            diagnostic_kind: self.diagnostic_kind,
-            diagnostic_confidence: self.diagnostic_confidence,
-            diagnostic_provider: self.diagnostic_provider,
-            diagnostic_evidence: self.diagnostic_evidence,
-            details: None,
+            diagnostic,
         };
-        (self.region, row_to_result(inner, org_id))
+        RegionOutcome {
+            region: self.region,
+            outcome,
+            arrival: u64::from(self.ingested_at),
+        }
     }
 }
 
@@ -378,6 +357,49 @@ fn pair_list(targets: &[(OrgId, Uuid)]) -> String {
         .map(|(o, t)| format!("('{}','{}')", o.0, t))
         .collect::<Vec<_>>()
         .join(",")
+}
+
+#[async_trait]
+impl RecentOutcomes for ClickhouseResultsStore {
+    async fn recent_outcomes(
+        &self,
+        targets: &[(OrgId, Uuid)],
+        since: DateTime<Utc>,
+        arrived_within: Option<Duration>,
+        per_target_limit: usize,
+    ) -> Result<Vec<RegionOutcome>> {
+        if targets.is_empty() {
+            return Ok(Vec::new());
+        }
+        let limit = per_target_limit.min(10_000) as u64;
+        let pair_list = pair_list(targets);
+        // The server's own clock on both sides, so neither ours nor an
+        // agent's has to agree with it. The minmax index on `ingested_at`
+        // drops every granule nothing has landed in since.
+        let arrived = arrived_within
+            .map(|_| "AND ingested_at >= now() - toIntervalSecond(?)")
+            .unwrap_or("");
+        let mut q = self
+            .client
+            .query(&format!(
+                "SELECT region, target_id, timestamp, ingested_at, status, error, \
+                 diagnostic_kind, diagnostic_confidence, diagnostic_provider, \
+                 diagnostic_evidence FROM {TABLE} \
+                 WHERE (org_id, target_id) IN ({pair_list}) \
+                 AND timestamp >= fromUnixTimestamp(?) {arrived} \
+                 ORDER BY target_id, region, timestamp DESC \
+                 LIMIT {limit} BY target_id, region"
+            ))
+            .bind(since.timestamp());
+        if let Some(within) = arrived_within {
+            q = q.bind(within.as_secs() + 1);
+        }
+        let rows: Vec<OutcomeRow> = q
+            .fetch_all::<OutcomeRow>()
+            .await
+            .context("clickhouse recent_outcomes")?;
+        Ok(rows.into_iter().map(OutcomeRow::split).collect())
+    }
 }
 
 #[async_trait]
@@ -772,35 +794,6 @@ impl ResultsStore for ClickhouseResultsStore {
             .await
             .context("clickhouse list_failures_by_region")?;
         Ok(rows.into_iter().map(|r| r.split(org.0)).collect())
-    }
-
-    async fn recent_results_for_targets(
-        &self,
-        targets: &[(OrgId, Uuid)],
-        range: ClampedRange,
-        per_target_limit: usize,
-    ) -> Result<Vec<(String, CheckResult)>> {
-        if targets.is_empty() {
-            return Ok(Vec::new());
-        }
-        let limit = per_target_limit.min(10_000) as u64;
-        let pair_list = pair_list(targets);
-        let rows: Vec<MultiResultRow> = self
-            .client
-            .query(&format!(
-                "SELECT org_id, region, target_id, {RESULT_COLUMNS} FROM {TABLE} \
-                 WHERE (org_id, target_id) IN ({pair_list}) \
-                 AND timestamp >= fromUnixTimestamp(?) \
-                 AND timestamp < fromUnixTimestamp(?) \
-                 ORDER BY target_id, region, timestamp DESC \
-                 LIMIT {limit} BY target_id, region"
-            ))
-            .bind(range.from.timestamp())
-            .bind(range.to.timestamp())
-            .fetch_all::<MultiResultRow>()
-            .await
-            .context("clickhouse recent_results_for_targets")?;
-        Ok(rows.into_iter().map(MultiResultRow::split).collect())
     }
 
     async fn last_n_summary(
