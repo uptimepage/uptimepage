@@ -37,10 +37,12 @@ services:
     restart: unless-stopped
     logging: *logging
     # Every request enters here, so unbounded growth swaps the whole box to a
-    # stall. No swap allowance: past the cap Caddy is OOM-killed and restarted
-    # in seconds. Caddy sets GOMEMLIMIT to 90% of this cap at boot.
+    # stall. Past the cap Caddy is OOM-killed and restarted in seconds. Caddy
+    # sets GOMEMLIMIT to 90% of this cap at boot. Swap is one 4 KiB page, not
+    # zero: Docker only registers a non-zero swap limit with systemd, and a
+    # systemd reload resets an unregistered 0 to unlimited.
     mem_limit: 1g
-    memswap_limit: 1g
+    memswap_limit: 1073745920
     ports:
       - "80:80"
       - "443:443"
