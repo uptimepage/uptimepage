@@ -2131,7 +2131,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "ClickHouseAsyncMetrics_DiskUsed_default{instance=~\"$instance\"}",
+          "expr": "ClickHouseAsyncMetrics_DiskUsed{disk=\"default\", instance=~\"$instance\"}",
           "legendFormat": "used",
           "refId": "A",
           "range": true
@@ -2142,7 +2142,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "ClickHouseAsyncMetrics_DiskAvailable_default{instance=~\"$instance\"}",
+          "expr": "ClickHouseAsyncMetrics_DiskAvailable{disk=\"default\", instance=~\"$instance\"}",
           "legendFormat": "available",
           "refId": "B",
           "range": true

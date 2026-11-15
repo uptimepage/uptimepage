@@ -139,7 +139,7 @@ jobs:
           --health-timeout 3s
           --health-retries 10
       clickhouse:
-        image: clickhouse/clickhouse-server:26.3
+        image: clickhouse/clickhouse-server:26.10
         env:
           CLICKHOUSE_DB: monitor
           CLICKHOUSE_USER: monitor

@@ -224,7 +224,7 @@ Three steps. No Rust toolchain and no compile step.
 docker compose up -d
 ```
 
-Pulls `ghcr.io/uptimepage/uptimepage:latest` and starts Postgres 18, ClickHouse 26.3, and the monitor. Both databases run their own migrations at startup, so there is nothing to wire up.
+Pulls `ghcr.io/uptimepage/uptimepage:latest` and starts Postgres 18, ClickHouse 26.10, and the monitor. Both databases run their own migrations at startup, so there is nothing to wire up.
 
 **2. Create your account**
 

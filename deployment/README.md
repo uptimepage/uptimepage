@@ -444,9 +444,8 @@ docker compose exec -T postgres pg_dump -U monitor monitor | \
     gzip > "backups/postgres-$(date +%Y%m%d).sql.gz"
 ```
 
-ClickHouse backup is bigger and more involved — use ClickHouse's
-`BACKUP TABLE check_results TO Disk(...)` from inside the container.
-See ClickHouse docs.
+`BACKUP_ROOT="$PWD/backups" ./backup.sh daily` dumps Postgres and every
+ClickHouse table; [BACKUP.md](BACKUP.md) covers scheduling and restore.
 
 Caddy data is small — just copy the volume:
 
@@ -457,6 +456,8 @@ docker run --rm -v uptimepage_caddy_data:/source:ro \
 ```
 
 ## Upgrading
+
+When an update moves the `clickhouse-server` image to a newer release, back up first: ClickHouse upgrades its data in place, and the older release may not read it back. From this directory, `BACKUP_ROOT="$PWD/backups" ./backup.sh daily` dumps Postgres and ClickHouse; [BACKUP.md](BACKUP.md) covers restore. ClickHouse 26.9 and later need an app image newer than v1.6.0, which cannot read their query results.
 
 ```bash
 docker compose pull

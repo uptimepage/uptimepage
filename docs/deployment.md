@@ -101,7 +101,7 @@ For the operator workflow (enabling components, narrating incidents, scheduling 
 
 ## Docker
 
-`docker compose up -d` brings up Postgres 18, ClickHouse 26.3, and the monitor on the same network. It pulls the published image `ghcr.io/uptimepage/uptimepage:latest`; override the tag with `UPTIMEPAGE_IMAGE`, or build from a checkout with `docker compose -f docker-compose.yml -f compose.build.yml up -d --build`. Compose env vars wire the monitor to the stack:
+`docker compose up -d` brings up Postgres 18, ClickHouse 26.10, and the monitor on the same network. It pulls the published image `ghcr.io/uptimepage/uptimepage:latest`; override the tag with `UPTIMEPAGE_IMAGE`, or build from a checkout with `docker compose -f docker-compose.yml -f compose.build.yml up -d --build`. Compose env vars wire the monitor to the stack:
 
 ```yaml
 UPTIMEPAGE_STORAGE__POSTGRES__URL: postgres://monitor:monitor@postgres:5432/monitor

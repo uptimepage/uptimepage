@@ -90,8 +90,8 @@ impl ClickhouseResultSink {
     ) -> std::result::Result<(), clickhouse::error::Error> {
         let mut insert = self.client.insert::<CheckResultRow>(TABLE).await?;
         if !first_attempt {
-            // ClickHouse 26.3 fails every insert in a flush that also carries a
-            // resent batch, and the inserts that failed together retry together.
+            // A resend flushes alone and at once, so whatever failed it
+            // cannot fail inserts that would have shared its flush.
             insert = insert.with_setting("async_insert_max_query_number", "1");
         } else if let Some(window_ms) = self.hold_for(rows.len()) {
             insert = insert
