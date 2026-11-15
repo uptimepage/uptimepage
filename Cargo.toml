@@ -62,7 +62,7 @@ sqlx = { version = "0.8", features = [
 ] }
 
 # ClickHouse for time-series results (optional but recommended)
-clickhouse = { version = "0.15", features = ["rustls-tls", "uuid", "chrono"] }
+clickhouse = { version = "0.15.3", features = ["rustls-tls", "uuid", "chrono"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
