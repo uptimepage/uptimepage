@@ -1500,8 +1500,8 @@ jobs:
           force=""
           if [ -z "$want_id" ] || [ "$want_id" != "$run_id" ]; then
             echo "caddy image $caddy_image not the running one; building"
-            # --pull: the bases are floating tags and the prune step wipes them,
-            # so a cached FROM would silently re-tag the same old binary.
+            # --pull: the pinned base tags are re-published for Alpine patches,
+            # so a cached FROM would build on a stale base.
             docker compose build --pull caddy
             # Re-validate against the freshly built binary: the gate before
             # the cutover ran on the previous image, which may not have the

@@ -12,15 +12,21 @@
 #
 # docker-compose builds this automatically; no manual one-time step.
 
-# Both plugins are pinned: an unpinned build makes the image's behaviour depend
-# on the day it was built, and the Caddyfile relies on `ipv6_prefix`, which
-# caddy-ratelimit only gained after its sole v0.1.0 tag — hence a commit pin.
-# caddy-ratelimit is pinned to main @ 2026-06-12: its only tag, v0.1.0,
-# predates the `ipv6_prefix` the Caddyfile needs.
-FROM caddy:2-builder AS builder
+# Caddy and both plugins are pinned: an unpinned build makes the image's
+# behaviour depend on the day it was built, and the Caddyfile relies on
+# `ipv6_prefix`, which caddy-ratelimit only gained after its sole v0.1.0 tag —
+# hence a commit pin. caddy-ratelimit is pinned to main @ 2026-06-12: its only
+# tag, v0.1.0, predates the `ipv6_prefix` the Caddyfile needs.
+#
+# Caddy 2.11.5 or later: older builds carry a certmagic in which handshakes
+# queued behind a refused on-demand `ask` recurse once per retry, so a flood
+# of handshakes without SNI grows their stacks until the memory cap is hit.
+ARG CADDY_VERSION=2.11.9
+
+FROM caddy:${CADDY_VERSION}-builder AS builder
 RUN xcaddy build \
     --with github.com/caddy-dns/hetzner/v2@v2.0.1 \
     --with github.com/mholt/caddy-ratelimit@5625512f24f6f59d6f64fb3aafe5eecff0b286db
 
-FROM caddy:2-alpine
+FROM caddy:${CADDY_VERSION}-alpine
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy

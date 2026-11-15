@@ -87,8 +87,8 @@ The stock `caddy:2-alpine` image lacks two plugins this deployment needs:
 - [`caddy-ratelimit`](https://github.com/mholt/caddy-ratelimit) — per-IP
   throttle on the public status surface.
 
-`deployment/Dockerfile.caddy` bakes both in, at pinned versions. `docker
-compose up -d` builds it automatically and tags it `uptimepage-caddy:3` —
+`deployment/Dockerfile.caddy` bakes both, pinned, into a pinned Caddy. `docker
+compose up -d` builds it automatically and tags it `uptimepage-caddy:4` —
 there is no manual one-time step. Bump that tag whenever the pins move: CI
 validates the Caddyfile against a freshly built image, and the deploy swaps
 the container when the tag no longer matches what it runs, but neither can
@@ -96,7 +96,7 @@ tell that a *reused* tag now means a different binary. To rebuild after a
 Caddy or plugin bump:
 
 ```bash
-# --pull: the bases are floating tags, so a cached FROM re-tags the old binary.
+# --pull: the base tags are re-published for Alpine patches; take the latest.
 docker compose build --pull caddy && docker compose up -d caddy
 ```
 

@@ -33,7 +33,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.caddy
-    image: uptimepage-caddy:3
+    image: uptimepage-caddy:4
     restart: unless-stopped
     logging: *logging
     # Every request enters here, so unbounded growth swaps the whole box to a
