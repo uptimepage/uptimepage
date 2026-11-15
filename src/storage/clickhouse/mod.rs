@@ -1,5 +1,5 @@
 //! ClickHouse storage: the migration runner, the write sinks, and the
-//! org-scoped read side, over the shared client and rollup-window helpers here.
+//! org-scoped read side, over the shared client and helpers here.
 
 use std::time::Duration;
 
@@ -8,7 +8,7 @@ use backoff::ExponentialBackoffBuilder;
 use chrono::{DateTime, TimeZone, Utc};
 use clickhouse::{Client, Row, RowOwned, RowRead, query::Query};
 use secrecy::ExposeSecret;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::config::ClickhouseConfig;
@@ -17,6 +17,7 @@ use crate::error::Result;
 mod results;
 mod schema;
 mod sinks;
+mod source;
 
 pub use results::ClickhouseResultsStore;
 pub use schema::migrate;
@@ -29,16 +30,6 @@ const TABLE: &str = "check_results";
 const FLOW_TABLE: &str = "flow_runs";
 const HEARTBEAT_PING_TABLE: &str = "heartbeat_pings";
 const ALERT_EVENT_TABLE: &str = "alert_events";
-
-/// Seconds bound for the matview `minute` column (`DateTime`).
-#[derive(Serialize)]
-struct MinuteBound(u32);
-
-impl MinuteBound {
-    fn new(dt: DateTime<Utc>) -> Self {
-        Self(to_unix_secs(dt))
-    }
-}
 
 /// SQL for a row stamped at `ts` being past the evidence window it carries.
 /// A column TTL acts only when a merge runs, so every reader of evidence
@@ -58,28 +49,6 @@ fn from_unix_secs(secs: u32) -> DateTime<Utc> {
         .unwrap_or_else(Utc::now)
 }
 
-/// `[from, to)` over the matview `minute` column; bind via [`bind_minute_window`].
-const MINUTE_WINDOW: &str = "minute >= fromUnixTimestamp(?) AND minute < fromUnixTimestamp(?)";
-
-/// 1m rollup TTL (days). Ranges reaching past it read the 1h rollup instead.
-const MINUTE_ROLLUP_DAYS: i64 = 30;
-
-/// The two [`MinuteBound`] binds [`MINUTE_WINDOW`] expects; call after the
-/// leading positional binds (org_id, target_id, …).
-fn bind_minute_window(q: Query, from: DateTime<Utc>, to: DateTime<Utc>) -> Query {
-    q.bind(MinuteBound::new(from)).bind(MinuteBound::new(to))
-}
-
-/// `(table, time_column)` for a range: the 1m rollup within its TTL, else the
-/// 1h rollup. Both carry the same AggregateFunction columns, so a merge query
-/// reads either by swapping these two tokens.
-fn rollup_source(from: DateTime<Utc>) -> (&'static str, &'static str) {
-    if from >= Utc::now() - chrono::Duration::days(MINUTE_ROLLUP_DAYS) {
-        ("check_results_1m", "minute")
-    } else {
-        ("check_results_1h", "hour")
-    }
-}
 pub fn build_client(cfg: &ClickhouseConfig) -> Client {
     let mut client = Client::default()
         .with_url(&cfg.url)

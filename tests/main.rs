@@ -136,6 +136,7 @@ mod recent_results_test;
 mod region_fold_test;
 mod region_health_test;
 mod regions_test;
+mod results_source_test;
 mod retention_test;
 mod rollup_dedup_test;
 mod sampler_test;

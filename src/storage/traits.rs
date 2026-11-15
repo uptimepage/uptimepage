@@ -515,8 +515,7 @@ impl std::ops::Deref for ClampedRange {
     }
 }
 
-/// Round a requested bucket width up to a whole number of 60s rollup rows, so
-/// every output bucket spans an integer count of minutes (grid alignment is the
+/// Round a requested bucket width up to whole minutes (grid alignment is the
 /// caller's `toStartOfInterval` / `div_euclid`).
 pub fn rollup_bucket_secs(bucket_seconds: u32) -> u32 {
     bucket_seconds.max(60).div_ceil(60) * 60
@@ -829,9 +828,7 @@ pub trait ResultsStore: RecentOutcomes {
         target: Option<Uuid>,
     ) -> Result<Vec<RegionLatestStatus>>;
     /// Minute-bucketed average duration for the last 60 minutes, every
-    /// monitor in the org. Drives the per-row sparkline. Implementations
-    /// MUST read from the `check_results_1m` rollup (already aggregated
-    /// per minute) so the cost stays cheap even for large orgs.
+    /// monitor in the org. Drives the per-row sparkline.
     async fn dashboard_sparkline(
         &self,
         org: OrgId,
@@ -841,10 +838,10 @@ pub trait ResultsStore: RecentOutcomes {
     ) -> Result<Vec<DashboardSparkBucket>>;
     /// Bucketed latency for a single monitor: p50/p95/p99 + per-phase means
     /// per `bucket_seconds` slice across `range`. Drives the monitor-detail
-    /// latency and breakdown charts. Implementations MUST read from the
-    /// `check_results_1m` rollup so a 30d window stays O(buckets) regardless
-    /// of sample rate. Buckets with no samples are omitted; the chart leaves
-    /// the gap unconnected.
+    /// latency and breakdown charts. A range past the raw window reads the
+    /// hour rollup, so a long one stays O(hours) regardless of sample rate.
+    /// Buckets with no samples are omitted; the chart leaves the gap
+    /// unconnected.
     async fn latency_buckets(
         &self,
         org: OrgId,
@@ -854,7 +851,7 @@ pub trait ResultsStore: RecentOutcomes {
         region: Option<&str>,
     ) -> Result<Vec<LatencyBucket>>;
     /// Per-target up/total counts per bucket — drives the uptime-card
-    /// sparkline. Same rollup source and bucketing as [`latency_buckets`](Self::latency_buckets).
+    /// sparkline. Same source and bucketing as [`latency_buckets`](Self::latency_buckets).
     async fn availability_buckets(
         &self,
         org: OrgId,
@@ -873,8 +870,8 @@ pub trait ResultsStore: RecentOutcomes {
         range: TimeRange,
     ) -> Result<Vec<RegionRollup>>;
     /// Per-region failure and state-change counts for one target over `range`.
-    /// Implementations MUST read raw results: the minute rollup keeps one status
-    /// per minute, which erases the transitions this counts.
+    /// Implementations MUST read raw results: a rollup keeps one status per
+    /// bucket, which erases the transitions this counts.
     async fn flap_counts(
         &self,
         org: OrgId,
@@ -899,7 +896,7 @@ pub trait ResultsStore: RecentOutcomes {
         limit: usize,
     ) -> Result<Vec<FailingServer>>;
     /// Per-region latency buckets for one target — the overlay view, each
-    /// region a separate line. Same rollup source + bucketing as
+    /// region a separate line. Same source + bucketing as
     /// [`latency_buckets`](Self::latency_buckets), split by region.
     async fn latency_buckets_by_region(
         &self,
@@ -909,10 +906,8 @@ pub trait ResultsStore: RecentOutcomes {
         bucket_seconds: u32,
     ) -> Result<Vec<RegionLatencySeries>>;
     /// Fleet-wide uptime ribbon: one bucket per `bucket_seconds` slice
-    /// across every monitor in `org`. Implementations MUST read from the
-    /// `check_results_1m` rollup so the cost stays O(buckets) regardless
-    /// of monitor count. Buckets with no samples are omitted; the caller
-    /// fills the window into a fixed-length array.
+    /// across every monitor in `org`. Buckets with no samples are omitted;
+    /// the caller fills the window into a fixed-length array.
     async fn fleet_ribbon(
         &self,
         org: OrgId,

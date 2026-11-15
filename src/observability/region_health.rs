@@ -66,22 +66,20 @@ async fn sweep(ch: &ChClient) -> Result<()> {
     Ok(())
 }
 
-/// One grouped read over the last `window_secs`, merged from the per-minute
-/// rollup so the scan is O(minutes) not O(raw checks). Operator-wide across
-/// every org by design, like the inventory gauges. The cutoff is computed
-/// app-side and bound as a unix timestamp (matching the other range reads) so
-/// it does not depend on ClickHouse interval parsing. p95 is the approximate
-/// quantile merged from the rollup state, fine for a health signal.
+/// One grouped read over the last `window_secs`. Operator-wide across every
+/// org by design, like the inventory gauges. The cutoff is computed app-side
+/// and bound as a unix timestamp (matching the other range reads) so it does
+/// not depend on ClickHouse interval parsing.
 pub async fn collect(ch: &ChClient, window_secs: u32) -> Result<Vec<RegionStat>> {
     let cutoff = Utc::now().timestamp() - i64::from(window_secs);
     let rows = ch
         .query(
             "SELECT region, \
-                    countMerge(total_checks) AS total, \
-                    countIfMerge(up_checks) AS up, \
-                    quantilesMerge(0.5, 0.95)(duration_quantiles)[2] AS p95_ms \
-             FROM check_results_1m \
-             WHERE minute >= toStartOfMinute(fromUnixTimestamp(?)) \
+                    count() AS total, \
+                    countIf(status = 'up') AS up, \
+                    quantile(0.95)(duration_ms) AS p95_ms \
+             FROM check_results \
+             WHERE timestamp >= fromUnixTimestamp(?) \
              GROUP BY region",
         )
         .bind(cutoff)

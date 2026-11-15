@@ -1,7 +1,6 @@
 //! ClickHouse integration test for the per-monitor availability buckets that
 //! drive the uptime-card sparkline. Validates what in-memory unit tests can't:
-//! the `countMerge`/`countIfMerge` deserialize path off the rollup and the
-//! region predicate.
+//! the count deserialize path and the region predicate.
 //!
 //!     CLICKHOUSE_URL=http://127.0.0.1:8123 \
 //!       cargo nextest run --test it --run-ignored only --no-capture -E 'test(/^availability_buckets_test::/)'
@@ -37,7 +36,7 @@ fn check(target: Uuid, org: Uuid, ts: chrono::DateTime<Utc>, status: CheckStatus
 
 #[tokio::test]
 #[ignore = "requires ClickHouse (CLICKHOUSE_URL)"]
-async fn availability_buckets_count_up_and_total_from_rollup() {
+async fn availability_buckets_count_up_and_total() {
     let Some(ch) = common::ch_client_from_env().await else {
         return;
     };
@@ -83,7 +82,7 @@ async fn availability_buckets_count_up_and_total_from_rollup() {
     assert_eq!(buckets.len(), 1, "all samples land in one 60s bucket");
     assert_eq!(buckets[0].bucket_ts, base.timestamp());
     assert_eq!(buckets[0].total, 5);
-    assert_eq!(buckets[0].up, 3, "countIfMerge counts only status=up");
+    assert_eq!(buckets[0].up, 3, "only status=up counts as up");
 
     // Region predicate: matching region returns the bucket, others are empty.
     let same = store
@@ -109,7 +108,7 @@ async fn availability_buckets_count_up_and_total_from_rollup() {
         .expect("other-region query");
     assert!(other.is_empty(), "no rows for an unused region");
 
-    // uptime() merges the same rollup counts over the window.
+    // uptime() reads the same counts over the window.
     let up = store
         .uptime(OrgId(org), target, ClampedRange::unclamped(range), None)
         .await

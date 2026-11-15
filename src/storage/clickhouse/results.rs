@@ -26,10 +26,12 @@ use crate::storage::traits::{
     rollup_bucket_secs,
 };
 
+use super::source::{Source, bind_window};
 use super::{
-    FLOW_TABLE, HEARTBEAT_PING_TABLE, MINUTE_WINDOW, TABLE, bind_minute_window, fetch_first,
-    fetch_single, from_unix_secs, past_evidence, rollup_source, to_unix_secs,
+    FLOW_TABLE, HEARTBEAT_PING_TABLE, TABLE, fetch_single, from_unix_secs, past_evidence,
+    to_unix_secs,
 };
+use crate::storage::org_ttl::OrgTtlDays;
 
 /// Org-scoped read side of the ClickHouse results table. Holds no ambient
 /// org; every query binds the `org` the caller resolved from the request, so
@@ -38,11 +40,26 @@ use super::{
 /// not only isolation.
 pub struct ClickhouseResultsStore {
     client: Client,
+    retention: OrgTtlDays,
 }
 
 impl ClickhouseResultsStore {
     pub fn from_client(client: Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            retention: OrgTtlDays::default(),
+        }
+    }
+
+    /// The snapshot that stamps each row's TTL, so reads stop at the same
+    /// window the rows were kept for.
+    pub fn with_retention(mut self, retention: OrgTtlDays) -> Self {
+        self.retention = retention;
+        self
+    }
+
+    fn source(&self, org: OrgId, from: DateTime<Utc>) -> Source {
+        Source::for_range(from, self.retention.days_for(org.0).row)
     }
 }
 
@@ -802,37 +819,11 @@ impl ResultsStore for ClickhouseResultsStore {
         range: TimeRange,
         region: Option<&str>,
     ) -> Result<(u64, u64, u32)> {
-        #[derive(Row, Deserialize)]
-        struct Counts {
-            total: u64,
-            up: u64,
-            avg_ms: f64,
-        }
-        let (table, tcol) = rollup_source(range.from);
-        let window = format!("{tcol} >= fromUnixTimestamp(?) AND {tcol} < fromUnixTimestamp(?)");
-        let region_pred = region.map(|_| "AND region = ?").unwrap_or("");
-        let mut cq = self
-            .client
-            .query(&format!(
-                "SELECT countMerge(total_checks) AS total, \
-                        countIfMerge(up_checks) AS up, \
-                        avgMerge(avg_duration_ms) AS avg_ms \
-                 FROM {table} \
-                 WHERE org_id = ? {region_pred} AND {window}"
-            ))
-            .bind(org.0);
-        if let Some(r) = region {
-            cq = cq.bind(r);
-        }
-        let counts: Counts = fetch_single(bind_minute_window(cq, range.from, range.to))
+        let t = self
+            .fleet_totals(org, range, region)
             .await
             .context("clickhouse last_n_summary counts")?;
-        let avg_ms = if counts.avg_ms.is_finite() {
-            counts.avg_ms.round().clamp(0.0, u32::MAX as f64) as u32
-        } else {
-            0
-        };
-        Ok((counts.total, counts.up, avg_ms))
+        Ok((t.total, t.up, t.avg_ms()))
     }
 
     async fn failure_streaks(&self, org: OrgId, range: TimeRange, region: &str) -> Result<u64> {
@@ -888,17 +879,16 @@ impl ResultsStore for ClickhouseResultsStore {
             #[serde(with = "clickhouse::serde::uuid")]
             target_id: Uuid,
         }
-        // The minute rollup ages out first, so an older window reads the hour one.
-        let (table, tcol) = rollup_source(from);
+        let src = self.source(org, from);
         let q = self
             .client
             .query(&format!(
-                "SELECT DISTINCT target_id FROM {table} \
-                 WHERE org_id = ? AND {tcol} >= fromUnixTimestamp(?) \
-                   AND {tcol} < fromUnixTimestamp(?)"
+                "SELECT DISTINCT target_id FROM {table} WHERE org_id = ? AND {window}",
+                table = src.table(),
+                window = src.window(),
             ))
             .bind(org.0);
-        let rows: Vec<Sampled> = bind_minute_window(q, from, to)
+        let rows: Vec<Sampled> = bind_window(q, from, to)
             .fetch_all::<Sampled>()
             .await
             .context("clickhouse sampled_targets")?;
@@ -921,27 +911,29 @@ impl ResultsStore for ClickhouseResultsStore {
             error: u64,
         }
 
-        let (table, tcol) = rollup_source(range.from);
-        let window = format!("{tcol} >= fromUnixTimestamp(?) AND {tcol} < fromUnixTimestamp(?)");
+        let src = self.source(org, range.from);
         let region_pred = region.map(|_| "AND region = ?").unwrap_or("");
         let mut q = self
             .client
             .query(&format!(
-                "SELECT \
-                   countMerge(total_checks) AS total, \
-                   countIfMerge(up_checks) AS up, \
-                   countIfMerge(down_checks) AS down, \
-                   countIfMerge(degraded_checks) AS degraded, \
-                   countIfMerge(error_checks) AS error \
+                "SELECT {total} AS total, {up} AS up, {down} AS down, \
+                        {degraded} AS degraded, {error} AS error \
                  FROM {table} \
-                 WHERE org_id = ? AND target_id = ? {region_pred} AND {window}"
+                 WHERE org_id = ? AND target_id = ? {region_pred} AND {window}",
+                total = src.total(),
+                up = src.checks(CheckStatus::Up),
+                down = src.checks(CheckStatus::Down),
+                degraded = src.checks(CheckStatus::Degraded),
+                error = src.checks(CheckStatus::Error),
+                table = src.table(),
+                window = src.window(),
             ))
             .bind(org.0)
             .bind(target_id);
         if let Some(r) = region {
             q = q.bind(r);
         }
-        let row: CountsRow = fetch_single(bind_minute_window(q, range.from, range.to))
+        let row: CountsRow = fetch_single(bind_window(q, range.from, range.to))
             .await
             .context("clickhouse uptime")?;
 
@@ -963,8 +955,6 @@ impl ResultsStore for ClickhouseResultsStore {
         range: TimeRange,
         region: Option<&str>,
     ) -> Result<Vec<DashboardMetrics>> {
-        // Merges from the per-minute matview, not raw `check_results`.
-        // `minute` is `DateTime` (UInt32 s), so the bind is u32-seconds.
         #[derive(Row, Deserialize)]
         struct RollupRow {
             #[serde(with = "clickhouse::serde::uuid")]
@@ -976,27 +966,34 @@ impl ResultsStore for ClickhouseResultsStore {
             last_status: i8,
             last_minute_ts: u32,
         }
-        let (table, tcol) = rollup_source(range.from);
+        let src = self.source(org, range.from);
         let query = format!(
             "SELECT \
                target_id, \
-               countMerge(total_checks) AS samples, \
-               countIfMerge(up_checks) AS up, \
-               avgMerge(avg_duration_ms) AS avg_ms, \
-               quantilesMerge(0.5, 0.95)(duration_quantiles) AS quantiles, \
-               argMaxMerge(last_status_state) AS last_status, \
-               toUInt32(max({tcol})) AS last_minute_ts \
+               {total} AS samples, \
+               {up} AS up, \
+               {avg} AS avg_ms, \
+               {quantiles} AS quantiles, \
+               {last_status} AS last_status, \
+               toUInt32(toStartOfMinute(max({time}))) AS last_minute_ts \
              FROM {table} \
-             WHERE org_id = ? {region_pred} \
-               AND {tcol} >= fromUnixTimestamp(?) AND {tcol} < fromUnixTimestamp(?) \
+             WHERE org_id = ? {region_pred} AND {window} \
              GROUP BY target_id",
+            total = src.total(),
+            up = src.checks(CheckStatus::Up),
+            avg = src.avg_ms("duration"),
+            quantiles = src.duration_quantiles("0.5, 0.95"),
+            last_status = src.last_status(),
+            time = src.time(),
+            table = src.table(),
+            window = src.window(),
             region_pred = region.map(|_| "AND region = ?").unwrap_or("")
         );
         let mut q = self.client.query(&query).bind(org.0);
         if let Some(r) = region {
             q = q.bind(r);
         }
-        let rows: Vec<RollupRow> = bind_minute_window(q, range.from, range.to)
+        let rows: Vec<RollupRow> = bind_window(q, range.from, range.to)
             .fetch_all::<RollupRow>()
             .await
             .context("clickhouse dashboard_rollup")?;
@@ -1121,27 +1118,26 @@ impl ResultsStore for ClickhouseResultsStore {
             region: String,
             status: i8,
         }
-        let (table, tcol) = rollup_source(range.from);
+        let src = self.source(org, range.from);
         let target_filter = if target.is_some() {
             "AND target_id = ?"
         } else {
             ""
         };
         let query = format!(
-            "SELECT \
-               target_id, \
-               region, \
-               argMaxMerge(last_status_state) AS status \
+            "SELECT target_id, region, {last_status} AS status \
              FROM {table} \
-             WHERE org_id = ? {target_filter} \
-               AND {tcol} >= fromUnixTimestamp(?) AND {tcol} < fromUnixTimestamp(?) \
-             GROUP BY target_id, region"
+             WHERE org_id = ? {target_filter} AND {window} \
+             GROUP BY target_id, region",
+            last_status = src.last_status(),
+            table = src.table(),
+            window = src.window(),
         );
         let mut q = self.client.query(&query).bind(org.0);
         if let Some(t) = target {
             q = q.bind(t);
         }
-        let rows: Vec<StatusRow> = bind_minute_window(q, range.from, range.to)
+        let rows: Vec<StatusRow> = bind_window(q, range.from, range.to)
             .fetch_all::<StatusRow>()
             .await
             .context("clickhouse latest_status_by_region")?;
@@ -1162,8 +1158,6 @@ impl ResultsStore for ClickhouseResultsStore {
         to: DateTime<Utc>,
         region: Option<&str>,
     ) -> Result<Vec<DashboardSparkBucket>> {
-        // Reads the per-minute rollup so cost stays O(buckets), not O(raw). The
-        // `avgState` column needs its `avgMerge` finaliser in `SELECT`.
         #[derive(Row, Deserialize)]
         struct SparkRow {
             #[serde(with = "clickhouse::serde::uuid")]
@@ -1173,24 +1167,31 @@ impl ResultsStore for ClickhouseResultsStore {
             checks: u64,
             up: u64,
         }
+        let src = self.source(org, from);
         let query = format!(
             "SELECT \
                target_id, \
-               toUInt32(minute) AS bucket_ts, \
-               avgMerge(avg_duration_ms) AS avg_ms, \
-               countMerge(total_checks) AS checks, \
-               countIfMerge(up_checks) AS up \
-             FROM check_results_1m \
-             WHERE org_id = ? {region_pred} AND {MINUTE_WINDOW} \
-             GROUP BY target_id, minute \
-             ORDER BY target_id, minute",
+               toUInt32(toStartOfMinute({time})) AS bucket_ts, \
+               {avg} AS avg_ms, \
+               {total} AS checks, \
+               {up} AS up \
+             FROM {table} \
+             WHERE org_id = ? {region_pred} AND {window} \
+             GROUP BY target_id, bucket_ts \
+             ORDER BY target_id, bucket_ts",
+            time = src.time(),
+            avg = src.avg_ms("duration"),
+            total = src.total(),
+            up = src.checks(CheckStatus::Up),
+            table = src.table(),
+            window = src.window(),
             region_pred = region.map(|_| "AND region = ?").unwrap_or("")
         );
         let mut q = self.client.query(&query).bind(org.0);
         if let Some(r) = region {
             q = q.bind(r);
         }
-        let rows: Vec<SparkRow> = bind_minute_window(q, from, to)
+        let rows: Vec<SparkRow> = bind_window(q, from, to)
             .fetch_all::<SparkRow>()
             .await
             .context("clickhouse dashboard_sparkline")?;
@@ -1228,31 +1229,23 @@ impl ResultsStore for ClickhouseResultsStore {
             samples: u64,
         }
         let bucket = rollup_bucket_secs(bucket_seconds);
-        // `minute`/`hour` are both DateTime seconds, so `bind_minute_window`
-        // binds either.
-        let (table, tcol) = rollup_source(range.from);
-        let window = format!("{tcol} >= fromUnixTimestamp(?) AND {tcol} < fromUnixTimestamp(?)");
+        let src = self.source(org, range.from);
         let region_pred = region.map(|_| "AND region = ?").unwrap_or("");
         let query = format!(
-            "SELECT \
-               toUInt32(toStartOfInterval({tcol}, INTERVAL {bucket} SECOND)) AS bucket_ts, \
-               quantilesMerge(0.5, 0.95, 0.99)(duration_quantiles) AS quantiles, \
-               avgMerge(avg_duration_ms) AS avg, \
-               ifNull(avgMerge(avg_dns_ms), 0) AS dns, \
-               ifNull(avgMerge(avg_connect_ms), 0) AS connect, \
-               ifNull(avgMerge(avg_tls_ms), 0) AS tls, \
-               ifNull(avgMerge(avg_ttfb_ms), 0) AS ttfb, \
-               countMerge(total_checks) AS samples \
+            "SELECT {columns} \
              FROM {table} \
              WHERE org_id = ? AND target_id = ? {region_pred} AND {window} \
              GROUP BY bucket_ts \
-             ORDER BY bucket_ts"
+             ORDER BY bucket_ts",
+            columns = latency_columns(src, bucket),
+            table = src.table(),
+            window = src.window(),
         );
         let mut q = self.client.query(&query).bind(org.0).bind(target_id);
         if let Some(r) = region {
             q = q.bind(r);
         }
-        let rows: Vec<LatRow> = bind_minute_window(q, range.from, range.to)
+        let rows: Vec<LatRow> = bind_window(q, range.from, range.to)
             .fetch_all::<LatRow>()
             .await
             .context("clickhouse latency_buckets")?;
@@ -1301,25 +1294,25 @@ impl ResultsStore for ClickhouseResultsStore {
             total: u64,
             up: u64,
         }
-        let bucket = rollup_bucket_secs(bucket_seconds);
-        let (table, tcol) = rollup_source(range.from);
-        let window = format!("{tcol} >= fromUnixTimestamp(?) AND {tcol} < fromUnixTimestamp(?)");
+        let src = self.source(org, range.from);
         let region_pred = region.map(|_| "AND region = ?").unwrap_or("");
         let query = format!(
-            "SELECT \
-               toUInt32(toStartOfInterval({tcol}, INTERVAL {bucket} SECOND)) AS bucket_ts, \
-               countMerge(total_checks) AS total, \
-               countIfMerge(up_checks) AS up \
+            "SELECT {bucket} AS bucket_ts, {total} AS total, {up} AS up \
              FROM {table} \
              WHERE org_id = ? AND target_id = ? {region_pred} AND {window} \
              GROUP BY bucket_ts \
-             ORDER BY bucket_ts"
+             ORDER BY bucket_ts",
+            bucket = src.bucket(rollup_bucket_secs(bucket_seconds)),
+            total = src.total(),
+            up = src.checks(CheckStatus::Up),
+            table = src.table(),
+            window = src.window(),
         );
         let mut q = self.client.query(&query).bind(org.0).bind(target_id);
         if let Some(r) = region {
             q = q.bind(r);
         }
-        let rows: Vec<AvailRow> = bind_minute_window(q, range.from, range.to)
+        let rows: Vec<AvailRow> = bind_window(q, range.from, range.to)
             .fetch_all::<AvailRow>()
             .await
             .context("clickhouse availability_buckets")?;
@@ -1347,21 +1340,25 @@ impl ResultsStore for ClickhouseResultsStore {
             quantiles: Vec<f64>,
             last_status: i8,
         }
+        let src = self.source(org, range.from);
         let q = self
             .client
             .query(&format!(
-                "SELECT region, \
-                   countMerge(total_checks) AS samples, \
-                   countIfMerge(up_checks) AS up, \
-                   quantilesMerge(0.5, 0.95, 0.99)(duration_quantiles) AS quantiles, \
-                   argMaxMerge(last_status_state) AS last_status \
-                 FROM check_results_1m \
-                 WHERE org_id = ? AND target_id = ? AND {MINUTE_WINDOW} \
-                 GROUP BY region ORDER BY region"
+                "SELECT region, {total} AS samples, {up} AS up, \
+                        {quantiles} AS quantiles, {last_status} AS last_status \
+                 FROM {table} \
+                 WHERE org_id = ? AND target_id = ? AND {window} \
+                 GROUP BY region ORDER BY region",
+                total = src.total(),
+                up = src.checks(CheckStatus::Up),
+                quantiles = src.duration_quantiles("0.5, 0.95, 0.99"),
+                last_status = src.last_status(),
+                table = src.table(),
+                window = src.window(),
             ))
             .bind(org.0)
             .bind(target_id);
-        let rows: Vec<R> = bind_minute_window(q, range.from, range.to)
+        let rows: Vec<R> = bind_window(q, range.from, range.to)
             .fetch_all::<R>()
             .await
             .context("clickhouse region_breakdown")?;
@@ -1556,25 +1553,19 @@ impl ResultsStore for ClickhouseResultsStore {
             samples: u64,
         }
         let bucket = rollup_bucket_secs(bucket_seconds);
-        let (table, tcol) = rollup_source(range.from);
-        let window = format!("{tcol} >= fromUnixTimestamp(?) AND {tcol} < fromUnixTimestamp(?)");
+        let src = self.source(org, range.from);
         let query = format!(
-            "SELECT region, \
-               toUInt32(toStartOfInterval({tcol}, INTERVAL {bucket} SECOND)) AS bucket_ts, \
-               quantilesMerge(0.5, 0.95, 0.99)(duration_quantiles) AS quantiles, \
-               avgMerge(avg_duration_ms) AS avg, \
-               ifNull(avgMerge(avg_dns_ms), 0) AS dns, \
-               ifNull(avgMerge(avg_connect_ms), 0) AS connect, \
-               ifNull(avgMerge(avg_tls_ms), 0) AS tls, \
-               ifNull(avgMerge(avg_ttfb_ms), 0) AS ttfb, \
-               countMerge(total_checks) AS samples \
+            "SELECT region, {columns} \
              FROM {table} \
              WHERE org_id = ? AND target_id = ? AND {window} \
              GROUP BY region, bucket_ts \
-             ORDER BY region, bucket_ts"
+             ORDER BY region, bucket_ts",
+            columns = latency_columns(src, bucket),
+            table = src.table(),
+            window = src.window(),
         );
         let q = self.client.query(&query).bind(org.0).bind(target_id);
-        let rows: Vec<LatRow> = bind_minute_window(q, range.from, range.to)
+        let rows: Vec<LatRow> = bind_window(q, range.from, range.to)
             .fetch_all::<LatRow>()
             .await
             .context("clickhouse latency_buckets_by_region")?;
@@ -1623,32 +1614,32 @@ impl ResultsStore for ClickhouseResultsStore {
             // read each element in its RowBinary `(hi, lo)` form and rebuild.
             down_targets: Vec<(u64, u64)>,
         }
-        let bucket = rollup_bucket_secs(bucket_seconds);
+        let src = self.source(org, from);
         // Inner per-target pass so the outer can sum the fleet rate and also
-        // collect which monitors dipped. INTERVAL is a keyword position —
-        // inlined so `bind()` stays value-only.
+        // collect which monitors dipped.
         let query = format!(
             "SELECT bucket_ts, sum(t_samples) AS samples, sum(t_up) AS up, \
                     groupUniqArrayIf(target_id, t_samples > t_up) AS down_targets \
              FROM ( \
-               SELECT \
-                 toUInt32(toStartOfInterval(minute, INTERVAL {bucket} SECOND)) AS bucket_ts, \
-                 target_id, \
-                 countMerge(total_checks) AS t_samples, \
-                 countIfMerge(up_checks) AS t_up \
-               FROM check_results_1m \
-               WHERE org_id = ? {region_pred} AND {MINUTE_WINDOW} \
+               SELECT {bucket} AS bucket_ts, target_id, {total} AS t_samples, {up} AS t_up \
+               FROM {table} \
+               WHERE org_id = ? {region_pred} AND {window} \
                GROUP BY bucket_ts, target_id \
              ) \
              GROUP BY bucket_ts \
              ORDER BY bucket_ts",
+            bucket = src.bucket(rollup_bucket_secs(bucket_seconds)),
+            total = src.total(),
+            up = src.checks(CheckStatus::Up),
+            table = src.table(),
+            window = src.window(),
             region_pred = region.map(|_| "AND region = ?").unwrap_or("")
         );
         let mut q = self.client.query(&query).bind(org.0);
         if let Some(r) = region {
             q = q.bind(r);
         }
-        let rows: Vec<RibbonRow> = bind_minute_window(q, from, to)
+        let rows: Vec<RibbonRow> = bind_window(q, from, to)
             .fetch_all::<RibbonRow>()
             .await
             .context("clickhouse fleet_ribbon")?;
@@ -1673,54 +1664,90 @@ impl ResultsStore for ClickhouseResultsStore {
         range: TimeRange,
         region: Option<&str>,
     ) -> Result<PriorPeriodSummary> {
-        // Same rollup source as `last_n_summary`: the dashboard compares
-        // current (from `last_n_summary`) against prior here, so a source
-        // mismatch would produce phantom deltas during ingest lag.
-        #[derive(Row, Deserialize)]
-        struct PriorRow {
-            samples: u64,
-            up: u64,
-            avg_ms: f64,
-        }
         let span = range.to - range.from;
-        let prior_to = range.from;
-        let prior_from = prior_to - span;
-        let (table, tcol) = rollup_source(prior_from);
-        let window = format!("{tcol} >= fromUnixTimestamp(?) AND {tcol} < fromUnixTimestamp(?)");
+        let prior = TimeRange {
+            from: range.from - span,
+            to: range.from,
+        };
+        let t = self
+            .fleet_totals(org, prior, region)
+            .await
+            .context("clickhouse prior_period_summary")?;
+        Ok(PriorPeriodSummary {
+            checks_total: t.total,
+            checks_up: t.up,
+            avg_ms: t.avg_ms(),
+        })
+    }
+}
+
+#[derive(Row, Deserialize)]
+struct FleetTotals {
+    total: u64,
+    up: u64,
+    avg_ms: f64,
+}
+
+impl FleetTotals {
+    fn avg_ms(&self) -> u32 {
+        if self.avg_ms.is_finite() {
+            self.avg_ms.round().clamp(0.0, u32::MAX as f64) as u32
+        } else {
+            0
+        }
+    }
+}
+
+impl ClickhouseResultsStore {
+    /// The current and prior KPI windows share one query shape; each still
+    /// picks its source from its own start.
+    async fn fleet_totals(
+        &self,
+        org: OrgId,
+        range: TimeRange,
+        region: Option<&str>,
+    ) -> clickhouse::error::Result<FleetTotals> {
+        let src = self.source(org, range.from);
         let region_pred = region.map(|_| "AND region = ?").unwrap_or("");
         let mut q = self
             .client
             .query(&format!(
-                "SELECT \
-                   countMerge(total_checks) AS samples, \
-                   countIfMerge(up_checks) AS up, \
-                   avgMerge(avg_duration_ms) AS avg_ms \
+                "SELECT {total} AS total, {up} AS up, {avg} AS avg_ms \
                  FROM {table} \
-                 WHERE org_id = ? {region_pred} AND {window}"
+                 WHERE org_id = ? {region_pred} AND {window}",
+                total = src.total(),
+                up = src.checks(CheckStatus::Up),
+                avg = src.avg_ms("duration"),
+                table = src.table(),
+                window = src.window(),
             ))
             .bind(org.0);
         if let Some(r) = region {
             q = q.bind(r);
         }
-        let row: Option<PriorRow> = fetch_first(bind_minute_window(q, prior_from, prior_to))
-            .await
-            .context("clickhouse prior_period_summary")?;
-        let r = row.unwrap_or(PriorRow {
-            samples: 0,
-            up: 0,
-            avg_ms: 0.0,
-        });
-        let avg_ms = if r.avg_ms.is_finite() {
-            r.avg_ms.round().clamp(0.0, u32::MAX as f64) as u32
-        } else {
-            0
-        };
-        Ok(PriorPeriodSummary {
-            checks_total: r.samples,
-            checks_up: r.up,
-            avg_ms,
-        })
+        fetch_single(bind_window(q, range.from, range.to)).await
     }
+}
+
+fn latency_columns(src: Source, bucket: u32) -> String {
+    format!(
+        "{bucket_ts} AS bucket_ts, \
+         {quantiles} AS quantiles, \
+         {avg} AS avg, \
+         ifNull({dns}, 0) AS dns, \
+         ifNull({connect}, 0) AS connect, \
+         ifNull({tls}, 0) AS tls, \
+         ifNull({ttfb}, 0) AS ttfb, \
+         {total} AS samples",
+        bucket_ts = src.bucket(bucket),
+        quantiles = src.duration_quantiles("0.5, 0.95, 0.99"),
+        avg = src.avg_ms("duration"),
+        dns = src.avg_ms("dns"),
+        connect = src.avg_ms("connect"),
+        tls = src.avg_ms("tls"),
+        ttfb = src.avg_ms("ttfb"),
+        total = src.total(),
+    )
 }
 
 #[cfg(test)]

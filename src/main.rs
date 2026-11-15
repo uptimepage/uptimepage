@@ -275,8 +275,9 @@ async fn main() -> Result<()> {
     let ch_client_for_purge = clickhouse_client.clone();
     let ch_client_for_region = clickhouse_client.clone();
     let ch_client_for_error_classes = clickhouse_client.clone();
-    let results_store: Arc<dyn ResultsStore> =
-        Arc::new(ClickhouseResultsStore::from_client(clickhouse_client));
+    let results_store: Arc<dyn ResultsStore> = Arc::new(
+        ClickhouseResultsStore::from_client(clickhouse_client).with_retention(org_ttl.clone()),
+    );
 
     let http_clients = Arc::new(build_clients(
         &cfg.http_client,

@@ -1,8 +1,8 @@
 //! ClickHouse integration test for the bucketed latency series (issue #29).
 //!
-//! Validates the parts in-memory unit tests can't: the migration's new
-//! per-phase `avgState` columns, the `quantilesMerge → Vec<f64>` deserialize
-//! path, and the →0 fold for phases that are all-NULL (non-HTTP checks).
+//! Validates the parts in-memory unit tests can't: the per-phase means, the
+//! quantiles `Vec<f64>` deserialize path, and the →0 fold for phases that are
+//! all-NULL (non-HTTP checks).
 //!
 //! Skipped by default — requires a ClickHouse the migrations have run against:
 //!
@@ -60,7 +60,7 @@ fn tcp_ok(target: Uuid, org: Uuid, ts: chrono::DateTime<Utc>, dur: u32) -> Check
 
 #[tokio::test]
 #[ignore = "requires ClickHouse (CLICKHOUSE_URL)"]
-async fn latency_buckets_merge_quantiles_and_phases_from_rollup() {
+async fn latency_buckets_carry_quantiles_and_phases() {
     let Some(ch) = common::ch_client_from_env().await else {
         return;
     };
@@ -136,9 +136,9 @@ async fn latency_buckets_clamp_all_null_phases_to_zero() {
         .unwrap()
         .with_nanosecond(0)
         .unwrap();
-    // TCP checks record no phase timings — every phase is NULL, so the
-    // matview's avgMerge finalises to NULL. The query's ifNull must fold it
-    // to 0 (NULL/NaN would not serialise as valid JSON).
+    // TCP checks record no phase timings — every phase is NULL, so its mean
+    // is NULL. The query's ifNull must fold it to 0 (NULL/NaN would not
+    // serialise as valid JSON).
     sink.write_batch(&[tcp_ok(target, org, base, 70)])
         .await
         .expect("insert tcp sample");
@@ -159,10 +159,10 @@ async fn latency_buckets_clamp_all_null_phases_to_zero() {
     assert_eq!(b.p50, 70);
 }
 
-// A range reaching past the 1m rollup's 90-day TTL must route to check_results_1h.
+// A range older than the raw window must route to check_results_1h.
 #[tokio::test]
 #[ignore = "requires ClickHouse (CLICKHOUSE_URL)"]
-async fn latency_buckets_route_to_hour_rollup_past_90d() {
+async fn latency_buckets_route_to_hour_rollup_past_the_raw_window() {
     let Some(ch) = common::ch_client_from_env().await else {
         return;
     };

@@ -38,8 +38,8 @@ pub struct DashboardMetrics {
     /// Latest observed status string ("up" / "down" / "degraded" / "error"),
     /// or empty when the range contains no samples.
     pub last_status: String,
-    /// Unix-seconds of `max(minute)` over the rollup. `None` when the
-    /// range contains no samples.
+    /// Unix-seconds of the latest sample's minute, or its hour for a range
+    /// past the raw window. `None` when the range contains no samples.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(nullable = true)]
     pub last_minute_ts: Option<i64>,
@@ -60,11 +60,10 @@ pub struct DashboardSparkBucket {
     pub up: u64,
 }
 
-/// One time-bucket of a single monitor's latency, merged from the
-/// `check_results_1m` rollup. Powers both monitor-detail charts (p50/p95/p99
-/// line + phase-breakdown area). The server picks a bucket width so any range
-/// yields ~60 buckets — switching 1h↔30d actually re-scales the series, and
-/// the cost stays O(buckets) instead of pulling raw samples to the client.
+/// One time-bucket of a single monitor's latency. Powers both monitor-detail
+/// charts (p50/p95/p99 line + phase-breakdown area). The server picks a bucket
+/// width so any range yields ~60 buckets — switching 1h↔30d actually re-scales
+/// the series instead of pulling raw samples to the client.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct LatencyBucket {
     /// Unix-milliseconds at the bucket's start (JS `new Date(t)`).
@@ -91,7 +90,7 @@ pub struct LatencyBucket {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct LatencySeries {
     pub buckets: Vec<LatencyBucket>,
-    /// Bucket width in seconds (always a multiple of the 60s rollup grain).
+    /// Bucket width in seconds (always a whole number of minutes).
     pub bucket_seconds: u32,
 }
 
@@ -160,11 +159,10 @@ pub struct PriorPeriodSummary {
 
 /// One slice of the fleet 24h uptime ribbon. Aggregates every monitor in
 /// the org into a single bucket so the dashboard renders 48 × 30-minute
-/// cells from a single matview merge — cost stays O(buckets), not O(orgs
-/// × monitors).
+/// cells from one read.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct FleetRibbonBucket {
-    /// Unix-seconds at the bucket's start (`toStartOfInterval(minute, …)`).
+    /// Unix-seconds at the bucket's start.
     pub bucket_ts: i64,
     /// Total samples across every monitor in the bucket window.
     pub samples: u64,

@@ -36,14 +36,12 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "001_initial.sql",
         include_str!("../../../migrations/clickhouse/001_initial.sql"),
     ),
-    // 002 `check_results_1h`: the hour-rollup for the long history tail. Same
-    // AggregateFunction columns as `check_results_1m`, so [`super::rollup_source`]
-    // merges either with one finaliser set; it routes ranges past the 1m
-    // rollup's 30-day TTL here. A 2nd matview on raw `check_results` (accrues
-    // forward, no backfill). The 13-month TTL exceeds the raw/1m TTL, so the
-    // Privacy Policy and the `retention_test` guard disclose it; org erasure
-    // must clear it too (see [`CH_TENANT_TABLES`]). Migration SQL is frozen —
-    // keep this rationale here.
+    // 002 `check_results_1h`: the hour-rollup for the long history tail; reads
+    // past the org's raw window route here (`super::source`). A 2nd matview on
+    // raw `check_results` (accrues forward, no backfill). The 13-month TTL
+    // exceeds the raw TTL, so the Privacy Policy and the `retention_test` guard
+    // disclose it; org erasure must clear it too (see [`CH_TENANT_TABLES`]).
+    // Migration SQL is frozen — keep this rationale here.
     (
         "002_check_results_1h.sql",
         include_str!("../../../migrations/clickhouse/002_check_results_1h.sql"),
@@ -166,7 +164,7 @@ pub async fn migrate(client: &Client) -> Result<()> {
         }
     }
 
-    verify_rollup_schema(client).await?;
+    verify_view_schema(client, "check_results_1h", EXPECTED_ROLLUP_SCHEMA).await?;
     dedup_retries_in_rollups(client).await?;
 
     tracing::info!("clickhouse ready");
@@ -202,17 +200,17 @@ async fn dedup_retries_in_rollups(client: &Client) -> Result<()> {
     Ok(())
 }
 
-/// Exact `(column, type)` shape of `check_results_1m`, in definition order.
-/// Editing the matview in `001_initial.sql` is a no-op on an existing DB
-/// (recorded migration + `IF NOT EXISTS`), so [`verify_rollup_schema`] checks
-/// the live view against this at boot and fails loud on drift. A matview change
-/// = recreate migration + update 001 + update this list. Type strings are
-/// CH-version-formatted; a server upgrade that reformats them fails boot here.
+/// Exact `(column, type)` shape of `check_results_1h`, in definition order.
+/// Editing the matview in its migration is a no-op on an existing DB
+/// (recorded migration + `IF NOT EXISTS`), so [`migrate`] checks the live view
+/// against this at boot and fails loud on drift. A matview change = recreate
+/// migration + update this list. Type strings are CH-version-formatted; a
+/// server upgrade that reformats them fails boot here.
 const EXPECTED_ROLLUP_SCHEMA: &[(&str, &str)] = &[
     ("org_id", "UUID"),
     ("target_id", "UUID"),
     ("region", "LowCardinality(String)"),
-    ("minute", "DateTime('UTC')"),
+    ("hour", "DateTime('UTC')"),
     ("total_checks", "AggregateFunction(count)"),
     ("up_checks", "AggregateFunction(countIf, UInt8)"),
     ("down_checks", "AggregateFunction(countIf, UInt8)"),
@@ -232,24 +230,6 @@ const EXPECTED_ROLLUP_SCHEMA: &[(&str, &str)] = &[
         "AggregateFunction(argMax, Enum8('up' = 1, 'down' = 2, 'degraded' = 3, 'error' = 4), DateTime('UTC'))",
     ),
 ];
-
-/// Boot check: both rollups must equal [`EXPECTED_ROLLUP_SCHEMA`]. The 1h view
-/// mirrors the 1m column set with `hour` in place of `minute`.
-async fn verify_rollup_schema(client: &Client) -> Result<()> {
-    verify_view_schema(client, "check_results_1m", EXPECTED_ROLLUP_SCHEMA).await?;
-    let expected_1h: Vec<(&str, &str)> = EXPECTED_ROLLUP_SCHEMA
-        .iter()
-        .map(|(n, t)| {
-            if *n == "minute" {
-                ("hour", *t)
-            } else {
-                (*n, *t)
-            }
-        })
-        .collect();
-    verify_view_schema(client, "check_results_1h", &expected_1h).await?;
-    Ok(())
-}
 
 async fn verify_view_schema(client: &Client, view: &str, expected: &[(&str, &str)]) -> Result<()> {
     #[derive(Row, Deserialize)]
