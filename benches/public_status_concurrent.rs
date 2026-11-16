@@ -242,7 +242,7 @@ async fn build_fixture() -> Option<Fixture> {
         page_ids.push(page_id);
     }
 
-    ch.query("OPTIMIZE TABLE check_results_1m FINAL")
+    ch.query("OPTIMIZE TABLE check_results_1h FINAL")
         .execute()
         .await
         .expect("optimize mv");
@@ -279,7 +279,7 @@ async fn teardown(fixture: &Fixture) {
             .await;
         let _ = fixture
             .ch
-            .query("ALTER TABLE check_results_1m DELETE WHERE org_id = ?")
+            .query("ALTER TABLE check_results_1h DELETE WHERE org_id = ?")
             .bind(org.0)
             .execute()
             .await;

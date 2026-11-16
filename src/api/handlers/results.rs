@@ -90,9 +90,8 @@ pub async fn list_results(
     tag = "results",
     summary = "Bucketed latency series for a target",
     description = "Returns p50/p95/p99 and mean per-phase timings, pre-bucketed \
-                   server-side from the per-minute rollup into ~60 slices across \
-                   the range. Switching range re-scales the buckets; cost stays \
-                   O(buckets), not O(samples). Powers the monitor-detail charts.",
+                   server-side into ~60 slices across the range. Switching range \
+                   re-scales the buckets. Powers the monitor-detail charts.",
     params(
         ("id" = Uuid, Path, description = "Target id"),
         ("from" = Option<DateTime<Utc>>, Query, description = "Inclusive lower bound (default: now-24h)"),

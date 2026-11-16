@@ -65,18 +65,17 @@ const PURGE_BATCH_LIMIT: i64 = 10;
 /// PG round-trips for CH mutation backlog.
 const DRAIN_BATCH_LIMIT: i64 = 50;
 
-/// Upper bound on one org's synchronous CH erasure (both tables + verify). A
-/// healthy single-org mutation is sub-second; this only bites when CH is
-/// stuck, in which case we abandon the row (left pending, retried next tick)
-/// rather than letting the daily job hang. Correctness is unaffected — a row
+/// Upper bound on one org's synchronous CH erasure (every tenant table +
+/// verify). A healthy single-org mutation is sub-second; this only bites when
+/// CH is stuck, in which case we abandon the row (left pending, retried next
+/// tick) rather than letting the daily job hang. Correctness is unaffected — a row
 /// is never marked complete until `count()` proves the data is gone.
 const DRAIN_ROW_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Every ClickHouse table carrying per-org data. Erasure must clear all of them
 /// before a queue row may settle.
-const CH_TENANT_TABLES: [&str; 6] = [
+const CH_TENANT_TABLES: [&str; 5] = [
     "check_results",
-    "check_results_1m",
     "check_results_1h",
     "flow_runs",
     "heartbeat_pings",

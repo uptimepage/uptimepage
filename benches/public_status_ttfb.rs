@@ -240,7 +240,7 @@ async fn build_fixture() -> Option<Fixture> {
     // Single MV merge after all inserts. OPTIMIZE FINAL is table-wide; doing
     // it once per org would burn most of the fixture's wall-clock budget
     // re-merging the same partitions on every iteration.
-    ch.query("OPTIMIZE TABLE check_results_1m FINAL")
+    ch.query("OPTIMIZE TABLE check_results_1h FINAL")
         .execute()
         .await
         .expect("optimize mv");
@@ -279,7 +279,7 @@ async fn teardown(fixture: &Fixture) {
             .await;
         let _ = fixture
             .ch
-            .query("ALTER TABLE check_results_1m DELETE WHERE org_id = ?")
+            .query("ALTER TABLE check_results_1h DELETE WHERE org_id = ?")
             .bind(org.0)
             .execute()
             .await;

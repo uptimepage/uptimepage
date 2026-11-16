@@ -47,6 +47,7 @@ ch -q "CREATE DATABASE $DB"
 echo "applying migrations…"
 ch --database="$DB" --multiquery < migrations/clickhouse/001_initial.sql
 ch --database="$DB" --multiquery < migrations/clickhouse/002_check_results_1h.sql
+ch --database="$DB" --multiquery < migrations/clickhouse/011_drop_check_results_1m.sql
 
 # Per-column byte accounting only exists for WIDE parts (one file per column);
 # small datasets default to COMPACT parts (all columns in one file → per-column

@@ -23,10 +23,7 @@
 #   CH_CONTAINER  clickhouse container name   (default: uptimepage-clickhouse-1)
 #   BASE_DOMAIN   for the printed URL         (default: lvh.me)
 #
-# Requires `just up-app` + `just dev-login` first (org must already exist) and
-# a ClickHouse whose check_results_1m matview carries the per-phase avgState
-# columns (i.e. a DB created after the issue-#29 migration change — a clean
-# `just down-clean && just up-app`).
+# Requires `just up-app` + `just dev-login` first (org must already exist).
 set -euo pipefail
 
 SLUG="${SLUG:-devorg}"

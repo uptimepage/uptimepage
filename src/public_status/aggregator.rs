@@ -67,7 +67,7 @@ impl Default for AggregatorConfig {
 }
 
 // Day-resolution strip reads the hour rollup (13-month tail), so it spans the
-// full `history_days` window independent of the shorter 1m-rollup TTL.
+// full `history_days` window independent of the shorter raw TTL.
 const CH_HISTORY_MV: &str = "check_results_1h";
 
 /// Whether incident `i` shows on a page: through one of its components

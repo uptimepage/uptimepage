@@ -149,7 +149,7 @@ WorkerPool       passive fast path, then in-flight guard, semaphore, circuit
 ResultBatcher    flush on size or timeout; buffer bounded, oldest dropped on overflow,
    │             retries exhausted counted
    ▼
-ClickHouse       check_results (per-row TTL) + 1-minute and 1-hour rollup views
+ClickHouse       check_results (per-row TTL) + 1-hour rollup view
 ```
 
 HTTP checks connect fresh every interval. There is no connection pool, because a monitor probes each target once per interval so a pool would rarely reuse a socket, and connecting fresh is exactly what lets the probe time DNS resolution, TCP connect, and the TLS handshake as separate phases and write them into each result. The connector resolves, applies the SSRF filter, dials with happy eyeballs, and optionally completes TLS, returning per-phase timings. See [Monitor types](monitor-types.md).
@@ -171,9 +171,9 @@ Internal incident state (Triggered, Acknowledged, Resolved) and the public commu
 Two backends, split by access pattern:
 
 - **Postgres** holds configuration and control-plane state: tenancy, monitors, incidents, paging and on-call, public-status config, auth, quotas, and ops tables. Low-cardinality, mutated by API operations. Migrations run via `sqlx::migrate!` at startup. Three high-churn audit tables (`org_audit_log`, `login_attempts`, `quota_events`) are monthly range-partitioned with a boot-time and daily partition maintainer.
-- **ClickHouse** holds check results only: append-only, high-cardinality, queried by time range. `check_results` carries a per-row TTL stamped from the org plan; two AggregatingMergeTree views roll it up to one-minute and one-hour grains. Reads for sparklines, buckets, and summaries go through a rollup, never raw. Migrations are idempotent `CREATE ... IF NOT EXISTS` statements run by a hand-rolled runner; editing a shipped one is a silent no-op on existing volumes, so schema changes are validated against a fresh volume. The result sink retries by re-sending an identical block, which the deduplication window collapses, so mid-batch checkpointing is forbidden.
+- **ClickHouse** holds check results only: append-only, high-cardinality, queried by time range. `check_results` carries a per-row TTL stamped from the org plan; an AggregatingMergeTree view rolls it up to one-hour grains. Reads for sparklines, buckets, and summaries come from raw results inside the org's raw window, capped at 30 days, and from the hour rollup past it. Migrations are idempotent `IF NOT EXISTS` / `IF EXISTS` statements run by a hand-rolled runner; editing a shipped one is a silent no-op on existing volumes, so schema changes are validated against a fresh volume. The result sink retries by re-sending an identical block, which the deduplication window collapses, so mid-batch checkpointing is forbidden.
 
-Erasure spans both stores through a two-step outbox (`src/jobs/purge_deleted.rs`): the Postgres transaction enqueues and cascades in one shot, and the ClickHouse side drains idempotently and only settles a queue row after a count proves zero rows across all three result tables.
+Erasure spans both stores through a two-step outbox (`src/jobs/purge_deleted.rs`): the Postgres transaction enqueues and cascades in one shot, and the ClickHouse side drains idempotently and only settles a queue row after a count proves zero rows across every ClickHouse table holding the org's data.
 
 Every tenant-facing storage method takes `org: OrgId` as its first parameter, every child table carries a denormalised `org_id` with a parent-match trigger, and the isolation is enforced at the type, schema, script, and test level. The only ways around it are the two audited escape hatches (`src/storage/admin.rs`, which requires a static reason string, and `src/storage/operator.rs`, which is global by nature). See [Multi-tenancy](multi-tenancy.md).
 
@@ -196,7 +196,7 @@ Every tenant-facing storage method takes `org: OrgId` as its first parameter, ev
 
 ## Where region partitioning lives
 
-Region assignment is not in the scheduler. It lives in the `EnabledTargetSource` implementations (`RegionTargetSource` and `HeartbeatTargetSource` in `src/scheduler/sources.rs`, `AgentPullSource` in `src/agent/mod.rs`), and the assignment table is `target_regions`. Results carry their region as a low-cardinality column through both ClickHouse rollups, so reads can slice by region and quorum policies can require agreement across regions. See [Multi-region probes](multi-region.md).
+Region assignment is not in the scheduler. It lives in the `EnabledTargetSource` implementations (`RegionTargetSource` and `HeartbeatTargetSource` in `src/scheduler/sources.rs`, `AgentPullSource` in `src/agent/mod.rs`), and the assignment table is `target_regions`. Results carry their region as a low-cardinality column through raw results and the hour rollup, so reads can slice by region and quorum policies can require agreement across regions. See [Multi-region probes](multi-region.md).
 
 ## Related pages
 

@@ -11,13 +11,13 @@ use super::{CountRow, fetch_single};
 /// that has already executed on this database.
 ///
 /// Crash-atomicity discipline: every migration MUST be idempotent on re-run
-/// (i.e. only `CREATE … IF NOT EXISTS` / `ALTER … IF EXISTS`). ClickHouse has
-/// no transactions across DDL statements and `schema_migrations` is TinyLog
-/// (no atomic CAS), so the apply-then-record sequence is not crash-atomic:
-/// an OOM-kill between the last statement and the recording INSERT leaves
-/// the migration officially un-applied and the next boot re-runs it. A
-/// destructive statement (DROP/TRUNCATE) under those conditions wipes live
-/// data, which is why migrations contain none.
+/// (i.e. only `CREATE … IF NOT EXISTS` / `ALTER … IF EXISTS` /
+/// `DROP … IF EXISTS`). ClickHouse has no transactions across DDL statements
+/// and `schema_migrations` is TinyLog (no atomic CAS), so the apply-then-record
+/// sequence is not crash-atomic: an OOM-kill between the last statement and
+/// the recording INSERT leaves the migration officially un-applied and the
+/// next boot re-runs it. A destructive statement may therefore only target an
+/// object whose data nothing needs any more, so a re-run loses nothing.
 ///
 /// The splitter is a real tokenizer ([`split_statements`]) — it tracks
 /// single/double-quote string literals, backtick identifiers, line
@@ -63,7 +63,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../../../migrations/clickhouse/004_heartbeat_pings.sql"),
     ),
     // Raw rows only: a diagnosis explains one response, so it is deliberately
-    // absent from the rollups.
+    // absent from the rollup.
     (
         "005_check_diagnostics.sql",
         include_str!("../../../migrations/clickhouse/005_check_diagnostics.sql"),
@@ -90,10 +90,14 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "009_alert_event_id.sql",
         include_str!("../../../migrations/clickhouse/009_alert_event_id.sql"),
     ),
-    // Raw table only: the rollups are never read by arrival time.
+    // Raw table only: the rollup is never read by arrival time.
     (
         "010_check_results_ingested_index.sql",
         include_str!("../../../migrations/clickhouse/010_check_results_ingested_index.sql"),
+    ),
+    (
+        "011_drop_check_results_1m.sql",
+        include_str!("../../../migrations/clickhouse/011_drop_check_results_1m.sql"),
     ),
 ];
 
@@ -165,16 +169,16 @@ pub async fn migrate(client: &Client) -> Result<()> {
     }
 
     verify_view_schema(client, "check_results_1h", EXPECTED_ROLLUP_SCHEMA).await?;
-    dedup_retries_in_rollups(client).await?;
+    dedup_retries_in_rollup(client).await?;
 
     tracing::info!("clickhouse ready");
     Ok(())
 }
 
-/// Without their own window, a retry `check_results` drops still counts twice
-/// in the rollups. Not a migration file: ClickHouse refuses this setting
+/// Without its own window, a retry `check_results` drops still counts twice
+/// in the rollup. Not a migration file: ClickHouse refuses this setting
 /// through a materialized view, and the inner table's name differs per install.
-async fn dedup_retries_in_rollups(client: &Client) -> Result<()> {
+async fn dedup_retries_in_rollup(client: &Client) -> Result<()> {
     let without_window = client
         .query(
             "SELECT name FROM system.tables \
@@ -183,11 +187,11 @@ async fn dedup_retries_in_rollups(client: &Client) -> Result<()> {
              AND name IN ( \
                  SELECT concat('.inner_id.', toString(uuid)) FROM system.tables \
                  WHERE database = currentDatabase() \
-                 AND name IN ('check_results_1m', 'check_results_1h'))",
+                 AND name = 'check_results_1h')",
         )
         .fetch_all::<String>()
         .await
-        .context("find rollup inner tables")?;
+        .context("find rollup inner table")?;
     for table in without_window {
         client
             .query(&format!(

@@ -14,7 +14,7 @@ organizations ── memberships ── users
                      └── role: 'owner' | 'member'
 ```
 
-Every tenant-scoped table (`targets`, `incidents`, `incident_updates`, `maintenance_windows`, `maintenance_window_components`, `notification_channels`, …) carries `org_id NOT NULL` and an `ON DELETE CASCADE` foreign key to `organizations`. ClickHouse `check_results` and `check_results_1m` are ordered by `(org_id, target_id, region, timestamp)` so single-org queries never full-scan the table.
+Every tenant-scoped table (`targets`, `incidents`, `incident_updates`, `maintenance_windows`, `maintenance_window_components`, `notification_channels`, …) carries `org_id NOT NULL` and an `ON DELETE CASCADE` foreign key to `organizations`. ClickHouse `check_results` and its hour rollup `check_results_1h` are ordered by `(org_id, target_id, region, …)` so single-org queries never full-scan the table.
 
 ### Slugs
 

@@ -101,7 +101,7 @@ async fn teardown(pool: &PgPool, ch: &clickhouse::Client, t: &Tenant) {
         .execute()
         .await;
     let _ = ch
-        .query("ALTER TABLE check_results_1m DELETE WHERE org_id = ?")
+        .query("ALTER TABLE check_results_1h DELETE WHERE org_id = ?")
         .bind(t.org.0)
         .execute()
         .await;

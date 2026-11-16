@@ -44,19 +44,17 @@ fn async_inserts(ch: &clickhouse::Client) -> clickhouse::Client {
         .with_setting("async_insert_deduplicate", "1")
 }
 
-async fn rollup_total(ch: &clickhouse::Client, table: &str, target_id: Uuid) -> u64 {
-    ch.query(&format!(
-        "SELECT countMerge(total_checks) FROM {table} WHERE target_id = toUUID(?)"
-    ))
-    .bind(target_id.to_string())
-    .fetch_one::<u64>()
-    .await
-    .expect("rollup total")
+async fn rollup_total(ch: &clickhouse::Client, target_id: Uuid) -> u64 {
+    ch.query("SELECT countMerge(total_checks) FROM check_results_1h WHERE target_id = toUUID(?)")
+        .bind(target_id.to_string())
+        .fetch_one::<u64>()
+        .await
+        .expect("rollup total")
 }
 
 #[tokio::test]
 #[ignore = "requires CLICKHOUSE_URL"]
-async fn a_batch_sent_again_after_a_lost_ack_counts_once_in_the_rollups() {
+async fn a_batch_sent_again_after_a_lost_ack_counts_once_in_the_rollup() {
     let Some(ch) = common::ch_client_from_env().await else {
         eprintln!("skipped: CLICKHOUSE_URL not set");
         return;
@@ -75,13 +73,7 @@ async fn a_batch_sent_again_after_a_lost_ack_counts_once_in_the_rollups() {
         sink.write_batch(&rows).await.expect("first write");
         sink.write_batch(&rows).await.expect("repeated write");
 
-        for table in ["check_results_1m", "check_results_1h"] {
-            assert_eq!(
-                rollup_total(&ch, table, target_id).await,
-                2,
-                "{table} variant {variant}"
-            );
-        }
+        assert_eq!(rollup_total(&ch, target_id).await, 2, "variant {variant}");
     }
 }
 
@@ -121,7 +113,7 @@ async fn only_a_small_batch_before_shutdown_waits_out_the_window() {
 
 #[tokio::test]
 #[ignore = "requires CLICKHOUSE_URL"]
-async fn a_resend_merged_with_other_posts_still_counts_once_in_the_rollups() {
+async fn a_resend_merged_with_other_posts_still_counts_once_in_the_rollup() {
     let Some(ch) = common::ch_client_from_env().await else {
         eprintln!("skipped: CLICKHOUSE_URL not set");
         return;
@@ -151,13 +143,7 @@ async fn a_resend_merged_with_other_posts_still_counts_once_in_the_rollups() {
         "second flush took {took:?}"
     );
 
-    for table in ["check_results_1m", "check_results_1h"] {
-        for target in ids.iter().flatten() {
-            assert_eq!(
-                rollup_total(&ch, table, *target).await,
-                2,
-                "{table} {target}"
-            );
-        }
+    for target in ids.iter().flatten() {
+        assert_eq!(rollup_total(&ch, *target).await, 2, "{target}");
     }
 }

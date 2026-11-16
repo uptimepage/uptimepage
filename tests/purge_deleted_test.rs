@@ -412,7 +412,7 @@ async fn drain_erases_ch_rows_then_completes() {
         .unwrap()
         .unwrap();
 
-    // One real result row for this org; the MV propagates it to check_results_1m.
+    // One real result row for this org; the MV propagates it to check_results_1h.
     ch.query(
         "INSERT INTO check_results (org_id, target_id, timestamp, status, duration_ms) \
          VALUES (?, ?, fromUnixTimestamp(?), 'up', ?)",
@@ -447,7 +447,7 @@ async fn drain_erases_ch_rows_then_completes() {
         "queue row settles only after erasure is verified"
     );
 
-    for table in ["check_results", "check_results_1m"] {
+    for table in ["check_results", "check_results_1h"] {
         let n: u64 = ch
             .query(&format!("SELECT count() FROM {table} WHERE org_id = ?"))
             .bind(org.id.0)

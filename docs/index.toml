@@ -39,7 +39,7 @@ blurb = "How checks are scheduled, executed, batched, and stored across Postgres
 section = "start"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-11-14
+lastmod = 2026-11-16
 
 [[page]]
 slug = "ui"
@@ -179,7 +179,7 @@ blurb = "The /api/v1 surface: monitors, incidents, channels, status pages, and t
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-11-10
+lastmod = 2026-11-16
 
 [[page]]
 slug = "terraform"
@@ -219,7 +219,7 @@ blurb = "The org model, how the active org is resolved, and how tenant isolation
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-02
+lastmod = 2026-11-16
 
 [[page]]
 slug = "hosted/plans-and-limits"
@@ -244,12 +244,12 @@ lastmod = 2026-10-23
 [[page]]
 slug = "hosted/data-retention"
 title = "Data retention"
-description = "How long raw check results, rollups, incidents and audit records are kept on the hosted service, and which layer a chart reads for the range you asked for."
-blurb = "How long raw checks, rollups, incidents, and audit records are kept on the hosted service."
+description = "How long raw check results, the hourly rollup, incidents and audit records are kept on the hosted service, and which layer a chart reads for the range you asked for."
+blurb = "How long raw checks, the hourly rollup, incidents, and audit records are kept on the hosted service."
 section = "hosted"
 scope = "hosted"
 created = 2026-07-22
-lastmod = 2026-11-08
+lastmod = 2026-11-16
 
 [[page]]
 slug = "hosted/support"

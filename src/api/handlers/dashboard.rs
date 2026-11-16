@@ -33,7 +33,7 @@ pub fn summary_cache() -> SummaryCache {
     path = "/api/v1/dashboard/summary",
     tag = "dashboard",
     summary = "Fleet-wide aggregated metrics for the operator dashboard",
-    description = "Composed from ClickHouse rollups + Postgres counts + in-process gauges. Cached in-process for 5 seconds.",
+    description = "Composed from ClickHouse check results + Postgres counts + in-process gauges. Cached in-process for 5 seconds.",
     responses(
         (status = 200, body = DashboardSummary, example = json!({
             "targets": {"total": 42, "enabled": 40, "disabled": 2},

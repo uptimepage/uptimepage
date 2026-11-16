@@ -309,11 +309,11 @@ UPDATE monitor_silence_state SET resolved_at = now()
 SQL
 
 if [[ "$RESET_CH" == "1" ]]; then
-  echo "==> ClickHouse: purge prior rows for this org (raw + both rollups)"
-  # Deleting from check_results does not cascade into the matviews built off
-  # it, and rollup_source() reads _1h for any window past MINUTE_ROLLUP_DAYS —
-  # skipping them stacks another copy of every seeded outage per rerun.
-  for tbl in check_results check_results_1m check_results_1h; do
+  echo "==> ClickHouse: purge prior rows for this org (raw + hour rollup)"
+  # Deleting from check_results does not cascade into the matview built off
+  # it, and ranges past the raw window read _1h — skipping it stacks another
+  # copy of every seeded outage per rerun.
+  for tbl in check_results check_results_1h; do
     ch -q "ALTER TABLE monitor.${tbl} DELETE WHERE org_id = toUUID('${ORG}') SETTINGS mutations_sync = 2"
   done
 fi

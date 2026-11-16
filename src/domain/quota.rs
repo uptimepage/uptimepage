@@ -97,8 +97,8 @@ impl Plan {
         }
     }
 
-    /// Raw + 1m rollup physical retention (days): raw forensics and
-    /// minute-resolution history cap here.
+    /// Raw physical retention (days): raw forensics and per-check history
+    /// cap here.
     pub const RAW_MAX_DAYS: i64 = 90;
     /// 1h rollup physical retention (days) — the long history tail.
     pub const HISTORY_MAX_DAYS: i64 = 395;

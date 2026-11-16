@@ -542,9 +542,7 @@ pub struct MonitorHistory {
     /// Per-region split of the same window, so a partial outage is visible.
     /// Always every region the monitor runs in, including under a `region`
     /// filter, and empty when it runs in only one. Regions that ran no checks
-    /// in the window are omitted; this reads per-minute data, which is kept for
-    /// 30 days, so at the far edge of a `30d` window a region can be short of
-    /// samples or absent while the headline numbers still cover it.
+    /// in the window are omitted.
     pub regions: Vec<RegionHealth>,
     /// Confirmed failures on the monitor as a whole. A `region` filter does not
     /// narrow these: an incident is raised for the monitor, not per region.

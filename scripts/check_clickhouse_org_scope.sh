@@ -15,7 +15,7 @@ cd "$(dirname "$0")/.."
 # source_id but omit org_id.
 hits="$(rg --pcre2 --multiline --pretty --line-number \
   -trust \
-  -e '(?is)\bFROM\s+(check_results(_1m|_1h)?|flow_runs|heartbeat_pings|alert_events)\b(?:(?!\borg_id\b).)*\b(target_id|source_id)\s*=' \
+  -e '(?is)\bFROM\s+(check_results(_1h)?|flow_runs|heartbeat_pings|alert_events)\b(?:(?!\borg_id\b).)*\b(target_id|source_id)\s*=' \
   src/ || true)"
 
 if [ -n "$hits" ]; then

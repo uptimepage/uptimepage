@@ -783,8 +783,8 @@ pub trait ResultsStore: RecentOutcomes {
     /// summed across the org. Raw: a single failed check is a run, whether or
     /// not it opened an incident.
     async fn failure_streaks(&self, org: OrgId, range: TimeRange, region: &str) -> Result<u64>;
-    /// Monitors with at least one check in `[from, to)`, from the minute rollup
-    /// while it still holds the window and the hour rollup after.
+    /// Monitors with at least one check in `[from, to)`, from raw results
+    /// inside the org's raw window and the hour rollup past it.
     async fn sampled_targets(
         &self,
         org: OrgId,

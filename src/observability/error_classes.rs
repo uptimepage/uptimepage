@@ -193,7 +193,7 @@ fn fold(rows: Vec<ErrorRow>) -> HashMap<ErrorClass, ClassStat> {
         .collect()
 }
 
-/// Raw results, not the per-minute rollup, which carries no error column.
+/// Raw results: the hour rollup carries no error column.
 /// `timestamp` leads the partition key, so the window prunes to a day or two
 /// even though the scan crosses every org.
 pub async fn collect(ch: &ChClient, window_secs: u32) -> Result<Vec<ErrorRow>> {

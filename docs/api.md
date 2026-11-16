@@ -921,7 +921,7 @@ Pass the previous page's `next_cursor` as `?cursor=...` to fetch the next page; 
 
 `GET /api/v1/targets/{id}/latency?from=…&to=…`
 
-Pre-bucketed quantiles and per-phase means read straight from the per-minute rollup — powers the monitor-detail latency line and phase-breakdown area charts. The server divides the range into ~60 slices (floored to the 60-second rollup grain), so any range returns a comparably dense series and the cost stays O(buckets), not O(samples). Switching range re-scales the buckets.
+Pre-bucketed quantiles and per-phase means for the monitor-detail latency line and phase-breakdown area charts. The server divides the range into ~60 slices of whole minutes, so any range returns a comparably dense series. Switching range re-scales the buckets.
 
 - `from` / `to` default to the last 24 h; `to` must be strictly greater than `from` (400 `BAD_TIME_RANGE`).
 

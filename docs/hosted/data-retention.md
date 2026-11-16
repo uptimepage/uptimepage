@@ -6,12 +6,11 @@ The [Privacy Policy](https://uptimepage.dev/privacy) is the binding statement. T
 
 ## Check data
 
-There are three layers, and a chart reads whichever one covers the range you asked for.
+There are two layers, and a chart reads whichever one covers the range you asked for.
 
 | Layer | What it holds | Kept |
 |---|---|---|
 | Raw results | One row per check: status, latency phases, response code, error text | 30 days |
-| Minute rollup | Per-minute aggregates used by the dashboard and monitor charts | 30 days |
 | Hourly rollup | Per-hour aggregates behind long-range uptime and history | 13 months |
 
 The raw window is stamped on each row when it is written, from your plan. That means a plan change applies to data written after it, and nothing already stored is retroactively shortened or extended.

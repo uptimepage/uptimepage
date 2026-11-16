@@ -195,7 +195,8 @@ mod tests {
 
     #[test]
     fn latency_bucket_seconds_floors_to_one_minute() {
-        // A sub-hour span must never produce a bucket below the 60s rollup grain.
+        // A sub-hour span must never produce a bucket below one minute, where
+        // most buckets would hold no check.
         let to = ts(2026, 5, 1);
         let from = to - Duration::try_minutes(10).unwrap();
         assert_eq!(latency_bucket_seconds(TimeRange { from, to }), 60);

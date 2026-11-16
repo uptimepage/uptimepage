@@ -499,9 +499,9 @@ impl ResultsStore for ClickhouseResultsStore {
             samples: u64,
             failed: u64,
         }
-        // Not the rollup grain the other bucketed reads snap to — this one has
-        // no rollup and no neighbouring chart to line up with. A floor is still
-        // needed: a zero-second interval has no start to round to.
+        // Not the whole-minute grain the other bucketed reads snap to: this one
+        // has no neighbouring chart to line up with. A floor is still needed: a
+        // zero-second interval has no start to round to.
         let bucket = bucket_seconds.max(60);
         let region_pred = region.map(|_| "AND region = ?").unwrap_or("");
         // `arrayEnumerate` fans one run out to a row per step, and the index

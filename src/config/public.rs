@@ -134,8 +134,8 @@ impl Default for TenancyConfig {
     }
 }
 
-/// Raw check results and the 1-minute rollup: a ClickHouse TTL set by the
-/// migrations rather than config, and quoted by the hosted Privacy Policy.
+/// Raw check results: a ClickHouse TTL set by the migrations rather than
+/// config, and quoted by the hosted Privacy Policy.
 pub const CHECK_RESULTS_RAW_DAYS: u32 = 30;
 /// The hourly rollup's ClickHouse TTL, which carries the history.
 pub const CHECK_RESULTS_HISTORY_MONTHS: u32 = 13;
