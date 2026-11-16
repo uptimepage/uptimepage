@@ -119,16 +119,47 @@ async fn a_range_past_the_orgs_raw_window_reads_the_hour_rollup() {
         .await
         .expect("expire raw rows");
 
-    let range = TimeRange {
-        from: hour,
-        to: hour + Duration::hours(1),
+    let read = async |range: ClampedRange| {
+        let stats = store.uptime(OrgId(org), target, range, None).await;
+        stats.map(|s| (s.total, s.up)).expect("uptime")
     };
-    let stats = store
-        .uptime(OrgId(org), target, ClampedRange::unclamped(range), None)
-        .await
-        .expect("uptime");
+    let span = |from, to| ClampedRange::unclamped(TimeRange { from, to });
+    let whole_hour = read(span(hour, hour + Duration::hours(1))).await;
+    let inside_the_hour = read(span(
+        hour + Duration::minutes(15),
+        hour + Duration::minutes(45),
+    ))
+    .await;
+    let after_its_start = read(span(
+        hour + Duration::minutes(15),
+        hour + Duration::hours(2),
+    ))
+    .await;
+    // A history window that starts at :45 clamps a :00-:30 request to nothing.
+    let outside_history = read(ClampedRange::for_window(
+        TimeRange {
+            from: hour,
+            to: hour + Duration::minutes(30),
+        },
+        10,
+        hour + Duration::days(10) + Duration::minutes(45),
+    ))
+    .await;
+    let bucket = store.bucket_width(OrgId(org), hour, 24 * 60);
     drop_org_and_plan(&pool, org, &plan).await;
-    assert_eq!((stats.total, stats.up), (4, 4));
+    assert_eq!(whole_hour, (4, 4));
+    assert_eq!(
+        inside_the_hour,
+        (4, 4),
+        "a range inside one hour reads that hour"
+    );
+    assert_eq!(
+        after_its_start,
+        (0, 0),
+        "an hour counts in the range its start falls in"
+    );
+    assert_eq!(outside_history, (0, 0), "an emptied range stays empty");
+    assert_eq!(bucket, 3600, "the hour rollup buckets in whole hours");
 }
 
 #[tokio::test]

@@ -518,7 +518,7 @@ impl std::ops::Deref for ClampedRange {
 /// Round a requested bucket width up to whole minutes (grid alignment is the
 /// caller's `toStartOfInterval` / `div_euclid`).
 pub fn rollup_bucket_secs(bucket_seconds: u32) -> u32 {
-    bucket_seconds.max(60).div_ceil(60) * 60
+    bucket_seconds.clamp(60, u32::MAX / 60 * 60).div_ceil(60) * 60
 }
 
 #[derive(Debug, Default, Clone, Copy, serde::Serialize, utoipa::ToSchema)]
@@ -836,6 +836,11 @@ pub trait ResultsStore: RecentOutcomes {
         to: chrono::DateTime<Utc>,
         region: Option<&str>,
     ) -> Result<Vec<DashboardSparkBucket>>;
+    /// The width a bucketed read over a range starting at `from` uses for a
+    /// `requested` one. A caller that lays out its own grid sizes it with this.
+    fn bucket_width(&self, _org: OrgId, _from: DateTime<Utc>, requested: u32) -> u32 {
+        rollup_bucket_secs(requested)
+    }
     /// Bucketed latency for a single monitor: p50/p95/p99 + per-phase means
     /// per `bucket_seconds` slice across `range`. Drives the monitor-detail
     /// latency and breakdown charts. A range past the raw window reads the

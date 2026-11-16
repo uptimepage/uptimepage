@@ -921,7 +921,7 @@ Pass the previous page's `next_cursor` as `?cursor=...` to fetch the next page; 
 
 `GET /api/v1/targets/{id}/latency?from=…&to=…`
 
-Pre-bucketed quantiles and per-phase means for the monitor-detail latency line and phase-breakdown area charts. The server divides the range into ~60 slices of whole minutes, so any range returns a comparably dense series. Switching range re-scales the buckets.
+Pre-bucketed quantiles and per-phase means for the monitor-detail latency line and phase-breakdown area charts. The server divides the range into ~60 slices of whole minutes, or whole hours for a range answered from hourly summaries (see [Uptime query](#uptime-query)), so any range returns a comparably dense series. `bucket_seconds` in the response is the width used. Switching range re-scales the buckets.
 
 - `from` / `to` default to the last 24 h; `to` must be strictly greater than `from` (400 `BAD_TIME_RANGE`).
 
@@ -999,6 +999,8 @@ Bucketing works like `/latency` but aims for about half as many slices. These re
 ```
 
 `uptime_pct` is confirmed incident downtime over the window, weighted as the status page weights it: a partial outage counts for 30% of its length and degraded performance not at all. With `region` set it is that region's share of passing checks instead. It is `null` when the window holds no checks.
+
+A window that starts more than 30 days ago, or before your plan's raw retention when that is shorter, is answered from hourly summaries. Each hour counts in the window its start falls in, so back-to-back windows never count an hour twice. A window that holds no hour start, like `10:15`–`10:45`, counts the checks of the whole hour it falls in. The same applies to the latency series.
 
 ## Incidents query
 

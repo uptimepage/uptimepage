@@ -330,7 +330,11 @@ async fn load_live_data(
             },
         )
         .await?;
-    let spark_bucket_seconds = (span.num_seconds() / SPARK_SEGMENTS).max(60) as u32;
+    let spark_bucket_seconds = state.results_store.bucket_width(
+        org,
+        time_range.from,
+        (span.num_seconds() / SPARK_SEGMENTS).max(60) as u32,
+    );
     // Confirmed downtime drives uptime only for the all-regions view; a region
     // filter keeps the raw per-region sample rate and needs no incident reads.
     let confirmed = region.is_none();

@@ -559,7 +559,11 @@ pub async fn latency(
         .quotas
         .clamp_history(resolved.org, q.resolve_uncapped()?)
         .await?;
-    let bucket_seconds = latency_bucket_seconds(range.inner());
+    let bucket_seconds = state.results_store.bucket_width(
+        resolved.org,
+        range.from,
+        latency_bucket_seconds(range.inner()),
+    );
     let buckets = state
         .results_store
         .latency_buckets(

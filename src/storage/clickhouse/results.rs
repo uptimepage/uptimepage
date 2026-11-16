@@ -23,10 +23,9 @@ use crate::error::Result;
 use crate::storage::traits::{
     ClampedRange, FailingServer, FlowRunView, PassMarks, RecentOutcomes, RegionFlaps,
     RegionLatestStatus, RegionNewest, RegionOutcome, ResultsStore, TimeRange, UptimeStats,
-    rollup_bucket_secs,
 };
 
-use super::source::{Source, bind_window};
+use super::source::Source;
 use super::{
     FLOW_TABLE, HEARTBEAT_PING_TABLE, TABLE, fetch_single, from_unix_secs, past_evidence,
     to_unix_secs,
@@ -421,6 +420,10 @@ impl RecentOutcomes for ClickhouseResultsStore {
 
 #[async_trait]
 impl ResultsStore for ClickhouseResultsStore {
+    fn bucket_width(&self, org: OrgId, from: DateTime<Utc>, requested: u32) -> u32 {
+        self.source(org, from).bucket_width(requested)
+    }
+
     async fn flow_runs(
         &self,
         org: OrgId,
@@ -888,7 +891,8 @@ impl ResultsStore for ClickhouseResultsStore {
                 window = src.window(),
             ))
             .bind(org.0);
-        let rows: Vec<Sampled> = bind_window(q, from, to)
+        let rows: Vec<Sampled> = src
+            .bind_window(q, from, to)
             .fetch_all::<Sampled>()
             .await
             .context("clickhouse sampled_targets")?;
@@ -933,7 +937,7 @@ impl ResultsStore for ClickhouseResultsStore {
         if let Some(r) = region {
             q = q.bind(r);
         }
-        let row: CountsRow = fetch_single(bind_window(q, range.from, range.to))
+        let row: CountsRow = fetch_single(src.bind_window(q, range.from, range.to))
             .await
             .context("clickhouse uptime")?;
 
@@ -993,7 +997,8 @@ impl ResultsStore for ClickhouseResultsStore {
         if let Some(r) = region {
             q = q.bind(r);
         }
-        let rows: Vec<RollupRow> = bind_window(q, range.from, range.to)
+        let rows: Vec<RollupRow> = src
+            .bind_window(q, range.from, range.to)
             .fetch_all::<RollupRow>()
             .await
             .context("clickhouse dashboard_rollup")?;
@@ -1137,7 +1142,8 @@ impl ResultsStore for ClickhouseResultsStore {
         if let Some(t) = target {
             q = q.bind(t);
         }
-        let rows: Vec<StatusRow> = bind_window(q, range.from, range.to)
+        let rows: Vec<StatusRow> = src
+            .bind_window(q, range.from, range.to)
             .fetch_all::<StatusRow>()
             .await
             .context("clickhouse latest_status_by_region")?;
@@ -1191,7 +1197,8 @@ impl ResultsStore for ClickhouseResultsStore {
         if let Some(r) = region {
             q = q.bind(r);
         }
-        let rows: Vec<SparkRow> = bind_window(q, from, to)
+        let rows: Vec<SparkRow> = src
+            .bind_window(q, from, to)
             .fetch_all::<SparkRow>()
             .await
             .context("clickhouse dashboard_sparkline")?;
@@ -1228,8 +1235,8 @@ impl ResultsStore for ClickhouseResultsStore {
             ttfb: f64,
             samples: u64,
         }
-        let bucket = rollup_bucket_secs(bucket_seconds);
         let src = self.source(org, range.from);
+        let bucket = src.bucket_width(bucket_seconds);
         let region_pred = region.map(|_| "AND region = ?").unwrap_or("");
         let query = format!(
             "SELECT {columns} \
@@ -1245,7 +1252,8 @@ impl ResultsStore for ClickhouseResultsStore {
         if let Some(r) = region {
             q = q.bind(r);
         }
-        let rows: Vec<LatRow> = bind_window(q, range.from, range.to)
+        let rows: Vec<LatRow> = src
+            .bind_window(q, range.from, range.to)
             .fetch_all::<LatRow>()
             .await
             .context("clickhouse latency_buckets")?;
@@ -1275,7 +1283,7 @@ impl ResultsStore for ClickhouseResultsStore {
             target = %target_id,
             bucket_seconds = bucket,
             buckets = buckets.len(),
-            "latency_buckets served from rollup"
+            "latency_buckets served"
         );
         Ok(buckets)
     }
@@ -1302,7 +1310,7 @@ impl ResultsStore for ClickhouseResultsStore {
              WHERE org_id = ? AND target_id = ? {region_pred} AND {window} \
              GROUP BY bucket_ts \
              ORDER BY bucket_ts",
-            bucket = src.bucket(rollup_bucket_secs(bucket_seconds)),
+            bucket = src.bucket(src.bucket_width(bucket_seconds)),
             total = src.total(),
             up = src.checks(CheckStatus::Up),
             table = src.table(),
@@ -1312,7 +1320,8 @@ impl ResultsStore for ClickhouseResultsStore {
         if let Some(r) = region {
             q = q.bind(r);
         }
-        let rows: Vec<AvailRow> = bind_window(q, range.from, range.to)
+        let rows: Vec<AvailRow> = src
+            .bind_window(q, range.from, range.to)
             .fetch_all::<AvailRow>()
             .await
             .context("clickhouse availability_buckets")?;
@@ -1358,7 +1367,8 @@ impl ResultsStore for ClickhouseResultsStore {
             ))
             .bind(org.0)
             .bind(target_id);
-        let rows: Vec<R> = bind_window(q, range.from, range.to)
+        let rows: Vec<R> = src
+            .bind_window(q, range.from, range.to)
             .fetch_all::<R>()
             .await
             .context("clickhouse region_breakdown")?;
@@ -1552,8 +1562,8 @@ impl ResultsStore for ClickhouseResultsStore {
             ttfb: f64,
             samples: u64,
         }
-        let bucket = rollup_bucket_secs(bucket_seconds);
         let src = self.source(org, range.from);
+        let bucket = src.bucket_width(bucket_seconds);
         let query = format!(
             "SELECT region, {columns} \
              FROM {table} \
@@ -1565,7 +1575,8 @@ impl ResultsStore for ClickhouseResultsStore {
             window = src.window(),
         );
         let q = self.client.query(&query).bind(org.0).bind(target_id);
-        let rows: Vec<LatRow> = bind_window(q, range.from, range.to)
+        let rows: Vec<LatRow> = src
+            .bind_window(q, range.from, range.to)
             .fetch_all::<LatRow>()
             .await
             .context("clickhouse latency_buckets_by_region")?;
@@ -1628,7 +1639,7 @@ impl ResultsStore for ClickhouseResultsStore {
              ) \
              GROUP BY bucket_ts \
              ORDER BY bucket_ts",
-            bucket = src.bucket(rollup_bucket_secs(bucket_seconds)),
+            bucket = src.bucket(src.bucket_width(bucket_seconds)),
             total = src.total(),
             up = src.checks(CheckStatus::Up),
             table = src.table(),
@@ -1639,7 +1650,8 @@ impl ResultsStore for ClickhouseResultsStore {
         if let Some(r) = region {
             q = q.bind(r);
         }
-        let rows: Vec<RibbonRow> = bind_window(q, from, to)
+        let rows: Vec<RibbonRow> = src
+            .bind_window(q, from, to)
             .fetch_all::<RibbonRow>()
             .await
             .context("clickhouse fleet_ribbon")?;
@@ -1725,7 +1737,7 @@ impl ClickhouseResultsStore {
         if let Some(r) = region {
             q = q.bind(r);
         }
-        fetch_single(bind_window(q, range.from, range.to)).await
+        fetch_single(src.bind_window(q, range.from, range.to)).await
     }
 }
 

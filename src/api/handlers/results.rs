@@ -121,7 +121,10 @@ pub async fn latency(
         .quotas
         .clamp_history(org, q.resolve_uncapped()?)
         .await?;
-    let bucket_seconds = latency_bucket_seconds(range.inner());
+    let bucket_seconds =
+        state
+            .results_store
+            .bucket_width(org, range.from, latency_bucket_seconds(range.inner()));
     // Org-scoped `get` rides alongside the (also org-scoped) rollup read so a
     // foreign/unknown id still 404s without a serial round-trip.
     let (target, buckets) = tokio::try_join!(
@@ -168,7 +171,10 @@ pub async fn latency_by_region(
         .quotas
         .clamp_history(org, q.resolve_uncapped()?)
         .await?;
-    let bucket_seconds = latency_bucket_seconds(range.inner());
+    let bucket_seconds =
+        state
+            .results_store
+            .bucket_width(org, range.from, latency_bucket_seconds(range.inner()));
     let (target, mut regions, catalog) = tokio::try_join!(
         state.target_store.get(org, id),
         state
