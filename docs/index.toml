@@ -244,7 +244,7 @@ lastmod = 2026-10-23
 [[page]]
 slug = "hosted/data-retention"
 title = "Data retention"
-description = "How long raw check results, the hourly rollup, incidents and audit records are kept on the hosted service, and which layer a chart reads for the range you asked for."
+description = "How long raw check results, the hourly rollup, incidents and audit records are kept on the hosted service, and which layer a chart reads for a given range."
 blurb = "How long raw checks, the hourly rollup, incidents, and audit records are kept on the hosted service."
 section = "hosted"
 scope = "hosted"
