@@ -8,8 +8,9 @@
 </a>
 <div class="flex items-center gap-3">
     <button type="button" data-subscribe-open
-            class="rounded-full border border-brand-soft px-4 py-2.5 text-sm text-brand transition-[border-color,scale] hover:border-brand motion-safe:active:scale-[0.96]">
-        {{ tr.t("subscribe-title") }}
+            class="whitespace-nowrap rounded-full border border-brand-soft px-4 py-2.5 text-sm text-brand transition-[border-color,scale] hover:border-brand motion-safe:active:scale-[0.96]">
+        <span class="sm:hidden">{{ tr.t("subscribe-submit") }}</span>
+        <span class="hidden sm:inline">{{ tr.t("subscribe-title") }}</span>
     </button>
     <a href="{{ reader.rss_url }}" class="text-sm text-brand-soft hover:text-brand"
        aria-label="{{ tr.t("rss-aria") }}">RSS</a>

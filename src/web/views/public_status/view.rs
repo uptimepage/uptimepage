@@ -107,6 +107,7 @@ pub(super) struct DayRelated {
 /// Common header fields shared by the recent-incidents list and the detail page.
 pub struct IncidentHeader {
     pub id: String,
+    /// Empty with no component, or when the title already names it.
     pub component_name: String,
     pub title: String,
     pub impact_label: String,
@@ -303,7 +304,8 @@ impl DayText {
     }
 
     /// Each state the day spent time in, worst first. A day an incident
-    /// touched for no measurable time still names the state it reached.
+    /// touched for no measurable time still names the state it reached, and
+    /// so does a day nothing was checked.
     fn spans(&self, state: DayState, d: Downtime) -> Vec<DaySpan> {
         let span = |s: DayState, duration: String| DaySpan {
             state: self.state(s).to_owned(),
@@ -320,7 +322,10 @@ impl DayText {
         .map(|(s, secs)| span(s, self.tr.duration(secs)))
         .collect();
         match state {
-            DayState::MajorOutage | DayState::PartialOutage | DayState::Degraded
+            DayState::MajorOutage
+            | DayState::PartialOutage
+            | DayState::Degraded
+            | DayState::NoData
                 if spans.is_empty() =>
             {
                 vec![span(state, String::new())]
@@ -604,6 +609,15 @@ pub(super) fn history_summary(states: &[DayState], checked: &[bool], tr: Tr) -> 
     }
 }
 
+/// `name` stands in `text` as words of its own: "Web" is not in "Webhooks".
+fn names_whole(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + name.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    })
+}
+
 pub(super) fn build_incident_header(
     i: &PublicIncident,
     now: DateTime<Utc>,
@@ -614,7 +628,11 @@ pub(super) fn build_incident_header(
     let (phase_id, phase_class) = phase_classes(i.status_phase);
     IncidentHeader {
         id: i.id.to_string(),
-        component_name: i.component_name.clone(),
+        component_name: if names_whole(&i.title, &i.component_name) {
+            String::new()
+        } else {
+            i.component_name.clone()
+        },
         title: i.title.clone(),
         impact_label: tr.t(impact_id),
         impact_class,

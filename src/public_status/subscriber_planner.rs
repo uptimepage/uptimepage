@@ -58,7 +58,7 @@ pub async fn plan(pool: &PgPool, links: &PageLinks) -> anyhow::Result<()> {
                     incident_title: row.incident_title(),
                     update_id: row.update_id,
                     phase: row.phase.clone(),
-                    message: row.message.clone(),
+                    message: row.message(),
                 },
             ),
         });

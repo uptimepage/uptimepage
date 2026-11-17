@@ -444,7 +444,7 @@ impl OrgPublicSource {
                     .map(|u| PublicIncidentUpdate {
                         posted_at: u.posted_at,
                         phase: IncidentStatusPhase::from_db_str(&u.phase),
-                        message: u.message.clone(),
+                        message: tr.update_message(&u.message, u.generated),
                         generated: u.generated,
                     })
                     .collect();

@@ -104,6 +104,11 @@ auto-title-down = indisponível
 auto-title-degraded = desempenho degradado
 auto-title-error = erro
 auto-title-generic = Perturbação do serviço
+auto-update-detected = Detetado automaticamente: as verificações de monitorização estão a falhar.
+auto-update-recovered = Resolvido automaticamente: as verificações de monitorização voltaram ao normal.
+auto-update-investigating = Estamos a investigar este incidente.
+auto-update-resolved = Este incidente foi resolvido.
+auto-update-monitor-deleted = A monitorização foi removida; este incidente foi encerrado.
 
 ## Status page
 
@@ -124,7 +129,7 @@ maintenance-starts = Começa
 maintenance-ends = termina
 maintenance-affects = afeta
 legend-label = Legenda de cores: tempo de inatividade por dia
-legend-no-downtime = Sem inatividade
+legend-no-downtime = Operacional
 legend-brief = Menos de 20 min
 legend-outage = 20–60 min
 legend-extended = 1 hora ou mais

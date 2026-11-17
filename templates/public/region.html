@@ -201,10 +201,10 @@
                                 tabindex="{% if day.day_index == 0 %}0{% else %}-1{% endif %}"></button>
                         {% endfor %}
                     </div>
-                    <div class="mt-2 flex items-center justify-between text-[11px] text-quiet">
-                        <span>{{ tr.t("strip-start") }}</span>
-                        <span><span class="font-mono text-muted">{{ c.uptime_label }}</span> {{ tr.t("strip-uptime") }} · {{ c.history_summary }}</span>
-                        <span>{{ tr.t("strip-today") }}</span>
+                    <div class="mt-2 flex items-baseline justify-between gap-x-3 text-[11px] text-quiet">
+                        <span class="shrink-0">{{ tr.t("strip-start") }}</span>
+                        <span class="min-w-0 text-balance text-center"><span class="font-mono text-muted">{{ c.uptime_label }}</span> {{ tr.t("strip-uptime") }} · {{ c.history_summary }}</span>
+                        <span class="shrink-0">{{ tr.t("strip-today") }}</span>
                     </div>
                 </li>
                 {% endfor %}

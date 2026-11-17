@@ -104,6 +104,11 @@ auto-title-down = no disponible
 auto-title-degraded = rendimiento degradado
 auto-title-error = error
 auto-title-generic = Interrupción del servicio
+auto-update-detected = Detectado automáticamente: las comprobaciones de monitorización están fallando.
+auto-update-recovered = Resuelto automáticamente: las comprobaciones de monitorización se han recuperado.
+auto-update-investigating = Estamos investigando este incidente.
+auto-update-resolved = Este incidente se ha resuelto.
+auto-update-monitor-deleted = Se ha retirado la monitorización; este incidente se ha cerrado.
 
 ## Status page
 

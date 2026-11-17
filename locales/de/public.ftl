@@ -104,6 +104,11 @@ auto-title-down = ausgefallen
 auto-title-degraded = beeinträchtigt
 auto-title-error = Fehler
 auto-title-generic = Dienststörung
+auto-update-detected = Automatisch erkannt: Die Überwachungsprüfungen schlagen fehl.
+auto-update-recovered = Automatisch behoben: Die Überwachungsprüfungen laufen wieder erfolgreich.
+auto-update-investigating = Wir untersuchen diese Störung.
+auto-update-resolved = Diese Störung wurde behoben.
+auto-update-monitor-deleted = Die Überwachung wurde entfernt; diese Störung wurde geschlossen.
 
 ## Status page
 

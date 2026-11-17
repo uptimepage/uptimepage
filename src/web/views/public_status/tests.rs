@@ -166,6 +166,47 @@ fn day_strip_blob_links_overlapping_incident() {
 }
 
 #[test]
+fn a_day_nothing_was_checked_says_no_data() {
+    let mut p = sample_page();
+    let comp_id = p.groups[0].components[0].id;
+    p.groups[0].components[0].history[0] = DayState::NoData;
+    let view = build_view(&p, &[], &Default::default(), all_tab(), Tr::default());
+    let blob: serde_json::Value = serde_json::from_str(&view.day_strip_json).unwrap();
+    let days = &blob[comp_id.to_string()]["days"];
+    assert_eq!(
+        days[0]["spans"],
+        serde_json::json!([
+            { "state": "No data", "state_class": "day-pop-status--none", "duration": "" },
+        ])
+    );
+    assert_eq!(
+        days[1]["spans"],
+        serde_json::json!([]),
+        "a checked day reads as no downtime"
+    );
+}
+
+#[test]
+fn an_incident_header_does_not_repeat_a_component_its_title_names() {
+    let now = Utc::now();
+    let mut inc = fake_incident(now, 1, "API down");
+    assert_eq!(
+        build_incident_header(&inc, now, Tr::default()).component_name,
+        ""
+    );
+    for title in ["Latency spike", "APIs slow", "RAPID-APIv2"] {
+        inc.title = title.into();
+        let header = build_incident_header(&inc, now, Tr::default());
+        assert_eq!(header.component_name, "API", "{title}");
+    }
+    inc.title = "Errors on the API.".into();
+    assert_eq!(
+        build_incident_header(&inc, now, Tr::default()).component_name,
+        ""
+    );
+}
+
+#[test]
 fn a_day_cell_is_coloured_by_how_long_it_was_down() {
     let mut p = sample_page();
     let c = &mut p.groups[0].components[0];
@@ -719,6 +760,16 @@ fn component_uptime_is_the_aggregator_figure_not_a_day_ratio() {
         &DayText::new(Tr::default(), Utc::now(), 90),
     );
     assert_eq!(view.uptime_label, "99.97%");
+    c.uptime_pct = Some(100.0);
+    assert_eq!(
+        build_component(
+            &c,
+            &Default::default(),
+            &DayText::new(Tr::default(), Utc::now(), 90)
+        )
+        .uptime_label,
+        "100%"
+    );
     c.uptime_pct = None;
     assert_eq!(
         build_component(

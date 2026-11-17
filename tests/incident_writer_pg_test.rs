@@ -148,7 +148,9 @@ async fn a_public_open_posts_its_opening_update_pg() {
         updates(public).await,
         vec![(
             "investigating".to_string(),
-            uptimepage::storage::incident_ops::AUTO_OPENED_MESSAGE.to_string(),
+            uptimepage::domain::GeneratedUpdate::Detected
+                .text()
+                .to_string(),
             "system".to_string()
         )],
         "a public open is what subscribers hear first"

@@ -11,12 +11,12 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::domain::{
-    ActorType, IncidentAcknowledgement, IncidentAlertLink, IncidentAlertSourceRef, IncidentEvent,
-    IncidentEventKind, IncidentGroupLink, IncidentGroupRef, IncidentMetrics, IncidentNotification,
-    IncidentOrigin, IncidentSeverity, IncidentState, IncidentTransition, IncidentUrgency,
-    IncidentVisibility, MetricBucket, MonitorIncidentCount, NewIncidentNotification,
-    NewManualIncident, NotificationOutcome, NotificationReason, NotificationStatus, OpsIncident,
-    OrgId, StatusPageId, UserId, next_state,
+    ActorType, GeneratedUpdate, IncidentAcknowledgement, IncidentAlertLink, IncidentAlertSourceRef,
+    IncidentEvent, IncidentEventKind, IncidentGroupLink, IncidentGroupRef, IncidentMetrics,
+    IncidentNotification, IncidentOrigin, IncidentSeverity, IncidentState, IncidentTransition,
+    IncidentUrgency, IncidentVisibility, MetricBucket, MonitorIncidentCount,
+    NewIncidentNotification, NewManualIncident, NotificationOutcome, NotificationReason,
+    NotificationStatus, OpsIncident, OrgId, StatusPageId, UserId, next_state,
 };
 use crate::error::Result;
 use crate::storage::admin::NOT_HELD_PREDICATE;
@@ -24,12 +24,12 @@ use crate::storage::group_incidents::{GroupLock, lock_group_of};
 use crate::storage::locks::{advisory_xact_lock, alert_source_lock_key, incident_lock_key};
 
 use super::{
-    AUTO_RESOLVED_MESSAGE, Acknowledged, Actor, ClaimedEscalation, ClosingNotice,
-    DueClosingNotices, DueIncident, EPISODE_EVENT_KINDS, EmergencyAck, FanOut, FanOutKind,
-    INCIDENT_DETAIL_ROW_CAP, IncidentOpsFilter, IncidentOpsStore, IncidentStateCounts,
-    LifecycleOutcome, OwedPage, PendingNotification, QUEUED_TAKEOVER_SECS, UpdateText,
-    may_page_predicate, notify_needs_monitor, opening_update_message, pages_with_monitor,
-    status_page_required, unnamed_sender,
+    Acknowledged, Actor, ClaimedEscalation, ClosingNotice, DueClosingNotices, DueIncident,
+    EPISODE_EVENT_KINDS, EmergencyAck, FanOut, FanOutKind, INCIDENT_DETAIL_ROW_CAP,
+    IncidentOpsFilter, IncidentOpsStore, IncidentStateCounts, LifecycleOutcome, OwedPage,
+    PendingNotification, QUEUED_TAKEOVER_SECS, UpdateText, may_page_predicate,
+    notify_needs_monitor, opening_update_message, pages_with_monitor, status_page_required,
+    unnamed_sender,
 };
 
 pub struct PgIncidentOpsStore {
@@ -139,7 +139,7 @@ fn like_contains(s: &str) -> String {
 
 /// Public resolution line: the note, or a default when blank.
 pub(super) fn resolved_public_message(note: Option<&str>) -> UpdateText {
-    UpdateText::or_default(note, "This incident has been resolved.")
+    UpdateText::or_default(note, GeneratedUpdate::Resolved.text())
 }
 
 /// Closed by deleting its monitor, group or alert source: nothing was resolved.
@@ -949,7 +949,7 @@ pub async fn auto_resolve_in_tx(
         None,
         &resolve_sql(),
         Some(UpdateText {
-            message: AUTO_RESOLVED_MESSAGE.to_string(),
+            message: GeneratedUpdate::Recovered.text().to_string(),
             generated: true,
         }),
         None,

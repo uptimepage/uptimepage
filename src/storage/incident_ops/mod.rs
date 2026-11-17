@@ -19,9 +19,9 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::domain::{
-    ActorType, ExternalId, IncidentAcknowledgement, IncidentEvent, IncidentEventKind,
-    IncidentMetrics, IncidentNotification, IncidentSeverity, IncidentState, LinkedApp,
-    NewIncidentNotification, NewManualIncident, NotificationOutcome, NotificationReason,
+    ActorType, ExternalId, GeneratedUpdate, IncidentAcknowledgement, IncidentEvent,
+    IncidentEventKind, IncidentMetrics, IncidentNotification, IncidentSeverity, IncidentState,
+    LinkedApp, NewIncidentNotification, NewManualIncident, NotificationOutcome, NotificationReason,
     OpsIncident, OrgId, StatusPageId, TransitionError, UserId,
 };
 use crate::error::Result;
@@ -498,19 +498,9 @@ pub fn opening_update_message(title: Option<&str>, description: Option<&str>) ->
     let non_blank = |s: &&str| !s.trim().is_empty();
     UpdateText::or_default(
         description.filter(non_blank).or(title.filter(non_blank)),
-        "We are investigating this incident.",
+        GeneratedUpdate::Investigating.text(),
     )
 }
-
-/// Public opening line for a monitor-opened incident that lands on a status
-/// page; written by the writer's `insert_open` so subscribers hear the outage
-/// start, not only its end.
-pub const AUTO_OPENED_MESSAGE: &str = "Automatically detected — monitoring checks are failing.";
-
-/// Public closing line for an auto-resolved incident; shared with the writer's
-/// `close` path.
-pub const AUTO_RESOLVED_MESSAGE: &str =
-    "Automatically resolved — monitoring checks have recovered.";
 
 /// Upper bound on per-incident timeline/update rows a detail view renders, so a
 /// pathological long-lived incident can't blow up the query or page.

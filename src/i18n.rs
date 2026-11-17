@@ -8,7 +8,7 @@ use chrono_tz::Tz;
 use fluent_templates::fluent_bundle::FluentValue;
 use fluent_templates::{LanguageIdentifier, langid, static_loader};
 
-use crate::domain::{Locale, PageTimezone};
+use crate::domain::{GeneratedUpdate, Locale, PageTimezone};
 use crate::duration::{DurationUnit, duration_parts};
 
 static_loader! {
@@ -218,9 +218,37 @@ impl Tr {
         )
     }
 
+    /// A public update's words: a line the platform wrote reads in this
+    /// language, what a person wrote stays as written.
+    pub fn update_message(self, message: &str, generated: bool) -> String {
+        generated
+            .then(|| GeneratedUpdate::from_text(message))
+            .flatten()
+            .map_or_else(
+                || message.to_owned(),
+                |line| self.t(generated_update_id(line)),
+            )
+    }
+
+    /// Two decimals, a bare `100` only when nothing was lost: anything short
+    /// of it stops at 99.99 instead of rounding up.
     pub fn percent(self, pct: f64) -> String {
-        let value = format!("{pct:.2}").replace('.', &self.t("decimal-separator"));
+        let value = if pct >= 100.0 {
+            "100".to_owned()
+        } else {
+            format!("{:.2}", pct.min(99.99)).replace('.', &self.t("decimal-separator"))
+        };
         self.t_args("percent", [("value", value.into())])
+    }
+}
+
+fn generated_update_id(line: GeneratedUpdate) -> &'static str {
+    match line {
+        GeneratedUpdate::Detected => "auto-update-detected",
+        GeneratedUpdate::Recovered => "auto-update-recovered",
+        GeneratedUpdate::Investigating => "auto-update-investigating",
+        GeneratedUpdate::Resolved => "auto-update-resolved",
+        GeneratedUpdate::MonitorDeleted => "auto-update-monitor-deleted",
     }
 }
 
@@ -432,6 +460,31 @@ mod tests {
         assert_eq!(tr.duration(25 * 3600), "1d 1h");
         assert_eq!(tr.ago(45), "45s ago");
         assert_eq!(tr.percent(99.9666), "99.97%");
+        assert_eq!(tr.percent(90.0), "90.00%");
+    }
+
+    #[test]
+    fn only_a_whole_hundred_percent_drops_its_decimals() {
+        assert_eq!(Tr::new(Locale::En).percent(100.0), "100%");
+        assert_eq!(Tr::new(Locale::De).percent(100.0), "100 %");
+        assert_eq!(Tr::new(Locale::PtPt).percent(100.0), "100%");
+        assert_eq!(Tr::new(Locale::PtPt).percent(99.999), "99,99%");
+    }
+
+    #[test]
+    fn a_generated_update_reads_in_the_pages_language() {
+        let pt = Tr::new(Locale::PtPt);
+        for line in GeneratedUpdate::ALL {
+            let stored = line.text();
+            assert_eq!(Tr::default().update_message(stored, true), stored);
+            assert_ne!(pt.update_message(stored, true), stored, "{line:?}");
+            assert_eq!(pt.update_message(stored, false), stored, "a person's words");
+        }
+        assert_eq!(
+            pt.update_message(GeneratedUpdate::Resolved.text(), true),
+            "Este incidente foi resolvido."
+        );
+        assert_eq!(pt.update_message("Failover done.", true), "Failover done.");
     }
 
     #[test]

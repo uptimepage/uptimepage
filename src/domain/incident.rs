@@ -663,6 +663,45 @@ impl NotificationReason {
     }
 }
 
+/// A public update the platform words itself. Its stored English is what
+/// names the line, so a page in another language can show its own words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GeneratedUpdate {
+    /// Opens a monitor's incident on a page, so subscribers hear the outage
+    /// start and not only its end.
+    Detected,
+    Recovered,
+    /// A publish with no words of its own.
+    Investigating,
+    /// A resolve that gave the page no words of its own.
+    Resolved,
+    MonitorDeleted,
+}
+
+impl GeneratedUpdate {
+    pub const ALL: [Self; 5] = [
+        Self::Detected,
+        Self::Recovered,
+        Self::Investigating,
+        Self::Resolved,
+        Self::MonitorDeleted,
+    ];
+
+    pub const fn text(self) -> &'static str {
+        match self {
+            Self::Detected => "Automatically detected — monitoring checks are failing.",
+            Self::Recovered => "Automatically resolved — monitoring checks have recovered.",
+            Self::Investigating => "We are investigating this incident.",
+            Self::Resolved => "This incident has been resolved.",
+            Self::MonitorDeleted => MONITOR_DELETED_MESSAGE,
+        }
+    }
+
+    pub fn from_text(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|line| line.text() == text)
+    }
+}
+
 /// Internal operational projection of an `incidents` row. Returned by the
 /// `IncidentOpsStore`; never serialised to a public/anonymous surface.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

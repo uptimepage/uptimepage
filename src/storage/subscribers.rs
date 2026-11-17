@@ -401,7 +401,7 @@ pub struct UpdateNoticeRow {
     pub page: PageRow,
     pub update_id: Uuid,
     pub phase: String,
-    pub message: String,
+    message: String,
     pub generated: bool,
     pub incident_id: Uuid,
     pub origin: String,
@@ -436,6 +436,10 @@ impl UpdateNoticeRow {
             &self.component_name,
             &self.status_at_start,
         )
+    }
+
+    pub fn message(&self) -> String {
+        Tr::new(self.locale()).update_message(&self.message, self.generated)
     }
 }
 
@@ -660,6 +664,16 @@ mod tests {
             component_name: "Painel Cloud".into(),
             status_at_start: "down".into(),
         }
+    }
+
+    #[test]
+    fn a_generated_update_is_told_in_the_pages_language() {
+        let mut row = pending(None, "pt-PT");
+        row.message = crate::domain::GeneratedUpdate::Resolved.text().into();
+        row.generated = true;
+        assert_eq!(row.message(), "Este incidente foi resolvido.");
+        row.generated = false;
+        assert_eq!(row.message(), "This incident has been resolved.");
     }
 
     #[test]

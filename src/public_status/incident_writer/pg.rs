@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-use crate::domain::{ActorType, CheckStatus, IncidentEventKind, OrgId, Recovered};
+use crate::domain::{ActorType, CheckStatus, GeneratedUpdate, IncidentEventKind, OrgId, Recovered};
 use crate::error::Result;
 use crate::storage::group_incidents::{self, MemberClose, MemberLeft};
 
@@ -63,7 +63,7 @@ impl PgIncidentStore {
             .bind(incident_id)
             .bind(ended_at)
             .bind(org.0)
-            .bind(crate::storage::incident_ops::AUTO_RESOLVED_MESSAGE)
+            .bind(GeneratedUpdate::Recovered.text())
             .bind(routed)
             .fetch_optional(&mut *tx)
             .await
@@ -323,7 +323,7 @@ impl IncidentStore for PgIncidentStore {
         .bind(new.region)
         .bind(&new.regions_down)
         .bind(&new.regions_up)
-        .bind(crate::storage::incident_ops::AUTO_OPENED_MESSAGE)
+        .bind(GeneratedUpdate::Detected.text())
         .bind(routed)
         .fetch_optional(&mut *tx)
         .await
@@ -370,7 +370,7 @@ impl IncidentStore for PgIncidentStore {
             .bind(incident_id)
             .bind(ended_at)
             .bind(org.0)
-            .bind(crate::storage::incident_ops::AUTO_RESOLVED_MESSAGE)
+            .bind(GeneratedUpdate::Recovered.text())
             .bind(false)
             .fetch_optional(&self.pool)
             .await
