@@ -127,7 +127,6 @@ async-trait = "0.1"
 fastrand = "2"
 moka = { version = "0.12", features = ["future"] }
 arc-swap = "1"
-lettre = { version = "0.11.21", default-features = false, features = ["smtp-transport", "builder", "pool", "tokio1-rustls-tls"] }
 x509-parser = "0.18.1"
 
 # Secret-string wrapper for in-memory API keys / OAuth client secrets.
