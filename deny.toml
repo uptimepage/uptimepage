@@ -63,6 +63,21 @@ ignore = [
     # through: a plain bump fails every write for those clients. Revisit when
     # issue #250 lands InputRequiredResult confirmation for them.
     "RUSTSEC-2026-0462",
+    # `chrono` — unmaintained, no safe upgrade. Our code uses it directly in
+    # about 350 files and through the sqlx and clickhouse `chrono` features;
+    # replacing it is a large change of its own. Even after that, rmcp keeps
+    # it in the lock file: 1.7.0 (locked) and the latest release, 3.11.0,
+    # depend on chrono unconditionally for `Annotations.last_modified` in
+    # their public model, and turn on `schemars/chrono04`
+    # (modelcontextprotocol/rust-sdk#1469). Revisit when our own code is off
+    # chrono, then on every rmcp bump.
+    "RUSTSEC-2026-0543",
+    # `chrono-tz` — unmaintained, no safe upgrade, and it gets no new tzdb
+    # releases, so DST rule changes stop reaching on-call schedules and status
+    # page time zones. Only our code uses it (7 files), but it is tied to the
+    # chrono types those files use, so it goes in the same change. Remove this
+    # ignore with that change; revisit by 2026-12-18 if it has not landed.
+    "RUSTSEC-2026-0555",
 ]
 
 # ── Licenses: explicit allow-list. Anything outside the list fails CI. ──────
