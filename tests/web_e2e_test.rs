@@ -947,8 +947,11 @@ async fn a_former_policy_path_redirects_to_the_configured_policy() {
 }
 
 /// The footer links the operator's own policies, and only those it publishes.
+/// Each router keeps its own: one built earlier in the process with none
+/// does not empty the next one's footer.
 #[tokio::test]
 async fn the_footer_links_only_the_configured_policies() {
+    let bare = app();
     let app = build_test_app_with_web_and_owner(|cfg| {
         cfg.legal.terms_url = "https://example.test/terms".into();
         cfg.legal.terms_version = "v7".into();
@@ -977,6 +980,17 @@ async fn the_footer_links_only_the_configured_policies() {
     assert!(
         body.contains(r#"href="/licenses""#),
         "the license bundle always stays"
+    );
+    let resp = bare
+        .oneshot(Request::get("/licenses").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp).await;
+    assert!(body.contains(r#"href="/licenses""#), "the footer rendered");
+    assert!(
+        !body.contains(">Terms</a>"),
+        "the earlier router keeps its own empty footer"
     );
 }
 

@@ -72,60 +72,73 @@ mod static_refs {
         Ok(env!("CARGO_PKG_VERSION"))
     }
 
-    static SUPPORT_UI: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-
-    /// Set once at startup from `[email].support_address`. Nav, page and
-    /// endpoint ride the same flag, so a self-host install shows no dead entry.
-    pub fn set_support_ui(enabled: bool) {
-        let _ = SUPPORT_UI.set(enabled);
+    /// Deployment settings templates read, so a self-host install shows no
+    /// dead entry. Scoped to the router that renders the page by
+    /// [`with_page_chrome`]; a render outside one sees the default, all off.
+    #[derive(Default)]
+    pub struct PageChrome {
+        /// `[email].support_address` is set: nav, page and endpoint ride it.
+        pub support_ui: bool,
+        /// A payment provider is configured.
+        pub billing_ui: bool,
+        /// The policies the deployment publishes.
+        pub legal_links: Vec<LegalLink>,
     }
 
-    /// `{% if ""|support_ui %}` → whether the in-app help form is on.
-    #[askama::filter_fn]
-    pub fn support_ui(_: &str, _: &dyn askama::Values) -> askama::Result<bool> {
-        Ok(*SUPPORT_UI.get().unwrap_or(&false))
-    }
-
+    #[derive(Clone)]
     pub struct LegalLink {
         pub label: &'static str,
         pub url: String,
     }
 
-    static LEGAL_LINKS: std::sync::OnceLock<Vec<LegalLink>> = std::sync::OnceLock::new();
+    impl LegalLink {
+        pub fn configured(legal: &crate::config::LegalConfig) -> Vec<Self> {
+            legal
+                .policies()
+                .into_iter()
+                .filter(|(_, _, url)| !url.is_empty())
+                .map(|(_, label, url)| Self {
+                    label,
+                    url: url.to_owned(),
+                })
+                .collect()
+        }
+    }
 
-    /// Set once at startup from `[legal]`, so a deployment links only the
-    /// policies it publishes.
-    pub fn set_legal_links(legal: &crate::config::LegalConfig) {
-        let links = legal
-            .policies()
-            .into_iter()
-            .filter(|(_, _, url)| !url.is_empty())
-            .map(|(_, label, url)| LegalLink {
-                label,
-                url: url.to_owned(),
-            })
-            .collect();
-        let _ = LEGAL_LINKS.set(links);
+    tokio::task_local! {
+        static PAGE_CHROME: std::sync::Arc<PageChrome>;
+    }
+
+    /// Runs `fut` with `chrome` visible to the filters below.
+    pub fn with_page_chrome<F: std::future::Future>(
+        chrome: std::sync::Arc<PageChrome>,
+        fut: F,
+    ) -> impl std::future::Future<Output = F::Output> {
+        PAGE_CHROME.scope(chrome, fut)
+    }
+
+    fn page_chrome<R>(read: impl Fn(&PageChrome) -> R) -> R {
+        PAGE_CHROME
+            .try_with(|chrome| read(chrome))
+            .unwrap_or_else(|_| read(&PageChrome::default()))
+    }
+
+    /// `{% if ""|support_ui %}` → whether the in-app help form is on.
+    #[askama::filter_fn]
+    pub fn support_ui(_: &str, _: &dyn askama::Values) -> askama::Result<bool> {
+        Ok(page_chrome(|c| c.support_ui))
     }
 
     /// `{% for link in ""|legal_links %}` → the operator's policy links.
     #[askama::filter_fn]
-    pub fn legal_links(_: &str, _: &dyn askama::Values) -> askama::Result<&'static [LegalLink]> {
-        Ok(LEGAL_LINKS.get().map_or(&[], Vec::as_slice))
-    }
-
-    static BILLING_UI: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-
-    /// Set once at startup from whether a payment provider is configured, so
-    /// a self-host install shows no billing entry.
-    pub fn set_billing_ui(enabled: bool) {
-        let _ = BILLING_UI.set(enabled);
+    pub fn legal_links(_: &str, _: &dyn askama::Values) -> askama::Result<Vec<LegalLink>> {
+        Ok(page_chrome(|c| c.legal_links.clone()))
     }
 
     /// `{% if ""|billing_ui %}` → whether the billing page is on.
     #[askama::filter_fn]
     pub fn billing_ui(_: &str, _: &dyn askama::Values) -> askama::Result<bool> {
-        Ok(*BILLING_UI.get().unwrap_or(&false))
+        Ok(page_chrome(|c| c.billing_ui))
     }
 
     #[cfg(test)]

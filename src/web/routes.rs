@@ -1,11 +1,15 @@
+use std::sync::Arc;
+
 use axum::Router;
-use axum::extract::Extension;
-use axum::response::Redirect;
+use axum::extract::{Extension, Request, State};
+use axum::middleware::Next;
+use axum::response::{Redirect, Response};
 use axum::routing::{get, post};
 use tower_cookies::CookieManagerLayer;
 
 use crate::app::AppState;
 use crate::templates::assets;
+use crate::templates::filters::{self, LegalLink, PageChrome};
 use crate::web::{error, views};
 
 /// RFC 9727 well-known path of the API catalog.
@@ -21,9 +25,11 @@ const API_CATALOG_PATH: &str = "/.well-known/api-catalog";
 /// parity); the operator dashboard keeps `/` on its own host.
 pub fn routes(state: AppState) -> Router {
     let cfg = &state.cfg;
-    crate::templates::filters::set_support_ui(cfg.email.support_enabled());
-    crate::templates::filters::set_billing_ui(state.billing.is_some());
-    crate::templates::filters::set_legal_links(&cfg.legal);
+    let chrome = Arc::new(PageChrome {
+        support_ui: cfg.email.support_enabled(),
+        billing_ui: state.billing.is_some(),
+        legal_links: LegalLink::configured(&cfg.legal),
+    });
     let mut r = Router::new()
         .route("/", get(views::dashboard::root))
         .route("/targets", get(views::targets_list::index))
@@ -469,5 +475,11 @@ pub fn routes(state: AppState) -> Router {
         .layer(CookieManagerLayer::new())
         .layer(Extension(views::dashboard::dashboard_page_cache()))
         .layer(Extension(views::targets_detail::live_data_cache()))
+        // Outermost, so the fallback and every layer above render inside it.
+        .layer(axum::middleware::from_fn_with_state(chrome, page_chrome))
         .with_state(state)
+}
+
+async fn page_chrome(State(chrome): State<Arc<PageChrome>>, req: Request, next: Next) -> Response {
+    filters::with_page_chrome(chrome, next.run(req)).await
 }
