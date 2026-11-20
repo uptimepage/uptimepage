@@ -38,7 +38,7 @@ Flow monitors run a headless browser, so they execute only on agents that ship a
 
 The agent must reference a region and a token that already exist (see the operator surface below). Pull and ingest behaviour:
 
-- **Pull** (`GET /api/agent/targets`) — `401`/`403` is terminal: the agent clears its cached config and pauses, so revoking or disabling the agent stops the probe. `5xx`/timeout is transient: it keeps serving the last-known config. Responses are content-hashed with an ETag, so a credential re-encrypt invalidates the cache even without a config change. The agent asks for a gzip reply, so a reverse proxy that compresses responses shrinks a large config several times over. The reply's headers get 30 s. Its body may then take up to 5 minutes while it keeps arriving, and is dropped when nothing arrives for 20 s. An agent that holds no config yet, such as one that just restarted, retries every 5 s instead of backing off when a pull times out, loses its connection or gets an error status.
+- **Pull** (`GET /api/agent/targets`) — `401`/`403` is terminal: the agent clears its cached config and pauses, so revoking or disabling the agent stops the probe. `5xx`/timeout is transient: it keeps serving the last-known config. Responses are content-hashed with an ETag, so a credential re-encrypt invalidates the cache even without a config change. The agent asks for a gzip reply, so a reverse proxy that compresses responses shrinks a large config several times over. The reply's headers get 30 s. Its body may then take up to 5 minutes while it keeps arriving, and is dropped when nothing arrives for 20 s. An agent that holds no config yet, such as one that just restarted, retries every 5 s instead of backing off when a pull times out, loses its connection or gets an error status. Every pull carries an `x-agent-monitors` header with the number of monitors the agent holds, or `none`, which the control plane records (see [Is an agent probing](#is-an-agent-probing)).
 - **Ingest** (`POST /api/agent/results`) — region and agent id are taken from the token, never trusted from the body. Rows that are clock-skewed or belong to a region the agent isn't assigned are dropped per-row (the rest of the batch still lands) and counted, rather than rejecting the whole batch. Cross-process de-duplication is authoritative in ClickHouse; a re-sent identical batch is idempotent.
 - **Dispatch** (`GET /api/agent/dispatch`, `POST /api/agent/dispatch/results`) — a long-poll surface for on-demand runs ("check now" and channel tests), so a manual check reaches the agent in the right region instead of running centrally.
 
@@ -60,7 +60,7 @@ Authorization: Bearer <that-secret>
 | `POST` | `/operator/regions` | create a region (`id` is a `[a-z0-9-]` slug, `name`, optional geo fields: `city`, `country_code`, `continent`, `latitude`/`longitude`) |
 | `PATCH` | `/operator/regions/{id}` | rename / relocate, enable / disable a region (`enabled`), or opt it in / out of new monitors' defaults (`default_selected`) |
 | `DELETE` | `/operator/regions/{id}` | delete a region — `409` while it still holds agents or assigned targets |
-| `GET` | `/operator/agents` | list agents |
+| `GET` | `/operator/agents` | list agents, with each one's check-in and config state |
 | `POST` | `/operator/agents` | mint an agent — the response carries its `sm_agent_…` token **once** |
 | `PATCH` | `/operator/agents/{id}` | rename / enable / disable an agent |
 | `DELETE` | `/operator/agents/{id}` | delete an agent |
@@ -70,6 +70,27 @@ The agent token is shown only at creation; store it when it is minted. Disabling
 Disabling a **region** stops it being scheduled and stops config-pull for it (its agents receive no targets) while keeping its stored history — a reversible alternative to deleting, which the foreign keys block while the region is in use.
 
 A typical bring-up: create the region, mint an agent in it, copy the token to the agent box's `UPTIMEPAGE_AGENT__TOKEN`, start the agent.
+
+## Is an agent probing
+
+An agent that checks in is not always running checks. After a restart it holds no config until a config pull succeeds, and if every pull fails it stays connected with nothing to probe.
+
+Each config pull says what the agent holds. The `x-agent-monitors` request header carries the number of monitors it holds, or `none`. An older agent build that does not send the header sends `If-None-Match` only when it holds a config, so the control plane reads that instead. A header value that is neither `none` nor a whole number is ignored.
+
+`GET /operator/agents` shows, per agent:
+
+| Field | Meaning |
+|-------|---------|
+| `last_seen_at`, `stale` | when the agent last checked in, and whether an enabled agent has been silent longer than `operator.agent_stale_after_secs` |
+| `config_missing_since` | when the agent was first seen without a config; `null` once a pull showed one |
+| `scheduled_monitors` | how many monitors the agent last said it holds; `null` when it holds none, did not say, or has not said since it came back from a gap longer than the staleness window |
+| `probing` | the agent is enabled, checked in within `agent_stale_after_secs`, and holds a config or has been without one for no longer than `agent_stale_after_secs`. An agent never seen counts from its creation, as its staleness does |
+
+The grace in `probing` keeps a restart from reading as an outage. A current agent pulls again right after it loads a config, so the control plane sees the load within seconds. An agent that comes back after being stale reads as holding no config until a pull shows one, because it has most likely restarted.
+
+The same state drives the `uptimepage_agent_probing` and `uptimepage_region_agents_probing` gauges (see [Metrics](metrics.md)). `uptimepage_region_agents_up` minus `uptimepage_region_agents_probing` counts agents in a region that check in but run no checks.
+
+**Long pull intervals.** An agent shows what it holds only on a config pull. A current agent pulls again right after it loads a config, but in two cases the control plane waits for the next regular pull: an older agent build that does not send `x-agent-monitors`, after each restart, and any agent that comes back after being stale with its config intact, since its first call home is usually a result upload. If `pull_interval_secs` is longer than `operator.agent_stale_after_secs`, that agent reads as not probing until the pull. Keep `pull_interval_secs` below `agent_stale_after_secs`, and upgrade older agents.
 
 ## Viewing per-region data
 

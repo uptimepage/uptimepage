@@ -26,8 +26,8 @@ use uuid::Uuid;
 
 use crate::config::AppConfig;
 use crate::domain::agent_wire::{
-    AgentTargetsResponse, DispatchBatch, DispatchReport, DispatchedCheck, FlowRunRecord,
-    IngestRequestRef, MAX_FLOW_RUNS_PER_BATCH,
+    AGENT_MONITORS, AgentTargetsResponse, DispatchBatch, DispatchReport, DispatchedCheck,
+    FlowRunRecord, IngestRequestRef, MAX_FLOW_RUNS_PER_BATCH,
 };
 use crate::domain::{CheckResult, MAX_CHECK_TIMEOUT, OrgId, Target};
 use crate::error::{AppError, Result};
@@ -67,9 +67,6 @@ const SEEN_TIMEOUT: Duration = Duration::from_secs(5);
 /// Longer than a dead connection takes to notice, so a post caught on one can
 /// still go out on a new one.
 const POST_RETRY_BUDGET: Duration = Duration::from_secs(30);
-/// Tells the control plane, on every config pull, how many monitors this agent
-/// holds, or `none`, so a connected agent with no config is not read as probing.
-const AGENT_MONITORS: HeaderName = HeaderName::from_static("x-agent-monitors");
 
 /// How the control plane answered a pull whose body nobody reads.
 enum Touched {

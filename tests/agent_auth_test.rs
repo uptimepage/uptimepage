@@ -1,7 +1,8 @@
 //! The regional-agent surface (`/api/agent/*`) on live Postgres: only an
 //! agent's own token gets in, a disabled agent is turned away, an agent reports
 //! only for monitors in its token's region and under each monitor's own org,
-//! and an authenticated call stamps the agent as seen.
+//! an authenticated call stamps the agent as seen, and every config pull
+//! records whether the agent holds a config.
 //!
 //! Live-PG ignored: needs `DATABASE_URL`. Regions are global rows, so each
 //! test gets its own database.
@@ -14,13 +15,14 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
 use tower::ServiceExt;
 use uptimepage::domain::CheckResult;
-use uptimepage::domain::agent_wire::IngestRequestRef;
+use uptimepage::domain::agent_wire::{AGENT_MONITORS, HeldConfig, IngestRequestRef};
 use uptimepage::storage::InMemorySink;
-use uptimepage::storage::operator::OperatorRepo;
+use uptimepage::storage::operator::{AgentRow, OperatorRepo};
 use uuid::Uuid;
 
 use common::{
@@ -83,9 +85,20 @@ impl Rig {
     }
 
     async fn pull(&self, bearer: Option<&str>) -> (StatusCode, Value, Option<String>) {
+        self.pull_with(bearer, &[]).await
+    }
+
+    async fn pull_with(
+        &self,
+        bearer: Option<&str>,
+        headers: &[(&str, &str)],
+    ) -> (StatusCode, Value, Option<String>) {
         let mut req = Request::get("/api/agent/targets");
         if let Some(token) = bearer {
             req = req.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        for (name, value) in headers {
+            req = req.header(*name, *value);
         }
         let resp = self
             .app
@@ -98,7 +111,12 @@ impl Rig {
             .headers()
             .get(header::ETAG)
             .map(|v| v.to_str().unwrap().to_string());
-        (status, common::body_json(resp).await, etag)
+        let body = if status == StatusCode::NOT_MODIFIED {
+            Value::Null
+        } else {
+            common::body_json(resp).await
+        };
+        (status, body, etag)
     }
 
     async fn ingest(&self, token: &str, results: &[CheckResult]) -> (StatusCode, Value) {
@@ -143,7 +161,11 @@ impl Rig {
         id
     }
 
-    async fn last_seen(&self, agent: Uuid) -> Option<chrono::DateTime<chrono::Utc>> {
+    async fn last_seen(&self, agent: Uuid) -> Option<DateTime<Utc>> {
+        self.row(agent).await.last_seen_at
+    }
+
+    async fn row(&self, agent: Uuid) -> AgentRow {
         self.repo
             .list_agents()
             .await
@@ -151,7 +173,30 @@ impl Rig {
             .into_iter()
             .find(|a| a.id == agent)
             .expect("agent listed")
-            .last_seen_at
+    }
+
+    /// Put the agent's row in a known state; ages are seconds before now.
+    async fn set_state(
+        &self,
+        agent: Uuid,
+        seen_ago: Option<i64>,
+        missing_ago: Option<i64>,
+        count: Option<i32>,
+    ) {
+        sqlx::query(
+            "UPDATE agents SET \
+                 last_seen_at = now() - make_interval(secs => $2), \
+                 config_missing_since = now() - make_interval(secs => $3), \
+                 scheduled_monitors = $4 \
+             WHERE id = $1",
+        )
+        .bind(agent)
+        .bind(seen_ago.map(|s| s as f64))
+        .bind(missing_ago.map(|s| s as f64))
+        .bind(count)
+        .execute(&self.pool)
+        .await
+        .unwrap();
     }
 
     async fn done(self) {
@@ -271,6 +316,231 @@ async fn an_authenticated_call_stamps_the_agent_as_seen() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(stamped.is_some(), "last_seen_at never set");
+
+    rig.done().await;
+}
+
+const WINDOW_SECS: u64 = 90;
+
+fn recent(at: Option<DateTime<Utc>>) -> bool {
+    at.is_some_and(|t| Utc::now() - t < chrono::Duration::seconds(30))
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_pull_without_a_config_marks_the_agent_once() {
+    let Some(rig) = rig("agentcfg_bare").await else {
+        return;
+    };
+    let (id, token) = rig.agent(REGION).await;
+    rig.set_state(id, Some(5), None, Some(4)).await;
+
+    let (status, _, _) = rig.pull(Some(&token)).await;
+    assert_eq!(status, StatusCode::OK);
+    let first = rig.row(id).await;
+    assert!(
+        first.config_missing_since.is_some(),
+        "a bare pull holds none"
+    );
+    assert_eq!(first.scheduled_monitors, None);
+
+    let (status, _, _) = rig
+        .pull_with(Some(&token), &[(AGENT_MONITORS, "none")])
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        rig.row(id).await.config_missing_since,
+        first.config_missing_since,
+        "the mark keeps the first time"
+    );
+
+    rig.done().await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_pull_stores_the_count_the_agent_reports() {
+    let Some(rig) = rig("agentcfg_count").await else {
+        return;
+    };
+    let (id, token) = rig.agent(REGION).await;
+    rig.set_state(id, Some(5), Some(60), None).await;
+
+    let (status, _, etag) = rig.pull_with(Some(&token), &[(AGENT_MONITORS, "26")]).await;
+    assert_eq!(status, StatusCode::OK);
+    let row = rig.row(id).await;
+    assert_eq!(row.config_missing_since, None);
+    assert_eq!(row.scheduled_monitors, Some(26));
+
+    let etag = etag.expect("a full reply names its version");
+    let (status, _, _) = rig
+        .pull_with(Some(&token), &[("if-none-match", etag.as_str())])
+        .await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    let row = rig.row(id).await;
+    assert_eq!(
+        (row.config_missing_since, row.scheduled_monitors),
+        (None, None),
+        "an older agent's etag shows a config with no count"
+    );
+
+    rig.done().await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_pull_whose_config_read_fails_still_records_its_evidence() {
+    let Some(rig) = rig("agentcfg_fail").await else {
+        return;
+    };
+    let (id, token) = rig.agent(REGION).await;
+    rig.set_state(id, Some(5), Some(60), None).await;
+    sqlx::query("ALTER TABLE target_regions RENAME TO target_regions_gone")
+        .execute(&rig.pool)
+        .await
+        .unwrap();
+
+    let (status, _, _) = rig.pull_with(Some(&token), &[(AGENT_MONITORS, "5")]).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let row = rig.row(id).await;
+    assert_eq!(
+        (row.config_missing_since, row.scheduled_monitors),
+        (None, Some(5))
+    );
+
+    rig.done().await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn showing_a_config_clears_the_mark_and_stamps_the_agent_seen() {
+    let Some(rig) = rig("agentcfg_clear").await else {
+        return;
+    };
+    let (id, _) = rig.agent(REGION).await;
+    rig.set_state(id, Some(600), Some(600), None).await;
+
+    rig.repo
+        .record_config_evidence(id, HeldConfig::Loaded(Some(3)), WINDOW_SECS)
+        .await
+        .unwrap();
+    let row = rig.row(id).await;
+    assert_eq!(row.config_missing_since, None);
+    assert_eq!(row.scheduled_monitors, Some(3));
+    assert!(recent(row.last_seen_at), "{:?}", row.last_seen_at);
+
+    rig.done().await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn showing_none_after_a_return_keeps_the_time_it_came_back() {
+    let Some(rig) = rig("agentcfg_return").await else {
+        return;
+    };
+    let (id, _) = rig.agent(REGION).await;
+    rig.set_state(id, Some(600), None, Some(26)).await;
+
+    rig.repo.touch_agent_seen(id, WINDOW_SECS).await.unwrap();
+    let voided = rig.row(id).await;
+    assert!(voided.config_missing_since.is_some());
+    assert_eq!(voided.scheduled_monitors, None, "the old count went too");
+
+    rig.repo
+        .record_config_evidence(id, HeldConfig::Nothing, WINDOW_SECS)
+        .await
+        .unwrap();
+    let row = rig.row(id).await;
+    assert_eq!(row.config_missing_since, voided.config_missing_since);
+    assert_eq!(row.scheduled_monitors, None);
+
+    rig.done().await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_heartbeat_from_a_stale_or_never_seen_agent_marks_it() {
+    let Some(rig) = rig("agentcfg_hb_stale").await else {
+        return;
+    };
+    let (never, _) = rig.agent(REGION).await;
+    let (stale, _) = rig.agent(OTHER_REGION).await;
+    rig.set_state(stale, Some(600), None, Some(26)).await;
+
+    for id in [never, stale] {
+        rig.repo.touch_agent_seen(id, WINDOW_SECS).await.unwrap();
+        let row = rig.row(id).await;
+        assert!(recent(row.config_missing_since), "{id}");
+        assert!(recent(row.last_seen_at), "{id}");
+        assert_eq!(row.scheduled_monitors, None, "{id}");
+        assert!(!row.holds_config(Utc::now(), std::time::Duration::from_secs(WINDOW_SECS)));
+    }
+
+    rig.done().await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_heartbeat_from_a_fresh_agent_leaves_the_mark_alone() {
+    let Some(rig) = rig("agentcfg_hb_fresh").await else {
+        return;
+    };
+    let (holds, _) = rig.agent(REGION).await;
+    let (missing, _) = rig.agent(OTHER_REGION).await;
+    rig.set_state(holds, Some(10), None, Some(3)).await;
+    rig.set_state(missing, Some(10), Some(300), None).await;
+    let marked = rig.row(missing).await.config_missing_since;
+
+    for id in [holds, missing] {
+        rig.repo.touch_agent_seen(id, WINDOW_SECS).await.unwrap();
+    }
+    let holds = rig.row(holds).await;
+    assert_eq!(holds.config_missing_since, None);
+    assert_eq!(holds.scheduled_monitors, Some(3));
+    assert_eq!(rig.row(missing).await.config_missing_since, marked);
+
+    rig.done().await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_heartbeat_that_runs_after_a_clearing_write_voids_nothing() {
+    let Some(rig) = rig("agentcfg_hb_late").await else {
+        return;
+    };
+    let (id, _) = rig.agent(REGION).await;
+    rig.set_state(id, Some(600), Some(30), None).await;
+
+    rig.repo
+        .record_config_evidence(id, HeldConfig::Loaded(Some(2)), WINDOW_SECS)
+        .await
+        .unwrap();
+    rig.repo.touch_agent_seen(id, WINDOW_SECS).await.unwrap();
+    let row = rig.row(id).await;
+    assert_eq!(row.config_missing_since, None);
+    assert_eq!(row.scheduled_monitors, Some(2));
+
+    rig.done().await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn an_agent_back_with_its_config_whose_pull_lands_first_keeps_holding_it() {
+    let Some(rig) = rig("agentcfg_back").await else {
+        return;
+    };
+    let (id, _) = rig.agent(REGION).await;
+    rig.set_state(id, Some(600), None, Some(26)).await;
+
+    rig.repo
+        .record_config_evidence(id, HeldConfig::Loaded(Some(26)), WINDOW_SECS)
+        .await
+        .unwrap();
+    rig.repo.touch_agent_seen(id, WINDOW_SECS).await.unwrap();
+    let row = rig.row(id).await;
+    assert_eq!(row.config_missing_since, None);
+    assert_eq!(row.scheduled_monitors, Some(26));
+    assert!(recent(row.last_seen_at), "{:?}", row.last_seen_at);
 
     rig.done().await;
 }

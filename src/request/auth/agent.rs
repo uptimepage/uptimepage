@@ -39,8 +39,12 @@ where
                 // UPDATE its row constantly.
                 if app.agent_seen_debounce.get(&id).is_none() {
                     app.agent_seen_debounce.insert(id, ());
+                    let stale_after = app.cfg.operator.agent_stale_after_secs;
                     tokio::spawn(async move {
-                        if let Err(err) = OperatorRepo::new(pool).touch_agent_seen(id).await {
+                        if let Err(err) = OperatorRepo::new(pool)
+                            .touch_agent_seen(id, stale_after)
+                            .await
+                        {
                             tracing::warn!(error = %err, "agent last_seen update failed");
                         }
                     });

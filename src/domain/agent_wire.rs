@@ -28,6 +28,38 @@ pub struct AgentTargetDto {
 /// batch of thousands is a bug or an attempt to make us write rows on demand.
 pub const MAX_FLOW_RUNS_PER_BATCH: usize = 256;
 
+/// Config-pull request header: how many monitors the agent holds, or `none`.
+pub const AGENT_MONITORS: &str = "x-agent-monitors";
+
+/// What a config pull says the agent holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeldConfig {
+    /// A config, with its monitor count when the agent reported one.
+    Loaded(Option<i32>),
+    Nothing,
+}
+
+impl HeldConfig {
+    /// `monitors` is the [`AGENT_MONITORS`] value and wins when it reads as
+    /// `none` or a count. Otherwise the etag decides: an agent sends
+    /// `If-None-Match` only when it holds a config.
+    pub fn from_pull(monitors: Option<&str>, if_none_match: bool) -> Self {
+        if let Some(v) = monitors {
+            if v.eq_ignore_ascii_case("none") {
+                return Self::Nothing;
+            }
+            if let Ok(n @ 0..) = v.parse::<i32>() {
+                return Self::Loaded(Some(n));
+            }
+        }
+        if if_none_match {
+            Self::Loaded(None)
+        } else {
+            Self::Nothing
+        }
+    }
+}
+
 /// Config-pull response: every enabled target assigned to the agent's region.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentTargetsResponse {
@@ -206,6 +238,30 @@ pub struct DispatchReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pull_reads_as_what_the_agent_says_it_holds() {
+        use HeldConfig::{Loaded, Nothing};
+        for (monitors, if_none_match, want) in [
+            (Some("26"), false, Loaded(Some(26))),
+            (Some("0"), false, Loaded(Some(0))),
+            (Some("none"), false, Nothing),
+            (None, true, Loaded(None)),
+            (None, false, Nothing),
+            (Some("none"), true, Nothing),
+            (Some("26"), true, Loaded(Some(26))),
+            (Some("lots"), true, Loaded(None)),
+            (Some("-1"), false, Nothing),
+            (Some(""), true, Loaded(None)),
+            (Some("99999999999"), false, Nothing),
+        ] {
+            assert_eq!(
+                HeldConfig::from_pull(monitors, if_none_match),
+                want,
+                "{monitors:?} with If-None-Match={if_none_match}"
+            );
+        }
+    }
 
     /// The body is decoded before the handler runs, so one unreadable field
     /// would reject every result in the flush.

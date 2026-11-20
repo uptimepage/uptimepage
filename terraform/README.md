@@ -21,7 +21,8 @@ State + secrets live in **HCP Terraform Cloud** — never in this repo.
   `UptimepageCaddyMemoryHigh`, `UptimepageCaddyMetricsMissing`,
   `UptimepageInodesLow`/`Critical`), `uptimepage-availability`
   (is it up at all, all critical: `UptimepageMetricsPipelineDown`,
-  `UptimepageControlPlaneDown`, `UptimepageRegionalAgentDown`) and
+  `UptimepageControlPlaneDown`, `UptimepageRegionalAgentDown`,
+  `UptimepageRegionalAgentNotProbing`) and
   `uptimepage-churn` (not health — a customer leaving, warning only, a nudge
   to look rather than a page: `UptimepageAccountDeletionRequested`); two
   contact points (email-only `uptimepage-default` for warnings,

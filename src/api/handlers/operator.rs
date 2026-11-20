@@ -3,6 +3,8 @@
 //! off the tenant `/api/v1` surface. Agent creation mints the agent's token and
 //! returns it exactly once.
 
+use std::time::Duration;
+
 use crate::request::json::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -318,6 +320,11 @@ pub struct AgentView {
     /// switch). A disabled agent is never stale (it is intentionally dark).
     pub stale: bool,
     pub created_at: DateTime<Utc>,
+    pub config_missing_since: Option<DateTime<Utc>>,
+    pub scheduled_monitors: Option<i32>,
+    /// Enabled, checked in within the staleness window, and holds a config or
+    /// has been without one for no longer than that window.
+    pub probing: bool,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -351,16 +358,14 @@ pub async fn list_agents(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<AgentView>>> {
     let agents = repo(&state)?.list_agents().await?;
-    let threshold = state.cfg.operator.agent_stale_after_secs;
+    let window = Duration::from_secs(state.cfg.operator.agent_stale_after_secs);
     let now = Utc::now();
     Ok(Json(
         agents
             .into_iter()
             .map(|a| {
-                // Same rule as the background sweep: never-seen agents age from
-                // creation, so a fresh agent inside the window isn't "stale".
-                let since = a.last_seen_at.unwrap_or(a.created_at);
-                let stale = a.enabled && (now - since).num_seconds().max(0) as u64 > threshold;
+                let stale = a.enabled && !a.is_fresh(now, window);
+                let probing = a.is_probing(now, window);
                 AgentView {
                     id: a.id,
                     region: a.region,
@@ -370,6 +375,9 @@ pub async fn list_agents(
                     last_seen_at: a.last_seen_at,
                     stale,
                     created_at: a.created_at,
+                    config_missing_since: a.config_missing_since,
+                    scheduled_monitors: a.scheduled_monitors,
+                    probing,
                 }
             })
             .collect(),

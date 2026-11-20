@@ -64,14 +64,7 @@ detail views.
 
 ## 3. Verify
 
-- **Liveness:** the control plane bumps `agents.last_seen_at` on every pull and
-  push. The `uptimepage_agent_up` and `uptimepage_agent_last_seen_age_seconds`
-  Prometheus gauges expose staleness; wire a Grafana alert on them so a dead
-  agent (a silent regional
-  monitoring gap) pages. `agent_stale_after_secs` (operator config) sets the
-  threshold the gauge flips at. The agent also serves its own metrics on `:9090`
-  (internal network only) — scrape it for buffer depth and push outcomes if you
-  run a metrics sidecar on the agent box.
+- **Liveness:** the control plane bumps `agents.last_seen_at` on every pull and push, and each config pull also says whether the agent holds a config. The `uptimepage_agent_up` and `uptimepage_agent_last_seen_age_seconds` Prometheus gauges expose staleness. `uptimepage_agent_probing` shows whether a connected agent runs checks at all: one whose config pulls keep failing checks in but probes nothing. Wire Grafana alerts on them so a dead or idle agent (a silent regional monitoring gap) pages. `agent_stale_after_secs` (operator config) sets the threshold the gauges flip at. The agent also serves its own metrics on `:9090` (internal network only); scrape it for buffer depth and push outcomes if you run a metrics sidecar on the agent box.
 - **Data:** pick a monitor assigned to the region and confirm its detail view
   shows a distinct per-region series.
 

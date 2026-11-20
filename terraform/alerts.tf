@@ -1465,6 +1465,49 @@ resource "grafana_rule_group" "availability" {
       model = local.threshold_c
     }
   }
+
+  # A probe agent checks in but holds no config, so it runs no checks while it
+  # still counts as up. Agents say what they hold on every config pull, and the
+  # probing gauge gives one without a config the staleness window as grace, so a
+  # restart reads as nothing. A stale agent leaves both gauges; the rule above
+  # owns it. no_data = OK for the same reasons.
+  rule {
+    name           = "UptimepageRegionalAgentNotProbing"
+    condition      = "C"
+    for            = "5m"
+    no_data_state  = "OK"
+    exec_err_state = "Error"
+    labels = {
+      severity = "critical"
+      service  = "uptimepage"
+    }
+    annotations = {
+      summary     = "uptimepage: probe agent not probing in {{ $labels.region }}"
+      description = "{{ $labels.region }} has a probe agent that checks in but holds no config, so it runs no checks. Its config_missing_since on /operator/agents says since when. Runbook: runbooks/grafana-cloud.md."
+    }
+    data {
+      ref_id         = "A"
+      datasource_uid = data.grafana_data_source.prometheus.uid
+      relative_time_range {
+        from = 600
+        to   = 0
+      }
+      model = jsonencode({
+        refId   = "A"
+        instant = true
+        expr    = "max by (region) (uptimepage_region_agents_up - uptimepage_region_agents_probing)"
+      })
+    }
+    data {
+      ref_id         = "C"
+      datasource_uid = "__expr__"
+      relative_time_range {
+        from = 0
+        to   = 0
+      }
+      model = local.threshold_c
+    }
+  }
 }
 
 # Churn alerts. Not health — nothing here means the product is broken, so they

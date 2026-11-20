@@ -16,8 +16,8 @@ use crate::ad_hoc_dispatch::DeliveredResult;
 use crate::app::AppState;
 use crate::domain::OrgId;
 use crate::domain::agent_wire::{
-    AgentTargetDto, AgentTargetsResponse, DispatchBatch, DispatchReport, FlowRunRecord,
-    IngestRequest, IngestResponse, MAX_FLOW_RUNS_PER_BATCH,
+    AGENT_MONITORS, AgentTargetDto, AgentTargetsResponse, DispatchBatch, DispatchReport,
+    FlowRunRecord, HeldConfig, IngestRequest, IngestResponse, MAX_FLOW_RUNS_PER_BATCH,
 };
 use crate::error::codes;
 use crate::error::{AppError, Result};
@@ -46,6 +46,21 @@ pub async fn pull_targets(
     headers: HeaderMap,
     agent: AgentIdentity,
 ) -> Result<Response> {
+    let db = state.require_db()?.clone();
+    let operator = OperatorRepo::new(db.clone());
+    let agent_id = agent.agent_id.parse::<Uuid>().ok();
+    // Before any config read, so a pull that fails below still records what
+    // the agent said it holds.
+    if let Some(id) = agent_id {
+        let held = HeldConfig::from_pull(
+            headers.get(AGENT_MONITORS).and_then(|v| v.to_str().ok()),
+            headers.contains_key(header::IF_NONE_MATCH),
+        );
+        let stale_after = state.cfg.operator.agent_stale_after_secs;
+        if let Err(err) = operator.record_config_evidence(id, held, stale_after).await {
+            tracing::warn!(error = %err, "recording agent config evidence failed");
+        }
+    }
     let region = agent.region;
     // Self-reported: only a flow-capable agent is handed flow checks. A change
     // ships with an agent restart, which clears its etag cache and forces a full
@@ -54,8 +69,7 @@ pub async fn pull_targets(
         .get("x-flow-capable")
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.eq_ignore_ascii_case("true"));
-    let db = state.require_db()?.clone();
-    let repo = AdminRepo::new(db.clone(), state.cipher.clone(), "agent_config_pull");
+    let repo = AdminRepo::new(db, state.cipher.clone(), "agent_config_pull");
 
     // Resolved before the etag and reused for the clamp below, so what the agent
     // is told changed and what it is handed come from one reading of the plan.
@@ -83,10 +97,8 @@ pub async fn pull_targets(
     // Persist it for create-time region validation before returning, so a create
     // right after an agent first reports capability can't miss it. Only full
     // pulls reach here (a 304 returned above), so the extra write is rare.
-    if let Ok(id) = agent.agent_id.parse::<uuid::Uuid>()
-        && let Err(err) = OperatorRepo::new(db)
-            .set_agent_flow_capable(id, flow_capable)
-            .await
+    if let Some(id) = agent_id
+        && let Err(err) = operator.set_agent_flow_capable(id, flow_capable).await
     {
         tracing::warn!(error = %err, "persisting agent flow_capable failed");
     }

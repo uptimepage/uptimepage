@@ -1,7 +1,9 @@
 //! Dead-man's-switch for regional agents. A control-plane task that periodically
 //! reads `agents.last_seen_at` and exposes per-agent staleness as Prometheus
 //! gauges (alertable in Grafana) plus a warn log on the fresh→stale transition.
-//! Agents are operator/cross-tenant, so there is no per-org incident here.
+//! Alongside, whether each agent is probing: connected is not enough when it
+//! holds no config. Agents are operator/cross-tenant, so there is no per-org
+//! incident here.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -48,7 +50,7 @@ async fn sweep(
         // Never-reported agents age from creation.
         let since = a.last_seen_at.unwrap_or(a.created_at);
         let age = (now - since).num_seconds().max(0);
-        let is_stale = age as u64 > stale_after.as_secs();
+        let is_stale = !a.is_fresh(now, stale_after);
         // Emit for every agent (incl. disabled) so one that goes dark ages to 0.
         // Per-agent series can freeze if an agent is removed (the metrics facade
         // can't retract); that's fine for dashboards, and alerts page on the
@@ -57,6 +59,8 @@ async fn sweep(
             .set(age as f64);
         metrics::gauge!(metric_names::AGENT_UP, "region" => a.region.clone(), "agent" => a.name.clone())
             .set(if is_stale { 0.0 } else { 1.0 });
+        metrics::gauge!(metric_names::AGENT_PROBING, "region" => a.region.clone(), "agent" => a.name.clone())
+            .set(if a.is_probing(now, stale_after) { 1.0 } else { 0.0 });
         // Warn only when an *enabled* agent crosses into stale — a disabled one
         // is intentionally dark, not an incident.
         if is_stale && a.enabled {
@@ -72,57 +76,62 @@ async fn sweep(
     // Recomputed every sweep, so a recovered, disabled, or removed agent drops
     // out and the gauge can't latch.
     metrics::gauge!(metric_names::AGENTS_ENABLED_DOWN).set(stale.len() as f64);
-    // Dashboards read up-of-total and the agent-down alert pages on the gap.
+    // Dashboards read up-of-total, the agent-down alert pages on the gap, and
+    // the not-probing alert on up minus probing.
     let quorum = region_quorum(&agents, now, stale_after);
-    for (region, total, up) in &quorum {
-        set_region_gauges(region, *total, *up);
+    for (region, counts) in &quorum {
+        set_region_gauges(region, *counts);
     }
     // The gauges can't retract, so a region left with no enabled agent would
     // otherwise page on its last values.
     for region in vanished(regions, &quorum) {
-        set_region_gauges(region, 0, 0);
+        set_region_gauges(region, Quorum::default());
     }
-    *regions = quorum.iter().map(|(r, ..)| (*r).to_owned()).collect();
+    *regions = quorum.iter().map(|(r, _)| (*r).to_owned()).collect();
     Ok(())
 }
 
-fn set_region_gauges(region: &str, total: u32, up: u32) {
-    metrics::gauge!(metric_names::REGION_AGENTS_TOTAL, "region" => region.to_owned())
-        .set(total as f64);
-    metrics::gauge!(metric_names::REGION_AGENTS_UP, "region" => region.to_owned()).set(up as f64);
+/// One region's enabled agents: all of them, the fresh ones, and the probing
+/// ones (a subset of fresh).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Quorum {
+    total: u32,
+    up: u32,
+    probing: u32,
 }
 
-fn vanished<'a>(known: &'a HashSet<String>, quorum: &[(&str, u32, u32)]) -> Vec<&'a str> {
+fn set_region_gauges(region: &str, q: Quorum) {
+    metrics::gauge!(metric_names::REGION_AGENTS_TOTAL, "region" => region.to_owned())
+        .set(q.total as f64);
+    metrics::gauge!(metric_names::REGION_AGENTS_UP, "region" => region.to_owned()).set(q.up as f64);
+    metrics::gauge!(metric_names::REGION_AGENTS_PROBING, "region" => region.to_owned())
+        .set(q.probing as f64);
+}
+
+fn vanished<'a>(known: &'a HashSet<String>, quorum: &[(&str, Quorum)]) -> Vec<&'a str> {
     known
         .iter()
         .map(String::as_str)
-        .filter(|region| !quorum.iter().any(|(r, ..)| r == region))
+        .filter(|region| !quorum.iter().any(|(r, _)| r == region))
         .collect()
 }
 
-/// Per-region quorum from a roster: `(region, enabled_total, fresh_up)`.
-/// Enabled agents only — a disabled agent is intentionally dark, not part of a
-/// region's expected roster. Pure, so the quorum logic is unit-testable without
-/// a metrics recorder.
+/// Per-region quorum from a roster. Enabled agents only — a disabled agent is
+/// intentionally dark, not part of a region's expected roster. Pure, so the
+/// quorum logic is unit-testable without a metrics recorder.
 fn region_quorum(
     agents: &[AgentRow],
     now: DateTime<Utc>,
     stale_after: Duration,
-) -> Vec<(&str, u32, u32)> {
-    let mut total: HashMap<&str, u32> = HashMap::new();
-    let mut up: HashMap<&str, u32> = HashMap::new();
+) -> Vec<(&str, Quorum)> {
+    let mut quorum: HashMap<&str, Quorum> = HashMap::new();
     for a in agents.iter().filter(|a| a.enabled) {
-        *total.entry(a.region.as_str()).or_insert(0) += 1;
-        let since = a.last_seen_at.unwrap_or(a.created_at);
-        let age = (now - since).num_seconds().max(0);
-        if age as u64 <= stale_after.as_secs() {
-            *up.entry(a.region.as_str()).or_insert(0) += 1;
-        }
+        let q = quorum.entry(a.region.as_str()).or_default();
+        q.total += 1;
+        q.up += u32::from(a.is_fresh(now, stale_after));
+        q.probing += u32::from(a.is_probing(now, stale_after));
     }
-    total
-        .into_iter()
-        .map(|(region, t)| (region, t, up.get(region).copied().unwrap_or(0)))
-        .collect()
+    quorum.into_iter().collect()
 }
 
 #[cfg(test)]
@@ -139,20 +148,32 @@ mod tests {
             token_prefix: "tok".into(),
             last_seen_at: Some(now - chrono::Duration::seconds(last_seen_secs_ago)),
             created_at: now,
+            config_missing_since: None,
+            scheduled_monitors: Some(1),
         }
     }
 
-    fn quorum_for<'a>(out: &'a [(&'a str, u32, u32)], region: &str) -> Option<(u32, u32)> {
+    fn missing_for(mut a: AgentRow, secs: i64) -> AgentRow {
+        a.config_missing_since = Some(Utc::now() - chrono::Duration::seconds(secs));
+        a
+    }
+
+    fn quorum_for(out: &[(&str, Quorum)], region: &str) -> Option<(u32, u32, u32)> {
         out.iter()
-            .find(|(r, _, _)| *r == region)
-            .map(|(_, t, u)| (*t, *u))
+            .find(|(r, _)| *r == region)
+            .map(|(_, q)| (q.total, q.up, q.probing))
     }
 
     #[test]
     fn a_region_with_no_enabled_agent_left_has_vanished() {
         let known = HashSet::from(["eu".to_owned(), "us".to_owned()]);
+        let eu = Quorum {
+            total: 1,
+            up: 1,
+            probing: 1,
+        };
 
-        assert_eq!(vanished(&known, &[("eu", 1, 1)]), ["us"]);
+        assert_eq!(vanished(&known, &[("eu", eu)]), ["us"]);
     }
 
     #[test]
@@ -166,8 +187,26 @@ mod tests {
             agent("us", true, 5),   // fresh
         ];
         let out = region_quorum(&agents, now, stale_after);
-        assert_eq!(quorum_for(&out, "eu"), Some((3, 2)), "eu: 2 of 3 fresh");
-        assert_eq!(quorum_for(&out, "us"), Some((1, 1)), "us: 1 of 1 fresh");
+        assert_eq!(quorum_for(&out, "eu"), Some((3, 2, 2)), "eu: 2 of 3 fresh");
+        assert_eq!(quorum_for(&out, "us"), Some((1, 1, 1)), "us: 1 of 1 fresh");
+    }
+
+    #[test]
+    fn a_region_counts_only_its_probing_agents_as_probing() {
+        let now = Utc::now();
+        let stale_after = Duration::from_secs(90);
+        let agents = vec![
+            agent("eu", true, 5),
+            missing_for(agent("eu", true, 5), 30),
+            missing_for(agent("eu", true, 5), 600),
+            agent("eu", true, 600),
+        ];
+
+        assert_eq!(
+            quorum_for(&region_quorum(&agents, now, stale_after), "eu"),
+            Some((4, 3, 2)),
+            "one holds a config, one is in its grace, one lost it long ago, one is stale"
+        );
     }
 
     #[test]
@@ -178,7 +217,7 @@ mod tests {
         // Only the enabled agent counts toward total and up.
         assert_eq!(
             quorum_for(&region_quorum(&agents, now, stale_after), "eu"),
-            Some((1, 1))
+            Some((1, 1, 1))
         );
     }
 
@@ -189,7 +228,7 @@ mod tests {
         let agents = vec![agent("eu", true, 600), agent("eu", true, 1200)];
         assert_eq!(
             quorum_for(&region_quorum(&agents, now, stale_after), "eu"),
-            Some((2, 0)),
+            Some((2, 0, 0)),
             "region dark: 0 of 2 fresh"
         );
     }
