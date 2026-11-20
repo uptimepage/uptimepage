@@ -2,8 +2,8 @@ apiVersion: v2
 name: uptimepage
 description: Self-hosted uptime monitoring, incidents, and status pages
 type: application
-version: 0.9.1
-appVersion: "1.6.0"
+version: 0.10.0
+appVersion: "1.7.0"
 # `-0` so vendor builds (v1.31.1-gke.x) satisfy the constraint.
 kubeVersion: ">=1.29.0-0"
 home: https://uptimepage.dev
@@ -31,7 +31,7 @@ annotations:
   # Artifact Hub scans what it finds here, so it has to track appVersion.
   artifacthub.io/images: |
     - name: uptimepage
-      image: ghcr.io/uptimepage/uptimepage:1.6.0
+      image: ghcr.io/uptimepage/uptimepage:1.7.0
   artifacthub.io/screenshots: |
     - title: Monitor dashboard
       url: https://uptimepage.dev/static/marketing/uptime-monitoring-dashboard.webp
@@ -48,5 +48,7 @@ annotations:
     - title: Status page day history
       url: https://uptimepage.dev/static/marketing/blog-maintenance-day.webp
   artifacthub.io/changes: |
+    - kind: changed
+      description: Tracks application 1.7.0
     - kind: changed
       description: Use the green favicon as the chart icon

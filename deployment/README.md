@@ -457,7 +457,7 @@ docker run --rm -v uptimepage_caddy_data:/source:ro \
 
 ## Upgrading
 
-When an update moves the `clickhouse-server` image to a newer release, back up first: ClickHouse upgrades its data in place, and the older release may not read it back. From this directory, `BACKUP_ROOT="$PWD/backups" ./backup.sh daily` dumps Postgres and ClickHouse; [BACKUP.md](BACKUP.md) covers restore. ClickHouse 26.9 and later need an app image newer than v1.6.0, which cannot read their query results.
+When an update moves the `clickhouse-server` image to a newer release, back up first: ClickHouse upgrades its data in place, and the older release may not read it back. From this directory, `BACKUP_ROOT="$PWD/backups" ./backup.sh daily` dumps Postgres and ClickHouse; [BACKUP.md](BACKUP.md) covers restore. ClickHouse 26.9 and later need app 1.7.0 or later: older images cannot read their query results.
 
 ```bash
 docker compose pull
