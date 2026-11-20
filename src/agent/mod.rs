@@ -14,7 +14,7 @@ use backoff::ExponentialBackoffBuilder;
 use flate2::read::GzDecoder;
 use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use hyper::body::{Body, Bytes};
-use hyper::header::{self, ACCEPT_ENCODING, AUTHORIZATION, HeaderName, IF_NONE_MATCH};
+use hyper::header::{self, ACCEPT_ENCODING, AUTHORIZATION, HeaderName, HeaderValue, IF_NONE_MATCH};
 use hyper::{HeaderMap, Request, StatusCode};
 use metrics::counter;
 use secrecy::ExposeSecret;
@@ -67,8 +67,24 @@ const SEEN_TIMEOUT: Duration = Duration::from_secs(5);
 /// Longer than a dead connection takes to notice, so a post caught on one can
 /// still go out on a new one.
 const POST_RETRY_BUDGET: Duration = Duration::from_secs(30);
+/// Tells the control plane, on every config pull, how many monitors this agent
+/// holds, or `none`, so a connected agent with no config is not read as probing.
+const AGENT_MONITORS: HeaderName = HeaderName::from_static("x-agent-monitors");
 
-struct PullCache {
+/// How the control plane answered a pull whose body nobody reads.
+enum Touched {
+    /// With the version it named, if any.
+    Answered(Option<String>),
+    Rejected(StatusCode),
+}
+
+fn rejects_credential(status: StatusCode) -> bool {
+    status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN
+}
+
+/// A config the control plane served. An empty one with no `ETag` is still
+/// loaded: the region has nothing to probe, which is not the same as not knowing.
+struct LoadedConfig {
     etag: Option<String>,
     targets: Vec<(OrgId, Target)>,
 }
@@ -81,7 +97,7 @@ pub struct AgentPullSource {
     url: String,
     token: String,
     flow_capable: bool,
-    cache: Mutex<PullCache>,
+    cache: Mutex<Option<LoadedConfig>>,
 }
 
 impl AgentPullSource {
@@ -96,27 +112,47 @@ impl AgentPullSource {
             url: format!("{}/api/agent/targets", base_url.trim_end_matches('/')),
             token,
             flow_capable,
-            cache: Mutex::new(PullCache {
-                etag: None,
-                targets: Vec::new(),
-            }),
+            cache: Mutex::new(None),
         }
+    }
+
+    /// The version a pull asks about and the monitor count it reports, both
+    /// `None` while no config is loaded.
+    async fn held(&self) -> (Option<String>, Option<usize>) {
+        let cache = self.cache.lock().await;
+        cache
+            .as_ref()
+            .map_or((None, None), |c| (c.etag.clone(), Some(c.targets.len())))
+    }
+
+    /// Terminal: the token was revoked or the agent disabled. Serving
+    /// last-known here would keep probing, and holding decrypted credentials,
+    /// after an operator pulled the plug. Resumes once the credential is restored.
+    async fn unload(&self, status: StatusCode) {
+        *self.cache.lock().await = None;
+        tracing::error!(%status, "agent credential rejected; pausing until restored");
     }
 
     async fn cached_or_err(&self, msg: String) -> Result<Vec<(OrgId, Target)>> {
-        let cache = self.cache.lock().await;
-        if cache.etag.is_some() || !cache.targets.is_empty() {
-            tracing::warn!(error = %msg, "agent config pull failed; serving last-known config");
-            Ok(cache.targets.clone())
-        } else {
-            Err(AppError::Other(NothingToProbe(msg).into()))
+        match self.cache.lock().await.as_ref() {
+            Some(held) => {
+                tracing::warn!(error = %msg, "agent config pull failed; serving last-known config");
+                Ok(held.targets.clone())
+            }
+            None => Err(AppError::Other(NothingToProbe(msg).into())),
         }
     }
 
-    fn pull_request(&self, etag: Option<&str>) -> Result<Request<Full<Bytes>>> {
+    fn pull_request(
+        &self,
+        etag: Option<&str>,
+        monitors: Option<usize>,
+    ) -> Result<Request<Full<Bytes>>> {
+        let held = monitors.map_or(HeaderValue::from_static("none"), HeaderValue::from);
         let mut builder = Request::get(&self.url)
             .header(AUTHORIZATION, format!("Bearer {}", self.token))
-            .header(ACCEPT_ENCODING, "gzip");
+            .header(ACCEPT_ENCODING, "gzip")
+            .header(AGENT_MONITORS, held);
         if self.flow_capable {
             builder = builder.header("x-flow-capable", "true");
         }
@@ -140,23 +176,28 @@ impl AgentPullSource {
 
     /// Tracks the config version on its own, so a change made while settling
     /// is sent in full once rather than on every pull, and the cache stays as
-    /// the scheduler last read it. The first pull waits a full period: the
-    /// scheduler pulled moments ago.
+    /// the scheduler last read it. The monitor count still comes from the
+    /// cache: a version adopted from a reply nobody read loads nothing. The
+    /// first pull waits a full period: the scheduler pulled moments ago.
     async fn keep_seen(&self, every: Duration) -> Infallible {
         let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
         ticks.tick().await;
-        let mut etag = self.cache.lock().await.etag.clone();
+        let (mut etag, _) = self.held().await;
         loop {
-            match self.touch(etag.as_deref()).await {
-                Ok(answered) => etag = answered.or(etag),
+            let (_, monitors) = self.held().await;
+            match self.touch(etag.as_deref(), monitors).await {
+                Ok(Touched::Answered(answered)) => etag = answered.or(etag),
+                Ok(Touched::Rejected(status)) => {
+                    tracing::warn!(%status, "agent keep-alive pull rejected");
+                }
                 Err(err) => tracing::warn!(error = %err, "agent keep-alive pull failed"),
             }
             ticks.tick().await;
         }
     }
 
-    async fn touch(&self, etag: Option<&str>) -> Result<Option<String>> {
-        let req = self.pull_request(etag)?;
+    async fn touch(&self, etag: Option<&str>, monitors: Option<usize>) -> Result<Touched> {
+        let req = self.pull_request(etag, monitors)?;
         let resp = tokio::time::timeout(SEEN_TIMEOUT, self.client.request(req))
             .await
             .context("timed out")?
@@ -165,12 +206,15 @@ impl AgentPullSource {
                 AppError::Other(anyhow::anyhow!("request failed: {cause}"))
             })?;
         let status = resp.status();
+        if rejects_credential(status) {
+            return Ok(Touched::Rejected(status));
+        }
         if status != StatusCode::NOT_MODIFIED && !status.is_success() {
             return Err(AppError::Other(anyhow::anyhow!(
                 "control plane returned {status}"
             )));
         }
-        Ok(text_header(resp.headers(), header::ETAG))
+        Ok(Touched::Answered(text_header(resp.headers(), header::ETAG)))
     }
 }
 
@@ -248,8 +292,8 @@ fn decoded(raw: Vec<u8>, encoding: Option<&str>) -> std::result::Result<Vec<u8>,
 #[async_trait]
 impl EnabledTargetSource for AgentPullSource {
     async fn list_all_enabled_targets(&self) -> Result<Vec<(OrgId, Target)>> {
-        let etag = self.cache.lock().await.etag.clone();
-        let req = self.pull_request(etag.as_deref())?;
+        let (etag, monitors) = self.held().await;
+        let req = self.pull_request(etag.as_deref(), monitors)?;
 
         let resp = match tokio::time::timeout(HTTP_TIMEOUT, self.client.request(req)).await {
             Ok(Ok(r)) => r,
@@ -268,17 +312,11 @@ impl EnabledTargetSource for AgentPullSource {
 
         let status = resp.status();
         if status == StatusCode::NOT_MODIFIED {
-            return Ok(self.cache.lock().await.targets.clone());
+            let cache = self.cache.lock().await;
+            return Ok(cache.as_ref().map_or_else(Vec::new, |c| c.targets.clone()));
         }
-        if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-            // Terminal: the token was revoked or the agent disabled. Drop the
-            // cached config and schedule nothing — serving last-known here would
-            // keep probing (and holding decrypted credentials) after an operator
-            // pulled the plug. Resumes automatically if the credential is restored.
-            let mut cache = self.cache.lock().await;
-            cache.etag = None;
-            cache.targets.clear();
-            tracing::error!(%status, "agent credential rejected; pausing until restored");
+        if rejects_credential(status) {
+            self.unload(status).await;
             return Ok(Vec::new());
         }
         if !status.is_success() {
@@ -310,9 +348,26 @@ impl EnabledTargetSource for AgentPullSource {
             .map(|d| (OrgId(d.org_id), d.target))
             .collect();
 
-        let mut cache = self.cache.lock().await;
-        cache.etag = new_etag;
-        cache.targets = targets.clone();
+        let first_load = self
+            .cache
+            .lock()
+            .await
+            .replace(LoadedConfig {
+                etag: new_etag.clone(),
+                targets: targets.clone(),
+            })
+            .is_none();
+        if first_load {
+            // Tells the control plane at once rather than a pull interval later.
+            match self.touch(new_etag.as_deref(), Some(targets.len())).await {
+                Ok(Touched::Answered(_)) => {}
+                Ok(Touched::Rejected(status)) => {
+                    self.unload(status).await;
+                    return Ok(Vec::new());
+                }
+                Err(err) => tracing::warn!(error = %err, "agent config load confirm failed"),
+            }
+        }
         Ok(targets)
     }
 }

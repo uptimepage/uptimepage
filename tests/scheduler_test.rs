@@ -921,26 +921,60 @@ async fn a_monitor_added_while_running_is_probed_within_seconds() {
     assert!(matches!(first, Ok(Some(_))), "no probe for the new monitor");
 }
 
-/// Each connection gets the next response, then is closed.
-async fn control_plane_answering(responses: Vec<Vec<u8>>) -> AgentPullSource {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        for response in responses {
-            let (mut sock, _) = listener.accept().await.unwrap();
-            let mut scratch = [0u8; 4096];
-            let _ = sock.read(&mut scratch).await;
-            let _ = sock.write_all(&response).await;
-        }
-    });
+fn agent_pulling_from(control_plane: std::net::SocketAddr) -> AgentPullSource {
     AgentPullSource::new(
         uptimepage::http_outbound::build_control_plane_client(
             uptimepage::security::SsrfGuard::relaxed_for_tests(),
         ),
-        &format!("http://{addr}"),
+        &format!("http://{control_plane}"),
         "token".into(),
         false,
     )
+}
+
+/// Each connection gets the next response, then is closed. The head of each
+/// request comes out of the receiver before its response goes back.
+async fn control_plane_answering(
+    responses: Vec<Vec<u8>>,
+) -> (AgentPullSource, mpsc::UnboundedReceiver<String>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (heads_tx, heads) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        for response in responses {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut head = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                match sock.read(&mut chunk).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => head.extend_from_slice(&chunk[..read]),
+                }
+            }
+            let _ = heads_tx.send(String::from_utf8_lossy(&head).into_owned());
+            let _ = sock.write_all(&response).await;
+        }
+    });
+    (agent_pulling_from(addr), heads)
+}
+
+/// One header's value on each request, `""` where it was absent.
+fn sent<'a>(heads: &'a [String], name: &str) -> Vec<&'a str> {
+    heads
+        .iter()
+        .map(|head| {
+            head.lines()
+                .find_map(|line| {
+                    let (key, value) = line.split_once(':')?;
+                    key.eq_ignore_ascii_case(name).then(|| value.trim())
+                })
+                .unwrap_or("")
+        })
+        .collect()
+}
+
+fn received(heads: &mut mpsc::UnboundedReceiver<String>) -> Vec<String> {
+    std::iter::from_fn(|| heads.try_recv().ok()).collect()
 }
 
 fn config_with_one_target() -> (Target, Vec<u8>) {
@@ -966,9 +1000,15 @@ fn ok_response(headers: &str, body: &[u8]) -> Vec<u8> {
     response
 }
 
+const V1: &str = "ETag: \"v1\"\r\n";
+
 fn pull_with_one_target() -> (Target, Vec<u8>) {
     let (target, config) = config_with_one_target();
-    (target, ok_response("ETag: \"v1\"\r\n", &config))
+    (target, ok_response(V1, &config))
+}
+
+fn not_modified() -> Vec<u8> {
+    format!("HTTP/1.1 304 Not Modified\r\n{V1}Connection: close\r\n\r\n").into_bytes()
 }
 
 fn gzipped(body: &[u8]) -> Vec<u8> {
@@ -984,7 +1024,7 @@ const OVER_LIMIT: &str = "config pull body is over";
 async fn agent_serves_last_known_config_when_a_pull_loses_its_connection_mid_body() {
     let (target, first_pull) = pull_with_one_target();
     let cut_off = b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n{".to_vec();
-    let pull = control_plane_answering(vec![first_pull, cut_off]).await;
+    let (pull, _) = control_plane_answering(vec![first_pull, not_modified(), cut_off]).await;
 
     pull.list_all_enabled_targets().await.expect("first pull");
 
@@ -999,7 +1039,7 @@ async fn agent_serves_last_known_config_when_a_pull_loses_its_connection_mid_bod
 #[tokio::test]
 async fn agent_holding_no_config_reports_a_lost_pull_as_nothing_to_probe() {
     let cut_off = b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n{".to_vec();
-    let pull = control_plane_answering(vec![cut_off]).await;
+    let (pull, _) = control_plane_answering(vec![cut_off]).await;
 
     let failed = pull
         .list_all_enabled_targets()
@@ -1018,7 +1058,7 @@ async fn agent_reports_a_pull_over_the_size_limit_as_a_failure() {
     let size = MAX_PULL_BYTES + 1;
     let mut oversized = format!("HTTP/1.1 200 OK\r\nContent-Length: {size}\r\n\r\n").into_bytes();
     oversized.resize(oversized.len() + size, b' ');
-    let pull = control_plane_answering(vec![first_pull, oversized]).await;
+    let (pull, _) = control_plane_answering(vec![first_pull, not_modified(), oversized]).await;
 
     pull.list_all_enabled_targets().await.expect("first pull");
 
@@ -1051,14 +1091,7 @@ async fn agent_asks_for_a_compressed_config_and_unpacks_it() {
         }),
     ))
     .await;
-    let pull = AgentPullSource::new(
-        uptimepage::http_outbound::build_control_plane_client(
-            uptimepage::security::SsrfGuard::relaxed_for_tests(),
-        ),
-        &format!("http://{control_plane}"),
-        "token".into(),
-        false,
-    );
+    let pull = agent_pulling_from(control_plane);
 
     let served = pull
         .list_all_enabled_targets()
@@ -1073,7 +1106,7 @@ async fn agent_asks_for_a_compressed_config_and_unpacks_it() {
 async fn agent_serves_last_known_config_when_a_compressed_pull_is_corrupt() {
     let (target, first_pull) = pull_with_one_target();
     let corrupt = ok_response(GZIP, b"not gzip");
-    let pull = control_plane_answering(vec![first_pull, corrupt]).await;
+    let (pull, _) = control_plane_answering(vec![first_pull, not_modified(), corrupt]).await;
 
     pull.list_all_enabled_targets().await.expect("first pull");
 
@@ -1089,7 +1122,7 @@ async fn agent_serves_last_known_config_when_a_compressed_pull_is_corrupt() {
 async fn agent_reports_a_compressed_pull_that_unpacks_over_the_size_limit_as_a_failure() {
     let (_, first_pull) = pull_with_one_target();
     let bomb = ok_response(GZIP, &gzipped(&vec![b' '; MAX_PULL_BYTES + 1]));
-    let pull = control_plane_answering(vec![first_pull, bomb]).await;
+    let (pull, _) = control_plane_answering(vec![first_pull, not_modified(), bomb]).await;
 
     pull.list_all_enabled_targets().await.expect("first pull");
 
@@ -1098,4 +1131,161 @@ async fn agent_reports_a_compressed_pull_that_unpacks_over_the_size_limit_as_a_f
         .await
         .expect_err("the limit bounds what the config unpacks to");
     assert!(refused.to_string().contains(OVER_LIMIT), "{refused}");
+}
+
+#[tokio::test]
+async fn agent_reports_the_monitors_it_holds_on_every_pull() {
+    let (_, first_pull) = pull_with_one_target();
+    let (pull, mut heads) =
+        control_plane_answering(vec![first_pull, not_modified(), not_modified()]).await;
+
+    pull.list_all_enabled_targets().await.expect("first pull");
+    pull.list_all_enabled_targets().await.expect("second pull");
+
+    let heads = received(&mut heads);
+    assert_eq!(sent(&heads, "x-agent-monitors"), ["none", "1", "1"]);
+    assert_eq!(sent(&heads, "if-none-match"), ["", "\"v1\"", "\"v1\""]);
+}
+
+#[tokio::test]
+async fn a_first_load_is_confirmed_at_once_not_a_pull_interval_later() {
+    let (_, first_pull) = pull_with_one_target();
+    let (pull, mut heads) = control_plane_answering(vec![first_pull, not_modified()]).await;
+    let registry = Arc::new(TargetRegistry::new(Arc::new(pull)));
+    let (tx, _results) = mpsc::channel(64);
+    let scheduler = Arc::new(Scheduler::new(registry, test_pool(tx), scheduler_cfg(300)));
+    let shutdown = CancellationToken::new();
+    let handle = tokio::spawn(scheduler.run(shutdown.clone()));
+
+    let load = tokio::time::timeout(Duration::from_secs(5), heads.recv())
+        .await
+        .expect("the scheduler pulls at start")
+        .expect("a first pull");
+    let confirm = tokio::time::timeout(Duration::from_secs(5), heads.recv())
+        .await
+        .expect("the load is confirmed within seconds")
+        .expect("a second pull");
+    shutdown.cancel();
+    handle.await.unwrap().unwrap();
+
+    let heads = [load, confirm];
+    assert_eq!(sent(&heads, "x-agent-monitors"), ["none", "1"]);
+    assert_eq!(sent(&heads, "if-none-match"), ["", "\"v1\""]);
+}
+
+#[tokio::test]
+async fn a_new_config_version_is_not_confirmed_again() {
+    let (_, first_pull) = pull_with_one_target();
+    let (_, config) = config_with_one_target();
+    let next_version = ok_response("ETag: \"v2\"\r\n", &config);
+    let (pull, mut heads) = control_plane_answering(vec![
+        first_pull,
+        not_modified(),
+        next_version,
+        // Answers a wrong confirm, which would otherwise hit a closed port and go unseen.
+        not_modified(),
+    ])
+    .await;
+
+    pull.list_all_enabled_targets().await.expect("first pull");
+    pull.list_all_enabled_targets().await.expect("second pull");
+
+    let heads = received(&mut heads);
+    assert_eq!(sent(&heads, "if-none-match"), ["", "\"v1\"", "\"v1\""]);
+}
+
+#[tokio::test]
+async fn a_first_load_stands_when_its_confirm_is_lost() {
+    let (target, first_pull) = pull_with_one_target();
+    let (pull, _) = control_plane_answering(vec![first_pull]).await;
+
+    let served = pull
+        .list_all_enabled_targets()
+        .await
+        .expect("the confirm is best effort");
+
+    let ids: Vec<_> = served.iter().map(|(_, t)| t.id).collect();
+    assert_eq!(ids, [target.id]);
+}
+
+#[tokio::test]
+async fn a_first_load_is_dropped_when_its_confirm_is_refused() {
+    let (_, first_pull) = pull_with_one_target();
+    let refused =
+        b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec();
+    let cut_off = b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n{".to_vec();
+    let (pull, mut heads) = control_plane_answering(vec![first_pull, refused, cut_off]).await;
+
+    let served = pull
+        .list_all_enabled_targets()
+        .await
+        .expect("a refused credential pauses the agent");
+    let failed = pull
+        .list_all_enabled_targets()
+        .await
+        .expect_err("the refused config is gone");
+
+    assert!(served.is_empty());
+    assert!(
+        matches!(&failed, AppError::Other(cause) if cause.is::<NothingToProbe>()),
+        "{failed}"
+    );
+    let heads = received(&mut heads);
+    assert_eq!(sent(&heads, "x-agent-monitors"), ["none", "1", "none"]);
+}
+
+#[tokio::test]
+async fn agent_holding_an_empty_config_with_no_version_reports_zero_and_keeps_serving_it() {
+    let empty = serde_json::to_vec(&AgentTargetsResponse {
+        region: "eu".into(),
+        targets: Vec::new(),
+    })
+    .unwrap();
+    let cut_off = b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n{".to_vec();
+    let (pull, mut heads) = control_plane_answering(vec![
+        ok_response("", &empty),
+        ok_response("", &empty),
+        cut_off,
+    ])
+    .await;
+
+    let loaded = pull
+        .list_all_enabled_targets()
+        .await
+        .expect("an empty config loads");
+    let served = pull
+        .list_all_enabled_targets()
+        .await
+        .expect("a lost pull serves the empty config");
+
+    assert!(loaded.is_empty() && served.is_empty());
+    let heads = received(&mut heads);
+    assert_eq!(sent(&heads, "x-agent-monitors"), ["none", "0", "0"]);
+    assert_eq!(sent(&heads, "if-none-match"), ["", "", ""]);
+}
+
+#[tokio::test]
+async fn keep_alives_from_an_agent_that_never_loaded_say_it_holds_none() {
+    let (_, first_pull) = pull_with_one_target();
+    let (pull, mut heads) = control_plane_answering(vec![first_pull, not_modified()]).await;
+    let mut keep_alives = Vec::new();
+
+    let stopping = async {
+        while keep_alives.len() < 2 {
+            keep_alives.push(heads.recv().await.expect("a keep-alive"));
+        }
+    };
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        pull.keep_seen_while(stopping, Duration::from_millis(50)),
+    )
+    .await
+    .expect("two keep-alives within seconds");
+
+    assert_eq!(
+        sent(&keep_alives, "if-none-match"),
+        ["", "\"v1\""],
+        "the second keep-alive asks about the version the first was sent"
+    );
+    assert_eq!(sent(&keep_alives, "x-agent-monitors"), ["none", "none"]);
 }
