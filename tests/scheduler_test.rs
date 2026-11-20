@@ -1,5 +1,6 @@
 use crate::common;
 
+use std::io::Write as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -20,7 +21,7 @@ use uptimepage::domain::{
 use uptimepage::error::{AppError, Result as SmResult};
 use uptimepage::pipeline::{BatcherConfig, ResultBatcher};
 use uptimepage::scheduler::{Scheduler, TargetRegistry, stop_probing};
-use uptimepage::storage::admin::EnabledTargetSource;
+use uptimepage::storage::admin::{EnabledTargetSource, NothingToProbe};
 use uptimepage::storage::{InMemorySink, InMemoryTargetStore};
 use uptimepage::worker::{ResultFanout, WorkerPool};
 
@@ -472,6 +473,56 @@ async fn scheduler_recovers_after_transient_refresh_failures() {
     );
 }
 
+struct CountingFailingSource {
+    attempts: AtomicU32,
+    failure: fn() -> AppError,
+}
+
+#[async_trait]
+impl EnabledTargetSource for CountingFailingSource {
+    async fn list_all_enabled_targets(&self) -> SmResult<Vec<(OrgId, Target)>> {
+        self.attempts.fetch_add(1, Ordering::SeqCst);
+        Err((self.failure)())
+    }
+}
+
+async fn refresh_attempts_in_a_minute(failure: fn() -> AppError) -> u32 {
+    let source = Arc::new(CountingFailingSource {
+        attempts: AtomicU32::new(0),
+        failure,
+    });
+    let registry = Arc::new(TargetRegistry::new(source.clone()));
+    let (tx, _rx) = mpsc::channel(64);
+    let scheduler = Arc::new(Scheduler::new(registry, test_pool(tx), scheduler_cfg(30)));
+    let shutdown = CancellationToken::new();
+    let handle = tokio::spawn(scheduler.run(shutdown.clone()));
+
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    shutdown.cancel();
+    handle.await.unwrap().unwrap();
+    source.attempts.load(Ordering::SeqCst)
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_source_with_nothing_to_probe_is_retried_without_backing_off() {
+    let attempts = refresh_attempts_in_a_minute(|| {
+        AppError::Other(NothingToProbe("config pull request timed out".into()).into())
+    })
+    .await;
+
+    assert!(attempts >= 10, "{attempts} attempts in a minute");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_source_failing_any_other_way_backs_off() {
+    let attempts = refresh_attempts_in_a_minute(|| {
+        AppError::Other(anyhow::anyhow!("config pull body is over the limit"))
+    })
+    .await;
+
+    assert!(attempts <= 3, "{attempts} attempts in a minute");
+}
+
 #[tokio::test]
 async fn scheduler_shutdown_observed_during_slow_refresh() {
     // Source that simulates a slow PG handshake: blocks indefinitely on
@@ -892,9 +943,9 @@ async fn control_plane_answering(responses: Vec<Vec<u8>>) -> AgentPullSource {
     )
 }
 
-fn pull_with_one_target() -> (Target, Vec<u8>) {
+fn config_with_one_target() -> (Target, Vec<u8>) {
     let target = http_target("127.0.0.1:9".parse().unwrap(), "/", 1000);
-    let body = serde_json::to_vec(&AgentTargetsResponse {
+    let config = serde_json::to_vec(&AgentTargetsResponse {
         region: "eu".into(),
         targets: vec![AgentTargetDto {
             org_id: uuid::Uuid::now_v7(),
@@ -902,14 +953,32 @@ fn pull_with_one_target() -> (Target, Vec<u8>) {
         }],
     })
     .unwrap();
+    (target, config)
+}
+
+fn ok_response(headers: &str, body: &[u8]) -> Vec<u8> {
     let mut response = format!(
-        "HTTP/1.1 200 OK\r\nETag: \"v1\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 200 OK\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     )
     .into_bytes();
     response.extend(body);
-    (target, response)
+    response
 }
+
+fn pull_with_one_target() -> (Target, Vec<u8>) {
+    let (target, config) = config_with_one_target();
+    (target, ok_response("ETag: \"v1\"\r\n", &config))
+}
+
+fn gzipped(body: &[u8]) -> Vec<u8> {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(body).unwrap();
+    encoder.finish().unwrap()
+}
+
+const GZIP: &str = "Content-Encoding: gzip\r\n";
+const OVER_LIMIT: &str = "config pull body is over";
 
 #[tokio::test]
 async fn agent_serves_last_known_config_when_a_pull_loses_its_connection_mid_body() {
@@ -928,6 +997,22 @@ async fn agent_serves_last_known_config_when_a_pull_loses_its_connection_mid_bod
 }
 
 #[tokio::test]
+async fn agent_holding_no_config_reports_a_lost_pull_as_nothing_to_probe() {
+    let cut_off = b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n{".to_vec();
+    let pull = control_plane_answering(vec![cut_off]).await;
+
+    let failed = pull
+        .list_all_enabled_targets()
+        .await
+        .expect_err("there is no config to fall back on");
+
+    assert!(
+        matches!(&failed, AppError::Other(cause) if cause.is::<NothingToProbe>()),
+        "{failed}"
+    );
+}
+
+#[tokio::test]
 async fn agent_reports_a_pull_over_the_size_limit_as_a_failure() {
     let (_, first_pull) = pull_with_one_target();
     let size = MAX_PULL_BYTES + 1;
@@ -937,7 +1022,80 @@ async fn agent_reports_a_pull_over_the_size_limit_as_a_failure() {
 
     pull.list_all_enabled_targets().await.expect("first pull");
 
-    pull.list_all_enabled_targets()
+    let refused = pull
+        .list_all_enabled_targets()
         .await
         .expect_err("a config over the limit will not fix itself");
+    assert!(refused.to_string().contains(OVER_LIMIT), "{refused}");
+}
+
+#[tokio::test]
+async fn agent_asks_for_a_compressed_config_and_unpacks_it() {
+    use axum::http::HeaderMap;
+    use axum::http::header::{ACCEPT_ENCODING, CONTENT_ENCODING};
+    use axum::response::IntoResponse;
+
+    let (target, config) = config_with_one_target();
+    let packed = gzipped(&config);
+    let control_plane = spawn_router(Router::new().route(
+        "/api/agent/targets",
+        get(move |headers: HeaderMap| {
+            let packed = packed.clone();
+            async move {
+                if headers.get(ACCEPT_ENCODING).is_some_and(|v| v == "gzip") {
+                    ([(CONTENT_ENCODING, "gzip")], packed).into_response()
+                } else {
+                    StatusCode::NOT_ACCEPTABLE.into_response()
+                }
+            }
+        }),
+    ))
+    .await;
+    let pull = AgentPullSource::new(
+        uptimepage::http_outbound::build_control_plane_client(
+            uptimepage::security::SsrfGuard::relaxed_for_tests(),
+        ),
+        &format!("http://{control_plane}"),
+        "token".into(),
+        false,
+    );
+
+    let served = pull
+        .list_all_enabled_targets()
+        .await
+        .expect("a gzip reply is read");
+
+    let ids: Vec<_> = served.iter().map(|(_, t)| t.id).collect();
+    assert_eq!(ids, [target.id]);
+}
+
+#[tokio::test]
+async fn agent_serves_last_known_config_when_a_compressed_pull_is_corrupt() {
+    let (target, first_pull) = pull_with_one_target();
+    let corrupt = ok_response(GZIP, b"not gzip");
+    let pull = control_plane_answering(vec![first_pull, corrupt]).await;
+
+    pull.list_all_enabled_targets().await.expect("first pull");
+
+    let served = pull
+        .list_all_enabled_targets()
+        .await
+        .expect("a corrupt transfer is transient");
+    let ids: Vec<_> = served.iter().map(|(_, t)| t.id).collect();
+    assert_eq!(ids, [target.id]);
+}
+
+#[tokio::test]
+async fn agent_reports_a_compressed_pull_that_unpacks_over_the_size_limit_as_a_failure() {
+    let (_, first_pull) = pull_with_one_target();
+    let bomb = ok_response(GZIP, &gzipped(&vec![b' '; MAX_PULL_BYTES + 1]));
+    let pull = control_plane_answering(vec![first_pull, bomb]).await;
+
+    pull.list_all_enabled_targets().await.expect("first pull");
+
+    let refused = pull
+        .list_all_enabled_targets()
+        .await
+        .expect_err("the limit bounds what the config unpacks to");
+    assert!(refused.to_string().contains(OVER_LIMIT), "{refused}");
 }

@@ -40,6 +40,12 @@ pub trait EnabledTargetSource: Send + Sync {
     async fn list_all_enabled_targets(&self) -> Result<Vec<(OrgId, Target)>>;
 }
 
+/// A listing that failed in a way the next attempt may not, from a source
+/// with nothing older to hand out.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct NothingToProbe(pub String);
+
 #[async_trait]
 impl EnabledTargetSource for AdminRepo {
     async fn list_all_enabled_targets(&self) -> Result<Vec<(OrgId, Target)>> {

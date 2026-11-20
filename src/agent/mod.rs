@@ -4,15 +4,17 @@
 //! re-pulls.
 
 use std::convert::Infallible;
+use std::io::Read as _;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
 use async_trait::async_trait;
 use backoff::ExponentialBackoffBuilder;
+use flate2::read::GzDecoder;
 use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
-use hyper::body::Bytes;
-use hyper::header::{self, AUTHORIZATION, IF_NONE_MATCH};
+use hyper::body::{Body, Bytes};
+use hyper::header::{self, ACCEPT_ENCODING, AUTHORIZATION, HeaderName, IF_NONE_MATCH};
 use hyper::{HeaderMap, Request, StatusCode};
 use metrics::counter;
 use secrecy::ExposeSecret;
@@ -36,7 +38,7 @@ use crate::metric_names;
 use crate::pipeline::{BatcherConfig, ResultBatcher};
 use crate::scheduler::{Scheduler, TargetRegistry, stop_probing};
 use crate::security::SsrfGuard;
-use crate::storage::admin::EnabledTargetSource;
+use crate::storage::admin::{EnabledTargetSource, NothingToProbe};
 use crate::storage::traits::FlowRunSink;
 use crate::storage::{DomainExpiryStateStore, InMemoryDomainExpiryStateStore, ResultSink};
 use crate::worker::domain_expiry::{DEFAULT_MAX_STALENESS, DomainExpiryRuntime};
@@ -50,10 +52,13 @@ use crate::worker::{ResultFanout, WorkerDeps, WorkerPool};
 const SETTLE: Duration = Duration::from_secs(MAX_CHECK_TIMEOUT.as_secs() + 15);
 
 pub const MAX_PULL_BYTES: usize = 32 << 20;
-/// One exchange with the control plane, headers and body together. A stall
-/// mid-body wedges this loop, and the region then stops probing while still
-/// reporting itself connected.
+/// The headers of a config pull, or a whole dispatch claim.
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+/// A stall mid-body wedges the pull loop, and the region then stops following
+/// its config while still reporting itself connected.
+const PULL_IDLE_TIMEOUT: Duration = Duration::from_secs(20);
+/// Bounds a body that trickles without ever stalling.
+const PULL_BODY_TIMEOUT: Duration = Duration::from_secs(300);
 /// The control plane records an agent visit at most every 30 s and, by
 /// default, calls the agent stale after 90 s, so even with one pull lost this
 /// one stays live.
@@ -104,13 +109,14 @@ impl AgentPullSource {
             tracing::warn!(error = %msg, "agent config pull failed; serving last-known config");
             Ok(cache.targets.clone())
         } else {
-            Err(AppError::Other(anyhow::anyhow!(msg)))
+            Err(AppError::Other(NothingToProbe(msg).into()))
         }
     }
 
     fn pull_request(&self, etag: Option<&str>) -> Result<Request<Full<Bytes>>> {
-        let mut builder =
-            Request::get(&self.url).header(AUTHORIZATION, format!("Bearer {}", self.token));
+        let mut builder = Request::get(&self.url)
+            .header(AUTHORIZATION, format!("Bearer {}", self.token))
+            .header(ACCEPT_ENCODING, "gzip");
         if self.flow_capable {
             builder = builder.header("x-flow-capable", "true");
         }
@@ -164,15 +170,79 @@ impl AgentPullSource {
                 "control plane returned {status}"
             )));
         }
-        Ok(etag_of(resp.headers()))
+        Ok(text_header(resp.headers(), header::ETAG))
     }
 }
 
-fn etag_of(headers: &HeaderMap) -> Option<String> {
+fn text_header(headers: &HeaderMap, name: HeaderName) -> Option<String> {
     headers
-        .get(header::ETAG)
+        .get(name)
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned)
+}
+
+#[derive(Debug)]
+enum PullBodyError {
+    OverLimit,
+    Failed(String),
+}
+
+/// Reads `body` for as long as it keeps arriving.
+async fn collect_moving<B>(body: B) -> std::result::Result<Vec<u8>, PullBodyError>
+where
+    B: Body<Data = Bytes> + Unpin,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let mut body = Limited::new(body, MAX_PULL_BYTES);
+    let mut collected = Vec::new();
+    let read = async {
+        loop {
+            let frame = tokio::time::timeout(PULL_IDLE_TIMEOUT, body.frame())
+                .await
+                .map_err(|_| PullBodyError::Failed("config pull body stalled".into()))?;
+            match frame {
+                None => return Ok(()),
+                Some(Ok(frame)) => {
+                    if let Some(data) = frame.data_ref() {
+                        collected.extend_from_slice(data);
+                    }
+                }
+                Some(Err(e)) if e.is::<LengthLimitError>() => {
+                    return Err(PullBodyError::OverLimit);
+                }
+                Some(Err(e)) => {
+                    let cause = http_outbound::error_chain(e);
+                    return Err(PullBodyError::Failed(format!(
+                        "reading config-pull body: {cause}"
+                    )));
+                }
+            }
+        }
+    };
+    tokio::time::timeout(PULL_BODY_TIMEOUT, read)
+        .await
+        .map_err(|_| PullBodyError::Failed("config pull body timed out".into()))??;
+    Ok(collected)
+}
+
+fn decoded(raw: Vec<u8>, encoding: Option<&str>) -> std::result::Result<Vec<u8>, PullBodyError> {
+    let Some(encoding) = encoding else {
+        return Ok(raw);
+    };
+    if !encoding.eq_ignore_ascii_case("gzip") {
+        return Err(PullBodyError::Failed(format!(
+            "config pull body came encoded as {encoding}"
+        )));
+    }
+    let mut out = Vec::new();
+    GzDecoder::new(raw.as_slice())
+        .take(MAX_PULL_BYTES as u64 + 1)
+        .read_to_end(&mut out)
+        .map_err(|e| PullBodyError::Failed(format!("decompressing config-pull body: {e}")))?;
+    if out.len() > MAX_PULL_BYTES {
+        return Err(PullBodyError::OverLimit);
+    }
+    Ok(out)
 }
 
 #[async_trait]
@@ -181,8 +251,7 @@ impl EnabledTargetSource for AgentPullSource {
         let etag = self.cache.lock().await.etag.clone();
         let req = self.pull_request(etag.as_deref())?;
 
-        let at = tokio::time::Instant::now() + HTTP_TIMEOUT;
-        let resp = match tokio::time::timeout_at(at, self.client.request(req)).await {
+        let resp = match tokio::time::timeout(HTTP_TIMEOUT, self.client.request(req)).await {
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
                 let cause = http_outbound::error_chain(e);
@@ -219,30 +288,19 @@ impl EnabledTargetSource for AgentPullSource {
                 .await;
         }
 
-        let new_etag = etag_of(resp.headers());
-        let bytes = match tokio::time::timeout_at(
-            at,
-            Limited::new(resp.into_body(), MAX_PULL_BYTES).collect(),
-        )
-        .await
-        {
-            Ok(Ok(body)) => body.to_bytes(),
-            Ok(Err(e)) if e.is::<LengthLimitError>() => {
+        let new_etag = text_header(resp.headers(), header::ETAG);
+        let encoding = text_header(resp.headers(), header::CONTENT_ENCODING);
+        let body = collect_moving(resp.into_body())
+            .await
+            .and_then(|raw| decoded(raw, encoding.as_deref()));
+        let bytes = match body {
+            Ok(bytes) => bytes,
+            Err(PullBodyError::OverLimit) => {
                 return Err(AppError::Other(anyhow::anyhow!(
                     "config pull body is over {MAX_PULL_BYTES} bytes"
                 )));
             }
-            Ok(Err(e)) => {
-                let cause = http_outbound::error_chain(e);
-                return self
-                    .cached_or_err(format!("reading config-pull body: {cause}"))
-                    .await;
-            }
-            Err(_) => {
-                return self
-                    .cached_or_err("config pull body timed out".into())
-                    .await;
-            }
+            Err(PullBodyError::Failed(msg)) => return self.cached_or_err(msg).await,
         };
         let parsed: AgentTargetsResponse =
             serde_json::from_slice(&bytes).context("decoding config-pull response")?;
@@ -662,11 +720,85 @@ async fn wait_for_signal() {
 
 #[cfg(test)]
 mod tests {
+    use std::pin::Pin;
     use std::sync::atomic::{AtomicU32, Ordering};
+    use std::task::{Context, Poll};
 
+    use hyper::body::Frame;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::sync::mpsc;
+    use tokio::time::Instant;
 
     use super::*;
+
+    struct ChannelBody(mpsc::Receiver<Bytes>);
+
+    impl Body for ChannelBody {
+        type Data = Bytes;
+        type Error = Infallible;
+
+        fn poll_frame(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<Option<std::result::Result<Frame<Bytes>, Infallible>>> {
+            self.0
+                .poll_recv(cx)
+                .map(|chunk| chunk.map(|bytes| Ok(Frame::data(bytes))))
+        }
+    }
+
+    fn dripping(every: Duration, chunks: usize) -> ChannelBody {
+        let (tx, rx) = mpsc::channel(1);
+        tokio::spawn(async move {
+            for _ in 0..chunks {
+                tokio::time::sleep(every).await;
+                if tx.send(Bytes::from_static(b" ")).await.is_err() {
+                    return;
+                }
+            }
+        });
+        ChannelBody(rx)
+    }
+
+    fn within_a_second_of(elapsed: Duration, bound: Duration) -> bool {
+        elapsed >= bound && elapsed < bound + Duration::from_secs(1)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_config_body_that_keeps_arriving_outlasts_the_header_deadline() {
+        let chunks = 7;
+        let started = Instant::now();
+
+        let body = collect_moving(dripping(PULL_IDLE_TIMEOUT / 2, chunks))
+            .await
+            .expect("a slow body is not a stalled one");
+
+        assert_eq!(body.len(), chunks);
+        assert!(started.elapsed() > HTTP_TIMEOUT);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_config_body_fails_at_the_idle_bound() {
+        let (tx, rx) = mpsc::channel(1);
+        tx.send(Bytes::from_static(b"{")).await.unwrap();
+        let started = Instant::now();
+
+        let stalled = collect_moving(ChannelBody(rx)).await;
+
+        assert!(matches!(stalled, Err(PullBodyError::Failed(_))));
+        assert!(within_a_second_of(started.elapsed(), PULL_IDLE_TIMEOUT));
+        drop(tx);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_config_body_that_only_trickles_fails_at_the_total_bound() {
+        let started = Instant::now();
+
+        let trickled = collect_moving(dripping(PULL_IDLE_TIMEOUT / 2, usize::MAX)).await;
+
+        assert!(matches!(trickled, Err(PullBodyError::Failed(_))));
+        assert!(within_a_second_of(started.elapsed(), PULL_BODY_TIMEOUT));
+    }
 
     #[tokio::test]
     async fn a_post_cut_off_by_the_network_is_sent_again() {

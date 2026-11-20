@@ -13,9 +13,10 @@ use uuid::Uuid;
 
 use crate::config::SchedulerConfig;
 use crate::domain::Target;
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use crate::metric_names;
 use crate::scheduler::registry::{RegistryDiff, ScheduledTarget, TargetRegistry};
+use crate::storage::admin::NothingToProbe;
 use crate::worker::{CheckTask, WorkerPool};
 
 /// Fixed sweep cadence — decoupled from registry-refresh so a DB outage or
@@ -28,6 +29,8 @@ const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 /// retry cadence under sustained outage is 5 minutes, with recovery noticed
 /// within the same window.
 const REFRESH_BACKOFF_CAP_MULTIPLIER: u64 = 10;
+
+const NOTHING_TO_PROBE_RETRY_SECS: u64 = 5;
 
 /// A target someone is waiting on gets its first result within this, or within
 /// half its interval when that is shorter.
@@ -180,8 +183,11 @@ impl Scheduler {
                 *consecutive_failures = consecutive_failures.saturating_add(1);
                 REFRESH_FAILED.increment(1);
                 CONSECUTIVE_REFRESH_FAILURES.set(*consecutive_failures as f64);
-                let base = self.cfg.target_refresh_interval_secs;
-                let delay_secs = backoff_delay_secs(base, *consecutive_failures);
+                let delay_secs = retry_delay_secs(
+                    self.cfg.target_refresh_interval_secs,
+                    *consecutive_failures,
+                    &err,
+                );
                 tracing::error!(
                     ?err,
                     consecutive_failures = *consecutive_failures,
@@ -343,6 +349,14 @@ async fn sleep_until_opt(at: Option<Instant>) {
     }
 }
 
+fn retry_delay_secs(base_secs: u64, consecutive_failures: u32, err: &AppError) -> u64 {
+    if matches!(err, AppError::Other(cause) if cause.is::<NothingToProbe>()) {
+        base_secs.min(NOTHING_TO_PROBE_RETRY_SECS)
+    } else {
+        backoff_delay_secs(base_secs, consecutive_failures)
+    }
+}
+
 /// Exponential backoff for consecutive refresh failures. Doubles each
 /// failure until it hits the cap (`base × REFRESH_BACKOFF_CAP_MULTIPLIER`)
 /// — bounded so the scheduler notices PG recovery within one cap-window.
@@ -384,10 +398,13 @@ fn stagger_offset(id: Uuid, region: &str, interval: Duration) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::{
-        Due, INITIAL_PROBE_SPREAD, RECENT_EDIT, REFRESH_BACKOFF_CAP_MULTIPLIER, STARTUP_SPREAD,
-        backoff_delay_secs, first_probe_in, quick_probe_in, stagger_offset, until_slot,
+        Due, INITIAL_PROBE_SPREAD, NOTHING_TO_PROBE_RETRY_SECS, RECENT_EDIT,
+        REFRESH_BACKOFF_CAP_MULTIPLIER, STARTUP_SPREAD, backoff_delay_secs, first_probe_in,
+        quick_probe_in, retry_delay_secs, stagger_offset, until_slot,
     };
     use crate::domain::Target;
+    use crate::error::AppError;
+    use crate::storage::admin::NothingToProbe;
     use std::cmp::Reverse;
     use std::collections::BinaryHeap;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -607,6 +624,24 @@ mod tests {
             backoff_delay_secs(base, 100),
             base * REFRESH_BACKOFF_CAP_MULTIPLIER
         );
+    }
+
+    #[test]
+    fn a_source_with_nothing_to_probe_is_retried_soon_however_often_it_failed() {
+        let nothing = AppError::Other(NothingToProbe("timed out".into()).into());
+        for failures in [1, 5, 100] {
+            assert_eq!(
+                retry_delay_secs(30, failures, &nothing),
+                NOTHING_TO_PROBE_RETRY_SECS
+            );
+        }
+        assert_eq!(retry_delay_secs(1, 3, &nothing), 1);
+    }
+
+    #[test]
+    fn any_other_failure_backs_off() {
+        let other = AppError::Other(anyhow::anyhow!("config is over the limit"));
+        assert_eq!(retry_delay_secs(30, 3, &other), 120);
     }
 
     #[test]

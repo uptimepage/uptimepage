@@ -75,7 +75,7 @@ pub async fn pull_targets(
     if headers
         .get(header::IF_NONE_MATCH)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v == etag)
+        .is_some_and(|v| same_version(v, &etag))
     {
         return Ok((StatusCode::NOT_MODIFIED, [(header::ETAG, etag)]).into_response());
     }
@@ -104,6 +104,11 @@ pub async fn pull_targets(
             .collect(),
     };
     Ok((StatusCode::OK, [(header::ETAG, etag)], Json(body)).into_response())
+}
+
+/// A proxy that compresses the reply may hand the agent a weakened tag.
+fn same_version(if_none_match: &str, etag: &str) -> bool {
+    if_none_match.strip_prefix("W/").unwrap_or(if_none_match) == etag
 }
 
 pub async fn ingest_results(
@@ -331,6 +336,13 @@ mod tests {
             steps: Vec::new(),
             evidence: None,
         }
+    }
+
+    #[test]
+    fn a_weakened_tag_still_names_the_same_config() {
+        assert!(same_version("\"3-17-ab\"", "\"3-17-ab\""));
+        assert!(same_version("W/\"3-17-ab\"", "\"3-17-ab\""));
+        assert!(!same_version("W/\"3-16-ab\"", "\"3-17-ab\""));
     }
 
     #[test]
