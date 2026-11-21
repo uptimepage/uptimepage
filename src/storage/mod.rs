@@ -128,7 +128,7 @@ pub use postgres::PostgresTargetStore;
 pub use postmortems::{InMemoryPostmortemStore, PgPostmortemStore, PostmortemStore};
 pub use silence::{
     GroupSilence, InMemorySilenceStore, OpenSilence, PgSilenceStore, Resolved, SilenceGroup,
-    SilenceStore,
+    SilenceStore, Unmonitored,
 };
 pub use status_pages::{
     AddComponentOutcome, InMemoryStatusPageStore, PgStatusPageStore, StatusPageStore,

@@ -97,7 +97,7 @@ A channel whose deliveries keep using up every retry is flagged **not delivering
 
 A channel only ever fails where something tries to page it, so one bound to quiet monitors can sit dead for a long time before anything notices. The channel list carries `last delivered` for that: a channel that has not delivered in weeks is worth a look even while nothing is flagged. A channel that has never delivered shows no line at all.
 
-Two more messages exist that are not incident alerts: **monitoring stopped** and **monitoring resumed**. They fire when every probe covering a monitor has gone silent longer than expected and when results start flowing again. They mean the service is unwatched, not that it is down: no incident opens, and the webhook payload carries the distinct reasons `nodata` and `dataresumed`. A platform-wide probe outage on our side is suppressed rather than fanned out as a flood of these.
+Two more messages exist that are not incident alerts: **monitoring stopped** and **monitoring resumed**. They fire when no probe covering a monitor has run checks for longer than expected, whether the probe went quiet or stayed connected with nothing to run, and when a probe is ready to run checks again. They mean the service is unwatched, not that it is down: no incident opens, and the webhook payload carries the distinct reasons `nodata` and `dataresumed`. A platform-wide probe outage on our side is suppressed rather than fanned out as a flood of these.
 
 ## Acknowledging from the notification
 

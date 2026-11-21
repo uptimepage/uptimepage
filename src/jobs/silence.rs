@@ -1,11 +1,14 @@
 //! Per-monitor silence (no-data) detection + customer notification.
 //!
 //! A monitor goes truly silent only when the agents covering all its regions
-//! stop running — a failing or timing-out check still reports an Error and opens
-//! a normal incident. Each tick, the sweep derives the unmonitored set (one SQL
-//! query over agent liveness + region assignment, excluding maintenance), records
-//! the open/resolved boundary in `monitor_silence_state`, exposes an operator
-//! gauge, and notifies the customer's bound channels once per episode.
+//! stop running its checks — a failing or timing-out check still reports an
+//! Error and opens a normal incident. Each tick, the sweep derives the silent
+//! set (one SQL query over agent config state + region assignment, excluding
+//! maintenance, where an agent just restarted may hold an open silence but
+//! neither opens nor announces one), records the open/resolved boundary in
+//! `monitor_silence_state`,
+//! exposes an operator gauge, and notifies the customer's bound channels once
+//! per episode.
 //!
 //! Sibling to `agent_health`: that one alarms a dead *agent* (operator-facing);
 //! this rolls liveness up to the *monitor* so the customer whose monitor is now
@@ -246,13 +249,23 @@ pub async fn sweep(
     caps: &RegionCaps,
 ) -> Result<()> {
     let now = Utc::now();
-    let unmonitored: HashSet<_> = store
-        .unmonitored(stale_after.as_secs(), caps)
-        .await?
-        .into_iter()
-        .collect();
+    let rows = store.unmonitored(stale_after.as_secs(), caps).await?;
     let open = store.list_open().await?;
     let open_ids: HashSet<_> = open.iter().map(|s| (s.org, s.target_id)).collect();
+    // Grace may hold an open silence but never opens one, and `open` is the
+    // one read both this and the resolve below go by, so it never closes one.
+    let held: HashSet<_> = rows
+        .iter()
+        .filter(|r| r.in_grace)
+        .map(|r| (r.org, r.target_id))
+        .filter(|key| open_ids.contains(key))
+        .collect();
+    let unmonitored: HashSet<_> = rows
+        .iter()
+        .filter(|r| !r.in_grace)
+        .map(|r| (r.org, r.target_id))
+        .chain(held.iter().copied())
+        .collect();
 
     for &(org, target_id) in unmonitored.difference(&open_ids) {
         store.enter(org, target_id, now).await?;
@@ -290,7 +303,7 @@ pub async fn sweep(
             "many monitors unmonitored at once — likely a regional probe outage; customer notices suppressed"
         );
     } else if let Some(d) = delivery {
-        notify_silent(store, d, now).await?;
+        notify_silent(store, d, now, &held).await?;
     } else if !unmonitored.is_empty() {
         tracing::warn!(
             unmonitored = unmonitored.len(),
@@ -311,16 +324,22 @@ type SilentMember = (Uuid, chrono::DateTime<Utc>);
 /// silent in the same tick share one, and later ones join it quietly.
 /// Send-then-mark keeps retrying a transient transport failure; a 2-instance
 /// deploy overlap may double-send a no-data notice, which is benign.
+///
+/// A silence in `held` waits: its agent is back and most likely about to show
+/// its config. After an outage that cut every agent off, each one returns that
+/// way, and the silences mass damping kept quiet would otherwise be announced
+/// one tick before they close.
 async fn notify_silent(
     store: &dyn SilenceStore,
     d: &dyn SilenceDelivery,
     now: chrono::DateTime<Utc>,
+    held: &HashSet<(OrgId, Uuid)>,
 ) -> Result<()> {
     let pending: Vec<_> = store
         .list_open()
         .await?
         .into_iter()
-        .filter(|s| !s.notified)
+        .filter(|s| !s.notified && !held.contains(&(s.org, s.target_id)))
         .collect();
     let keys: Vec<(OrgId, Uuid)> = pending.iter().map(|s| (s.org, s.target_id)).collect();
     let groups = store.alerting_groups(&keys).await?;
@@ -570,6 +589,106 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(count(&d, NotificationReason::DataResumed), 1);
+    }
+
+    #[tokio::test]
+    async fn an_agent_in_grace_opens_no_silence() {
+        let org = OrgId(Uuid::now_v7());
+        let a = Uuid::now_v7();
+        let store = InMemorySilenceStore::new();
+        store.set_total(10);
+        let d = RecordingDelivery::default();
+
+        store.set_in_grace(vec![(org, a)]);
+        tick(&store, &d).await;
+        tick(&store, &d).await;
+        assert!(store.open_target_ids().is_empty());
+        assert!(d.sent.lock().is_empty());
+
+        store.set_in_grace(vec![]);
+        store.set_unmonitored(vec![(org, a)]);
+        tick(&store, &d).await;
+        assert_eq!(store.open_target_ids(), vec![a]);
+        assert_eq!(count(&d, NotificationReason::NoData), 1);
+    }
+
+    #[tokio::test]
+    async fn an_open_silence_stays_open_while_its_agent_is_in_grace() {
+        let org = OrgId(Uuid::now_v7());
+        let a = Uuid::now_v7();
+        let store = InMemorySilenceStore::new();
+        store.set_total(10);
+        let d = RecordingDelivery::default();
+
+        store.set_unmonitored(vec![(org, a)]);
+        tick(&store, &d).await;
+        assert_eq!(store.open_target_ids(), vec![a]);
+
+        store.set_unmonitored(vec![]);
+        store.set_in_grace(vec![(org, a)]);
+        tick(&store, &d).await;
+        tick(&store, &d).await;
+        assert_eq!(store.open_target_ids(), vec![a]);
+        assert!(store.resolved_target_ids().is_empty());
+        assert_eq!(count(&d, NotificationReason::NoData), 1);
+        assert_eq!(count(&d, NotificationReason::DataResumed), 0);
+
+        store.set_in_grace(vec![]);
+        tick(&store, &d).await;
+        assert_eq!(store.resolved_target_ids(), vec![a]);
+        assert_eq!(count(&d, NotificationReason::DataResumed), 1);
+    }
+
+    /// One monitor silent out of two is a mass outage: its silence opens
+    /// without a notice.
+    async fn silence_opened_quietly(
+        store: &InMemorySilenceStore,
+        d: &RecordingDelivery,
+    ) -> (OrgId, Uuid) {
+        let key = (OrgId(Uuid::now_v7()), Uuid::now_v7());
+        store.set_total(2);
+        store.set_unmonitored(vec![key]);
+        tick(store, d).await;
+        assert_eq!(store.open_target_ids(), vec![key.1]);
+        assert!(d.sent.lock().is_empty());
+        store.set_total(10);
+        key
+    }
+
+    #[tokio::test]
+    async fn a_quiet_silence_held_by_grace_closes_without_a_notice() {
+        let store = InMemorySilenceStore::new();
+        let d = RecordingDelivery::default();
+        let key = silence_opened_quietly(&store, &d).await;
+
+        store.set_unmonitored(vec![]);
+        store.set_in_grace(vec![key]);
+        tick(&store, &d).await;
+        assert_eq!(store.open_target_ids(), vec![key.1]);
+
+        store.set_in_grace(vec![]);
+        tick(&store, &d).await;
+        assert_eq!(store.resolved_target_ids(), vec![key.1]);
+        assert!(d.sent.lock().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_quiet_silence_held_by_grace_is_announced_once_the_grace_runs_out() {
+        let store = InMemorySilenceStore::new();
+        let d = RecordingDelivery::default();
+        let key = silence_opened_quietly(&store, &d).await;
+
+        store.set_unmonitored(vec![]);
+        store.set_in_grace(vec![key]);
+        tick(&store, &d).await;
+        assert!(d.sent.lock().is_empty());
+
+        store.set_in_grace(vec![]);
+        store.set_unmonitored(vec![key]);
+        tick(&store, &d).await;
+        tick(&store, &d).await;
+        assert_eq!(count(&d, NotificationReason::NoData), 1);
+        assert_eq!(count(&d, NotificationReason::DataResumed), 0);
     }
 
     #[tokio::test]

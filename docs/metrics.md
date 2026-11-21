@@ -86,7 +86,7 @@ these names verbatim.
 | `uptimepage_workers_in_flight` | gauge | current worker-pool semaphore depth (sampled). Emitted by every probing process, so on a brain doing agent-only probing the real value is on the agent's `role=probe` series, not the brain's near-zero one |
 | `uptimepage_result_queue_depth` | gauge | depth of the result channel buffer (sampled). Present on both the agent (egress to the control plane) and the brain (ingest to storage); separate them by `role` |
 | `uptimepage_circuit_breakers_open` | gauge | currently-open breakers (sampled). Probe-side — read the `role=probe` series |
-| `uptimepage_monitors_unmonitored` | gauge | monitors whose covering probes have all gone silent (no fresh results), from the silence sweep. Distinct from down: these have no data at all |
+| `uptimepage_monitors_unmonitored` | gauge | monitors no covering agent is probing, plus those whose open silence waits for an agent to hold a config again, from the silence sweep. Distinct from down: these have no data at all |
 | `uptimepage_long_down_monitors` | gauge | monitors down from every region long enough to be checked at the slower long-down interval, sampled from Postgres every minute |
 | `uptimepage_long_down_slowed_total` | counter | monitors moved to the slower long-down interval by the hourly slow pass |
 | `uptimepage_long_down_restored_total{reason}` | counter | long-down monitors put back on their own interval: `incident` (its incident closed or was resolved), `maintenance` (a window covering it started), `check_now` (a check someone ran passed). An edit clears it in Postgres and is not counted |

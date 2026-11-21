@@ -259,7 +259,7 @@ pub async fn index(
     let region_breakdown = if region_ids.len() > 1 && !target.check.is_passive() {
         let live: Option<std::collections::HashSet<String>> = state
             .silence_store
-            .live_regions(state.cfg.operator.agent_stale_after_secs)
+            .live_regions(org, target.id, state.cfg.operator.agent_stale_after_secs)
             .await
             .ok()
             .map(|v| v.into_iter().collect());

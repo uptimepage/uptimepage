@@ -303,7 +303,7 @@ fn register_descriptions() {
     );
     describe_gauge!(
         "uptimepage_monitors_unmonitored",
-        "Monitors whose covering probes have all gone silent (no fresh results), sampled by the silence sweep. Distinct from down: these have no data at all"
+        "Monitors no covering agent is probing, plus those whose open silence waits for an agent to hold a config again, sampled by the silence sweep. Distinct from down: these have no data at all"
     );
     describe_gauge!(
         "uptimepage_long_down_monitors",

@@ -79,7 +79,7 @@ blurb = "Alert channels, how a monitor binds them, and what decides when an aler
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-11-07
+lastmod = 2026-11-21
 
 [[page]]
 slug = "groups"
@@ -309,7 +309,7 @@ blurb = "Running probe agents in more than one region, and the operator surface 
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-07-22
-lastmod = 2026-11-20
+lastmod = 2026-11-21
 
 [[page]]
 slug = "metrics"
@@ -319,7 +319,7 @@ blurb = "The Prometheus series the service exposes and how to ship traces off th
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-07-22
-lastmod = 2026-11-20
+lastmod = 2026-11-21
 
 [[page]]
 slug = "troubleshooting"
