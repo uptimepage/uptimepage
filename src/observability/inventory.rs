@@ -32,8 +32,10 @@ pub async fn run(pg: PgPool, shutdown: CancellationToken) {
 
 async fn sweep(pg: &PgPool) -> Result<()> {
     let by_kind: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT kind, count(*) FROM targets WHERE enabled GROUP BY kind \
-             /* SAFE: operator-wide inventory gauge, counts every org by design */",
+        "SELECT t.kind, count(*) FROM targets t \
+             JOIN organizations o ON o.id = t.org_id AND o.deleted_at IS NULL \
+             WHERE t.enabled GROUP BY t.kind \
+             /* SAFE: operator-wide inventory gauge, counts every live org by design */",
     )
     .fetch_all(pg)
     .await

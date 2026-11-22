@@ -198,7 +198,7 @@ fn register_descriptions() {
     );
     describe_gauge!(
         "uptimepage_targets_enabled",
-        "Configured enabled monitors counted from Postgres, labelled by kind. Inventory gauge refreshed on a slow cadence and scrape-cached, so request load never reaches Postgres. Source of truth for the dashboard monitor count regardless of where probing runs"
+        "Configured enabled monitors in live orgs counted from Postgres, labelled by kind. A deleted org's monitors leave the count at deletion, not at purge. Inventory gauge refreshed on a slow cadence and scrape-cached, so request load never reaches Postgres. Source of truth for the dashboard monitor count regardless of where probing runs"
     );
     describe_gauge!(
         "uptimepage_users_active",
