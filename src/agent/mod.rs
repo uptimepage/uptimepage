@@ -26,8 +26,8 @@ use uuid::Uuid;
 
 use crate::config::AppConfig;
 use crate::domain::agent_wire::{
-    AGENT_MONITORS, AgentTargetsResponse, DispatchBatch, DispatchReport, DispatchedCheck,
-    FlowRunRecord, IngestRequestRef, MAX_FLOW_RUNS_PER_BATCH,
+    AGENT_BUILD, AGENT_MONITORS, AgentTargetsResponse, DispatchBatch, DispatchReport,
+    DispatchedCheck, FlowRunRecord, IngestRequestRef, MAX_FLOW_RUNS_PER_BATCH, reported_build,
 };
 use crate::domain::{CheckResult, MAX_CHECK_TIMEOUT, OrgId, Target};
 use crate::error::{AppError, Result};
@@ -94,21 +94,27 @@ pub struct AgentPullSource {
     url: String,
     token: String,
     flow_capable: bool,
+    build: Option<HeaderValue>,
     cache: Mutex<Option<LoadedConfig>>,
 }
 
 impl AgentPullSource {
+    /// `build` goes out on every config pull, unless it is not a value the
+    /// control plane would record, such as the empty commit of a build with
+    /// no git context.
     pub fn new(
         client: OutboundHttpClient,
         base_url: &str,
         token: String,
         flow_capable: bool,
+        build: &str,
     ) -> Self {
         Self {
             client,
             url: format!("{}/api/agent/targets", base_url.trim_end_matches('/')),
             token,
             flow_capable,
+            build: reported_build(build).and_then(|b| HeaderValue::from_str(b).ok()),
             cache: Mutex::new(None),
         }
     }
@@ -152,6 +158,9 @@ impl AgentPullSource {
             .header(AGENT_MONITORS, held);
         if self.flow_capable {
             builder = builder.header("x-flow-capable", "true");
+        }
+        if let Some(build) = &self.build {
+            builder = builder.header(AGENT_BUILD, build.clone());
         }
         if let Some(e) = etag {
             builder = builder.header(IF_NONE_MATCH, e);
@@ -621,6 +630,7 @@ pub async fn run(cfg: AppConfig) -> Result<()> {
         &base,
         token.clone(),
         flow_capable,
+        env!("SM_SOURCE_COMMIT"),
     ));
     let source: Arc<dyn EnabledTargetSource> = pull.clone();
     let results_url = Url::parse(&format!("{base}/api/agent/results"))

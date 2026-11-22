@@ -322,6 +322,7 @@ pub struct AgentView {
     pub created_at: DateTime<Utc>,
     pub config_missing_since: Option<DateTime<Utc>>,
     pub scheduled_monitors: Option<i32>,
+    pub build: Option<String>,
     /// Enabled, checked in within the staleness window, and holds a config or
     /// has been without one for no longer than that window.
     pub probing: bool,
@@ -377,6 +378,7 @@ pub async fn list_agents(
                     created_at: a.created_at,
                     config_missing_since: a.config_missing_since,
                     scheduled_monitors: a.scheduled_monitors,
+                    build: a.build,
                     probing,
                 }
             })

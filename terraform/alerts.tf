@@ -1508,6 +1508,55 @@ resource "grafana_rule_group" "availability" {
       model = local.threshold_c
     }
   }
+
+  # Probe agents run different builds, so regions can disagree about the same
+  # target for a reason that is not the target. Agents are compared with each
+  # other, never with the control plane: a control-plane deploy moves no agent.
+  # A fleet roll shows more than one build until it finishes, hence the hour.
+  # max() drops the color label across a blue/green cutover. no_data = OK: no
+  # live agent, or the brain itself dark.
+  rule {
+    name           = "UptimepageRegionalAgentBuildsDiffer"
+    condition      = "C"
+    for            = "1h"
+    no_data_state  = "OK"
+    exec_err_state = "Error"
+    labels = {
+      severity = "warning"
+      service  = "uptimepage"
+    }
+    annotations = {
+      summary     = "uptimepage: probe agents run more than one build; list the agents (GET /operator/agents) to see which one differs"
+      description = "Live probe agents have reported more than one build for an hour, so a region a deploy missed may run older probe code, or the fleet is not pinned to one commit. Each agent's build is on /operator/agents. Runbook: runbooks/grafana-cloud.md."
+    }
+    data {
+      ref_id         = "A"
+      datasource_uid = data.grafana_data_source.prometheus.uid
+      relative_time_range {
+        from = 600
+        to   = 0
+      }
+      model = jsonencode({
+        refId   = "A"
+        instant = true
+        expr    = "max(uptimepage_agent_builds)"
+      })
+    }
+    data {
+      ref_id         = "C"
+      datasource_uid = "__expr__"
+      relative_time_range {
+        from = 0
+        to   = 0
+      }
+      model = jsonencode({
+        refId      = "C"
+        type       = "threshold"
+        expression = "A"
+        conditions = [{ evaluator = { type = "gt", params = [1] } }]
+      })
+    }
+  }
 }
 
 # Churn alerts. Not health — nothing here means the product is broken, so they

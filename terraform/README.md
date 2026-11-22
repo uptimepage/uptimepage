@@ -20,9 +20,11 @@ State + secrets live in **HCP Terraform Cloud** — never in this repo.
   `UptimepageHostSwapThrashing`, `UptimepageHostOomKill`,
   `UptimepageCaddyMemoryHigh`, `UptimepageCaddyMetricsMissing`,
   `UptimepageInodesLow`/`Critical`), `uptimepage-availability`
-  (is it up at all, all critical: `UptimepageMetricsPipelineDown`,
+  (is it up at all, critical: `UptimepageMetricsPipelineDown`,
   `UptimepageControlPlaneDown`, `UptimepageRegionalAgentDown`,
-  `UptimepageRegionalAgentNotProbing`) and
+  `UptimepageRegionalAgentNotProbing`; plus one warning,
+  `UptimepageRegionalAgentBuildsDiffer`, when probe agents have run more
+  than one build for an hour) and
   `uptimepage-churn` (not health — a customer leaving, warning only, a nudge
   to look rather than a page: `UptimepageAccountDeletionRequested`); two
   contact points (email-only `uptimepage-default` for warnings,

@@ -31,6 +31,16 @@ pub const MAX_FLOW_RUNS_PER_BATCH: usize = 256;
 /// Config-pull request header: how many monitors the agent holds, or `none`.
 pub const AGENT_MONITORS: &str = "x-agent-monitors";
 
+/// Config-pull request header: the commit the agent was built from.
+pub const AGENT_BUILD: &str = "x-agent-build";
+
+/// An [`AGENT_BUILD`] value as reported: 1 to 64 characters from
+/// `[0-9A-Za-z._-]`. Anything else counts as not sent.
+pub fn reported_build(value: &str) -> Option<&str> {
+    let allowed = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-');
+    ((1..=64).contains(&value.len()) && value.bytes().all(allowed)).then_some(value)
+}
+
 /// What a config pull says the agent holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeldConfig {
@@ -260,6 +270,34 @@ mod tests {
                 want,
                 "{monitors:?} with If-None-Match={if_none_match}"
             );
+        }
+    }
+
+    #[test]
+    fn a_build_is_taken_as_reported_or_not_at_all() {
+        let longest = "a".repeat(64);
+        for accepted in [
+            "0123456789ab",
+            "9b4a036c5d2e8f7a1b3c4d5e6f708192a3b4c5d6",
+            "v1.7.0",
+            "release_2026-11-22",
+            "A",
+            longest.as_str(),
+        ] {
+            assert_eq!(reported_build(accepted), Some(accepted), "{accepted:?}");
+        }
+        let too_long = "a".repeat(65);
+        for rejected in [
+            "",
+            too_long.as_str(),
+            "v1.7.0+abc",
+            "abc def",
+            " abc",
+            "abc/def",
+            "abc\t",
+            "é",
+        ] {
+            assert_eq!(reported_build(rejected), None, "{rejected:?}");
         }
     }
 

@@ -16,8 +16,9 @@ use crate::ad_hoc_dispatch::DeliveredResult;
 use crate::app::AppState;
 use crate::domain::OrgId;
 use crate::domain::agent_wire::{
-    AGENT_MONITORS, AgentTargetDto, AgentTargetsResponse, DispatchBatch, DispatchReport,
-    FlowRunRecord, HeldConfig, IngestRequest, IngestResponse, MAX_FLOW_RUNS_PER_BATCH,
+    AGENT_BUILD, AGENT_MONITORS, AgentTargetDto, AgentTargetsResponse, DispatchBatch,
+    DispatchReport, FlowRunRecord, HeldConfig, IngestRequest, IngestResponse,
+    MAX_FLOW_RUNS_PER_BATCH, reported_build,
 };
 use crate::error::codes;
 use crate::error::{AppError, Result};
@@ -50,7 +51,7 @@ pub async fn pull_targets(
     let operator = OperatorRepo::new(db.clone());
     let agent_id = agent.agent_id.parse::<Uuid>().ok();
     // Before any config read, so a pull that fails below still records what
-    // the agent said it holds.
+    // the agent said it holds and runs.
     if let Some(id) = agent_id {
         let held = HeldConfig::from_pull(
             headers.get(AGENT_MONITORS).and_then(|v| v.to_str().ok()),
@@ -59,6 +60,13 @@ pub async fn pull_targets(
         let stale_after = state.cfg.operator.agent_stale_after_secs;
         if let Err(err) = operator.record_config_evidence(id, held, stale_after).await {
             tracing::warn!(error = %err, "recording agent config evidence failed");
+        }
+        let build = headers
+            .get(AGENT_BUILD)
+            .and_then(|v| v.to_str().ok())
+            .and_then(reported_build);
+        if let Err(err) = operator.set_agent_build(id, build).await {
+            tracing::warn!(error = %err, "persisting agent build failed");
         }
     }
     let region = agent.region;

@@ -254,6 +254,10 @@ fn register_descriptions() {
         "Enabled regional agents in a region that are probing, labelled by region: fresh and holding a config, or without one for no longer than the staleness window. A subset of uptimepage_region_agents_up, so up minus probing counts connected agents that run no checks. Recomputed each sweep; set to 0 once a region has no enabled agent"
     );
     describe_gauge!(
+        "uptimepage_agent_builds",
+        "Distinct builds among enabled regional agents that checked in within the staleness window, from the build each one's config pull reports. Agents that report none count together as one more build; 0 when there is no such agent. Above 1 means agents run different builds, so possibly different probe code, as they do while a fleet roll is under way"
+    );
+    describe_gauge!(
         "uptimepage_region_checks_window",
         "Checks completed in a region over the recent sampling window, labelled by region. Brain-side count from ClickHouse, so it covers remote agents Alloy can't scrape. Only regions with results in the window appear"
     );

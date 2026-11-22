@@ -41,6 +41,9 @@ pub struct AgentRow {
     pub config_missing_since: Option<DateTime<Utc>>,
     /// Monitors the agent last said it holds.
     pub scheduled_monitors: Option<i32>,
+    /// As the last config pull reported it; `None` when that pull sent none
+    /// or a value outside the wire rule.
+    pub build: Option<String>,
 }
 
 impl AgentRow {
@@ -235,7 +238,7 @@ impl OperatorRepo {
     pub async fn list_agents(&self) -> Result<Vec<AgentRow>> {
         let rows = sqlx::query_as::<_, AgentRow>(
             "SELECT id, region, name, enabled, token_prefix, last_seen_at, created_at, \
-             config_missing_since, scheduled_monitors FROM agents ORDER BY region, name",
+             config_missing_since, scheduled_monitors, build FROM agents ORDER BY region, name",
         )
         .fetch_all(&self.pool)
         .await
@@ -266,7 +269,7 @@ impl OperatorRepo {
             "INSERT INTO agents (region, name, token_hash, token_prefix) \
              VALUES ($1, $2, $3, $4) \
              RETURNING id, region, name, enabled, token_prefix, last_seen_at, created_at, \
-                       config_missing_since, scheduled_monitors",
+                       config_missing_since, scheduled_monitors, build",
         )
         .bind(region)
         .bind(name)
@@ -414,6 +417,19 @@ impl OperatorRepo {
         .context("operator: set agent flow_capable")?;
         Ok(())
     }
+
+    /// Persist the build a config pull reported, `None` when it sent none, so
+    /// an agent moved back to a build that does not report keeps no newer one.
+    /// Conditional so a repeat pull reporting the same build writes nothing.
+    pub async fn set_agent_build(&self, id: Uuid, build: Option<&str>) -> Result<()> {
+        sqlx::query("UPDATE agents SET build = $2 WHERE id = $1 AND build IS DISTINCT FROM $2")
+            .bind(id)
+            .bind(build)
+            .execute(&self.pool)
+            .await
+            .context("operator: set agent build")?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -434,6 +450,7 @@ mod tests {
             created_at: ago(3600),
             config_missing_since: missing_ago.map(ago),
             scheduled_monitors: None,
+            build: None,
         }
     }
 

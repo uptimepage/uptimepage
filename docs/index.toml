@@ -309,7 +309,7 @@ blurb = "Running probe agents in more than one region, and the operator surface 
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-07-22
-lastmod = 2026-11-21
+lastmod = 2026-11-22
 
 [[page]]
 slug = "metrics"

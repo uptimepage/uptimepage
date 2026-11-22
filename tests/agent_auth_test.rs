@@ -20,7 +20,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use tower::ServiceExt;
 use uptimepage::domain::CheckResult;
-use uptimepage::domain::agent_wire::{AGENT_MONITORS, HeldConfig, IngestRequestRef};
+use uptimepage::domain::agent_wire::{AGENT_BUILD, AGENT_MONITORS, HeldConfig, IngestRequestRef};
 use uptimepage::storage::InMemorySink;
 use uptimepage::storage::operator::{AgentRow, OperatorRepo};
 use uuid::Uuid;
@@ -31,6 +31,8 @@ use common::{
 
 const REGION: &str = "eu-test";
 const OTHER_REGION: &str = "us-test";
+const OPERATOR_TOKEN: &str = "operator-secret-for-tests";
+const BUILD: &str = "9b4a036c5d2e";
 
 struct Rig {
     app: Router,
@@ -56,7 +58,7 @@ async fn rig(prefix: &str) -> Option<Rig> {
     let results = sink.clone();
     let (app, org) = build_test_app_with_pg_store_anon_tweaked(
         pool.clone(),
-        |_| {},
+        |cfg| cfg.operator.admin_token = OPERATOR_TOKEN.to_string().into(),
         move |mut state| {
             state.result_sink = results;
             state
@@ -159,6 +161,32 @@ impl Rig {
             .await
             .unwrap();
         id
+    }
+
+    async fn operator_agents(&self) -> Value {
+        let resp = self
+            .app
+            .clone()
+            .oneshot(
+                Request::get("/operator/agents")
+                    .header(header::AUTHORIZATION, format!("Bearer {OPERATOR_TOKEN}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        common::body_json(resp).await
+    }
+
+    /// Changes with every write to the row, even one that sets what was there.
+    async fn row_version(&self, agent: Uuid) -> String {
+        let (xmin,): (String,) = sqlx::query_as("SELECT xmin::text FROM agents WHERE id = $1")
+            .bind(agent)
+            .fetch_one(&self.pool)
+            .await
+            .unwrap();
+        xmin
     }
 
     async fn last_seen(&self, agent: Uuid) -> Option<DateTime<Utc>> {
@@ -541,6 +569,99 @@ async fn an_agent_back_with_its_config_whose_pull_lands_first_keeps_holding_it()
     assert_eq!(row.config_missing_since, None);
     assert_eq!(row.scheduled_monitors, Some(26));
     assert!(recent(row.last_seen_at), "{:?}", row.last_seen_at);
+
+    rig.done().await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_pull_stores_the_build_the_agent_reports_and_clears_one_it_does_not() {
+    let Some(rig) = rig("agentbuild_store").await else {
+        return;
+    };
+    let (id, token) = rig.agent(REGION).await;
+
+    let (status, _, _) = rig.pull_with(Some(&token), &[(AGENT_BUILD, BUILD)]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(rig.row(id).await.build.as_deref(), Some(BUILD));
+
+    let (status, _, _) = rig.pull(Some(&token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        rig.row(id).await.build,
+        None,
+        "a build that does not report"
+    );
+
+    rig.pull_with(Some(&token), &[(AGENT_BUILD, BUILD)]).await;
+    let (status, _, _) = rig
+        .pull_with(Some(&token), &[(AGENT_BUILD, "v1.7.0+abc")])
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(rig.row(id).await.build, None, "a value it may not send");
+
+    rig.done().await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn reporting_the_same_build_again_writes_nothing() {
+    let Some(rig) = rig("agentbuild_same").await else {
+        return;
+    };
+    let (id, _) = rig.agent(REGION).await;
+
+    for build in [Some(BUILD), None] {
+        rig.repo.set_agent_build(id, build).await.unwrap();
+        let written = rig.row_version(id).await;
+        rig.repo.set_agent_build(id, build).await.unwrap();
+        assert_eq!(rig.row_version(id).await, written, "{build:?}");
+    }
+
+    rig.done().await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn a_pull_whose_config_read_fails_still_stores_its_build() {
+    let Some(rig) = rig("agentbuild_fail").await else {
+        return;
+    };
+    let (id, token) = rig.agent(REGION).await;
+    sqlx::query("ALTER TABLE target_regions RENAME TO target_regions_gone")
+        .execute(&rig.pool)
+        .await
+        .unwrap();
+
+    let (status, _, _) = rig.pull_with(Some(&token), &[(AGENT_BUILD, BUILD)]).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(rig.row(id).await.build.as_deref(), Some(BUILD));
+
+    rig.done().await;
+}
+
+#[tokio::test]
+#[ignore = "needs live Postgres (DATABASE_URL)"]
+async fn the_operator_list_shows_each_agents_build() {
+    let Some(rig) = rig("agentbuild_list").await else {
+        return;
+    };
+    let (reporting, token) = rig.agent(REGION).await;
+    let (silent, _) = rig.agent(OTHER_REGION).await;
+    rig.pull_with(Some(&token), &[(AGENT_BUILD, BUILD)]).await;
+
+    let listed = rig.operator_agents().await;
+    let build_of = |id: Uuid| {
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["id"] == id.to_string())
+            .map(|a| a["build"].clone())
+            .expect("agent listed")
+    };
+    assert_eq!(build_of(reporting), BUILD);
+    assert_eq!(build_of(silent), Value::Null);
 
     rig.done().await;
 }

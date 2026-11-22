@@ -61,6 +61,7 @@ pub const AGENTS_ENABLED_DOWN: &str = "uptimepage_agents_enabled_down";
 pub const REGION_AGENTS_TOTAL: &str = "uptimepage_region_agents_total";
 pub const REGION_AGENTS_UP: &str = "uptimepage_region_agents_up";
 pub const REGION_AGENTS_PROBING: &str = "uptimepage_region_agents_probing";
+pub const AGENT_BUILDS: &str = "uptimepage_agent_builds";
 pub const REGION_CHECKS_WINDOW: &str = "uptimepage_region_checks_window";
 pub const REGION_CHECKS_UP_WINDOW: &str = "uptimepage_region_checks_up_window";
 pub const REGION_CHECK_LATENCY_P95_MS: &str = "uptimepage_region_check_latency_p95_ms";

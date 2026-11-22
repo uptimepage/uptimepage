@@ -2,7 +2,8 @@
 //! reads `agents.last_seen_at` and exposes per-agent staleness as Prometheus
 //! gauges (alertable in Grafana) plus a warn log on the fresh→stale transition.
 //! Alongside, whether each agent is probing: connected is not enough when it
-//! holds no config. Agents are operator/cross-tenant, so there is no per-org
+//! holds no config. And how many builds the fleet runs, so a region a deploy
+//! missed shows. Agents are operator/cross-tenant, so there is no per-org
 //! incident here.
 
 use std::collections::{HashMap, HashSet};
@@ -88,7 +89,21 @@ async fn sweep(
         set_region_gauges(region, Quorum::default());
     }
     *regions = quorum.iter().map(|(r, _)| (*r).to_owned()).collect();
+    metrics::gauge!(metric_names::AGENT_BUILDS)
+        .set(distinct_builds(&agents, now, stale_after) as f64);
     Ok(())
+}
+
+/// Builds the live fleet runs, compared with each other and never with the
+/// control plane's, which deploys on its own. Agents that report none count
+/// together as one more: they run some build, just not one they name.
+fn distinct_builds(agents: &[AgentRow], now: DateTime<Utc>, stale_after: Duration) -> usize {
+    agents
+        .iter()
+        .filter(|a| a.enabled && a.is_fresh(now, stale_after))
+        .map(|a| a.build.as_deref())
+        .collect::<HashSet<_>>()
+        .len()
 }
 
 /// One region's enabled agents: all of them, the fresh ones, and the probing
@@ -150,7 +165,13 @@ mod tests {
             created_at: now,
             config_missing_since: None,
             scheduled_monitors: Some(1),
+            build: Some("9b4a036c5d2e".into()),
         }
+    }
+
+    fn on_build(mut a: AgentRow, build: Option<&str>) -> AgentRow {
+        a.build = build.map(Into::into);
+        a
     }
 
     fn missing_for(mut a: AgentRow, secs: i64) -> AgentRow {
@@ -162,6 +183,52 @@ mod tests {
         out.iter()
             .find(|(r, _)| *r == region)
             .map(|(_, q)| (q.total, q.up, q.probing))
+    }
+
+    fn builds(agents: &[AgentRow]) -> usize {
+        distinct_builds(agents, Utc::now(), Duration::from_secs(90))
+    }
+
+    #[test]
+    fn a_fleet_on_one_build_counts_one() {
+        assert_eq!(builds(&[agent("eu", true, 5), agent("us", true, 5)]), 1);
+    }
+
+    #[test]
+    fn each_build_the_fleet_runs_counts_once() {
+        let agents = [
+            agent("eu", true, 5),
+            agent("us", true, 5),
+            on_build(agent("ap", true, 5), Some("7065a7df0c1b")),
+        ];
+        assert_eq!(builds(&agents), 2);
+    }
+
+    #[test]
+    fn agents_reporting_no_build_count_as_one_more() {
+        let agents = [
+            agent("eu", true, 5),
+            on_build(agent("us", true, 5), None),
+            on_build(agent("ap", true, 5), None),
+        ];
+        assert_eq!(builds(&agents), 2);
+        assert_eq!(builds(&agents[1..]), 1, "none alone is one build");
+    }
+
+    #[test]
+    fn stale_and_disabled_agents_run_no_build_that_counts() {
+        let agents = [
+            agent("eu", true, 5),
+            on_build(agent("us", true, 600), Some("7065a7df0c1b")),
+            on_build(agent("ap", false, 5), Some("90108875aa11")),
+        ];
+        assert_eq!(builds(&agents), 1);
+    }
+
+    #[test]
+    fn no_agents_run_no_build() {
+        assert_eq!(builds(&[]), 0);
+        assert_eq!(builds(&[agent("eu", false, 5), agent("us", true, 600)]), 0);
     }
 
     #[test]

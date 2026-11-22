@@ -366,6 +366,7 @@ async fn an_agent_stays_seen_while_its_checks_settle_and_stops_after() {
         &format!("http://{control_plane}"),
         "token".into(),
         false,
+        BUILD,
     );
     let (addr, arrived) = spawn_slow_mock(Duration::from_millis(800)).await;
     let p = mid_check(addr, &arrived).await;
@@ -921,7 +922,13 @@ async fn a_monitor_added_while_running_is_probed_within_seconds() {
     assert!(matches!(first, Ok(Some(_))), "no probe for the new monitor");
 }
 
+const BUILD: &str = "9b4a036c5d2e";
+
 fn agent_pulling_from(control_plane: std::net::SocketAddr) -> AgentPullSource {
+    agent_built_as(control_plane, BUILD)
+}
+
+fn agent_built_as(control_plane: std::net::SocketAddr, build: &str) -> AgentPullSource {
     AgentPullSource::new(
         uptimepage::http_outbound::build_control_plane_client(
             uptimepage::security::SsrfGuard::relaxed_for_tests(),
@@ -929,14 +936,22 @@ fn agent_pulling_from(control_plane: std::net::SocketAddr) -> AgentPullSource {
         &format!("http://{control_plane}"),
         "token".into(),
         false,
+        build,
     )
+}
+
+async fn control_plane_answering(
+    responses: Vec<Vec<u8>>,
+) -> (AgentPullSource, mpsc::UnboundedReceiver<String>) {
+    let (addr, heads) = recording_control_plane(responses).await;
+    (agent_pulling_from(addr), heads)
 }
 
 /// Each connection gets the next response, then is closed. The head of each
 /// request comes out of the receiver before its response goes back.
-async fn control_plane_answering(
+async fn recording_control_plane(
     responses: Vec<Vec<u8>>,
-) -> (AgentPullSource, mpsc::UnboundedReceiver<String>) {
+) -> (std::net::SocketAddr, mpsc::UnboundedReceiver<String>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (heads_tx, heads) = mpsc::unbounded_channel();
@@ -955,7 +970,7 @@ async fn control_plane_answering(
             let _ = sock.write_all(&response).await;
         }
     });
-    (agent_pulling_from(addr), heads)
+    (addr, heads)
 }
 
 /// One header's value on each request, `""` where it was absent.
@@ -1145,6 +1160,57 @@ async fn agent_reports_the_monitors_it_holds_on_every_pull() {
     let heads = received(&mut heads);
     assert_eq!(sent(&heads, "x-agent-monitors"), ["none", "1", "1"]);
     assert_eq!(sent(&heads, "if-none-match"), ["", "\"v1\"", "\"v1\""]);
+}
+
+#[tokio::test]
+async fn agent_reports_its_build_on_every_pull() {
+    let (_, first_pull) = pull_with_one_target();
+    let (pull, mut heads) =
+        control_plane_answering(vec![first_pull, not_modified(), not_modified()]).await;
+
+    pull.list_all_enabled_targets().await.expect("first pull");
+    pull.list_all_enabled_targets().await.expect("second pull");
+
+    assert_eq!(sent(&received(&mut heads), "x-agent-build"), [BUILD; 3]);
+}
+
+#[tokio::test]
+async fn agent_reports_its_build_on_keep_alives_too() {
+    let (_, first_pull) = pull_with_one_target();
+    let (pull, mut heads) = control_plane_answering(vec![first_pull, not_modified()]).await;
+    let mut keep_alives = Vec::new();
+
+    let stopping = async {
+        while keep_alives.len() < 2 {
+            keep_alives.push(heads.recv().await.expect("a keep-alive"));
+        }
+    };
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        pull.keep_seen_while(stopping, Duration::from_millis(50)),
+    )
+    .await
+    .expect("two keep-alives within seconds");
+
+    assert_eq!(sent(&keep_alives, "x-agent-build"), [BUILD; 2]);
+}
+
+#[tokio::test]
+async fn agent_built_without_a_commit_sends_no_build() {
+    let (_, first_pull) = pull_with_one_target();
+    let (addr, mut heads) = recording_control_plane(vec![first_pull, not_modified()]).await;
+    let pull = agent_built_as(addr, "");
+
+    pull.list_all_enabled_targets().await.expect("first pull");
+
+    let heads = received(&mut heads);
+    assert_eq!(heads.len(), 2, "a load and its confirm");
+    assert!(
+        heads
+            .iter()
+            .all(|h| !h.to_ascii_lowercase().contains("x-agent-build")),
+        "{heads:?}"
+    );
 }
 
 #[tokio::test]
