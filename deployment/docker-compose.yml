@@ -377,7 +377,8 @@ services:
       # Authoritative `default` password from CLICKHOUSE_PASSWORD on
       # every boot — works around first-init-only seeding (see the
       # file header for the full rationale). `zz-` sorts last in
-      # users.d so it overrides any entrypoint-seeded user.
+      # users.d so it overrides any entrypoint-seeded user. Also holds the
+      # default profile's per-query settings (memory cap, query_log level).
       - ./clickhouse-users.xml:/etc/clickhouse-server/users.d/zz-default-password.xml:ro
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]

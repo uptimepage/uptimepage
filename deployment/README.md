@@ -37,7 +37,7 @@ Certificates renew through the same gate they were issued through, so a gate tha
 | Access logging | JSON format, rotated automatically |
 | Database exposure | Postgres + ClickHouse have no public ports |
 | Credential storage | AES-256-GCM at rest (KEK in env) |
-| ClickHouse memory | Capped via `clickhouse-config.xml`; raise for larger workloads |
+| ClickHouse memory | Server cap in `clickhouse-config.xml`, per-query cap in `clickhouse-users.xml`; raise for larger workloads |
 
 ## Prerequisites
 
@@ -564,9 +564,10 @@ first init).
 
 **Tuning ClickHouse memory**
 The stack ships `clickhouse-config.xml` with conservative defaults suitable
-for modest workloads. For larger workloads, edit
-`deployment/clickhouse-config.xml` to raise `max_server_memory_usage` and
-`max_memory_usage`, or delete the file entirely to use ClickHouse defaults.
+for modest workloads. For larger workloads, raise `max_server_memory_usage`
+in `deployment/clickhouse-config.xml` and the per-query `max_memory_usage`
+in the default profile in `deployment/clickhouse-users.xml`; ClickHouse
+reads profiles only from the users config.
 
 ## Lighthouse audit (public status page)
 

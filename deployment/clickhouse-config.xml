@@ -19,14 +19,8 @@
          caching uncompressed blocks just wastes RAM. -->
     <uncompressed_cache_size>0</uncompressed_cache_size>
 
-    <!-- max_memory_usage is a user-level (profile) setting; ClickHouse 25.8+
-         refuses to start if it sits at server-config top level. Per-query
-         cap so one bad query can't consume the whole server memory budget. -->
-    <profiles>
-        <default>
-            <max_memory_usage>1500000000</max_memory_usage>
-        </default>
-    </profiles>
+    <!-- Per-query settings live in the default profile in
+         clickhouse-users.xml: profiles are read from the users config only. -->
 
     <!-- Server text logs sit in the container's own filesystem, not a volume.
          The default trace level with ten 1000M files per log grew to gigabytes
