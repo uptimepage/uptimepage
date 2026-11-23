@@ -1,5 +1,5 @@
-//! `{{ key }}` interpolation of org variables into HTTP request fields, resolved
-//! at probe time. Pure and single-pass: a substituted value is never re-scanned,
+//! `{{ key }}` interpolation of org variables into HTTP request fields and flow
+//! step text, resolved at probe time. Pure and single-pass: a substituted value is never re-scanned,
 //! so a variable whose value itself contains `{{x}}` cannot inject another
 //! reference. The per-field policy keeps secrets out of fields that leak them.
 
@@ -166,23 +166,32 @@ pub fn resolve_http(check: &HttpCheck, vars: &VarMap) -> Result<ResolvedHttp, Re
     })
 }
 
-/// True if any step value carries a `{{` token, so a flow with none skips
-/// resolution entirely.
+/// True if any fill value or assertion carries a `{{` token, so a flow with
+/// none skips resolution entirely.
 pub fn flow_uses_vars(check: &FlowCheck) -> bool {
     check.steps.iter().any(|s| match s {
-        FlowStep::Fill { value, .. } => value.contains("{{"),
+        FlowStep::Fill { value: text, .. }
+        | FlowStep::AssertText { contains: text, .. }
+        | FlowStep::AssertUrl { contains: text } => text.contains("{{"),
         _ => false,
     })
 }
 
-/// Resolve `{{var}}` in a flow's step values into a fresh check (the stored spec
-/// is never mutated). Only `Fill.value` is interpolable — a secret is allowed
-/// there because it is typed into a form field, never echoed to a URL/assertion.
+/// Resolve `{{var}}` in a flow's fill values and assertions into a fresh check
+/// (the stored spec is never mutated). A fill value takes a secret, since it is
+/// typed into a form field; an assertion does not, since a failed one reports
+/// the text it expected.
 pub fn resolve_flow_spec(check: &FlowCheck, vars: &VarMap) -> Result<FlowCheck, ResolveError> {
     let mut out = check.clone();
     for step in &mut out.steps {
-        if let FlowStep::Fill { value, .. } = step {
-            *value = resolve(value, vars, FieldKind::StepValue)?;
+        match step {
+            FlowStep::Fill { value, .. } => {
+                *value = resolve(value, vars, FieldKind::StepValue)?;
+            }
+            FlowStep::AssertText { contains, .. } | FlowStep::AssertUrl { contains } => {
+                *contains = resolve(contains, vars, FieldKind::Assertion)?;
+            }
+            _ => {}
         }
     }
     Ok(out)
@@ -525,23 +534,69 @@ mod tests {
     }
 
     #[test]
-    fn flow_uses_vars_detects_fill_tokens_only() {
-        let with = flow(vec![FlowStep::Fill {
-            selector: "#pw".into(),
-            value: "{{password}}".into(),
-        }]);
-        let without = flow(vec![
+    fn flow_uses_vars_detects_fill_and_assertion_tokens() {
+        for step in [
             FlowStep::Fill {
                 selector: "#pw".into(),
-                value: "literal".into(),
+                value: "{{password}}".into(),
+            },
+            FlowStep::AssertText {
+                selector: None,
+                contains: "{{greeting}}".into(),
             },
             FlowStep::AssertUrl {
-                contains: "{{marker}}".into(),
+                contains: "{{path}}".into(),
+            },
+        ] {
+            assert!(flow_uses_vars(&flow(vec![step.clone()])), "{step:?}");
+        }
+        let selector_only = flow(vec![FlowStep::Click {
+            selector: "{{not_a_var}}".into(),
+        }]);
+        assert!(!flow_uses_vars(&selector_only));
+    }
+
+    #[test]
+    fn resolve_flow_spec_substitutes_plain_vars_into_assertions() {
+        let f = flow(vec![
+            FlowStep::AssertText {
+                selector: Some("h1".into()),
+                contains: "Welcome, {{user}}".into(),
+            },
+            FlowStep::AssertUrl {
+                contains: "/orgs/{{org}}/".into(),
             },
         ]);
-        assert!(flow_uses_vars(&with));
-        // Only Fill values are interpolable; a token elsewhere is left literal.
-        assert!(!flow_uses_vars(&without));
+        let v = plain(&[("user", "Olena"), ("org", "acme")]);
+        let out = resolve_flow_spec(&f, &v).unwrap();
+        assert!(
+            matches!(&out.steps[0], FlowStep::AssertText { contains, .. } if contains == "Welcome, Olena")
+        );
+        assert!(
+            matches!(&out.steps[1], FlowStep::AssertUrl { contains } if contains == "/orgs/acme/")
+        );
+    }
+
+    #[test]
+    fn resolve_flow_spec_rejects_secret_in_assertions() {
+        let v = vars(&[("token", "s3cr3t", true)]);
+        for step in [
+            FlowStep::AssertText {
+                selector: None,
+                contains: "{{token}}".into(),
+            },
+            FlowStep::AssertUrl {
+                contains: "{{token}}".into(),
+            },
+        ] {
+            assert_eq!(
+                resolve_flow_spec(&flow(vec![step]), &v).unwrap_err(),
+                ResolveError::SecretNotAllowed {
+                    key: "token".into(),
+                    field: FieldKind::Assertion,
+                }
+            );
+        }
     }
 
     #[test]

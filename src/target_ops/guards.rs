@@ -29,7 +29,7 @@ impl TargetOps<'_> {
     /// Reject a monitor whose `{{var}}` references don't all resolve against the
     /// org's variables — an unknown key or a secret used in a field that forbids it.
     /// Fails fast at save instead of silently dropping the monitor at probe time.
-    /// Non-HTTP or no-variable specs are a no-op.
+    /// Specs other than HTTP and flow, or with no variables, are a no-op.
     pub(crate) async fn validate_variable_refs(&self, org: OrgId, check: &CheckSpec) -> Result<()> {
         use crate::domain::interpolate::{
             flow_uses_vars, repoint_risk, resolve_flow_spec, resolve_http_spec, uses_vars,

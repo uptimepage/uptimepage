@@ -2,9 +2,9 @@
 // org's variable list (keys only; secret values never leave the server):
 //
 //   1. Insert menu: typing `{{` in an interpolable field (HTTP url, header
-//      value, body, body-assertion, or a flow step's fill value) opens a
-//      filtered list of variable keys; picking one completes the `{{key}}`
-//      token.
+//      value, body, body-assertion, or a flow step's fill value or assertion)
+//      opens a filtered list of variable keys; picking one completes the
+//      `{{key}}` token.
 //   2. Auth picker: pick a secret variable and a scheme to drop a prefilled
 //      `Authorization: Bearer {{key}}` / `x-api-key: {{key}}` header row. The
 //      stored credential stays a reference; the secret resolves at probe time.
@@ -23,12 +23,13 @@
         http_body: true,
         http_expected_body_contains: false,
     };
-    // The only interpolable field on a step, and secrets belong there. Matched
-    // by attribute since client-built rows carry no name.
+    // Flow step fields, matched by attribute since client-built rows carry no
+    // name. A secret belongs in a fill value, never in an assertion.
     const FLOW_VALUE = "[data-flow-value]";
+    const FLOW_CONTAINS = "[data-flow-contains]";
     const SELECTOR = Object.keys(FIELDS)
         .map((n) => `[name="${n}"]`)
-        .concat(FLOW_VALUE)
+        .concat(FLOW_VALUE, FLOW_CONTAINS)
         .join(", ");
 
     let vars = [];

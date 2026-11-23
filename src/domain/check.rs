@@ -656,8 +656,9 @@ impl FlowCheck {
     }
 }
 
-/// One action in a [`FlowCheck`]. `Fill.value` may carry a `{{secret}}` token
-/// resolved at probe time; every other field is literal.
+/// One action in a [`FlowCheck`]. `Fill.value` and an assertion's `contains`
+/// resolve `{{var}}` tokens at probe time, a secret only in `Fill.value`;
+/// selectors and URLs are literal.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum FlowStep {

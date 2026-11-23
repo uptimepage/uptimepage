@@ -102,6 +102,40 @@ async fn plain_variable_value_is_visible() {
 }
 
 #[tokio::test]
+async fn blank_value_is_rejected_on_create_and_rotate() {
+    let app = build_test_app_with_owner(|_| {});
+    let (status, body) = send(
+        &app,
+        "POST",
+        "/api/v1/variables",
+        Some(json!({ "key": "marker", "value": "  " })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body.contains("EMPTY_VARIABLE_VALUE"), "{body}");
+
+    let (status, body) = send(
+        &app,
+        "POST",
+        "/api/v1/variables",
+        Some(json!({ "key": "marker", "value": "ok" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let v: Value = serde_json::from_str(&body).unwrap();
+    let id = v["id"].as_str().unwrap();
+    let (status, body) = send(
+        &app,
+        "PATCH",
+        &format!("/api/v1/variables/{id}"),
+        Some(json!({ "value": "" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body.contains("EMPTY_VARIABLE_VALUE"), "{body}");
+}
+
+#[tokio::test]
 async fn invalid_key_and_duplicate_are_rejected() {
     let app = build_test_app_with_owner(|_| {});
 

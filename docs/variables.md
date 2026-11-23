@@ -10,7 +10,7 @@ Manage variables under **Settings → Variables**, or through the [REST API](api
 
 A reference is the variable key wrapped in double braces, for example `{{api_key}}`. A key's first character must be a lowercase letter, and the rest may be lowercase letters, digits, and underscores (`api_key`, `base_url`, `region2`). Inner spaces are trimmed, so `{{ api_key }}` and `{{api_key}}` mean the same thing.
 
-References resolve in these HTTP request fields:
+References resolve in these fields:
 
 | Field | Plain variable | Secret variable |
 |---|---|---|
@@ -19,8 +19,9 @@ References resolve in these HTTP request fields:
 | Request body | yes | yes |
 | Body assertion (expected body contains) | yes | no |
 | Flow step `fill` value | yes | yes |
+| Flow step `assert_text` / `assert_url` text | yes | no |
 
-A secret is confined to header values, the request body, and the value a flow step types into a form field. It is rejected in the URL and in the body assertion, because those surface through logs, redirects, or the captured response and would leak the value. A plain variable is allowed anywhere on the request side.
+A secret is confined to header values, the request body, and the value a flow step types into a form field. It is rejected in the URL and in every assertion, because those surface through logs, redirects, or a failed check's error and would leak the value. A plain variable is allowed in all of them.
 
 A flow monitor's `fill` value is the one place a credential would otherwise be stored literally, since a login script needs the password. Reference a secret there and the stored config keeps only the `{{key}}`.
 
@@ -28,7 +29,7 @@ Substitution is single pass: a value that itself contains `{{x}}` is inserted as
 
 ## Defining a variable
 
-Each variable has a key, a value, and a secret flag set at creation. To change whether a value is secret, delete it and recreate it.
+Each variable has a key, a value, and a secret flag set at creation. To change whether a value is secret, delete it and recreate it. A value cannot be blank: blank text is found on every page, so an assertion referencing it would always pass.
 
 A plain variable shows its value in the list. A secret shows `••••`; once saved, its value is never displayed again. Editing a secret means rotating it: you type a new value, which replaces the old one. Rotating reaches monitors on their next check, the same as editing a credential.
 
@@ -43,7 +44,7 @@ On the monitor form, under **headers**, the **use a secret variable** control is
 
 The monitor stores only the `{{key}}` reference, not the value. The picker appears once you have at least one secret variable. You can also type a reference into any header by hand; the picker is a convenience, not the only path.
 
-The interpolable fields (URL, header value, body, assertion) also offer an inline helper: type `{{` and a list of your variable keys appears. In the URL and the body assertion, secret keys are shown greyed out, since a secret is not allowed there.
+The interpolable fields (URL, header value, body, assertions, flow fill values) also offer an inline helper: type `{{` and a list of your variable keys appears. In the URL and in an assertion, secret keys are shown greyed out, since a secret is not allowed there.
 
 ## How resolution works
 

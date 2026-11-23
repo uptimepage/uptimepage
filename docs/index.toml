@@ -69,7 +69,7 @@ blurb = "The nine monitor kinds, what each one actually proves, and which to rea
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-11-10
+lastmod = 2026-11-23
 
 [[page]]
 slug = "notifications"
@@ -159,7 +159,7 @@ blurb = "Reusable org-scoped values and write-only secrets referenced from monit
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-10-22
+lastmod = 2026-11-23
 
 [[page]]
 slug = "authentication"
@@ -179,7 +179,7 @@ blurb = "The /api/v1 surface: monitors, incidents, channels, status pages, and t
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-11-16
+lastmod = 2026-11-23
 
 [[page]]
 slug = "terraform"

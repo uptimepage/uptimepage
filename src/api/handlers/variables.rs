@@ -42,6 +42,18 @@ fn view(variable: Variable, used_by: i64) -> VariableView {
     VariableView { variable, used_by }
 }
 
+/// A blank value is contained in every page, so an assertion referencing it
+/// would pass forever.
+fn require_value(value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(AppError::bad_request(
+            codes::EMPTY_VARIABLE_VALUE,
+            "variable value must not be blank",
+        ));
+    }
+    Ok(())
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/variables",
@@ -98,7 +110,7 @@ pub async fn get(
     responses(
         (status = 201, body = VariableView,
             headers(("Location" = String, description = "URL of the new variable"))),
-        (status = 400, body = ApiError, description = "Invalid key"),
+        (status = 400, body = ApiError, description = "Invalid key or blank value"),
         (status = 409, body = ApiError, description = "Key already in use in this org"),
     ),
 )]
@@ -114,6 +126,7 @@ pub async fn create(
 )> {
     validate_var_key(&new.key)
         .map_err(|e| AppError::bad_request(codes::INVALID_VARIABLE_KEY, e.to_string()))?;
+    require_value(&new.value)?;
     let var = match state.variable_store.create(org, new, Some(user)).await? {
         CreateVariableOutcome::Created(v) => v,
         CreateVariableOutcome::DuplicateKey => {
@@ -139,7 +152,11 @@ pub async fn create(
     summary = "Rotate a variable's value",
     params(("id" = Uuid, Path)),
     request_body = VariableValueUpdate,
-    responses((status = 200, body = VariableView), (status = 404, body = ApiError)),
+    responses(
+        (status = 200, body = VariableView),
+        (status = 400, body = ApiError, description = "Blank value"),
+        (status = 404, body = ApiError),
+    ),
 )]
 pub async fn update(
     State(state): State<AppState>,
@@ -148,6 +165,7 @@ pub async fn update(
     Path(id): Path<Uuid>,
     Json(body): Json<VariableValueUpdate>,
 ) -> Result<Json<VariableView>> {
+    require_value(&body.value)?;
     let var = state
         .variable_store
         .update_value(org, VariableId(id), &body.value, Some(user))
