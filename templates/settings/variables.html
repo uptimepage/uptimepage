@@ -7,13 +7,14 @@
     <h1 class="page-title"><span class="page-title__prefix" aria-hidden="true">$</span>variables</h1>
     <p class="text-sm text-muted">
       Reusable values for your monitors. Reference one from any HTTP request
-      field as <code>&lbrace;&lbrace;key&rbrace;&rbrace;</code>. Edit it once and
+      field, or a flow step's fill value or assertion, as
+      <code>&lbrace;&lbrace;key&rbrace;&rbrace;</code>. Edit it once and
       every monitor that uses it picks up the change on its next check.
     </p>
     <p class="text-sm text-muted">
       Mark a value <strong>secret</strong> to store an API key or token: it is
-      hidden after saving, allowed only in request headers and bodies, and
-      encrypted at rest when an encryption key is configured.
+      hidden after saving, allowed only in request headers, bodies and flow
+      fill values, and encrypted at rest when an encryption key is configured.
     </p>
   </header>
 
@@ -36,7 +37,7 @@
 
     <label class="flex items-center gap-2 text-sm text-body">
       <input id="variable-secret" type="checkbox" class="h-4 w-4">
-      <span>secret: hide the value after saving and allow it only in headers &amp; bodies</span>
+      <span>secret: hide the value after saving and allow it only in headers, bodies &amp; flow fill values</span>
     </label>
 
     <div class="flex justify-end">
@@ -77,8 +78,8 @@
           keyInput.focus();
           return;
         }
-        if (valueInput.value.length === 0) {
-          window.smRenderClientError(banner, 'Value is required.');
+        if (valueInput.value.trim().length === 0) {
+          window.smRenderClientError(banner, 'Value must not be blank.');
           valueInput.focus();
           return;
         }
@@ -136,7 +137,7 @@
         const input = tr.querySelector('[data-var-input]');
         const result = tr.querySelector('[data-var-result]');
         const value = input.value;
-        if (value.length === 0) { result.textContent = 'value required'; result.className = 'text-xs flash-text flash-text--bad'; return; }
+        if (value.trim().length === 0) { result.textContent = 'value must not be blank'; result.className = 'text-xs flash-text flash-text--bad'; return; }
         saveBtn.disabled = true;
         const prev = saveBtn.textContent;
         saveBtn.textContent = 'saving…';
