@@ -228,6 +228,56 @@ fn a_held_manual_card_says_a_change_waits_for_the_plan() {
     );
 }
 
+/// The list's chip, on both tabs, and no "checking…" for a monitor nothing
+/// probes: the handler has already blanked its status.
+#[test]
+fn a_held_monitor_wears_the_list_chip_on_both_tabs() {
+    let badge = r#"status-badge--none">no data</span>"#;
+    let mut p = sample_page();
+    assert!(!p.render().unwrap().contains("held-chip"));
+    p.plan_held = true;
+    p.last_status = "";
+    let html = p.render().unwrap();
+    assert!(
+        html.contains(r#"<span class="held-chip" title="Your plan no longer covers"#),
+        "{html}"
+    );
+    assert!(html.contains(badge), "{html}");
+    assert!(
+        html.contains(r#"data-enabled="false""#),
+        "the first-result poll would run forever"
+    );
+
+    let mut i = sample_incidents_page(vec![], 0);
+    i.plan_held = true;
+    i.last_status = "";
+    let html = i.render().unwrap();
+    assert!(html.contains(r#"<span class="held-chip""#), "{html}");
+    assert!(html.contains(badge), "{html}");
+}
+
+#[test]
+fn the_live_refresh_keeps_a_held_monitor_off_checking() {
+    let mut live = sample_live();
+    live.watched = false;
+    live.last_status = "";
+    let html = live.render().unwrap();
+    assert!(
+        html.contains(r#"status-badge--none">no data</span>"#),
+        "{html}"
+    );
+}
+
+/// A green badge from before the hold reads as watched and healthy.
+#[test]
+fn a_held_monitor_reports_no_status_in_the_header() {
+    let mut t = crate::domain::Target::sample(std::time::Duration::from_secs(60));
+    assert_eq!(super::header_status(&t, "up", None), "up");
+    t.plan_hold_at = Some(Utc::now());
+    assert_eq!(super::header_status(&t, "up", None), "");
+    assert_eq!(super::header_status(&t, "down", None), "");
+}
+
 #[test]
 fn a_slowed_monitor_says_how_often_it_is_checked_and_since_when() {
     use crate::domain::long_down::LONG_DOWN;
@@ -1126,7 +1176,7 @@ fn sample_live() -> DetailLive {
         id: "00000000-0000-0000-0000-000000000001".into(),
         name: "api".into(),
         range: "24h",
-        enabled: true,
+        watched: true,
         last_status: "up",
         uptime: Arc::new(UptimeStatsView {
             total: 100,
@@ -1667,6 +1717,7 @@ fn sample_incidents_page(incidents: Vec<IncidentRow>, ongoing_count: usize) -> I
         interval_s: 60,
         slowed: None,
         enabled: true,
+        plan_held: false,
         tags: vec!["prod".into()],
         managed_by: None,
         share_count: 0,

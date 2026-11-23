@@ -26,7 +26,7 @@ pub struct HeartbeatInfo {
     pub last_exit_code: Option<u8>,
     /// What the job printed on that failure, while inside its window.
     pub last_failure_output: Option<String>,
-    /// `None` while pending, paused, or already failing on the job's own report.
+    /// `None` while pending, paused, held, or already failing on the job's own report.
     pub due_at: Option<chrono::DateTime<chrono::Utc>>,
     /// When silence starts reading as down. An incident follows a confirmation
     /// or two later, so this is the earlier instant.
@@ -92,10 +92,10 @@ pub async fn heartbeat_info(
     org: OrgId,
     target_id: Uuid,
     check: &HeartbeatCheck,
-    enabled: bool,
+    watched: bool,
 ) -> Result<HeartbeatInfo> {
     let hb = heartbeats.get(org, target_id).await?;
-    Ok(heartbeat_info_from(results, public_base_url, org, target_id, check, enabled, hb).await)
+    Ok(heartbeat_info_from(results, public_base_url, org, target_id, check, watched, hb).await)
 }
 
 /// Infallible on purpose: a writer that has committed must not lose its
@@ -106,7 +106,7 @@ pub async fn heartbeat_info_from(
     org: OrgId,
     target_id: Uuid,
     check: &HeartbeatCheck,
-    enabled: bool,
+    watched: bool,
     hb: Option<HeartbeatMonitor>,
 ) -> HeartbeatInfo {
     let observed = observed_cadence(results, org, target_id).await;
@@ -120,7 +120,7 @@ pub async fn heartbeat_info_from(
             }),
         None => None,
     };
-    let (due_at, down_at) = match hb.as_ref().filter(|h| enabled && !h.is_pending()) {
+    let (due_at, down_at) = match hb.as_ref().filter(|h| watched && !h.is_pending()) {
         Some(h) if h.ping_state().failing().is_none() => {
             let (due, down) = check.window(h.ping_state().success_at);
             (Some(due), Some(down))
@@ -153,5 +153,56 @@ pub async fn heartbeat_info_from(
         cadence_advice: observed
             .and_then(|o| o.advice(check.period + check.grace))
             .map(Into::into),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use chrono::Utc;
+
+    use super::*;
+    use crate::storage::InMemorySink;
+
+    /// Silence evaluation skips a held heartbeat as it does a paused one, so
+    /// the projection must not count it down to late and overdue either.
+    #[tokio::test]
+    async fn an_unwatched_heartbeat_has_no_window() {
+        let now = Utc::now();
+        let wired = HeartbeatMonitor {
+            token: None,
+            last_ping_at: Some(now),
+            armed_at: now,
+            first_ping_at: Some(now),
+            created_at: now,
+            last_start_at: None,
+            last_fail_at: None,
+            last_exit_code: None,
+            token_rotated_at: None,
+            prev_token_expires_at: None,
+            prev_token_last_used_at: None,
+        };
+        let check = HeartbeatCheck {
+            period: Duration::from_secs(300),
+            grace: Duration::from_secs(60),
+            max_runtime: None,
+        };
+        let results = InMemorySink::new();
+        let info = |watched| {
+            heartbeat_info_from(
+                &results,
+                "https://example.test",
+                OrgId(Uuid::new_v4()),
+                Uuid::new_v4(),
+                &check,
+                watched,
+                Some(wired.clone()),
+            )
+        };
+        let watched = info(true).await;
+        assert!(watched.due_at.is_some() && watched.down_at.is_some());
+        let unwatched = info(false).await;
+        assert!(unwatched.due_at.is_none() && unwatched.down_at.is_none());
     }
 }

@@ -80,7 +80,7 @@ impl ManualOps<'_> {
             // Stamped after the record: a restatement that read the old state
             // took its time before this one. Results are stored to the second,
             // so a tie in that second is settled by the next restatement.
-            if target.enabled && target.plan_hold_at.is_none() {
+            if target.is_watched() {
                 let result = manual_result(target.id, org.0, Utc::now(), &change.state);
                 crate::worker::spawn_passive_results(Arc::clone(self.results), vec![result]);
             }

@@ -241,6 +241,11 @@ impl NewTarget {
 }
 
 impl Target {
+    /// Probed on its schedule: switched on and not held by the plan.
+    pub fn is_watched(&self) -> bool {
+        self.enabled && self.plan_hold_at.is_none()
+    }
+
     /// Every setting of this monitor under a new name, owned by whoever made
     /// the copy. Regions and the escalation policy live outside the row; the
     /// caller carries them on the [`PlacedTarget`].

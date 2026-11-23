@@ -1,6 +1,6 @@
 {# Shared header for the Monitor and Incidents sub-tabs. Inputs (all
    fields exist on both `DetailPage` and `IncidentsPage`): id, name,
-   kind, address, interval_s, slowed, enabled, tags, managed_by, last_status,
+   kind, address, interval_s, slowed, enabled, plan_held, tags, managed_by, last_status,
    last_at_iso, alerts_nobody, failure, failure_oob. Kept in sync because both
    views populate the same shape from `target_store.get` + the most-recent
    check row. #}
@@ -8,8 +8,9 @@
 <a href="/targets" class="inline-block text-sm text-muted hover:text-body">← monitors</a>
 <div class="flex flex-wrap items-center gap-3">
   <h1 class="page-title"><span class="page-title__prefix" aria-hidden="true">$</span>{{ name }}</h1>
-  {% call sb::show(last_status, enabled, false) %}{% endcall %}
+  {% call sb::show(last_status, enabled && !plan_held, false) %}{% endcall %}
   {% if !enabled %}<span class="status-badge status-badge--disabled">disabled</span>{% endif %}
+  {% if plan_held %}{% include "targets/partials/_held_chip.html" %}{% endif %}
   {% if let Some(m) = managed_by %}<span class="managed-chip">{{ m }}</span>{% endif %}
   {% if alerts_nobody %}
   <a href="/targets/{{ id }}/edit"
@@ -76,7 +77,7 @@
   {% endif %}
   <span class="cli-brackets ml-2" data-last-check
         data-last-at="{{ last_at_iso }}"
-        data-enabled="{{ enabled }}">{% if let Some(s) = slowed %}interval:{{ s.interval_s|exact_dur }} (own: {{ interval_s|exact_dur }}){% else %}interval:{{ interval_s|exact_dur }}{% endif %}</span>
+        data-enabled="{{ enabled && !plan_held }}">{% if let Some(s) = slowed %}interval:{{ s.interval_s|exact_dur }} (own: {{ interval_s|exact_dur }}){% else %}interval:{{ interval_s|exact_dur }}{% endif %}</span>
 </p>
 <div>
   {% for tag in tags %}

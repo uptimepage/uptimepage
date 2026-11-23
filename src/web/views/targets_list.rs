@@ -760,7 +760,7 @@ fn build_row(
         },
         _ => "",
     };
-    let class = status_while_watched(class, !t.enabled || t.plan_hold_at.is_some());
+    let class = status_while_watched(class, !t.is_watched());
     let last_status = class;
     let status_class = class;
 
@@ -795,9 +795,7 @@ fn build_row(
 }
 
 fn slowed_title(t: &Target) -> Option<String> {
-    let since = t
-        .slowed_at
-        .filter(|_| t.enabled && t.plan_hold_at.is_none())?;
+    let since = t.slowed_at.filter(|_| t.is_watched())?;
     Some(format!(
         "Down from every region for {}, so checked every {} since {} instead of every {}. \
          It goes back when its incident closes, you edit it, or a check you run passes.",

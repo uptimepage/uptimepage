@@ -175,9 +175,9 @@ pub struct HeartbeatLiveness {
 }
 
 impl HeartbeatLiveness {
-    pub fn derive(hb: &crate::targets::HeartbeatInfo, now: DateTime<Utc>, enabled: bool) -> Self {
+    pub fn derive(hb: &crate::targets::HeartbeatInfo, now: DateTime<Utc>, watched: bool) -> Self {
         Self {
-            pending: hb.pending && enabled,
+            pending: hb.pending && watched,
             since: hb.created_at,
             due_at: hb.due_at,
             down_at: hb.down_at.filter(|d| Some(*d) != hb.due_at),
@@ -228,7 +228,8 @@ pub struct DetailLive {
     pub id: String,
     pub name: String,
     pub range: &'static str,
-    pub enabled: bool,
+    /// Enabled and not held: an empty status then reads "checking…".
+    pub watched: bool,
     pub last_status: &'static str,
     pub uptime: Arc<UptimeStatsView>,
     pub kpi: Arc<KpiTrend>,

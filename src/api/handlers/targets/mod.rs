@@ -511,7 +511,7 @@ pub async fn get_heartbeat(
             org,
             id,
             check,
-            target.enabled,
+            target.is_watched(),
         )
         .await?,
     ))
@@ -576,7 +576,7 @@ pub async fn rotate_heartbeat(
                 org,
                 id,
                 check,
-                target.enabled,
+                target.is_watched(),
                 Some(healed),
             )
             .await,
@@ -594,7 +594,7 @@ pub async fn rotate_heartbeat(
             org,
             id,
             check,
-            target.enabled,
+            target.is_watched(),
             Some(rotated),
         )
         .await,

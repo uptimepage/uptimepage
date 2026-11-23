@@ -81,9 +81,7 @@ pub struct SlowedView {
 
 impl SlowedView {
     fn of(target: &Target) -> Option<Self> {
-        let since = target
-            .slowed_at
-            .filter(|_| target.enabled && target.plan_hold_at.is_none())?;
+        let since = target.slowed_at.filter(|_| target.is_watched())?;
         Some(Self {
             since,
             interval_s: LONG_DOWN.slowed_interval(target.interval).as_secs(),
@@ -105,6 +103,8 @@ pub struct IncidentsPage {
     pub interval_s: u64,
     pub slowed: Option<SlowedView>,
     pub enabled: bool,
+    /// Over the plan's caps, so not checked until the plan covers it again.
+    pub plan_held: bool,
     pub tags: Vec<String>,
     /// `terraform`/`api` chip for externally-managed monitors; `None` (UI) hides it.
     pub managed_by: Option<&'static str>,
@@ -344,7 +344,7 @@ pub async fn index(
             org,
             target.id,
             check,
-            target.enabled,
+            target.is_watched(),
         )
         .await
         .map_err(|err| tracing::warn!(error = %err, "heartbeat card unavailable"))
@@ -401,8 +401,8 @@ pub async fn index(
     // From the projection, so a ping landing mid-render cannot split the page.
     let liveness = heartbeat
         .as_ref()
-        .map(|h| HeartbeatLiveness::derive(h, Utc::now(), target.enabled));
-    let last_status = badge_status(live.last_status, liveness.as_ref());
+        .map(|h| HeartbeatLiveness::derive(h, Utc::now(), target.is_watched()));
+    let last_status = header_status(&target, live.last_status, liveness.as_ref());
     let failure = crate::targets::failure_note(
         state.results_store.as_ref(),
         org,
@@ -622,7 +622,7 @@ pub async fn live_partial(
     .await?;
 
     let liveness = read_liveness(&state, org, &target).await;
-    let last_status = badge_status(live.last_status, liveness.as_ref());
+    let last_status = header_status(&target, live.last_status, liveness.as_ref());
     let facts = facts::load(&state, org, &target, selected_region.as_deref()).await;
     let failure = crate::targets::failure_note(
         state.results_store.as_ref(),
@@ -635,9 +635,9 @@ pub async fn live_partial(
 
     let page = DetailLive {
         id: target.id.to_string(),
+        watched: target.is_watched(),
         name: target.name,
         range: range_key,
-        enabled: target.enabled,
         last_status,
         failure,
         failure_oob: true,
@@ -747,7 +747,8 @@ pub async fn incidents(
         .count_active_for_target(org, target.id)
         .await? as usize;
     let reaches_nobody = alerts_nobody(&state, org, &target).await;
-    let last_status = badge_status(
+    let last_status = header_status(
+        &target,
         data.last_status,
         read_liveness(&state, org, &target).await.as_ref(),
     );
@@ -773,6 +774,7 @@ pub async fn incidents(
         interval_s: target.interval.as_secs(),
         slowed,
         enabled: target.enabled,
+        plan_held: target.plan_hold_at.is_some(),
         tags: target.tags,
         managed_by: target.write_source.managed_label(),
         share_count,
@@ -820,12 +822,13 @@ pub(crate) async fn read_liveness(
         }
     };
     let now = Utc::now();
+    let watched = target.is_watched();
     let window = hb
         .as_ref()
-        .filter(|h| target.enabled && !h.is_pending() && h.ping_state().failing().is_none())
+        .filter(|h| watched && !h.is_pending() && h.ping_state().failing().is_none())
         .map(|h| check.window(h.ping_state().success_at));
     Some(HeartbeatLiveness {
-        pending: target.enabled && hb.as_ref().is_none_or(HeartbeatMonitor::is_pending),
+        pending: watched && hb.as_ref().is_none_or(HeartbeatMonitor::is_pending),
         since: hb.map(|h| h.created_at),
         due_at: window.map(|(due, _)| due),
         down_at: window
@@ -834,6 +837,20 @@ pub(crate) async fn read_liveness(
         late: window.is_some_and(|(due, down)| now > due && now <= down),
         overdue: window.is_some_and(|(_, down)| now > down),
     })
+}
+
+/// A held monitor is not probed, so what it last reported is a claim about
+/// the past and the header shows no status.
+fn header_status(
+    target: &Target,
+    last_status: &'static str,
+    hb: Option<&HeartbeatLiveness>,
+) -> &'static str {
+    if target.plan_hold_at.is_some() {
+        ""
+    } else {
+        badge_status(last_status, hb)
+    }
 }
 
 /// Every other kind gets its stored status back untouched.
