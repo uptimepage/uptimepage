@@ -1,5 +1,8 @@
 {# Current-state banner, shared by the operator and share headers so the two
-   cannot drift apart. Needs `last_status` and `ongoing_count` in scope.
+   cannot drift apart. Needs `last_status`, `ongoing_count`, `enabled` and
+   `public_view` in scope; a shared link's viewer is not the account holder.
+   A paused or held monitor is not checked, so its open incident is
+   explained rather than reported as an outage happening now.
    A count of zero is also what a failed count reads as, so nothing here
    asserts that no incident exists — only that one is open when it is. #}
 {% if last_status == "down" %}
@@ -19,5 +22,15 @@
   {%- if kind == "TLS" %} The certificate expires inside its warning window, or some regions cannot read it.
   {%- else if kind == "DOMAIN" %} The registration expires inside its warning window, or some regions cannot look it up.
   {%- else %} Response times are elevated or partial failures are occurring.{% endif %}
+</div>
+{% else if (last_status == "paused" || last_status == "held") && ongoing_count > 0 %}
+<div class="alert-card alert-card--muted" role="note">
+  {%- if last_status == "held" && public_view %}
+  <strong>Monitor is not being checked.</strong> {% if ongoing_count == 1 %}Its incident stays{% else %}Its incidents stay{% endif %} open until checks resume and it recovers, or until resolved by hand.
+  {%- else if last_status == "held" %}
+  <strong>Monitor is held by your plan.</strong> {% if ongoing_count == 1 %}Its incident stays{% else %}Its incidents stay{% endif %} open until the plan covers it again{% if !enabled %}, it is resumed{% endif %} and it recovers, or until resolved by hand.
+  {%- else %}
+  <strong>Monitor is paused.</strong> {% if ongoing_count == 1 %}Its incident stays{% else %}Its incidents stay{% endif %} open until it is resumed and recovers, or until resolved by hand.
+  {%- endif %}
 </div>
 {% endif %}

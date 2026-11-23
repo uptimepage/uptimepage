@@ -99,6 +99,7 @@
   Managed by <strong>{{ m }}</strong> — edits made here may be overwritten the next time it's applied from code.
 </div>
 {% endif %}
+{% let public_view = false %}
 {% include "targets/partials/_status_banner.html" %}
 {% include "targets/partials/_failure_note.html" %}
 {% if let Some(s) = slowed %}

@@ -23,4 +23,6 @@
 {#- -#}
 <span id="detail-recent-count" hx-swap-oob="true" class="text-xs text-muted">latest {{ results.len() }}{% if results_has_more %}+{% endif %}</span>
 {%- import "targets/partials/_status_badge.html" as sb -%}
-{%- call sb::show(last_status, enabled, true) %}{% endcall -%}
+{%- import "share/partials/_state_chips.html" as sc -%}
+{%- call sb::show(last_status, watched, true) %}{% endcall -%}
+{%- call sc::show(enabled, watched, true) %}{% endcall -%}

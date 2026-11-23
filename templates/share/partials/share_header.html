@@ -3,10 +3,11 @@
    (run/edit/enable/delete) and NO operator navigation. Inputs exist on both
    ShareDetailPage and ShareIncidentsPage. #}
 {% import "targets/partials/_status_badge.html" as sb %}
+{% import "share/partials/_state_chips.html" as sc %}
 <div class="flex flex-wrap items-center gap-3">
   <h1 class="page-title"><span class="page-title__prefix" aria-hidden="true">$</span>{{ name }}</h1>
-  {% call sb::show(last_status, enabled, false) %}{% endcall %}
-  {% if !enabled %}<span class="status-badge status-badge--disabled">disabled</span>{% endif %}
+  {% call sb::show(last_status, watched, false) %}{% endcall %}
+  {% call sc::show(enabled, watched, false) %}{% endcall %}
 </div>
 <p class="text-sm text-muted">
   <span class="font-mono uppercase">{{ kind }}</span>
@@ -18,11 +19,12 @@
   {% endif %}
   <span class="ml-2" data-last-check
         data-last-at="{{ last_at_iso }}"
-        data-enabled="{{ enabled }}">interval {{ interval_s|exact_dur }}</span>
+        data-enabled="{{ watched }}">interval {{ interval_s|exact_dur }}</span>
 </p>
 <div>
   {% for tag in tags %}
     <span class="status-badge status-badge--tag mr-1">{{ tag }}</span>
   {% endfor %}
 </div>
+{% let public_view = true %}
 {% include "targets/partials/_status_banner.html" %}

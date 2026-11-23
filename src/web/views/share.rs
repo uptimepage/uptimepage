@@ -54,7 +54,7 @@ use crate::web::views::page_branding::{BrandingView, resolve_branding};
 use crate::web::views::targets_detail::{
     CustomWindow, DEFAULT_RANGE, DetailParams, INCIDENT_DEFAULT_RANGE, INCIDENT_RANGE_KEYS,
     IncidentRow, KpiTrend, LiveDataCache, PingTally, RANGE_KEYS, ResultRow, SUBTAB_INCIDENTS,
-    SUBTAB_MONITOR, UptimeStatsView, WindowLabels, badge_status, fmt_error_display,
+    SUBTAB_MONITOR, UptimeStatsView, WindowLabels, badge_status, fmt_error_display, header_status,
     load_incidents_data, load_live_data_cached, ongoing_for_target, read_liveness,
     resolve_incident_window, resolve_window,
 };
@@ -224,6 +224,7 @@ pub struct ShareDetailPage {
     pub address: String,
     pub interval_s: u64,
     pub enabled: bool,
+    pub watched: bool,
     pub tags: Vec<String>,
     pub last_status: &'static str,
     pub last_at_iso: Arc<str>,
@@ -261,6 +262,7 @@ pub struct ShareLive {
     pub token: String,
     pub range: &'static str,
     pub enabled: bool,
+    pub watched: bool,
     pub last_status: &'static str,
     pub uptime: Arc<UptimeStatsView>,
     pub pings: Option<PingTally>,
@@ -285,6 +287,7 @@ pub struct ShareIncidentsPage {
     pub address: String,
     pub interval_s: u64,
     pub enabled: bool,
+    pub watched: bool,
     pub tags: Vec<String>,
     pub last_status: &'static str,
     pub last_at_iso: String,
@@ -359,11 +362,15 @@ pub async fn detail(
 
     // The same override the owner's page applies, so one monitor cannot read
     // late on one surface and up on the other.
-    let last_status = badge_status(
-        live.last_status,
-        read_liveness(&state, resolved.org, &target).await.as_ref(),
+    let last_status = header_status(
+        &target,
+        badge_status(
+            live.last_status,
+            read_liveness(&state, resolved.org, &target).await.as_ref(),
+        ),
     );
 
+    let watched = target.is_watched();
     Ok(uncached(
         ShareDetailPage {
             token,
@@ -374,6 +381,7 @@ pub async fn detail(
             address,
             interval_s: target.interval.as_secs(),
             enabled: target.enabled,
+            watched,
             tags: target.tags,
             last_status,
             last_at_iso: Arc::clone(&live.last_at_iso),
@@ -433,15 +441,19 @@ pub async fn live_partial(
         None,
     )
     .await?;
-    let last_status = badge_status(
-        live.last_status,
-        read_liveness(&state, resolved.org, &target).await.as_ref(),
+    let last_status = header_status(
+        &target,
+        badge_status(
+            live.last_status,
+            read_liveness(&state, resolved.org, &target).await.as_ref(),
+        ),
     );
 
     let page = ShareLive {
         token,
         range: range_key,
         enabled: target.enabled,
+        watched: target.is_watched(),
         last_status,
         uptime: Arc::clone(&live.uptime),
         pings: live.pings,
@@ -502,11 +514,15 @@ pub async fn incidents(
     let (kind, address) = target.check.describe();
     let range_base_path = format!("/m/{token}/incidents");
     let results_base = format!("/m/{token}");
-    let last_status = badge_status(
-        data.last_status,
-        read_liveness(&state, resolved.org, &target).await.as_ref(),
+    let last_status = header_status(
+        &target,
+        badge_status(
+            data.last_status,
+            read_liveness(&state, resolved.org, &target).await.as_ref(),
+        ),
     );
 
+    let watched = target.is_watched();
     Ok(uncached(
         ShareIncidentsPage {
             token,
@@ -517,6 +533,7 @@ pub async fn incidents(
             address,
             interval_s: target.interval.as_secs(),
             enabled: target.enabled,
+            watched,
             tags: target.tags,
             last_status,
             last_at_iso: data.last_at_iso,
@@ -651,6 +668,99 @@ mod tests {
         assert!(html.contains(">late<"));
     }
 
+    /// The owner's rule on the shared link too: a paused monitor is not an
+    /// outage happening now.
+    #[test]
+    fn a_paused_monitor_reads_paused_on_the_shared_link_too() {
+        let mut p = share_page(false);
+        p.enabled = false;
+        p.watched = false;
+        p.last_status = "paused";
+        p.ongoing_count = 1;
+        let html = p.render().unwrap();
+        assert!(
+            html.contains(r#"status-badge--none">no data</span>"#),
+            "{html}"
+        );
+        assert!(!html.contains("Monitor is down."));
+        assert!(html.contains("Monitor is paused."));
+    }
+
+    /// A plan hold stops checks without pausing, so `enabled` alone would read
+    /// it as a monitor whose first check is still running.
+    #[test]
+    fn a_held_monitor_reads_unchecked_on_the_shared_link() {
+        let mut p = share_page(false);
+        p.watched = false;
+        p.last_status = "held";
+        let html = p.render().unwrap();
+        assert!(
+            html.contains(r#"status-badge--none">no data</span>"#),
+            "{html}"
+        );
+        assert!(!html.contains("checking…"), "{html}");
+        assert!(html.contains(r#"data-enabled="false""#), "{html}");
+        assert!(
+            html.contains(r#"title="Checks are stopped for this monitor; its history is kept.">not checked</span>"#),
+            "{html}"
+        );
+    }
+
+    /// A paused monitor already wears `disabled`; a second chip would say it twice.
+    #[test]
+    fn only_a_held_monitor_wears_the_not_checked_chip() {
+        let mut paused = share_page(false);
+        paused.enabled = false;
+        paused.watched = false;
+        paused.last_status = "paused";
+        let html = paused.render().unwrap();
+        assert!(html.contains(">disabled</span>"), "{html}");
+        assert!(!html.contains("not checked"), "{html}");
+
+        assert!(!share_page(false).render().unwrap().contains("not checked"));
+
+        let mut paused_and_held = share_page(false);
+        paused_and_held.enabled = false;
+        paused_and_held.watched = false;
+        paused_and_held.last_status = "held";
+        let html = paused_and_held.render().unwrap();
+        assert!(html.contains(">disabled</span>"), "{html}");
+        assert!(!html.contains("not checked"), "{html}");
+    }
+
+    #[test]
+    fn a_held_monitor_with_an_open_incident_shows_the_chip_and_the_note_once() {
+        let mut p = share_page(false);
+        p.watched = false;
+        p.last_status = "held";
+        p.ongoing_count = 1;
+        let html = p.render().unwrap();
+        assert_eq!(html.matches(">not checked</span>").count(), 1, "{html}");
+        assert_eq!(
+            html.matches("<strong>Monitor is not being checked.</strong>")
+                .count(),
+            1,
+            "{html}"
+        );
+    }
+
+    /// The viewer of a shared link is not the account holder, so the hold is
+    /// not explained in terms of their plan.
+    #[test]
+    fn a_held_monitor_keeps_the_owners_plan_off_the_shared_link() {
+        let mut p = share_page(false);
+        p.watched = false;
+        p.last_status = "held";
+        p.ongoing_count = 1;
+        let html = p.render().unwrap();
+        assert!(!html.contains("your plan"), "{html}");
+        assert!(!html.contains("the plan"), "{html}");
+        assert!(
+            html.contains("<strong>Monitor is not being checked.</strong> Its incident stays open until checks resume and it recovers, or until resolved by hand."),
+            "{html}"
+        );
+    }
+
     fn share_page(all_regions: bool) -> ShareDetailPage {
         ShareDetailPage {
             token: "tok".into(),
@@ -661,6 +771,7 @@ mod tests {
             address: "https://example.com".into(),
             interval_s: 60,
             enabled: true,
+            watched: true,
             tags: vec![],
             last_status: "up",
             last_at_iso: Arc::from("2026-07-13T12:00:00Z"),
@@ -749,12 +860,12 @@ mod tests {
         assert!(!html.contains("--brand-color"));
     }
 
-    #[test]
-    fn live_partial_has_no_whitespace_between_its_top_level_nodes() {
-        let html = ShareLive {
+    fn share_live() -> ShareLive {
+        ShareLive {
             token: "tok".into(),
             range: "24h",
             enabled: true,
+            watched: true,
             last_status: "up",
             uptime: Arc::new(UptimeStatsView {
                 total: 100,
@@ -772,8 +883,27 @@ mod tests {
             show_region: false,
             owner_view: false,
         }
-        .render()
-        .unwrap();
+    }
+
+    /// The live refresh re-renders the badge, so a hold must not flip it back
+    /// to a running check a minute after the page loaded.
+    #[test]
+    fn a_held_monitor_stays_unchecked_on_the_live_refresh() {
+        let mut live = share_live();
+        live.watched = false;
+        live.last_status = "held";
+        let html = live.render().unwrap();
+        assert!(
+            html.contains(r#"status-badge--none">no data</span>"#),
+            "{html}"
+        );
+        assert!(!html.contains("checking…"), "{html}");
+        assert!(html.contains(">not checked</span>"), "{html}");
+    }
+
+    #[test]
+    fn live_partial_has_no_whitespace_between_its_top_level_nodes() {
+        let html = share_live().render().unwrap();
         // An outerHTML swap inserts every top-level node beside the target.
         assert!(html.starts_with("<section id=\"detail-live-kpi\""));
         assert!(html.contains(
@@ -785,6 +915,9 @@ mod tests {
         assert!(html.contains("</section><template>"));
         assert!(html.contains("</template><span id=\"detail-recent-count\""));
         assert!(html.contains("</span><span id=\"detail-status-badge\""));
+        assert!(
+            html.contains(r#"<span id="share-state-chips" class="contents" hx-swap-oob="true">"#)
+        );
         assert!(html.ends_with("</span>"));
     }
 

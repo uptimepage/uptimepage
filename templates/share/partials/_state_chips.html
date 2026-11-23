@@ -1,0 +1,8 @@
+{# Why a shared monitor is not being checked. `display: contents` keeps the
+   chips in the header's flex row; the live poll swaps the wrapper out of band. #}
+{% macro show(enabled, watched, oob) -%}
+<span id="share-state-chips" class="contents"{% if oob %} hx-swap-oob="true"{% endif %}>
+{%- if !enabled %}<span class="status-badge status-badge--disabled">disabled</span>{% endif -%}
+{%- if enabled && !watched %}<span class="status-badge status-badge--disabled" title="Checks are stopped for this monitor; its history is kept.">not checked</span>{% endif -%}
+</span>
+{%- endmacro %}

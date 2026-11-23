@@ -402,15 +402,16 @@ pub async fn index(
     let liveness = heartbeat
         .as_ref()
         .map(|h| HeartbeatLiveness::derive(h, Utc::now(), target.is_watched()));
-    let last_status = header_status(&target, live.last_status, liveness.as_ref());
+    let status = badge_status(live.last_status, liveness.as_ref());
     let failure = crate::targets::failure_note(
         state.results_store.as_ref(),
         org,
         &target,
-        last_status,
+        status,
         selected_region.as_deref(),
     )
     .await;
+    let last_status = header_status(&target, status);
 
     let slowed = SlowedView::of(&target);
     Ok(DetailPage {
@@ -622,16 +623,17 @@ pub async fn live_partial(
     .await?;
 
     let liveness = read_liveness(&state, org, &target).await;
-    let last_status = header_status(&target, live.last_status, liveness.as_ref());
+    let status = badge_status(live.last_status, liveness.as_ref());
     let facts = facts::load(&state, org, &target, selected_region.as_deref()).await;
     let failure = crate::targets::failure_note(
         state.results_store.as_ref(),
         org,
         &target,
-        last_status,
+        status,
         selected_region.as_deref(),
     )
     .await;
+    let last_status = header_status(&target, status);
 
     let page = DetailLive {
         id: target.id.to_string(),
@@ -747,20 +749,14 @@ pub async fn incidents(
         .count_active_for_target(org, target.id)
         .await? as usize;
     let reaches_nobody = alerts_nobody(&state, org, &target).await;
-    let last_status = header_status(
-        &target,
+    let status = badge_status(
         data.last_status,
         read_liveness(&state, org, &target).await.as_ref(),
     );
-
-    let failure = crate::targets::failure_note(
-        state.results_store.as_ref(),
-        org,
-        &target,
-        last_status,
-        None,
-    )
-    .await;
+    let failure =
+        crate::targets::failure_note(state.results_store.as_ref(), org, &target, status, None)
+            .await;
+    let last_status = header_status(&target, status);
 
     let slowed = SlowedView::of(&target);
     Ok(IncidentsPage {
@@ -839,17 +835,22 @@ pub(crate) async fn read_liveness(
     })
 }
 
-/// A held monitor is not probed, so what it last reported is a claim about
-/// the past and the header shows no status.
-fn header_status(
-    target: &Target,
-    last_status: &'static str,
-    hb: Option<&HeartbeatLiveness>,
-) -> &'static str {
+// Not probed: the badge shows no status and the banner explains an incident
+// that stays open.
+const PAUSED: &str = "paused";
+const HELD: &str = "held";
+
+/// A paused or held monitor's last result is a claim about the past, so the
+/// header reads why it is not checked instead. Shared with the share view, so
+/// the two surfaces cannot disagree. The failure note keeps `status`: its
+/// cause is a diagnosis, and a pause is often when someone acts on it.
+pub(crate) fn header_status(target: &Target, status: &'static str) -> &'static str {
     if target.plan_hold_at.is_some() {
-        ""
+        HELD
+    } else if !target.enabled {
+        PAUSED
     } else {
-        badge_status(last_status, hb)
+        status
     }
 }
 

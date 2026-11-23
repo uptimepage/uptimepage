@@ -153,7 +153,7 @@ impl Worker {
             return false;
         };
         matches!(self.targets.get(ack.org, target_id).await,
-            Ok(Some(t)) if !t.enabled || t.plan_hold_at.is_some())
+            Ok(Some(t)) if !t.is_watched())
     }
 
     /// Poll outstanding emergency receipts: record acknowledgement on the

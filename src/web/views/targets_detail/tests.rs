@@ -236,7 +236,7 @@ fn a_held_monitor_wears_the_list_chip_on_both_tabs() {
     let mut p = sample_page();
     assert!(!p.render().unwrap().contains("held-chip"));
     p.plan_held = true;
-    p.last_status = "";
+    p.last_status = super::HELD;
     let html = p.render().unwrap();
     assert!(
         html.contains(r#"<span class="held-chip" title="Your plan no longer covers"#),
@@ -250,7 +250,7 @@ fn a_held_monitor_wears_the_list_chip_on_both_tabs() {
 
     let mut i = sample_incidents_page(vec![], 0);
     i.plan_held = true;
-    i.last_status = "";
+    i.last_status = super::HELD;
     let html = i.render().unwrap();
     assert!(html.contains(r#"<span class="held-chip""#), "{html}");
     assert!(html.contains(badge), "{html}");
@@ -260,7 +260,7 @@ fn a_held_monitor_wears_the_list_chip_on_both_tabs() {
 fn the_live_refresh_keeps_a_held_monitor_off_checking() {
     let mut live = sample_live();
     live.watched = false;
-    live.last_status = "";
+    live.last_status = super::HELD;
     let html = live.render().unwrap();
     assert!(
         html.contains(r#"status-badge--none">no data</span>"#),
@@ -268,14 +268,67 @@ fn the_live_refresh_keeps_a_held_monitor_off_checking() {
     );
 }
 
-/// A green badge from before the hold reads as watched and healthy.
+/// A result from before the pause or hold reads as an outage, or health,
+/// happening now.
 #[test]
-fn a_held_monitor_reports_no_status_in_the_header() {
+fn an_unwatched_monitor_reports_why_instead_of_its_last_result() {
     let mut t = crate::domain::Target::sample(std::time::Duration::from_secs(60));
-    assert_eq!(super::header_status(&t, "up", None), "up");
+    assert_eq!(super::header_status(&t, "up"), "up");
+    t.enabled = false;
+    assert_eq!(super::header_status(&t, "down"), super::PAUSED);
     t.plan_hold_at = Some(Utc::now());
-    assert_eq!(super::header_status(&t, "up", None), "");
-    assert_eq!(super::header_status(&t, "down", None), "");
+    assert_eq!(super::header_status(&t, "down"), super::HELD);
+    t.enabled = true;
+    assert_eq!(super::header_status(&t, "up"), super::HELD);
+}
+
+/// Paused while down: no red banner, and a grey note only when an incident is
+/// still open, since that is what would otherwise look abandoned.
+#[test]
+fn a_paused_monitor_explains_its_open_incident_instead_of_reporting_down() {
+    let badge = r#"status-badge--none">no data</span>"#;
+    let mut p = sample_page();
+    p.enabled = false;
+    p.last_status = super::PAUSED;
+    p.ongoing_count = 1;
+    let html = p.render().unwrap();
+    assert!(html.contains(badge), "{html}");
+    assert!(!html.contains("Monitor is down."));
+    assert!(html.contains(
+        "<strong>Monitor is paused.</strong> Its incident stays open until it is resumed and recovers, or until resolved by hand."
+    ), "{html}");
+
+    p.ongoing_count = 2;
+    assert!(p.render().unwrap().contains("Its incidents stay open"));
+
+    p.ongoing_count = 0;
+    assert!(!p.render().unwrap().contains("Monitor is paused."));
+
+    let mut i = sample_incidents_page(vec![], 1);
+    i.enabled = false;
+    i.last_status = super::PAUSED;
+    let html = i.render().unwrap();
+    assert!(html.contains(badge), "{html}");
+    assert!(html.contains("Monitor is paused."));
+}
+
+#[test]
+fn a_held_monitor_explains_its_open_incident() {
+    let mut p = sample_page();
+    p.plan_held = true;
+    p.last_status = super::HELD;
+    p.ongoing_count = 1;
+    let html = p.render().unwrap();
+    assert!(!html.contains("Monitor is down."));
+    assert!(html.contains("<strong>Monitor is held by your plan.</strong> Its incident stays open until the plan covers it again and it recovers, or until resolved by hand."), "{html}");
+
+    p.enabled = false;
+    assert!(
+        p.render()
+            .unwrap()
+            .contains("until the plan covers it again, it is resumed and it recovers"),
+        "held and paused needs both undone"
+    );
 }
 
 #[test]

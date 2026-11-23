@@ -340,7 +340,7 @@ impl Worker {
             // it, so this only catches an episode that was open when the hold
             // landed. Its closing notice still goes out, above, or an outage
             // that ended would stay on the customer's timeline forever.
-            _ if !target.enabled || target.plan_hold_at.is_some() => Ok(None),
+            _ if !target.is_watched() => Ok(None),
             NotificationReason::Opened | NotificationReason::Reopened => {
                 self.open_episode(org, &incident, &target, damper).await
             }
