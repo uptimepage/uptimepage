@@ -429,7 +429,7 @@ fn is_app_path(path: &str) -> bool {
 /// RFC 9728 / RFC 8414 metadata under `/.well-known/`, public by definition.
 fn is_mcp_host_path(path: &str) -> bool {
     path == crate::request::MCP_PATH
-        || path == crate::mcp::SERVER_CARD_PATH
+        || path == crate::request::MCP_SERVER_CARD_PATH
         || path.starts_with("/.well-known/")
 }
 

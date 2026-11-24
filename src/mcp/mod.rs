@@ -57,9 +57,7 @@ use rmcp::transport::streamable_http_server::tower::{
 use crate::app::AppState;
 use server::McpServer;
 
-use crate::request::MCP_PATH;
-
-pub(crate) use card::PATH as SERVER_CARD_PATH;
+use crate::request::{MCP_PATH, MCP_SERVER_CARD_PATH};
 
 /// Mount the MCP server at `/mcp` when `cfg.mcp.enabled`. No-op otherwise,
 /// so a deployment without the dedicated host + Caddy route never exposes it.
@@ -85,7 +83,7 @@ pub fn mount(router: Router, state: AppState) -> Router {
     // with no endpoint to advertise, so `/mcp/server-card` 404s instead of
     // falling into the authenticated transport.
     let discovery = Router::new()
-        .route(card::PATH, axum::routing::get(card::server_card))
+        .route(MCP_SERVER_CARD_PATH, axum::routing::get(card::server_card))
         .route(card::WELL_KNOWN_PATH, axum::routing::get(card::server_card))
         .with_state(state);
     router.merge(mcp).merge(discovery)

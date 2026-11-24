@@ -17,8 +17,6 @@ use crate::app::AppState;
 
 use super::server::McpServer;
 
-/// `<streamable-http-url>/server-card`, the location MCP reserves for the card.
-pub(crate) const PATH: &str = "/mcp/server-card";
 /// Where agents found the card before the reserved location existed.
 pub(super) const WELL_KNOWN_PATH: &str = "/.well-known/mcp/server-card.json";
 
@@ -129,11 +127,6 @@ mod tests {
                 .is_some_and(|d| d.len() <= 100),
             "the registry caps description at 100 characters and rejects at publish time"
         );
-    }
-
-    #[test]
-    fn card_lives_under_the_transport_endpoint() {
-        assert_eq!(PATH, format!("{}/server-card", crate::request::MCP_PATH));
     }
 
     #[test]

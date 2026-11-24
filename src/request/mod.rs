@@ -49,6 +49,9 @@ pub const HEALTH_PATHS: &[&str] = &["/healthz", "/readyz"];
 /// Where the MCP transport listens; the MCP host serves this and discovery only.
 pub const MCP_PATH: &str = "/mcp";
 
+/// `<streamable-http-url>/server-card`, the location MCP reserves for the card.
+pub const MCP_SERVER_CARD_PATH: &str = "/mcp/server-card";
+
 /// True when `path` is one of [`HEALTH_PATHS`]. Cheap `contains` over a
 /// 2-element slice — fine on the per-request hot path.
 pub fn is_health_path(path: &str) -> bool {
@@ -73,5 +76,10 @@ mod tests {
         assert!(!is_health_path("/healthz/extra"));
         assert!(!is_health_path("/"));
         assert!(!is_health_path(""));
+    }
+
+    #[test]
+    fn server_card_lives_under_the_transport_endpoint() {
+        assert_eq!(MCP_SERVER_CARD_PATH, format!("{MCP_PATH}/server-card"));
     }
 }
