@@ -5,7 +5,8 @@
 //! Constants live here so the limits are one source of truth across
 //! maintenance + incident endpoints.
 
-use crate::domain::TargetAlerts;
+use uuid::Uuid;
+
 use crate::error::codes;
 use crate::error::{AppError, Result};
 
@@ -116,16 +117,14 @@ pub(crate) fn validate_renotify_interval(secs: Option<u32>) -> Result<()> {
 /// Refuses a channel bound twice: each open and resolve goes out once per
 /// bound channel, so a duplicate would page it twice. Structural only, no I/O:
 /// that each channel belongs to the caller's org is checked by the write.
-pub(crate) fn validate_alerts(alerts: &TargetAlerts) -> Result<()> {
+/// Takes the bound channel ids in binding order, so the error names the index.
+pub(crate) fn validate_alerts(channel_ids: impl IntoIterator<Item = Uuid>) -> Result<()> {
     let mut seen = std::collections::HashSet::new();
-    for (i, b) in alerts.iter().enumerate() {
-        if !seen.insert(b.channel_id) {
+    for (i, id) in channel_ids.into_iter().enumerate() {
+        if !seen.insert(id) {
             return Err(AppError::bad_request_field(
                 codes::INVALID_ALERT_CONFIG,
-                format!(
-                    "alerts[{i}]: duplicate binding for channel {}",
-                    b.channel_id
-                ),
+                format!("alerts[{i}]: duplicate binding for channel {id}"),
                 format!("alerts[{i}].channel_id"),
             ));
         }
@@ -171,5 +170,17 @@ mod tests {
         assert!(validate_renotify_interval(Some(i32::MAX as u32)).is_ok());
         assert!(validate_renotify_interval(Some(59)).is_err());
         assert!(validate_renotify_interval(Some(i32::MAX as u32 + 1)).is_err());
+    }
+
+    #[test]
+    fn alerts_refuse_a_channel_bound_twice_at_its_second_index() {
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        assert!(validate_alerts([]).is_ok());
+        assert!(validate_alerts([a, b]).is_ok());
+        assert!(matches!(
+            validate_alerts([a, b, a]),
+            Err(AppError::BadRequest { code, field: Some(f), .. })
+                if code == codes::INVALID_ALERT_CONFIG && f == "alerts[2].channel_id"
+        ));
     }
 }

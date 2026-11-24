@@ -211,7 +211,7 @@ pub(crate) fn validate_new_target(
     validate_check(&new.check, guard)?;
     validate_heartbeat_cadence(&new.check, new.interval, effective_floor as u64)?;
     new.tags = normalize_tags(&new.tags)?;
-    validate_alerts(&new.alerts)?;
+    validate_alerts(new.alerts.iter().map(|b| b.channel_id))?;
     validate_alert_confirmations(Some(new.alert_confirmations))?;
     validate_renotify_interval(Some(new.renotify_interval_secs))?;
     validate_recovery_period(new.recovery_period_secs)?;

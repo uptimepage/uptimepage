@@ -305,7 +305,7 @@ pub async fn update(
         stored_target = Some(stored);
     }
     if let Some(alerts) = &update.alerts {
-        validate_alerts(alerts)?;
+        validate_alerts(alerts.iter().map(|b| b.channel_id))?;
         ops.verify_alert_channels(org, alerts).await?;
     }
     if let Some(tags) = update.tags.as_ref() {

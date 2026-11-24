@@ -66,7 +66,7 @@ impl TargetOps<'_> {
     ) -> Result<()> {
         validate_renotify_interval(renotify_interval_secs)?;
         if let Some(alerts) = alerts {
-            validate_alerts(alerts)?;
+            validate_alerts(alerts.iter().map(|b| b.channel_id))?;
             self.verify_alert_channels(org, alerts).await?;
         }
         Ok(())
