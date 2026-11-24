@@ -210,15 +210,71 @@ async fn mcp_with_sm_live_token_but_no_db_challenges() {
 
 #[tokio::test]
 async fn server_card_is_public_and_matches_the_running_server() {
+    for path in ["/mcp/server-card", "/.well-known/mcp/server-card.json"] {
+        let app = build_test_app_with_web(|cfg| {
+            cfg.mcp.enabled = true;
+            cfg.mcp.resource_uri = "https://mcp.example.test/mcp".into();
+            cfg.site.origin = "https://example.test".into();
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header("host", "localhost")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
+        assert_eq!(
+            resp.headers().get("content-type").unwrap(),
+            "application/mcp-server-card+json",
+            "{path}"
+        );
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let card: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            card["$schema"],
+            "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json"
+        );
+        assert_eq!(card["name"], "test.example/uptimepage");
+        assert_eq!(card["version"], env!("CARGO_PKG_VERSION"));
+        assert!(
+            card["description"]
+                .as_str()
+                .is_some_and(|d| !d.is_empty() && d.chars().count() <= 100),
+            "the card schema bounds description to 1..=100 characters: {card}"
+        );
+        let remote = &card["remotes"][0];
+        assert_eq!(remote["type"], "streamable-http");
+        assert_eq!(remote["url"], "https://mcp.example.test/mcp");
+        let versions = remote["supportedProtocolVersions"].as_array().unwrap();
+        assert!(!versions.is_empty(), "{card}");
+        assert!(
+            !versions.contains(&serde_json::json!("2024-11-05")),
+            "2024-11-05 predates streamable HTTP: {card}"
+        );
+        assert!(
+            card.get("capabilities").is_none(),
+            "cards leave capabilities to runtime negotiation: {card}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn server_card_omits_the_website_when_no_site_is_configured() {
     let app = build_test_app_with_web(|cfg| {
         cfg.mcp.enabled = true;
         cfg.mcp.resource_uri = "https://mcp.example.test/mcp".into();
-        cfg.site.origin = "https://example.test".into();
+        cfg.site.origin = String::new();
     });
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/.well-known/mcp/server-card.json")
+                .uri("/mcp/server-card")
                 .header("host", "localhost")
                 .body(Body::empty())
                 .unwrap(),
@@ -230,25 +286,26 @@ async fn server_card_is_public_and_matches_the_running_server() {
         .await
         .unwrap();
     let card: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(card["name"], "test.example/uptimepage");
-    assert_eq!(card["version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(card["remotes"][0]["url"], "https://mcp.example.test/mcp");
-    assert_eq!(card["remotes"][0]["transport"], "streamable-http");
-    assert!(card["capabilities"]["tools"].is_object(), "{card}");
+    assert!(
+        card.get("websiteUrl").is_none(),
+        "an empty websiteUrl fails the schema's uri format: {card}"
+    );
 }
 
 #[tokio::test]
 async fn server_card_is_absent_without_a_configured_endpoint() {
-    let app = build_test_app_with_web(|cfg| cfg.mcp.enabled = true);
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/.well-known/mcp/server-card.json")
-                .header("host", "localhost")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    for path in ["/mcp/server-card", "/.well-known/mcp/server-card.json"] {
+        let app = build_test_app_with_web(|cfg| cfg.mcp.enabled = true);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header("host", "localhost")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{path}");
+    }
 }

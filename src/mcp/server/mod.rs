@@ -30,6 +30,7 @@ mod view;
 /// so it is the one place the published name lives.
 pub const SERVER_NAME: &str = "uptimepage";
 pub const SERVER_TITLE: &str = "Uptimepage";
+pub const SERVER_DESCRIPTION: &str = "Monitor uptime and incidents, run checks, and publish status updates from your Uptimepage org.";
 
 /// Max length of an incident-update message. Shares the REST bound so the two
 /// front doors can't drift.
@@ -65,6 +66,7 @@ impl ServerHandler for McpServer {
             .build();
         info.server_info.name = SERVER_NAME.to_string();
         info.server_info.title = Some(SERVER_TITLE.to_string());
+        info.server_info.description = Some(SERVER_DESCRIPTION.to_string());
         info.server_info.version = env!("CARGO_PKG_VERSION").to_string();
         info.instructions = Some(
             "Tools for one Uptimepage organization's monitors, status pages, and health. \

@@ -743,11 +743,12 @@ app.{$UPTIMEPAGE_DOMAIN} {
 # ═══════════════════════════════════════════════════════════════════════
 # MCP connector host
 # ═══════════════════════════════════════════════════════════════════════
-# `mcp` is an operator label, so the app router serves it, narrowed to /mcp
-# and /.well-known/* (`host_isolation` in src/request/host.rs); the edge repeats
-# that allow-list so the operator UI, API and OAuth endpoints, and the per-IP
-# zones they sit behind, never answer on a second host. Own per-host cert:
-# every request here carries a bearer token.
+# `mcp` is an operator label, so the app router serves it, narrowed to /mcp,
+# /mcp/server-card and /.well-known/* (`host_isolation` in
+# src/request/host.rs); the edge repeats that allow-list so the operator UI,
+# API and OAuth endpoints, and the per-IP zones they sit behind, never answer
+# on a second host. Own per-host cert: every request here carries a bearer
+# token.
 mcp.{$UPTIMEPAGE_DOMAIN} {
 	encode gzip zstd
 
@@ -770,7 +771,7 @@ mcp.{$UPTIMEPAGE_DOMAIN} {
 	}
 
 	# ─── Discovery — RFC 9728 / RFC 8414 metadata, the server card ──────
-	@discovery path /.well-known/*
+	@discovery path /.well-known/* /mcp/server-card
 	handle @discovery {
 		invoke app_upstream
 	}

@@ -59,6 +59,8 @@ use server::McpServer;
 
 use crate::request::MCP_PATH;
 
+pub(crate) use card::PATH as SERVER_CARD_PATH;
+
 /// Mount the MCP server at `/mcp` when `cfg.mcp.enabled`. No-op otherwise,
 /// so a deployment without the dedicated host + Caddy route never exposes it.
 ///
@@ -79,13 +81,12 @@ pub fn mount(router: Router, state: AppState) -> Router {
             crate::request::rate_limit::rate_limit_middleware,
         ))
         .layer(from_fn_with_state(state.clone(), auth::middleware));
-    // Public discovery: outside the auth + rate-limit layers, and only once
-    // there is an absolute endpoint to advertise.
-    if state.cfg.mcp.resource_uri.is_empty() {
-        return router.merge(mcp);
-    }
+    // Public discovery, outside the auth + rate-limit layers. Mounted even
+    // with no endpoint to advertise, so `/mcp/server-card` 404s instead of
+    // falling into the authenticated transport.
     let discovery = Router::new()
         .route(card::PATH, axum::routing::get(card::server_card))
+        .route(card::WELL_KNOWN_PATH, axum::routing::get(card::server_card))
         .with_state(state);
     router.merge(mcp).merge(discovery)
 }

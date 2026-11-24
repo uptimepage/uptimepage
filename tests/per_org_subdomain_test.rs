@@ -415,6 +415,7 @@ async fn mcp_host_serves_only_the_connector_surface() {
         "/.well-known/oauth-protected-resource/mcp",
         "/.well-known/oauth-authorization-server",
         "/.well-known/mcp/server-card.json",
+        "/mcp/server-card",
     ] {
         assert_eq!(
             get_path(&app, path, Some(&mcp_host)).await,

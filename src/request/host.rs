@@ -425,11 +425,12 @@ fn is_app_path(path: &str) -> bool {
     path == "/" || !is_public_tenant_path(path)
 }
 
-/// The transport itself plus its discovery documents: the RFC 9728 / RFC 8414
-/// metadata and the server card are all `/.well-known/` files, public by
-/// definition.
+/// The transport itself plus its discovery documents: the server card and the
+/// RFC 9728 / RFC 8414 metadata under `/.well-known/`, public by definition.
 fn is_mcp_host_path(path: &str) -> bool {
-    path == crate::request::MCP_PATH || path.starts_with("/.well-known/")
+    path == crate::request::MCP_PATH
+        || path == crate::mcp::SERVER_CARD_PATH
+        || path.starts_with("/.well-known/")
 }
 
 /// Default-deny middleware on the non-operator hosts. A tenant subdomain
@@ -533,6 +534,7 @@ mod tests {
         assert!(is_mcp_host_path("/mcp"));
         assert!(is_mcp_host_path("/.well-known/oauth-protected-resource"));
         assert!(is_mcp_host_path("/.well-known/mcp/server-card.json"));
+        assert!(is_mcp_host_path("/mcp/server-card"));
         for path in [
             "/",
             "/mcp/",
