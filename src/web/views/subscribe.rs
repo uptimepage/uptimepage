@@ -22,14 +22,14 @@ use crate::email::{EmailAddress, EmailTemplate, SendClass, TransactionalEmail};
 use crate::http_outbound::post_bytes_with_headers;
 use crate::i18n::Tr;
 use crate::public_status::access::{Access, same_origin};
-use crate::request::host::resolve_status_page;
+use crate::public_status::urls::published_paths;
+use crate::request::host::{PageInPath, resolve_status_page};
 use crate::robots::mark_private;
 use crate::storage::page_sql::{PAGE_CUSTOM_DOMAIN_PUBLISHED, PAGE_PLAN_JOIN, PAGE_PUBLIC_NAME};
 use crate::storage::status_pages;
 use crate::storage::subscribers::{self, CONFIRM_TTL_HOURS};
 use crate::templates::filters;
 use crate::web::error::WebResult;
-use crate::web::views::page_branding::status_home;
 
 #[derive(Template, WebTemplate)]
 #[template(path = "public/subscribe_notice.html")]
@@ -39,38 +39,45 @@ pub struct SubscribeNotice {
     pub heading: String,
     pub message: String,
     pub code: String,
+    pub home: String,
 }
 
+/// Where a notice leads when it cannot tell which page it is for: the
+/// primary page on a path-based deploy, the page itself on a page host.
+const ANY_HOME: &str = "/status";
+
 impl SubscribeNotice {
-    fn new(tr: Tr, ok: bool, heading: &str, message: &str, code: &str) -> Self {
+    fn new(tr: Tr, home: &str, ok: bool, heading: &str, message: &str, code: &str) -> Self {
         SubscribeNotice {
             tr,
             ok,
             heading: tr.t(heading),
             message: tr.t(message),
             code: code.into(),
+            home: home.to_owned(),
         }
     }
 
-    fn ok(tr: Tr, heading: &str, message: &str) -> Response {
-        Self::new(tr, true, heading, message, "").into_response()
+    fn ok(tr: Tr, home: &str, heading: &str, message: &str) -> Response {
+        Self::new(tr, home, true, heading, message, "").into_response()
     }
 
-    fn ok_with_code(tr: Tr, heading: &str, message: &str, code: &str) -> Response {
-        Self::new(tr, true, heading, message, code).into_response()
+    fn ok_with_code(tr: Tr, home: &str, heading: &str, message: &str, code: &str) -> Response {
+        Self::new(tr, home, true, heading, message, code).into_response()
     }
 
-    fn bad(tr: Tr, status: StatusCode, heading: &str, message: &str) -> Response {
-        (status, Self::new(tr, false, heading, message, "")).into_response()
+    fn bad(tr: Tr, home: &str, status: StatusCode, heading: &str, message: &str) -> Response {
+        (status, Self::new(tr, home, false, heading, message, "")).into_response()
     }
 
-    fn subscribed_as(tr: Tr, email: &str) -> Response {
+    fn subscribed_as(tr: Tr, home: &str, email: &str) -> Response {
         let mut resp = SubscribeNotice {
             tr,
             ok: true,
             heading: tr.t("notice-subscribed"),
             message: tr.t_args("notice-subscribed-as-body", [("email", email.into())]),
             code: String::new(),
+            home: home.to_owned(),
         }
         .into_response();
         mark_private(&mut resp);
@@ -80,8 +87,8 @@ impl SubscribeNotice {
 
 /// The language of the page whose host the request arrived on.
 async fn host_page_tr(state: &AppState, headers: &HeaderMap) -> Tr {
-    match resolve_status_page(&state.request_state(), headers).await {
-        Ok(page) => page_tr(state, page).await,
+    match resolve_status_page(&state.request_state(), headers, &PageInPath::default()).await {
+        Ok(served) => page_tr(state, served.page).await,
         Err(_) => Tr::default(),
     }
 }
@@ -126,28 +133,31 @@ pub struct SubscribeForm {
 
 pub async fn subscribe(
     State(state): State<AppState>,
+    in_path: PageInPath,
     headers: HeaderMap,
     Form(form): Form<SubscribeForm>,
 ) -> WebResult<Response> {
-    let invalid_page = |tr| {
+    let invalid_page = |tr, home: &str| {
         SubscribeNotice::bad(
             tr,
+            home,
             StatusCode::NOT_FOUND,
             "notice-page-not-found",
             "notice-page-not-found-body",
         )
     };
 
-    let page = match resolve_status_page(&state.request_state(), &headers).await {
+    let served = match resolve_status_page(&state.request_state(), &headers, &in_path).await {
         Ok(p) => p,
-        Err(_) => return Ok(invalid_page(Tr::default())),
+        Err(_) => return Ok(invalid_page(Tr::default(), ANY_HOME)),
     };
+    let (page, home) = (served.page, served.paths.home());
     let tr = page_tr(&state, page).await;
     let Some(pool) = state.db.as_ref() else {
-        return Ok(invalid_page(tr));
+        return Ok(invalid_page(tr, home));
     };
 
-    let sign_in_again = || Ok(Redirect::to(status_home(&state, &headers)).into_response());
+    let sign_in_again = || Ok(Redirect::to(home).into_response());
     // On a private page a signed-in viewer subscribes as themselves. Someone
     // who came in with the page password proved no address, so they confirm
     // one by email as on a public page; nobody subscribes a webhook there.
@@ -160,7 +170,7 @@ pub async fn subscribe(
             if !subscribers::subscribe_viewer(pool, page, viewer.id, &viewer.email).await? {
                 return sign_in_again();
             }
-            return Ok(SubscribeNotice::subscribed_as(tr, &viewer.email));
+            return Ok(SubscribeNotice::subscribed_as(tr, home, &viewer.email));
         }
         Ok(Access::Password { session }) => {
             if !same_origin(&headers) || form.channel == "webhook" {
@@ -172,16 +182,17 @@ pub async fn subscribe(
             Some(session)
         }
         Ok(Access::SignInRequired(_)) => return sign_in_again(),
-        Err(_) => return Ok(invalid_page(tr)),
+        Err(_) => return Ok(invalid_page(tr, home)),
     };
 
     if form.channel == "webhook" {
-        return subscribe_webhook(&state, pool, page, form.url.trim(), tr).await;
+        return subscribe_webhook(&state, pool, page, form.url.trim(), tr, home).await;
     }
 
     let Some(email) = email_norm::normalize(&form.email) else {
         return Ok(SubscribeNotice::bad(
             tr,
+            home,
             StatusCode::BAD_REQUEST,
             "notice-check-address",
             "notice-invalid-email",
@@ -197,6 +208,7 @@ pub async fn subscribe(
     if crate::security::abuse::blocked_email_destination(&email, &ops).is_some() {
         return Ok(SubscribeNotice::bad(
             tr,
+            home,
             StatusCode::BAD_REQUEST,
             "notice-check-address",
             "notice-blocked-email",
@@ -208,6 +220,7 @@ pub async fn subscribe(
         crate::security::email_policy::record("status_page_subscribe", "refused", risk);
         return Ok(SubscribeNotice::bad(
             tr,
+            home,
             StatusCode::BAD_REQUEST,
             "notice-check-address",
             risk.message_id(),
@@ -237,7 +250,11 @@ pub async fn subscribe(
         let meta = page_meta(pool, page.page.0).await;
         let origin = match &meta {
             Some(m) => crate::public_status::urls::page_origin(
-                &state.cfg.public_status.base_domain,
+                state
+                    .cfg
+                    .tenancy
+                    .subdomain_public_routes
+                    .then_some(state.cfg.public_status.base_domain.as_str()),
                 &state.cfg.auth.public_base_url,
                 &m.slug,
                 m.custom_domain.as_deref(),
@@ -277,7 +294,7 @@ pub async fn subscribe(
         }
     }
 
-    let mut resp = SubscribeNotice::ok(tr, "notice-almost-there", "notice-check-inbox");
+    let mut resp = SubscribeNotice::ok(tr, home, "notice-almost-there", "notice-check-inbox");
     if password_session.is_some() {
         mark_private(&mut resp);
     }
@@ -299,6 +316,7 @@ pub async fn confirm(
     let invalid = || {
         SubscribeNotice::bad(
             tr,
+            ANY_HOME,
             StatusCode::NOT_FOUND,
             "notice-link-expired",
             "notice-link-expired-body",
@@ -311,14 +329,21 @@ pub async fn confirm(
     let Some(pool) = state.db.as_ref() else {
         return Ok(invalid());
     };
-    match subscribers::confirm(pool, token).await? {
-        Some(_) => Ok(SubscribeNotice::ok(
-            tr,
-            "notice-subscribed",
-            "notice-subscribed-body",
-        )),
-        None => Ok(invalid()),
-    }
+    let Some(sub) = subscribers::confirm(pool, token).await? else {
+        return Ok(invalid());
+    };
+    // The host can serve several pages, so the subscription says which.
+    let tr = subscriber_tr(&state, sub.id).await;
+    let home = match page_meta(pool, sub.status_page_id).await {
+        Some(meta) => published_paths(&state.cfg, &meta.slug).home().to_owned(),
+        None => ANY_HOME.to_owned(),
+    };
+    Ok(SubscribeNotice::ok(
+        tr,
+        &home,
+        "notice-subscribed",
+        "notice-subscribed-body",
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -412,10 +437,12 @@ async fn subscribe_webhook(
     page: PageRef,
     url: &str,
     tr: Tr,
+    home: &str,
 ) -> WebResult<Response> {
     let bad_url = || {
         SubscribeNotice::bad(
             tr,
+            home,
             StatusCode::BAD_REQUEST,
             "notice-check-url",
             "notice-invalid-url",
@@ -447,6 +474,7 @@ async fn subscribe_webhook(
     {
         return Ok(SubscribeNotice::bad(
             tr,
+            home,
             StatusCode::BAD_REQUEST,
             "notice-unreachable",
             "notice-unreachable-body",
@@ -473,6 +501,7 @@ async fn subscribe_webhook(
         .unwrap_or(&secret);
     Ok(SubscribeNotice::ok_with_code(
         tr,
+        home,
         "notice-webhook-subscribed",
         "notice-webhook-subscribed-body",
         shown,

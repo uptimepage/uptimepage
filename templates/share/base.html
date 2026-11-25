@@ -3,8 +3,7 @@
    auth chrome, or write controls, so a public capability link can never reach
    an action surface. noindex keeps shared links out of search engines. A
    status page's detail link draws in that page's chrome (`brand`). #}
-{% let rss_url = crate::web::views::public_status::RSS_URL %}
-{% let reader = crate::web::views::public_status::Reader::default() %}
+{% let reader = crate::web::views::public_status::Reader::shared(brand.as_ref()) %}
 {% let tr = crate::i18n::Tr::default() %}
 <!doctype html>
 <html lang="en"{% if let Some(branding) = brand %} class="theme-{{ branding.style }}"{% endif %}>
@@ -54,7 +53,7 @@
     <main id="main-content" tabindex="-1" class="container mx-auto px-4 py-6">
         {% if let Some(branding) = brand %}
         <p class="mb-4 text-sm">
-            <a href="{{ branding.home }}" class="text-quiet hover:text-body">← Back to status</a>
+            <a href="{{ branding.home() }}" class="text-quiet hover:text-body">← Back to status</a>
         </p>
         {% endif %}
         {% block content %}{% endblock %}
@@ -62,7 +61,7 @@
     <footer class="container mx-auto px-4 py-4 text-xs text-quiet">
         {% if let Some(branding) = brand %}
         {% include "public/_powered_by.html" %}
-        <a href="{{ rss_url }}" class="hover:text-body">RSS</a>
+        <a href="{{ reader.rss_url }}" class="hover:text-body">RSS</a>
         {% include "public/_source_links.html" %}
         {% else %}
         Monitored with <a href="/" class="hover:text-body">uptimepage</a>.

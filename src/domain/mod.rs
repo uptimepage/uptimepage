@@ -122,7 +122,7 @@ pub use on_call::{
 };
 pub use org::{
     AccountId, BrandingError, OrgId, Organization, PublicOrgBranding, PublicStyle, SlugError,
-    page_display_name, validate_slug,
+    has_slug_chars, page_display_name, validate_slug,
 };
 pub use page_access::{
     AccessError, AccessEventKind, AccessEventMethod, AccessRule, AccessRuleKind, AccessSpec,

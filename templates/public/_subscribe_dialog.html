@@ -1,5 +1,5 @@
 <dialog id="subscribe-dialog" class="sticker-card m-auto w-full max-w-sm p-0 backdrop:bg-black/40">
-    <form method="post" action="/subscribe" class="flex flex-col gap-3 p-5">
+    <form method="post" action="{{ branding.paths.subscribe() }}" class="flex flex-col gap-3 p-5">
         <div class="flex items-center justify-between">
             <h2 class="text-sm font-semibold text-body">{{ tr.t("subscribe-title") }}</h2>
             <button type="button" data-subscribe-close aria-label="{{ tr.t("subscribe-close") }}" class="-m-2 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded text-xl leading-none text-quiet transition-[color,scale] hover:text-body motion-safe:active:scale-[0.96]">&times;</button>

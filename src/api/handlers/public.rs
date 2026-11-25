@@ -38,7 +38,7 @@ use crate::public_status::access::Access;
 use crate::public_status::badge::{component_badge, overall_badge, render_badge};
 use crate::public_status::source::FeedLinks;
 use crate::public_status::{IncidentListQuery, MaintenanceListQuery};
-use crate::request::host::{ResolvedStatusPage, resolve_status_page};
+use crate::request::host::{IdInPath, PageInPath, ResolvedStatusPage, resolve_status_page};
 use crate::robots::{NOINDEX, X_ROBOTS_TAG, mark_private};
 
 /// A status page the request may read: resolved from the host, then past the
@@ -55,7 +55,10 @@ impl FromRequestParts<AppState> for ReadablePage {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let page = resolve_status_page(&state.request_state(), &parts.headers).await?;
+        let in_path = PageInPath::from_request_parts(parts, state).await?;
+        let page = resolve_status_page(&state.request_state(), &parts.headers, &in_path)
+            .await?
+            .page;
         match state
             .page_gate
             .check(state.db.as_ref(), page, &parts.headers)
@@ -188,7 +191,7 @@ pub async fn public_status(
 pub async fn component_history(
     State(state): State<AppState>,
     read: ReadablePage,
-    Path(id): Path<Uuid>,
+    Path(IdInPath { id }): Path<IdInPath>,
     Query(q): Query<HistoryQuery>,
 ) -> Result<Served<Json<ComponentHistoryResponse>>, PublicAppError> {
     let days = q.days.unwrap_or(90);
@@ -246,7 +249,7 @@ pub async fn public_incidents(
 pub async fn public_incident(
     State(state): State<AppState>,
     read: ReadablePage,
-    Path(id): Path<Uuid>,
+    Path(IdInPath { id }): Path<IdInPath>,
 ) -> Result<Served<Json<PublicIncident>>, PublicAppError> {
     let inc = state.public_source.incident_by_id(read.page, id).await?;
     Ok(Served::new(&state, &read, Json(inc)).await)
@@ -270,10 +273,11 @@ pub async fn public_incident(
 )]
 pub async fn public_incidents_rss(
     State(state): State<AppState>,
-    ResolvedStatusPage(page): ResolvedStatusPage,
+    ResolvedStatusPage(served): ResolvedStatusPage,
     Query(feed): Query<FeedQuery>,
     headers: HeaderMap,
 ) -> Result<Served<Response>, PublicAppError> {
+    let page = served.page;
     let read = match state
         .page_gate
         .check(state.db.as_ref(), page, &headers)
@@ -327,10 +331,11 @@ pub async fn public_incidents_rss(
     } else {
         configured()
     };
-    let page_url = crate::public_status::urls::status_url_for(subdomain_routes, &origin);
+    let page_url = served.paths.url(&origin);
     let links = FeedLinks {
         page: &page_url,
         origin: &origin,
+        paths: served.paths,
     };
     let body = state.public_source.incidents_rss(page, links).await?;
     let mut resp = (StatusCode::OK, body).into_response();

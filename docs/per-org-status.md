@@ -10,10 +10,10 @@ This page is the per-org / per-page model. For the component, incident, and main
 
 | Shape | Config | Public surface |
 |---|---|---|
-| Single-tenant | `tenancy.path_based_public_routes = true` (default) | the lone org's default page, served path-based at `/status` on the operator host |
+| Single-tenant | `tenancy.path_based_public_routes = true` (default) | the lone org's every enabled page at `/status/{slug}` on the operator host; `/status` leads to its primary page |
 | Multi-tenant SaaS | `tenancy.subdomain_public_routes = true`, `tenancy.path_based_public_routes = false` | every enabled page at `{slug}.{base_domain}` |
 
-Single-tenant deploys never pay the subdomain path: there is one live org, so its default page is mounted on the operator host at `/status`.
+Single-tenant deploys never pay the subdomain path: there is one live org, and each of its pages lives on the operator host under its own `/status/{slug}`, with its archive, incidents, subscribe form, sign-in and public API (`/status/{slug}/api/public/v1/*`) below that prefix. `/status`, and the old `/status/incidents/…` links, redirect to the lone org's primary page, its oldest, at its own `/status/{slug}`. That stays pinned: disabling the primary page takes `/status` down rather than putting a younger page there.
 
 Path-based and subdomain public routes are mutually exclusive — serving `/status` on the operator host alongside subdomains would publish one page's data at every tenant's expected URL. Pick one.
 

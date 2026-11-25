@@ -14,6 +14,7 @@ use crate::api::handlers;
 use crate::api::{idempotency, middleware as api_middleware};
 use crate::app::AppState;
 use crate::config::CorsConfig;
+use crate::public_status::urls::PagePaths;
 use crate::request::rate_limit::rate_limit_middleware;
 
 const SINGLE_BODY_LIMIT: usize = 64 * 1024;
@@ -728,7 +729,10 @@ pub fn build_router(state: AppState, shutdown: CancellationToken) -> Router {
         .nest("/operator", operator);
 
     if state.cfg.tenancy.public_routes_active() {
-        root = root.nest("/api/public/v1", build_public_router());
+        root = root.nest(&PagePaths::primary().api(), build_public_router());
+    }
+    if state.cfg.tenancy.page_paths_active() {
+        root = root.nest(&PagePaths::scoped_routes().api(), build_public_router());
     }
 
     // CSRF lives one layer up (router::build_app_router) so it wraps

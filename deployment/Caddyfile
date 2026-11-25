@@ -301,15 +301,19 @@ app.{$UPTIMEPAGE_DOMAIN} {
 	}
 
 	# ─── Public status surface (self-host, no auth) ─────────────────────
-	# Self-host serves its single org's status page, public JSON API, and
-	# bundled assets here. `handle` is terminal, so these get their own
+	# Self-host serves its status pages, public JSON API, and bundled assets
+	# here; a page's own sign-in and subscribe form under `/status/<slug>/`
+	# take the stricter zones below. `handle` is terminal, so these get their own
 	# rate-limit zone instead of the catch-all's; what makes them public is
 	# that the routes carry no auth extractor, not anything at the edge. In
 	# SaaS the Host is `app.{domain}` (no slug), so the app 404s these and
 	# the wildcard site is the real public surface — keeping this block is
 	# harmless there. Distinct rate-limit zone from the wildcard site (zone
 	# names are global to the Caddy process).
-	@public path /status /status/* /api/public/* /robots.txt /favicon.ico
+	@public {
+		path /status /status/* /api/public/* /robots.txt /favicon.ico
+		not path_regexp ^/status/[^/]+/(access/|subscribe$)
+	}
 	handle @public {
 		rate_limit {
 			zone status_path {
@@ -324,10 +328,10 @@ app.{$UPTIMEPAGE_DOMAIN} {
 		invoke app_upstream
 	}
 
-	# Signing in to a private status page (self-host serves it here). Mail
-	# volume is capped per address and per page in the app; this caps the
-	# requests that ask for it.
-	@page_access path /access/*
+	# Signing in to a private status page (self-host serves it here, and
+	# under each page's `/status/<slug>/`). Mail volume is capped per address
+	# and per page in the app; this caps the requests that ask for it.
+	@page_access path_regexp ^(/status/[^/]+)?/access/
 	handle @page_access {
 		rate_limit {
 			zone page_access_app {
@@ -496,7 +500,7 @@ app.{$UPTIMEPAGE_DOMAIN} {
 	# POST /subscribe mints a confirm mail; GET confirm/unsubscribe carry
 	# their own token/HMAC. Per-page and per-subscriber DB caps already bound
 	# mail volume; this caps one IP fanning across many addresses.
-	@subscribe path /subscribe /subscribe/*
+	@subscribe path_regexp ^(/status/[^/]+)?/subscribe(/|$)
 	handle @subscribe {
 		rate_limit {
 			zone subscribe {

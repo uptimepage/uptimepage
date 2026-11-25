@@ -27,6 +27,7 @@ use crate::pagination::page::CursorPage;
 use super::aggregator::{OrgAggregator, kept_component_name, on_page};
 use super::cache::{HistoryMarker, PageCache, PageCacheError, PageData};
 use super::history::{WindowQuery, page_windows};
+use super::urls::PagePaths;
 use super::xml::xml_escape;
 use crate::domain::stored_incident_impact;
 
@@ -572,10 +573,11 @@ struct UpdateRow {
 /// Where a feed's links point. The channel link is the page a reader lands on
 /// from the feed title, which is not the origin on a deploy that serves the
 /// page under a path.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct FeedLinks<'a> {
     pub page: &'a str,
     pub origin: &'a str,
+    pub paths: PagePaths,
 }
 
 /// Minimal RSS 2.0 builder — keeps us free of an extra crate just to emit
@@ -624,9 +626,9 @@ pub fn build_rss(
         out.push_str(&format!("<title>{}</title>", xml_escape(&i.title)));
         out.push_str(&format!("<guid isPermaLink=\"false\">{}</guid>", i.id));
         out.push_str(&format!(
-            "<link>{}/status/incidents/{}</link>",
+            "<link>{}{}</link>",
             xml_escape(base_url),
-            i.id
+            xml_escape(&links.paths.incident(i.id))
         ));
         out.push_str(&format!("<pubDate>{pub_date}</pubDate>"));
         out.push_str(&format!("<description>{}</description>", xml_escape(&body)));
@@ -730,6 +732,7 @@ mod tests {
         FeedLinks {
             page: origin,
             origin,
+            paths: PagePaths::host(),
         }
     }
 
@@ -917,6 +920,28 @@ mod tests {
     }
 
     #[test]
+    fn a_scoped_page_links_its_items_under_its_own_path() {
+        let inc = sample_incident(0xc02, vec![]);
+        let xml = build_rss(
+            "Site",
+            FeedLinks {
+                page: "https://ops.example.test/status/two",
+                origin: "https://ops.example.test",
+                paths: PagePaths::scoped("two"),
+            },
+            Locale::En,
+            std::slice::from_ref(&inc),
+        );
+        assert!(
+            xml.contains(&format!(
+                "<link>https://ops.example.test/status/two/incidents/{}</link>",
+                inc.id
+            )),
+            "{xml}"
+        );
+    }
+
+    #[test]
     fn the_channel_link_is_the_page_not_the_origin() {
         // A path-based deploy serves the dashboard at the origin root, so a
         // reader clicking the feed title there would land on the login screen.
@@ -926,6 +951,7 @@ mod tests {
             FeedLinks {
                 page: "https://status.example.test/status",
                 origin: "https://status.example.test",
+                paths: PagePaths::primary(),
             },
             Locale::En,
             std::slice::from_ref(&inc),

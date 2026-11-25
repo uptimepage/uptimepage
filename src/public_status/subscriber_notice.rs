@@ -14,6 +14,7 @@ use crate::email::templates::subscriber_maintenance::{MaintenanceMail, Maintenan
 use crate::email::templates::subscriber_outage::{OutageComponent, OutageMail};
 use crate::email::{EmailAddress, EmailTemplate, TransactionalEmail};
 use crate::public_status::credit;
+use crate::public_status::urls::PagePaths;
 use crate::storage::page_sql::PageRow;
 use crate::storage::subscribers;
 
@@ -21,8 +22,8 @@ use crate::storage::subscribers;
 /// mail carries.
 #[derive(Debug, Clone)]
 pub struct PageLinks {
-    /// Wildcard base domain for `{slug}.{base_domain}` page links; empty on a
-    /// self-host deploy, where `public_base_url` is used instead.
+    /// Wildcard base domain for `{slug}.{base_domain}` page links, read only
+    /// with `subdomain_routes`; otherwise `public_base_url` is used instead.
     pub base_domain: String,
     pub public_base_url: String,
     /// Whether pages are served on hosts of their own; decides where on the
@@ -37,7 +38,7 @@ pub struct PageLinks {
 impl PageLinks {
     pub fn snapshot(&self, page: &PageRow) -> PageSnapshot {
         let origin = crate::public_status::urls::page_origin(
-            &self.base_domain,
+            self.subdomain_routes.then_some(self.base_domain.as_str()),
             &self.public_base_url,
             &page.slug,
             page.custom_domain.as_deref(),
@@ -45,7 +46,8 @@ impl PageLinks {
         );
         // The page's own address: subscribers keep it, so it has to be the
         // URL the page answers on rather than one that redirects there.
-        let url = crate::public_status::urls::status_url_for(self.subdomain_routes, &origin);
+        let paths = PagePaths::published(self.subdomain_routes, &page.slug);
+        let url = paths.url(&origin);
         let credit = credit::in_mail(
             page.show_powered_by.unwrap_or(self.default_show_powered_by),
             self.enforce_plan_features,
@@ -57,6 +59,7 @@ impl PageLinks {
             timezone: page.public_timezone.clone(),
             origin,
             url,
+            paths,
             credit,
         }
     }
@@ -75,6 +78,11 @@ pub struct PageSnapshot {
     pub timezone: String,
     pub origin: String,
     pub url: String,
+    /// Where the page's incidents hang off `origin`. A notice planned before
+    /// pages had paths of their own was for a page host or the primary page,
+    /// whose incidents both sit under `/status`.
+    #[serde(default = "PagePaths::host")]
+    pub paths: PagePaths,
     /// The mail carries the uptimepage credit, as the page's footer does.
     /// Absent from a notice planned before the credit existed.
     #[serde(default)]
@@ -137,7 +145,11 @@ impl NoticePayload {
     }
 
     fn incident_url(&self, incident_id: Uuid) -> String {
-        format!("{}/status/incidents/{incident_id}", self.page.origin)
+        format!(
+            "{}{}",
+            self.page.origin,
+            self.page.paths.incident(incident_id)
+        )
     }
 
     fn credit_url(&self) -> Option<String> {
@@ -336,6 +348,7 @@ mod tests {
             timezone: "UTC".into(),
             origin: "https://acme.example.com".into(),
             url: "https://acme.example.com".into(),
+            paths: PagePaths::host(),
             credit: false,
         }
     }

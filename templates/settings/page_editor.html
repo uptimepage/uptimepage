@@ -2,7 +2,7 @@
 {% import "_register.html" as reg %}
 {% block title %}{{ name }} · Status pages · Uptimepage{% endblock %}
 {% block content %}
-<section class="mx-auto w-full max-w-7xl space-y-6" data-page-id="{{ id }}" data-suffix="{% if let Some(s) = host_suffix %}{{ s }}{% endif %}">
+<section class="mx-auto w-full max-w-7xl space-y-6" data-page-id="{{ id }}">
 
   <form id="page-form" novalidate>
 
@@ -390,7 +390,6 @@
     (() => {
       const root = document.querySelector('[data-page-id]');
       const id = root.dataset.pageId;
-      const suffix = root.dataset.suffix || null;
       // Row edits stay on the rail: a centre notice would cover the rows being
       // toggled. Page-level saves take the centre, where the eye already is.
       function err(msg, placement) {
@@ -539,15 +538,10 @@
           });
           const page = await res.json().catch(() => null);
           dirty = false;
+          // The live link and every badge snippet carry the slug.
+          if (slugChanged()) { location.reload(); return; }
           access.saved(page && page.access);
-          slugEl.dataset.original = slug;
-          refreshSlugWarning();
           slugStatus.textContent = '';
-          const link = document.getElementById('live-url');
-          if (link && suffix !== null) {
-            const url = 'https://' + slug + suffix;
-            link.href = url; link.textContent = url + ' ↗';
-          }
           saved = true;
         } catch (m) {
           const code = m instanceof Error ? m.code : undefined;

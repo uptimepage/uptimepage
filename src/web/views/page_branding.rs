@@ -5,15 +5,14 @@ use axum::http::HeaderMap;
 
 use crate::app::AppState;
 use crate::config::PublicStatusConfig;
-use crate::domain::{OrgId, PublicOrgBranding, StatusPageId};
-use crate::request::host::is_subdomain_public_request;
+use crate::domain::PublicOrgBranding;
 use crate::storage::orgs::{OrgBranding, load_page_branding};
 
 use crate::domain::Locale;
 use crate::public_status::credit;
 use crate::public_status::status_title;
-use crate::public_status::urls::LOGO_ROUTE;
-use crate::request::host::published_page_origin;
+use crate::public_status::urls::PagePaths;
+use crate::request::host::{ServedPage, published_page_origin};
 
 /// Operator-controlled branding, resolved for rendering. Optional DB fields
 /// have already had their defaults applied here, so the template just prints
@@ -35,9 +34,9 @@ pub struct BrandingView {
     /// The Licenses and Source code footer links. See `enforce_source_links`.
     pub show_source_links: bool,
     pub style: &'static str,
-    /// Where the status page lives on this host: every self-link and its
-    /// canonical URL use it. See [`status_home`].
-    pub home: &'static str,
+    /// Where the page's surface sits on this host: every self-link and its
+    /// canonical URL use it.
+    pub paths: PagePaths,
     pub hide_from_search: bool,
     /// Operator's own site. The header brand links here when set, else [`Self::home`].
     pub website_url: Option<String>,
@@ -46,8 +45,12 @@ pub struct BrandingView {
 }
 
 impl BrandingView {
+    pub fn home(&self) -> &str {
+        self.paths.home()
+    }
+
     pub fn brand_href(&self) -> &str {
-        self.website_url.as_deref().unwrap_or(self.home)
+        self.website_url.as_deref().unwrap_or(self.home())
     }
 
     /// `None` for a link to the page's own root, or an outbound one the plan
@@ -75,7 +78,7 @@ impl BrandingView {
         }
     }
 
-    fn from_org(o: &OrgBranding, cfg: &PublicStatusConfig, home: &'static str) -> Self {
+    fn from_org(o: &OrgBranding, cfg: &PublicStatusConfig, paths: PagePaths) -> Self {
         let display_name = o.resolved_display_name().to_owned();
         let about_html = o
             .branding
@@ -98,12 +101,12 @@ impl BrandingView {
                 .branding
                 .logo_hash
                 .as_deref()
-                .map(|h| format!("{LOGO_ROUTE}?v={h}")),
+                .map(|h| format!("{}?v={h}", paths.logo())),
             show_powered_by: o.branding.show_powered_by(cfg.default_show_powered_by),
             credit_host: None,
             show_source_links: true,
             style: o.branding.public_style.as_str(),
-            home,
+            paths,
             hide_from_search: o.branding.public_hide_from_search,
             website_url: o.branding.public_website_url.clone(),
             follow_website_link: false,
@@ -117,16 +120,16 @@ impl BrandingView {
 pub async fn resolve_branding(
     state: &AppState,
     headers: &HeaderMap,
-    org: OrgId,
-    page: StatusPageId,
+    served: &ServedPage,
     fallback_name: &str,
 ) -> BrandingView {
     let cfg = &state.cfg.public_status;
-    let home = status_home(state, headers);
+    let (org, page) = (served.page.org, served.page.page);
+    let paths = served.paths.clone();
     let mut view = if let Some(pool) = state.db.as_ref()
         && let Ok(Some(ob)) = load_page_branding(pool, page).await
     {
-        BrandingView::from_org(&ob, cfg, home)
+        BrandingView::from_org(&ob, cfg, paths)
     } else {
         // Unreadable branding keeps the generic render out of search results.
         BrandingView::from_org(
@@ -139,7 +142,7 @@ pub async fn resolve_branding(
                 },
             },
             cfg,
-            home,
+            paths,
         )
     };
     // On a plan-lookup fault, fail closed (badge shown, link nofollowed) but log
@@ -167,17 +170,6 @@ pub async fn resolve_branding(
     view.show_source_links = enforce_source_links(enforced, view.show_powered_by);
     view.follow_website_link = enforce_follow_link(enforced, white_label, view.hide_from_search);
     view
-}
-
-/// A tenant subdomain serves the status page at its root, which is the URL
-/// customers hand out, so that is the one to link and to declare canonical.
-/// A path-based deploy keeps `/status`, its root being the operator dashboard.
-pub(crate) fn status_home(state: &AppState, headers: &HeaderMap) -> &'static str {
-    if is_subdomain_public_request(&state.request_state(), headers) {
-        "/"
-    } else {
-        "/status"
-    }
 }
 
 /// The links go with the enforced badge. A self-host operator running modified
@@ -263,7 +255,7 @@ impl BrandingView {
                 branding,
             },
             &PublicStatusConfig::default(),
-            "/",
+            PagePaths::host(),
         )
     }
 }

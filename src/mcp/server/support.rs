@@ -173,11 +173,11 @@ impl McpServer {
     }
 
     /// Public URL of a status page slug, mirroring the operator UI's own
-    /// computation (subdomain → absolute apex, path mode → `/status`). Empty
-    /// when no public surface is mounted.
+    /// computation (subdomain → absolute apex, path mode → `/status/{slug}`).
+    /// Empty when no public surface is mounted.
     pub(super) fn page_public_url(&self, slug: &str) -> String {
         public_base(&self.state.cfg, slug)
-            .map(|origin| public_status_url(&self.state.cfg, &origin))
+            .map(|origin| public_status_url(&self.state.cfg, &origin, slug))
             .unwrap_or_default()
     }
 

@@ -275,6 +275,15 @@ impl std::fmt::Display for SlugError {
 
 impl std::error::Error for SlugError {}
 
+/// Made only of `[a-z0-9-]`, the characters every slug the app accepts is
+/// made of.
+pub fn has_slug_chars(slug: &str) -> bool {
+    !slug.is_empty()
+        && slug
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
 /// Validate a slug: 3-30 chars, [a-z0-9-], leading letter, no trailing
 /// hyphen, no consecutive hyphens, not in reserved list (exact match).
 pub fn validate_slug(slug: &str) -> Result<(), SlugError> {
@@ -293,11 +302,8 @@ pub fn validate_slug(slug: &str) -> Result<(), SlugError> {
     if !(last.is_ascii_lowercase() || last.is_ascii_digit()) {
         return Err(SlugError::TrailingHyphen);
     }
-    for &b in bytes {
-        let ok = b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-';
-        if !ok {
-            return Err(SlugError::InvalidChar);
-        }
+    if !has_slug_chars(slug) {
+        return Err(SlugError::InvalidChar);
     }
     if slug.contains("--") {
         return Err(SlugError::ConsecutiveHyphens);

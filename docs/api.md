@@ -190,8 +190,9 @@ sensitive target fields (`url`, `headers`, `basic_auth`, `bearer_token`).
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/` | server-rendered HTML status page on a page's own host (`?fragment=1` returns the dynamic region only) |
-| `GET` | `/status` | the same page on a single-tenant deploy, where `/` is the operator dashboard; on a page's own host it redirects to `/` |
-| `GET` | `/status/incidents/{id}` | per-incident detail page |
+| `GET` | `/status` | on a path-based deploy, where `/` is the operator dashboard, redirects to the primary page at its own `/status/{slug}`; on a page's own host it redirects to `/` |
+| `GET` | `/status/{slug}` | any page of the deploy's one org on a path-based deploy; that page's `/incidents`, `/incidents/{id}`, `/branding/logo`, `/subscribe`, `/access/*` and `/api/public/v1/*` answer under the same prefix, e.g. `/status/{slug}/incidents/{id}` and `/status/{slug}/api/public/v1/status` |
+| `GET` | `/status/incidents/{id}` | per-incident detail page; on a path-based deploy it redirects to `/status/{slug}/incidents/{id}` |
 | `GET` | `/api/public/v1/status` | the same data as `/status` in JSON; each component carries `uptime_pct` (time-based, `null` until probed) and each incident an `impact` of `degraded` \| `partial_outage` \| `major_outage` beside its declared `severity`; `recent_maintenance` lists the finished windows that started in the last 30 days |
 | `GET` | `/api/public/v1/components/{id}/history` | per-component history (`days` query, 1..365, default 90) |
 | `GET` | `/api/public/v1/incidents` | recent public incidents (paginated) |

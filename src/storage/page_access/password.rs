@@ -171,7 +171,7 @@ pub async fn open_session(
     page: PageRef,
     checked_hash: &str,
     claim: TryClaim,
-    replaces: Option<&str>,
+    replaces: &[String],
     ip_hash: Option<&str>,
     user_agent_hash: Option<&str>,
 ) -> Result<Option<CreatedSession>> {
@@ -194,7 +194,7 @@ pub async fn open_session(
         tx.rollback().await.ok();
         return Ok(None);
     }
-    if let Some(old) = replaces {
+    for old in replaces {
         sessions::delete(&mut *tx, page, old).await?;
     }
     let created = sessions::create(

@@ -2126,7 +2126,7 @@ async fn a_sign_in_racing_a_save_that_moves_the_slug_does_not_deadlock() {
         .unwrap();
     let (pool, page) = (rig.pool.clone(), rig.page);
     let pending = tokio::spawn(async move {
-        password::open_session(&pool, page, &hash, claim, None, Some("ip"), None).await
+        password::open_session(&pool, page, &hash, claim, &[], Some("ip"), None).await
     });
     rig.wait_until_blocked_by(pid).await;
     settings::replace_in_tx(

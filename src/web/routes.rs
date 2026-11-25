@@ -8,6 +8,7 @@ use axum::routing::{get, post};
 use tower_cookies::CookieManagerLayer;
 
 use crate::app::AppState;
+use crate::public_status::urls::PagePaths;
 use crate::templates::assets;
 use crate::templates::filters::{self, LegalLink, PageChrome};
 use crate::web::{error, views};
@@ -379,46 +380,14 @@ pub fn routes(state: AppState) -> Router {
     }
 
     if cfg.tenancy.public_routes_active() {
-        r = r
-            // Signing in to a private page, on that page's host.
-            .route("/access/request", post(views::page_access::request_code))
-            .route("/access/code", post(views::page_access::submit_code))
-            .route(
-                "/access/password",
-                post(views::page_access::submit_password),
-            )
-            .route(
-                "/access/verify",
-                get(views::page_access::verify_landing).post(views::page_access::verify_confirm),
-            )
-            .route("/access/sign-out", post(views::page_access::sign_out))
-            .route("/access/passkey", get(views::page_access::passkey_offer))
-            .route(
-                "/access/passkey/register/start",
-                post(views::page_access::register_start),
-            )
-            .route(
-                "/access/passkey/register/finish",
-                post(views::page_access::register_finish),
-            )
-            .route(
-                "/access/passkey/login/start",
-                post(views::page_access::login_start),
-            )
-            .route(
-                "/access/passkey/login/finish",
-                post(views::page_access::login_finish),
-            )
-            .route("/status", get(views::public_status::status_path))
-            .route("/status/incidents", get(views::public_status::archive))
-            .route(
-                "/status/incidents/{id}",
-                get(views::public_status::incident),
-            )
-            .route(
-                crate::public_status::urls::LOGO_ROUTE,
-                get(views::public_status::logo),
-            );
+        r = page_surface(r, &PagePaths::primary())
+            .route("/status", get(views::public_status::status_path));
+    }
+    if cfg.tenancy.page_paths_active() {
+        let scoped = PagePaths::scoped_routes();
+        r = page_surface(r, &scoped)
+            .route(scoped.home(), get(views::public_status::index))
+            .route(&scoped.subscribe(), post(views::subscribe::subscribe));
     }
 
     // OAuth 2.1 authorization-server + RFC 9728 resource metadata for the MCP
@@ -482,4 +451,49 @@ pub fn routes(state: AppState) -> Router {
 
 async fn page_chrome(State(chrome): State<Arc<PageChrome>>, req: Request, next: Next) -> Response {
     filters::with_page_chrome(chrome, next.run(req)).await
+}
+
+/// What a status page answers below its home, wherever `paths` puts it: the
+/// sign-in to a private page, its archive, incidents and logo.
+fn page_surface(r: Router<AppState>, paths: &PagePaths) -> Router<AppState> {
+    r.route(
+        &paths.access("request"),
+        post(views::page_access::request_code),
+    )
+    .route(&paths.access("code"), post(views::page_access::submit_code))
+    .route(
+        &paths.access("password"),
+        post(views::page_access::submit_password),
+    )
+    .route(
+        &paths.access("verify"),
+        get(views::page_access::verify_landing).post(views::page_access::verify_confirm),
+    )
+    .route(
+        &paths.access("sign-out"),
+        post(views::page_access::sign_out),
+    )
+    .route(
+        &paths.access("passkey"),
+        get(views::page_access::passkey_offer),
+    )
+    .route(
+        &paths.access("passkey/register/start"),
+        post(views::page_access::register_start),
+    )
+    .route(
+        &paths.access("passkey/register/finish"),
+        post(views::page_access::register_finish),
+    )
+    .route(
+        &paths.access("passkey/login/start"),
+        post(views::page_access::login_start),
+    )
+    .route(
+        &paths.access("passkey/login/finish"),
+        post(views::page_access::login_finish),
+    )
+    .route(&paths.archive(), get(views::public_status::archive))
+    .route(&paths.incident("{id}"), get(views::public_status::incident))
+    .route(&paths.logo(), get(views::public_status::logo))
 }

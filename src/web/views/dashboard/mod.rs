@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::OrgId;
-use crate::request::host::is_subdomain_public_request;
+use crate::request::host::{PageInPath, is_subdomain_public_request};
 use crate::request::{AuthedBrowser, CurrentOrg, CurrentUser};
 use crate::web::error::WebResult;
 use crate::web::views::public_status::{self, StatusParams};
@@ -98,7 +98,14 @@ pub async fn root(state: State<AppState>, mut parts: Parts) -> Response {
             Ok(q) => q,
             Err(rej) => return rej.into_response(),
         };
-        return public_status::index(state, parts.headers, query).await;
+        return public_status::index(
+            state,
+            PageInPath::default(),
+            parts.uri,
+            parts.headers,
+            query,
+        )
+        .await;
     }
     // Operator dashboard. Re-run the extractors the routed `index`
     // would have run so rejection paths (login redirect, org error

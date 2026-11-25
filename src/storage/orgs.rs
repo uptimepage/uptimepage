@@ -1442,6 +1442,20 @@ pub async fn find_public_status_page_by_slug(
     }))
 }
 
+/// PUBLIC-STATUS PATH ONLY (path-based / self-host). A page of the lone live org
+/// by its exact slug, under the same filters as
+/// [`find_public_status_page_by_slug`]. `None` once a second live org exists,
+/// so a shared operator host never publishes one tenant's page beside another's.
+pub async fn find_lone_org_page_by_slug(pool: &PgPool, slug: &str) -> Result<Option<PageRef>> {
+    let Some(org) = find_lone_active_org(pool).await? else {
+        return Ok(None);
+    };
+    Ok(find_public_status_page_by_slug(pool, slug)
+        .await?
+        .map(|page| page.0)
+        .filter(|page| page.org == org))
+}
+
 /// PUBLIC-STATUS PATH ONLY (path-based / self-host). The lone live org's PRIMARY
 /// page — its oldest page (the one signup created), if enabled. Pinning to the
 /// oldest page keeps `/status` stable as other pages are added or toggled:
@@ -1450,12 +1464,12 @@ pub async fn find_public_status_page_by_slug(
 /// for the same reason: the page is unavailable, not replaced. 404s (via `None`)
 /// if there is no single live org, the org has no page, or the primary page is
 /// disabled or held.
-pub async fn resolve_default_page_for_lone_org(pool: &PgPool) -> Result<Option<PageRef>> {
+pub async fn resolve_default_page_for_lone_org(pool: &PgPool) -> Result<Option<(PageRef, String)>> {
     let Some(org) = find_lone_active_org(pool).await? else {
         return Ok(None);
     };
-    let row: Option<(Uuid, bool, Option<DateTime<Utc>>)> = sqlx::query_as(
-        r#"SELECT id, enabled, plan_hold_at FROM status_pages
+    let row: Option<(Uuid, String, bool, Option<DateTime<Utc>>)> = sqlx::query_as(
+        r#"SELECT id, slug::text, enabled, plan_hold_at FROM status_pages
            WHERE org_id = $1
            ORDER BY created_at ASC, id ASC
            LIMIT 1"#,
@@ -1465,10 +1479,15 @@ pub async fn resolve_default_page_for_lone_org(pool: &PgPool) -> Result<Option<P
     .await
     .context("resolve_default_page_for_lone_org")?;
     Ok(row
-        .filter(|(_, enabled, held)| *enabled && held.is_none())
-        .map(|(page, _, _)| PageRef {
-            page: StatusPageId(page),
-            org,
+        .filter(|(_, _, enabled, held)| *enabled && held.is_none())
+        .map(|(page, slug, _, _)| {
+            (
+                PageRef {
+                    page: StatusPageId(page),
+                    org,
+                },
+                slug,
+            )
         }))
 }
 

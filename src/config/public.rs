@@ -122,6 +122,14 @@ impl TenancyConfig {
     pub fn public_routes_active(&self) -> bool {
         self.path_based_public_routes || self.subdomain_public_routes
     }
+
+    /// Whether every page is also served under `/status/{slug}` on the
+    /// operator host. Only where pages have no hosts of their own: with both
+    /// flags on, it would publish each tenant's page on the operator origin
+    /// that host isolation keeps to the operator alone.
+    pub fn page_paths_active(&self) -> bool {
+        self.path_based_public_routes && !self.subdomain_public_routes
+    }
 }
 
 impl Default for TenancyConfig {

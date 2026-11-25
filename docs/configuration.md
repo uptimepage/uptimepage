@@ -77,12 +77,12 @@ uptimepage ships from one binary as a multi-tenant SaaS. The active org is alway
 
 The public status surface is gated by **two** independent flags because path-based and subdomain routing have opposite safety profiles:
 
-- `tenancy.path_based_public_routes` — serve `/status` and `/api/public/v1/*` on the operator host, scoped to the single live org. Useful for a single-tenant deploy (one org, one page). Defaults to `true`. Safe by construction once you have more than one tenant: the lookup only resolves when exactly one live org exists, so a second org doesn't leak the first org's data, it 404s the path-based surface for everyone. Turn it off once you're on subdomain routing so the operator host doesn't 404 on every visit.
+- `tenancy.path_based_public_routes` — serve the single live org's pages on the operator host, each at `/status/{slug}` with its JSON at `/status/{slug}/api/public/v1/*`. `/status` and its old links redirect to the primary (oldest) page's own path, and `/api/public/v1/*` answers for that page. Useful for a single-tenant deploy. Defaults to `true`. Safe by construction once you have more than one tenant: the lookup only resolves when exactly one live org exists, so a second org doesn't leak the first org's data, it 404s the path-based surface for everyone. Turn it off once you're on subdomain routing so the operator host doesn't 404 on every visit.
 - `tenancy.subdomain_public_routes` — serve one page per org at `{slug}.{public_status.base_domain}` (apex wildcard). Defaults to `false`; requires a well-formed `base_domain`.
 
 | Shape | Recommended flags | Public surface |
 |---|---|---|
-| Single-tenant | `path_based_public_routes = true` (default) | `/status` on the operator host (one org) |
+| Single-tenant | `path_based_public_routes = true` (default) | `/status/{slug}` per page on the operator host, `/status` leads to the primary page |
 | Multi-tenant SaaS | `subdomain_public_routes = true`, `path_based_public_routes = false` | `{slug}.{base_domain}` per org |
 
 The binary refuses to boot in the dangerous combinations: `subdomain_public_routes` with an empty or single-label `public_status.base_domain`; or an `auth.session.cookie_domain` that overlaps the status wildcard. Each is a loud panic at startup, not a silent runtime leak. See [Per-org status pages](per-org-status.md) for the full model.

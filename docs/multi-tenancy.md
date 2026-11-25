@@ -60,7 +60,7 @@ The public-page caches are keyed by `StatusPageId`, not `OrgId`: an org can run 
 
 ## Public status routes gating
 
-Public-status routing has two shapes, gated by `tenancy.path_based_public_routes` and `tenancy.subdomain_public_routes`. Path-based routing (`/status`, `/api/public/v1/*` on the operator host, scoped to the single live org) is the default and is correct only for a single-tenant deploy. Multi-tenant deployments **must** flip to subdomain routing (`{slug}.{base_domain}`) — otherwise every visitor sees the lone org's data regardless of which slug they expected. The binary panics at boot on the dangerous combinations (subdomain routes with an empty `base_domain`, or a `cookie_domain` that overlaps the status wildcard); see [Public status routing](configuration.md#public-status-routing) for the full flag matrix.
+Public-status routing has two shapes, gated by `tenancy.path_based_public_routes` and `tenancy.subdomain_public_routes`. Path-based routing (the single live org's pages, each at `/status/{slug}` on the operator host, with `/status` and `/api/public/v1/*` for its primary page) is the default and is correct only for a single-tenant deploy. Multi-tenant deployments **must** flip to subdomain routing (`{slug}.{base_domain}`) — otherwise every visitor sees the lone org's data regardless of which slug they expected. The binary panics at boot on the dangerous combinations (subdomain routes with an empty `base_domain`, or a `cookie_domain` that overlaps the status wildcard); see [Public status routing](configuration.md#public-status-routing) for the full flag matrix.
 
 ## Tenant-isolation invariants
 

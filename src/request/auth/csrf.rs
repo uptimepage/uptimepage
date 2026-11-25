@@ -23,6 +23,7 @@ use subtle::ConstantTimeEq;
 
 use crate::error::ApiErrorBody;
 use crate::error::codes;
+use crate::public_status::urls::within_scoped_page;
 use crate::request::RequestState;
 use crate::request::auth::bearer_from_headers;
 
@@ -43,16 +44,27 @@ pub const CSRF_HEADER_VALUE: &str = "uptimepage";
 const TOKEN_AUTHENTICATED_PATHS: &[&str] = &[
     "/alert-channel/stop",
     "/incident/ack",
-    "/subscribe",
     "/subscribe/unsubscribe",
     "/auth/magic-link/verify",
     "/auth/magic-link/code",
+];
+
+/// The status page's own forms, which a path-based deploy also serves under
+/// each page's `/status/{slug}`.
+const PAGE_FORM_PATHS: &[&str] = &[
+    "/subscribe",
     "/access/request",
     "/access/code",
     "/access/password",
     "/access/verify",
     "/access/sign-out",
 ];
+
+fn is_token_authenticated(path: &str) -> bool {
+    TOKEN_AUTHENTICATED_PATHS.contains(&path)
+        || PAGE_FORM_PATHS.contains(&path)
+        || within_scoped_page(path).is_some_and(|form| PAGE_FORM_PATHS.contains(&form))
+}
 
 /// Tower middleware that enforces the rule documented at module level.
 pub async fn middleware(
@@ -63,7 +75,7 @@ pub async fn middleware(
     if !is_state_changing(req.method()) {
         return next.run(req).await;
     }
-    if TOKEN_AUTHENTICATED_PATHS.contains(&req.uri().path()) {
+    if is_token_authenticated(req.uri().path()) {
         return next.run(req).await;
     }
     if bearer_from_headers(req.headers()).is_some() {
@@ -148,12 +160,29 @@ mod tests {
 
     #[test]
     fn token_authenticated_paths_are_exempt() {
-        assert!(TOKEN_AUTHENTICATED_PATHS.contains(&"/alert-channel/stop"));
-        assert!(TOKEN_AUTHENTICATED_PATHS.contains(&"/incident/ack"));
-        assert!(TOKEN_AUTHENTICATED_PATHS.contains(&"/subscribe/unsubscribe"));
-        assert!(TOKEN_AUTHENTICATED_PATHS.contains(&"/auth/magic-link/verify"));
-        assert!(TOKEN_AUTHENTICATED_PATHS.contains(&"/auth/magic-link/code"));
-        assert!(!TOKEN_AUTHENTICATED_PATHS.contains(&"/api/v1/notification-channels"));
+        for path in [
+            "/alert-channel/stop",
+            "/incident/ack",
+            "/subscribe",
+            "/subscribe/unsubscribe",
+            "/auth/magic-link/verify",
+            "/auth/magic-link/code",
+            "/access/code",
+        ] {
+            assert!(is_token_authenticated(path), "{path}");
+        }
+        assert!(!is_token_authenticated("/api/v1/notification-channels"));
+    }
+
+    #[test]
+    fn a_scoped_page_s_forms_are_exempt_and_nothing_else_under_it() {
+        assert!(is_token_authenticated("/status/two/subscribe"));
+        assert!(is_token_authenticated("/status/two/access/sign-out"));
+        assert!(!is_token_authenticated("/status/two/subscribe/unsubscribe"));
+        assert!(!is_token_authenticated("/status/two/api/v1/targets"));
+        assert!(!is_token_authenticated(
+            "/status/two/access/passkey/login/start"
+        ));
     }
 
     #[test]

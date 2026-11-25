@@ -24,7 +24,7 @@ Certificates renew through the same gate they were issued through, so a gate tha
 | TLS certificates | Automatic via Let's Encrypt — no manual renewal |
 | HTTP/2 + HTTP/3 | Enabled by default in Caddy |
 | Authentication | The app's own sign-in on `app.{domain}` (UI + operator API). The edge adds no second gate |
-| Public status surface | Self-host: `/status` on `app.{domain}`. SaaS: each org at `{slug}.{domain}` (apex wildcard) |
+| Public status surface | Self-host: each page at `/status/{slug}` on `app.{domain}`, `/status` leads to the primary one. SaaS: each org at `{slug}.{domain}` (apex wildcard) |
 | TLS for status pages | Wildcard cert for `*.{domain}` via Let's Encrypt + Hetzner DNS-01; `app.{domain}` and `mcp.{domain}` kept on their own per-host HTTP-01 certs |
 | Custom status-page domains | A customer CNAMEs their own hostname here; Caddy issues its certificate on the first handshake, but only for a domain the app's `ask` gate authorizes. `UPTIMEPAGE_CUSTOM_DOMAINS_ENABLED` turns the gate on, subdomain mode only. See [Custom domains](#custom-domains) for what unset actually leaves running |
 | MCP connector host | `mcp.{domain}` serves only `/mcp` and `/.well-known/*`; the app answers 404 for everything else there, so the operator surface and its edge limits stay single-host |
@@ -69,8 +69,8 @@ Certificates renew through the same gate they were issued through, so a gate tha
     `dns.hetzner.com` DNS Console and its API were retired 2026-05.
 
   Self-host (single org) needs the `app.{domain}` and `mcp.{domain}`
-  records and no DNS token — the status page is served at
-  `https://app.{domain}/status`. Caddy asks Let's Encrypt for the
+  records and no DNS token — each status page is served at
+  `https://app.{domain}/status/{slug}`, and `/status` leads to the first one. Caddy asks Let's Encrypt for the
   `mcp.{domain}` cert at start whether or not the connector is on, so
   without that record it retries and logs the failure until you add it.
 
@@ -575,7 +575,7 @@ The public status page targets a Lighthouse accessibility score ≥ 95.
 Run the audit against a live deployment — Lighthouse needs a real
 HTTP origin, not an in-process router. There is no Rust harness for this;
 use the `lighthouse` Node CLI on any workstation. Audit the URL your mode
-serves: self-host `https://app.example.com/status`, SaaS
+serves: self-host `https://app.example.com/status/{slug}`, SaaS
 `https://{slug}.example.com`.
 
 ```bash

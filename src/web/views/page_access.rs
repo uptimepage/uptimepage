@@ -33,11 +33,11 @@ use crate::email::{EmailAddress, EmailTemplate, SendClass, TransactionalEmail};
 use crate::error::public::PublicAppError;
 use crate::i18n::Tr;
 use crate::public_status::access::{
-    Access, same_origin, session_clear_cookie, session_cookie, session_set_cookie,
+    Access, same_origin, session_clear_cookie, session_cookies, session_set_cookie,
 };
 use crate::request::client_ip::{ClientIp, network_key};
 use crate::request::host::{
-    is_subdomain_public_request, published_page_origin, resolve_status_page,
+    PageInPath, ServedPage, is_subdomain_public_request, published_page_origin, resolve_status_page,
 };
 use crate::request::json::Json;
 use crate::robots::mark_private;
@@ -48,7 +48,7 @@ use crate::storage::page_access::{passkeys, sessions, viewers};
 use crate::storage::status_pages;
 use crate::templates::filters;
 
-use super::page_branding::{BrandingView, resolve_branding, status_home};
+use super::page_branding::{BrandingView, resolve_branding};
 use crate::web::error::render_public_error;
 
 /// Binds an emailed code to the browser that asked for it. Scoped to the
@@ -56,7 +56,6 @@ use crate::web::error::render_public_error;
 const CODE_NONCE_COOKIE: &str = "_up_page_code";
 /// Double-submit nonce between the link's confirm page and its POST.
 const CONFIRM_NONCE_COOKIE: &str = "_up_page_confirm";
-const ACCESS_PATH: &str = "/access";
 
 #[derive(Template, WebTemplate)]
 #[template(path = "public/access.html")]
@@ -77,8 +76,9 @@ pub struct AccessPage {
     /// The ways in the sign-in screen offers.
     pub email_way: bool,
     pub password_way: bool,
-    /// The page host, as the password form's username: a password manager
-    /// keys its saved entry on it, so it keeps one per page.
+    /// The page host, and the page's path where pages share it, as the
+    /// password form's username: a password manager keys its saved entry on
+    /// it, so it keeps one per page.
     pub username: String,
     /// Shown above the password field: a wrong password, or the wait.
     pub password_error: String,
@@ -91,20 +91,14 @@ impl AccessPage {
     async fn build(
         state: &AppState,
         headers: &HeaderMap,
-        page: PageRef,
+        served: &ServedPage,
         step: &'static str,
     ) -> Self {
-        let tr = page_tr(state, page).await;
-        let mut branding = resolve_branding(
-            state,
-            headers,
-            page.org,
-            page.page,
-            &tr.t("email-fallback-page-name"),
-        )
-        .await;
+        let tr = page_tr(state, served.page).await;
+        let mut branding =
+            resolve_branding(state, headers, served, &tr.t("email-fallback-page-name")).await;
         branding.hide_from_search = true;
-        let next = branding.home.to_owned();
+        let next = branding.home().to_owned();
         Self {
             tr,
             branding,
@@ -129,11 +123,12 @@ impl AccessPage {
         self.email_way = access.settings.email_enabled;
         self.password_way = access.settings.password_enabled;
         self.passkeys = passkeys_on(state, access, headers);
-        self.username = headers
+        let host = headers
             .get(HOST)
             .and_then(|v| v.to_str().ok())
             .unwrap_or_default()
             .to_ascii_lowercase();
+        self.username = format!("{host}{}", self.branding.paths.scope());
         self
     }
 
@@ -189,11 +184,11 @@ async fn page_tr(state: &AppState, page: PageRef) -> Tr {
 pub async fn sign_in_screen(
     state: &AppState,
     headers: &HeaderMap,
-    page: PageRef,
+    served: &ServedPage,
     access: &PageAccess,
     next: &str,
 ) -> Response {
-    let mut view = AccessPage::build(state, headers, page, "email")
+    let mut view = AccessPage::build(state, headers, served, "email")
         .await
         .ways(state, access, headers);
     if let Some(next) = crate::auth::url::safe_redirect_target(next) {
@@ -213,25 +208,25 @@ fn passkeys_on(state: &AppState, access: &PageAccess, headers: &HeaderMap) -> bo
         && is_subdomain_public_request(&state.request_state(), headers)
 }
 
-/// The page this host serves and its settings, for a sign-in path. A page
-/// that is not private has nothing to sign in to.
+/// The page a sign-in path is for and its settings. A page that is not
+/// private has nothing to sign in to.
 async fn private_page(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<(PageRef, std::sync::Arc<PageAccess>), Response> {
-    let page = resolve_status_page(&state.request_state(), headers)
+    in_path: &PageInPath,
+) -> Result<(ServedPage, std::sync::Arc<PageAccess>), Response> {
+    let served = resolve_status_page(&state.request_state(), headers, in_path)
         .await
         .map_err(render_public_error)?;
     let access = state
         .page_gate
-        .settings(state.db.as_ref(), page)
+        .settings(state.db.as_ref(), served.page)
         .await
         .map_err(render_public_error)?;
     if !access.is_private() {
-        let home = status_home(state, headers);
-        return Err(Redirect::to(home).into_response());
+        return Err(Redirect::to(served.paths.home()).into_response());
     }
-    Ok((page, access))
+    Ok((served, access))
 }
 
 fn forbidden() -> Response {
@@ -261,12 +256,7 @@ fn requester(state: &AppState, ip: std::net::IpAddr, headers: &HeaderMap) -> Req
     }
 }
 
-fn nonce_cookie(
-    name: &'static str,
-    path: &'static str,
-    value: &str,
-    secure: bool,
-) -> Cookie<'static> {
+fn nonce_cookie(name: &'static str, path: String, value: &str, secure: bool) -> Cookie<'static> {
     let mut c = Cookie::new(name, value.to_owned());
     c.set_http_only(true);
     c.set_secure(secure);
@@ -276,7 +266,7 @@ fn nonce_cookie(
     c
 }
 
-fn clear_nonce(cookies: &Cookies, name: &'static str, path: &'static str) {
+fn clear_nonce(cookies: &Cookies, name: &'static str, path: String) {
     let mut gone = Cookie::new(name, "");
     gone.set_path(path);
     cookies.remove(gone);
@@ -304,6 +294,7 @@ pub struct RequestForm {
 /// list covers, and that is not blocked, gets a mail.
 pub async fn request_code(
     State(state): State<AppState>,
+    in_path: PageInPath,
     ClientIp(ip): ClientIp,
     headers: HeaderMap,
     cookies: Cookies,
@@ -312,14 +303,15 @@ pub async fn request_code(
     if !same_origin(&headers) {
         return forbidden();
     }
-    let (page, access) = match private_page(&state, &headers).await {
+    let (served, access) = match private_page(&state, &headers, &in_path).await {
         Ok(p) => p,
         Err(resp) => return resp,
     };
-    let mut view = AccessPage::build(&state, &headers, page, "email")
+    let page = served.page;
+    let mut view = AccessPage::build(&state, &headers, &served, "email")
         .await
         .ways(&state, &access, &headers);
-    view.next = safe_next(&form.next, view.branding.home);
+    view.next = safe_next(&form.next, view.branding.home());
     let Some(email) = normalize_email(&form.email) else {
         view.error = "access-bad-email";
         view.email = form.email.trim().chars().take(254).collect();
@@ -337,7 +329,7 @@ pub async fn request_code(
         .unwrap_or_else(crate::security::token_hash::generate_raw_token);
     cookies.add(nonce_cookie(
         CODE_NONCE_COOKIE,
-        ACCESS_PATH,
+        served.paths.access_root(),
         &nonce,
         state.cfg.auth.session.cookie_secure,
     ));
@@ -361,6 +353,7 @@ pub async fn request_code(
         locale: view.tr.locale(),
         page_name: view.branding.display_name.clone(),
         origin,
+        verify_path: served.paths.access("verify"),
     };
     let admitted = access.admits(&email);
     tokio::spawn(send_code(
@@ -384,6 +377,8 @@ struct MailContext {
     locale: crate::domain::Locale,
     page_name: String,
     origin: String,
+    /// The mailed link's path, under the page the request came in on.
+    verify_path: String,
 }
 
 async fn send_code(
@@ -439,7 +434,7 @@ async fn send_code(
             return;
         }
     };
-    let url = crate::auth::url::token_link(&mail.origin, "/access/verify", &created.token);
+    let url = crate::auth::url::token_link(&mail.origin, &mail.verify_path, &created.token);
     let outgoing = TransactionalEmail {
         from: mail.from,
         to: EmailAddress::new(email.clone(), email.clone()),
@@ -489,6 +484,7 @@ pub struct CodeForm {
 /// `POST /access/code`. One attempt, from the browser that asked.
 pub async fn submit_code(
     State(state): State<AppState>,
+    in_path: PageInPath,
     ClientIp(ip): ClientIp,
     headers: HeaderMap,
     cookies: Cookies,
@@ -497,25 +493,26 @@ pub async fn submit_code(
     if !same_origin(&headers) {
         return forbidden();
     }
-    let (page, access) = match private_page(&state, &headers).await {
+    let (served, access) = match private_page(&state, &headers, &in_path).await {
         Ok(p) => p,
         Err(resp) => return resp,
     };
+    let page = served.page;
     let Ok(pool) = state.require_db() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     let who = requester(&state, ip, &headers);
-    let mut view = AccessPage::build(&state, &headers, page, "refused").await;
-    let next = safe_next(&form.next, view.branding.home);
+    let mut view = AccessPage::build(&state, &headers, &served, "refused").await;
+    let next = safe_next(&form.next, view.branding.home());
     view.next = next.clone();
     let Some(nonce) = cookies.get(CODE_NONCE_COOKIE).map(|c| c.value().to_owned()) else {
         return view.respond(StatusCode::UNAUTHORIZED);
     };
     match codes::consume_code(pool, page, &nonce, &form.code).await {
         Ok(CodeOutcome::Ok(email)) => {
-            clear_nonce(&cookies, CODE_NONCE_COOKIE, ACCESS_PATH);
+            clear_nonce(&cookies, CODE_NONCE_COOKIE, served.paths.access_root());
             sign_in(
-                &state, &headers, &cookies, page, &access, &email, &who, &next,
+                &state, &headers, &cookies, &served, &access, &email, &who, &next,
             )
             .await
         }
@@ -526,7 +523,7 @@ pub async fn submit_code(
             view.respond(StatusCode::BAD_REQUEST)
         }
         Ok(CodeOutcome::Refused) => {
-            clear_nonce(&cookies, CODE_NONCE_COOKIE, ACCESS_PATH);
+            clear_nonce(&cookies, CODE_NONCE_COOKIE, served.paths.access_root());
             refused_event(pool, page, &who, "code_refused").await;
             view.respond(StatusCode::UNAUTHORIZED)
         }
@@ -560,17 +557,18 @@ async fn sign_in(
     state: &AppState,
     headers: &HeaderMap,
     cookies: &Cookies,
-    page: PageRef,
+    served: &ServedPage,
     access: &PageAccess,
     email: &str,
     who: &Requester,
     next: &str,
 ) -> Response {
+    let page = served.page;
     let Ok(pool) = state.require_db() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     let invalid = || async {
-        let view = AccessPage::build(state, headers, page, "invalid").await;
+        let view = AccessPage::build(state, headers, served, "invalid").await;
         view.respond(StatusCode::UNAUTHORIZED)
     };
     if !access.admits(email) {
@@ -592,7 +590,7 @@ async fn sign_in(
         state,
         headers,
         cookies,
-        page,
+        served,
         access,
         viewer.id,
         who,
@@ -623,7 +621,7 @@ async fn sign_in(
         };
     let to = if offer {
         let next: String = url::form_urlencoded::byte_serialize(next.as_bytes()).collect();
-        format!("/access/passkey?next={next}")
+        format!("{}?next={next}", served.paths.access("passkey"))
     } else {
         next.to_owned()
     };
@@ -637,16 +635,17 @@ async fn open_session(
     state: &AppState,
     headers: &HeaderMap,
     cookies: &Cookies,
-    page: PageRef,
+    served: &ServedPage,
     access: &PageAccess,
     viewer: Uuid,
     who: &Requester,
     method: AccessEventMethod,
 ) -> Result<(), Response> {
+    let page = served.page;
     let pool = state
         .require_db()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE.into_response())?;
-    if let Some(old) = session_cookie(headers) {
+    for old in session_cookies(headers) {
         let _ = sessions::delete(pool, page, &old).await;
     }
     let created = sessions::create(
@@ -666,6 +665,7 @@ async fn open_session(
         &created.cookie,
         created.session_days,
         state.cfg.auth.session.cookie_secure,
+        served.paths.cookie_path(),
     ));
     metrics::counter!(crate::metric_names::PAGE_ACCESS_SIGN_INS, "method" => method.as_db_str())
         .increment(1);
@@ -690,6 +690,7 @@ pub struct PasswordForm {
 /// would hand anyone a switch that locks out every real visitor.
 pub async fn submit_password(
     State(state): State<AppState>,
+    in_path: PageInPath,
     ClientIp(ip): ClientIp,
     headers: HeaderMap,
     cookies: Cookies,
@@ -698,14 +699,15 @@ pub async fn submit_password(
     if !same_origin(&headers) {
         return forbidden();
     }
-    let (page, access) = match private_page(&state, &headers).await {
+    let (served, access) = match private_page(&state, &headers, &in_path).await {
         Ok(p) => p,
         Err(resp) => return resp,
     };
-    let mut view = AccessPage::build(&state, &headers, page, "email")
+    let page = served.page;
+    let mut view = AccessPage::build(&state, &headers, &served, "email")
         .await
         .ways(&state, &access, &headers);
-    let next = safe_next(&form.next, view.branding.home);
+    let next = safe_next(&form.next, view.branding.home());
     view.next = next.clone();
     if !access.settings.password_enabled {
         return view.respond(StatusCode::UNAUTHORIZED);
@@ -767,7 +769,7 @@ pub async fn submit_password(
                 page,
                 h,
                 claim,
-                session_cookie(&headers).as_deref(),
+                &session_cookies(&headers),
                 who.ip_hash.as_deref(),
                 who.ua_hash.as_deref(),
             )
@@ -792,6 +794,7 @@ pub async fn submit_password(
         &created.cookie,
         created.session_days,
         state.cfg.auth.session.cookie_secure,
+        served.paths.cookie_path(),
     ));
     metrics::counter!(crate::metric_names::PAGE_ACCESS_SIGN_INS, "method" => AccessEventMethod::Password.as_db_str())
         .increment(1);
@@ -822,14 +825,16 @@ pub struct VerifyQuery {
 /// before people do.
 pub async fn verify_landing(
     State(state): State<AppState>,
+    in_path: PageInPath,
     headers: HeaderMap,
     cookies: Cookies,
     Query(q): Query<VerifyQuery>,
 ) -> Response {
-    let (page, _) = match private_page(&state, &headers).await {
+    let (served, _) = match private_page(&state, &headers, &in_path).await {
         Ok(p) => p,
         Err(resp) => return resp,
     };
+    let page = served.page;
     let Ok(pool) = state.require_db() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
@@ -839,17 +844,17 @@ pub async fn verify_landing(
             let csrf = crate::security::token_hash::generate_raw_token();
             cookies.add(nonce_cookie(
                 CONFIRM_NONCE_COOKIE,
-                "/access/verify",
+                served.paths.access("verify"),
                 &csrf,
                 state.cfg.auth.session.cookie_secure,
             ));
-            let mut view = AccessPage::build(&state, &headers, page, "confirm").await;
+            let mut view = AccessPage::build(&state, &headers, &served, "confirm").await;
             view.email = email;
             view.token = token.to_owned();
             view.csrf = csrf;
             view.respond(StatusCode::OK)
         }
-        Ok(None) => AccessPage::build(&state, &headers, page, "invalid")
+        Ok(None) => AccessPage::build(&state, &headers, &served, "invalid")
             .await
             .respond(StatusCode::GONE),
         Err(e) => {
@@ -870,15 +875,17 @@ pub struct ConfirmForm {
 /// `POST /access/verify`. Spends the link and signs the browser in.
 pub async fn verify_confirm(
     State(state): State<AppState>,
+    in_path: PageInPath,
     ClientIp(ip): ClientIp,
     headers: HeaderMap,
     cookies: Cookies,
     Form(form): Form<ConfirmForm>,
 ) -> Response {
-    let (page, access) = match private_page(&state, &headers).await {
+    let (served, access) = match private_page(&state, &headers, &in_path).await {
         Ok(p) => p,
         Err(resp) => return resp,
     };
+    let page = served.page;
     let Ok(pool) = state.require_db() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
@@ -888,22 +895,32 @@ pub async fn verify_confirm(
     });
     if !csrf_ok {
         refused_event(pool, page, &who, "confirm_csrf").await;
-        return AccessPage::build(&state, &headers, page, "invalid")
+        return AccessPage::build(&state, &headers, &served, "invalid")
             .await
             .respond(StatusCode::FORBIDDEN);
     }
-    clear_nonce(&cookies, CONFIRM_NONCE_COOKIE, "/access/verify");
+    clear_nonce(
+        &cookies,
+        CONFIRM_NONCE_COOKIE,
+        served.paths.access("verify"),
+    );
     match codes::consume_link(pool, page, form.token.trim()).await {
         Ok(Some(email)) => {
-            let home = status_home(&state, &headers);
             sign_in(
-                &state, &headers, &cookies, page, &access, &email, &who, home,
+                &state,
+                &headers,
+                &cookies,
+                &served,
+                &access,
+                &email,
+                &who,
+                served.paths.home(),
             )
             .await
         }
         Ok(None) => {
             refused_event(pool, page, &who, "invalid_link").await;
-            AccessPage::build(&state, &headers, page, "invalid")
+            AccessPage::build(&state, &headers, &served, "invalid")
                 .await
                 .respond(StatusCode::GONE)
         }
@@ -921,6 +938,7 @@ pub async fn verify_confirm(
 /// `POST /access/sign-out`.
 pub async fn sign_out(
     State(state): State<AppState>,
+    in_path: PageInPath,
     ClientIp(ip): ClientIp,
     headers: HeaderMap,
     cookies: Cookies,
@@ -928,13 +946,21 @@ pub async fn sign_out(
     if !same_origin(&headers) {
         return forbidden();
     }
-    let home = status_home(&state, &headers);
-    let page = match resolve_status_page(&state.request_state(), &headers).await {
+    let served = match resolve_status_page(&state.request_state(), &headers, &in_path).await {
         Ok(p) => p,
         Err(err) => return render_public_error(err),
     };
-    if let (Ok(pool), Some(cookie)) = (state.require_db(), session_cookie(&headers)) {
-        match sessions::delete(pool, page, &cookie).await {
+    let page = served.page;
+    let held = session_cookies(&headers);
+    if let (Ok(pool), false) = (state.require_db(), held.is_empty()) {
+        let mut ended = Ok(None);
+        for cookie in &held {
+            match sessions::delete(pool, page, cookie).await {
+                Ok(viewer) => ended = ended.map(|v: Option<Uuid>| v.or(viewer)),
+                Err(e) => ended = Err(e),
+            }
+        }
+        match ended {
             Ok(viewer) => {
                 let who = requester(&state, ip, &headers);
                 events::record_quietly(
@@ -951,8 +977,11 @@ pub async fn sign_out(
             Err(e) => tracing::warn!(error = %e, "page access: sign-out failed"),
         }
     }
-    cookies.add(session_clear_cookie(state.cfg.auth.session.cookie_secure));
-    Redirect::to(home).into_response()
+    cookies.add(session_clear_cookie(
+        state.cfg.auth.session.cookie_secure,
+        served.paths.cookie_path(),
+    ));
+    Redirect::to(served.paths.home()).into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -995,15 +1024,16 @@ pub struct PasskeyOfferQuery {
 /// `GET /access/passkey`. The offer after a first sign-in, skippable.
 pub async fn passkey_offer(
     State(state): State<AppState>,
+    in_path: PageInPath,
     headers: HeaderMap,
     Query(q): Query<PasskeyOfferQuery>,
 ) -> Response {
-    let (page, access) = match private_page(&state, &headers).await {
+    let (served, access) = match private_page(&state, &headers, &in_path).await {
         Ok(p) => p,
         Err(resp) => return resp,
     };
-    let home = status_home(&state, &headers);
-    let next = safe_next(&q.next, home);
+    let page = served.page;
+    let next = safe_next(&q.next, served.paths.home());
     let signed_in = matches!(
         state
             .page_gate
@@ -1014,7 +1044,7 @@ pub async fn passkey_offer(
     if !signed_in || !passkeys_on(&state, &access, &headers) {
         return Redirect::to(&next).into_response();
     }
-    let mut view = AccessPage::build(&state, &headers, page, "passkey").await;
+    let mut view = AccessPage::build(&state, &headers, &served, "passkey").await;
     view.next = next;
     view.passkeys = true;
     view.respond(StatusCode::OK)
@@ -1101,25 +1131,31 @@ impl From<PublicAppError> for PasskeyError {
 async fn passkey_page(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<(PageRef, std::sync::Arc<PageAccess>, sqlx::PgPool), PasskeyError> {
+    in_path: &PageInPath,
+) -> Result<(ServedPage, std::sync::Arc<PageAccess>, sqlx::PgPool), PasskeyError> {
     if !same_origin(headers) {
         return Err(PasskeyError::Forbidden);
     }
-    let page = resolve_status_page(&state.request_state(), headers).await?;
-    let access = state.page_gate.settings(state.db.as_ref(), page).await?;
+    let served = resolve_status_page(&state.request_state(), headers, in_path).await?;
+    let access = state
+        .page_gate
+        .settings(state.db.as_ref(), served.page)
+        .await?;
     if !access.is_private() || !passkeys_on(state, &access, headers) {
         return Err(PasskeyError::Unavailable);
     }
     let pool = state.require_db().cloned()?;
-    Ok((page, access, pool))
+    Ok((served, access, pool))
 }
 
 /// `POST /access/passkey/register/start`, for the signed-in viewer.
 pub async fn register_start(
     State(state): State<AppState>,
+    in_path: PageInPath,
     headers: HeaderMap,
 ) -> Result<Json<CeremonyStart>, PasskeyError> {
-    let (page, _, pool) = passkey_page(&state, &headers).await?;
+    let (served, _, pool) = passkey_page(&state, &headers, &in_path).await?;
+    let page = served.page;
     let Access::Viewer(viewer) = state.page_gate.check(Some(&pool), page, &headers).await? else {
         return Err(PasskeyError::Forbidden);
     };
@@ -1147,11 +1183,13 @@ pub async fn register_start(
 /// `POST /access/passkey/register/finish`.
 pub async fn register_finish(
     State(state): State<AppState>,
+    in_path: PageInPath,
     ClientIp(ip): ClientIp,
     headers: HeaderMap,
     Json(body): Json<CeremonyFinish>,
 ) -> Result<StatusCode, PasskeyError> {
-    let (page, _, pool) = passkey_page(&state, &headers).await?;
+    let (served, _, pool) = passkey_page(&state, &headers, &in_path).await?;
+    let page = served.page;
     let Access::Viewer(viewer) = state.page_gate.check(Some(&pool), page, &headers).await? else {
         return Err(PasskeyError::Forbidden);
     };
@@ -1193,9 +1231,11 @@ pub async fn register_finish(
 /// `POST /access/passkey/login/start`. Discoverable, so no address is named.
 pub async fn login_start(
     State(state): State<AppState>,
+    in_path: PageInPath,
     headers: HeaderMap,
 ) -> Result<Json<CeremonyStart>, PasskeyError> {
-    let (page, _, pool) = passkey_page(&state, &headers).await?;
+    let (served, _, pool) = passkey_page(&state, &headers, &in_path).await?;
+    let page = served.page;
     let (webauthn, _) = page_webauthn(&state, &headers)?;
     let (options, ceremony) = webauthn.start_discoverable_authentication().map_err(|e| {
         tracing::warn!(error = %e, "page passkey sign-in did not start");
@@ -1214,12 +1254,14 @@ pub async fn login_start(
 /// whose email proof is not older than the owner's re-check period.
 pub async fn login_finish(
     State(state): State<AppState>,
+    in_path: PageInPath,
     ClientIp(ip): ClientIp,
     headers: HeaderMap,
     cookies: Cookies,
     Json(body): Json<CeremonyFinish>,
 ) -> Result<Json<SignedIn>, PasskeyError> {
-    let (page, access, pool) = passkey_page(&state, &headers).await?;
+    let (served, access, pool) = passkey_page(&state, &headers, &in_path).await?;
+    let page = served.page;
     let (webauthn, rp_id) = page_webauthn(&state, &headers)?;
     let who = requester(&state, ip, &headers);
     let refuse = |reason: &'static str| {
@@ -1282,7 +1324,7 @@ pub async fn login_finish(
         &state,
         &headers,
         &cookies,
-        page,
+        &served,
         &access,
         viewer.id,
         &who,
@@ -1301,8 +1343,7 @@ pub async fn login_finish(
         },
     )
     .await;
-    let home = status_home(&state, &headers);
     Ok(Json(SignedIn {
-        redirect: safe_next(&body.next, home),
+        redirect: safe_next(&body.next, served.paths.home()),
     }))
 }

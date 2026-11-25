@@ -37,13 +37,15 @@ use axum::http::{HeaderMap, HeaderValue, Uri, header};
 use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::app::AppState;
+use crate::domain::ResolvedShare;
 use crate::domain::metrics::LatencySeries;
-use crate::domain::{PageRef, ResolvedShare};
 use crate::error::AppError;
 use crate::error::codes;
 use crate::error::public::PublicAppError;
 use crate::public_status::urls::page_origin;
-use crate::request::host::{is_subdomain_public_request, resolve_status_page};
+use crate::request::host::{
+    PageInPath, ServedPage, is_subdomain_public_request, resolve_status_page,
+};
 use crate::request::range::{RangeQuery, latency_bucket_seconds};
 use crate::robots;
 use crate::security::redaction::redact_check_for_public;
@@ -62,8 +64,9 @@ use crate::web::views::{RangeOption, build_range_options, resolve_range_key};
 
 /// Where a share is opened, relative to the page showing it as a detail link.
 enum Placement {
-    /// On that page's own host.
-    Page { page: PageRef, name: String },
+    /// Where that page is served: its own host, or its path on a path-based
+    /// deploy.
+    Page { page: ServedPage, name: String },
     /// A page's link on the operator host; the page lives at this origin.
     Elsewhere(String),
     /// A link minted from the monitor, or one whose page no host here serves.
@@ -111,7 +114,7 @@ async fn open_share(
     let share = find_share(state, token).await?;
     Ok(match place(state, headers, &share).await? {
         Placement::Page { page, name } => {
-            let brand = resolve_branding(state, headers, page.org, page.page, &name).await;
+            let brand = resolve_branding(state, headers, &page, &name).await;
             Opened::Render(share, Some(brand))
         }
         Placement::Elsewhere(origin) => {
@@ -135,11 +138,14 @@ async fn place(
         .status_page_store
         .page_for_share(share.org, share.share_id)
         .await?;
-    // A path-based deploy serves its page on the operator host itself.
-    let host_page = if page.is_some()
-        && (on_page_host || (tenancy.path_based_public_routes && !tenancy.subdomain_public_routes))
-    {
-        match resolve_status_page(&request, headers).await {
+    // A path-based deploy serves every page on the operator host itself, each
+    // under its own path.
+    let host_page = if page.is_some() && (on_page_host || tenancy.page_paths_active()) {
+        let in_path = match &page {
+            Some(page) if !on_page_host => PageInPath(Some(page.slug.clone())),
+            _ => PageInPath::default(),
+        };
+        match resolve_status_page(&request, headers, &in_path).await {
             Ok(host) => Some(host),
             Err(PublicAppError::NotFound) => None,
             Err(err) if on_page_host => return Err(AppError::Other(anyhow::anyhow!(err)).into()),
@@ -153,7 +159,7 @@ async fn place(
         None
     };
     Ok(match (page, host_page) {
-        (Some(page), Some(host)) if host.page == page.id => Placement::Page {
+        (Some(page), Some(host)) if host.page.page == page.id => Placement::Page {
             page: host,
             name: page.name,
         },
@@ -161,7 +167,7 @@ async fn place(
         (Some(page), _) if tenancy.subdomain_public_routes => {
             let domain = state.custom_domains.published(page.id);
             Placement::Elsewhere(page_origin(
-                &state.cfg.public_status.base_domain,
+                Some(&state.cfg.public_status.base_domain),
                 &state.cfg.auth.public_base_url,
                 &page.slug,
                 domain.as_deref(),
@@ -814,7 +820,7 @@ mod tests {
             credit_host: None,
             show_source_links: show_powered_by,
             style: "dark",
-            home: "/",
+            paths: crate::public_status::urls::PagePaths::host(),
             hide_from_search: false,
             website_url: None,
             follow_website_link: false,

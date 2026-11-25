@@ -115,6 +115,7 @@ mod page_sections_pg_test;
 mod partition_retention_test;
 mod passkey_ceremony_test;
 mod passkey_test;
+mod path_mode_pages_test;
 mod per_org_subdomain_test;
 mod periodic_loop_test;
 mod plan_assignment_test;

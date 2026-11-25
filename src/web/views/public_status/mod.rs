@@ -15,18 +15,20 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::AssetSlot;
-use crate::domain::{PageRef, StatusPageId};
+use crate::domain::PageRef;
 use crate::error::public::PublicAppError;
 use crate::i18n::Tr;
 use crate::public_status::access::{Access, feed_token, password_feed_token};
 use crate::public_status::history::{HistoryEntry, HistoryPage, merge};
+use crate::public_status::urls::PagePaths;
 use crate::request::host::{
-    is_subdomain_public_request, published_page_origin, resolve_status_page,
+    IdInPath, PageInPath, ServedPage, is_subdomain_public_request, published_page_origin,
+    resolve_status_page,
 };
 use crate::robots::{self, mark_private};
 use crate::templates::filters;
 use crate::web::error::render_public_error;
-use crate::web::views::page_branding::{BrandingView, resolve_branding, status_home};
+use crate::web::views::page_branding::{BrandingView, resolve_branding};
 
 mod incident_display;
 mod og;
@@ -38,8 +40,8 @@ mod view;
 pub use og::OgMeta;
 pub use past::{HistoryTab, PastEntry, PastEvents, PastItem, PhaseChip, TabLink};
 pub use view::{
-    ARCHIVE_URL, ComponentView, DayCell, GroupView, HistoryRequest, IncidentDetailView,
-    IncidentHeader, IncidentSummary, IncidentUpdateView, MaintenanceView, RSS_URL, StatusView,
+    ComponentView, DayCell, GroupView, HistoryRequest, IncidentDetailView, IncidentHeader,
+    IncidentSummary, IncidentUpdateView, MaintenanceView, StatusView,
 };
 
 use og::build_og_meta;
@@ -80,28 +82,44 @@ pub struct Reader {
     pub rss_url: String,
 }
 
+#[cfg(test)]
 impl Default for Reader {
     fn default() -> Self {
-        Self {
-            viewer: None,
-            password: false,
-            rss_url: RSS_URL.to_owned(),
-        }
+        Self::public(&PagePaths::host())
     }
 }
 
 impl Reader {
-    async fn of(state: &AppState, page: PageRef, access: &Access) -> Self {
+    pub fn public(paths: &PagePaths) -> Self {
+        Self {
+            viewer: None,
+            password: false,
+            rss_url: paths.rss(),
+        }
+    }
+
+    /// A shared monitor's reader, in its status page's chrome when it has one.
+    pub fn shared(brand: Option<&BrandingView>) -> Self {
+        Self {
+            viewer: None,
+            password: false,
+            rss_url: brand.map(|b| b.paths.rss()).unwrap_or_default(),
+        }
+    }
+
+    async fn of(state: &AppState, served: &ServedPage, access: &Access) -> Self {
         let secret = state.page_feed_secret.as_str();
+        let rss = served.paths.rss();
+        let page = served.page;
         match access {
             Access::Viewer(viewer) => Self {
                 viewer: Some(viewer.email.clone()),
                 password: false,
                 rss_url: if secret.is_empty() {
-                    RSS_URL.to_owned()
+                    rss
                 } else {
                     format!(
-                        "{RSS_URL}?viewer={}&t={}",
+                        "{rss}?viewer={}&t={}",
                         viewer.id,
                         feed_token(secret, page.page, viewer.id)
                     )
@@ -110,19 +128,22 @@ impl Reader {
             Access::Password { session } => Self {
                 viewer: None,
                 password: true,
-                rss_url: password_feed_url(state, page, secret, session.as_deref())
+                rss_url: match password_feed_token_for(state, page, secret, session.as_deref())
                     .await
-                    .unwrap_or_else(|| RSS_URL.to_owned()),
+                {
+                    Some(t) => format!("{rss}?t={t}"),
+                    None => rss,
+                },
             },
-            _ => Self::default(),
+            _ => Self::public(&served.paths),
         }
     }
 }
 
-/// The page-password feed link for `session`. Cut from the stored hash, so the
-/// page has to be read for it; without one the plain feed URL still works in
-/// this browser.
-async fn password_feed_url(
+/// The page-password feed token for `session`. Cut from the stored hash, so
+/// the page has to be read for it; without one the plain feed URL still works
+/// in this browser.
+async fn password_feed_token_for(
     state: &AppState,
     page: PageRef,
     secret: &str,
@@ -134,9 +155,7 @@ async fn password_feed_url(
     let session = session?;
     let pool = state.db.as_ref()?;
     match crate::storage::page_access::password::session_hash(pool, page, session).await {
-        Ok(hash) => {
-            hash.map(|h| format!("{RSS_URL}?t={}", password_feed_token(secret, page.page, &h)))
-        }
+        Ok(hash) => hash.map(|h| password_feed_token(secret, page.page, &h)),
         Err(e) => {
             tracing::warn!(error = %e, "page-password feed link not built");
             None
@@ -201,15 +220,25 @@ pub struct ArchiveParams {
 }
 pub async fn index(
     State(state): State<AppState>,
+    in_path: PageInPath,
+    uri: Uri,
     headers: HeaderMap,
     Query(params): Query<StatusParams>,
 ) -> Response {
     let fragment = params.fragment.unwrap_or(0) != 0;
-    let home = status_home(&state, &headers);
-    let (page_ref, access) = match readable(&state, &headers, home, fragment).await {
+    let (served, access) = match readable(
+        &state,
+        &headers,
+        (&in_path, &uri),
+        |p| p.home().to_owned(),
+        fragment,
+    )
+    .await
+    {
         Ok(p) => p,
         Err(resp) => return resp,
     };
+    let page_ref = served.page;
     let (page, markers) = match state.public_source.page_with_markers(page_ref).await {
         Ok(pair) => pair,
         Err(err) => return render_public_error(err),
@@ -224,7 +253,7 @@ pub async fn index(
     let tr = Tr::new(state.public_source.locale(page_ref).await);
     let history = HistoryRequest {
         tab: HistoryTab::from_query(params.show.as_deref()),
-        home,
+        paths: &served.paths,
     };
     let view = build_view(&page, &markers, &silenced, history, tr);
     let resp = if fragment {
@@ -236,17 +265,17 @@ pub async fn index(
         // hence the canonical.
         resp.headers_mut()
             .insert(robots::X_ROBOTS_TAG, robots::NOINDEX_FOLLOW);
-        if let Some(canonical) = canonical_link(&state, &headers, page_ref.page) {
+        if let Some(canonical) = canonical_link(&state, &headers, &served) {
             resp.headers_mut().insert(header::LINK, canonical);
         }
         resp
     } else {
-        let branding = page_branding(&state, &headers, page_ref, &access, &page.site_name).await;
+        let branding = page_branding(&state, &headers, &served, &access, &page.site_name).await;
         let og = build_og_meta(
             &state,
             &headers,
             page_ref.page,
-            branding.home,
+            branding.home(),
             branding.status_title(),
             tr.t_args(
                 "og-status-description",
@@ -261,7 +290,7 @@ pub async fn index(
                 view,
                 branding,
                 og,
-                reader: Reader::of(&state, page_ref, &access).await,
+                reader: Reader::of(&state, &served, &access).await,
             },
             tr,
         )
@@ -269,22 +298,27 @@ pub async fn index(
     privately(resp, &access)
 }
 
-/// The page this host serves, past the access gate. `Err` is the answer to
-/// send instead: a 404, or for a private page nobody here may read yet, the
-/// sign-in screen (a bare 401 for the refresh poll, which has nowhere to put
-/// one). `next` is where sign-in returns to.
+/// The page this request asks for, past the access gate. `Err` is the answer
+/// to send instead: a 404, the page's own path for one reached by another, or
+/// for a private page nobody here may read yet, the sign-in screen (a bare 401
+/// for the refresh poll, which has nowhere to put one). `next` is where
+/// sign-in returns to.
 async fn readable(
     state: &AppState,
     headers: &HeaderMap,
-    next: &str,
+    (in_path, uri): (&PageInPath, &Uri),
+    next: impl FnOnce(&PagePaths) -> String,
     fragment: bool,
-) -> Result<(PageRef, Access), Response> {
-    let page = resolve_status_page(&state.request_state(), headers)
+) -> Result<(ServedPage, Access), Response> {
+    let served = resolve_status_page(&state.request_state(), headers, in_path)
         .await
         .map_err(render_public_error)?;
+    if let Some(moved) = own_path(&served, in_path, uri) {
+        return Err(moved);
+    }
     match state
         .page_gate
-        .check(state.db.as_ref(), page, headers)
+        .check(state.db.as_ref(), served.page, headers)
         .await
     {
         Ok(Access::SignInRequired(_)) if fragment => {
@@ -293,11 +327,27 @@ async fn readable(
             Err(resp)
         }
         Ok(Access::SignInRequired(access)) => {
-            Err(super::page_access::sign_in_screen(state, headers, page, &access, next).await)
+            let next = next(&served.paths);
+            Err(super::page_access::sign_in_screen(state, headers, &served, &access, &next).await)
         }
-        Ok(access) => Ok((page, access)),
+        Ok(access) => Ok((served, access)),
         Err(err) => Err(render_public_error(err)),
     }
+}
+
+/// A page that has a path of its own, reached by the primary page's unscoped
+/// URL: the same resource under its own path, where its links and its sign-in
+/// cookie live, so the page answers at one address.
+pub(super) fn own_path(served: &ServedPage, in_path: &PageInPath, uri: &Uri) -> Option<Response> {
+    if in_path.0.is_some() || served.paths.scope().is_empty() {
+        return None;
+    }
+    let rest = uri.path().strip_prefix("/status").unwrap_or_default();
+    let target = match uri.query() {
+        Some(q) => format!("{}{rest}?{q}", served.paths.home()),
+        None => format!("{}{rest}", served.paths.home()),
+    };
+    Some(Redirect::temporary(&target).into_response())
 }
 
 /// Branding as the page renders it. A private page is never offered to a
@@ -305,11 +355,11 @@ async fn readable(
 async fn page_branding(
     state: &AppState,
     headers: &HeaderMap,
-    page: PageRef,
+    served: &ServedPage,
     access: &Access,
     fallback_name: &str,
 ) -> BrandingView {
-    let mut branding = resolve_branding(state, headers, page.org, page.page, fallback_name).await;
+    let mut branding = resolve_branding(state, headers, served, fallback_name).await;
     if access.is_private() {
         branding.hide_from_search = true;
         branding.follow_website_link = false;
@@ -336,19 +386,21 @@ fn with_language(page: impl IntoResponse, tr: Tr) -> Response {
 /// A tenant host answers the same page at `/`, so `/status` there is a second
 /// URL for one page: it splits search ranking and gives visitors two addresses
 /// to share. Redirect to the one the page links to itself. A path-based deploy
-/// serves the operator dashboard at `/`, so `/status` stays the page there.
+/// serves the operator dashboard at `/`, so `/status` leads to the primary
+/// page at its own `/status/{slug}` there.
 pub async fn status_path(
     State(state): State<AppState>,
     uri: Uri,
     headers: HeaderMap,
     query: Query<StatusParams>,
 ) -> Response {
+    let primary = PageInPath::default();
     if !is_subdomain_public_request(&state.request_state(), &headers) {
-        return index(State(state), headers, query).await;
+        return index(State(state), primary, uri, headers, query).await;
     }
     // Resolve before redirecting so a host with no live page still 404s here
     // rather than answering for one it cannot serve.
-    if let Err(err) = resolve_status_page(&state.request_state(), &headers).await {
+    if let Err(err) = resolve_status_page(&state.request_state(), &headers, &primary).await {
         return render_public_error(err);
     }
     // The 30s refresh poll of an already-open tab still asks for `?fragment=1`
@@ -363,9 +415,17 @@ pub async fn status_path(
 /// Serves the page's uploaded logo (or 404 when none is set). Same host→page
 /// resolution as the page itself; the query string is a cache-buster only,
 /// never a selector — the bytes come from the page's `logo` asset row.
-pub async fn logo(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    let page_ref = match resolve_status_page(&state.request_state(), &headers).await {
-        Ok(p) => p,
+pub async fn logo(
+    State(state): State<AppState>,
+    in_path: PageInPath,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Response {
+    let page_ref = match resolve_status_page(&state.request_state(), &headers, &in_path).await {
+        Ok(served) => match own_path(&served, &in_path, &uri) {
+            Some(moved) => return moved,
+            None => served.page,
+        },
         Err(err) => return render_public_error(err),
     };
     match state
@@ -427,14 +487,24 @@ fn incident_description(title: &str, component_name: &str, display_name: &str, t
 
 pub async fn incident(
     State(state): State<AppState>,
+    in_path: PageInPath,
+    uri: Uri,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    Path(IdInPath { id }): Path<IdInPath>,
 ) -> Response {
-    let next = format!("/status/incidents/{id}");
-    let (page_ref, access) = match readable(&state, &headers, &next, false).await {
+    let (served, access) = match readable(
+        &state,
+        &headers,
+        (&in_path, &uri),
+        |p| p.incident(id),
+        false,
+    )
+    .await
+    {
         Ok(p) => p,
         Err(resp) => return resp,
     };
+    let page_ref = served.page;
     let (inc_res, page_res, locale) = tokio::join!(
         state.public_source.incident_by_id(page_ref, id),
         state.public_source.page(page_ref),
@@ -449,13 +519,13 @@ pub async fn incident(
         Ok(p) => p.site_name.clone(),
         Err(err) => return render_public_error(err),
     };
-    let branding = page_branding(&state, &headers, page_ref, &access, &fallback_name).await;
+    let branding = page_branding(&state, &headers, &served, &access, &fallback_name).await;
     let now = Utc::now();
     let og = build_og_meta(
         &state,
         &headers,
         page_ref.page,
-        &format!("/status/incidents/{id}"),
+        &served.paths.incident(id),
         format!("{} · {}", inc.title, branding.status_title()),
         incident_description(&inc.title, &inc.component_name, &branding.display_name, tr),
         "article",
@@ -468,7 +538,7 @@ pub async fn incident(
             incident: IncidentDetailView::from_incident(&inc, now, tr),
             generated_at: now,
             og,
-            reader: Reader::of(&state, page_ref, &access).await,
+            reader: Reader::of(&state, &served, &access).await,
         },
         tr,
     );
@@ -482,6 +552,8 @@ pub async fn incident(
 /// bottom passes `?cursor=…` to walk backwards.
 pub async fn archive(
     State(state): State<AppState>,
+    in_path: PageInPath,
+    uri: Uri,
     headers: HeaderMap,
     Query(params): Query<ArchiveParams>,
 ) -> Response {
@@ -489,10 +561,20 @@ pub async fn archive(
     use crate::pagination::page::CursorPage;
     use crate::public_status::{IncidentListQuery, MaintenanceListQuery};
 
-    let (page_ref, access) = match readable(&state, &headers, ARCHIVE_URL, false).await {
+    let (served, access) = match readable(
+        &state,
+        &headers,
+        (&in_path, &uri),
+        PagePaths::archive,
+        false,
+    )
+    .await
+    {
         Ok(p) => p,
         Err(resp) => return resp,
     };
+    let page_ref = served.page;
+    let paths = &served.paths;
     let tab = HistoryTab::from_query(params.show.as_deref());
     let cursor = match params.cursor.as_deref().map(HistoryCursor::decode) {
         Some(Ok(c)) => Some(c),
@@ -536,13 +618,13 @@ pub async fn archive(
         (Ok(i), Ok(m)) => merge(i, m, ARCHIVE_PAGE_SIZE as usize),
         (Err(err), _) | (_, Err(err)) => return render_public_error(err),
     };
-    let branding = page_branding(&state, &headers, page_ref, &access, &fallback_name).await;
-    let months = bucket_by_month(listing.entries, Utc::now(), tr);
+    let branding = page_branding(&state, &headers, &served, &access, &fallback_name).await;
+    let months = bucket_by_month(listing.entries, paths, Utc::now(), tr);
     // Self-canonical, tab and cursor included. Pointing such a page at the
     // entry point instead would pair a canonical with the `noindex` below,
     // and the entry point can inherit that `noindex` — the one page here
     // worth indexing.
-    let path = archive_path(tab, params.cursor.as_deref());
+    let path = archive_path(paths, tab, params.cursor.as_deref());
     let heading = tab.t(tr, "archive-heading");
     let og = build_og_meta(
         &state,
@@ -564,14 +646,14 @@ pub async fn archive(
             branding,
             heading,
             empty: tab.t(tr, "archive-empty"),
-            tabs: past::tab_links(ARCHIVE_URL, "", tab, tr),
+            tabs: past::tab_links(&paths.archive(), "", tab, tr),
             months,
             older_url: listing
                 .next_cursor
-                .map(|cursor| archive_path(tab, Some(&cursor))),
+                .map(|cursor| archive_path(paths, tab, Some(&cursor))),
             robots,
             og,
-            reader: Reader::of(&state, page_ref, &access).await,
+            reader: Reader::of(&state, &served, &access).await,
         },
         tr,
     );
@@ -581,7 +663,12 @@ pub async fn archive(
 /// Group sorted-DESC rows into per-month buckets, each folded into rows the
 /// way the status page folds them. Months come out newest first because the
 /// merge hands us rows ordered by `(started_at DESC, id DESC)`.
-fn bucket_by_month(entries: Vec<HistoryEntry>, now: DateTime<Utc>, tr: Tr) -> Vec<MonthBucket> {
+fn bucket_by_month(
+    entries: Vec<HistoryEntry>,
+    paths: &PagePaths,
+    now: DateTime<Utc>,
+    tr: Tr,
+) -> Vec<MonthBucket> {
     let mut months: Vec<(String, Vec<HistoryEntry>)> = Vec::new();
     for entry in entries {
         let label = tr.month_year(entry.started_at());
@@ -594,7 +681,7 @@ fn bucket_by_month(entries: Vec<HistoryEntry>, now: DateTime<Utc>, tr: Tr) -> Ve
         .into_iter()
         .map(|(label, in_month)| MonthBucket {
             label,
-            rows: past::build_rows(&in_month, now, tr),
+            rows: past::build_rows(&in_month, paths, now, tr),
         })
         .collect()
 }
@@ -604,10 +691,10 @@ fn bucket_by_month(entries: Vec<HistoryEntry>, now: DateTime<Utc>, tr: Tr) -> Ve
 fn canonical_link(
     state: &AppState,
     headers: &HeaderMap,
-    page: StatusPageId,
+    served: &ServedPage,
 ) -> Option<header::HeaderValue> {
-    let origin =
-        published_page_origin(&state.request_state(), headers, page).unwrap_or_else(|| {
+    let origin = published_page_origin(&state.request_state(), headers, served.page.page)
+        .unwrap_or_else(|| {
             state
                 .cfg
                 .auth
@@ -618,7 +705,7 @@ fn canonical_link(
     if origin.is_empty() {
         return None;
     }
-    let home = status_home(state, headers);
+    let home = served.paths.home();
     let home = home.strip_suffix('/').unwrap_or(home);
     header::HeaderValue::from_str(&format!("<{origin}{home}>; rel=\"canonical\"")).ok()
 }

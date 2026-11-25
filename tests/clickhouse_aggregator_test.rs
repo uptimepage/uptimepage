@@ -1512,6 +1512,7 @@ async fn a_page_is_named_by_its_display_name_else_its_org() {
         let links = FeedLinks {
             page: "https://example.test",
             origin: "https://example.test",
+            paths: uptimepage::public_status::urls::PagePaths::host(),
         };
 
         for (display_name, expected) in [
@@ -1531,7 +1532,10 @@ async fn a_page_is_named_by_its_display_name_else_its_org() {
 
             let cfg = uptimepage::config::PublicStatusConfig::default();
             let source = OrgPublicSource::new(agg.clone(), PageCache::new(&cfg), pool.clone());
-            let rss = source.incidents_rss(page_ref, links).await.expect("rss");
+            let rss = source
+                .incidents_rss(page_ref, links.clone())
+                .await
+                .expect("rss");
             assert!(
                 rss.contains(&format!("<title>{expected} Status Incidents</title>")),
                 "feed title for {display_name:?}: {rss}"

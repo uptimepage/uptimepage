@@ -24,7 +24,8 @@ use crate::error::public::PublicAppError;
 use crate::storage::page_access::{password, sessions, settings, viewers};
 
 /// Host-only on the page's own host, so one page's session never reaches
-/// another page, even a sibling under the same base domain.
+/// another page, even a sibling under the same base domain. Pages sharing the
+/// operator host on a path-based deploy scope theirs by path instead.
 pub const SESSION_COOKIE: &str = "_up_page";
 
 /// Browsers cap a cookie's life at 400 days, so a session the owner left
@@ -126,35 +127,21 @@ impl PageGate {
         if !access.is_private() {
             return Ok(Access::Public);
         }
-        let (Some(pool), Some(cookie)) = (pool, session_cookie(headers)) else {
+        let Some(pool) = pool else {
             return Ok(Access::SignInRequired(access));
         };
-        let Some(session) = sessions::lookup(pool, page, &cookie).await? else {
-            return Ok(Access::SignInRequired(access));
-        };
-        // The owner's current length, so shortening it ends older sessions
-        // too, not only the ones opened after the change.
-        if let Some(days) = access.settings.session_days
-            && session.created_at < chrono::Utc::now() - chrono::Duration::days(i64::from(days))
-        {
-            return Ok(Access::SignInRequired(access));
+        // A stale session beside a live one for the same page must not shut
+        // the reader out, so each is judged in turn.
+        for cookie in session_cookies(headers) {
+            let Some(session) = sessions::lookup(pool, page, &cookie).await? else {
+                continue;
+            };
+            if let Some(reader) = reader_of(&access, &session) {
+                self.touch(pool, page, &session);
+                return Ok(reader);
+            }
         }
-        let reader = match (session.method, &session.viewer) {
-            (PageSessionMethod::Email, Some(v)) if !v.blocked && access.admits(&v.email) => {
-                Access::Viewer(Viewer {
-                    id: v.id,
-                    email: v.email.clone(),
-                })
-            }
-            (PageSessionMethod::Password, None) if access.settings.password_enabled => {
-                Access::Password {
-                    session: Some(session.id_hash.clone()),
-                }
-            }
-            _ => return Ok(Access::SignInRequired(access)),
-        };
-        self.touch(pool, page, &session);
-        Ok(reader)
+        Ok(Access::SignInRequired(access))
     }
 
     /// A viewer's personal feed link stands in for the cookie a feed reader
@@ -252,32 +239,71 @@ pub fn same_origin(headers: &HeaderMap) -> bool {
     })
 }
 
-pub fn session_cookie(headers: &HeaderMap) -> Option<String> {
+/// Who a session reads the page as, while its way in is still open.
+fn reader_of(access: &PageAccess, session: &sessions::ActiveSession) -> Option<Access> {
+    // The owner's current length, so shortening it ends older sessions too,
+    // not only the ones opened after the change.
+    if let Some(days) = access.settings.session_days
+        && session.created_at < chrono::Utc::now() - chrono::Duration::days(i64::from(days))
+    {
+        return None;
+    }
+    match (session.method, &session.viewer) {
+        (PageSessionMethod::Email, Some(v)) if !v.blocked && access.admits(&v.email) => {
+            Some(Access::Viewer(Viewer {
+                id: v.id,
+                email: v.email.clone(),
+            }))
+        }
+        (PageSessionMethod::Password, None) if access.settings.password_enabled => {
+            Some(Access::Password {
+                session: Some(session.id_hash.clone()),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Session cookies one request may hold for a page: the page's own path, the
+/// host root, and one more set from a sibling host. Each costs a lookup, so a
+/// request stuffed with them must not buy more.
+const MAX_SESSION_COOKIES: usize = 3;
+
+/// The session cookies the browser sent. A path-based deploy's pages each
+/// scope their own, so one request can carry several, and a browser need not
+/// send the nearest first.
+pub fn session_cookies(headers: &HeaderMap) -> Vec<String> {
     headers
         .get_all(COOKIE)
         .iter()
         .filter_map(|v| v.to_str().ok())
         .flat_map(Cookie::split_parse)
         .filter_map(Result::ok)
-        .find(|c| c.name() == SESSION_COOKIE)
+        .filter(|c| c.name() == SESSION_COOKIE && !c.value().is_empty())
         .map(|c| c.value().to_owned())
-        .filter(|v| !v.is_empty())
+        .take(MAX_SESSION_COOKIES)
+        .collect()
 }
 
-pub fn session_set_cookie(value: &str, session_days: Option<i32>, secure: bool) -> Cookie<'static> {
+pub fn session_set_cookie(
+    value: &str,
+    session_days: Option<i32>,
+    secure: bool,
+    path: &str,
+) -> Cookie<'static> {
     let mut c = Cookie::new(SESSION_COOKIE, value.to_owned());
     c.set_http_only(true);
     c.set_secure(secure);
     c.set_same_site(SameSite::Lax);
-    c.set_path("/");
+    c.set_path(path.to_owned());
     c.set_max_age(CookieDuration::days(
         session_days.map_or(UNLIMITED_COOKIE_DAYS, i64::from),
     ));
     c
 }
 
-pub fn session_clear_cookie(secure: bool) -> Cookie<'static> {
-    let mut c = session_set_cookie("", Some(0), secure);
+pub fn session_clear_cookie(secure: bool, path: &str) -> Cookie<'static> {
+    let mut c = session_set_cookie("", Some(0), secure, path);
     c.set_max_age(CookieDuration::ZERO);
     c
 }
@@ -319,14 +345,45 @@ mod tests {
     fn the_session_cookie_is_found_among_others() {
         let mut h = HeaderMap::new();
         h.insert(COOKIE, "a=1; _up_page=abc; b=2".parse().unwrap());
-        assert_eq!(session_cookie(&h).as_deref(), Some("abc"));
+        assert_eq!(session_cookies(&h), ["abc"]);
         h.insert(COOKIE, "_up_page_x=abc".parse().unwrap());
-        assert_eq!(session_cookie(&h), None);
+        assert!(session_cookies(&h).is_empty());
+    }
+
+    #[test]
+    fn every_page_session_on_a_shared_host_is_a_candidate() {
+        let mut h = HeaderMap::new();
+        h.insert(
+            COOKIE,
+            "_up_page=one; _up_page=; _up_page=two".parse().unwrap(),
+        );
+        assert_eq!(session_cookies(&h), ["one", "two"]);
+    }
+
+    #[test]
+    fn a_request_stuffed_with_session_cookies_buys_no_more_lookups() {
+        let stuffed = (0..50)
+            .map(|i| format!("_up_page=s{i}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        let mut h = HeaderMap::new();
+        h.insert(COOKIE, stuffed.parse().unwrap());
+        assert_eq!(session_cookies(&h).len(), MAX_SESSION_COOKIES);
+    }
+
+    #[test]
+    fn a_scoped_page_keeps_its_session_cookie_under_its_path() {
+        let c = session_set_cookie("v", None, true, "/status/two");
+        assert_eq!(c.path(), Some("/status/two"));
+        assert_eq!(
+            session_clear_cookie(true, "/status/two").path(),
+            Some("/status/two")
+        );
     }
 
     #[test]
     fn the_session_cookie_is_host_only() {
-        let c = session_set_cookie("v", None, true);
+        let c = session_set_cookie("v", None, true, "/");
         assert_eq!(c.domain(), None);
         assert_eq!(c.path(), Some("/"));
         assert_eq!(c.http_only(), Some(true));

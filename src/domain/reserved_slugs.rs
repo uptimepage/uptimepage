@@ -547,7 +547,9 @@ pub const RESERVED_SLUGS: &[&str] = &[
     "audit",
     "auditlog",
     "audit-log",
-    // Product surface
+    // Product surface. `incidents` and `branding` are also static segments
+    // under `/status/`, where a path-based deploy serves each page.
+    "branding",
     "incident",
     "incidents",
     "postmortem",
@@ -611,6 +613,13 @@ mod tests {
     fn non_reserved_words_pass() {
         assert!(!is_reserved("acme-corp"));
         assert!(!is_reserved("personal-fox-3a9k7m"));
+    }
+
+    #[test]
+    fn a_page_path_cannot_shadow_a_status_route() {
+        for s in ["incidents", "branding"] {
+            assert!(is_reserved(s), "{s} is a route under /status/");
+        }
     }
 
     #[test]

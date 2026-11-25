@@ -109,7 +109,7 @@ blurb = "The customer-facing surface: components, incidents, maintenance, badges
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-11-12
+lastmod = 2026-11-25
 
 [[page]]
 slug = "per-org-status"
@@ -119,7 +119,7 @@ blurb = "Running one or more branded status pages per organization, each on its 
 section = "guide"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-11-05
+lastmod = 2026-11-25
 
 [[page]]
 slug = "share-links"
@@ -179,7 +179,7 @@ blurb = "The /api/v1 surface: monitors, incidents, channels, status pages, and t
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-11-24
+lastmod = 2026-11-25
 
 [[page]]
 slug = "terraform"
@@ -219,7 +219,7 @@ blurb = "The org model, how the active org is resolved, and how tenant isolation
 section = "reference"
 scope = "everyone"
 created = 2026-07-22
-lastmod = 2026-11-16
+lastmod = 2026-11-25
 
 [[page]]
 slug = "hosted/plans-and-limits"
@@ -269,7 +269,7 @@ blurb = "Every configuration key, its default, and the environment variable that
 section = "self-hosting"
 scope = "self-hosting"
 created = 2026-07-22
-lastmod = 2026-11-20
+lastmod = 2026-11-25
 
 [[page]]
 slug = "bot"

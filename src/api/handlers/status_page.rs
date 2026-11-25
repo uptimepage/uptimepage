@@ -30,7 +30,7 @@ use crate::public_status::LogoMime;
 use crate::public_status::curation::{
     clean_curation, clean_curation_patch, normalise_opt, validate_name,
 };
-use crate::public_status::urls::{LOGO_ROUTE, public_base, public_logo_url, public_status_url};
+use crate::public_status::urls::{public_base, public_logo_url, published_paths};
 use crate::request::{
     Authorized, CurrentUser, OwnerAuthorized, RequestSource, StatusPageDelete, StatusPageRead,
     StatusPageWrite,
@@ -245,7 +245,7 @@ pub async fn get_page(
     request_body = UpdatePageRequest,
     responses(
         (status = 200, body = StatusPageView),
-        (status = 400, body = ApiError, description = "SLUG_INVALID / BRANDING_INVALID / ACCESS_INVALID / PASSWORD_REQUIRED (password on with none sent or stored) / INVALID_PAGE_PASSWORD (empty or over 128 characters)"),
+        (status = 400, body = ApiError, description = "SLUG_INVALID (a new slug the rules refuse; the stored one is always accepted back) / BRANDING_INVALID / ACCESS_INVALID / PASSWORD_REQUIRED (password on with none sent or stored) / INVALID_PAGE_PASSWORD (empty or over 128 characters)"),
         (status = 403, body = ApiError, description = "PRIVATE_PAGES_DISABLED: the plan does not include private pages, and the page is not private already"),
         (status = 404, body = ApiError),
         (status = 422, body = ApiError, description = "SLUG_TAKEN"),
@@ -277,9 +277,17 @@ pub async fn update_page(
     let slug = match req.slug {
         Some(s) => {
             let s = s.trim().to_ascii_lowercase();
-            validate_slug(&s).map_err(|e| {
-                AppError::bad_request_field(codes::SLUG_INVALID, e.to_string(), "slug")
-            })?;
+            // Clients send the slug with every save, and one stored before a
+            // rule refused it stays the page's own; only a new one must pass.
+            if let Err(e) = validate_slug(&s)
+                && load(&state, org, id).await?.slug != s
+            {
+                return Err(AppError::bad_request_field(
+                    codes::SLUG_INVALID,
+                    e.to_string(),
+                    "slug",
+                ));
+            }
             Some(s)
         }
         None => None,
@@ -889,8 +897,9 @@ pub async fn upload_logo(
         .await;
 
     let base = public_base(&state.cfg, &page.slug);
-    let url = public_logo_url(base.as_deref(), &meta.content_hash)
-        .unwrap_or_else(|| format!("{LOGO_ROUTE}?v={}", meta.content_hash));
+    let paths = published_paths(&state.cfg, &page.slug);
+    let url = public_logo_url(base.as_deref(), &paths, &meta.content_hash)
+        .unwrap_or_else(|| format!("{}?v={}", paths.logo(), meta.content_hash));
     Ok(Json(LogoResponse { logo_url: url }))
 }
 
@@ -942,6 +951,7 @@ fn component_not_found() -> AppError {
 fn view(state: &AppState, p: StatusPage, access: Option<&PageAccess>) -> StatusPageView {
     let cfg = &state.cfg.public_status;
     let base = public_base(&state.cfg, &p.slug);
+    let paths = published_paths(&state.cfg, &p.slug);
     let b = &p.branding;
     StatusPageView {
         id: p.id,
@@ -961,10 +971,8 @@ fn view(state: &AppState, p: StatusPage, access: Option<&PageAccess>) -> StatusP
         logo_url: b
             .logo_hash
             .as_deref()
-            .and_then(|hash| public_logo_url(base.as_deref(), hash)),
-        status_url: base
-            .as_ref()
-            .map(|origin| public_status_url(&state.cfg, origin)),
+            .and_then(|hash| public_logo_url(base.as_deref(), &paths, hash)),
+        status_url: base.as_ref().map(|origin| paths.url(origin)),
         access: access.map(AccessSpec::from),
     }
 }

@@ -13,7 +13,7 @@ use crate::app::AppState;
 use crate::domain::{Locale, OrgId, PublicStyle};
 use crate::error::AppError;
 use crate::public_status::urls::{
-    public_base, public_host_suffix, public_logo_url, public_status_url,
+    public_base, public_host_suffix, public_logo_url, public_status_url, published_paths,
 };
 use crate::request::CurrentUser;
 use crate::request::auth::CurrentOrg;
@@ -103,7 +103,7 @@ async fn build_rows(state: &AppState, org: OrgId) -> WebResult<Vec<PageRow>> {
         .into_iter()
         .map(|p| {
             let url = public_base(&state.cfg, &p.slug)
-                .map(|o| public_status_url(&state.cfg, &o))
+                .map(|o| public_status_url(&state.cfg, &o, &p.slug))
                 .unwrap_or_default();
             let subscriber_count = counts.get(&p.id.0).copied().unwrap_or(0);
             PageRow {
@@ -461,15 +461,13 @@ pub async fn page_editor(
     let cfg = &state.cfg.public_status;
     let b = &page.branding;
     let base = public_base(&state.cfg, &page.slug);
-    let status_url = base
-        .as_deref()
-        .map(|o| public_status_url(&state.cfg, o))
-        .unwrap_or_default();
+    let paths = published_paths(&state.cfg, &page.slug);
+    let status_url = base.as_deref().map(|o| paths.url(o)).unwrap_or_default();
     let (badge_url, badge_link) = badge_embed(&state.cfg, &page.slug);
     let logo_url = b
         .logo_hash
         .as_deref()
-        .and_then(|hash| public_logo_url(base.as_deref(), hash))
+        .and_then(|hash| public_logo_url(base.as_deref(), &paths, hash))
         .unwrap_or_default();
     let (logo_w, logo_h) = if b.logo_hash.is_some() {
         match state
@@ -615,13 +613,14 @@ fn badge_embed(cfg: &crate::config::AppConfig, slug: &str) -> (Option<String>, O
     if origin.is_empty() {
         return (None, None);
     }
+    let paths = published_paths(cfg, slug);
     let link = base.is_some().then(|| {
         format!(
             "{}?utm_source=status-badge&utm_medium=badge&utm_campaign=embed",
-            public_status_url(cfg, origin)
+            paths.url(origin)
         )
     });
-    (Some(format!("{origin}/api/public/v1/badge.svg")), link)
+    (Some(format!("{origin}{}", paths.badge())), link)
 }
 
 /// Overall-badge alt text. Strips `"` so the value can't break out of the
@@ -756,7 +755,7 @@ mod tests {
     }
 
     /// An embed lives on someone else's site, so a path-based deploy's badge
-    /// links its page by full address rather than `/status`.
+    /// links its page by full address, under the page's own path.
     #[test]
     fn the_badge_links_its_page_by_full_address() {
         let mut cfg = crate::config::AppConfig::load().expect("config");
@@ -768,12 +767,12 @@ mod tests {
         let (src, href) = badge_embed(&cfg, "acme");
         assert_eq!(
             src.as_deref(),
-            Some("https://status.example.com/api/public/v1/badge.svg")
+            Some("https://status.example.com/status/acme/api/public/v1/badge.svg")
         );
         assert_eq!(
             href.as_deref(),
             Some(
-                "https://status.example.com/status\
+                "https://status.example.com/status/acme\
                  ?utm_source=status-badge&utm_medium=badge&utm_campaign=embed"
             )
         );

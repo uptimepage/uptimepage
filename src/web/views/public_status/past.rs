@@ -10,6 +10,7 @@ use crate::domain::{
 };
 use crate::i18n::Tr;
 use crate::public_status::history::HistoryEntry;
+use crate::public_status::urls::PagePaths;
 use fluent_templates::fluent_bundle::FluentValue;
 
 use super::incident_display::{impact_classes, phase_classes, preview, previews_whole};
@@ -190,6 +191,7 @@ pub(super) fn build_past(
     incidents: &[PublicIncident],
     maintenance: &[PublicMaintenance],
     tab: HistoryTab,
+    paths: &PagePaths,
     now: DateTime<Utc>,
     tr: Tr,
 ) -> PastEvents {
@@ -204,7 +206,7 @@ pub(super) fn build_past(
     } else {
         &[]
     };
-    let mut rows = fold(&closed, now, tr);
+    let mut rows = fold(&closed, paths, now, tr);
     rows.extend(windows.iter().map(|m| window(m, now, tr)));
     newest_first(&mut rows);
     let (recent, earlier): (Vec<PastEntry>, Vec<PastEntry>) = rows
@@ -257,7 +259,12 @@ pub(super) fn mixed_within_caps<'a>(
 
 /// One month of the archive, folded the same way, newest first. An incident
 /// still open and a window still running are listed too.
-pub(super) fn build_rows(entries: &[HistoryEntry], now: DateTime<Utc>, tr: Tr) -> Vec<PastEntry> {
+pub(super) fn build_rows(
+    entries: &[HistoryEntry],
+    paths: &PagePaths,
+    now: DateTime<Utc>,
+    tr: Tr,
+) -> Vec<PastEntry> {
     let mut incidents: Vec<&PublicIncident> = Vec::new();
     let mut windows: Vec<&PublicMaintenance> = Vec::new();
     for entry in entries {
@@ -266,7 +273,7 @@ pub(super) fn build_rows(entries: &[HistoryEntry], now: DateTime<Utc>, tr: Tr) -
             HistoryEntry::Maintenance(m) => windows.push(m),
         }
     }
-    let mut rows = fold(&incidents, now, tr);
+    let mut rows = fold(&incidents, paths, now, tr);
     rows.extend(windows.into_iter().map(|m| window(m, now, tr)));
     newest_first(&mut rows);
     rows
@@ -282,7 +289,12 @@ fn newest_first(rows: &mut [PastEntry]) {
 /// overlap and began within [`STARTED_TOGETHER`]. One a person has written an
 /// update for keeps its own row, so the words are not folded out of sight,
 /// and so does one still open.
-fn fold(incidents: &[&PublicIncident], now: DateTime<Utc>, tr: Tr) -> Vec<PastEntry> {
+fn fold(
+    incidents: &[&PublicIncident],
+    paths: &PagePaths,
+    now: DateTime<Utc>,
+    tr: Tr,
+) -> Vec<PastEntry> {
     let mut sorted: Vec<&PublicIncident> = incidents.to_vec();
     sorted.sort_by_key(|i| (i.started_at, i.id));
     let stands_alone = |i: &PublicIncident| i.ended_at.is_none() || narrated(i).is_some();
@@ -310,8 +322,8 @@ fn fold(incidents: &[&PublicIncident], now: DateTime<Utc>, tr: Tr) -> Vec<PastEn
     groups
         .into_iter()
         .map(|g| match g.as_slice() {
-            [one] => single(one, now, tr),
-            _ => folded(&g, now, tr),
+            [one] => single(one, paths, now, tr),
+            _ => folded(&g, paths, now, tr),
         })
         .collect()
 }
@@ -420,12 +432,12 @@ fn lasted(inc: &PublicIncident, now: DateTime<Utc>) -> i64 {
     downtime(&[inc], now)
 }
 
-fn single(inc: &PublicIncident, now: DateTime<Utc>, tr: Tr) -> PastEntry {
+fn single(inc: &PublicIncident, paths: &PagePaths, now: DateTime<Utc>, tr: Tr) -> PastEntry {
     let (impact_id, impact_class) = impact_classes(inc.impact);
     PastEntry {
         key: inc.id.to_string(),
         title: inc.title.clone(),
-        permalink: Some(permalink(inc)),
+        permalink: Some(paths.incident(inc.id)),
         impact_label: tr.t(impact_id),
         impact_class,
         phase: telling_phase(inc.status_phase, tr),
@@ -442,7 +454,7 @@ fn single(inc: &PublicIncident, now: DateTime<Utc>, tr: Tr) -> PastEntry {
     }
 }
 
-fn folded(group: &[&PublicIncident], now: DateTime<Utc>, tr: Tr) -> PastEntry {
+fn folded(group: &[&PublicIncident], paths: &PagePaths, now: DateTime<Utc>, tr: Tr) -> PastEntry {
     let worst = group
         .iter()
         .map(|i| i.impact)
@@ -483,7 +495,7 @@ fn folded(group: &[&PublicIncident], now: DateTime<Utc>, tr: Tr) -> PastEntry {
                 let (impact_id, impact_class) = impact_classes(inc.impact);
                 PastItem {
                     title: inc.title.clone(),
-                    permalink: permalink(inc),
+                    permalink: paths.incident(inc.id),
                     impact_label: tr.t(impact_id),
                     impact_class,
                     component_name: if one_component {
@@ -519,10 +531,6 @@ fn downtime(group: &[&PublicIncident], now: DateTime<Utc>) -> i64 {
         reach = reach.max(end);
     }
     total.num_seconds()
-}
-
-fn permalink(inc: &PublicIncident) -> String {
-    format!("/status/incidents/{}", inc.id)
 }
 
 fn telling_phase(p: IncidentStatusPhase, tr: Tr) -> Option<PhaseChip> {
@@ -603,7 +611,14 @@ mod tests {
             from: at(5, 10, 5),
             until: at(5, 10, 25),
         }];
-        let past = build_past(&[held], &[], HistoryTab::All, now(), Tr::default());
+        let past = build_past(
+            &[held],
+            &[],
+            HistoryTab::All,
+            &PagePaths::host(),
+            now(),
+            Tr::default(),
+        );
         assert_eq!(past.recent[0].duration, "10m");
     }
 
@@ -623,7 +638,14 @@ mod tests {
         .map(|(h, m, mins, impact)| incident(webmail, "WEBMAIL", at(4, h, m), mins, impact))
         .rev()
         .collect();
-        let past = build_past(&incidents, &[], HistoryTab::All, now(), Tr::default());
+        let past = build_past(
+            &incidents,
+            &[],
+            HistoryTab::All,
+            &PagePaths::host(),
+            now(),
+            Tr::default(),
+        );
         let [row] = past.recent.as_slice() else {
             panic!("one row, got {}", past.recent.len());
         };
@@ -656,7 +678,14 @@ mod tests {
             2,
             Partial,
         ));
-        let past = build_past(&incidents, &[], HistoryTab::All, now(), Tr::default());
+        let past = build_past(
+            &incidents,
+            &[],
+            HistoryTab::All,
+            &PagePaths::host(),
+            now(),
+            Tr::default(),
+        );
         assert_eq!(past.recent.len(), 2);
         let (blip, outage) = (&past.recent[0], &past.recent[1]);
         assert!(blip.items.is_empty());
@@ -677,9 +706,16 @@ mod tests {
             incident(c, "WEBSITE", at(5, 11, 5), 4, Major),
         ];
         assert_eq!(
-            build_past(&incidents, &[], HistoryTab::All, now(), Tr::default())
-                .recent
-                .len(),
+            build_past(
+                &incidents,
+                &[],
+                HistoryTab::All,
+                &PagePaths::host(),
+                now(),
+                Tr::default()
+            )
+            .recent
+            .len(),
             2
         );
     }
@@ -696,7 +732,14 @@ mod tests {
         });
         told.status_phase = IncidentStatusPhase::Postmortem;
         let incidents = vec![incident(c, "API", at(5, 10, 0), 5, Major), told];
-        let past = build_past(&incidents, &[], HistoryTab::All, now(), Tr::default());
+        let past = build_past(
+            &incidents,
+            &[],
+            HistoryTab::All,
+            &PagePaths::host(),
+            now(),
+            Tr::default(),
+        );
         assert_eq!(past.recent.len(), 2);
         let row = &past.recent[0];
         assert_eq!(row.message.as_deref(), Some("A bad deploy; rolled back."));
@@ -729,7 +772,14 @@ mod tests {
                 Major,
             ),
         ];
-        let past = build_past(&incidents, &[], HistoryTab::Incidents, now(), Tr::default());
+        let past = build_past(
+            &incidents,
+            &[],
+            HistoryTab::Incidents,
+            &PagePaths::host(),
+            now(),
+            Tr::default(),
+        );
         assert!(past.recent.is_empty());
         assert_eq!(past.earlier.len(), 2);
         assert_eq!(past.earlier_label, "2 earlier incidents");
@@ -749,7 +799,14 @@ mod tests {
             incident(Uuid::now_v7(), "WEBSITE", at(5, 10, 0), 4, Major),
             incident(Uuid::now_v7(), "WEBMAIL", at(5, 10, 2), 4, Major),
         ];
-        let past = build_past(&incidents, &[], HistoryTab::All, now(), Tr::default());
+        let past = build_past(
+            &incidents,
+            &[],
+            HistoryTab::All,
+            &PagePaths::host(),
+            now(),
+            Tr::default(),
+        );
         let rows: Vec<&str> = past.recent.iter().map(|e| e.title.as_str()).collect();
         assert_eq!(rows, ["WEBSITE, WEBMAIL", "API error"]);
     }
@@ -765,16 +822,23 @@ mod tests {
             .cloned()
             .map(HistoryEntry::Incident)
             .collect();
-        let rows = build_rows(&entries, now(), Tr::default());
+        let rows = build_rows(&entries, &PagePaths::host(), now(), Tr::default());
         assert_eq!(rows.len(), 2, "an open incident never folds");
         assert!(rows[0].ongoing);
         assert_eq!(rows[0].duration, "1h");
         assert!(!rows[1].ongoing);
         assert!(
-            build_past(&incidents, &[], HistoryTab::All, now(), Tr::default())
-                .recent
-                .iter()
-                .all(|e| !e.ongoing)
+            build_past(
+                &incidents,
+                &[],
+                HistoryTab::All,
+                &PagePaths::host(),
+                now(),
+                Tr::default()
+            )
+            .recent
+            .iter()
+            .all(|e| !e.ongoing)
         );
     }
 
@@ -782,7 +846,14 @@ mod tests {
     fn a_long_outage_that_ended_this_week_is_in_view() {
         let start = Utc.with_ymd_and_hms(2026, 9, 30, 9, 0, 0).unwrap();
         let incidents = vec![incident(Uuid::now_v7(), "API", start, 8 * 24 * 60, Major)];
-        let past = build_past(&incidents, &[], HistoryTab::All, now(), Tr::default());
+        let past = build_past(
+            &incidents,
+            &[],
+            HistoryTab::All,
+            &PagePaths::host(),
+            now(),
+            Tr::default(),
+        );
         assert_eq!(past.recent.len(), 1);
         assert!(past.earlier.is_empty());
     }
@@ -804,7 +875,14 @@ mod tests {
             })
             .chain([incident(Uuid::now_v7(), "API", at(1, 12, 10), 5, Partial)])
             .collect();
-        let past = build_past(&incidents, &[], HistoryTab::All, now(), Tr::default());
+        let past = build_past(
+            &incidents,
+            &[],
+            HistoryTab::All,
+            &PagePaths::host(),
+            now(),
+            Tr::default(),
+        );
         let recent: Vec<&str> = past.recent.iter().map(|e| e.title.as_str()).collect();
         assert_eq!(recent, ["API error", "WEBMAIL"]);
         assert_eq!(past.recent[1].started_at, at(1, 10, 0));
@@ -834,7 +912,14 @@ mod tests {
             maintenance(at(6, 10, 10), 1, &["API"]),
             maintenance(at(5, 2, 0), 2, &["API", "DB", "Mail", "DNS", "CDN"]),
         ];
-        let past = build_past(&incidents, &windows, HistoryTab::All, now(), Tr::default());
+        let past = build_past(
+            &incidents,
+            &windows,
+            HistoryTab::All,
+            &PagePaths::host(),
+            now(),
+            Tr::default(),
+        );
         let titles: Vec<&str> = past.recent.iter().map(|e| e.title.as_str()).collect();
         assert_eq!(titles, ["Database upgrade", "API", "Database upgrade"]);
         let window = &past.recent[0];
@@ -863,7 +948,14 @@ mod tests {
         let windows = vec![maintenance(at(1, 2, 0), 1, &["API"])];
         let tr = Tr::default();
 
-        let all = build_past(&incidents, &windows, HistoryTab::All, now(), tr);
+        let all = build_past(
+            &incidents,
+            &windows,
+            HistoryTab::All,
+            &PagePaths::host(),
+            now(),
+            tr,
+        );
         assert_eq!(all.earlier.len(), 2);
         assert_eq!(all.earlier_label, "2 earlier entries");
         assert_eq!(
@@ -871,7 +963,14 @@ mod tests {
             Some("No resolved incidents or completed maintenance in the past 7 days.")
         );
 
-        let only_incidents = build_past(&incidents, &windows, HistoryTab::Incidents, now(), tr);
+        let only_incidents = build_past(
+            &incidents,
+            &windows,
+            HistoryTab::Incidents,
+            &PagePaths::host(),
+            now(),
+            tr,
+        );
         assert_eq!(only_incidents.earlier.len(), 1);
         assert_eq!(only_incidents.earlier_label, "1 earlier incident");
         assert_eq!(
@@ -879,7 +978,14 @@ mod tests {
             Some("No resolved incidents in the past 7 days.")
         );
 
-        let only_windows = build_past(&incidents, &windows, HistoryTab::Maintenance, now(), tr);
+        let only_windows = build_past(
+            &incidents,
+            &windows,
+            HistoryTab::Maintenance,
+            &PagePaths::host(),
+            now(),
+            tr,
+        );
         assert_eq!(only_windows.earlier.len(), 1);
         assert_eq!(only_windows.earlier[0].title, "Database upgrade");
         assert_eq!(only_windows.earlier_label, "1 earlier maintenance window");
@@ -888,7 +994,7 @@ mod tests {
     #[test]
     fn a_quiet_month_says_so_in_the_words_of_the_tab() {
         let tr = Tr::default();
-        let says = |tab| build_past(&[], &[], tab, now(), tr).quiet;
+        let says = |tab| build_past(&[], &[], tab, &PagePaths::host(), now(), tr).quiet;
         assert_eq!(
             says(HistoryTab::All).as_deref(),
             Some("No resolved incidents or completed maintenance in the past 30 days.")
@@ -903,9 +1009,16 @@ mod tests {
         );
         let windows = vec![maintenance(at(7, 2, 0), 1, &["API"])];
         assert!(
-            build_past(&[], &windows, HistoryTab::All, now(), tr)
-                .quiet
-                .is_none()
+            build_past(
+                &[],
+                &windows,
+                HistoryTab::All,
+                &PagePaths::host(),
+                now(),
+                tr
+            )
+            .quiet
+            .is_none()
         );
     }
 
@@ -915,7 +1028,14 @@ mod tests {
         long.description = Some("x".repeat(UPDATE_PREVIEW_CHARS + 1));
         let mut blank = maintenance(at(7, 4, 0), 1, &["API"]);
         blank.description = Some("   ".into());
-        let past = build_past(&[], &[long, blank], HistoryTab::All, now(), Tr::default());
+        let past = build_past(
+            &[],
+            &[long, blank],
+            HistoryTab::All,
+            &PagePaths::host(),
+            now(),
+            Tr::default(),
+        );
         assert!(past.recent[0].message.is_none(), "blank says nothing");
         let row = &past.recent[1];
         assert!(row.message.as_deref().is_some_and(|m| m.ends_with('…')));
@@ -935,6 +1055,7 @@ mod tests {
             &[],
             &[plain, formatted],
             HistoryTab::All,
+            &PagePaths::host(),
             now(),
             Tr::default(),
         );
@@ -947,7 +1068,14 @@ mod tests {
     fn a_description_with_no_words_left_previews_nothing() {
         let mut rule = maintenance(at(7, 2, 0), 1, &["API"]);
         rule.description = Some("---".into());
-        let past = build_past(&[], &[rule], HistoryTab::All, now(), Tr::default());
+        let past = build_past(
+            &[],
+            &[rule],
+            HistoryTab::All,
+            &PagePaths::host(),
+            now(),
+            Tr::default(),
+        );
         assert!(past.recent[0].message.is_none());
     }
 
@@ -966,7 +1094,14 @@ mod tests {
                 message: "Finished at 03:24 UTC.".into(),
             },
         ];
-        let past = build_past(&[], &[w], HistoryTab::All, now(), Tr::default());
+        let past = build_past(
+            &[],
+            &[w],
+            HistoryTab::All,
+            &PagePaths::host(),
+            now(),
+            Tr::default(),
+        );
         let row = &past.recent[0];
         assert_eq!(row.message.as_deref(), Some("Finished at 03:24 UTC."));
         assert!(
@@ -994,7 +1129,12 @@ mod tests {
     #[test]
     fn the_archive_lists_a_running_window_as_in_progress() {
         let running = maintenance(at(8, 11, 0), 3, &["API"]);
-        let rows = build_rows(&[HistoryEntry::Maintenance(running)], now(), Tr::default());
+        let rows = build_rows(
+            &[HistoryEntry::Maintenance(running)],
+            &PagePaths::host(),
+            now(),
+            Tr::default(),
+        );
         assert_eq!(rows[0].ended_at, None);
         assert_eq!(rows[0].duration, "1h", "so far");
         assert_eq!(

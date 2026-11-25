@@ -12,13 +12,12 @@ use crate::domain::{
 use crate::i18n::Tr;
 use crate::pagination::HistoryCursor;
 use crate::public_status::overall_status::{day_tone, overall_label_id};
+use crate::public_status::urls::PagePaths;
 use crate::public_status::{HistoryMarker, MarkerKind};
 
 use super::incident_display::{impact_classes, phase_classes, preview};
 use super::past::{HistoryTab, PastEvents, TabLink, build_past, mixed_within_caps, tab_links};
 
-pub const RSS_URL: &str = "/api/public/v1/incidents.rss";
-pub const ARCHIVE_URL: &str = "/status/incidents";
 pub(super) const HISTORY_LEN: usize = 90;
 
 pub struct StatusView {
@@ -165,35 +164,37 @@ pub struct LatestUpdate {
     pub message: String,
 }
 /// The archive on `tab`, from `cursor` on.
-pub(super) fn archive_path(tab: HistoryTab, cursor: Option<&str>) -> String {
+pub(super) fn archive_path(paths: &PagePaths, tab: HistoryTab, cursor: Option<&str>) -> String {
     let query: Vec<String> = tab
         .query()
         .map(|show| format!("show={show}"))
         .into_iter()
         .chain(cursor.map(|c| format!("cursor={c}")))
         .collect();
+    let archive = paths.archive();
     if query.is_empty() {
-        ARCHIVE_URL.to_owned()
+        archive
     } else {
-        format!("{ARCHIVE_URL}?{}", query.join("&"))
+        format!("{archive}?{}", query.join("&"))
     }
 }
 
-/// Which history tab the reader picked, and the path the page is served at,
-/// which the tab links point back to.
+/// Which history tab the reader picked, and where the page is served, which
+/// the tab links point back to.
 #[derive(Debug, Clone, Copy)]
-pub struct HistoryRequest {
+pub struct HistoryRequest<'a> {
     pub tab: HistoryTab,
-    pub home: &'static str,
+    pub paths: &'a PagePaths,
 }
 
 pub(super) fn build_view(
     page: &PublicStatusPage,
     history_markers: &[HistoryMarker],
     silenced: &std::collections::HashSet<Uuid>,
-    history: HistoryRequest,
+    history: HistoryRequest<'_>,
     tr: Tr,
 ) -> StatusView {
+    let paths = history.paths;
     let now = page.generated_at;
     let days = page
         .groups
@@ -211,12 +212,12 @@ pub(super) fn build_view(
         .collect::<Vec<_>>();
     let has_components = groups.iter().any(|g| !g.components.is_empty());
 
-    let day_strip_json = build_day_strip_json(page, history_markers, now, &text);
+    let day_strip_json = build_day_strip_json(page, history_markers, paths, now, &text);
 
     let active = page
         .active_incidents
         .iter()
-        .map(|i| build_incident_summary(i, now, tr))
+        .map(|i| build_incident_summary(i, paths, now, tr))
         .collect::<Vec<_>>();
     let tab = history.tab;
     let (incidents, windows) = match tab {
@@ -228,7 +229,7 @@ pub(super) fn build_view(
         ),
         _ => (&page.recent_incidents[..], &page.recent_maintenance[..]),
     };
-    let past = build_past(incidents, windows, tab, now, tr);
+    let past = build_past(incidents, windows, tab, paths, now, tr);
     let show = tab.query().map(|q| format!("show={q}"));
 
     let active_m = page
@@ -258,8 +259,8 @@ pub(super) fn build_view(
         active_heading: tr.t_args("active-incidents-heading", [("count", active.len().into())]),
         active_incidents: active,
         past,
-        history_tabs: tab_links(history.home, "#history", tab, tr),
-        archive_url: archive_path(tab, None),
+        history_tabs: tab_links(paths.home(), "#history", tab, tr),
+        archive_url: archive_path(paths, tab, None),
         poll_url: match &show {
             Some(show) => format!("?fragment=1&{show}"),
             None => "?fragment=1".to_owned(),
@@ -475,6 +476,7 @@ fn downtime_at(component: &PublicComponent, idx: usize) -> Downtime {
 pub(super) fn build_day_strip_json(
     page: &PublicStatusPage,
     history_markers: &[HistoryMarker],
+    paths: &PagePaths,
     now: DateTime<Utc>,
     text: &DayText,
 ) -> String {
@@ -501,7 +503,7 @@ pub(super) fn build_day_strip_json(
                     DayPopoverEntry {
                         date: text.date(days_ago).to_owned(),
                         spans: text.spans(c.history[idx], downtime_at(c, idx)),
-                        related: day_related(markers, day_start, day_end, now),
+                        related: day_related(markers, paths, day_start, day_end, now),
                     }
                 })
                 .collect();
@@ -534,6 +536,7 @@ pub(super) fn build_day_strip_json(
 /// window's puts the window first.
 pub(super) fn day_related(
     markers: &[&HistoryMarker],
+    paths: &PagePaths,
     day_start: DateTime<Utc>,
     day_end: DateTime<Utc>,
     now: DateTime<Utc>,
@@ -546,7 +549,7 @@ pub(super) fn day_related(
         .map(|m| DayRelated {
             title: m.title.clone(),
             url: match m.kind {
-                MarkerKind::Incident => format!("/status/incidents/{}", m.id),
+                MarkerKind::Incident => paths.incident(m.id),
                 MarkerKind::Maintenance { starts_at } => {
                     let from = HistoryCursor {
                         started_at: starts_at,
@@ -554,7 +557,7 @@ pub(super) fn day_related(
                     };
                     format!(
                         "{}#past-{}",
-                        archive_path(HistoryTab::Maintenance, Some(&from.encode())),
+                        archive_path(paths, HistoryTab::Maintenance, Some(&from.encode())),
                         m.id
                     )
                 }
@@ -648,6 +651,7 @@ pub(super) fn build_incident_header(
 
 pub(super) fn build_incident_summary(
     i: &PublicIncident,
+    paths: &PagePaths,
     now: DateTime<Utc>,
     tr: Tr,
 ) -> IncidentSummary {
@@ -658,7 +662,7 @@ pub(super) fn build_incident_summary(
         .description_beside(latest.map(std::slice::from_ref).unwrap_or_default())
         .and_then(preview);
     IncidentSummary {
-        permalink: format!("/status/incidents/{}", header.id),
+        permalink: paths.incident(&header.id),
         header,
         description,
         latest_message,

@@ -52,10 +52,13 @@ fn sample_page() -> PublicStatusPage {
     }
 }
 
-fn all_tab() -> HistoryRequest {
+static HOST: std::sync::LazyLock<PagePaths> = std::sync::LazyLock::new(PagePaths::host);
+static PRIMARY: std::sync::LazyLock<PagePaths> = std::sync::LazyLock::new(PagePaths::primary);
+
+fn all_tab() -> HistoryRequest<'static> {
     HistoryRequest {
         tab: HistoryTab::All,
-        home: "/",
+        paths: &HOST,
     }
 }
 
@@ -283,11 +286,11 @@ fn day_related_keeps_incidents_touching_the_day() {
         ended_at: Some(day_start + ChronoDuration::hours(2)),
     };
     let pool: Vec<&HistoryMarker> = vec![&inc];
-    assert_eq!(day_related(&pool, day_start, day_end, now).len(), 1);
+    assert_eq!(day_related(&pool, &HOST, day_start, day_end, now).len(), 1);
     let before = day_start - ChronoDuration::days(1);
-    assert!(day_related(&pool, before - ChronoDuration::days(1), before, now).is_empty());
+    assert!(day_related(&pool, &HOST, before - ChronoDuration::days(1), before, now).is_empty());
     let empty: Vec<&HistoryMarker> = Vec::new();
-    assert!(day_related(&empty, day_start, day_end, now).is_empty());
+    assert!(day_related(&empty, &HOST, day_start, day_end, now).is_empty());
 }
 
 #[test]
@@ -1259,7 +1262,7 @@ fn a_long_update_is_cut_by_characters_not_bytes() {
         message: format!("{}ü{}", "a".repeat(239), "b".repeat(20)),
         generated: false,
     });
-    let summary = build_incident_summary(&inc, Utc::now(), Tr::default());
+    let summary = build_incident_summary(&inc, &HOST, Utc::now(), Tr::default());
     assert_eq!(
         summary.latest_message.as_deref(),
         Some(format!("{}ü…", "a".repeat(239)).as_str())
@@ -1293,7 +1296,7 @@ fn bucket_by_month_groups_consecutive_incidents() {
         HistoryEntry::Incident(fake_incident(may_b, 2, "May early")),
         HistoryEntry::Incident(fake_incident(apr, 3, "April")),
     ];
-    let buckets = bucket_by_month(items, now, Tr::default());
+    let buckets = bucket_by_month(items, &HOST, now, Tr::default());
     assert_eq!(buckets.len(), 2);
     assert_eq!(buckets[0].label, "May 2026");
     let may: Vec<&str> = buckets[0].rows.iter().map(|r| r.title.as_str()).collect();
@@ -1314,9 +1317,9 @@ fn archive_page(
         branding: BrandingView::sample(PublicOrgBranding::default()),
         heading: tab.t(tr, "archive-heading"),
         empty: tab.t(tr, "archive-empty"),
-        tabs: super::past::tab_links(ARCHIVE_URL, "", tab, tr),
+        tabs: super::past::tab_links(&HOST.archive(), "", tab, tr),
         months,
-        older_url: cursor.map(|c| archive_path(tab, Some(c))),
+        older_url: cursor.map(|c| archive_path(&HOST, tab, Some(c))),
         reader: Reader::default(),
         robots,
         og: OgMeta::default(),
@@ -1334,7 +1337,7 @@ fn archive_page_renders_buckets_and_next_link() {
         1,
         "ECS rolled back",
     ))];
-    let months = bucket_by_month(items, now, Tr::default());
+    let months = bucket_by_month(items, &HOST, now, Tr::default());
     let html = archive_page(
         HistoryTab::Incidents,
         months,
@@ -1362,13 +1365,16 @@ fn archive_page_renders_buckets_and_next_link() {
 
 #[test]
 fn archive_path_keeps_the_tab_and_the_cursor() {
-    assert_eq!(archive_path(HistoryTab::All, None), "/status/incidents");
     assert_eq!(
-        archive_path(HistoryTab::All, Some("c")),
+        archive_path(&HOST, HistoryTab::All, None),
+        "/status/incidents"
+    );
+    assert_eq!(
+        archive_path(&HOST, HistoryTab::All, Some("c")),
         "/status/incidents?cursor=c"
     );
     assert_eq!(
-        archive_path(HistoryTab::Maintenance, Some("c")),
+        archive_path(&HOST, HistoryTab::Maintenance, Some("c")),
         "/status/incidents?show=maintenance&cursor=c"
     );
 }
@@ -1376,12 +1382,12 @@ fn archive_path_keeps_the_tab_and_the_cursor() {
 #[test]
 fn status_url_puts_the_page_where_the_deploy_serves_it() {
     assert_eq!(
-        status_url_for(true, "https://acme.example.com"),
+        PagePaths::published(true, "acme").url("https://acme.example.com"),
         "https://acme.example.com"
     );
     assert_eq!(
-        status_url_for(false, "https://status.acme.test"),
-        "https://status.acme.test/status"
+        PagePaths::published(false, "acme").url("https://status.acme.test"),
+        "https://status.acme.test/status/acme"
     );
 }
 
@@ -1611,7 +1617,7 @@ fn a_tab_keeps_itself_through_the_refresh_and_into_the_archive() {
     }];
     let history = HistoryRequest {
         tab: HistoryTab::Maintenance,
-        home: "/status",
+        paths: &PRIMARY,
     };
     let view = build_view(&p, &[], &Default::default(), history, Tr::default());
     let html = StatusRegion {
@@ -1897,4 +1903,63 @@ fn a_day_touched_for_no_measurable_time_still_names_its_state() {
             { "state": "Partial outage", "state_class": "day-pop-status--part", "duration": "" },
         ])
     );
+}
+
+fn served(paths: PagePaths) -> ServedPage {
+    ServedPage {
+        page: PageRef {
+            page: crate::domain::StatusPageId(Uuid::nil()),
+            org: crate::domain::OrgId(Uuid::nil()),
+        },
+        paths,
+    }
+}
+
+fn location(resp: Option<axum::response::Response>) -> Option<String> {
+    resp.map(|r| {
+        assert_eq!(r.status(), axum::http::StatusCode::TEMPORARY_REDIRECT);
+        r.headers()[axum::http::header::LOCATION]
+            .to_str()
+            .unwrap()
+            .to_owned()
+    })
+}
+
+#[test]
+fn the_primary_page_s_old_addresses_lead_to_its_own_path() {
+    let primary = served(PagePaths::scoped("acme"));
+    let none = PageInPath::default();
+    for (old, new) in [
+        ("/status", "/status/acme"),
+        (
+            "/status?fragment=1&show=incidents",
+            "/status/acme?fragment=1&show=incidents",
+        ),
+        (
+            "/status/incidents?cursor=c",
+            "/status/acme/incidents?cursor=c",
+        ),
+        ("/status/incidents/7", "/status/acme/incidents/7"),
+        (
+            "/status/branding/logo?v=h",
+            "/status/acme/branding/logo?v=h",
+        ),
+    ] {
+        let uri: axum::http::Uri = old.parse().unwrap();
+        assert_eq!(
+            location(own_path(&primary, &none, &uri)).as_deref(),
+            Some(new)
+        );
+    }
+}
+
+#[test]
+fn a_page_at_its_own_address_or_on_its_own_host_stays_put() {
+    let uri: axum::http::Uri = "/status/acme/incidents".parse().unwrap();
+    let named = PageInPath(Some("acme".into()));
+    assert!(own_path(&served(PagePaths::scoped("acme")), &named, &uri).is_none());
+    let uri: axum::http::Uri = "/status/incidents".parse().unwrap();
+    let none = PageInPath::default();
+    assert!(own_path(&served(PagePaths::host()), &none, &uri).is_none());
+    assert!(own_path(&served(PagePaths::primary()), &none, &uri).is_none());
 }

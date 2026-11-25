@@ -17,9 +17,7 @@
             </button>
         </div>
         {% endif %}
-        {# No branding here to say which URL this deploy serves the page on, and
-           `/status` reaches it in every mode. #}
-        <p><a href="/status" class="text-sm underline decoration-dotted hover:text-body">{{ tr.t("notice-back") }}</a></p>
+        <p><a href="{{ home }}" class="text-sm underline decoration-dotted hover:text-body">{{ tr.t("notice-back") }}</a></p>
     </main>
     {% if code != "" %}
     <script defer src="{{ "js/public/copy.js"|asset }}"></script>

@@ -198,8 +198,9 @@ services:
       UPTIMEPAGE_OBSERVABILITY__HEARTBEAT__ENABLED: ${HEARTBEAT_ENABLED:-false}
       UPTIMEPAGE_OBSERVABILITY__HEARTBEAT__URL: ${HEARTBEAT_URL:-}
       UPTIMEPAGE_OBSERVABILITY__HEARTBEAT__INTERVAL_SECONDS: ${HEARTBEAT_INTERVAL_SECONDS:-60}
-      # Public-status surface routing. `path_based` serves `/status/<slug>` on
-      # the operator host. `subdomain` serves per-org pages on
+      # Public-status surface routing. `path_based` serves each page at
+      # `/status/<slug>` on the operator host, and the primary one at
+      # `/status`. `subdomain` serves per-org pages on
       # `{slug}.{public_status.base_domain}` (apex wildcard). base_domain
       # reuses UPTIMEPAGE_DOMAIN so {slug}.{domain} resolves via the
       # Caddy apex wildcard; only consulted when SUBDOMAIN_PUBLIC_ROUTES is

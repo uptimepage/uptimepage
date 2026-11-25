@@ -113,6 +113,47 @@ fn logo_request(id: &str, bytes: &[u8]) -> Request<Body> {
         .unwrap()
 }
 
+/// Clients send the slug with every save, so one a rule came to refuse after
+/// the page took it keeps saving; only a rename has to pass the rules.
+#[tokio::test]
+#[ignore]
+async fn a_stored_slug_a_newer_rule_refuses_still_saves() {
+    let Some((url, db)) = common::fresh_test_db("sp_reserved").await else {
+        return;
+    };
+    let pool = common::open_test_pool(&url).await;
+    let (router, id) = owner_page(pool.clone()).await;
+    sqlx::query("UPDATE status_pages SET slug = 'branding' WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let (st, body) = read(
+        router
+            .clone()
+            .oneshot(patch(&id, json!({ "slug": "branding", "name": "Renamed" })))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "unchanged slug: {body}");
+    assert_eq!(body["name"], "Renamed");
+
+    let (st, body) = read(
+        router
+            .oneshot(patch(&id, json!({ "slug": "incidents" })))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], "SLUG_INVALID");
+
+    pool.close().await;
+    common::drop_test_db(&db).await;
+}
+
 // ── #26: a normal save succeeds and round-trips ─────────────────────────────
 
 #[tokio::test]
