@@ -66,7 +66,7 @@
       "update_status_page_component"
     ]
   },
-  "product_version": "1.7.0",
+  "product_version": "1.8.0",
   "retention_days": {
     "account_deletion_grace": 30,
     "audit_log": 730,
@@ -86,5 +86,5 @@
     "app": "sm_app_theme",
     "pick": "sm_theme_pick"
   },
-  "user_agent_template": "Mozilla/5.0 (compatible; uptimepage/1.7.0; +{bot_url})"
+  "user_agent_template": "Mozilla/5.0 (compatible; uptimepage/1.8.0; +{bot_url})"
 }
