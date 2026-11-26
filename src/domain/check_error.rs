@@ -2,9 +2,11 @@
 //! shared by the web views, the JSON API, and MCP, plus the bounded
 //! classification of that same code for operator metrics.
 
+use std::net::IpAddr;
+
 use crate::domain::{
-    CheckDiagnostic, CheckDiagnosticKind, CheckResult, DnsDetails, expiry_words, is_breaker_skip,
-    strip_served_stale,
+    CheckDetails, CheckDiagnostic, CheckDiagnosticKind, CheckResult, CheckStatus, DnsDetails,
+    DnsRecordType, expiry_words, is_breaker_skip, names_a_host, strip_served_stale,
 };
 
 pub fn humanize_check_error(raw: &str) -> String {
@@ -494,9 +496,9 @@ fn classify_json(raw: &str) -> ErrorClass {
     ErrorClass::Other
 }
 
-/// What a failed check most likely means to whoever is setting the monitor up,
-/// and what to try. Read off the error when it is shown and never stored, so an
-/// old row cannot outlive the advice it was written with.
+/// What a check's result most likely means to whoever is setting the monitor
+/// up, and what to try. Read off the result when it is shown and never stored,
+/// so an old row cannot outlive the advice it was written with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CheckHint {
     IcmpNoReply,
@@ -506,6 +508,11 @@ pub enum CheckHint {
     NoAnswer,
     AccessRefused,
     NotFound,
+    /// A pass: the name resolves, which says nothing about the host.
+    ResolvesOnly,
+    /// A pass to an address the probes refuse, so no check reaches the host
+    /// through it.
+    ResolvesToPrivate,
 }
 
 impl CheckHint {
@@ -519,6 +526,8 @@ impl CheckHint {
             Self::NoAnswer => "no_answer",
             Self::AccessRefused => "access_refused",
             Self::NotFound => "not_found",
+            Self::ResolvesOnly => "resolves_only",
+            Self::ResolvesToPrivate => "resolves_to_private",
         }
     }
 
@@ -543,11 +552,17 @@ impl CheckHint {
                 "The server answered and refused the request. If the page needs a sign-in or blocks automated clients, check a public health endpoint, send credentials in a header, or expect this status."
             }
             Self::NotFound => "The server answered, but nothing is at this path. Check the URL.",
+            Self::ResolvesOnly => {
+                "The name resolves, and that is all a DNS check verifies: it stays up whether or not the host answers. To know the host is up, add a TCP or HTTP check on a port the service listens on, or a ping check for a host with none."
+            }
+            Self::ResolvesToPrivate => {
+                "The name resolves to a private or reserved address, and that is all a DNS check verifies. Probes do not connect to those, so no check reaches the host through this address. If the host has no public address, a heartbeat sent by a job inside your network tells you it is up."
+            }
         }
     }
 
     /// Docs path, under the docs root, for the hints that come down to a
-    /// target the probes cannot reach from outside.
+    /// target the probes cannot reach from outside, or to what a check covers.
     pub const fn docs_path(self) -> Option<&'static str> {
         match self {
             Self::IcmpNoReply
@@ -555,6 +570,7 @@ impl CheckHint {
             | Self::HandshakeDropped
             | Self::NameNotPublic
             | Self::NoAnswer => Some(UNREACHABLE_DOCS_PATH),
+            Self::ResolvesOnly | Self::ResolvesToPrivate => Some(DNS_DOCS_PATH),
             Self::AccessRefused | Self::NotFound => None,
         }
     }
@@ -562,6 +578,7 @@ impl CheckHint {
 
 const UNREACHABLE_DOCS_PATH: &str =
     "/monitor-types#a-new-monitor-fails-but-the-service-works-for-you";
+const DNS_DOCS_PATH: &str = "/monitor-types#dns";
 
 /// Narrows inside the class where the class is wider than the advice: a class
 /// is a metric label, so it cannot be split to fit a sentence.
@@ -595,8 +612,34 @@ fn hint_for_check_error(raw: &str) -> Option<CheckHint> {
     }
 }
 
-/// What to try about a failed result. A diagnostic rests on evidence the probe
-/// saw, so its guidance takes the place of a hint, which has only the error.
+/// One address for a host's name reads as a server, and a green DNS check on
+/// a server reads as the server being up. Several addresses, an apex, a
+/// wildcard or an asserted answer is someone watching the records themselves.
+/// `reachable` is whether the probes would connect to an address.
+fn hint_for_pass(result: &CheckResult, reachable: impl Fn(IpAddr) -> bool) -> Option<CheckHint> {
+    let Some(CheckDetails::Dns(dns)) = &result.details else {
+        return None;
+    };
+    let [answer] = dns.answers.as_slice() else {
+        return None;
+    };
+    let address = matches!(dns.record_type, DnsRecordType::A | DnsRecordType::Aaaa);
+    let host_name = !dns.domain.starts_with("*.") && names_a_host(&dns.domain);
+    if result.status != CheckStatus::Up || dns.matched.is_some() || !address || !host_name {
+        return None;
+    }
+    let refused = answer.parse::<IpAddr>().is_ok_and(|ip| !reachable(ip));
+    Some(if refused {
+        CheckHint::ResolvesToPrivate
+    } else {
+        CheckHint::ResolvesOnly
+    })
+}
+
+/// What to try about a result: a failure a different check or target would
+/// fix, or a pass that proves less than it seems to. A diagnostic rests on
+/// evidence the probe saw, so its guidance takes the place of a hint, which
+/// has only the error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckAdvice {
     Diagnosed(CheckDiagnosticKind),
@@ -611,11 +654,14 @@ impl CheckAdvice {
         }
     }
 
-    pub fn for_result(result: &CheckResult) -> Option<Self> {
+    /// `reachable` is whether the probes would connect to an address, which
+    /// the deployment's private-target policy decides.
+    pub fn for_result(result: &CheckResult, reachable: impl Fn(IpAddr) -> bool) -> Option<Self> {
         Self::of(
             result.error.as_deref(),
             result.diagnostic.as_ref().map(|d| d.kind),
         )
+        .or_else(|| hint_for_pass(result, reachable).map(Self::Hint))
     }
 
     /// Where it came from, for API clients.
@@ -1174,7 +1220,7 @@ mod tests {
             uuid::Uuid::nil(),
             "unexpected status 403",
         );
-        let plain = CheckAdvice::for_result(&result).unwrap();
+        let plain = CheckAdvice::for_result(&result, refuses_private).unwrap();
         assert_eq!(plain, CheckAdvice::Hint(CheckHint::AccessRefused));
         assert_eq!(plain.label(), "hint");
 
@@ -1184,7 +1230,7 @@ mod tests {
             Vec::new(),
         );
         result.diagnostic = Some(diagnostic.clone());
-        let advice = CheckAdvice::for_result(&result).unwrap();
+        let advice = CheckAdvice::for_result(&result, refuses_private).unwrap();
         assert_eq!(
             advice,
             CheckAdvice::Diagnosed(CheckDiagnosticKind::AccessInterference)
@@ -1200,7 +1246,7 @@ mod tests {
 
         result.diagnostic = None;
         result.error = None;
-        assert_eq!(CheckAdvice::for_result(&result), None);
+        assert_eq!(CheckAdvice::for_result(&result, refuses_private), None);
         assert_eq!(explain_check_error(None, None), None);
     }
 
@@ -1233,6 +1279,8 @@ mod tests {
         CheckHint::NoAnswer,
         CheckHint::AccessRefused,
         CheckHint::NotFound,
+        CheckHint::ResolvesOnly,
+        CheckHint::ResolvesToPrivate,
     ];
 
     #[test]
@@ -1241,13 +1289,135 @@ mod tests {
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(codes.len(), ALL_HINTS.len(), "two hints share a code");
+        let passed = ["93.184.215.14", "10.0.0.5"].map(|ip| {
+            hint_for_pass(
+                &dns_pass("dc01.example.com", DnsRecordType::A, &[ip]),
+                refuses_private,
+            )
+        });
         for hint in ALL_HINTS {
             assert!(
-                HINTED.iter().any(|(_, h)| h == hint),
-                "no emitted error leads to {}",
+                HINTED.iter().any(|(_, h)| h == hint) || passed.contains(&Some(*hint)),
+                "no emitted result leads to {}",
                 hint.code()
             );
         }
+    }
+
+    /// What hosted probes refuse, narrowed to the private range: the fixtures
+    /// use public addresses for every other case.
+    fn refuses_private(ip: IpAddr) -> bool {
+        !matches!(ip, IpAddr::V4(v4) if v4.is_private())
+    }
+
+    fn dns_pass(domain: &str, record_type: DnsRecordType, answers: &[&str]) -> CheckResult {
+        CheckResult::graded(
+            uuid::Uuid::nil(),
+            uuid::Uuid::nil(),
+            chrono::Utc::now(),
+            12,
+            CheckStatus::Up,
+            CheckDetails::Dns(DnsDetails {
+                domain: domain.into(),
+                record_type,
+                missing: None,
+                unexpected: None,
+                answers: answers.iter().map(|a| (*a).to_string()).collect(),
+                aliases: Vec::new(),
+                expected_contains: None,
+                matched: None,
+            }),
+        )
+    }
+
+    #[test]
+    fn one_address_for_a_host_name_says_the_check_covers_only_the_name() {
+        for result in [
+            dns_pass(
+                "dc01.corp.example.com",
+                DnsRecordType::A,
+                &["93.184.215.14"],
+            ),
+            dns_pass("myhost.duckdns.org", DnsRecordType::A, &["93.184.215.14"]),
+            dns_pass(
+                "ec2-192-0-2-1.compute-1.amazonaws.com",
+                DnsRecordType::A,
+                &["93.184.215.14"],
+            ),
+            dns_pass(
+                "print.example.co.uk.",
+                DnsRecordType::Aaaa,
+                &["2606:2800:21f:cb07:6820:80da:af6b:8b2c"],
+            ),
+        ] {
+            let advice = CheckAdvice::for_result(&result, refuses_private);
+            assert_eq!(advice, Some(CheckAdvice::Hint(CheckHint::ResolvesOnly)));
+            assert_eq!(advice.unwrap().docs_path(), Some("/monitor-types#dns"));
+        }
+    }
+
+    #[test]
+    fn one_address_the_probes_refuse_says_no_probe_reaches_the_host() {
+        let result = dns_pass("dc01.example.com", DnsRecordType::A, &["10.0.0.5"]);
+        let advice = CheckAdvice::for_result(&result, refuses_private);
+        assert_eq!(
+            advice,
+            Some(CheckAdvice::Hint(CheckHint::ResolvesToPrivate))
+        );
+        assert_eq!(advice.unwrap().docs_path(), Some("/monitor-types#dns"));
+        // An instance that allows private targets can check the host itself.
+        assert_eq!(
+            CheckAdvice::for_result(&result, |_| true),
+            Some(CheckAdvice::Hint(CheckHint::ResolvesOnly))
+        );
+    }
+
+    #[test]
+    fn a_pass_that_watches_the_records_gets_no_hint() {
+        let two = ["93.184.215.14", "93.184.215.15"];
+        let mut asserted = dns_pass("api.example.com", DnsRecordType::A, &["93.184.215.14"]);
+        if let Some(CheckDetails::Dns(dns)) = &mut asserted.details {
+            dns.expected_contains = Some("93.184.215.14".into());
+            dns.matched = Some(true);
+        }
+        for result in [
+            dns_pass("example.com", DnsRecordType::A, &["93.184.215.14"]),
+            dns_pass("www.example.co.uk", DnsRecordType::A, &two),
+            dns_pass("*.example.com", DnsRecordType::A, &["93.184.215.14"]),
+            dns_pass("duckdns.org", DnsRecordType::A, &["93.184.215.14"]),
+            dns_pass("github.io", DnsRecordType::A, &["93.184.215.14"]),
+            dns_pass(
+                "us-east-1.amazonaws.com",
+                DnsRecordType::A,
+                &["93.184.215.14"],
+            ),
+            dns_pass("example.com", DnsRecordType::Mx, &["10 mail.example.com."]),
+            dns_pass(
+                "mail.example.com",
+                DnsRecordType::Cname,
+                &["ghs.example.net."],
+            ),
+            asserted,
+        ] {
+            assert_eq!(
+                CheckAdvice::for_result(&result, refuses_private),
+                None,
+                "{:?}",
+                result.details
+            );
+        }
+    }
+
+    #[test]
+    fn a_failing_host_name_keeps_its_failure_hint() {
+        let mut result = dns_pass("dc01.example.com", DnsRecordType::A, &["93.184.215.14"]);
+        result.status = CheckStatus::Down;
+        assert_eq!(CheckAdvice::for_result(&result, refuses_private), None);
+        result.error = Some("dns: domain not found".into());
+        assert_eq!(
+            CheckAdvice::for_result(&result, refuses_private),
+            Some(CheckAdvice::Hint(CheckHint::NameNotPublic))
+        );
     }
 
     /// The docs site slugs a heading by lowercasing it and dashing its spaces.

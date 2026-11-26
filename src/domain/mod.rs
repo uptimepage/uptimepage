@@ -60,7 +60,8 @@ pub use check::{
     FlowCheck, FlowStep, HeartbeatCheck, HttpCheck, HttpMethod, IntervalHints, IpVersion,
     MAX_CHECK_TIMEOUT, ManualCheck, PingCheck, SLOW_INTERVAL_PRESETS, TcpCheck, TlsCertCheck,
     default_recovery_period_secs_for_kind, interval_hints_for_kind, is_monitorable,
-    min_interval_secs_for_kind, publishes_no_expiry, reduced_domain_hint, registered_domain,
+    min_interval_secs_for_kind, names_a_host, publishes_no_expiry, reduced_domain_hint,
+    registered_domain,
 };
 pub use check_address::AddressError;
 pub use check_details::{

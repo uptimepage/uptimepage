@@ -503,6 +503,34 @@ pub fn reduced_domain_hint(domain: &str) -> Option<String> {
     (registered != normalized).then_some(registered)
 }
 
+/// A name below its registered domain, or one a shared suffix such as
+/// `duckdns.org` or `*.compute-1.amazonaws.com` hands out to a machine: that
+/// is a registration of its own, or none at all, but still one machine's name.
+/// The shared suffix itself, `duckdns.org` or `us-east-1.amazonaws.com`, is
+/// not. A wildcard's children are taken as machines, which most are.
+pub fn names_a_host(domain: &str) -> bool {
+    let normalized = normalize_domain(domain);
+    let name = normalized.as_bytes();
+    match psl::domain(name) {
+        Some(registered) => {
+            registered.as_bytes() != name || registered.suffix().typ() == Some(psl::Type::Private)
+        }
+        None => {
+            psl::suffix(name).is_some_and(|s| s.typ() == Some(psl::Type::Private))
+                && matched_a_wildcard(&normalized)
+        }
+    }
+}
+
+/// Whether a wildcard rule, not one naming it, made `name` a suffix. No rule
+/// names a label `_`, so only a wildcard makes that sibling a suffix too.
+fn matched_a_wildcard(name: &str) -> bool {
+    name.split_once('.').is_some_and(|(_, parent)| {
+        let sibling = format!("_.{parent}");
+        psl::suffix(sibling.as_bytes()).is_some_and(|s| s.as_bytes() == sibling.as_bytes())
+    })
+}
+
 /// These registries omit expiry by policy, so the check can never succeed.
 const NO_PUBLIC_EXPIRY: &[&str] = &[
     "ae", "at", "be", "bg", "ch", "de", "eu", "gg", "hu", "jp", "lu", "lv", "nz", "ro",

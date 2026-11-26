@@ -14,6 +14,7 @@ use crate::domain::notification_channel::NotificationChannel;
 use crate::domain::result::{CheckResult, CheckStatus};
 use crate::domain::target::RegionIncidentPolicy;
 use crate::domain::{CheckSpec, ExpectedStatus, FlowStep};
+use crate::security::SsrfGuard;
 use crate::security::redaction::strip_url_credentials;
 use crate::storage::incidents::IncidentBrief;
 
@@ -41,9 +42,9 @@ pub(super) fn network_path(result: &CheckResult) -> Option<NetworkPathView> {
     })
 }
 
-pub(super) fn check_hint(result: &CheckResult) -> Option<String> {
+pub(super) fn check_hint(result: &CheckResult, guard: SsrfGuard) -> Option<String> {
     // A diagnosed result already carries its guidance in `diagnostic`.
-    crate::domain::CheckAdvice::for_result(result)?
+    crate::domain::CheckAdvice::for_result(result, |ip| guard.allow(ip))?
         .hint()
         .map(|hint| hint.text().to_string())
 }

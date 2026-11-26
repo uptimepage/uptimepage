@@ -643,7 +643,7 @@ impl McpServer {
                 http_status: r.response_code,
                 error: r.error.as_deref().map(present_error),
                 diagnostic: check_diagnostic(&r),
-                hint: check_hint(&r),
+                hint: check_hint(&r, self.state.target_ops().ssrf_guard()),
             },
         ))
     }

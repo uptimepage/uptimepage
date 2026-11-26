@@ -775,10 +775,10 @@ pub struct ProbeOutcome {
     pub error: Option<String>,
     /// Structured edge-access diagnosis, when a supported signature matched.
     pub diagnostic: Option<CheckDiagnosticView>,
-    /// What the failure most likely means and what to try, in plain words,
-    /// when the error is one a different check or target would fix. Relay it
-    /// to the user. Absent beside a `diagnostic`, whose `guidance` is the
-    /// advice then.
+    /// What the result most likely means and what to try, in plain words,
+    /// when the error is one a different check or target would fix, or the
+    /// pass covers less than it seems to. Relay it to the user. Absent beside
+    /// a `diagnostic`, whose `guidance` is the advice then.
     pub hint: Option<String>,
 }
 

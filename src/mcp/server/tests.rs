@@ -970,11 +970,14 @@ fn a_setup_shaped_failure_reaches_mcp_with_its_hint() {
     r.status = CheckStatus::Down;
     r.error = Some("no echo reply from 192.0.2.1 within 3000ms".into());
     assert_eq!(
-        super::view::check_hint(&r).as_deref(),
+        super::view::check_hint(&r, crate::security::SsrfGuard::strict()).as_deref(),
         Some(crate::domain::CheckHint::IcmpNoReply.text())
     );
     r.error = Some("connection refused".into());
-    assert_eq!(super::view::check_hint(&r), None);
+    assert_eq!(
+        super::view::check_hint(&r, crate::security::SsrfGuard::strict()),
+        None
+    );
 }
 
 #[test]

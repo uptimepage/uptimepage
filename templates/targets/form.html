@@ -339,6 +339,10 @@
         Resolves a record and (optionally) asserts a substring appears in
         the answer, or that the answer is exactly the records you list.
         NXDOMAIN or an empty answer set fails the check.
+        <span class="hl">It verifies the name resolves, not that the host
+        answers</span>: a server that is down still resolves, so watch the
+        service itself with a TCP or HTTP check, or ping a host with no open
+        port.
       </p>
       <div class="field-join">
         <select name="dns_record_type" data-sm-combobox aria-label="DNS record type" class="field-join__method">

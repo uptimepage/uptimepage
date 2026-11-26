@@ -114,17 +114,19 @@ pub struct TestRequest {
 
 pub use crate::domain::agent_wire::HeaderPreview;
 
-/// What to try about a failed check.
+/// What to try about a check's result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct CheckAdviceView {
     /// `diagnostic` when the result carries a diagnostic, whose guidance this
     /// is. Otherwise `hint`: read off the error alone, for the errors a
-    /// different check or target would fix.
+    /// different check or target would fix, or off a pass that proves less
+    /// than it seems to.
     #[schema(example = "hint")]
     pub source: &'static str,
     /// Stable identifier. A hint is one of `icmp_no_reply`, `private_address`,
-    /// `handshake_dropped`, `name_not_public`, `no_answer`, `access_refused`
-    /// or `not_found`; a diagnostic's is its `kind`.
+    /// `handshake_dropped`, `name_not_public`, `no_answer`, `access_refused`,
+    /// `not_found`, `resolves_only` or `resolves_to_private`; a diagnostic's
+    /// is its `kind`.
     #[schema(example = "icmp_no_reply")]
     pub code: &'static str,
     /// Plain-language advice. The wording may change; `code` does not.
@@ -177,7 +179,7 @@ pub struct TestResponse {
     pub error_text: Option<String>,
     /// It describes this region's run alone: a caller testing several regions
     /// should show it only when every region returns the same `source` and
-    /// `code`.
+    /// `code`. A pass can carry it too, so it is not a failure signal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub advice: Option<CheckAdviceView>,
     /// Whether the check would be considered `up` given the spec's
@@ -206,12 +208,18 @@ pub struct TestResponse {
 }
 
 impl TestResponse {
-    pub fn new(delivered: crate::ad_hoc_dispatch::DeliveredResult, region: String) -> Self {
+    /// `guard` is the deployment's private-target policy, which the advice
+    /// takes for the probes': an agent configured apart can differ.
+    pub fn new(
+        delivered: crate::ad_hoc_dispatch::DeliveredResult,
+        region: String,
+        guard: crate::security::SsrfGuard,
+    ) -> Self {
         let result = delivered.result;
         Self {
             matched_expectations: result.status == CheckStatus::Up,
             error_text: explain_check_error(result.error.as_deref(), result.diagnostic.as_ref()),
-            advice: CheckAdvice::for_result(&result).map(Into::into),
+            advice: CheckAdvice::for_result(&result, |ip| guard.allow(ip)).map(Into::into),
             result,
             warnings: Vec::new(),
             response_headers_preview: delivered.response_headers_preview,
@@ -274,7 +282,12 @@ mod tests {
     }
 
     fn test_body(result: CheckResult) -> serde_json::Value {
-        serde_json::to_value(TestResponse::new(delivered(result), "eu".into())).unwrap()
+        serde_json::to_value(TestResponse::new(
+            delivered(result),
+            "eu".into(),
+            crate::security::SsrfGuard::strict(),
+        ))
+        .unwrap()
     }
 
     #[test]
@@ -329,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn a_passing_test_adds_nothing() {
+    fn a_plain_pass_adds_nothing() {
         let mut up = failed("x");
         up.status = CheckStatus::Up;
         up.error = None;
@@ -337,6 +350,47 @@ mod tests {
         assert_eq!(body["matched_expectations"], true);
         assert!(body.get("error_text").is_none(), "{body}");
         assert!(body.get("advice").is_none(), "{body}");
+    }
+
+    fn dns_up(answer: &str) -> CheckResult {
+        use crate::domain::{CheckDetails, DnsDetails, DnsRecordType};
+        CheckResult::graded(
+            Uuid::nil(),
+            Uuid::nil(),
+            chrono::Utc::now(),
+            8,
+            CheckStatus::Up,
+            CheckDetails::Dns(DnsDetails {
+                domain: "dc01.example.com".into(),
+                record_type: DnsRecordType::A,
+                missing: None,
+                unexpected: None,
+                answers: vec![answer.into()],
+                aliases: Vec::new(),
+                expected_contains: None,
+                matched: None,
+            }),
+        )
+    }
+
+    #[test]
+    fn a_dns_pass_on_a_host_name_says_it_covers_only_the_name() {
+        let body = test_body(dns_up("93.184.215.14"));
+        assert_eq!(body["matched_expectations"], true);
+        assert!(body.get("error_text").is_none(), "{body}");
+        assert_eq!(body["advice"]["source"], "hint");
+        assert_eq!(body["advice"]["code"], "resolves_only");
+        assert_eq!(
+            body["advice"]["docs_url"],
+            "https://uptimepage.dev/docs/monitor-types#dns"
+        );
+    }
+
+    #[test]
+    fn a_dns_pass_to_a_refused_address_says_no_probe_reaches_the_host() {
+        let body = test_body(dns_up("10.0.0.5"));
+        assert_eq!(body["advice"]["code"], "resolves_to_private");
+        assert_eq!(body["advice"]["text"], CheckHint::ResolvesToPrivate.text());
     }
 
     /// Clients read the result's fields at the top level; nesting them would

@@ -1187,7 +1187,7 @@ pub async fn test_check(
     let delivered = ops
         .run_ad_hoc(org, &region, DispatchKind::Test, None, req.check)
         .await?;
-    Ok(Json(TestResponse::new(delivered, region)))
+    Ok(Json(TestResponse::new(delivered, region, guard)))
 }
 
 #[utoipa::path(
