@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::request::json::Json;
 use axum::extract::{Extension, State};
 use chrono::{Duration, Utc};
-use moka::sync::Cache;
+use moka::future::Cache;
 use uuid::Uuid;
 
 use crate::api::types::{DashboardSummary, Last24hSummary, StatusBreakdown, SystemSummary};
@@ -12,7 +12,7 @@ use crate::app::AppState;
 use crate::domain::metrics::DashboardMetrics;
 use crate::domain::{CheckStatus, OrgId, Target};
 use crate::error::ApiError;
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use crate::request::CurrentOrg;
 use crate::storage::{TargetFilter, TimeRange};
 use crate::targets::{folded_status, folded_status_policies};
@@ -49,10 +49,16 @@ pub async fn dashboard_summary(
     Extension(cache): Extension<SummaryCache>,
     CurrentOrg(org_id): CurrentOrg,
 ) -> Result<Json<DashboardSummary>> {
-    if let Some(snapshot) = cache.get(&org_id) {
-        return Ok(Json((*snapshot).clone()));
-    }
+    let summary = cache
+        .try_get_with(org_id, async {
+            build_summary(&state, org_id).await.map(Arc::new)
+        })
+        .await
+        .map_err(AppError::from_shared)?;
+    Ok(Json((*summary).clone()))
+}
 
+async fn build_summary(state: &AppState, org_id: OrgId) -> Result<DashboardSummary> {
     let now = Utc::now();
     let range = TimeRange {
         from: now - Duration::try_hours(24).unwrap_or_default(),
@@ -75,7 +81,7 @@ pub async fn dashboard_summary(
             .incident_narration_store
             .count_overlapping(org_id, range),
     )?;
-    let current_status = status_breakdown(&state, org_id, range, &monitors, rollup).await;
+    let current_status = status_breakdown(state, org_id, range, &monitors, rollup).await;
 
     let uptime_pct = if checks_total > 0 {
         (checks_up as f64 / checks_total as f64) * 100.0
@@ -83,7 +89,7 @@ pub async fn dashboard_summary(
         0.0
     };
 
-    let summary = DashboardSummary {
+    Ok(DashboardSummary {
         targets,
         current_status,
         last_24h: Last24hSummary {
@@ -102,10 +108,7 @@ pub async fn dashboard_summary(
             circuit_breakers_open: u32::try_from(state.worker_pool.open_breakers())
                 .unwrap_or(u32::MAX),
         },
-    };
-
-    cache.insert(org_id, Arc::new(summary.clone()));
-    Ok(Json(summary))
+    })
 }
 
 /// Counts by folded status, not by whichever region reported last.

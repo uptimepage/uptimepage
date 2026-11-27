@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
-use moka::sync::Cache;
+use moka::future::Cache;
 use uuid::Uuid;
 
 use crate::app::AppState;
@@ -248,24 +248,22 @@ pub(crate) async fn load_live_data_cached(
         from: custom_from,
         to: custom_to,
     } = custom;
-    let target_id = target.id;
     // A region-filtered view skips the shared cache (selection is rare, not
     // worth widening the key) — same call as the custom-window path.
     let cacheable = custom_from.is_none() && custom_to.is_none() && region.is_none();
+    let load = async {
+        let (from, to) = resolve_window(range_key, custom_from, custom_to);
+        load_live_data(state, org, target, from, to, region)
+            .await
+            .map(Arc::new)
+    };
     if cacheable {
-        let key = (org, target_id, range_key);
-        if let Some(data) = cache.get(&key) {
-            return Ok(data);
-        }
-        let (from, to) = resolve_window(range_key, custom_from, custom_to);
-        let data = Arc::new(load_live_data(state, org, target, from, to, region).await?);
-        cache.insert(key, data.clone());
-        Ok(data)
+        cache
+            .try_get_with((org, target.id, range_key), load)
+            .await
+            .map_err(WebError::from_shared)
     } else {
-        let (from, to) = resolve_window(range_key, custom_from, custom_to);
-        Ok(Arc::new(
-            load_live_data(state, org, target, from, to, region).await?,
-        ))
+        load.await
     }
 }
 

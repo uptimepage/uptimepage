@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -294,6 +296,105 @@ impl AppError {
     }
 }
 
+impl AppError {
+    /// The error of a failed moka `try_get_with` load, which hands every
+    /// caller that waited on it one shared `Arc`. Each caller gets the same
+    /// status, code and message.
+    pub fn from_shared(err: Arc<Self>) -> Self {
+        Arc::try_unwrap(err).unwrap_or_else(|shared| shared.duplicate())
+    }
+
+    /// A copy with the same status, code, message and log detail. A wrapped
+    /// source error is kept as its rendered chain.
+    pub(crate) fn duplicate(&self) -> Self {
+        match self {
+            Self::NotFound { code, message } => Self::NotFound {
+                code,
+                message: message.clone(),
+            },
+            Self::BadRequest {
+                code,
+                message,
+                field,
+            } => Self::BadRequest {
+                code,
+                message: message.clone(),
+                field: field.clone(),
+            },
+            Self::PayloadTooLarge { code, message } => Self::PayloadTooLarge {
+                code,
+                message: message.clone(),
+            },
+            Self::UnsupportedMediaType { code, message } => Self::UnsupportedMediaType {
+                code,
+                message: message.clone(),
+            },
+            Self::Conflict { code, message } => Self::Conflict {
+                code,
+                message: message.clone(),
+            },
+            Self::Unprocessable { code, message } => Self::Unprocessable {
+                code,
+                message: message.clone(),
+            },
+            Self::UnprocessableDetails {
+                code,
+                message,
+                details,
+            } => Self::UnprocessableDetails {
+                code,
+                message: message.clone(),
+                details: details.clone(),
+            },
+            Self::Gone { code, message } => Self::Gone {
+                code,
+                message: message.clone(),
+            },
+            Self::ServiceUnavailable { code, message } => Self::ServiceUnavailable {
+                code,
+                message: message.clone(),
+            },
+            Self::QuotaExceeded {
+                code,
+                message,
+                quota,
+                current,
+                limit,
+                plan,
+            } => Self::QuotaExceeded {
+                code,
+                message: message.clone(),
+                quota,
+                current: *current,
+                limit: *limit,
+                plan: plan.clone(),
+            },
+            Self::RateLimited {
+                scope,
+                retry_after_secs,
+            } => Self::RateLimited {
+                scope: scope.clone(),
+                retry_after_secs: *retry_after_secs,
+            },
+            Self::Unauthorized => Self::Unauthorized,
+            Self::SessionRequired => Self::SessionRequired,
+            Self::Forbidden => Self::Forbidden,
+            Self::ForbiddenCoded { code, message } => Self::ForbiddenCoded {
+                code,
+                message: message.clone(),
+            },
+            Self::Internal { code, log } => Self::Internal {
+                code,
+                log: log.clone(),
+            },
+            Self::Other(e) => Self::Other(anyhow::anyhow!("{e:#}")),
+            Self::Config(_) | Self::Io(_) | Self::BindAddr { .. } => {
+                Self::Other(anyhow::anyhow!("{self}"))
+            }
+        }
+    }
+}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = self.status();
@@ -408,5 +509,49 @@ impl IntoResponse for AppError {
             );
         }
         (status, Json(ApiError { error: body })).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_caller_sharing_a_failed_load_keeps_its_status_and_message() {
+        let leader = Arc::new(AppError::ServiceUnavailable {
+            code: codes::PROBE_UNAVAILABLE,
+            message: "results store unavailable".into(),
+        });
+        let waiter = Arc::clone(&leader);
+        let from_leader = AppError::from_shared(leader);
+        let from_waiter = AppError::from_shared(waiter);
+        for err in [&from_leader, &from_waiter] {
+            assert_eq!(err.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(err.to_string(), "results store unavailable");
+        }
+    }
+
+    #[test]
+    fn a_shared_internal_error_keeps_its_log_detail() {
+        let err = Arc::new(AppError::Internal {
+            code: codes::INTERNAL,
+            log: "uptime query failed".into(),
+        });
+        let _waiter = Arc::clone(&err);
+        assert!(matches!(
+            AppError::from_shared(err),
+            AppError::Internal { log, .. } if log == "uptime query failed"
+        ));
+    }
+
+    #[test]
+    fn a_shared_source_error_keeps_its_cause_chain() {
+        let err = Arc::new(AppError::Other(
+            anyhow::anyhow!("connection refused").context("uptime query"),
+        ));
+        let _waiter = Arc::clone(&err);
+        let out = AppError::from_shared(err);
+        assert_eq!(out.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(out.to_string(), "uptime query: connection refused");
     }
 }

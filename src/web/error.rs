@@ -1,5 +1,7 @@
 //! HTML error pages for the web layer.
 
+use std::sync::Arc;
+
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::http::StatusCode;
@@ -85,6 +87,13 @@ impl<E: Into<AppError>> From<E> for WebError {
     }
 }
 
+impl WebError {
+    /// See [`AppError::from_shared`].
+    pub(crate) fn from_shared(err: Arc<Self>) -> Self {
+        Self(Arc::try_unwrap(err).map_or_else(|shared| shared.0.duplicate(), |own| own.0))
+    }
+}
+
 impl std::fmt::Display for WebError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
@@ -136,6 +145,20 @@ pub type WebResult<T> = std::result::Result<T, WebError>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_caller_sharing_a_failed_load_gets_its_status() {
+        let leader = Arc::new(WebError::from(AppError::not_found(
+            crate::error::codes::ORG_NOT_FOUND,
+            "org not found",
+        )));
+        let waiter = Arc::clone(&leader);
+        let from_leader = WebError::from_shared(leader);
+        let from_waiter = WebError::from_shared(waiter);
+        for err in [from_leader, from_waiter] {
+            assert_eq!(err.into_response().status(), StatusCode::NOT_FOUND);
+        }
+    }
 
     #[test]
     fn error_pages_render() {

@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{Duration, Utc};
-use moka::sync::Cache;
+use moka::future::Cache;
 use uuid::Uuid;
 
 use crate::app::AppState;
@@ -13,7 +13,7 @@ use crate::domain::{CheckStatus, OrgId, UserId};
 use crate::storage::{
     IncidentBriefFilter, IncidentSpan, TargetFilter, TimeRange, weighted_downtime_by_target,
 };
-use crate::web::error::WebResult;
+use crate::web::error::{WebError, WebResult};
 use crate::web::views::incidents::members_map;
 
 use super::charts::{
@@ -80,12 +80,12 @@ pub(super) async fn load_snapshot(
     org: OrgId,
     range: &'static str,
 ) -> WebResult<Arc<DashboardSnapshot>> {
-    if let Some(snap) = cache.get(&(org, range)) {
-        return Ok(snap);
-    }
-    let snap = Arc::new(build_snapshot(state, org, range, None).await?);
-    cache.insert((org, range), Arc::clone(&snap));
-    Ok(snap)
+    cache
+        .try_get_with((org, range), async {
+            build_snapshot(state, org, range, None).await.map(Arc::new)
+        })
+        .await
+        .map_err(WebError::from_shared)
 }
 
 /// What the all-regions view reads from incidents: the downtime spans over the
